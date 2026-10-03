@@ -116,6 +116,7 @@
 import { computed, ref } from 'vue'
 import { useFactImport, type FactImportRow, type FactImportOverPlanChoice } from '@/composables/subsidies/useFactImport'
 import FactImportRowPlanPicker from './FactImportRowPlanPicker.vue'
+import { formatMoney } from '@/utils/formatMoney'
 
 const props = defineProps<{ subsidyId: number | null }>()
 const subsidyId = computed(() => props.subsidyId)
@@ -188,9 +189,10 @@ function overPlanChoice(row: number): FactImportOverPlanChoice {
   return factImport.decisions.over_plan[String(row)] || 'keep_over'
 }
 
+// ПРАВИЛО №6: формат суммы — общий хелпер, не своя копия Intl.NumberFormat.
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(v)
+  return formatMoney(v)
 }
 
 const pickerOpen = ref(false)

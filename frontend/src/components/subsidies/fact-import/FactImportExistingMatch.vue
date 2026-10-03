@@ -12,7 +12,7 @@
         </div>
         <div class="text-caption">
           {{ match.subject || match.name || '(без предмета)' }} — {{ match.contractor_name || '(без поставщика)' }}
-          — {{ fmt(itemsTotal(match)) }} — <v-chip size="x-small" variant="tonal">{{ match.status }}</v-chip>
+          — {{ fmt(itemsTotal(match)) }} — <v-chip size="x-small" variant="tonal">{{ statusLabel(match.status) }}</v-chip>
         </div>
         <div class="text-caption text-medium-emphasis">
           {{ match.kind === 'same_amount' ? 'Тот же поставщик и сумма — скорее всего та же закупка.' : 'Тот же поставщик, другая сумма — возможно, та же закупка. Нужно решить.' }}
@@ -129,6 +129,10 @@ import {
   type FactImportExistingMatch,
   type FactImportExistingMatchItem,
 } from '@/composables/subsidies/useFactImport'
+// ПРАВИЛО №6: подпись статуса закупки и формат суммы — общие источники,
+// не своя копия (match.status/match.items[].total — коды/числа с бэкенда).
+import { purchaseStatusLabel } from '@/constants/purchaseStatus'
+import { formatMoney } from '@/utils/formatMoney'
 
 const props = defineProps<{ group: FactImportGroup; subsidyId: number | null }>()
 
@@ -150,7 +154,11 @@ const { plannedResiduals } = useFeoPlannedResiduals({ subsidyId: subsidyIdRef })
 
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(v)
+  return formatMoney(v)
+}
+
+function statusLabel(s?: string | null): string {
+  return purchaseStatusLabel(s) || 'План закупок'
 }
 
 function itemsTotal(match: FactImportExistingMatch): number {

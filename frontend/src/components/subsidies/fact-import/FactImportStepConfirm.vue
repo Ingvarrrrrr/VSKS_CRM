@@ -40,9 +40,11 @@
 
 <script setup lang="ts">
 import { useFactImport } from '@/composables/subsidies/useFactImport'
+// ПРАВИЛО №6: формат суммы — общий хелпер, не своя копия Intl.NumberFormat.
+import { formatMoney } from '@/utils/formatMoney'
 const { totals } = useFactImport()
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(v)
+  return formatMoney(v)
 }
 </script>

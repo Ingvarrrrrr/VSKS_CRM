@@ -23,7 +23,7 @@
           </template>
           <template v-else>
             <td>{{ r.supplier || '—' }}</td>
-            <td>{{ r.status }}</td>
+            <td>{{ statusLabel(r.status) }}</td>
             <td>{{ fmt(r.contract_amount) }}</td>
             <td>{{ fmt(r.paid_amount) }}</td>
             <td>
@@ -41,10 +41,16 @@
 
 <script setup lang="ts">
 import { useFactImport } from '@/composables/subsidies/useFactImport'
+// ПРАВИЛО №6: подпись статуса закупки и формат суммы — общие источники.
+import { purchaseStatusLabel } from '@/constants/purchaseStatus'
+import { formatMoney } from '@/utils/formatMoney'
 const { factImport } = useFactImport()
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(v)
+  return formatMoney(v)
+}
+function statusLabel(s?: string | null): string {
+  return purchaseStatusLabel(s) || 'План закупок'
 }
 </script>
 

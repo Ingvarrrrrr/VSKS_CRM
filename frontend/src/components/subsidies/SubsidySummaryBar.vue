@@ -2,7 +2,7 @@
   <div class="summary-bar">
     <div class="summary-item">
       <span class="summary-label">Субсидий</span>
-      <span class="summary-value">{{ filteredSubsidies.length }}</span>
+      <span class="summary-value">{{ nonSandboxSubsidies.length }}</span>
     </div>
     <div class="summary-sep" />
     <div class="summary-item summary-item--link" @click="ctx.router.push('/dashboard')">
@@ -63,5 +63,8 @@ const ctx = useSubsidyDetailCtx()
 // useSubsidyList() без ctx — переиспользует singleton SubsidiesView.vue, см.
 // докстринг в SubsidyListHeader.vue (владелец, 29.09: переключатель вид не
 // работал до F5, т.к. этот вызов с другим ctx пересобирал отдельный API).
-const { filteredSubsidies, totals } = useSubsidyList()
+// Счётчик «Субсидий» — без копий для экспериментов (is_sandbox), как и
+// денежные итоги (totals уже исключает их, ПРАВИЛО №6: один источник —
+// nonSandboxSubsidies из useSubsidyList.ts, не второй .filter() здесь).
+const { nonSandboxSubsidies, totals } = useSubsidyList()
 </script>

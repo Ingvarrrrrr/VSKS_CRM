@@ -18,7 +18,7 @@
                 {{ g.purchase_no ? `№ ${g.purchase_no}` : g.category_path }}
               </div>
             </div>
-            <v-chip size="small" variant="tonal">{{ g.status }}</v-chip>
+            <v-chip size="small" variant="tonal">{{ statusLabel(g.status) }}</v-chip>
           </div>
           <div class="d-flex ga-4 mt-2 text-body-2">
             <span>Договор: <strong>{{ fmt(g.contract_amount) }}</strong></span>
@@ -69,8 +69,15 @@ import { computed, ref } from 'vue'
 import { useFactImport } from '@/composables/subsidies/useFactImport'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import FactImportExistingMatch from './FactImportExistingMatch.vue'
+// ПРАВИЛО №6: подпись статуса закупки и формат суммы — общие источники.
+import { purchaseStatusLabel } from '@/constants/purchaseStatus'
+import { formatMoney } from '@/utils/formatMoney'
 
 const { factImport, visibleGroups, setSupplierOverride, moveRowToGroup, queuePreviewRefresh } = useFactImport()
+
+function statusLabel(s?: string | null): string {
+  return purchaseStatusLabel(s) || 'План закупок'
+}
 
 // 🟢🔵 «Нужно решение» (план breezy-mixing-lovelace.md, Часть А) — группы
 // с «возможно» (same_supplier, сумма другая) без явного решения владельца;
@@ -83,7 +90,7 @@ const filteredGroups = computed(() =>
 
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(v)
+  return formatMoney(v)
 }
 
 function otherGroupOptions(exceptKey: string) {

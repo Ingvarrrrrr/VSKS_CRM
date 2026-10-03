@@ -21,8 +21,17 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.historical_fact_import.preview import build_preview
+# ПРАВИЛО №6: формат суммы в ₽ для текста отказа — переиспользуем
+# _fmt_money шаблонов документов (единственный существующий money-форматтер
+# на бэкенде с нужным видом «19 800,80»), не заводим второй.
+from app.services.documents.formatting import _fmt_money
 
 _RANK = {"work_in_progress": 1, "contracted": 2, "ordered": 3, "delivered": 4, "paid": 5}
+
+
+def _format_rub(v) -> str:
+    formatted = _fmt_money(v)
+    return f"{formatted} ₽" if formatted else "0,00 ₽"
 
 
 def _dec(v) -> Optional[Decimal]:
@@ -49,12 +58,19 @@ async def commit_import(
     # existing_decision=True у группы означает kind='same_supplier' без
     # решения (preview.py её не предвыбирает). До записи ЧЕГО-ЛИБО в БД.
     from fastapi import HTTPException
-    undecided = [g["key"] for g in preview["groups"] if g.get("needs_existing_decision")]
+    undecided = [g for g in preview["groups"] if g.get("needs_existing_decision")]
     if undecided:
+        # Дефект приёмки (02.10.2026): текст отказа показывал служебный ключ
+        # группы («supplier|офисмаг») — заменён на поставщика и сумму группы,
+        # понятные человеку без знания внутреннего ключа.
+        human = "; ".join(
+            f'{g.get("supplier") or "(без поставщика)"} — {_format_rub(g.get("contract_amount"))}'
+            for g in undecided
+        )
         raise HTTPException(
             400,
-            "Похожая закупка найдена (тот же поставщик, другая сумма) — выберите «та же "
-            f"закупка» или «другая» для групп: {', '.join(undecided)}",
+            "Нужно решить, та же это закупка или другая: "
+            f"{human}",
         )
 
     from app.models.fact_import_run import FactImportRun

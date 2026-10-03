@@ -147,7 +147,7 @@ function buildSubsidyList(ctx: Pick<SubsidyDetailContext, 'allSubsidies'>) {
   }
 
   return {
-    selectedYear, availableYears, filteredSubsidies, subsidyTableHeaders, totals,
+    selectedYear, availableYears, filteredSubsidies, nonSandboxSubsidies, subsidyTableHeaders, totals,
     mobile, viewMode, effectiveView, subPage, subTotalPages, subPaged,
     cardDragIdx, cardDragOverIdx,
     onCardDragStart, onCardDragOver, onCardDrop,

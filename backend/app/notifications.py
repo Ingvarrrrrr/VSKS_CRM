@@ -3,13 +3,14 @@ import os
 import re
 import logging
 import httpx
+
+from app.config import settings
 from app.services.purchase_label import purchase_label
 
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN", "")
-BASE_URL = os.getenv("BASE_URL", "https://gaaala.duckdns.org")
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 MAX_API = "https://botapi.max.ru/messages/send?access_token={token}"
@@ -166,11 +167,11 @@ async def notify_user(user, text: str, task_id: int = None,
 
 
 def _task_url(task_id: int) -> str:
-    return f"{BASE_URL}/my-tasks?task={task_id}"
+    return f"{settings.BASE_URL}/my-tasks?task={task_id}"
 
 
 def _purchase_url(purchase_id: int) -> str:
-    return f"{BASE_URL}/orders/{purchase_id}/edit"
+    return f"{settings.BASE_URL}/orders/{purchase_id}/edit"
 
 
 def _esc(s: str) -> str:
@@ -375,7 +376,7 @@ async def notify_purchase_member_added(purchase, added_user, added_by_name: str)
 
 
 def _wish_url(wish_id: int) -> str:
-    return f"{BASE_URL}/wishes/{wish_id}"
+    return f"{settings.BASE_URL}/wishes/{wish_id}"
 
 
 def _wish_keyboard(wish_id: int) -> dict:
@@ -508,7 +509,7 @@ def _money(v) -> str:
 
 
 def _plan_excess_url(subsidy_id: int) -> str:
-    return f"{BASE_URL}/subsidies?sid={subsidy_id}"
+    return f"{settings.BASE_URL}/subsidies?sid={subsidy_id}"
 
 
 def _plan_excess_keyboard(subsidy_id: int) -> dict:
@@ -552,7 +553,7 @@ async def notify_plan_excess_decided(approval, requester_user, decision: str, de
 
 
 def _subsidy_revision_url(subsidy_id: int, revision_id: int) -> str:
-    return f"{BASE_URL}/subsidies/{subsidy_id}/revisions/{revision_id}"
+    return f"{settings.BASE_URL}/subsidies/{subsidy_id}/revisions/{revision_id}"
 
 
 def _subsidy_revision_keyboard(subsidy_id: int, revision_id: int) -> dict:

@@ -24,8 +24,8 @@ from app.routers import (
 # /api/purchases. Все пути литеральные или минимум на 2 сегмента длиннее
 # catch-all "/{pid}" purchases.router — порядок регистрации относительно него
 # и друг друга не важен, регистрируются рядом с purchase_items_import.router.
-from app.routers import purchase_items_import_mapped
 from app.routers import organization_director
+from app.routers import purchase_items_import_mapped
 from app.routers import purchase_items_import_smart
 from app.routers import purchase_items_import_feo
 # Разрезание departments.py (Правило №5, сессия 2026-09-08): departments_members,
@@ -108,6 +108,7 @@ from app.routers import purchase_lists
 from app.routers import purchase_payment_matching
 from app.routers import purchase_ops
 from app.routers import purchase_items_edit
+from app.routers import purchase_split_columns
 from app.routers import purchase_comments
 # purchase_import_template / purchase_import: разрезаны из purchase_export.py
 # (Правило №5, рефакторинг 2026-09) — только статические пути /import*, не
@@ -226,6 +227,12 @@ from app.routers import okpd2 as okpd2_router
 from app.routers import expense_codes as expense_codes_router
 from app.routers import diag as diag_router
 from app.routers import dictionaries as dictionaries_router
+# 152-ФЗ: согласие на обработку ПДн + обращения субъектов ПДн (2026-09-16).
+# Собственный префикс /api/legal, конфликтов по форме пути с catch-all
+# других роутеров нет — порядок регистрации не важен.
+from app.routers import legal as legal_router
+# Категории закупки товара — отдельный справочник, many-to-many (владелец, 2026-09-16)
+from app.routers import purchase_categories as purchase_categories_router
 # Разрезание contractors.py (Правило №5, сессия 2026-09-08): contractors_directory,
 # contractors_lookup, contractors_enrich, contractors_import несут доп. эндпоинты
 # на префиксе /api/contractors. contractors_directory ОБЯЗАН регистрироваться ДО
@@ -265,9 +272,6 @@ from app.routers import users_docs
 from app.routers import users_platform_credentials
 from app.routers import users_dictionaries
 from app.routers import users_import
-# Категории закупки товара — отдельный справочник, many-to-many (владелец, 2026-09-16)
-from app.routers import purchase_categories as purchase_categories_router
-from app.routers import purchase_split_columns  # черновик раскладки канбана разбиения (2026-09-16)
 
 
 def register_routes(app: FastAPI) -> None:
@@ -310,6 +314,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(purchase_ops.router)
     app.include_router(purchases.router)
     app.include_router(purchase_items_edit.router)
+    app.include_router(purchase_split_columns.router)
     app.include_router(purchase_comments.router)
     app.include_router(purchase_receipts_recompute.router)
     app.include_router(purchase_receipts.router)
@@ -493,5 +498,5 @@ def register_routes(app: FastAPI) -> None:
 
     app.include_router(diag_router.router)                 # /api/diag/*
     app.include_router(dictionaries_router.router)         # /api/dictionaries/purchase (Правило №6)
+    app.include_router(legal_router.router)                # /api/legal (152-ФЗ, 2026-09-16)
     app.include_router(purchase_categories_router.router)  # /api/purchase-categories (2026-09-16)
-    app.include_router(purchase_split_columns.router)  # PATCH split_column_key (2026-09-16)

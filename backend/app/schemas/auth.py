@@ -219,4 +219,10 @@ class RegisterRequest(BaseModel):
     password: str
     full_name: Optional[str] = None
     email: str
+    # 152-ФЗ (2026-09-16): согласие на обработку ПДн, обязательное условие
+    # регистрации — см. backend/app/routers/organizations.py:register().
+    # consent_version = LEGAL_VERSION с фронта
+    # (frontend/src/legal/documents.generated.ts), фиксируется как есть.
+    consent_accepted: bool = False
+    consent_version: Optional[str] = None
 

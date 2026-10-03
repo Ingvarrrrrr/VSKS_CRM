@@ -1,0 +1,297 @@
+{
+  "_": "ЕДИНСТВЕННЫЙ источник реквизитов оператора и версий правовых документов (ПРАВИЛО №6). Ни один документ, страница сайта или приказ не содержит реквизитов своим текстом — только подстановки из этого файла. Заполнить ПОСЛЕ регистрации юрлица и покупки домена, затем `python legal/build.py`.",
+  "status": "active",
+  "filled": true,
+  "operator": {
+    "form": "физическое лицо",
+    "short_name": "Цыганов Игорь Александрович",
+    "full_name": "Цыганов Игорь Александрович",
+    "inn": "{{ИНН}}",
+    "kpp": "{{КПП}}",
+    "ogrn": "{{ОГРН}}",
+    "legal_address": "г. Москва, ул. Кулакова, д. 18, корп. 1, кв. 62",
+    "postal_address": "г. Москва, ул. Кулакова, д. 18, корп. 1, кв. 62",
+    "bank_account": "{{РАСЧЁТНЫЙ_СЧЁТ}}",
+    "bank_name": "{{БАНК}}",
+    "bank_bik": "{{БИК}}",
+    "bank_corr": "{{КОРР_СЧЁТ}}"
+  },
+  "head": {
+    "position": "Оператор",
+    "position_genitive": "Оператора",
+    "fio": "Цыганов Игорь Александрович",
+    "acts_on": "Устава"
+  },
+  "responsible": {
+    "_": "Ответственный за организацию обработки ПДн (ст. 22.1 152-ФЗ). Оператор — физическое лицо, обработку организует лично.",
+    "position": "Оператор",
+    "fio": "Цыганов Игорь Александрович",
+    "email": "info@galaa.ru",
+    "phone": "{{ТЕЛЕФОН}}",
+    "same_as_head": true
+  },
+  "site": {
+    "product_name": "GALA",
+    "product_full_name": "Система управления государственными субсидиями GALA",
+    "domain": "galaa.ru",
+    "url": "https://galaa.ru",
+    "support_email": "info@galaa.ru",
+    "legal_email": "info@galaa.ru"
+  },
+  "hosting": {
+    "provider": "Timeweb Cloud",
+    "country": "Российская Федерация",
+    "note": "Серверы и база данных размещены на территории Российской Федерации (ч. 5 ст. 18 152-ФЗ). При смене площадки обновить этот блок и переиздать политику."
+  },
+  "processing": {
+    "_": "Фактический состав обрабатываемых данных — сверен по backend/app/models/. Менять при изменении моделей.",
+    "subjects": [
+      "работники и уполномоченные представители Пользователей (организаций-клиентов)",
+      "контрагенты — физические лица, индивидуальные предприниматели и самозанятые",
+      "представители контрагентов — юридических лиц",
+      "посетители сайта и лица, направившие обращение"
+    ],
+    "special_categories": false,
+    "biometric": false,
+    "cross_border": false,
+    "geolocation": true,
+    "geolocation_retention_days": 30,
+    "geolocation_purpose": "организация работы в течение рабочей смены, распределение и подтверждение выполнения служебных заданий, оперативное определение местонахождения работника, в том числе в нештатной ситуации",
+    "geolocation_facts": {
+      "_": "Сверено с кодом 16.09.2026: useStaffLocationTracking.ts, routers/staff_location.py, StaffTrackDialog.vue. Формулировки в политике и в форме согласия обязаны совпадать с этим блоком — при изменении поведения приложения правится здесь, а не в двадцати текстах.",
+      "auto_collect_during_shift": true,
+      "auto_collect_note": "пока работник сам включил смену и приложение открыто, координаты снимаются автоматически с интервалом в несколько минут, без подтверждения каждой точки",
+      "on_demand_request": true,
+      "on_demand_note": "разовый запрос «где вы сейчас» требует явного ответа работника: «Отправить» или «Отказаться»",
+      "track_playback": true,
+      "track_playback_note": "сохранённые точки можно посмотреть за выбранный период как последовательность перемещений (GET /track/{user_id}); доступ ограничен правом staff.location.view"
+    },
+    "sensitive_fields": [
+      "фамилия, имя, отчество",
+      "дата рождения",
+      "серия, номер, кем и когда выдан документ, удостоверяющий личность",
+      "СНИЛС",
+      "ИНН физического лица",
+      "номер телефона и адрес электронной почты",
+      "должность и место работы",
+      "банковские реквизиты и номер счёта",
+      "серия, номер и открытые категории водительского удостоверения",
+      "сроки действия медицинского заключения, психиатрического освидетельствования и карты тахографа водителя",
+      "фотография в профиле, изображение подписи и электронные копии документов",
+      "сведения о местоположении работника (широта, долгота, время)"
+    ]
+  },
+  "open_questions": {
+    "_": "Вопросы, которые обязан закрыть юрист до подачи уведомления в Роскомнадзор. Держатся здесь, а не в тексте документов, чтобы не размножаться по двадцати файлам.",
+    "health_dates_special_category": {
+      "question": "Относится ли хранение СРОКОВ ДЕЙСТВИЯ медицинского заключения и психиатрического освидетельствования водителя к обработке сведений о состоянии здоровья, то есть к специальной категории персональных данных (ст. 10 152-ФЗ)?",
+      "why": "Мы храним только даты годности допуска к управлению транспортным средством, без диагнозов и медицинских сведений. Если ответ «да» — потребуется письменное согласие по ч. 4 ст. 9 152-ФЗ и пересмотр уровня защищённости в акте.",
+      "affects": [
+        "08-akt-uroven.md",
+        "04-perechen-pdn.md",
+        "privacy.md",
+        "13-soglasie-rabotnika.md"
+      ],
+      "status": "open"
+    },
+    "employment_status_of_head": {
+      "question": "Оформлен ли единственный участник трудовым договором как работник, или действует только как единоличный исполнительный орган?",
+      "why": "Меняет формулировки в перечне обрабатываемых данных и в форме согласия работника.",
+      "affects": [
+        "04-perechen-pdn.md",
+        "13-soglasie-rabotnika.md"
+      ],
+      "status": "open"
+    },
+    "profile_photo_not_biometric": {
+      "question": "Подтвердить, что фотография в профиле не используется для установления личности и потому не является биометрическими персональными данными.",
+      "why": "Если фото когда-нибудь начнут сверять с лицом, категория данных изменится, а вместе с ней — уровень защищённости.",
+      "affects": [
+        "04-perechen-pdn.md",
+        "08-akt-uroven.md"
+      ],
+      "status": "open"
+    }
+  },
+  "consent": {
+    "term_months": 12,
+    "_term": "Срок действия согласия с даты последнего взаимодействия."
+  },
+  "deadlines_working_days": {
+    "_": "Сроки по 152-ФЗ. Используются и в текстах, и в регламенте инцидента.",
+    "info_request": 10,
+    "info_request_extension": 5,
+    "correction": 7,
+    "destruction_on_withdrawal": 10,
+    "stop_unlawful_processing": 3,
+    "repeat_request_cooldown_days": 30,
+    "breach_notify_hours": 24,
+    "breach_investigation_hours": 72,
+    "act_retention_years": 3
+  },
+  "tariffs": {
+    "_": "Для оферты. Заполнить перед публикацией; сейчас биллинг считает уникальных сотрудников — см. frontend/src/views/BillingView.vue.",
+    "unit": "уникальный сотрудник в месяц",
+    "currency": "RUB",
+    "vat": "{{НДС_РЕЖИМ}}",
+    "price_per_unit": "{{ЦЕНА_ЗА_ЕДИНИЦУ}}",
+    "billing_period": "календарный месяц",
+    "trial_days": 14
+  },
+  "documents": [
+    {
+      "slug": "privacy",
+      "kind": "public",
+      "route": "/legal/privacy",
+      "source": "sources/public/privacy.md",
+      "title": "Политика в отношении обработки персональных данных",
+      "version": "1.0",
+      "effective_date": "03.10.2026",
+      "published": true
+    },
+    {
+      "slug": "consent",
+      "kind": "public",
+      "route": "/legal/consent",
+      "source": "sources/public/consent.md",
+      "title": "Согласие на обработку персональных данных",
+      "version": "1.0",
+      "effective_date": "03.10.2026",
+      "published": true
+    },
+    {
+      "slug": "cookies",
+      "kind": "public",
+      "route": "/legal/cookies",
+      "source": "sources/public/cookies.md",
+      "title": "Политика использования файлов cookie",
+      "version": "1.0",
+      "effective_date": "03.10.2026",
+      "published": true
+    },
+    {
+      "slug": "offer",
+      "kind": "public",
+      "route": "/legal/offer",
+      "source": "sources/public/offer.md",
+      "title": "Публичная оферта на предоставление доступа к сервису GALA",
+      "version": "1.0",
+      "effective_date": "03.10.2026",
+      "published": false,
+      "_published": "Не публикуется, пока сервис бесплатный и оператор — физлицо без статуса (решение владельца 03.10.2026)."
+    },
+    {
+      "slug": "prikaz-otvetstvennyy",
+      "kind": "internal",
+      "source": "sources/internal/01-prikaz-otvetstvennyy.md",
+      "title": "Приказ о назначении ответственного за организацию обработки персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "prikaz-utverzhdenie",
+      "kind": "internal",
+      "source": "sources/internal/02-prikaz-utverzhdenie.md",
+      "title": "Приказ об утверждении документов по обработке и защите персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "polozhenie-obrabotka",
+      "kind": "internal",
+      "source": "sources/internal/03-polozhenie-obrabotka.md",
+      "title": "Положение об обработке и защите персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "perechen-pdn",
+      "kind": "internal",
+      "source": "sources/internal/04-perechen-pdn.md",
+      "title": "Перечень обрабатываемых персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "perechen-ispdn",
+      "kind": "internal",
+      "source": "sources/internal/05-perechen-ispdn.md",
+      "title": "Перечень информационных систем персональных данных и мест хранения",
+      "version": "1.0"
+    },
+    {
+      "slug": "spisok-dopushchennyh",
+      "kind": "internal",
+      "source": "sources/internal/06-spisok-dopushchennyh.md",
+      "title": "Список лиц, допущенных к обработке персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "pravila-dostupa",
+      "kind": "internal",
+      "source": "sources/internal/07-pravila-dostupa.md",
+      "title": "Правила доступа к персональным данным в информационной системе",
+      "version": "1.0"
+    },
+    {
+      "slug": "akt-uroven",
+      "kind": "internal",
+      "source": "sources/internal/08-akt-uroven.md",
+      "title": "Акт определения уровня защищённости персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "model-ugroz",
+      "kind": "internal",
+      "source": "sources/internal/09-model-ugroz.md",
+      "title": "Модель угроз безопасности персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "reglament-incidenta",
+      "kind": "internal",
+      "source": "sources/internal/10-reglament-incidenta.md",
+      "title": "Регламент реагирования на инциденты безопасности персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "poryadok-unichtozheniya",
+      "kind": "internal",
+      "source": "sources/internal/11-poryadok-unichtozheniya.md",
+      "title": "Порядок уничтожения персональных данных и форма акта",
+      "version": "1.0"
+    },
+    {
+      "slug": "zhurnal-obrashcheniy",
+      "kind": "internal",
+      "source": "sources/internal/12-zhurnal-obrashcheniy.md",
+      "title": "Журнал учёта обращений субъектов персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "soglasie-rabotnika",
+      "kind": "internal",
+      "source": "sources/internal/13-soglasie-rabotnika.md",
+      "title": "Форма согласия работника на обработку персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "soglasie-geolokaciya",
+      "kind": "internal",
+      "source": "sources/internal/14-soglasie-geolokaciya.md",
+      "title": "Форма уведомления и согласия работника на определение местоположения",
+      "version": "1.0"
+    },
+    {
+      "slug": "obyazatelstvo",
+      "kind": "internal",
+      "source": "sources/internal/15-obyazatelstvo.md",
+      "title": "Обязательство о неразглашении персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "uvedomlenie-rkn",
+      "kind": "internal",
+      "source": "sources/internal/16-uvedomlenie-rkn.md",
+      "title": "Сведения для уведомления Роскомнадзора об обработке персональных данных",
+      "version": "1.0"
+    }
+  ],
+  "_operator_form": "03.10.2026 владелец решил: пока сервис бесплатный (тестовые прогоны, денег не собираем), оператор ПДн — сам владелец как физическое лицо, без ИП и самозанятости. Оферта не публикуется (documents[].published=false). Банковские реквизиты, ОГРН, КПП, тарифы — плейсхолдеры, нужны только оферте и внутренним документам юрлица. При регистрации ИП/ООО: заполнить operator, сменить form, поднять version публичных документов до 1.1."
+}

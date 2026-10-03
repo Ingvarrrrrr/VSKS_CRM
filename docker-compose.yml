@@ -38,7 +38,7 @@ x-backend-common: &backend-common
     SMTP_FROM: z@vsks.ru
     # Захардкожено: на хосте .env держит устаревший http://85.239.53.155 и
     # перебивал бы ${BASE_URL:-...}; ссылки в письмах должны вести на домен.
-    BASE_URL: https://gaaala.duckdns.org
+    BASE_URL: https://galaa.ru
     TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
     VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}

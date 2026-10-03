@@ -1,7 +1,7 @@
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,13 +12,25 @@ from app.database import get_db
 from app.models.organization import Organization
 from app.models.contractor import Contractor
 from app.models.user import User
+from app.models.user_consent import UserConsent
+from app.routers.legal import client_ip
 from app.schemas.schemas import OrganizationCreate, OrganizationOut, RegisterRequest, UserOut
 from app.utils.email import send_verification_email
 from app.services.fio import compose_fio, resolve_user_name_input
 from app.services.org_requisites import org_requisites
+from app.services.legal_constants import REGISTRATION_CONSENT_DOCUMENTS
 from app.routers.contractors import apply_requisite_fields
 
 router = APIRouter(tags=["organizations"])
+
+# 152-ФЗ: пустая/отсутствующая версия документов делает запись согласия
+# юридически бесполезной — через время нельзя доказать, с какой редакцией
+# документов согласился пользователь. Константа лежит здесь (единственное
+# место, где формируется это сообщение) — второй копии в проекте быть не должно.
+CONSENT_VERSION_MISSING_MESSAGE = (
+    "Не удалось зафиксировать версию документов, на которые дано согласие — "
+    "обновите страницу и повторите"
+)
 
 
 def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> OrganizationOut:
@@ -108,8 +120,21 @@ async def _auto_link_contractor_by_inn(
 
 
 @router.post("/api/register", response_model=UserOut, status_code=201)
-async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """Public endpoint: create org + first org_admin. Sends verification email."""
+async def register(data: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Public endpoint: create org + first org_admin. Sends verification email.
+
+    152-ФЗ (2026-09-16): регистрация без согласия на обработку ПДн запрещена —
+    UserConsent создаётся в ТОЙ ЖЕ транзакции, что и org+user (единственный
+    commit ниже), пользователь без записи согласия появиться не должен ни при
+    каком исходе."""
+    if not data.consent_accepted:
+        raise HTTPException(
+            400,
+            "Регистрация невозможна без согласия на обработку персональных данных",
+        )
+    if not data.consent_version or not data.consent_version.strip():
+        raise HTTPException(400, CONSENT_VERSION_MISSING_MESSAGE)
+
     # Check email uniqueness (email = login)
     existing_email = (await db.execute(select(User).where(User.email == data.email))).scalar_one_or_none()
     if existing_email:
@@ -145,6 +170,18 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     await db.flush()  # get user.id
     # Link org to its owner
     org.owner_user_id = user.id
+
+    consent = UserConsent(
+        user_id=user.id,
+        email=data.email,
+        document_version=data.consent_version.strip(),
+        documents=list(REGISTRATION_CONSENT_DOCUMENTS),
+        ip_address=client_ip(request),
+        user_agent=request.headers.get("User-Agent"),
+        source="registration",
+    )
+    db.add(consent)
+
     await db.commit()
     await db.refresh(user)
 

@@ -218,17 +218,9 @@
     </section>
 
     <!-- ═══ Footer ═══ -->
-    <footer class="land-footer">
-      <div class="section-container">
-        <div class="footer-inner">
-          <div class="land-logo">
-            <v-icon icon="mdi-account-cash" color="primary" size="20" />
-            <span style="font-size:14px">GALA</span>
-          </div>
-          <span class="footer-copy">© {{ year }} Патриотика — Управление государственными субсидиями</span>
-        </div>
-      </div>
-    </footer>
+    <legal-footer />
+
+    <cookie-banner />
 
   </div>
 </template>
@@ -236,10 +228,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useTheme } from 'vuetify'
+import LegalFooter from '@/components/legal/LegalFooter.vue'
+import CookieBanner from '@/components/legal/CookieBanner.vue'
 
 const vuetifyTheme = useTheme()
 const isDark = computed(() => vuetifyTheme.global.name.value === 'dark')
-const year = new Date().getFullYear()
 
 function toggleTheme() {
   const next = isDark.value ? 'light' : 'dark'

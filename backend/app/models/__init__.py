@@ -83,6 +83,8 @@ from app.models.staff_location import StaffLocationPoint  # noqa: F401
 from app.models.staff_location_request import StaffLocationRequest  # noqa: F401
 # Комментарии (мини-чат) к плановым позициям/категориям ФЭО (владелец, Волна 4, п.16, 2026-09-13)
 from app.models.feo_comment import FeoComment, FeoCommentsVisibility  # noqa: F401
+# 152-ФЗ: согласие на обработку ПДн + обращения субъектов ПДн (2026-09-16)
+from app.models.user_consent import UserConsent, PersonalDataRequest  # noqa: F401
 # Категории закупки товара — отдельный справочник, many-to-many (владелец, 2026-09-16)
 from app.models.purchase_category import PurchaseCategory, product_purchase_categories  # noqa: F401
 # Корректировка утверждённой субсидии через проверку, волна 1 (2026-10-02)

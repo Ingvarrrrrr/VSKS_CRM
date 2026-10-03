@@ -76,6 +76,13 @@
         </template>
 
       </v-card>
+
+      <div class="login-legal-links">
+        <template v-for="(d, i) in LEGAL_DOC_LIST" :key="d.slug">
+          <span v-if="i > 0" class="login-legal-sep">·</span>
+          <router-link :to="d.route" target="_blank">{{ d.title }}</router-link>
+        </template>
+      </div>
     </v-responsive>
   </v-container>
 </template>
@@ -85,6 +92,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useToast } from '@/composables/useToast'
+import { LEGAL_DOC_LIST } from '@/legal/documents.generated'
 
 const router = useRouter()
 const route = useRoute()
@@ -176,3 +184,22 @@ onMounted(() => {
   if (savedToken && savedToken.startsWith('eyJ')) router.push('/')
 })
 </script>
+
+<style scoped>
+.login-legal-links {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 11px;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+}
+.login-legal-links a {
+  color: inherit;
+  text-decoration: none;
+}
+.login-legal-links a:hover {
+  text-decoration: underline;
+}
+.login-legal-sep {
+  margin: 0 6px;
+}
+</style>

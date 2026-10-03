@@ -252,6 +252,15 @@ const router = createRouter({
       meta: { requiresAuth: false, public: true, title: 'Сброс пароля' }
     },
     {
+      // Правовые документы (политика ПДн, согласие, cookie, оферта) — публичные,
+      // без входа в систему. meta.public пропускает guard ниже (не завязано на
+      // PUBLIC_PATHS: маршрут динамический, to.path не совпадёт ни с одной строкой).
+      path: '/legal/:slug',
+      name: 'legal-doc',
+      component: () => import('../views/legal/LegalDocView.vue'),
+      meta: { requiresAuth: false, public: true, title: 'Правовые документы' }
+    },
+    {
       path: '/organizations',
       name: 'organizations',
       component: () => import('../views/OrganizationsView.vue'),

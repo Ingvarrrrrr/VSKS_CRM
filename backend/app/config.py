@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = "noreply@vsks.ru"
-    BASE_URL: str = "https://gaaala.duckdns.org"
+    BASE_URL: str = "https://galaa.ru"
 
 try:
     settings = Settings()

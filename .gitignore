@@ -163,4 +163,6 @@ backups/
 frontend/.tmp_test/
 e2e/_tmp_*
 
+# Правовые документы — .docx собираются legal/build.py, не хранятся в git
+legal/out/
 backend/tests/_fact_import_samples/

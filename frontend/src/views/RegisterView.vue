@@ -55,9 +55,14 @@
               density="compact" class="mb-4" :error-messages="confirmError"
             />
 
+            <consent-checkbox v-model="consentAccepted" class="mb-4" />
+
             <v-alert v-if="error" type="error" class="mb-4" density="compact">{{ error }}</v-alert>
 
-            <v-btn type="submit" color="primary" size="large" block :loading="loading">
+            <v-btn
+              type="submit" color="primary" size="large" block :loading="loading"
+              :disabled="!consentAccepted"
+            >
               Зарегистрироваться
             </v-btn>
           </v-form>
@@ -71,17 +76,23 @@
 
       </v-card>
     </v-responsive>
+
+    <cookie-banner />
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
+import ConsentCheckbox, { LEGAL_VERSION } from '@/components/legal/ConsentCheckbox.vue'
+import CookieBanner from '@/components/legal/CookieBanner.vue'
 
 const success = ref(false)
 const loading = ref(false)
 const error = ref('')
 const validationErrors = ref<Record<string, string>>({})
 const passwordConfirm = ref('')
+// Чекбокс согласия — по умолчанию всегда снят, ни при каких условиях не предзаполняется.
+const consentAccepted = ref(false)
 
 const form = reactive({
   org_name: '',
@@ -111,6 +122,7 @@ async function register() {
   if (!form.password) { validationErrors.value.password = 'Обязательное поле'; return }
   if (form.password.length < 6) { validationErrors.value.password = 'Минимум 6 символов'; return }
   if (form.password !== passwordConfirm.value) { return }
+  if (!consentAccepted.value) { error.value = 'Нужно дать согласие на обработку персональных данных'; return }
 
   loading.value = true
   try {
@@ -123,11 +135,17 @@ async function register() {
         full_name: form.full_name || null,
         email: form.email,
         password: form.password,
+        consent_accepted: true,
+        consent_version: LEGAL_VERSION,
       }),
     })
     if (!res.ok) {
+      // Не глотать причину generic-текстом: распаковываем тело ответа (payload.message
+      // из ApiError-подобных бэкенд-ошибок, либо стандартный FastAPI detail) и добавляем
+      // HTTP-статус, чтобы было видно, что именно отклонил сервер.
       const data = await res.json().catch(() => ({}))
-      throw new Error(data.message || data.detail || `Ошибка ${res.status}`)
+      const serverMessage = data?.payload?.message || data?.message || data?.detail
+      throw new Error(serverMessage ? `${serverMessage} (HTTP ${res.status})` : `Ошибка регистрации (HTTP ${res.status})`)
     }
     success.value = true
   } catch (e: any) {

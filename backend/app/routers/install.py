@@ -12,13 +12,14 @@ Profile is unsigned, so iOS shows a "Not signed" warning. To remove the
 warning, sign with an Apple Developer cert (out of scope here).
 """
 import base64
-import os
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid5, NAMESPACE_URL
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
+
+from app.config import settings
 
 
 router = APIRouter(tags=["install"])
@@ -56,7 +57,7 @@ async def get_mobileconfig(request: Request, base: str | None = None):
     # источник публичного адреса (это собственный origin пользователя).
     candidate = (
         base
-        or os.getenv("BASE_URL")
+        or settings.BASE_URL
         or request.headers.get("x-forwarded-host")
         and f"{request.headers.get('x-forwarded-proto') or 'https'}://{request.headers.get('x-forwarded-host')}"
         or request.headers.get("host")
@@ -66,7 +67,7 @@ async def get_mobileconfig(request: Request, base: str | None = None):
     parsed = urlparse(candidate)
     # Защита: принимаем только http/https с непустым хостом, иначе fallback.
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        parsed = urlparse(os.getenv("BASE_URL") or "https://localhost")
+        parsed = urlparse(settings.BASE_URL or "https://localhost")
     domain = parsed.netloc
     target = f"{parsed.scheme}://{parsed.netloc}/"
 

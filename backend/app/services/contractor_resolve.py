@@ -64,3 +64,20 @@ async def find_or_create_contractor(
     db.add(new_contractor)
     await db.flush()
     return new_contractor.id
+
+
+async def find_contractors_by_name(db: AsyncSession, name: Optional[str]) -> list[int]:
+    """ВСЕ id контрагентов с тем же нормализованным именем (normalize_org_name —
+    точное сравнение, без нечёткого сопоставления, та же нормализация, что и
+    find_or_create_contractor выше) — только найти, НИЧЕГО не создаёт.
+
+    Несколько id возможны из-за дублей контрагентов (разные записи Contractor
+    с одинаковым названием после нормализации — учитываются все, а не только
+    первая). Задача «Похожие закупки в импорте факта» (план
+    breezy-mixing-lovelace.md, Часть А) — поиск существующей закупки идёт по
+    ЛЮБОМУ из этих id, не по одному произвольно выбранному."""
+    norm_name = normalize_org_name(name)
+    if not norm_name:
+        return []
+    rows = (await db.execute(select(Contractor.id, Contractor.name))).all()
+    return [r.id for r in rows if normalize_org_name(r.name) == norm_name]

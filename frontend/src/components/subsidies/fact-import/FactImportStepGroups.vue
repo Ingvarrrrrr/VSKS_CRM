@@ -3,10 +3,13 @@
     Каждая карточка станет одной закупкой. Строку можно перенести в другую группу или выделить в отдельную.
   </v-alert>
 
+  <v-checkbox v-if="hasAnyExistingDecisionNeeded" v-model="onlyNeedsDecision"
+              label="Нужно решение" density="compact" hide-details class="mb-2" />
+
   <v-progress-linear v-if="factImport.previewRefreshing" indeterminate color="teal" class="mb-2" />
   <v-row dense>
-    <v-col v-for="g in visibleGroups" :key="g.key" cols="12" md="6">
-      <v-card variant="outlined" class="fisg-card">
+    <v-col v-for="g in filteredGroups" :key="g.key" cols="12" md="6">
+      <v-card variant="outlined" class="fisg-card" :class="{ 'fisg-card--needs-decision': g.needs_existing_decision }">
         <v-card-text>
           <div class="d-flex justify-space-between align-start">
             <div>
@@ -25,6 +28,8 @@
           <v-alert v-if="g.warnings?.length" type="warning" variant="tonal" density="compact" class="mt-2">
             <div v-for="(w, i) in g.warnings" :key="i">{{ w }}</div>
           </v-alert>
+
+          <FactImportExistingMatch v-if="g.existing_matches?.length" :group="g" :subsidy-id="factImport.subsidyId" />
 
           <!-- Дефект приёмки «Импорт факта» (02.10.2026): до ~46 карточек на
                шаге 4 — eager-load="false" откладывает GET /contractors/ до
@@ -60,10 +65,21 @@
 </template>
 
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useFactImport } from '@/composables/subsidies/useFactImport'
 import ContractorPicker from '@/components/ContractorPicker.vue'
+import FactImportExistingMatch from './FactImportExistingMatch.vue'
 
 const { factImport, visibleGroups, setSupplierOverride, moveRowToGroup, queuePreviewRefresh } = useFactImport()
+
+// 🟢🔵 «Нужно решение» (план breezy-mixing-lovelace.md, Часть А) — группы
+// с «возможно» (same_supplier, сумма другая) без явного решения владельца;
+// commit отклоняется, пока такие есть (см. backend commit.py, 400).
+const onlyNeedsDecision = ref(false)
+const hasAnyExistingDecisionNeeded = computed(() => visibleGroups.value.some(g => g.needs_existing_decision))
+const filteredGroups = computed(() =>
+  onlyNeedsDecision.value ? visibleGroups.value.filter(g => g.needs_existing_decision) : visibleGroups.value,
+)
 
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
@@ -93,4 +109,5 @@ function onSupplierOverride(groupKey: string, contractorId: number | null) {
 
 <style scoped>
 .fisg-card { height: 100%; }
+.fisg-card--needs-decision { border-color: rgb(var(--v-theme-warning)); }
 </style>

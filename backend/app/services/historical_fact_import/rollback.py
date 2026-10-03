@@ -27,9 +27,15 @@ async def _collect_blockers(db: AsyncSession, run) -> dict:
     from app.models.wish import Wish
 
     purchase_ids = (run.created_refs or {}).get("purchase_ids") or []
+    existing_match_backups = (run.created_refs or {}).get("existing_match_item_backups") or []
     blockers: list[str] = []
-    will_delete = {"purchases": 0, "payments": 0, "contractors": 0, "contracts": 0, "planned_items": 0}
-    if not purchase_ids:
+    will_delete = {
+        "purchases": 0, "payments": 0, "contractors": 0, "contracts": 0, "planned_items": 0,
+        # 🟢🔵 «та же закупка» (Часть А) — позиции СУЩЕСТВУЮЩЕЙ закупки,
+        # которым откат вернёт прежнюю (до импорта) привязку к плану.
+        "existing_match_items_restored": len(existing_match_backups),
+    }
+    if not purchase_ids and not existing_match_backups:
         return {"can_rollback": False, "blockers": ["В этом прогоне нет созданных закупок"], "will_delete": will_delete}
 
     purchases = (await db.execute(select(Purchase).where(Purchase.id.in_(purchase_ids)))).scalars().all()
@@ -111,6 +117,33 @@ async def execute_rollback(db: AsyncSession, run) -> dict:
         await delete_purchase_core(p, db)
 
     created_refs = run.created_refs or {}
+
+    # 🟢🔵 «та же закупка» (Часть А, план breezy-mixing-lovelace.md) —
+    # восстановить позиции СУЩЕСТВУЮЩЕЙ (не созданной этим прогоном, поэтому
+    # delete_purchase_core её не трогает) закупки как было ДО привязки.
+    # Защита: восстанавливаем ТОЛЬКО если позиция до сих пор равна тому, что
+    # поставил этот прогон (set_feo_*) — если её успели поменять ещё раз
+    # после импорта (вручную или другим прогоном), откат не затирает чужую
+    # правку молча, просто оставляет эту позицию как есть.
+    restored_purchase_ids: set = set()
+    for backup in created_refs.get("existing_match_item_backups") or []:
+        pi = await db.get(PurchaseItem, backup["purchase_item_id"])
+        if not pi:
+            continue
+        if (
+            pi.feo_planned_item_id == backup.get("set_feo_planned_item_id")
+            and pi.feo_category_id == backup.get("set_feo_category_id")
+        ):
+            pi.feo_planned_item_id = backup.get("prev_feo_planned_item_id")
+            pi.feo_category_id = backup.get("prev_feo_category_id")
+            restored_purchase_ids.add(pi.purchase_id)
+    if restored_purchase_ids:
+        await db.flush()
+        from app.services.purchase_money_writer import recalc_purchase_money
+        for pid in restored_purchase_ids:
+            existing_purchase = await db.get(Purchase, pid)
+            if existing_purchase:
+                await recalc_purchase_money(db, existing_purchase)
 
     for contractor_id in created_refs.get("contractor_ids") or []:
         still_used = (await db.execute(

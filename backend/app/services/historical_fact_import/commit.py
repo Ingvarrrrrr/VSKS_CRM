@@ -44,10 +44,24 @@ async def commit_import(
     decisions = decisions or {}
     preview = await build_preview(db, subsidy_id, content, filename, sheet, mapping, decisions)
 
+    # 🔵 правка 3 (план breezy-mixing-lovelace.md, Часть А): «Импорт не идёт,
+    # пока по каждому „возможно“ не выбрано „та же / другая“» — needs_
+    # existing_decision=True у группы означает kind='same_supplier' без
+    # решения (preview.py её не предвыбирает). До записи ЧЕГО-ЛИБО в БД.
+    from fastapi import HTTPException
+    undecided = [g["key"] for g in preview["groups"] if g.get("needs_existing_decision")]
+    if undecided:
+        raise HTTPException(
+            400,
+            "Похожая закупка найдена (тот же поставщик, другая сумма) — выберите «та же "
+            f"закупка» или «другая» для групп: {', '.join(undecided)}",
+        )
+
     from app.models.fact_import_run import FactImportRun
     from app.models.subsidy import Subsidy
     from app.models.contractor import Contractor
     from app.models.payment import Payment
+    from app.models.purchase import Purchase
     from app.models.purchase_event import PurchaseEvent
     from app.schemas.purchases import PurchaseCreate, PurchaseItemCreate
     from app.services.contractor_resolve import find_or_create_contractor
@@ -57,6 +71,7 @@ async def commit_import(
     from app.routers.contracts import ensure_contract_linked
     from app.services.purchase_money_writer import recalc_purchase_money
     from app.services.purchase_payments import recompute_purchase_payments
+    from app.services.historical_fact_import import existing_link as existing_link_mod
 
     subsidy = await db.get(Subsidy, subsidy_id)
 
@@ -79,7 +94,13 @@ async def commit_import(
     row_overrides = decisions.get("row_overrides") or {}
 
     rows_by_num = {r["row"]: r for r in preview["rows"]}
-    created_refs: dict = {"contractor_ids": [], "contract_ids": [], "planned_item_ids": [], "purchase_ids": []}
+    created_refs: dict = {
+        "contractor_ids": [], "contract_ids": [], "planned_item_ids": [], "purchase_ids": [],
+        # 🟢🔵 «та же закупка» (Часть А) — позиции СУЩЕСТВУЮЩЕЙ закупки,
+        # привязанные к плану этим прогоном; rollback.py восстанавливает их
+        # прежние значения feo_planned_item_id/feo_category_id.
+        "existing_match_item_backups": [],
+    }
     purchases_created = 0
     payments_created = 0
     contractors_created = 0
@@ -101,9 +122,52 @@ async def commit_import(
             _fpi_cat_cache[fpi_id] = fpi.feo_category_id if fpi else None
         return _fpi_cat_cache[fpi_id]
 
+    existing_decisions = decisions.get("existing_match") or {}
+    existing_match_report: list[dict] = []
+
     for group in preview["groups"]:
         group_rows = [rows_by_num[rn] for rn in group["rows"] if not rows_by_num[rn]["skip"]]
         if not group_rows:
+            continue
+
+        # 🟢🔵 «Та же закупка» (план breezy-mixing-lovelace.md, Часть А) —
+        # новая закупка НЕ создаётся; непривязанные позиции СУЩЕСТВУЮЩЕЙ
+        # закупки привязываются к строкам плана из файла (ПРАВИЛО №6 —
+        # existing_link.apply_existing_match_decision переиспользует
+        # feo_item_linking.link_purchase_item_to_planned, тот же сервис, что
+        # и ручной POST /feo-planned-items/map).
+        decision_info = existing_link_mod.resolve_group_decision(group, existing_decisions)
+        if decision_info["action"] == "same" and decision_info["match"]:
+            match = decision_info["match"]
+            decision = existing_decisions.get(group["key"]) or {}
+            apply_result = await existing_link_mod.apply_existing_match_decision(
+                db,
+                purchase_id=match["id"],
+                items_info=match.get("items") or [],
+                item_links=decision.get("item_links") or {},
+                current_user=current_user,
+            )
+            if apply_result["item_backups"]:
+                created_refs["existing_match_item_backups"].extend(apply_result["item_backups"])
+            for new_fpi_id in apply_result["created_planned_item_ids"]:
+                created_refs["planned_item_ids"].append(new_fpi_id)
+
+            existing_purchase = await db.get(Purchase, match["id"])
+            if existing_purchase and apply_result["item_backups"]:
+                await recalc_purchase_money(db, existing_purchase)
+
+            db.add(PurchaseEvent(
+                purchase_id=match["id"],
+                user_id=getattr(current_user, "id", None),
+                event_type="fact_import_existing_match",
+                data={"import_run_id": run.id, "rows": group["rows"]},
+            ))
+            existing_match_report.append({
+                "registry_number": match.get("registry_number"),
+                "purchase_id": match["id"],
+                "items_linked": len(apply_result["item_backups"]),
+                "planned_items_created": len(apply_result["created_planned_item_ids"]),
+            })
             continue
 
         items_data: list = []
@@ -273,6 +337,19 @@ async def commit_import(
 
     from app.services.historical_fact_import.report import build_report
     run.report = await build_report(db, created_refs["purchase_ids"])
+    # 🟢🔵 «оставлена существующая РЕЕ-…» (владелец, Часть А) — строки про
+    # закупки, которые НЕ создавались, а были привязаны к плану.
+    run.report = (run.report or []) + [
+        {
+            "purchase_id": r["purchase_id"],
+            "registry_number": r["registry_number"],
+            "existing_match": True,
+            "items_linked": r["items_linked"],
+            "planned_items_created": r["planned_items_created"],
+            "missing": [],
+        }
+        for r in existing_match_report
+    ]
 
     await db.flush()
 
@@ -281,5 +358,6 @@ async def commit_import(
         "purchases_created": purchases_created,
         "payments_created": payments_created,
         "contractors_created": contractors_created,
+        "existing_matches_linked": len(existing_match_report),
         "report_url": f"/api/subsidies/{subsidy_id}/fact-import/runs/{run.id}",
     }

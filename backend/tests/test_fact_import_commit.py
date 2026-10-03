@@ -45,10 +45,16 @@ def _build_ho_workbook(rows: list) -> bytes:
 
 
 def _row(l3, amount, fact_price, fact_amount, paid=None, contracted=None,
-         status_raw=None, purchase_no=None, supplier=None):
+         status_raw=None, purchase_no=None, supplier=None, item_name=None):
     r = [None] * 28
     r[0] = "ХО_2026"
     r[5] = l3
+    # item_name (опционально, test_fact_import_existing_match.py) — колонка
+    # "Плановая позиция" (r[7]); без неё rows.py берёт имя строки из l3/l4
+    # (см. rows.py:85 leaf_name fallback) — именно так работали прежние
+    # тесты этого файла (level-3 текст совпадал с именем плановой позиции).
+    if item_name is not None:
+        r[7] = item_name
     r[16], r[17] = fact_price, amount
     r[19], r[20] = fact_price, fact_amount
     r[21], r[22] = paid, contracted

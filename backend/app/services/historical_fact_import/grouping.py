@@ -87,14 +87,21 @@ def build_groups(rows_with_match: list, decisions: Optional[dict] = None) -> lis
             if ts and (target_status is None or _rank.get(ts, 0) > _rank.get(target_status, 0)):
                 target_status = ts
 
+        # 🔵 правка 3 (план breezy-mixing-lovelace.md): сумма группы для
+        # сравнения с существующими закупками (Часть А, «похожие закупки») не
+        # должна включать пропущенные строки (needs_status/already_purchased/
+        # payroll и т.п. — они не станут частью будущей закупки). `.get`,
+        # т.к. у вызывающих тестов (test_fact_import_grouping.py) строки без
+        # ключа "skip" — там он всегда отсутствует, что равнозначно False.
+        non_skipped = [it for it in items if not it["row"].get("skip", False)] or items
         contract_amount = sum(
             (Decimal(str(it["row"]["fact"]["amount"])) if it["row"]["fact"]["amount"] is not None
              else (Decimal(str(it["row"]["contracted"])) if it["row"]["contracted"] is not None else Decimal(0)))
-            for it in items
+            for it in non_skipped
         )
         paid_amount = sum(
             (Decimal(str(it["row"]["paid"])) if it["row"]["paid"] is not None else Decimal(0))
-            for it in items
+            for it in non_skipped
         )
 
         groups.append({

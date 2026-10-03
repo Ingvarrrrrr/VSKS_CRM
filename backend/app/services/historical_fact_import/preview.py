@@ -201,6 +201,71 @@ async def build_preview(
     for r in out_rows:
         r.pop("_status_info", None)
 
+    # 🔵 правка 3 (план breezy-mixing-lovelace.md, Часть А «Похожие закупки в
+    # импорте факта»): для каждой будущей закупки (группы) — поиск уже
+    # существующей закупки того же поставщика/суммы (historical_fact_import.
+    # existing_link, ПРАВИЛО №6 — переиспользует purchase_similar +
+    # contractor_resolve.find_contractors_by_name, не второй поиск
+    # контрагента). Группа без ни одной незапропущенной строки (всё skip) —
+    # искать нечего, она всё равно не станет закупкой (commit.py её
+    # пропускает).
+    from app.services.historical_fact_import import existing_link as existing_link_mod
+    from app.services.tz_excess_approval import collect_tz_over_plan_violations as _collect_violations
+    from types import SimpleNamespace as _SimpleNamespace
+
+    rows_by_num = {r["row"]: r for r in out_rows}
+    existing_decisions = decisions.get("existing_match") or {}
+    for group in groups:
+        group_rows = [rows_by_num[rn] for rn in group["rows"] if not rows_by_num[rn]["skip"]]
+        if not group_rows:
+            group["existing_matches"] = []
+            group["needs_existing_decision"] = False
+            continue
+
+        group_amount = Decimal(str(group["contract_amount"])) if group["contract_amount"] else None
+        matches = await existing_link_mod.find_existing_matches_for_group(
+            db, subsidy_id, group.get("supplier"), group_amount,
+        )
+        if matches:
+            file_row_planned_item_id = group_rows[0]["match"].get("planned_item_id")
+            excess_units: list = []
+            for m in matches:
+                m["items"] = await existing_link_mod.build_existing_match_items(
+                    db, m["id"], ctx, file_row_planned_item_id,
+                )
+                for it in m["items"]:
+                    if it.get("suggested") and it["suggested"].get("planned_item_id"):
+                        excess_units.append(_SimpleNamespace(
+                            over_plan=False,
+                            feo_planned_item_id=it["suggested"]["planned_item_id"],
+                            feo_category_id=None,
+                            quantity=it.get("qty"),
+                            unit_price=it.get("price"),
+                            total_price=it.get("total"),
+                            item_name=it.get("name"),
+                        ))
+            if excess_units:
+                excess_violations = await _collect_violations(db, excess_units, fallback_category_id=None)
+                excess_by_fpi: dict = {}
+                for v in excess_violations:
+                    if v.get("feo_planned_item_id"):
+                        excess_by_fpi.setdefault(v["feo_planned_item_id"], []).append(v["message"])
+                for m in matches:
+                    for it in m["items"]:
+                        sug = it.get("suggested")
+                        if sug and sug.get("planned_item_id") in excess_by_fpi:
+                            it["warnings"] = excess_by_fpi[sug["planned_item_id"]]
+
+        group["existing_matches"] = matches
+        decided = group["key"] in existing_decisions
+        has_same_amount = any(m["kind"] == "same_amount" for m in matches)
+        has_same_supplier_only = bool(matches) and not has_same_amount
+        # «Скорее всего та же» (same_amount) — предвыбрано, коммит может идти
+        # без явного решения. «Возможно» (same_supplier, сумма другая) —
+        # решение обязательно (владелец: «импорт не идёт, пока по каждому
+        # „возможно“ не выбрано»).
+        group["needs_existing_decision"] = has_same_supplier_only and not decided
+
     return {
         "format": detected["format"],
         "sheet": sheet,

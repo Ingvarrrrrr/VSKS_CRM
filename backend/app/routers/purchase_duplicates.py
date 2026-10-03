@@ -4,12 +4,16 @@
 поведения. Оба GET зарегистрированы в app/routes.py ДО purchases.router —
 иначе Starlette матчит "/duplicate-check"/"/duplicate-groups" на catch-all
 "/{pid}" (pid: int) и падает с 422, так и не доходя до этих роутов.
-"""
-from decimal import Decimal
+
+`duplicate_check` переведён на общий `services/purchase_similar.
+find_similar_purchases` (ПРАВИЛО №6, план breezy-mixing-lovelace.md, Часть А)
+— та же SQL-выборка, что и раньше (OR по total_nmck/contract_price/
+payment_amount, ORDER BY id DESC LIMIT 10), без include_payment_rows (эта
+ручка исторически не заглядывала в отдельные Payment.amount — поведение не
+меняем) и без exclude_statuses (split не исключался и раньше)."""
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, or_, distinct, union_all
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.purchase import Purchase
@@ -19,6 +23,7 @@ from app.models.user import User
 from app.auth.jwt import ADMIN_ROLES
 from app.auth.visibility import build_visibility_clause, get_visible_user_ids, get_visible_subsidy_ids
 from app.auth.permissions import require_tab
+from app.services.purchase_similar import find_similar_purchases
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
@@ -35,50 +40,26 @@ async def duplicate_check(
     """Возможные повторы: разовые закупки (НЕ ежемесячные платежи) в той же субсидии
     с тем же контрагентом и той же итоговой суммой. Ежемесячные платежи исключены
     намеренно — это повторяющиеся платежи, а не дубли."""
-    from decimal import ROUND_HALF_UP
-    amt = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    stmt = (
-        select(Purchase)
-        .where(
-            Purchase.subsidy_id == subsidy_id,
-            Purchase.contractor_id == contractor_id,
-            Purchase.is_monthly_payment.isnot(True),
-            or_(
-                func.round(func.coalesce(Purchase.total_nmck, 0), 2) == amt,
-                func.round(func.coalesce(Purchase.contract_price, 0), 2) == amt,
-                func.round(func.coalesce(Purchase.payment_amount, 0), 2) == amt,
-            ),
-        )
-        .options(selectinload(Purchase.contractor))
-        .order_by(Purchase.id.desc())
-        .limit(10)
+    matches = await find_similar_purchases(
+        db,
+        subsidy_id=subsidy_id,
+        contractor_ids=[contractor_id],
+        amount=amount,
+        exclude_ids=[exclude_id] if exclude_id else None,
+        limit=10,
     )
-    if exclude_id:
-        stmt = stmt.where(Purchase.id != exclude_id)
-    rows = (await db.execute(stmt)).scalars().all()
-
-    def _dup_reason(p):
-        fa = float(amt)
-        if p.total_nmck is not None and round(float(p.total_nmck), 2) == fa:
-            return "НМЦК"
-        if p.contract_price is not None and round(float(p.contract_price), 2) == fa:
-            return "цена договора"
-        if p.payment_amount is not None and round(float(p.payment_amount), 2) == fa:
-            return "платёж"
-        return ""
-
     return [
         {
-            "id": p.id,
-            "purchase_number": p.purchase_number,
-            "name": p.item_name or p.subject,
-            "total_nmck": float(p.total_nmck) if p.total_nmck is not None else None,
-            "status": p.status,
-            "contract_date": p.contract_date.isoformat() if p.contract_date else None,
-            "contractor_name": p.contractor.name if p.contractor else None,
-            "match_reason": _dup_reason(p),
+            "id": m["id"],
+            "purchase_number": m["purchase_number"],
+            "name": m["item_name"] or m["subject"],
+            "total_nmck": m["total_nmck"],
+            "status": m["status"],
+            "contract_date": m["contract_date"],
+            "contractor_name": m["contractor_name"],
+            "match_reason": m["match_reason"] or "",
         }
-        for p in rows
+        for m in matches
     ]
 
 

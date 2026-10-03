@@ -17,10 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import get_current_user
 from app.auth.permissions import require_tab
 from app.database import get_db
-from app.models.feo_planned_item import FeoPlannedItem
 from app.models.feo_category import FeoCategory
 from app.models.purchase_item import PurchaseItem
-from app.models.purchase import Purchase
 from app.models.product import Product
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
@@ -155,81 +153,25 @@ async def map_purchase_item_to_planned(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('feo_categories')),
 ):
-    """Сопоставить purchase_item с плановой позицией. planned_item_id=null — снять сопоставление."""
+    """Сопоставить purchase_item с плановой позицией. planned_item_id=null — снять сопоставление.
+
+    Тело вынесено в app/services/feo_item_linking.py::link_purchase_item_to_planned
+    (ПРАВИЛО №6, план breezy-mixing-lovelace.md, Часть А) — без db.commit(), чтобы
+    тем же путём (включая проверку check_planned_item_category_link — Этап 3,
+    владелец 2026-09-02, см. докстринг сервиса) мог воспользоваться и импорт
+    факта (historical_fact_import/existing_link.py, решение «та же закупка»)."""
     pi = (await db.execute(
         select(PurchaseItem).where(PurchaseItem.id == purchase_item_id)
     )).scalar_one_or_none()
     if not pi:
         raise HTTPException(404, "Позиция закупки не найдена")
 
-    if planned_item_id is not None:
-        planned = (await db.execute(
-            select(FeoPlannedItem).where(FeoPlannedItem.id == planned_item_id)
-        )).scalar_one_or_none()
-        if not planned:
-            raise HTTPException(404, "Плановая позиция не найдена")
-
-        purchase = (await db.execute(
-            select(Purchase).where(Purchase.id == pi.purchase_id)
-        )).scalar_one_or_none()
-        effective_cat_id = pi.feo_category_id if pi.feo_category_id is not None else (
-            purchase.feo_category_id if purchase else None
-        )
-
-        # Этап 3 (владелец, 2026-09-02): до 2026-08-18 несовпадение категорий тут
-        # отклонялось с 409; с 2026-08-18 по 2026-09-02 этот путь молча ПЕРЕНОСИЛ
-        # позицию закупки в категорию плановой позиции — сумма не исчезала, но
-        # ровно этим переносом создавалось расхождение «категория позиции ≠
-        # категория шапки» (при feo_per_item=False), которое PATCH
-        # /purchases/{id}/items/{item_id} для явного выбора плановой позиции как
-        # раз запрещает — правило разъезжалось по двум путям. Приведено к тому
-        # же правилу через общий хелпер (см. app/services/plan_autoassign.py):
-        # обычному пользователю — отказ с объяснением, суперадмину — разрешение
-        # + уведомление согласовавших/ответственного; категория позиции закупки
-        # больше НЕ переносится молча — привязка живёт поверх существующей
-        # категории, как и в PATCH.
-        from app.services.plan_autoassign import check_planned_item_category_link
-        await check_planned_item_category_link(
-            db,
-            purchase=purchase,
-            item=pi,
-            item_category_id=effective_cat_id,
-            planned_category_id=planned.feo_category_id,
-            planned_item_name=planned.name,
-            current_user=current_user,
-        )
-
-        # НЕ вызываем здесь assert_no_unapproved_excess/другие гейты превышения:
-        # это действие сопоставления факта с планом, а не новая трата денег.
-    else:
-        planned = None
-
-    pi.feo_planned_item_id = planned_item_id
-
-    # Зеркалим привязку в связанную позицию заявки — иначе заявка и закупка
-    # расходятся (ровно баг с прода: wish_items.id=2583 остался с
-    # feo_planned_item_id=123/категория 3688, пока purchase_items.id=2897
-    # уехал на несуществующую плановую позицию 809/категорию 3710).
-    if pi.wish_item_id is not None:
-        wi = (await db.execute(
-            select(WishItem).where(WishItem.id == pi.wish_item_id)
-        )).scalar_one_or_none()
-        if wi:
-            wi.feo_planned_item_id = planned_item_id
-            # Категорию позиции заявки больше не переносим следом за плановой
-            # (см. комментарий выше про этап 3) — она следует тем же правилам,
-            # что и категория позиции закупки: своя категория не переписывается
-            # молча привязкой к плану.
-
+    from app.services.feo_item_linking import link_purchase_item_to_planned
+    result = await link_purchase_item_to_planned(
+        db, pi=pi, planned_item_id=planned_item_id, current_user=current_user,
+    )
     await db.commit()
-    return {
-        "ok": True,
-        "purchase_item_id": purchase_item_id,
-        "planned_item_id": planned_item_id,
-        # Оставлено для обратной совместимости фронта (SubsidiesView.vue читает
-        # это поле) — молчаливый перенос категории убран, поле теперь всегда null.
-        "moved_to_category_id": None,
-    }
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -89,6 +89,49 @@ export interface FactImportStatusOption {
   label: string
 }
 
+// 🟢🔵 «Похожие закупки в импорте факта» (план breezy-mixing-lovelace.md,
+// Часть А) — существующая закупка того же поставщика/суммы, предложенная
+// вместо создания новой. kind: 'same_amount' — поставщик И сумма совпали
+// («скорее всего та же», предвыбрано бэкендом — needs_existing_decision=
+// false); 'same_supplier' — только поставщик, сумма другая («возможно»,
+// решение обязательно).
+export type FactImportExistingMatchKind = 'same_amount' | 'same_supplier'
+
+export interface FactImportExistingMatchSuggested {
+  planned_item_id: number | null
+  reason: 'file_row' | 'same_name'
+}
+
+export interface FactImportExistingMatchCategoryChange {
+  from: string | null
+  to: string | null
+}
+
+export interface FactImportExistingMatchItem {
+  item_id: number
+  name: string
+  qty: number | null
+  price: number | null
+  total: number | null
+  feo_planned_item_id: number | null
+  planned_item_name: string | null
+  feo_category_path: string | null
+  suggested: FactImportExistingMatchSuggested | null
+  category_change: FactImportExistingMatchCategoryChange | null
+  warnings?: string[]
+}
+
+export interface FactImportExistingMatch {
+  purchase_id: number
+  registry_number: string | null
+  subject: string | null
+  name: string | null
+  contractor_name: string | null
+  status: string
+  kind: FactImportExistingMatchKind
+  items: FactImportExistingMatchItem[]
+}
+
 export interface FactImportGroup {
   key: string
   supplier: string | null
@@ -99,6 +142,8 @@ export interface FactImportGroup {
   contract_amount: number
   paid_amount: number
   warnings: string[]
+  existing_matches: FactImportExistingMatch[]
+  needs_existing_decision: boolean
 }
 
 export interface FactImportTotals {
@@ -130,6 +175,21 @@ export interface FactImportRowOverride {
   status?: string
 }
 
+export interface FactImportExistingMatchItemLink {
+  planned_item_id?: number | null
+  create_planned?: boolean
+  skip?: boolean
+}
+
+export interface FactImportExistingMatchDecision {
+  purchase_id: number
+  action: 'same' | 'new'
+  // item_links отсутствует/пуст — к НЕпривязанным позициям применяется
+  // предложение по умолчанию (item.suggested), см. докстринг
+  // existing_link.apply_existing_match_decision на бэкенде.
+  item_links?: Record<string, FactImportExistingMatchItemLink>
+}
+
 export interface FactImportDecisions {
   include_payroll: boolean
   row_overrides: Record<string, FactImportRowOverride>
@@ -140,6 +200,8 @@ export interface FactImportDecisions {
   // groupsDirty ниже); отсутствие ключа = сервер оставляет автогруппировку.
   groups?: { rows: number[] }[]
   supplier_overrides: Record<string, number | null>
+  // 🟢🔵 «Похожие закупки» (Часть А) — решение по группе, ключ — group.key.
+  existing_match: Record<string, FactImportExistingMatchDecision>
 }
 
 export interface FactImportCommitResult {
@@ -147,6 +209,7 @@ export interface FactImportCommitResult {
   purchases_created: number
   payments_created: number
   contractors_created: number
+  existing_matches_linked: number
   report_url: string | null
 }
 
@@ -164,11 +227,16 @@ export interface FactImportRunListItem {
 export interface FactImportReportRow {
   purchase_id: number
   registry_number: string | null
-  supplier: string | null
-  status: string
-  contract_amount: number
-  paid_amount: number
+  supplier?: string | null
+  status?: string
+  contract_amount?: number
+  paid_amount?: number
   missing: string[]
+  // 🟢🔵 «оставлена существующая РЕЕ-…» (Часть А) — закупка НЕ создавалась,
+  // её позиции привязаны к плану из файла (см. commit.py).
+  existing_match?: boolean
+  items_linked?: number
+  planned_items_created?: number
 }
 
 export interface FactImportRunDetail {
@@ -239,6 +307,7 @@ function emptyDecisions(): FactImportDecisions {
     contract_confirmed_rows: [],
     over_plan: {},
     supplier_overrides: {},
+    existing_match: {},
   }
 }
 
@@ -536,6 +605,85 @@ export function useFactImport() {
     factImport.decisions.supplier_overrides[groupKey] = contractorId
   }
 
+  // 🟢🔵 «Похожие закупки» (план breezy-mixing-lovelace.md, Часть А) ------
+
+  function existingMatchDecision(groupKey: string): FactImportExistingMatchDecision | null {
+    return factImport.decisions.existing_match[groupKey] ?? null
+  }
+
+  /** «Это она» / «Нет, создать из импорта» — переключатель на группу.
+   *  action='same' фиксирует ВЫБРАННУЮ existing_matches запись (purchase_id)
+   *  как решённую — даже для kind='same_amount', где сервер и так
+   *  предвыбрал «та же» (явное решение не мешает умолчанию, просто делает
+   *  его видимым пользователю/отправляемым в decisions). */
+  function setExistingMatchAction(groupKey: string, purchaseId: number, action: 'same' | 'new') {
+    const prev = factImport.decisions.existing_match[groupKey]
+    factImport.decisions.existing_match[groupKey] = {
+      purchase_id: purchaseId,
+      action,
+      item_links: prev?.purchase_id === purchaseId ? prev.item_links : {},
+    }
+  }
+
+  function itemLink(groupKey: string, purchaseId: number, itemId: number): FactImportExistingMatchItemLink {
+    const d = factImport.decisions.existing_match[groupKey]
+    if (!d || d.purchase_id !== purchaseId) {
+      factImport.decisions.existing_match[groupKey] = { purchase_id: purchaseId, action: 'same', item_links: {} }
+    }
+    const links = factImport.decisions.existing_match[groupKey].item_links!
+    if (!links[String(itemId)]) links[String(itemId)] = {}
+    return links[String(itemId)]
+  }
+
+  /** Выбор другой плановой позиции для непривязанной строки существующей
+   *  закупки (по умолчанию — предложение item.suggested, см. контракт). */
+  function setExistingMatchItemPlanned(groupKey: string, purchaseId: number, itemId: number, plannedItemId: number | null) {
+    const link = itemLink(groupKey, purchaseId, itemId)
+    link.planned_item_id = plannedItemId
+    link.create_planned = false
+    link.skip = false
+  }
+
+  function setExistingMatchItemCreatePlanned(groupKey: string, purchaseId: number, itemId: number) {
+    const link = itemLink(groupKey, purchaseId, itemId)
+    link.create_planned = true
+    link.planned_item_id = null
+    link.skip = false
+  }
+
+  function setExistingMatchItemSkip(groupKey: string, purchaseId: number, itemId: number) {
+    const link = itemLink(groupKey, purchaseId, itemId)
+    link.skip = true
+    link.planned_item_id = null
+    link.create_planned = false
+  }
+
+  /** «Всё на строку плана из файла» — все НЕпривязанные позиции группы на
+   *  предложение reason='file_row' (а если сервер уже предложил same_name —
+   *  на то же предложение, т.к. бэкенд решает «строка плана из файла» как
+   *  запасной вариант САМ, если точного совпадения имени не нашлось). */
+  function applyAllUnboundToSuggested(groupKey: string, match: FactImportExistingMatch) {
+    for (const it of match.items) {
+      if (it.feo_planned_item_id != null) continue
+      if (it.suggested?.planned_item_id != null) {
+        setExistingMatchItemPlanned(groupKey, match.purchase_id, it.item_id, it.suggested.planned_item_id)
+      }
+    }
+  }
+
+  /** «Создать плановые для всех непривязанных» — ТОЛЬКО для позиций без
+   *  готового предложения (suggested.planned_item_id пуст) — у остальных
+   *  уже есть на что привязать, создавать вторую плановую позицию поверх
+   *  готового предложения не нужно. */
+  function createPlannedForAllUnbound(groupKey: string, match: FactImportExistingMatch) {
+    for (const it of match.items) {
+      if (it.feo_planned_item_id != null) continue
+      if (it.suggested?.planned_item_id == null) {
+        setExistingMatchItemCreatePlanned(groupKey, match.purchase_id, it.item_id)
+      }
+    }
+  }
+
   // Перенос строки в другую группу / выделение в отдельную (Шаг 4) — правит
   // ЛОКАЛЬНУЮ копию groups в factImport.preview (чтобы карточки сразу
   // перерисовались), помечает groupsDirty — следующий loadPreview() пошлёт
@@ -587,5 +735,12 @@ export function useFactImport() {
     setSupplierOverride,
     moveRowToGroup,
     showSnack,
+    existingMatchDecision,
+    setExistingMatchAction,
+    setExistingMatchItemPlanned,
+    setExistingMatchItemCreatePlanned,
+    setExistingMatchItemSkip,
+    applyAllUnboundToSuggested,
+    createPlannedForAllUnbound,
   }
 }

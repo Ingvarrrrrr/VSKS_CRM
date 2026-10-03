@@ -138,50 +138,11 @@ async def _parse_and_group(
     # Duplicate-purchase index: существующие разовые (НЕ ежемесячные) закупки субсидии,
     # ключ (contractor_id, сумма). Сумма = ЛЮБАЯ из {НМЦК, цена договора, платёж} +
     # суммы отдельных платежей (Payment). Совпадение по любой сумме = возможный повтор.
-    existing_dup_q = await db.execute(
-        select(
-            Purchase.id, Purchase.purchase_number, Purchase.item_name,
-            Purchase.subject, Purchase.status, Purchase.contract_date,
-            Purchase.contractor_id, Purchase.total_nmck,
-            Purchase.contract_price, Purchase.payment_amount,
-        ).where(
-            Purchase.subsidy_id == sid,
-            Purchase.is_monthly_payment.isnot(True),
-            Purchase.contractor_id.isnot(None),
-        )
-    )
-    existing_rows = existing_dup_q.fetchall()
-    _exist_ids = [r.id for r in existing_rows]
-    exist_pay_amounts: dict = defaultdict(list)
-    if _exist_ids:
-        _pay_q = await db.execute(
-            select(Payment.purchase_id, Payment.amount).where(
-                Payment.purchase_id.in_(_exist_ids),
-                Payment.amount.isnot(None),
-            )
-        )
-        for _pr in _pay_q.fetchall():
-            exist_pay_amounts[_pr.purchase_id].append(_pr.amount)
-
-    existing_dup_index: dict = defaultdict(list)
-    for r in existing_rows:
-        _base = {
-            "source": "db",
-            "id": r.id,
-            "purchase_number": r.purchase_number,
-            "name": r.item_name or r.subject or "",
-            "status": r.status,
-            "contract_date": r.contract_date.isoformat() if r.contract_date else None,
-        }
-        _pairs = [("НМЦК", r.total_nmck), ("цена договора", r.contract_price), ("платёж", r.payment_amount)]
-        _pairs += [("платёж", a) for a in exist_pay_amounts.get(r.id, [])]
-        for _reason, _val in _pairs:
-            if _val is None:
-                continue
-            _fv = float(_val)
-            if _fv <= 0:
-                continue
-            existing_dup_index[(r.contractor_id, round(_fv, 2))].append({**_base, "amount": _fv, "match_reason": _reason})
+    # Вынесено в services/purchase_similar.py::build_similar_purchases_index (ПРАВИЛО №6,
+    # план breezy-mixing-lovelace.md, Часть А) — тот же один bulk-запрос на субсидию,
+    # та же форма записи, поведение не меняется.
+    from app.services.purchase_similar import build_similar_purchases_index
+    existing_dup_index = await build_similar_purchases_index(db, sid)
 
     errors: list[dict] = []
     warnings: list[dict] = []

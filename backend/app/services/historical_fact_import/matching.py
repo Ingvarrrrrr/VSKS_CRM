@@ -19,6 +19,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.plan_catalog import load_plan_catalog
 
@@ -48,9 +49,21 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
         key = normalize_item_name(entry["name"])
         by_name.setdefault(key, []).append(entry)
 
+    # Выровнено с feo_plan_fact.planned_item_consumption (ПРАВИЛО №6, план
+    # breezy-mixing-lovelace.md, Часть А): раньше это был голый запрос без
+    # фильтра по субсидии/статусу/stopped_at — остановленная закупка в ЧУЖОЙ
+    # субсидии «занимала» плановую позицию ЭТОЙ субсидии навечно. Теперь —
+    # та же субсидия, PLANNED_STATUSES, не остановлена.
+    from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
     bound_rows = (await db.execute(
         select(PurchaseItem.feo_planned_item_id)
-        .where(PurchaseItem.feo_planned_item_id.isnot(None))
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .where(
+            PurchaseItem.feo_planned_item_id.isnot(None),
+            Purchase.subsidy_id == subsidy_id,
+            Purchase.status.in_(list(PLANNED_STATUSES)),
+            Purchase.stopped_at.is_(None),
+        )
     )).scalars().all()
     already_bound = set(bound_rows)
 

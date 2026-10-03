@@ -253,6 +253,14 @@ async def dashboard_charts(
                 select(Subsidy).where(Subsidy.id.in_(sid_list))
             )).scalars().all()
         }
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б,
+    # правка после приёмки): на scope=managed subsidy_q/sub_objs ВКЛЮЧАЮТ копию
+    # (строка должна остаться в списке — её нужно удалить/сделать настоящей), но
+    # «итого» страницы (contracts_amt/contracts_cnt/monthly_payments_total ниже)
+    # обязаны исключать её — тот же not_sandbox-принцип (ПРАВИЛО №6), только на
+    # уровне финальной агрегации, а не SQL-фильтра (SQL-фильтр убрал бы и
+    # собственные цифры строки копии, которые должны остаться «как обычно»).
+    sandbox_ids_in_scope = {sid for sid, obj in sub_objs.items() if obj.is_sandbox}
     contractor_ids = {s.contractor_id for s in sub_objs.values() if s.contractor_id}
     contractors = {}
     if contractor_ids:
@@ -349,9 +357,12 @@ async def dashboard_charts(
         contracts_map[sid] = contracts_map.get(sid, 0.0) + float(r.amt)
         contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + int(r.cnt)
 
-    # Глобальные итоги — сумма по регруппированным строкам (бит-в-бит эквивалентно прежнему)
-    contracts_amt = sum(contracts_map.values())
-    contracts_cnt = sum(contracts_cnt_map.values())
+    # Глобальные итоги — сумма по регруппированным строкам, КРОМЕ копий для
+    # экспериментов (sandbox_ids_in_scope — см. выше; на scope=dashboard эта
+    # сумма уже пуста для них благодаря SQL-фильтру contract_single_q/
+    # contract_fc_q, здесь исключение актуально для scope=managed).
+    contracts_amt = sum(v for sid, v in contracts_map.items() if sid not in sandbox_ids_in_scope)
+    contracts_cnt = sum(v for sid, v in contracts_cnt_map.items() if sid not in sandbox_ids_in_scope)
 
     # Накопительный SUM(planned_monthly) по active-договорам, регруппированный по subsidy_id
     mp_q = (
@@ -376,8 +387,9 @@ async def dashboard_charts(
     for r in (await db.execute(mp_q)).all():
         mp_map[r.subsidy_id] = mp_map.get(r.subsidy_id, 0.0) + float(r.amt)
     # Глобальный итог — сумма по регруппированным строкам (бит-в-бит эквивалентно прежнему скаляру,
-    # включая договоры с subsidy_id IS NULL — они попадают в mp_map под ключом None)
-    monthly_payments_total = float(sum(mp_map.values()))
+    # включая договоры с subsidy_id IS NULL — они попадают в mp_map под ключом None),
+    # КРОМЕ копий для экспериментов (см. sandbox_ids_in_scope выше).
+    monthly_payments_total = float(sum(v for sid, v in mp_map.items() if sid not in sandbox_ids_in_scope))
 
     # ── Ежемесячные закупки: начисление «Заказано» по прошедшим месяцам ──────────────
     # Логика вынесена в app.services.dashboard_monthly_accrual.compute_monthly_ordered_map
@@ -437,6 +449,14 @@ async def dashboard_charts(
             "id": row.id,
             "name": row.name,
             "year": row.year,
+            # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md,
+            # Часть Б, правка после приёмки): строка копии остаётся в списке
+            # (scope=managed) — фронт должен узнать её, чтобы показать плашку
+            # «копия» и кнопки «Удалить копию»/«Сделать настоящей» вместо
+            # «Скопировать для эксперимента» (см. SubsidyCardsGrid.vue/
+            # SubsidyListTable.vue).
+            "is_sandbox": bool(sub_obj.is_sandbox) if sub_obj else False,
+            "copied_from_id": sub_obj.copied_from_id if sub_obj else None,
             # budget теперь nullable (владелец 2026-09-15: «ещё не определён»,
             # см. app/models/subsidy.py) — float(None) валил бы /dashboard/charts
             # целиком для ВСЕХ пользователей, если хотя бы одна субсидия без

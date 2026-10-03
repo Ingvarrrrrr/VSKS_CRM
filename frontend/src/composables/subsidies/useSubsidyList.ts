@@ -69,17 +69,22 @@ function buildSubsidyList(ctx: Pick<SubsidyDetailContext, 'allSubsidies'>) {
   })
 
   // Сводная панель (SubsidySummaryBar.vue) — суммы по ВСЕМ отфильтрованным по
-  // году субсидиям (не только по текущей странице карточек).
+  // году субсидиям (не только по текущей странице карточек), КРОМЕ копий для
+  // экспериментов (план breezy-mixing-lovelace.md, Часть Б, правка приёмки):
+  // строка копии остаётся в списке (ею нужно управлять), но «итого» страницы
+  // не подмешивают её бюджет/суммы — тот же принцип, что backend-предикат
+  // not_sandbox_subsidy_ids (ПРАВИЛО №6), только на уже отданных клиенту данных.
+  const nonSandboxSubsidies = computed(() => filteredSubsidies.value.filter(s => !s.is_sandbox))
   const totals = computed(() => ({
-    budget:           filteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget || 0), 0),
-    planned:          filteredSubsidies.value.reduce((s, x) => s + x.planned,            0),
-    ordered:          filteredSubsidies.value.reduce((s, x) => s + x.ordered,            0),
-    contracted:       filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0),  0),
-    paid:             filteredSubsidies.value.reduce((s, x) => s + x.paid,               0),
-    work:             filteredSubsidies.value.reduce((s, x) => s + x.work,               0),
-    contracts:        filteredSubsidies.value.reduce((s, x) => s + x.contracts,          0),
-    delivered:        filteredSubsidies.value.reduce((s, x) => s + x.delivered,          0),
-    delivered_unpaid: filteredSubsidies.value.reduce((s, x) => s + x.delivered_unpaid,   0),
+    budget:           nonSandboxSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget || 0), 0),
+    planned:          nonSandboxSubsidies.value.reduce((s, x) => s + x.planned,            0),
+    ordered:          nonSandboxSubsidies.value.reduce((s, x) => s + x.ordered,            0),
+    contracted:       nonSandboxSubsidies.value.reduce((s, x) => s + (x.contracted || 0),  0),
+    paid:             nonSandboxSubsidies.value.reduce((s, x) => s + x.paid,               0),
+    work:             nonSandboxSubsidies.value.reduce((s, x) => s + x.work,               0),
+    contracts:        nonSandboxSubsidies.value.reduce((s, x) => s + x.contracts,          0),
+    delivered:        nonSandboxSubsidies.value.reduce((s, x) => s + x.delivered,          0),
+    delivered_unpaid: nonSandboxSubsidies.value.reduce((s, x) => s + x.delivered_unpaid,   0),
   }))
 
   function getSubsidyExportColumns() {

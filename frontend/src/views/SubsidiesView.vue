@@ -471,6 +471,12 @@ async function loadAll() {
     const charts = await apiFetch<any>(`/dashboard/charts?scope=managed${typeSplitQs}`)
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
       id: s.id, name: s.name, year: s.year, budget: s.budget,
+      // «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md,
+      // Часть Б, правка после приёмки): без этого поля карточка/строка копии
+      // не отличает себя от обычной субсидии — показывала «Скопировать для
+      // эксперимента» вместо «Удалить копию»/«Сделать настоящей».
+      is_sandbox: s.is_sandbox ?? false,
+      copied_from_id: s.copied_from_id ?? null,
       calculated_budget: s.calculated_budget ?? 0,
       planned: s.planned_tree ?? s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
       plan_schedule: s.total_plan_schedule ?? 0,
@@ -585,6 +591,8 @@ async function silentRefreshSubsidies() {
       if (recentlyDeletedIds.has(s.id)) continue
       const mapped = {
         id: s.id, name: s.name, year: s.year, budget: s.budget,
+        is_sandbox: s.is_sandbox ?? false,
+        copied_from_id: s.copied_from_id ?? null,
         calculated_budget: s.calculated_budget ?? 0,
         planned: s.planned_tree ?? s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
         plan_schedule: s.total_plan_schedule ?? 0,

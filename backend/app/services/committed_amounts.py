@@ -52,6 +52,7 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.feo_plan_fact import fact_amounts_for_rows
+from app.services.plan_need_level import NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE, normalize_need_level
 from sqlalchemy import func
 
 # Разовый договор / закупка без типа договора (single, NULL, пусто, авансовый) —
@@ -146,7 +147,17 @@ async def committed_consumption_by_category(
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
     _fpi = aliased(FeoPlannedItem)
     stmt = (
-        select(PurchaseItem, Purchase, cat_col.label("cat_id"))
+        select(
+            PurchaseItem, Purchase, cat_col.label("cat_id"),
+            # Задача 2 (владелец, 04.10.2026, need_level-разбивка «не
+            # законтрактовано») — те же три поля валидности привязки, что и
+            # в exclude_planned_item_linked ниже/в plan_consumption_by_category,
+            # нужны тут же, в ЭТОМ ЖЕ проходе по строкам, без второго запроса.
+            _fpi.need_level.label("fpi_need_level"),
+            _fpi.id.label("fpi_id"),
+            _fpi.is_active.label("fpi_is_active"),
+            _fpi.feo_category_id.label("fpi_cat_id"),
+        )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .join(FeoCategory, FeoCategory.id == cat_col)
         .outerjoin(_fpi, _fpi.id == PurchaseItem.feo_planned_item_id)
@@ -179,7 +190,22 @@ async def committed_consumption_by_category(
             "committed": 0.0, "committed_quantity": 0.0,
             "committed_goods": 0.0, "committed_services": 0.0, "committed_unspecified": 0.0,
             "committed_missing_fact_items": 0,
+            "committed_likely": 0.0, "committed_nice_to_have": 0.0,
         })
+        # Задача 2 (владелец, 04.10.2026) — need_level ЭТОЙ строки: берётся у
+        # привязанной плановой позиции, ТОЛЬКО если привязка валидна (та же
+        # проверка существует/активна/своя категория, что и exclude_planned_item_linked
+        # выше) — иначе (не привязана, привязана на несуществующую/неактивную/
+        # чужую-категории позицию) нет позиции, чей need_level читать, и по
+        # решению владельца («заявки без плановой позиции — считать likely»)
+        # сумма идёт в 'likely'.
+        _valid_link = (
+            pi.feo_planned_item_id is not None
+            and r.fpi_id is not None
+            and bool(r.fpi_is_active)
+            and r.fpi_cat_id == r.cat_id
+        )
+        _level = normalize_need_level(r.fpi_need_level) if _valid_link else NEED_LEVEL_LIKELY
         if fact_amount is None:
             # ИСПРАВЛЕНИЕ #1 — см. докстринг выше: сумма по плановой/факт.
             # цене позиции входит в committed (деньги заняты договором), но
@@ -188,11 +214,13 @@ async def committed_consumption_by_category(
             amt = float(fallback or 0)
             d["committed"] += amt
             d[f"committed_{kind_of(pi.item_type)}"] += amt
+            d[f"committed_{_level}"] += amt
             d["committed_missing_fact_items"] += 1
             continue
         d["committed"] += float(fact_amount)
         d["committed_quantity"] += float(pi.quantity or 0)
         d[f"committed_{kind_of(pi.item_type)}"] += float(fact_amount)
+        d[f"committed_{_level}"] += float(fact_amount)
     return result
 
 
@@ -396,6 +424,60 @@ async def leaf_items_committed_contribution(
         )
         _kd[_bucket] += info["amount"]
     return contribution_by_category, contribution_by_kind
+
+
+async def leaf_items_not_committed_by_need_level(
+    db: AsyncSession, category_ids: list[int]
+) -> dict[int, dict]:
+    """{feo_category_id: {"likely": сумма, "nice_to_have": сумма}} — Задача 2
+    (владелец, 04.10.2026, план .planning/quick/2026-10-04-sheet-ideas):
+    «незаконтрактованный остаток плана» СОБСТВЕННЫХ (без рекурсии по
+    поддереву — рекурсию делает вызывающий код compute_feo_plan_tree, тот же
+    приём, что и leaf_items_committed_contribution выше) активных FeoPlannedItem
+    категории, разбитый по need_level (app.services.plan_need_level).
+
+    ПРАВИЛО №6 — НЕ вторая формула «законтрактовано»/«вклад в план»: остаток
+    ОДНОЙ позиции = planned_item_contributions(...)[item]['amount'] (contribution —
+    та же величина, что складывается в leaf_item_committed_amt узла, т.е. формирует
+    scalar `plan`) МИНУС committed_by_planned_item(...)[item]['amount']
+    (законтрактованная сумма именно этой позиции) — БЕЗ клэмпа на 0 для
+    отдельной позиции (аддитивно: Σ по ВСЕМ позициям категории равна
+    own-части scalar `planned_not_committed` ТОЧНО, когда нет непривязанных/
+    сверх-плановых закупок в категории — см. docstring compute_feo_plan_tree,
+    раздел not_committed_likely/not_committed_nice).
+
+    Вызывающий код (compute_feo_plan_tree) берёт ЭТУ сумму как own-часть
+    'nice_to_have', а 'likely' узла довыводит остатком из уже готового scalar
+    `planned_not_committed` (а не второй independent суммой) — так остаток
+    «непривязанных закупок»/«заявок без плановой позиции» автоматически
+    попадает в 'likely', без отдельной формулы под него (решение владельца
+    «заявки без плановой позиции считать likely»)."""
+    result: dict[int, dict] = {}
+    if not category_ids:
+        return result
+
+    items_q = (
+        select(FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.need_level)
+        .where(FeoPlannedItem.feo_category_id.in_(category_ids))
+        .where(FeoPlannedItem.is_active.is_(True))
+    )
+    rows = (await db.execute(items_q)).all()
+    if not rows:
+        return result
+
+    contrib = await planned_item_contributions(db, category_ids)
+    committed_map = await committed_by_planned_item(db, [r.id for r in rows])
+
+    for r in rows:
+        info = contrib.get(r.id)
+        if info is None:
+            continue
+        committed_amt = (committed_map.get(r.id) or {}).get("amount", 0.0)
+        remainder = info["amount"] - committed_amt
+        level = normalize_need_level(r.need_level)
+        d = result.setdefault(r.feo_category_id, {NEED_LEVEL_LIKELY: 0.0, NEED_LEVEL_NICE_TO_HAVE: 0.0})
+        d[level] += remainder
+    return result
 
 
 async def subsidy_committed_totals(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:

@@ -142,7 +142,7 @@ async def apply_collected_plan(state) -> None:
             )
             if _match_item is not None:
                 _ch = False
-                _tracked = ("quantity", "unit", "amount", "item_type", "is_feo_breakdown", "is_internal_plan")
+                _tracked = ("quantity", "unit", "amount", "item_type", "is_feo_breakdown", "is_internal_plan", "need_level")
                 _old_vals = {f: getattr(_match_item, f, None) for f in _tracked}
                 if _pdata["qty"] is not None and _match_item.quantity != _pdata["qty"]:
                     _match_item.quantity = _pdata["qty"]; _ch = True
@@ -163,6 +163,8 @@ async def apply_collected_plan(state) -> None:
                     _match_item.is_feo_breakdown = _pdata_feo; _ch = True
                 if hasattr(_match_item, "is_internal_plan") and _match_item.is_internal_plan != _pdata_plan:
                     _match_item.is_internal_plan = _pdata_plan; _ch = True
+                if _pdata.get("need_level") is not None and hasattr(_match_item, "need_level") and _match_item.need_level != _pdata["need_level"]:
+                    _match_item.need_level = _pdata["need_level"]; _ch = True
                 if _ch:
                     updated += 1
                     updated_details.append({"row": _plan_row, "name": _plan_name, "reason": "плановая позиция из плана строки"})
@@ -209,6 +211,10 @@ async def apply_collected_plan(state) -> None:
                         _pi_kwargs["is_feo_breakdown"] = _pdata.get("is_feo_breakdown", False)
                     if hasattr(FeoPlannedItem, "is_internal_plan"):
                         _pi_kwargs["is_internal_plan"] = _pdata.get("is_internal_plan", True)
+                    # Владелец, 2026-10-04: «Нужность» (need_level) — тот же
+                    # hasattr-приём, что и выше (ревизия p1q3r5s7t9v1).
+                    if hasattr(FeoPlannedItem, "need_level"):
+                        _pi_kwargs["need_level"] = _pdata.get("need_level")
                     _pi = FeoPlannedItem(**_pi_kwargs)
                     db.add(_pi)
                     await db.flush()

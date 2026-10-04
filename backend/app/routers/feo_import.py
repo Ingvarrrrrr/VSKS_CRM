@@ -184,6 +184,10 @@ async def import_feo_from_excel(
     # перехватить чужую колонку пользовательского файла раньше своей очереди.
     # Разбор ячейки и запись — app/services/feo_import_comments.py.
     c_comment        = find_col(["комментарий", "примечание"])
+    # Владелец, 2026-10-04: колонка «Нужность» шаблона — насколько нужна
+    # плановая позиция ('likely'/'nice_to_have', см. app/services/
+    # plan_need_level.py, Правило №6 — единственный источник подписей/кодов).
+    c_need_level     = find_col(["нужность"])
     # Fallback: generic qty column if no specific level columns present
     if c_qty is None and c_qty_lvl2 is None and c_qty_lvl3 is None and c_qty_lvl4 is None and c_feo_qty_lvl2 is None and c_feo_qty_lvl3 is None and c_feo_qty_lvl4 is None:
         c_qty = find_col(["количество", "кол-во", "qty"])
@@ -215,6 +219,7 @@ async def import_feo_from_excel(
         c_row_plan_price=c_row_plan_price, c_row_plan_sum=c_row_plan_sum,
         c_item_type=c_item_type,
         c_comment=c_comment,
+        c_need_level=c_need_level,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,

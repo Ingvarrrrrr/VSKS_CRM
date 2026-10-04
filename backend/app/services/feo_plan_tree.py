@@ -20,6 +20,7 @@ from app.services.committed_amounts import (
     leaf_items_committed_contribution,
 )
 from app.services.feo_plan_common import _order_substituted_plan, plan_floor_addition
+from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE
 from app.services.feo_plan_fact import (
     fact_consumption_by_category,
     ordered_consumption_by_category,
@@ -559,6 +560,14 @@ async def compute_feo_plan_tree(
     leaf_item_committed_amt, committed_plan_by_kind = await leaf_items_committed_contribution(
         db, list(by_id.keys())
     )
+    # Задача 2 (владелец, 04.10.2026) — own-часть «незаконтрактованного остатка
+    # плана», разбитая по need_level (nice_to_have — см. её докстринг,
+    # committed_amounts.leaf_items_not_committed_by_need_level, ПРАВИЛО №6:
+    # 'likely' узла довыводится остатком из уже готового scalar
+    # `planned_not_committed`, см. _not_committed_nice/node['not_committed_likely']
+    # ниже — не вторая независимая формула).
+    from app.services.committed_amounts import leaf_items_not_committed_by_need_level
+    own_not_committed_nice = await leaf_items_not_committed_by_need_level(db, list(by_id.keys()))
 
     # Задача владельца «план ≠ факт, шаг 2» (сессия 2026-08-12): FeoPlannedItem.auto_created
     # («плановая позиция заведена автоматически из закупки/заявки, а не человеком») — нужен
@@ -1073,6 +1082,25 @@ async def compute_feo_plan_tree(
         _committed_total_by_kind_memo[cat_id] = val
         return val
 
+    _not_committed_nice_memo: dict[int, float] = {}
+
+    def _not_committed_nice(cat_id: int) -> float:
+        """Рекурсивная Σ (узел+поддерево) own-части 'nice_to_have' из
+        leaf_items_not_committed_by_need_level (см. own_not_committed_nice
+        выше) — Задача 2 (04.10.2026). Зеркалит ТОТ ЖЕ приём rollup'а, что и
+        _committed_total_by_kind/_over_by_kind (own + Σ детей); node['not_committed_likely']
+        довыводится в _visit остатком из planned_not_committed (ПРАВИЛО №6 —
+        не вторая формула «законтрактовано»/«план», см. docstring
+        own_not_committed_nice)."""
+        if cat_id in _not_committed_nice_memo:
+            return _not_committed_nice_memo[cat_id]
+        _own = own_not_committed_nice.get(cat_id) or {}
+        val = _own.get(NEED_LEVEL_NICE_TO_HAVE, 0.0)
+        for _kid in children_map.get(cat_id, []):
+            val += _not_committed_nice(_kid)
+        _not_committed_nice_memo[cat_id] = val
+        return val
+
     def _visit(cat_id: int) -> dict:
         cached = result.get(cat_id)
         if cached is not None:
@@ -1381,6 +1409,16 @@ async def compute_feo_plan_tree(
         committed_unspecified = _committed_kind_total[KIND_UNSPECIFIED]
         committed_total = committed_goods + committed_services + committed_unspecified
 
+        # Задача 2 (владелец, 04.10.2026) — not_committed_nice клэмпится в
+        # [0, planned_not_committed] (см. комментарий у node['not_committed_nice']
+        # ниже), likely довыводится остатком — invariant nice+likely==planned_not_committed
+        # держится ТОЧНО на каждом узле этим построением.
+        _planned_not_committed = plan - committed_total
+        if _planned_not_committed > 0:
+            _not_committed_nice_clamped = max(0.0, min(_not_committed_nice(cat_id), _planned_not_committed))
+        else:
+            _not_committed_nice_clamped = 0.0
+
         _clamped = bool(budget is not None and full_display - budget > 0.005 and not excess_approved)
         _plan_kind = _plan_by_kind(cat_id)
         _over_kind = _over_by_kind(cat_id)
@@ -1493,6 +1531,19 @@ async def compute_feo_plan_tree(
             # целом) — redistributable тогда null, а не 0 (нечем перераспределять
             # НА УРОВНЕ ЭТОГО узла, см. normalize_feo_category_budget выше).
             "planned_not_committed": plan - committed_total,
+            # Задача 2 (владелец, 04.10.2026) — разбивка planned_not_committed
+            # ПО СТАТУСУ плановой позиции (need_level): not_committed_nice —
+            # own 'nice_to_have' (_not_committed_nice, см. её docstring) +
+            # рекурсивный rollup по поддереву; not_committed_likely довыводится
+            # ОСТАТКОМ из уже готового planned_not_committed (ПРАВИЛО №6 — то
+            # же planned_not_committed, не вторая сумма), поэтому «заявки без
+            # плановой позиции»/непривязанные закупки/пол плана автоматически
+            # попадают в 'likely'. Клэмп >=0 — защита от редкого случая, когда
+            # own-nice-позиция законтрактована ДОРОЖЕ своего вклада в план
+            # (цена договора выше плановой) в узле, где planned_not_committed
+            # мал/отрицателен — см. отчёт задачи, "если не сходится — описать".
+            "not_committed_nice": _not_committed_nice_clamped,
+            "not_committed_likely": (plan - committed_total) - _not_committed_nice_clamped,
             "redistributable": (budget - committed_total) if (budget is not None and budget > 0) else None,
             # Шаг 3 плана «Деньги субсидии» (02.10.2026, решение владельца
             # «договор входит в план») — Σ добавок «пола» (узел+поддерево, см.

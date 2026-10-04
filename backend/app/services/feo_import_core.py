@@ -128,6 +128,9 @@ class FeoImportState:
     c_row_plan_sum: int | None = None
     c_item_type: int | None = None
     c_comment: int | None = None
+    # Владелец, 2026-10-04: колонка «Нужность» (см. app/services/
+    # plan_need_level.py) — тем же порядком, что и c_item_type/c_comment выше.
+    c_need_level: int | None = None
 
     # --- справочники, посчитанные один раз до цикла (feo_import_core.py) ---
     sub_rows: list = field(default_factory=list)
@@ -345,6 +348,9 @@ async def _do_feo_import(
     # Владелец, 22.09: колонка «Комментарий» — см. докстринг c_comment в
     # FeoImportState выше и app/services/feo_import_comments.py.
     c_comment: int | None = None,
+    # Владелец, 2026-10-04: колонка «Нужность» — см. докстринг c_need_level в
+    # FeoImportState выше и app/services/plan_need_level.py.
+    c_need_level: int | None = None,
     default_subsidy_id: int | None = None,
     dry_run: bool = False,
     user=None,

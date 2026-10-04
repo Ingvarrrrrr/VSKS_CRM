@@ -129,6 +129,10 @@ const plannedItemForm = ref({
   // чекбокс «Составная позиция» в PlannedItemAddDialog.vue. Дефолт false —
   // старое поведение контроля «ТЗ не выше плана» не меняется.
   is_composite: false,
+  // Статус «нужности» (владелец, 04.10.2026) — см. @/utils/planNeedLevel.ts
+  // (Правило №6, единственный источник подписей). Дефолт 'likely' — то же
+  // умолчание, что и у backend-схемы FeoPlannedItemCreate.need_level.
+  need_level: 'likely' as string,
 })
 
 // Диалог показывает раздельные поля «По ФЭО»/«Внутренний план» ТОЛЬКО когда
@@ -366,7 +370,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       monthly_end_date: '', months_count: null, monthly_amount: null,
       is_feo_breakdown: false, is_internal_plan: true,
       feoQuantity: null, feoUnitPrice: null, feoAmount: null,
-      item_type: null, is_composite: false,
+      item_type: null, is_composite: false, need_level: 'likely',
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
@@ -417,7 +421,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       // подписана «подробного деления в ФЭО не было» (см. шаблон выше).
       is_feo_breakdown: false, is_internal_plan: true,
       feoQuantity: null, feoUnitPrice: null, feoAmount: null,
-      item_type: null, is_composite: false,
+      item_type: null, is_composite: false, need_level: 'likely',
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
@@ -454,7 +458,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       // auto_created в plan_autoassign.py (см. is_internal_plan там).
       is_feo_breakdown: false, is_internal_plan: true,
       feoQuantity: null, feoUnitPrice: null, feoAmount: null,
-      item_type: null, is_composite: false,
+      item_type: null, is_composite: false, need_level: 'likely',
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
@@ -655,6 +659,8 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       item_type: f.item_type || null,
       product_id: addPlannedProductId.value,
       sync_product_kind: addShowSyncProductKindCheckbox.value && addSyncProductKind.value,
+      // Статус «нужности» (владелец, 04.10.2026) — см. @/utils/planNeedLevel.ts.
+      need_level: f.need_level || 'likely',
     }
   }
 

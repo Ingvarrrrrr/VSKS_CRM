@@ -146,18 +146,26 @@ async def test_auto_match_contract_by_number(db_session, contractor, contract, b
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — recompute aggregates: full payment → auto-paid
+# Test 3 — recompute aggregates: полная сумма «подтверждено выпиской» → auto-paid
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_recompute_full_payment_becomes_paid(db_session, contract, purchase_delivered):
-    """2 Payment по 60k и 40k с matched_confirmed=true → status='paid', payment_amount=100k."""
+    """2 Payment по 60k и 40k, «подтверждено выпиской»
+    (payment_source='statement', confirmed_by_statement=True) →
+    payment_amount=100k, status='paid'.
+
+    Двухступенчатая модель оплаты (решение владельца 19.08.2026): в payment_amount
+    (и, соответственно, в авто-перевод закупки в 'paid') попадают только платежи,
+    подтверждённые банковской выпиской — см. app/services/purchase_payments.py."""
     pay1 = Payment(
         contract_id=contract.id,
         purchase_id=purchase_delivered.id,
         document_number="ПП-001",
         amount=Decimal("60000.00"),
         matched_confirmed=True,
+        payment_source="statement",
+        confirmed_by_statement=True,
     )
     pay2 = Payment(
         contract_id=contract.id,
@@ -165,6 +173,8 @@ async def test_recompute_full_payment_becomes_paid(db_session, contract, purchas
         document_number="ПП-002",
         amount=Decimal("40000.00"),
         matched_confirmed=True,
+        payment_source="statement",
+        confirmed_by_statement=True,
     )
     db_session.add_all([pay1, pay2])
     await db_session.commit()
@@ -175,24 +185,55 @@ async def test_recompute_full_payment_becomes_paid(db_session, contract, purchas
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — partial payment does NOT transition to paid
+# Test 4 — частичная сумма «подтверждено выпиской» НЕ переводит в paid
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_recompute_partial_stays_delivered(db_session, contract, purchase_delivered):
-    """1 Payment 60k при contract_price=100k → status остаётся 'delivered'."""
+    """1 Payment 60k, «подтверждено выпиской», при contract_price=100k →
+    payment_amount=60k, status остаётся 'delivered' (порог не достигнут)."""
     pay = Payment(
         contract_id=contract.id,
         purchase_id=purchase_delivered.id,
         document_number="ПП-003",
         amount=Decimal("60000.00"),
         matched_confirmed=True,
+        payment_source="statement",
+        confirmed_by_statement=True,
     )
     db_session.add(pay)
     await db_session.commit()
 
     updated = await recompute_purchase_payments(db_session, purchase_delivered.id)
     assert updated.payment_amount == Decimal("60000.00")
+    assert updated.status == "delivered"
+
+
+# ---------------------------------------------------------------------------
+# Test 4.1 — «оплачено по отметке» (без выписки) не закрывает закупку
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_recompute_marked_only_does_not_close(db_session, contract, purchase_delivered):
+    """1 Payment 100k, «оплачено по отметке» (payment_source='manual',
+    confirmed_by_statement=False) → уходит в payment_amount_declared («заявлено,
+    ждёт подтверждения»), payment_amount остаётся None, status НЕ меняется —
+    закупку закрывает только «подтверждено выпиской»."""
+    pay = Payment(
+        contract_id=contract.id,
+        purchase_id=purchase_delivered.id,
+        document_number="ПП-004",
+        amount=Decimal("100000.00"),
+        matched_confirmed=True,
+        payment_source="manual",
+        confirmed_by_statement=False,
+    )
+    db_session.add(pay)
+    await db_session.commit()
+
+    updated = await recompute_purchase_payments(db_session, purchase_delivered.id)
+    assert updated.payment_amount_declared == Decimal("100000.00")
+    assert updated.payment_amount is None
     assert updated.status == "delivered"
 
 

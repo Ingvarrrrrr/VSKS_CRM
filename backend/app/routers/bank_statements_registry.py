@@ -483,7 +483,21 @@ async def confirm_bank_payment(
     if not body.purchase_ids:
         raise HTTPException(status_code=422, detail="Список purchase_ids не может быть пустым")
 
-    created_payments = await create_payments_from_bank(db, bp.id, body.purchase_ids)
+    from app.services.purchase_payments import ServicePeriodConflict
+    from app.services.payment_service_period import service_period_conflict_detail
+    overrides = (
+        {int(pid): d for pid, d in body.service_periods.items()}
+        if body.service_periods else None
+    )
+    try:
+        created_payments = await create_payments_from_bank(
+            db, bp.id, body.purchase_ids, service_period_overrides=overrides,
+        )
+    except ServicePeriodConflict as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=service_period_conflict_detail(
+            str(exc), exc.purchase_id, exc.occupied_period
+        ))
     bp.matched_confirmed = True
     await db.commit()
     await db.refresh(bp)

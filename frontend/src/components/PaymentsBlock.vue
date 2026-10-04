@@ -257,6 +257,18 @@
                 <div class="d-flex flex-wrap gap-1 mt-1">
                   <v-chip v-for="(chk, i) in c.checks" :key="i" size="x-small" variant="tonal" color="grey">{{ chk }}</v-chip>
                 </div>
+                <!-- Задача 04.10.2026: месяц оказания для помесячной закупки (или причина,
+                     почему он неоднозначен) — та же resolve_service_period, что в
+                     PaymentMatchDialog.vue (app/services/payment_lookup.py::find_candidates). -->
+                <div v-if="c.service_period" class="mt-1">
+                  <v-chip size="x-small" color="primary" variant="tonal" prepend-icon="mdi-calendar-check">
+                    за месяц: {{ fmtMonth(c.service_period) }}
+                  </v-chip>
+                </div>
+                <div v-else-if="c.service_period_conflict" class="mt-1 text-caption text-warning">
+                  <v-icon size="12" color="warning">mdi-alert</v-icon>
+                  {{ c.service_period_conflict }}
+                </div>
                 <div v-if="!c.free" class="text-caption text-error mt-1">
                   <v-icon size="14" icon="mdi-lock-outline" class="mr-1" />{{ c.reason }}
                 </div>
@@ -274,6 +286,15 @@
       </v-card-actions>
     </v-card>
   </v-dialog>
+
+  <!-- Задача 04.10.2026: 409 «конфликт месяца оказания» при «Загрузить» — не
+       снэкбаром и не молча, а выбором месяца человеком с повтором запроса. -->
+  <ServicePeriodPickDialog
+    v-model="servicePeriodDialog"
+    :reason="servicePeriodReason"
+    @submit="onServicePeriodPicked"
+    @cancel="servicePeriodPendingCandidate = null"
+  />
 </template>
 
 <script setup lang="ts">
@@ -281,6 +302,8 @@ import { ref, computed, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
+import ServicePeriodPickDialog from '@/components/payments/ServicePeriodPickDialog.vue'
+import { isServicePeriodConflict, extractConflictPurchaseId, extractConflictMessage } from '@/composables/payments/useServicePeriodConflict'
 
 const { mobile } = useDisplay()
 const toast = useToast()
@@ -351,6 +374,18 @@ function formatMoney(n: number): string {
 function fmtDate(d: string | null): string {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('ru-RU')
+}
+
+const MONTH_NAMES_RU = [
+  'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
+  'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь',
+]
+function fmtMonth(iso: string): string {
+  // iso = 'YYYY-MM-DD' (первое число месяца, см. payments.service_period) —
+  // тот же формат, что PaymentMatchDialog.vue::fmtMonth.
+  const [y, m] = iso.split('-')
+  const idx = Number(m) - 1
+  return `${MONTH_NAMES_RU[idx] ?? m} ${y}`
 }
 
 // ── Справочник кодов расходов (для tooltip с расшифровкой) ─────────────────
@@ -438,6 +473,11 @@ interface Candidate {
   basis_label: string | null
   payment_number: string | null
   payment_date: string | null
+  // Задача 04.10.2026: месяц оказания для помесячной закупки (ISO первого числа
+  // месяца) либо причина, почему он неоднозначен — см. app/services/payment_lookup.py
+  // (та же resolve_service_period, что и в match_candidates.py, ПРАВИЛО №6).
+  service_period: string | null
+  service_period_conflict: string | null
 }
 
 const findDialog = ref(false)
@@ -454,6 +494,10 @@ async function openFindDialog() {
   candidatesReason.value = null
   candidates.value = { goods: [], services: [] }
   groupInfo.value = null
+  servicePeriodOverrides.value = {}
+  servicePeriodPendingCandidate.value = null
+  servicePeriodPendingPurchaseId.value = null
+  servicePeriodReason.value = null
   try {
     const data = await apiFetch<any>(`/purchases/${props.purchaseId}/payment-candidates`)
     if (!data.group) {
@@ -469,6 +513,18 @@ async function openFindDialog() {
   }
 }
 
+// Задача 04.10.2026: месяц оказания, выбранный человеком вручную после 409
+// («Закупка №{id}: ... месяц ...») — {purchase_id: 'YYYY-MM-01'}; кандидат,
+// на котором всплыл конфликт, запоминаем, чтобы повторить именно его attach.
+const servicePeriodOverrides = ref<Record<number, string>>({})
+const servicePeriodDialog = ref(false)
+const servicePeriodReason = ref<string | null>(null)
+const servicePeriodPendingCandidate = ref<Candidate | null>(null)
+// Номер закупки из структурированного detail (purchase_id), запомненный ПРИ
+// перехвате 409 — не перепарсиваем текст причины заново в onServicePeriodPicked
+// (регулярки убраны, см. useServicePeriodConflict.ts).
+const servicePeriodPendingPurchaseId = ref<number | null>(null)
+
 async function attachCandidate(c: Candidate) {
   if (!groupInfo.value) return
   attachingId.value = c.bank_payment_id
@@ -479,17 +535,43 @@ async function attachCandidate(c: Candidate) {
         subsidy_id: groupInfo.value.subsidy_id,
         group_key: groupInfo.value.group_key,
         bank_payment_ids: [c.bank_payment_id],
+        service_periods: Object.keys(servicePeriodOverrides.value).length ? servicePeriodOverrides.value : undefined,
       }),
     })
     toast.addToast('Платёж загружен в закупку', 'success')
+    servicePeriodOverrides.value = {}
     findDialog.value = false
     await loadPayments()
     emit('changed')
   } catch (e: any) {
-    toast.addToast(e?.payload?.message || e?.detail || e?.message || 'Ошибка загрузки платежа', 'error')
+    if (isServicePeriodConflict(e)) {
+      // Бэк не определил месяц сам — диалог ручного выбора вместо снэкбара.
+      // purchase_id берём из структурированного detail; race-backstop без него —
+      // на закупку, к которой привязан этот блок (обычно единственная помесячная).
+      servicePeriodPendingCandidate.value = c
+      servicePeriodPendingPurchaseId.value = extractConflictPurchaseId(e) ?? props.purchaseId
+      servicePeriodReason.value = extractConflictMessage(e)
+      servicePeriodDialog.value = true
+    } else {
+      toast.addToast(e?.payload?.message || e?.detail || e?.message || 'Ошибка загрузки платежа', 'error')
+    }
   } finally {
     attachingId.value = null
   }
+}
+
+async function onServicePeriodPicked(isoDate: string) {
+  const c = servicePeriodPendingCandidate.value
+  if (!c) return
+  const pid = servicePeriodPendingPurchaseId.value ?? props.purchaseId
+  if (pid == null) {
+    toast.addToast('Не удалось определить закупку для выбранного месяца — повторите вручную', 'error')
+    return
+  }
+  servicePeriodOverrides.value = { ...servicePeriodOverrides.value, [pid]: isoDate }
+  servicePeriodPendingCandidate.value = null
+  servicePeriodPendingPurchaseId.value = null
+  await attachCandidate(c)
 }
 
 watch(() => props.purchaseId, () => loadPayments(), { immediate: true })

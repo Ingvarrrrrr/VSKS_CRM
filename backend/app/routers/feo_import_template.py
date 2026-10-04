@@ -28,6 +28,7 @@ from app.database import get_db
 from app.models.feo_category import FeoCategory
 from app.auth.jwt import get_current_user
 from app.auth.visibility import get_visible_subsidy_ids
+from app.services.plan_need_level import NEED_LEVEL_LABELS
 from app.utils.http import content_disposition
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
@@ -69,7 +70,9 @@ async def download_feo_template(
     (одна пара на строку) | Плановое количество/Ед.изм./Цена/Сумма плана (одна
     пара на строку) | Код | Приложение | Активна | Финансирование (устар.) |
     Комментарий (уходит в ленту комментариев плановой позиции строки — или
-    категории строки, если позиции в строке нет).
+    категории строки, если позиции в строке нет) | Нужность (выпадающий
+    список: «Скорее всего понадобится» / «Хотелось бы, но можно и отказаться»;
+    пусто = первое значение; добавлено 2026-10-04).
     Если уровень пропущен, содержимое нижнего поднимается на его место. Если в
     строке нет ни одного уровня, а плановая позиция заполнена — её название
     становится Уровнем 2. Сумма строки приоритетнее кол-во × цена; расхождение —
@@ -137,6 +140,7 @@ async def download_feo_template(
         "Активна",                                            # Q  17
         "Финансирование (устар., можно не заполнять)",        # R  18
         "Комментарий",                                        # S  19
+        "Нужность",                                           # T  20
     ]
     ws.append(headers)
 
@@ -199,6 +203,7 @@ async def download_feo_template(
             example_rows.append([
                 subsidy_label, n1, n2, n3, "", "", "", "", "", "2000000", "", "", "", "",
                 leaf.code or "", leaf.appendix or "", "да" if leaf.is_active else "нет", "", "",
+                "",
             ])
         if cats_by_level[2]:
             leaf = cats_by_level[2][0]
@@ -206,6 +211,7 @@ async def download_feo_template(
             example_rows.append([
                 subsidy_label, n1, n2, n3, "", "", "6", "шт", "150000", "", "6", "шт", "150000", "900000",
                 leaf.code or "", leaf.appendix or "", "да" if leaf.is_active else "нет", "", "",
+                NEED_LEVEL_LABELS["likely"],
             ])
         if cats_by_level[3]:
             leaf = cats_by_level[3][0]
@@ -213,18 +219,19 @@ async def download_feo_template(
             example_rows.append([
                 subsidy_label, n1, n2, n3, "", "", "", "", "", "", "1", "усл", "178779.59", "178779.59",
                 leaf.code or "", leaf.appendix or "", "да" if leaf.is_active else "нет", "", "Пример комментария к категории",
+                NEED_LEVEL_LABELS["nice_to_have"],
             ])
     else:
         # Общий шаблон (нет subsidy_id) ИЛИ субсидия передана, но дерево у неё ещё
         # пустое — реальных уровней показать нечего, только условные подписи.
         example_rows.extend([
-            [subsidy_label, "Пример: Техническое оснащение", "Пример: Оргтехника", "", "", "", "", "", "", "2000000", "", "", "", "", "01.01.01", "Прил. 1", "да", "", ""],
-            [subsidy_label, "Пример: Техническое оснащение", "Пример: Оргтехника", "Пример: Закупка компьютеров", "", "", "6", "шт", "150000", "", "6", "шт", "150000", "900000", "01.01.02", "Прил. 1", "да", "", "Пример комментария к категории"],
+            [subsidy_label, "Пример: Техническое оснащение", "Пример: Оргтехника", "", "", "", "", "", "", "2000000", "", "", "", "", "01.01.01", "Прил. 1", "да", "", "", ""],
+            [subsidy_label, "Пример: Техническое оснащение", "Пример: Оргтехника", "Пример: Закупка компьютеров", "", "", "6", "шт", "150000", "", "6", "шт", "150000", "900000", "01.01.02", "Прил. 1", "да", "", "Пример комментария к категории", NEED_LEVEL_LABELS["likely"]],
         ])
     # Эти две строки — условные во всех случаях (демонстрируют «Плановую позицию»
     # и план без разбивки на уровни, а не сами уровни ФЭО) — реальных категорий не касаются.
-    example_rows.append([subsidy_label, "", "", "", "Пример: Услуга по заправке техники", "Услуга", "", "", "", "", "500", "л", "60", "30000", "", "", "да", "", "Пример комментария к плановой позиции"])
-    example_rows.append([subsidy_label, "Пример: Организация мероприятий", "Пример: Слёт студентов", "", "", "", "", "", "", "", "", "", "", "3500000", "02.02.01", "Прил. 2", "да", "", ""])
+    example_rows.append([subsidy_label, "", "", "", "Пример: Услуга по заправке техники", "Услуга", "", "", "", "", "500", "л", "60", "30000", "", "", "да", "", "Пример комментария к плановой позиции", NEED_LEVEL_LABELS["nice_to_have"]])
+    example_rows.append([subsidy_label, "Пример: Организация мероприятий", "Пример: Слёт студентов", "", "", "", "", "", "", "", "", "", "", "3500000", "02.02.01", "Прил. 2", "да", "", "", ""])
 
     for row in example_rows:
         ws.append(row)
@@ -250,13 +257,14 @@ async def download_feo_template(
         "← да/нет",                                                                                       # Q  17
         "← устарело, можно не заполнять — используйте «Сумма по ФЭО»",                                    # R  18
         "← Попадёт в ленту комментариев плановой позиции; если позиции в строке нет — категории строки",  # S  19
+        "← Насколько нужна позиция (выпадающий список, лист «Справочники»); пусто = «Скорее всего понадобится»",  # T  20
     ]
     for col, hint in enumerate(hints, start=1):
         ws.cell(7, col).value = hint
         ws.cell(7, col).font = Font(italic=True, color="888888", size=8)
 
-    # Ширины колонок (18 штук)
-    col_widths = [18, 42, 42, 42, 42, 14, 16, 14, 16, 16, 16, 14, 16, 16, 10, 12, 10, 22, 32]
+    # Ширины колонок (19 штук)
+    col_widths = [18, 42, 42, 42, 42, 14, 16, 14, 16, 16, 16, 14, 16, 16, 10, 12, 10, 22, 32, 30]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
@@ -277,44 +285,72 @@ async def download_feo_template(
         dv_item_type.sqref = "F2:F1000"
         ws.add_data_validation(dv_item_type)
 
-    # Лист «Справочники» + выпадающие списки по колонкам Уровень 2/3/4 (только
+    # Лист «Справочники» — выпадающие списки по колонкам Уровень 2/3/4 (только
     # когда subsidy_id передан и у субсидии УЖЕ есть хоть одна категория —
-    # 2026-09-04). Список — ПОДСКАЗКА, не запрет: через этот шаблон заводят и
+    # 2026-09-04) И по колонке «Нужность» (всегда, не зависит от субсидии —
+    # 2026-10-04). Список — ПОДСКАЗКА, не запрет: через этот шаблон заводят и
     # НОВЫЕ категории, поэтому showErrorMessage=False (как у dv_item_type выше).
-    # Инлайн-список (formula1='"a,b,c"') не годится — Excel режет его на ~255
-    # символах, категорий может быть больше, поэтому список живёт на отдельном
-    # листе, а формула ссылается на диапазон.
-    if subsidy is not None and has_real_tree and DataValidation is not None:
+    # Инлайн-список (formula1='"a,b,c"') не годится для Уровней — Excel режет
+    # его на ~255 символах, категорий может быть больше, поэтому список живёт
+    # на отдельном листе, а формула ссылается на диапазон. «Нужность» — всего
+    # два коротких значения, инлайн-формулы бы хватило, но лист «Справочники»
+    # — единственный источник полного набора NEED_LEVEL_LABELS (Правило №6:
+    # шаблон, парсер и экспорт берут подписи оттуда же, а не из копии строкой).
+    if DataValidation is not None:
         ws3 = wb.create_sheet("Справочники")
-        level_ref_cols = {1: "A", 2: "B", 3: "C"}   # колонки листа "Справочники"
-        level_titles = {1: "Уровень 2", 2: "Уровень 3", 3: "Уровень 4"}
-        level_target_cols = {1: "B", 2: "C", 3: "D"}  # колонки листа "Категории ФЭО"
-        for lvl, col_letter in level_ref_cols.items():
-            cell = ws3[f"{col_letter}1"]
-            cell.value = level_titles[lvl]
-            cell.font = Font(bold=True)
-            ws3.column_dimensions[col_letter].width = 42
-        for lvl, ref_col in level_ref_cols.items():
-            names = sorted(dict.fromkeys(c.name for c in cats_by_level[lvl] if c.name))
-            for i, name in enumerate(names, start=2):
-                ws3[f"{ref_col}{i}"] = name
-            if not names:
-                continue  # у субсидии нет категорий этого уровня — список не вешаем
-            last_row = len(names) + 1 + 50  # запас с рядом, чтобы список не обрезался
-            dv_level = DataValidation(
-                type="list",
-                formula1=f"Справочники!${ref_col}$2:${ref_col}${last_row}",
-                allow_blank=True,
-                showErrorMessage=False,
-                showInputMessage=True,
-            )
-            dv_level.error = "Значение не из списка — можно ввести и новую категорию"
-            dv_level.errorTitle = "Нестандартное значение"
-            dv_level.promptTitle = level_titles[lvl]
-            dv_level.prompt = f"Выберите существующую категорию «{level_titles[lvl]}» или впишите новую"
-            target_col = level_target_cols[lvl]
-            dv_level.sqref = f"{target_col}2:{target_col}1000"
-            ws.add_data_validation(dv_level)
+
+        # Колонка E — полный список подписей «Нужности» (NEED_LEVEL_LABELS),
+        # дропдаун на колонку T («Нужность») листа «Категории ФЭО».
+        ws3["E1"] = "Нужность"
+        ws3["E1"].font = Font(bold=True)
+        ws3.column_dimensions["E"].width = 42
+        need_level_values = list(NEED_LEVEL_LABELS.values())
+        for i, label in enumerate(need_level_values, start=2):
+            ws3[f"E{i}"] = label
+        dv_need_level = DataValidation(
+            type="list",
+            formula1=f"Справочники!$E$2:$E${len(need_level_values) + 1}",
+            allow_blank=True,
+            showErrorMessage=False,
+            showInputMessage=True,
+        )
+        dv_need_level.error = "Значение не из списка — пустая ячейка = «Скорее всего понадобится»"
+        dv_need_level.errorTitle = "Нестандартное значение"
+        dv_need_level.promptTitle = "Нужность"
+        dv_need_level.prompt = "Выберите, насколько нужна позиция; пусто = «Скорее всего понадобится»"
+        dv_need_level.sqref = "T2:T1000"
+        ws.add_data_validation(dv_need_level)
+
+        if subsidy is not None and has_real_tree:
+            level_ref_cols = {1: "A", 2: "B", 3: "C"}   # колонки листа "Справочники"
+            level_titles = {1: "Уровень 2", 2: "Уровень 3", 3: "Уровень 4"}
+            level_target_cols = {1: "B", 2: "C", 3: "D"}  # колонки листа "Категории ФЭО"
+            for lvl, col_letter in level_ref_cols.items():
+                cell = ws3[f"{col_letter}1"]
+                cell.value = level_titles[lvl]
+                cell.font = Font(bold=True)
+                ws3.column_dimensions[col_letter].width = 42
+            for lvl, ref_col in level_ref_cols.items():
+                names = sorted(dict.fromkeys(c.name for c in cats_by_level[lvl] if c.name))
+                for i, name in enumerate(names, start=2):
+                    ws3[f"{ref_col}{i}"] = name
+                if not names:
+                    continue  # у субсидии нет категорий этого уровня — список не вешаем
+                last_row = len(names) + 1 + 50  # запас с рядом, чтобы список не обрезался
+                dv_level = DataValidation(
+                    type="list",
+                    formula1=f"Справочники!${ref_col}$2:${ref_col}${last_row}",
+                    allow_blank=True,
+                    showErrorMessage=False,
+                    showInputMessage=True,
+                )
+                dv_level.error = "Значение не из списка — можно ввести и новую категорию"
+                dv_level.errorTitle = "Нестандартное значение"
+                dv_level.promptTitle = level_titles[lvl]
+                dv_level.prompt = f"Выберите существующую категорию «{level_titles[lvl]}» или впишите новую"
+                target_col = level_target_cols[lvl]
+                dv_level.sqref = f"{target_col}2:{target_col}1000"
+                ws.add_data_validation(dv_level)
 
     # Второй лист — текстовые правила заполнения.
     ws2 = wb.create_sheet("Как заполнять")
@@ -332,6 +368,7 @@ async def download_feo_template(
         "8. Не меняйте заголовки колонок — импорт определяет их по названию, а не по порядку.",
         "9. Строка-подсказка (начинается с «←», строка 7 примера) в файл не попадает — служебная, игнорируется при импорте.",
         "10. «Комментарий» (колонка 19) — попадает в ленту комментариев (не в примечание): если в строке заполнена «Плановая позиция» — комментарий уходит к ЭТОЙ позиции; если позиции в строке нет — к категории (самому глубокому заполненному уровню) этой строки. Пустая ячейка — комментарий не создаётся. Повторный импорт того же файла не создаёт дубли одного и того же текста.",
+        "11. «Нужность» (колонка 20, выпадающий список) — насколько нужна плановая позиция: «Скорее всего понадобится» или «Хотелось бы, но можно и отказаться». Пустая ячейка = «Скорее всего понадобится». Нераспознанное значение — ошибка импорта с номером строки.",
     ]
     for line in rules:
         ws2.append([line])

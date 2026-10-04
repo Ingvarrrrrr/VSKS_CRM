@@ -3,8 +3,8 @@
      закупкам». Вынесены в отдельный компонент (Правило №5 — SubsidyKpiCards.vue
      уже > 500 строк, новые карточки туда не дописываются, только один вызов).
      Поля ВСЕ приходят готовыми с бэкенда (redistributable/redistributable_by_kind/
-     planned_not_committed/committed_missing_fact_items/economy_total/
-     economy_no_planned_price_items — см. SubsidyRow в composables/subsidies/types.ts) —
+     redistributable_unplanned/planned_not_committed/committed_missing_fact_items/
+     economy_total/economy_no_planned_price_items — см. SubsidyRow в composables/subsidies/types.ts) —
      фронт ничего не считает (Правило №6). Рендерится внутри того же
      `.detail-kpis` контейнера родителя, чтобы глобальные стили
      `.subsidies-page .detail-kpis .kpi-card` (styles/subsidies.css) применились
@@ -20,8 +20,16 @@
         <div class="kpi-body">
           <div class="kpi-value">{{ redistributable != null ? formatCurrencyRound(redistributable) : '—' }}</div>
           <div class="kpi-label">Можно перераспределить</div>
-          <div v-if="redistributable != null" class="kpi-sub-note text-caption text-medium-emphasis">
-            не запланировано {{ formatCurrencyRound(free) }} (Свободно) + в плане без договоров {{ formatCurrencyRound(plannedNotCommitted) }}
+          <!-- Задача 1 (владелец, 04.10.2026): раньше одна строка «не
+               запланировано X (Свободно) + в плане без договоров Y» —
+               теперь три строки с разбивкой «в плане без договоров» по
+               статусу плановой позиции (not_committed_likely/_nice, см.
+               SubsidyRow в composables/subsidies/types.ts). «хотелось бы»
+               показываем даже при 0 ₽, чтобы категория была видна. -->
+          <div v-if="redistributable != null" class="kpi-sub-note kpi-redistributable-notes text-caption text-medium-emphasis">
+            <div class="kpi-redistributable-note-row">не запланировано: {{ formatCurrencyRound(redistributableUnplanned) }}</div>
+            <div class="kpi-redistributable-note-row">хотелось бы, можно отказаться: {{ formatCurrencyRound(notCommittedNice) }}</div>
+            <div class="kpi-redistributable-note-row">скорее всего понадобится, без договоров: {{ formatCurrencyRound(notCommittedLikely) }}</div>
           </div>
           <div v-if="isSplit" class="kpi-split-rows" @click.stop>
             <template v-if="splitRows.length">
@@ -67,14 +75,22 @@ import type { SubsidyRow } from '@/composables/subsidies/types'
 
 const props = defineProps<{
   subsidy: SubsidyRow | null
-  free: number
   isSplit: boolean
 }>()
 
 interface SplitRow { kind: ItemTypeKind; label: string; amount: number }
 
 const redistributable = computed(() => props.subsidy?.redistributable ?? null)
-const plannedNotCommitted = computed(() => props.subsidy?.planned_not_committed ?? 0)
+// Задача (владелец, 04.10.2026): «не запланировано» — redistributable_unplanned
+// с бэка (free, если бюджет задан, иначе 0.0), а не prop free, который фронт
+// раньше считал сам от РАСЧЁТНОЙ оценки бюджета (ctx.selectedBudget) — из-за
+// этого три строки карточки не сходились в сумму с «Можно перераспределить»
+// у субсидии без введённого бюджета. Одна точка расчёта — Правило №6.
+const redistributableUnplanned = computed(() => props.subsidy?.redistributable_unplanned ?? 0)
+// Задача 1 (владелец, 04.10.2026): разбивка «в плане без договоров» по
+// статусу плановой позиции — готовые поля бэкенда, ничего не считаем.
+const notCommittedLikely = computed(() => props.subsidy?.not_committed_likely ?? 0)
+const notCommittedNice = computed(() => props.subsidy?.not_committed_nice ?? 0)
 const committedMissingFactItems = computed(() => props.subsidy?.committed_missing_fact_items ?? 0)
 // null-безопасно (02.10.2026, приёмка): нет данных (поле не пришло или
 // бэкенд явно вернул null) — показываем «—», а не 0 ₽ (0 — это РЕАЛЬНОЕ
@@ -101,6 +117,18 @@ const splitRows = computed<SplitRow[]>(() => {
 .kpi-sub-note {
   margin-top: 4px;
   line-height: 1.3;
+}
+/* Задача 1 (04.10.2026): три строки вместо одной — каждая переносится
+   отдельно на мобильной ширине (~400px), не растягивает карточку в одну
+   длинную строку. */
+.kpi-redistributable-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kpi-redistributable-note-row {
+  white-space: normal;
+  word-break: break-word;
 }
 /* scoped-стиль родителя (SubsidyKpiCards.vue:534) до дочернего компонента не
    доходит (урок feedback_split_view_css_before_after_screenshots.md) —

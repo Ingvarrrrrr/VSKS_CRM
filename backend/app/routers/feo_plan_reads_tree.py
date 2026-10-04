@@ -363,6 +363,12 @@ async def get_plan_positions(
     прибавляет его к Σ плановых позиций категории, получая «занято по статье»
     (владелец: «занято = плановые позиции + непривязанные фактические, показывать
     отдельно, сколько из этого не привязано»).
+
+    `not_committed_raw` (kind='planned_item' только, владелец 04.10.2026, окно
+    PlanToOrderDialog «Что ещё заказать») — см. комментарий у поля ниже: другая
+    величина, чем `not_committed` (который None у закрытой позиции), совпадает
+    по формуле с карточкой «Можно перераспределить» (committed_amounts.
+    planned_item_contributions − committed_by_planned_item, без клэмпа).
     """
     from app.models.feo_planned_item import FeoPlannedItem
     from app.services.feo_plan import (
@@ -409,7 +415,7 @@ async def get_plan_positions(
     # (include_over_plan=True — та же трактовка, что node['committed'] из
     # compute_feo_plan_tree выше, ПРАВИЛО №6: не вторая формула).
     from app.services.committed_amounts import (
-        committed_consumption_by_category, committed_by_planned_item,
+        committed_consumption_by_category, committed_by_planned_item, planned_item_contributions,
     )
     committed_by_cat = await committed_consumption_by_category(db, [subsidy_id], include_over_plan=True)
 
@@ -496,6 +502,16 @@ async def get_plan_positions(
             fpi_ids = [it.id for it in fpi_rows]
             fpi_cons = await planned_item_consumption(db, fpi_ids, exclude_purchase_id, exclude_wish_id)
             fpi_committed = await committed_by_planned_item(db, fpi_ids)
+            # Задача «Что ещё заказать» (владелец, 04.10.2026, приёмка субсидии «ХО»
+            # id 75): окну PlanToOrderDialog нужен остаток, СОВПАДАЮЩИЙ с карточкой
+            # «Можно перераспределить» (subsidy_money_summary → compute_feo_plan_tree),
+            # а не с consumed/residual (план − потреблено). ПРАВИЛО №6 — не вторая
+            # формула: contribution берём из planned_item_contributions (та же точка,
+            # что leaf_items_not_committed_by_need_level использует для своей суммы).
+            # На тех же fpi_rows/условиях (feo_category_id in all_cats, is_active=True),
+            # поэтому category_ids = все категории субсидии воспроизводят ТОТ ЖЕ набор
+            # позиций без доп. фильтра.
+            contrib_map = await planned_item_contributions(db, [c.id for c in all_cats])
             for it in fpi_rows:
                 cat = cat_by_id.get(it.feo_category_id)
                 planned_total = float(it.amount or 0)
@@ -519,6 +535,9 @@ async def get_plan_positions(
                     # Товар/услуга/работа плановой позиции — показывается рядом с типом
                     # позиции закупки в «Привязать к плану» (владелец, 2026-09-30).
                     "item_type": it.item_type,
+                    # Статус «нужности» (владелец, 04.10.2026) — см.
+                    # app.services.plan_need_level.
+                    "need_level": it.need_level,
                     "planned_quantity": qty,
                     "unit": it.unit,
                     "planned_amount": planned_total,
@@ -559,6 +578,19 @@ async def get_plan_positions(
                     "savings": (planned_total - _committed_i["amount"]) if _closed_i else None,
                     "closed": _closed_i,
                     "committed_missing_fact_items": _committed_i["missing_fact_items"],
+                    # «Без договоров» для PlanToOrderDialog (владелец, 04.10.2026) —
+                    # НЕ то же самое, что not_committed выше (который None у закрытой
+                    # позиции — семантика FeoLevel5Panel, не трогаем). Здесь: вклад
+                    # позиции в план (contribution, см. planned_item_contributions —
+                    # учитывает замещение количеством у one_time-позиций) МИНУС
+                    # законтрактованная сумма ЭТОЙ позиции, БЕЗ клэмпа — ровно формула
+                    # leaf_items_not_committed_by_need_level (ПРАВИЛО №6, тот же
+                    # источник, что и карточка «Можно перераспределить»). Отрицательное
+                    # значение (законтрактовано дороже вклада в план) не скрываем —
+                    # решает фронт.
+                    "not_committed_raw": (
+                        contrib_map.get(it.id, {"amount": planned_total})["amount"] - _committed_i["amount"]
+                    ),
                 })
 
     result.sort(key=lambda x: x["path"])

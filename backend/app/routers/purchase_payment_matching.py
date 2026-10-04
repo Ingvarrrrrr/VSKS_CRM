@@ -118,6 +118,8 @@ def _payment_candidate_to_dict(c) -> dict:
         "basis_label": c.basis_label,
         "payment_number": c.payment_number,
         "payment_date": c.payment_date.isoformat() if c.payment_date else None,
+        "service_period": c.service_period,
+        "service_period_conflict": c.service_period_conflict,
     }
 
 
@@ -205,6 +207,11 @@ class AttachPaymentsRequest(BaseModel):
     group_key: str
     bank_payment_ids: List[int]
     allocations: Optional[dict] = None   # {purchase_id: amount}, только для одного bank_payment_id
+    # Задача 04.10.2026 («Помесячные платежи — разные месяцы»): необязательный
+    # явный выбор месяца оказания человеком — {purchase_id: "YYYY-MM-DD"}, нужен,
+    # когда app/services/payment_service_period.py не смог определить месяц сам
+    # (409 от attach с текстом про месяц) — см. ServicePeriodConflict-паттерн.
+    service_periods: Optional[dict] = None
 
 
 @router.post("/attach-payments")
@@ -218,7 +225,8 @@ async def attach_payments_endpoint(
     передать несколько сразу (каждый станет отдельной Payment-записью)."""
     await _get_subsidy_for_payments(data.subsidy_id, db, current_user)
     from app.services.payment_target import find_group
-    from app.services.payment_lookup import attach, PaymentAttachError
+    from app.services.payment_lookup import attach, PaymentAttachError, ServicePeriodAttachConflict
+    from app.services.payment_service_period import service_period_conflict_detail
 
     group = await find_group(db, data.subsidy_id, data.group_key)
     if not group:
@@ -228,8 +236,21 @@ async def attach_payments_endpoint(
     if data.allocations:
         allocations = {int(k): Decimal(str(v)) for k, v in data.allocations.items()}
 
+    service_periods = None
+    if data.service_periods:
+        from datetime import date as _dt_date
+        service_periods = {
+            int(k): (v if isinstance(v, _dt_date) else _dt_date.fromisoformat(str(v)))
+            for k, v in data.service_periods.items()
+        }
+
     try:
-        created = await attach(db, group, data.bank_payment_ids, allocations=allocations)
+        created = await attach(
+            db, group, data.bank_payment_ids, allocations=allocations, service_periods=service_periods,
+        )
+    except ServicePeriodAttachConflict as exc:
+        await db.rollback()
+        raise HTTPException(409, service_period_conflict_detail(str(exc), exc.purchase_id, exc.occupied_period))
     except PaymentAttachError as exc:
         await db.rollback()
         raise HTTPException(409, str(exc))

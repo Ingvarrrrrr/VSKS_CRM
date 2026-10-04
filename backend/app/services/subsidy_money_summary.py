@@ -64,12 +64,25 @@ app.routers.dashboard_charts.dashboard_charts — три отдельных вы
                             формула: redistributable = planned_not_committed,
                             redistributable_by_kind = planned_not_committed_by_kind.
 
+redistributable_unplanned           = free, когда задан бюджет (budget > 0);
+                            иначе 0.0 — «не запланировано от бюджета» не
+                            определено без бюджета (та же ветка budget>0/else,
+                            что у redistributable выше; не вторая формула —
+                            просто то же free, подставленное в карточку
+                            «Можно перераспределить» вместо prop, который
+                            фронт раньше считал сам от РАСЧЁТНОЙ оценки
+                            бюджета — владелец, 04.10.2026, задача про три
+                            строки карточки, которые не сходились в сумме).
+
 Инвариант (проверен test_subsidy_money_summary.py и совпадением с subsidy_stats
-/api/dashboard/charts): при заданном бюджете free + planned_not_committed ==
-redistributable == budget − committed (с точностью до копейки). Без бюджета
-(budget <= 0) инвариант иной: redistributable == planned_not_committed (budget
-в формулу не входит, free всё равно считается как budget − planned, т.е.
-может быть отрицательным/нулевым — это отдельное поле, не трогается)."""
+/api/dashboard/charts): redistributable_unplanned + not_committed_nice +
+not_committed_likely == redistributable — ДЛЯ ЛЮБОЙ субсидии, с бюджетом и без,
+с точностью до копейки. При заданном бюджете free + planned_not_committed ==
+redistributable == budget − committed. Без бюджета (budget <= 0) инвариант
+иной: redistributable == planned_not_committed (budget в формулу не входит,
+free всё равно считается как budget − planned, т.е. может быть
+отрицательным/нулевым — это отдельное поле, не трогается;
+redistributable_unplanned в этой ветке — 0.0, не free)."""
 from typing import Optional
 
 from sqlalchemy import select
@@ -80,13 +93,19 @@ from app.services.committed_amounts import subsidy_committed_totals
 from app.services.subsidy_budget import calculate_budgets_bulk, effective_subsidy_budget
 
 
-async def _plan_floor_added_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, float]:
-    """Σ node['plan_floor_added'] по КОРНЕВЫМ узлам compute_feo_plan_tree, на
-    субсидию — та же техника root-узлов, что subsidy_committed_totals
-    применяет к committed/plan_* (не вторая формула «пола плана», сам
-    plan_floor_added уже посчитан деревом через plan_floor_addition,
-    app.services.feo_plan_common — ЕДИНСТВЕННОЕ место этой формулы)."""
-    result: dict[int, float] = {sid: 0.0 for sid in subsidy_ids}
+async def _plan_floor_added_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
+    """{subsidy_id: {"plan_floor_added", "not_committed_likely", "not_committed_nice"}}
+    — Σ по КОРНЕВЫМ узлам compute_feo_plan_tree, на субсидию — та же техника
+    root-узлов, что subsidy_committed_totals применяет к committed/plan_* (не
+    вторая формула «пола плана»/«нужности» — оба поля уже посчитаны деревом:
+    plan_floor_added через plan_floor_addition, app.services.feo_plan_common;
+    not_committed_likely/not_committed_nice — Задача 2, владелец 04.10.2026,
+    см. compute_feo_plan_tree). Обе разбивки читаются ОДНИМ вызовом дерева,
+    второй раз его строить не нужно."""
+    result: dict[int, dict] = {
+        sid: {"plan_floor_added": 0.0, "not_committed_likely": 0.0, "not_committed_nice": 0.0}
+        for sid in subsidy_ids
+    }
     if not subsidy_ids:
         return result
     from app.services.feo_plan_tree import compute_feo_plan_tree
@@ -96,7 +115,9 @@ async def _plan_floor_added_by_subsidy(db: AsyncSession, subsidy_ids: list[int])
             continue
         sid = node.get("subsidy_id")
         if sid in result:
-            result[sid] += float(node.get("plan_floor_added", 0.0) or 0.0)
+            result[sid]["plan_floor_added"] += float(node.get("plan_floor_added", 0.0) or 0.0)
+            result[sid]["not_committed_likely"] += float(node.get("not_committed_likely", 0.0) or 0.0)
+            result[sid]["not_committed_nice"] += float(node.get("not_committed_nice", 0.0) or 0.0)
     return result
 
 
@@ -111,6 +132,7 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
         "planned_not_committed_by_kind": {"goods","services","unspecified"},
         "redistributable": float,             # budget − committed («Можно перераспределить»)
         "redistributable_by_kind": {"goods","services","unspecified"} | None,
+        "redistributable_unplanned": float,   # free, если budget > 0, иначе 0.0 («не запланировано» в карточке «Можно перераспределить»)
         "committed_missing_fact_items": int,  # позиций в договоре без суммы договора (fallback по плановой цене)
         "plan_floor_added": float,            # сумма «пола плана» (закрытые позиции без собственного плана) узлов субсидии
     }} — см. докстринг модуля для источника каждого поля (ПРАВИЛО №6: ни одно
@@ -177,8 +199,10 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
         # модуля).
         if budget > 0:
             redistributable = budget - committed
+            redistributable_unplanned = budget - planned  # = free, та же ветка budget>0
         else:
             redistributable = planned - committed
+            redistributable_unplanned = 0.0  # нет бюджета — «не запланировано от бюджета» не определено
             if redistributable_by_kind is None:
                 redistributable_by_kind = dict(planned_not_committed_by_kind)
 
@@ -192,8 +216,13 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
             "planned_not_committed_by_kind": planned_not_committed_by_kind,
             "redistributable": redistributable,
             "redistributable_by_kind": redistributable_by_kind,
+            "redistributable_unplanned": redistributable_unplanned,
             "committed_missing_fact_items": _committed.get("committed_missing_fact_items", 0),
-            "plan_floor_added": plan_floor_map.get(sid, 0.0),
+            "plan_floor_added": plan_floor_map.get(sid, {}).get("plan_floor_added", 0.0),
+            # Задача 2 (владелец, 04.10.2026) — разбивка planned_not_committed
+            # по статусу плановой позиции (need_level), см. compute_feo_plan_tree.
+            "not_committed_likely": plan_floor_map.get(sid, {}).get("not_committed_likely", 0.0),
+            "not_committed_nice": plan_floor_map.get(sid, {}).get("not_committed_nice", 0.0),
         }
 
     return result

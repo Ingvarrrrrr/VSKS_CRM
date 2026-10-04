@@ -34,7 +34,7 @@ from app.services.committed_amounts import FRAMEWORK_COMMITTED_STATUSES, SINGLE_
 # для полного пояснения; effective_amount_expr/aggregate_scope_expr уже применены
 # во всех местах ниже, где раньше были точечные COALESCE(...).
 from app.services.purchase_amounts import effective_amount_expr
-from app.services.dashboard_monthly_accrual import compute_monthly_ordered_map
+from app.services.dashboard_monthly_accrual import compute_monthly_ordered_map, compute_monthly_future_map
 # План B (ancient-prancing-music.md, раздел B) — товары/услуги/без типа по этапам
 # (?type_split=true) и по «Бюджет (ФЭО)»/«Запланировано» — оба читаются отсюда,
 # единственный источник (Правило №6), никакой второй копии формул типа/долей.
@@ -400,10 +400,22 @@ async def dashboard_charts(
         monthly_ordered_map = await compute_monthly_ordered_map(
             db, lambda q: _apply_purchase_org_filter(q, current_user, subsidy_ids=visible_subsidy_ids)
         )
+        # Задача 3 (владелец, 04.10.2026) — будущие помесячные платежи до конца
+        # года субсидии, тот же фильтр видимости, что и monthly_ordered_map.
+        monthly_future_map = await compute_monthly_future_map(
+            db, lambda q: _apply_purchase_org_filter(q, current_user, subsidy_ids=visible_subsidy_ids)
+        )
     else:
         monthly_ordered_map = await compute_monthly_ordered_map(
             db, lambda q: _apply_purchase_org_filter(q, current_user, org_ids)
         )
+        monthly_future_map = await compute_monthly_future_map(
+            db, lambda q: _apply_purchase_org_filter(q, current_user, org_ids)
+        )
+    # Общий итог — та же техника, что monthly_payments_total выше (Σ по
+    # субсидиям в scope, без песочниц — monthly_future_map строится по уже
+    # отфильтрованным apply_filter строкам, второй фильтр не нужен).
+    monthly_future_to_year_end_total = float(sum(monthly_future_map.values()))
 
     # Контракт API (PLAN.md шаг 1-2/5, п. A, ревью 02.10.2026): «Свободно»/
     # «законтрактовано»/«В плане без договоров»/«Можно перераспределить» —
@@ -475,6 +487,11 @@ async def dashboard_charts(
             # Справочно: какая часть total_ordered выше — из помесячного начисления (для отладки/подписи).
             # УЖЕ ВХОДИТ в total_ordered, не складывать повторно.
             "monthly_ordered_accrued": monthly_ordered_map.get(row.id, 0.0),
+            # Задача 3 (владелец, 04.10.2026) — оставшиеся помесячные платежи
+            # ДО КОНЦА ГОДА субсидии (app.services.dashboard_monthly_accrual.
+            # compute_monthly_future_map, ПРАВИЛО №6 — тот же разбор графика,
+            # что и monthly_ordered_accrued, не вторая формула).
+            "monthly_future_to_year_end": monthly_future_map.get(row.id, 0.0),
             "total_feo_planned": feo_planned_map.get(row.id, 0.0),  # NEW 12-01: SUM FeoPlannedItem.amount
             "planned_tree": planned_tree,  # единый источник: план дерева ФЭО (ручные + заявки)
             "feo_budget_total": effective_budget,
@@ -496,6 +513,11 @@ async def dashboard_charts(
             "committed_by_kind": _money.get("committed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
             "planned_not_committed": _money.get("planned_not_committed", planned_tree - _money.get("committed", 0.0)),
             "planned_not_committed_by_kind": _money.get("planned_not_committed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+            # Задача 2 (владелец, 04.10.2026) — разбивка «В плане без договоров»
+            # по статусу плановой позиции (need_level: likely/nice_to_have),
+            # ОДНА точка расчёта — subsidy_money_summary (см. импорт выше).
+            "not_committed_likely": _money.get("not_committed_likely", 0.0),
+            "not_committed_nice": _money.get("not_committed_nice", 0.0),
             "redistributable": _money.get("redistributable", effective_budget - _money.get("committed", 0.0)),
             # ИСПРАВЛЕНО 04.10.2026: раньше здесь жёстко стояло None (комментарий
             # «байт-в-байт прежнее поведение») — из-за этого «Можно
@@ -506,6 +528,10 @@ async def dashboard_charts(
             # докстринг subsidy_money_summary.py). Читаем как остальные поля
             # этого блока — ОДНА точка расчёта, без второго механизма здесь.
             "redistributable_by_kind": _money.get("redistributable_by_kind"),
+            # Задача (владелец, 04.10.2026) — «не запланировано» строкой карточки
+            # «Можно перераспределить»: free, если бюджет задан, иначе 0.0 — ОДНА
+            # точка расчёта, см. докстринг subsidy_money_summary.py.
+            "redistributable_unplanned": _money.get("redistributable_unplanned", 0.0),
             # ИСПРАВЛЕНО 02.10.2026: economy_total=None (ни одна позиция субсидии
             # не измерена) пропускается как null, не форсится в 0.0 — см.
             # purchase_economy.py docstring.
@@ -668,6 +694,9 @@ async def dashboard_charts(
             "amount": so_amt_strict + sd_amt + spd_amt + monthly_ordered_total,
             "count":  so_cnt_strict + sd_cnt + spd_cnt,
             "monthly_payments_total": monthly_payments_total,
+            # Задача 3 (владелец, 04.10.2026) — общий итог «оставшиеся помесячные
+            # платежи до конца года», рядом с monthly_payments_total.
+            "monthly_future_to_year_end": monthly_future_to_year_end_total,
         },
         # накопительно: stage_delivered_unpaid + stage_paid
         "delivered": {

@@ -74,6 +74,14 @@ class Payment(Base):
     basis_key = Column(String(300), nullable=True)
     basis_label = Column(String(300), nullable=True)    # человекочитаемая подпись, напр. «УПД 6 от 20.02.2026»
 
+    # Задача 04.10.2026 («Помесячные платежи — разные месяцы»): месяц оказания
+    # услуги (первое число месяца) для платежей помесячных закупок
+    # (Purchase.is_monthly_payment=True) — см. app/services/payment_service_period.py.
+    # NULL для всех платежей не помесячных закупок. Уникален в паре с purchase_id
+    # (частичный индекс, см. миграцию p2q4r6s8t0v2), пока matched_confirmed —
+    # тот же паттерн защиты, что у basis_key выше.
+    service_period = Column(Date, nullable=True)
+
     contract = relationship("Contract")
     purchase = relationship("Purchase")
     bank_payment = relationship("BankPayment", back_populates="payments")

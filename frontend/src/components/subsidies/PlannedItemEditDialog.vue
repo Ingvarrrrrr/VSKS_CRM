@@ -68,6 +68,15 @@
           variant="outlined" density="compact"
           class="mb-2"
         />
+        <!-- Статус «нужности» позиции (владелец, 04.10.2026) — NEED_LEVEL_OPTIONS
+             единственный источник вариантов (@/utils/planNeedLevel.ts, Правило №6). -->
+        <v-select
+          v-model="p.editPlannedDialog.value.need_level"
+          :items="NEED_LEVEL_OPTIONS"
+          label="Нужность"
+          variant="outlined" density="compact"
+          class="mb-2"
+        />
         <!-- Происхождение (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ галочки, тот же
              смысл, что и в диалоге создания. Правка доступна только тому, кто может
              редактировать ФЭО — этот диалог уже за той же вкладкой (feo_categories). -->
@@ -233,6 +242,7 @@
 import { useDisplay } from 'vuetify'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
+import { NEED_LEVEL_OPTIONS } from '@/utils/planNeedLevel'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { usePlannedItems } from '@/composables/subsidies/usePlannedItems'
 import FeoItemHistory from '@/components/subsidies/FeoItemHistory.vue'

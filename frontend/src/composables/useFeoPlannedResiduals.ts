@@ -87,6 +87,21 @@ export interface FeoPlanPosition {
    *  composite_group_metrics (backend/app/services/feo_plan_common.py) и
    *  planExcessFor (useItemsFeo.ts), FeoPlannedItemRow.vue (чип «составная»). */
   is_composite?: boolean
+  /** Статус «нужности» (владелец, 04.10.2026) — ТОЛЬКО у kind='planned_item'
+   *  (см. backend FeoPlannedItem.need_level, @/utils/planNeedLevel.ts). Строки
+   *  kind='plan_position'/'feo_article' (план без отдельной записи) его не
+   *  несут — needLevelOf() трактует отсутствие как 'likely'. */
+  need_level?: 'likely' | 'nice_to_have' | null
+  /** «Без договоров» (владелец, 04.10.2026, окно PlanToOrderDialog «Что ещё
+   *  заказать») — ТОЛЬКО у kind='planned_item'. НЕ то же самое, что
+   *  `not_committed` выше (который null у закрытой позиции — семантика
+   *  FeoLevel5Panel.vue, не трогаем): это вклад позиции в план (contribution,
+   *  см. backend committed_amounts.planned_item_contributions — учитывает
+   *  замещение количеством у one_time-позиций) МИНУС законтрактованная сумма
+   *  ЭТОЙ позиции, БЕЗ клэмпа в ноль/null (может быть отрицательным — решает
+   *  UI). Та же формула, что leaf_items_not_committed_by_need_level и карточка
+   *  «Можно перераспределить» (ПРАВИЛО №6). */
+  not_committed_raw?: number
 }
 
 /** @deprecated старое имя интерфейса (было завязано на /feo-planned-items/residuals) —

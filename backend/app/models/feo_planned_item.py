@@ -128,6 +128,12 @@ class FeoPlannedItem(Base):
     # цены) не меняется ни для одной существующей позиции. См. миграцию
     # u1v2w3x4y5z6_feo_planned_item_is_composite.py.
     is_composite = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    # Статус «нужности» позиции (владелец, 04.10.2026): 'likely' — «Скорее
+    # всего понадобится» (умолчание, все существующие позиции); 'nice_to_have' —
+    # «Хотелось бы, но можно и отказаться». Константы/подписи — ЕДИНОЕ место
+    # app.services.plan_need_level (ПРАВИЛО №6). См. миграцию
+    # p1q3r5s7t9v1_feo_planned_item_need_level.py.
+    need_level = Column(String(20), nullable=False, server_default="likely")
 
     feo_category = relationship(
         "FeoCategory",

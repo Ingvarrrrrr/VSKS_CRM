@@ -37,7 +37,7 @@
             </template>
           </td>
           <td class="text-right text-body-2" :class="row.economy == null ? 'text-medium-emphasis' : (row.economy < 0 ? 'text-error' : 'text-success')">
-            {{ row.economy_pct != null ? `${row.economy_pct}%` : '—' }}
+            {{ row.economy_pct != null ? `${formatPercent(row.economy_pct)}%` : '—' }}
           </td>
         </tr>
         <tr v-if="!loading && rows.length === 0">
@@ -55,6 +55,17 @@
 import { computed } from 'vue'
 import type { EconomyByMethodRow } from '@/composables/dashboard/useEconomyByMethod'
 import { formatEconomyUnmeasuredText, type EconomyUnmeasuredByReason } from '@/utils/economyUnmeasured'
+
+// Приёмка 04.10.2026: «Экономия %» отдавала сырое число (1.9223908221607067%)
+// — округляем до 1 знака, тот же ru-RU toLocaleString, что formatCurrency
+// (frontend/src/composables/subsidies/format.ts) — отдельного форматтера
+// процентов в проекте нет (grep не нашёл), поэтому берём ту же конвенцию
+// (запятая как разделитель, см. ceiling_committed_percent в SubsidyKpiCards.vue —
+// там бэкенд уже округляет сам; здесь округляем на фронте, т.к. бэкенд отдаёт
+// сырое деление).
+function formatPercent(v: number): string {
+  return v.toLocaleString('ru-RU', { maximumFractionDigits: 1 })
+}
 
 const props = defineProps<{
   rows: EconomyByMethodRow[]

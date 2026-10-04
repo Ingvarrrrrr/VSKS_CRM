@@ -66,6 +66,21 @@ export interface SubsidyRow {
   planned_not_committed_by_kind?: { goods: number; services: number; unspecified: number } | null
   redistributable?: number | null
   redistributable_by_kind?: { goods: number; services: number; unspecified: number } | null
+  // Задача (владелец, 04.10.2026): «не запланировано» строкой карточки «Можно
+  // перераспределить» — free, если бюджет задан, иначе 0.0. Одна точка
+  // расчёта — subsidy_money_summary.py (Правило №6), фронт больше НЕ считает
+  // free сам (см. SubsidyMoneyCards.vue).
+  redistributable_unplanned?: number | null
+  // Задача 2 (владелец, 04.10.2026) — разбивка «В плане без договоров» по
+  // статусу плановой позиции (need_level), одна точка расчёта —
+  // subsidy_money_summary (см. backend/app/routers/dashboard_charts.py).
+  // Сумма not_committed_likely + not_committed_nice == planned_not_committed.
+  not_committed_likely?: number | null
+  not_committed_nice?: number | null
+  // Задача 3 (владелец, 04.10.2026) — сколько ещё уйдёт помесячно по уже
+  // заключённым помесячным договорам до конца года (app.services.
+  // dashboard_monthly_accrual.compute_monthly_future_map).
+  monthly_future_to_year_end?: number | null
   economy_total?: number | null
   economy_no_planned_price_items?: number | null
   // ИСПРАВЛЕНО 02.10.2026 (база экономии — плановая позиция FeoPlannedItem,
@@ -246,6 +261,10 @@ export interface FeoPlannedItem {
   not_committed?: number | null
   savings?: number | null
   closed?: boolean
+  // Статус «нужности» (владелец, 04.10.2026) — 'likely'/'nice_to_have', см.
+  // @/utils/planNeedLevel.ts (Правило №6, единственный источник подписей) и
+  // backend/app/services/plan_need_level.py.
+  need_level?: 'likely' | 'nice_to_have' | null
 }
 
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура

@@ -9,7 +9,7 @@
 """
 from datetime import date
 from decimal import Decimal
-from typing import Callable
+from typing import Callable, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +36,70 @@ def _calendar_months(start: date, end: date) -> int:
     return k
 
 
+_MONTHLY_PURCHASE_COLUMNS = (
+    Purchase.id, Purchase.subsidy_id, Purchase.contract_price, Purchase.planned_total_price,
+    Purchase.monthly_payment_count, Purchase.monthly_payment_amount,
+    Purchase.service_start_date, Purchase.service_end_date,
+    Purchase.service_deadline_date, Purchase.contract_date,
+)
+_MONTHLY_PURCHASE_STATUSES = ["contracted", "ordered", "delivered", "paid"]
+
+
+class _MonthlyBasis:
+    """Общие для «начислено»/«остаток до конца года» величины ОДНОЙ помесячной
+    закупки — Задача 3 (владелец, 04.10.2026): compute_monthly_future_map не
+    копирует разбор строки compute_monthly_ordered_map, оба читают эту же
+    функцию (ПРАВИЛО №6 — одна точка разбора графика платежей)."""
+    __slots__ = ("start", "count_cap", "amount_per_month", "contract_total")
+
+    def __init__(self, start, count_cap, amount_per_month, contract_total):
+        self.start = start
+        self.count_cap = count_cap
+        self.amount_per_month = amount_per_month
+        self.contract_total = contract_total
+
+
+def _monthly_schedule_basis(r) -> Optional[_MonthlyBasis]:
+    """Разбор ОДНОЙ строки _MONTHLY_PURCHASE_COLUMNS в общие величины графика
+    платежа — start/count_cap (потолок по кол-ву месяцев, если задан)/
+    amount_per_month/contract_total. None — расчёт невозможен (нет точки
+    отсчёта, либо ни суммы платежа, ни способа её вывести)."""
+    start = r.service_start_date or r.contract_date
+    if not start:
+        return None  # нет точки отсчёта — начисление не делаем
+
+    count_cap = r.monthly_payment_count
+    if not count_cap:
+        period_end = r.service_end_date or r.service_deadline_date
+        derived = _calendar_months(start, period_end) if period_end else 0
+        count_cap = derived or None  # None = потолка по месяцам нет
+
+    contract_total = r.contract_price if r.contract_price is not None else r.planned_total_price
+
+    amount_per_month = r.monthly_payment_amount
+    if amount_per_month is None:
+        if contract_total is not None and r.monthly_payment_count:
+            amount_per_month = Decimal(contract_total) / Decimal(r.monthly_payment_count)
+        else:
+            return None  # ни суммы платежа, ни способа её вывести — начисление не делаем
+
+    return _MonthlyBasis(start, count_cap, Decimal(amount_per_month), contract_total)
+
+
+def _accrued_months_and_amount(basis: _MonthlyBasis, months_elapsed: int) -> tuple:
+    """(months_to_pay, accrued) — те самые величины, что считает
+    compute_monthly_ordered_map, вынесены сюда, чтобы compute_monthly_future_map
+    мог вычесть «уже начислено» из общего окна графика (Задача 3, ПРАВИЛО №6:
+    тот же порог/клэмп, не вторая формула)."""
+    months_to_pay = min(months_elapsed, basis.count_cap) if basis.count_cap else months_elapsed
+    if months_to_pay <= 0:
+        return 0, Decimal(0)
+    accrued = basis.amount_per_month * Decimal(months_to_pay)
+    if basis.contract_total is not None:
+        accrued = min(accrued, Decimal(basis.contract_total))  # итог не превышает сумму договора/плана
+    return months_to_pay, accrued
+
+
 async def compute_monthly_ordered_map(
     db: AsyncSession,
     apply_filter: Callable,
@@ -58,14 +122,9 @@ async def compute_monthly_ordered_map(
     стороной с нужными current_user/org_ids/visible_subsidy_ids.
     """
     monthly_q = (
-        select(
-            Purchase.subsidy_id, Purchase.contract_price, Purchase.planned_total_price,
-            Purchase.monthly_payment_count, Purchase.monthly_payment_amount,
-            Purchase.service_start_date, Purchase.service_end_date,
-            Purchase.service_deadline_date, Purchase.contract_date,
-        )
+        select(*_MONTHLY_PURCHASE_COLUMNS)
         .where(Purchase.is_monthly_payment == True)
-        .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+        .where(Purchase.status.in_(_MONTHLY_PURCHASE_STATUSES))
     )
     monthly_q = apply_filter(monthly_q)
     monthly_rows = (await db.execute(monthly_q)).all()
@@ -73,39 +132,84 @@ async def compute_monthly_ordered_map(
     monthly_ordered_map: dict = {}
     _today = date.today()
     for r in monthly_rows:
-        start = r.service_start_date or r.contract_date
-        if not start:
-            continue  # нет точки отсчёта — начисление не делаем
+        basis = _monthly_schedule_basis(r)
+        if basis is None:
+            continue
 
-        months_elapsed = _calendar_months(start, _today)
+        months_elapsed = _calendar_months(basis.start, _today)
         if months_elapsed <= 0:
             continue
 
-        count_cap = r.monthly_payment_count
-        if not count_cap:
-            period_end = r.service_end_date or r.service_deadline_date
-            derived = _calendar_months(start, period_end) if period_end else 0
-            count_cap = derived or None  # None = потолка по месяцам нет
-
-        months_to_pay = min(months_elapsed, count_cap) if count_cap else months_elapsed
-        if months_to_pay <= 0:
+        _months_to_pay, accrued = _accrued_months_and_amount(basis, months_elapsed)
+        if accrued <= 0:
             continue
-
-        amount_per_month = r.monthly_payment_amount
-        if amount_per_month is None:
-            contract_total = r.contract_price if r.contract_price is not None else r.planned_total_price
-            if contract_total is not None and r.monthly_payment_count:
-                amount_per_month = Decimal(contract_total) / Decimal(r.monthly_payment_count)
-            else:
-                continue  # ни суммы платежа, ни способа её вывести — начисление не делаем
-
-        accrued = Decimal(amount_per_month) * Decimal(months_to_pay)
-
-        contract_total = r.contract_price if r.contract_price is not None else r.planned_total_price
-        if contract_total is not None:
-            accrued = min(accrued, Decimal(contract_total))  # итог не превышает сумму договора/плана
 
         if r.subsidy_id is not None:
             monthly_ordered_map[r.subsidy_id] = monthly_ordered_map.get(r.subsidy_id, 0.0) + float(accrued)
 
     return monthly_ordered_map
+
+
+async def compute_monthly_future_map(
+    db: AsyncSession,
+    apply_filter: Callable,
+) -> dict:
+    """SUM будущих помесячных платежей ДО КОНЦА ГОДА субсидии, сгруппировано
+    по subsidy_id — Задача 3 (владелец, 04.10.2026, план .planning/quick/
+    2026-10-04-sheet-ideas): «что ещё придётся заплатить по ежемесячным
+    договорам в этом году».
+
+    По КАЖДОЙ помесячной закупке (тот же отбор, что и compute_monthly_ordered_map
+    — is_monthly_payment=true, статус от «Договор заключён», тот же apply_filter) —
+    оставшиеся месяцы от текущего (ПОСЛЕ уже начисленных compute_monthly_ordered_map,
+    _accrued_months_and_amount — ПРАВИЛО №6, тот же порог/клэмп, не вторая
+    формула) до min(service_end_date/service_deadline_date, 31 декабря ГОДА
+    СУБСИДИИ закупки, Subsidy.year), умноженные на monthly_payment_amount, не
+    больше «цена договора/план − уже начислено».
+
+    apply_filter — см. docstring compute_monthly_ordered_map (тот же фильтр
+    видимости org/subsidy).
+    """
+    from app.models.subsidy import Subsidy
+
+    monthly_q = (
+        select(*_MONTHLY_PURCHASE_COLUMNS, Subsidy.year.label("subsidy_year"))
+        .join(Subsidy, Subsidy.id == Purchase.subsidy_id)
+        .where(Purchase.is_monthly_payment == True)
+        .where(Purchase.status.in_(_MONTHLY_PURCHASE_STATUSES))
+    )
+    monthly_q = apply_filter(monthly_q)
+    monthly_rows = (await db.execute(monthly_q)).all()
+
+    monthly_future_map: dict = {}
+    _today = date.today()
+    for r in monthly_rows:
+        basis = _monthly_schedule_basis(r)
+        if basis is None:
+            continue
+        if r.subsidy_id is None or r.subsidy_year is None:
+            continue  # нет субсидии/года субсидии — нечем ограничить «до конца года»
+
+        months_elapsed = _calendar_months(basis.start, _today)
+        months_to_pay, accrued = _accrued_months_and_amount(basis, max(months_elapsed, 0))
+
+        year_end = date(r.subsidy_year, 12, 31)
+        period_end = r.service_end_date or r.service_deadline_date
+        window_end = min(period_end, year_end) if period_end else year_end
+        total_window_months = _calendar_months(basis.start, window_end)
+        if basis.count_cap:
+            total_window_months = min(total_window_months, basis.count_cap)
+
+        future_months = max(0, total_window_months - months_to_pay)
+        if future_months <= 0:
+            continue
+
+        future_amount = basis.amount_per_month * Decimal(future_months)
+        if basis.contract_total is not None:
+            remaining_cap = max(Decimal(0), Decimal(basis.contract_total) - accrued)
+            future_amount = min(future_amount, remaining_cap)
+
+        if future_amount > 0:
+            monthly_future_map[r.subsidy_id] = monthly_future_map.get(r.subsidy_id, 0.0) + float(future_amount)
+
+    return monthly_future_map

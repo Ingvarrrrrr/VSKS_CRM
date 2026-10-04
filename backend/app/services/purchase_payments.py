@@ -13,10 +13,29 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import Payment
 from app.models.purchase import Purchase
+
+
+class ServicePeriodConflict(Exception):
+    """Платёж помесячной закупки не удалось однозначно отнести к месяцу оказания
+    (см. app/services/payment_service_period.py::resolve_service_period) — платёж
+    НЕ создан молча, вызывающий роутер превращает это в HTTP 409 (тот же паттерн,
+    что PaymentAttachError в app/services/payment_lookup.py).
+
+    purchase_id/occupied_period — структурированные поля для detail 409-ответа
+    (см. app/services/payment_service_period.py::service_period_conflict_detail,
+    ПРАВИЛО №6 — один хелпер формирования, не копия в каждом роутере); оба
+    необязательны — race-backstop (IntegrityError на flush) не привязан к одной
+    закупке/месяцу, там известен только текст."""
+
+    def __init__(self, message: str, purchase_id: Optional[int] = None, occupied_period=None):
+        super().__init__(message)
+        self.purchase_id = purchase_id
+        self.occupied_period = occupied_period
 
 
 async def find_manual_match(
@@ -148,6 +167,7 @@ async def create_payments_from_bank(
     db: AsyncSession,
     bank_payment_id: int,
     purchase_ids: list[int],
+    service_period_overrides: Optional[dict] = None,
 ) -> list:
     """После того как менеджер подтвердил матч (matched_confirmed=true на BankPayment
     через PATCH /confirm), создать N Payment-записей для указанных закупок.
@@ -155,13 +175,26 @@ async def create_payments_from_bank(
     Если purchase_ids = [pid_1] → одна запись.
     Если purchase_ids = [pid_1, pid_2, pid_3] → 3 записи с РАВНОЙ долей суммы
     (split по числу закупок). Менеджер может потом скорректировать суммы вручную.
-    """
+
+    Для помесячных закупок (Purchase.is_monthly_payment=True) каждой записи
+    проставляется service_period — см. app/services/payment_service_period.py.
+    При неоднозначности (месяц уже занят / свободных не осталось) платёж НЕ
+    создаётся молча — бросается ServicePeriodConflict, если только вызывающий
+    код не передал месяц явно в service_period_overrides={purchase_id: date}
+    (выбор человека, см. эндпоинт подтверждения)."""
     from app.models.bank_statement import BankPayment
+    from app.services.payment_service_period import resolve_service_period
+    from app.services.payment_basis import (
+        expense_code as _expense_code,
+        extract_basis as _extract_basis,
+        basis_key as _basis_key,
+    )
     bp = await db.get(BankPayment, bank_payment_id)
     if not bp:
         raise ValueError(f"BankPayment {bank_payment_id} not found")
 
     tolerance_default = Decimal("0.02")
+    overrides = service_period_overrides or {}
 
     n = len(purchase_ids)
     if n == 0:
@@ -170,13 +203,45 @@ async def create_payments_from_bank(
     # Равная доля. Если хочется по-другому — менеджер правит руками после.
     share = (Decimal(str(bp.amount)) / n).quantize(Decimal("0.01")) if bp.amount else Decimal(0)
 
+    # Этап 3 плана (payment_basis.py) раньше заполнялся только через
+    # app/services/payment_lookup.py::attach — этот путь (create_payments_from_bank)
+    # создавал Payment без basis_key вовсе, и уникальный частичный индекс
+    # ix_payments_purchase_basis_key_uniq ничего не защищал. Считаем один раз на bp.
+    _basis = _extract_basis(bp)
+    _code = _expense_code(bp)
+    _bk = _basis_key(bp)
+
     created = []
     for pid in purchase_ids:
+        purchase = await db.get(Purchase, pid)
+
         # Владелец (2026-08-19): если на этой закупке уже есть ручной
         # неподтверждённый платёж с тем же номером/датой/суммой — схлопываем
         # выписку В него (подтверждаем), а не заводим вторую запись, иначе
         # сумма закупки после загрузки выписки удвоится.
         existing_manual = await find_manual_match(db, pid, bp.payment_number, bp.payment_date, share)
+
+        # Задача 04.10.2026 («Помесячные платежи — разные месяцы»): для
+        # помесячной закупки определяем месяц оказания ДО записи платежа —
+        # см. app/services/payment_service_period.py. Явный выбор человека
+        # (overrides) приоритетнее авто-резолва; при конфликте без выбора —
+        # не создаём платёж молча (ServicePeriodConflict → 409 в роутере).
+        override = overrides.get(pid)
+        if override is not None:
+            service_period = override
+        elif purchase is not None and purchase.is_monthly_payment:
+            exclude_id = existing_manual.id if existing_manual is not None else None
+            sp_result = await resolve_service_period(db, purchase, bp, exclude_payment_id=exclude_id)
+            if sp_result.conflict:
+                raise ServicePeriodConflict(
+                    f"Закупка №{pid}: не удалось однозначно определить месяц оказания — {sp_result.conflict}",
+                    purchase_id=pid,
+                    occupied_period=sp_result.occupied_period,
+                )
+            service_period = sp_result.period
+        else:
+            service_period = None
+
         if existing_manual is not None:
             # Заглушка «Импорта факта» (import_run_id задан, номер и дата
             # пустые — см. find_manual_match) с суммой БОЛЬШЕ, чем покрывает
@@ -203,6 +268,13 @@ async def create_payments_from_bank(
                     payment_source="statement",
                     confirmed_by_statement=True,
                     import_run_id=existing_manual.import_run_id,
+                    service_period=service_period,
+                    expense_code=_code,
+                    basis_kind=_basis.kind,
+                    basis_number=_basis.number,
+                    basis_date=_basis.date,
+                    basis_key=_bk,
+                    basis_label=_basis.label,
                 )
                 db.add(pay)
                 created.append(pay)
@@ -217,6 +289,13 @@ async def create_payments_from_bank(
             existing_manual.amount = share
             existing_manual.payment_purpose = (bp.purpose_text or "")[:500]
             existing_manual.contract_id = bp.matched_contract_id
+            existing_manual.service_period = service_period
+            existing_manual.expense_code = _code
+            existing_manual.basis_kind = _basis.kind
+            existing_manual.basis_number = _basis.number
+            existing_manual.basis_date = _basis.date
+            existing_manual.basis_key = _bk
+            existing_manual.basis_label = _basis.label
             created.append(existing_manual)
             continue
 
@@ -231,12 +310,27 @@ async def create_payments_from_bank(
             matched_confirmed=True,
             payment_source="statement",
             confirmed_by_statement=True,
+            service_period=service_period,
+            expense_code=_code,
+            basis_kind=_basis.kind,
+            basis_number=_basis.number,
+            basis_date=_basis.date,
+            basis_key=_bk,
+            basis_label=_basis.label,
         )
         db.add(pay)
         created.append(pay)
 
     bp.matched_confirmed = True
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # Частичные уникальные индексы (basis_key / service_period, см. миграции
+        # ix_payments_purchase_basis_key_uniq и p2q4r6s8t0v2) — race condition
+        # backstop, тот же паттерн, что app/services/payment_lookup.py::attach.
+        raise ServicePeriodConflict(
+            f"Платёж №{bp.id} конфликтует с уже существующей записью (назначение/месяц уже заняты)"
+        ) from exc
 
     # Этап 0 (попутная гигиена): аванс-отчёт из назначения платежа перезаписывает
     # contract_number/date ТОЛЬКО сейчас, в момент реального подтверждения матча —

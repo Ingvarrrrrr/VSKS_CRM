@@ -27,6 +27,13 @@
               <div class="kpi-monthly" v-if="card.monthly !== null">
                 в т.ч. ежемесячные платежи: {{ formatCurrencyShort(card.monthly!) }} /мес
               </div>
+              <!-- Задачи 1-2 (04.10.2026): несколько строк подписи (напр.
+                   «Можно перераспределить» — 3 строки разбивки) — card.notes
+                   приходит готовым массивом из useDashboardData.ts, здесь
+                   только отрисовка. -->
+              <div v-if="card.notes && card.notes.length" class="kpi-notes">
+                <div v-for="(line, i) in card.notes" :key="i" class="kpi-monthly kpi-notes-row">{{ line }}</div>
+              </div>
               <div class="kpi-monthly" v-if="card.note">{{ card.note }}</div>
               <!-- Раздел C (план ancient-prancing-music.md, 21.09): две строки товары/
                    услуги (+ «без типа», если не ноль) при включённом переключателе —
@@ -119,6 +126,18 @@ function fmtSplit(v: number): string {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* Задачи 1-2 (04.10.2026): несколько строк подписи карточки «Можно
+   перераспределить» — каждая своей строкой, переносится на мобильной
+   ширине (.kpi-monthly ниже уже не задаёт white-space:nowrap — см. global
+   <style> в DashboardView.vue). */
+.kpi-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.kpi-notes-row {
+  margin-top: 0;
 }
 .kpi-split-row {
   display: flex;

@@ -102,6 +102,11 @@ class FeoPlannedItemCreate(BaseModel):
     # собой (MAX, не сумма), цена за единицу группы сравнивается с планом как
     # сумма цен строк. Дефолт False — старое поведение.
     is_composite: bool = False
+    # Статус «нужности» позиции (владелец, 04.10.2026) — 'likely'/'nice_to_have',
+    # см. app.services.plan_need_level (ПРАВИЛО №6, единственное место констант/
+    # подписей) и миграцию p1q3r5s7t9v1. Дефолт 'likely' — поведение всех
+    # существующих позиций не меняется.
+    need_level: str = "likely"
 
 class FeoPlannedItemOut(FeoPlannedItemCreate):
     id: int

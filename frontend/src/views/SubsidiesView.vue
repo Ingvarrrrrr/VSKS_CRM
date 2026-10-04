@@ -500,6 +500,13 @@ async function loadAll() {
       planned_not_committed_by_kind: s.planned_not_committed_by_kind ?? null,
       redistributable: s.redistributable ?? null,
       redistributable_by_kind: s.redistributable_by_kind ?? null,
+      redistributable_unplanned: s.redistributable_unplanned ?? null,
+      // Задачи 2-3 (владелец, 04.10.2026): разбивка «в плане без договоров»
+      // по need_level + остаток помесячного до конца года — готовые поля
+      // /dashboard/charts, ничего не считаем (Правило №6).
+      not_committed_likely: s.not_committed_likely ?? null,
+      not_committed_nice: s.not_committed_nice ?? null,
+      monthly_future_to_year_end: s.monthly_future_to_year_end ?? null,
       economy_total: s.economy_total ?? null,
       economy_no_planned_price_items: s.economy_no_planned_price_items ?? null,
       economy_unmeasured_by_reason: s.economy_unmeasured_by_reason ?? null,
@@ -616,6 +623,13 @@ async function silentRefreshSubsidies() {
       planned_not_committed_by_kind: s.planned_not_committed_by_kind ?? null,
       redistributable: s.redistributable ?? null,
       redistributable_by_kind: s.redistributable_by_kind ?? null,
+      redistributable_unplanned: s.redistributable_unplanned ?? null,
+      // Задачи 2-3 (владелец, 04.10.2026): разбивка «в плане без договоров»
+      // по need_level + остаток помесячного до конца года — готовые поля
+      // /dashboard/charts, ничего не считаем (Правило №6).
+      not_committed_likely: s.not_committed_likely ?? null,
+      not_committed_nice: s.not_committed_nice ?? null,
+      monthly_future_to_year_end: s.monthly_future_to_year_end ?? null,
       economy_total: s.economy_total ?? null,
       economy_no_planned_price_items: s.economy_no_planned_price_items ?? null,
       economy_unmeasured_by_reason: s.economy_unmeasured_by_reason ?? null,

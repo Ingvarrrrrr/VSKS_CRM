@@ -78,6 +78,11 @@ const editPlannedDialog = ref({
   // конец списка. Читаем текущее значение при открытии и шлём его же обратно
   // неизменным — правка названия/суммы не должна двигать позицию.
   sort_order: null as number | null,
+  // Статус «нужности» (владелец, 04.10.2026) — см. @/utils/planNeedLevel.ts.
+  // Всегда шлётся явно в PUT-payload, как и item_type/is_feo_breakdown выше —
+  // тот же model_fields_set-guard на backend (иначе непереданное поле не
+  // трогается, но раз мы его всегда показываем в форме — шлём всегда явно).
+  need_level: 'likely' as string,
 })
 
 // Тот же режим «цена задана → сумма считается сама», что и в диалоге создания
@@ -206,6 +211,7 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
     editPlannedDialog.value.feoUnitPrice = item.feo_unit_price != null ? parseFloat(String(item.feo_unit_price)) : ''
     editPlannedDialog.value.feoAmount = item.feo_amount != null ? parseFloat(String(item.feo_amount)) : ''
     editPlannedDialog.value.sort_order = item.sort_order ?? null
+    editPlannedDialog.value.need_level = item.need_level ?? 'likely'
     editMonthlySchedule.value = null
     editPlannedDialog.value.show = true
     // Снимок «до» для стека отмены (владелец, п.4 волны 4, 2026-09-13):
@@ -275,6 +281,8 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
         // текущего значения позиция улетает в конец списка (сортировка
         // sort_order.nulls_last(), id в feo_planned_items_reports.py).
         sort_order: d.sort_order,
+        // Статус «нужности» (владелец, 04.10.2026) — см. @/utils/planNeedLevel.ts.
+        need_level: d.need_level || 'likely',
       }
       // Владелец, 30.09.2026 («Багажник» 2→4, цена не зафиксирована) — до
       // отправки запоминаем, что unit_price был пуст: единственное место

@@ -48,6 +48,7 @@ from app.services.feo_planned_item_amount import backfill_unit_price_on_quantity
 from app.services.item_types import (
     normalize_item_type, apply_item_type_to_product, resolve_product_for_planned_item,
 )
+from app.services.plan_need_level import normalize_need_level
 from app.services.text_match import normalize as _norm_text
 
 
@@ -158,6 +159,7 @@ async def create_planned_item(
         sort_order=data.sort_order,
         item_type=normalize_item_type(data.item_type),
         is_composite=data.is_composite,
+        need_level=normalize_need_level(data.need_level),
         **_origin_kwargs,
     )
     _apply_payment_fields(item, data)
@@ -289,6 +291,7 @@ async def create_planned_items_bulk(
             is_feo_breakdown=data.is_feo_breakdown,
             is_internal_plan=data.is_internal_plan,
             is_composite=data.is_composite,
+            need_level=normalize_need_level(data.need_level),
         )
         _apply_payment_fields(item, data)
         db.add(item)
@@ -342,7 +345,7 @@ async def update_planned_item(
         "item_type", "is_feo_breakdown", "is_internal_plan", "is_composite",
         "feo_category_id", "payment_mode", "planned_date",
         "monthly_start_date", "monthly_end_date", "monthly_amount",
-        "months_count", "amount",
+        "months_count", "amount", "need_level",
     )
     _old_values = {f: getattr(item, f) for f in _tracked_fields}
     item.name = data.name
@@ -355,6 +358,8 @@ async def update_planned_item(
     item.notes = data.notes
     item.is_active = data.is_active
     item.sort_order = data.sort_order
+    if "need_level" in data.model_fields_set:
+        item.need_level = normalize_need_level(data.need_level)
     if "item_type" in data.model_fields_set:
         item.item_type = normalize_item_type(data.item_type)
         _sync_product_id = data.product_id

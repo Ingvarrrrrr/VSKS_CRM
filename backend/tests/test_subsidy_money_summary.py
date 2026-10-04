@@ -44,6 +44,12 @@ async def test_subsidy_money_summary_invariant_and_values(
     assert row["committed_by_kind"]["goods"] + row["committed_by_kind"]["services"] + row["committed_by_kind"]["unspecified"] \
         == pytest.approx(row["committed"])
     assert row["committed_missing_fact_items"] == 0
+    # Карточка «Можно перераспределить» (04.10.2026): redistributable_unplanned
+    # == free при заданном бюджете, и три строки карточки обязаны сходиться
+    # в сумму с итогом — budget > 0.
+    assert row["redistributable_unplanned"] == pytest.approx(row["free"])
+    assert row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"] \
+        == pytest.approx(row["redistributable"])
 
     # Совпадение с GET /api/dashboard/charts subsidy_stats — та же точка чтения.
     resp = await client.get("/api/dashboard/charts", headers=superadmin_headers)
@@ -77,6 +83,9 @@ async def test_subsidy_money_summary_no_purchases_redistributable_eq_budget(
     assert row["planned_not_committed"] == pytest.approx(100_000.0)
     assert row["redistributable"] == pytest.approx(500_000.0)
     assert row["free"] + row["planned_not_committed"] == pytest.approx(row["redistributable"])
+    assert row["redistributable_unplanned"] == pytest.approx(row["free"])
+    assert row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"] \
+        == pytest.approx(row["redistributable"])
 
 
 @pytest.mark.asyncio
@@ -104,6 +113,12 @@ async def test_subsidy_money_summary_no_budget_redistributable_eq_planned(
     assert row["redistributable"] == pytest.approx(row["planned"])
     assert row["redistributable_by_kind"] is not None
     assert row["redistributable_by_kind"] == row["planned_not_committed_by_kind"]
+    # Без бюджета «не запланировано от бюджета» не определено — 0.0, не free
+    # (budget дефект владельца: три строки карточки не сходились в сумму
+    # именно на субсидии без бюджета).
+    assert row["redistributable_unplanned"] == pytest.approx(0.0)
+    assert row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"] \
+        == pytest.approx(row["redistributable"])
 
     # Частично законтрактовано — redistributable = planned − committed, не budget − committed.
     await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, 1, 150_000)
@@ -114,3 +129,6 @@ async def test_subsidy_money_summary_no_budget_redistributable_eq_planned(
     assert row2["redistributable"] == pytest.approx(row2["planned"] - row2["committed"])
     assert row2["redistributable"] == pytest.approx(row2["planned_not_committed"])
     assert row2["redistributable_by_kind"] == row2["planned_not_committed_by_kind"]
+    assert row2["redistributable_unplanned"] == pytest.approx(0.0)
+    assert row2["redistributable_unplanned"] + row2["not_committed_nice"] + row2["not_committed_likely"] \
+        == pytest.approx(row2["redistributable"])

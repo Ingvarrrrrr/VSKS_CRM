@@ -139,6 +139,21 @@
           Отмена
         </v-btn>
       </template>
+      <!-- «Что ещё заказать» (владелец, 04.10.2026, план .planning/quick/
+           2026-10-04-sheet-ideas/PLAN.md, Волна B) — плановые позиции
+           субсидии с остатком «без договоров», сгруппированные по «нужности».
+           Состояние/данные — usePlanToOrderDialog.ts (Правило №6). Третий
+           аргумент — итог карточки «Можно перераспределить» (not_committed_likely
+           + not_committed_nice ЭТОЙ субсидии), чтобы итог окна совпадал с
+           карточкой (приёмка 04.10.2026, субсидия «ХО» id 75 — расхождение). -->
+      <v-btn size="small" variant="outlined" color="deep-purple" prepend-icon="mdi-cart-outline"
+        @click="planToOrder.openPlanToOrderDialog(
+          ctx.selectedId.value!,
+          ctx.selectedSubsidy.value?.name,
+          (ctx.selectedSubsidy.value?.not_committed_likely ?? 0) + (ctx.selectedSubsidy.value?.not_committed_nice ?? 0),
+        )">
+        Что ещё заказать
+      </v-btn>
       <!-- «Свернуть категории-дубли» (владелец, задача 3) — categoryCollapse.ts,
            счётчик считается лениво при открытии субсидии (watch на ctx.selectedId
            ниже), кнопка скрыта при 0 кандидатов. -->
@@ -249,6 +264,7 @@
   </div>
 
   <PlanToRequestDialog />
+  <PlanToOrderDialog />
   <FeoCollapseCandidatesDialog />
   <FeoCollapseConfirmDialog />
   <FactImportWizard />
@@ -277,12 +293,17 @@ import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFull
 import { useFactImport } from '@/composables/subsidies/useFactImport'
 import FactImportWizard from '@/components/subsidies/fact-import/FactImportWizard.vue'
 import FactImportRunsPanel from '@/components/subsidies/fact-import/FactImportRunsPanel.vue'
+// «Что ещё заказать» (владелец, 04.10.2026) — см. докстринг кнопки в шаблоне
+// выше и usePlanToOrderDialog.ts.
+import { usePlanToOrderDialog } from '@/composables/subsidies/usePlanToOrderDialog'
+import PlanToOrderDialog from '@/components/subsidies/PlanToOrderDialog.vue'
 
 const ctx = useSubsidyDetailCtx()
 const planToRequest = usePlanToRequest()
 const feoCollapse = useFeoCategoryCollapse()
 const kpiPrefs = useKpiPrefs()
 const hideFullyPurchased = useFeoHideFullyPurchased()
+const planToOrder = usePlanToOrderDialog()
 
 // Остатки плановых позиций (planned_item_consumption/category_plan_links) —
 // нужны ВСЕГДА, не только в режиме «Создать закупку на основе плана»

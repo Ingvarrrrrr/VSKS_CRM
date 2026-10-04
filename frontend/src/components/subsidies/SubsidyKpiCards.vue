@@ -110,6 +110,13 @@
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_contracts) }}</div>
             <div class="kpi-label">Заключено договоров</div>
+            <!-- Задача 3 (владелец, 04.10.2026): остаток помесячных платежей
+                 по уже заключённым помесячным договорам до конца года —
+                 готовое поле бэкенда (monthly_future_to_year_end), см.
+                 SubsidyRow в composables/subsidies/types.ts. -->
+            <div v-if="monthlyFutureToYearEnd > 0" class="kpi-sub-note text-caption text-medium-emphasis">
+              из них ещё уйдёт помесячно до конца года: {{ formatCurrencyRound(monthlyFutureToYearEnd) }}
+            </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('contracts')">
                 <div v-for="row in splitRowsFor('contracts')" :key="row.kind" class="kpi-split-row"
@@ -223,7 +230,7 @@
     <!-- 10-11. «Можно перераспределить» / «Экономия по закупкам» — квик-план
          2026-10-02, вынесены в отдельный компонент (Правило №5 — этот файл уже
          > 500 строк). -->
-    <SubsidyMoneyCards :subsidy="ctx.selectedSubsidy.value" :free="ctx.selectedBudget.value - ctx.selectedPlannedTotal.value" :is-split="isSplit" />
+    <SubsidyMoneyCards :subsidy="ctx.selectedSubsidy.value" :is-split="isSplit" />
   </div>
 
   <!-- Раздел E1 (план ancient-prancing-music.md, 21.09): два новых контроля
@@ -386,6 +393,8 @@ const kpiSubTarget_delivered         = computed(() => ctx.selectedSubsidy.value?
 const kpiSubTarget_delivered_unpaid  = computed(() => ctx.selectedSubsidy.value?.delivered_unpaid  ?? 0)
 const kpiSubTarget_paid              = computed(() => ctx.selectedSubsidy.value?.paid              ?? 0)
 const kpiSubTarget_free              = computed(() => ctx.selectedBudget.value - ctx.selectedPlannedTotal.value)
+// Задача 3 (владелец, 04.10.2026) — готовое поле бэкенда, не считаем здесь (Правило №6).
+const monthlyFutureToYearEnd = computed(() => ctx.selectedSubsidy.value?.monthly_future_to_year_end ?? 0)
 
 const kpiSubAnim_budget            = useAnimatedNumber(kpiSubTarget_budget,           800)
 const kpiSubAnim_plan_schedule     = useAnimatedNumber(kpiSubTarget_plan_schedule,    800)
@@ -506,6 +515,14 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* Задача 3 (04.10.2026): подпись «из них ещё уйдёт помесячно...» у карточки
+   «Заключено договоров» — переносится на мобильной ширине, не вылезает. */
+.kpi-sub-note {
+  margin-top: 4px;
+  line-height: 1.3;
+  white-space: normal;
+  word-break: break-word;
 }
 .kpi-split-row {
   display: flex;

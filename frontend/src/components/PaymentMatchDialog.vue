@@ -63,6 +63,17 @@
                   <span class="text-medium-emphasis ml-1">
                     ({{ s.purchase_amounts.map((a: number) => formatMoney(a)).join(' + ') }})
                   </span>
+                  <!-- Задача 04.10.2026: месяц оказания для помесячной закупки (или причина,
+                       почему он неоднозначен) — см. app/services/match_candidates.py -->
+                  <div v-if="s.service_period" class="mt-1">
+                    <v-chip size="x-small" color="primary" variant="tonal" prepend-icon="mdi-calendar-check">
+                      за месяц: {{ fmtMonth(s.service_period) }}
+                    </v-chip>
+                  </div>
+                  <div v-else-if="s.service_period_conflict" class="mt-1 text-warning">
+                    <v-icon size="12" color="warning">mdi-alert</v-icon>
+                    {{ s.service_period_conflict }}
+                  </div>
                 </v-list-item-subtitle>
                 <template #append>
                   <v-icon v-if="appliedSuggestionIdx === idx" color="success">mdi-check-circle</v-icon>
@@ -199,12 +210,23 @@
       </v-card-actions>
     </v-card>
   </v-dialog>
+
+  <!-- Задача 04.10.2026: 409 «конфликт месяца оказания» при подтверждении — не
+       снэкбаром и не молча, а выбором месяца человеком с повтором запроса. -->
+  <ServicePeriodPickDialog
+    v-model="servicePeriodDialog"
+    :reason="servicePeriodReason"
+    @submit="onServicePeriodPicked"
+    @cancel="servicePeriodPendingPurchaseId = null"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import ServicePeriodPickDialog from '@/components/payments/ServicePeriodPickDialog.vue'
+import { isServicePeriodConflict, extractConflictPurchaseId, extractConflictMessage } from '@/composables/payments/useServicePeriodConflict'
 
 const { mobile } = useDisplay()
 import { useToast } from '@/composables/useToast'
@@ -279,6 +301,8 @@ interface MatchSuggestion {
   score: number
   kind: string
   label: string
+  service_period?: string | null
+  service_period_conflict?: string | null
 }
 const suggestions = ref<MatchSuggestion[]>([])
 const loadingSuggestions = ref(false)
@@ -350,6 +374,9 @@ function resetState() {
   selectedPurchases.value = []
   suggestions.value = []
   appliedSuggestionIdx.value = null
+  servicePeriodOverrides.value = {}
+  servicePeriodPendingPurchaseId.value = null
+  servicePeriodReason.value = null
 }
 
 async function loadPayment() {
@@ -460,29 +487,73 @@ async function saveMatch() {
   }
 }
 
+// Задача 04.10.2026: месяц оказания, выбранный человеком вручную после 409
+// («Закупка №{id}: ... месяц ...») — {purchase_id: 'YYYY-MM-01'}, копится между
+// повторами, если конфликтов на разные помесячные закупки несколько подряд.
+const servicePeriodOverrides = ref<Record<number, string>>({})
+const servicePeriodDialog = ref(false)
+const servicePeriodReason = ref<string | null>(null)
+const servicePeriodPendingPurchaseId = ref<number | null>(null)
+
 async function confirm() {
   if (!props.bankPaymentId || !selectedPurchases.value.length) return
   confirming.value = true
   try {
     const result = await apiFetch<{ payments_created: number }>(`/payments/registry/${props.bankPaymentId}/confirm`, {
       method: 'POST',
-      body: JSON.stringify({ purchase_ids: selectedPurchases.value }),
+      body: JSON.stringify({
+        purchase_ids: selectedPurchases.value,
+        service_periods: Object.keys(servicePeriodOverrides.value).length ? servicePeriodOverrides.value : undefined,
+      }),
     })
     const n = result?.payments_created ?? selectedPurchases.value.length
     success(`${n} платежей создано`)
+    servicePeriodOverrides.value = {}
     dialog.value = false
     emit('updated')
   } catch (e: any) {
-    error('Ошибка подтверждения: ' + (e.detail || ''))
+    if (isServicePeriodConflict(e)) {
+      // Бэк не определил месяц сам — открываем диалог ручного выбора вместо
+      // snackbar-а; извлекаем id закупки из текста причины, иначе отдаём на
+      // единственную выбранную закупку (edge-case race-backstop без id в тексте).
+      servicePeriodPendingPurchaseId.value =
+        extractConflictPurchaseId(e) ?? (selectedPurchases.value.length === 1 ? selectedPurchases.value[0] : null)
+      servicePeriodReason.value = extractConflictMessage(e)
+      servicePeriodDialog.value = true
+    } else {
+      error('Ошибка подтверждения: ' + (e.detail || ''))
+    }
   } finally {
     confirming.value = false
   }
+}
+
+async function onServicePeriodPicked(isoDate: string) {
+  const pid = servicePeriodPendingPurchaseId.value
+  if (pid == null) {
+    error('Не удалось определить закупку для выбранного месяца — повторите подтверждение вручную')
+    return
+  }
+  servicePeriodOverrides.value = { ...servicePeriodOverrides.value, [pid]: isoDate }
+  servicePeriodPendingPurchaseId.value = null
+  await confirm()
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmtDate(d: string | null) {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('ru-RU')
+}
+
+const MONTH_NAMES_RU = [
+  'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
+  'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь',
+]
+function fmtMonth(iso: string) {
+  // iso = 'YYYY-MM-DD' (первое число месяца, см. payments.service_period)
+  const [y, m] = iso.split('-')
+  const idx = Number(m) - 1
+  return `${MONTH_NAMES_RU[idx] ?? m} ${y}`
 }
 
 function formatMoney(v: number | null | undefined) {

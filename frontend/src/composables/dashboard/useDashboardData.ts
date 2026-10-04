@@ -3,7 +3,7 @@
 import { ref, computed, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
-import { pct, truncate } from './dashboardFormat'
+import { pct, truncate, formatCurrency } from './dashboardFormat'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import { formatEconomyUnmeasuredText, type EconomyUnmeasuredByReason } from '@/utils/economyUnmeasured'
 
@@ -13,6 +13,10 @@ export interface WidgetMetric {
   amount: number
   count: number
   monthly_payments_total?: number
+  // Задача 3 (владелец, 04.10.2026) — остаток помесячных платежей по уже
+  // заключённым договорам до конца года, см. backend/app/routers/
+  // dashboard_charts.py widgets.ordered (готовое поле, не пересчёт).
+  monthly_future_to_year_end?: number
 }
 
 export interface WidgetsData {
@@ -45,10 +49,23 @@ export interface SubsidyRow {
   planned_not_committed?: number | null
   redistributable?: number | null
   redistributable_by_kind?: TypeSplitByKind | null
+  // Задача (владелец, 04.10.2026): «не запланировано» строкой карточки
+  // «Можно перераспределить» — free, если бюджет задан, иначе 0.0, одна точка
+  // расчёта (Правило №6). Раньше здесь переиспользовался freeRaw (totalBudget
+  // − totalPlanSchedule, та же формула, что у отдельной карточки «Свободно»)
+  // — на субсидии без введённого бюджета три строки карточки не сходились в
+  // сумму с итогом.
+  redistributable_unplanned?: number | null
   economy_total?: number | null
   economy_no_planned_price_items?: number | null
   economy_unmeasured_by_reason?: { unlinked: number; no_plan_price: number; monthly: number; no_fact: number } | null
   committed_missing_fact_items?: number | null
+  // Задачи 2-3 (владелец, 04.10.2026) — то же, что и SubsidyRow в
+  // composables/subsidies/types.ts (один источник, Правило №6): разбивка «в
+  // плане без договоров» по need_level + остаток помесячного до конца года.
+  not_committed_likely?: number | null
+  not_committed_nice?: number | null
+  monthly_future_to_year_end?: number | null
 }
 
 // Владелец (2026-08-30): «субсидии у потолка» — сумма заказанного (включая
@@ -243,6 +260,26 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const totalPlannedNotCommitted = computed(() =>
     filteredSubsidies.value.reduce((s, x) => s + (x.planned_not_committed ?? 0), 0)
   )
+  // Задача (владелец, 04.10.2026) — Σ готового поля бэкенда redistributable_unplanned
+  // (не freeRaw = totalBudget − totalPlanSchedule, который считался от
+  // расчётной оценки бюджета и не сходился с остальными строками карточки у
+  // субсидий без введённого бюджета), та же схема суммирования, что у
+  // totalRedistributable выше (Правило №6).
+  const totalRedistributableUnplanned = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.redistributable_unplanned ?? 0), 0)
+  )
+  // Задачи 2-3 (владелец, 04.10.2026) — Σ по видимым субсидиям готовых полей
+  // бэкенда, та же схема суммирования, что у totalRedistributable выше
+  // (Правило №6: не новая формула).
+  const totalNotCommittedLikely = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.not_committed_likely ?? 0), 0)
+  )
+  const totalNotCommittedNice = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.not_committed_nice ?? 0), 0)
+  )
+  const totalMonthlyFutureToYearEnd = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.monthly_future_to_year_end ?? 0), 0)
+  )
   const totalRedistributableByKind = computed<TypeSplitByKind>(() => {
     const acc: TypeSplitByKind = { goods: 0, services: 0, unspecified: 0 }
     for (const x of filteredSubsidies.value) {
@@ -369,6 +406,12 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         countLabel: 'договоров',
         tooltip: 'суммарная стоимость заключённых договоров',
         monthly: null,
+        // Задача 3 (владелец, 04.10.2026): остаток помесячных платежей по уже
+        // заключённым помесячным договорам до конца года — готовое поле
+        // бэкенда (totalMonthlyFutureToYearEnd), не считаем здесь.
+        note: totalMonthlyFutureToYearEnd.value > 0
+          ? `из них ещё уйдёт помесячно до конца года: ${formatCurrency(totalMonthlyFutureToYearEnd.value)}`
+          : null,
         over: undefined as boolean | undefined,
         split: stageTypeSplit('contracts'),
       },
@@ -435,6 +478,16 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         monthly: null,
         over: undefined as boolean | undefined,
         split: totalRedistributableByKind.value,
+        // Задачи 1-2 (владелец, 04.10.2026): раньше одна строка «не
+        // запланировано X (Свободно) + в плане без договоров Y» — теперь три
+        // строки с разбивкой по статусу плановой позиции (та же разбивка,
+        // что и SubsidyMoneyCards.vue на вкладке «Субсидии», Σ готовых полей
+        // по видимым субсидиям, не новая формула — Правило №6).
+        notes: [
+          `не запланировано: ${formatCurrency(totalRedistributableUnplanned.value)}`,
+          `хотелось бы, можно отказаться: ${formatCurrency(totalNotCommittedNice.value)}`,
+          `скорее всего понадобится, без договоров: ${formatCurrency(totalNotCommittedLikely.value)}`,
+        ],
         note: totalCommittedMissingFactItems.value > 0
           ? `${totalCommittedMissingFactItems.value} позиций в договоре без суммы договора — учтены по плановой цене`
           : null,
@@ -499,10 +552,14 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         planned_not_committed: s.planned_not_committed ?? null,
         redistributable: s.redistributable ?? null,
         redistributable_by_kind: s.redistributable_by_kind ?? null,
+        redistributable_unplanned: s.redistributable_unplanned ?? null,
         economy_total: s.economy_total ?? null,
         economy_no_planned_price_items: s.economy_no_planned_price_items ?? null,
         economy_unmeasured_by_reason: s.economy_unmeasured_by_reason ?? null,
         committed_missing_fact_items: s.committed_missing_fact_items ?? null,
+        not_committed_likely: s.not_committed_likely ?? null,
+        not_committed_nice: s.not_committed_nice ?? null,
+        monthly_future_to_year_end: s.monthly_future_to_year_end ?? null,
       }))
 
       statusCounts.value = chartsData.status_counts
@@ -537,6 +594,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
     totalFeoPlanned, totalRemaining, totalUsagePct,
     totalRedistributable, totalEconomy, totalEconomyNoPlannedPriceItems,
     totalCommittedMissingFactItems, totalPlannedNotCommitted, totalRedistributableByKind,
+    totalNotCommittedLikely, totalNotCommittedNice, totalMonthlyFutureToYearEnd,
     overrunSubsidies, effectiveWidgets, kpiCards,
     loadAll,
   }

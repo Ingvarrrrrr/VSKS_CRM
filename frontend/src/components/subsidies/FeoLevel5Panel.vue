@@ -194,6 +194,14 @@
                     <v-chip v-if="!planned.isManual && planned.is_internal_plan" size="x-small" color="amber-darken-3" variant="tonal" style="font-size:9px;height:16px"
                       title="Внутренний план — в ФЭО была более широкая категория (или позиции не было вовсе), состав определили сами"
                     >внутренний план</v-chip>
+                    <!-- Статус «нужности» (владелец, 04.10.2026) — пометка ТОЛЬКО у
+                         nice_to_have, likely не отмечается никак (задание владельца:
+                         «Позиции likely без пометки»). NEED_LEVEL_LABELS/
+                         NEED_LEVEL_SHORT_LABELS — единственный источник подписи
+                         (@/utils/planNeedLevel.ts, Правило №6). -->
+                    <v-chip v-if="!planned.isManual && planned.need_level === 'nice_to_have'" size="x-small" color="deep-orange" variant="tonal" style="font-size:9px;height:16px"
+                      :title="NEED_LEVEL_LABELS.nice_to_have"
+                    >{{ NEED_LEVEL_SHORT_LABELS.nice_to_have }}</v-chip>
                   </div>
                   <div v-if="planned.isManual" class="feo-plan-note text-medium-emphasis">
                     <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />ручной план ФЭО — подробного деления в ФЭО не было
@@ -751,6 +759,7 @@ import FeoPlannedTakenBy from '@/components/items/feo-planned/FeoPlannedTakenBy.
 // на момент написания этого компонента ещё не существовал, импорт по
 // согласованному пути; npx vue-tsc --noEmit перепроверить, когда появится.
 import { kindOf, ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
+import { NEED_LEVEL_LABELS, NEED_LEVEL_SHORT_LABELS } from '@/utils/planNeedLevel'
 import { useFeoLevel5ItemType } from '@/composables/subsidies/useFeoLevel5ItemType'
 import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
 import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'

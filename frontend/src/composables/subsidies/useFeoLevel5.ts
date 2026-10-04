@@ -95,6 +95,11 @@ export function buildPlannedItemFullPayload(
     is_feo_breakdown: item.is_feo_breakdown ?? false,
     is_internal_plan: item.is_internal_plan ?? false,
     allow_duplicate_name: true,
+    // Статус «нужности» (владелец, 04.10.2026, @/utils/planNeedLevel.ts) — тот
+    // же приём, что и у item_type выше: без явной отправки POST (пересоздание
+    // при undo удаления) завёл бы позицию с дефолтным 'likely', даже если она
+    // была 'nice_to_have'.
+    need_level: item.need_level ?? 'likely',
     ...overrides,
   }
 }

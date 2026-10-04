@@ -44,6 +44,7 @@ from app.services.payment_basis import (
 )
 from app.services.item_type_split import kind_of
 from app.services.payment_matcher import apply_advance_report_override
+from app.services.payment_service_period import resolve_service_period
 from app.services.payment_target import PaymentGroup
 from app.services.purchase_payments import recompute_purchase_payments, find_manual_match
 
@@ -54,6 +55,20 @@ class PaymentAttachError(Exception):
     """Платёж нельзя разнести — конфликт занятости (уже привязан к другой
     закупке, либо назначение уже использовано в этой группе), либо платёж не
     найден/не исполнен. Router превращает в HTTP 409 с текстом .args[0]."""
+
+
+class ServicePeriodAttachConflict(PaymentAttachError):
+    """Частный случай PaymentAttachError — конкретно конфликт месяца оказания
+    (см. app/services/payment_service_period.py::resolve_service_period). Несёт
+    purchase_id/occupied_period для структурированного detail 409-ответа (см.
+    service_period_conflict_detail, ПРАВИЛО №6); остальные причины
+    PaymentAttachError («уже разнесён», «назначение уже использовано» и т.п.)
+    этим подклассом НЕ заводятся — у них остаётся обычный текстовый detail."""
+
+    def __init__(self, message: str, purchase_id: int, occupied_period=None):
+        super().__init__(message)
+        self.purchase_id = purchase_id
+        self.occupied_period = occupied_period
 
 
 @dataclass
@@ -68,6 +83,14 @@ class Candidate:
     basis_label: Optional[str] = None
     payment_number: Optional[str] = None
     payment_date: Optional[_date] = None
+    # Задача 04.10.2026 («Помесячные платежи — разные месяцы»): для кандидата на
+    # помесячную закупку (Purchase.is_monthly_payment=True) — вычисленный месяц
+    # оказания ИЛИ причина, почему он неоднозначен, той же функцией
+    # resolve_service_period, что и app/services/match_candidates.py::build_candidates
+    # (ПРАВИЛО №6 — не вторая логика). Кандидат не убирается ни в каком случае —
+    # это только подсказка для менеджера перед подтверждением/загрузкой.
+    service_period: Optional[str] = None
+    service_period_conflict: Optional[str] = None
 
 
 async def _used_basis_index(db: AsyncSession, purchase_ids: list[int]) -> dict[str, Payment]:
@@ -82,6 +105,21 @@ async def _used_basis_index(db: AsyncSession, purchase_ids: list[int]) -> dict[s
         )
     )).scalars().all()
     return {p.basis_key: p for p in rows}
+
+
+async def _monthly_purchase(db: AsyncSession, purchase_ids: list[int]) -> Optional[Purchase]:
+    """Помесячная закупка (is_monthly_payment=True) среди закупок группы, если
+    есть — для неё и показывается service_period/service_period_conflict у
+    кандидатов (см. Candidate)."""
+    if not purchase_ids:
+        return None
+    rows = (await db.execute(
+        select(Purchase).where(
+            Purchase.id.in_(purchase_ids),
+            Purchase.is_monthly_payment == True,  # noqa: E712
+        )
+    )).scalars().all()
+    return rows[0] if rows else None
 
 
 async def _attached_bank_payment_ids(db: AsyncSession, bank_payment_ids: list[int]) -> set[int]:
@@ -143,6 +181,7 @@ async def find_candidates(db: AsyncSession, group: PaymentGroup) -> dict[str, li
         return result
 
     used_basis = await _used_basis_index(db, group.purchase_ids)
+    monthly_purchase = await _monthly_purchase(db, group.purchase_ids)
 
     for kind, target_amount in (("goods", group.goods_amount), ("services", group.services_amount)):
         if not target_amount or target_amount <= 0:
@@ -184,6 +223,13 @@ async def find_candidates(db: AsyncSession, group: PaymentGroup) -> dict[str, li
                 doc = used_payment.document_number or "?"
                 dt = used_payment.payment_date.strftime("%d.%m.%Y") if used_payment.payment_date else "?"
                 cand.reason = f"назначение уже использовано платежом №{doc} от {dt}"
+
+            if monthly_purchase is not None:
+                sp_result = await resolve_service_period(db, monthly_purchase, bp)
+                if sp_result.period:
+                    cand.service_period = sp_result.period.isoformat()
+                elif sp_result.conflict:
+                    cand.service_period_conflict = sp_result.conflict
 
             candidates.append(cand)
 
@@ -235,6 +281,7 @@ async def attach(
     group: PaymentGroup,
     bank_payment_ids: list[int],
     allocations: Optional[dict[int, Decimal]] = None,
+    service_periods: Optional[dict[int, _date]] = None,
 ) -> list[Payment]:
     """Создаёт Payment(ы) для каждого bank_payment_id, разнося сумму платежа между
     заказами группы. allocations — явное {purchase_id: сумма}, применимо ТОЛЬКО
@@ -247,6 +294,12 @@ async def attach(
     condition backstop) ловится и превращается в PaymentAttachError — router
     отвечает 409 с понятным текстом, а не 500. Пересчитывает агрегаты закупок
     через recompute_purchase_payments по завершении.
+
+    Для помесячных закупок (Purchase.is_monthly_payment=True) каждому Payment
+    проставляется service_period — см. app/services/payment_service_period.py.
+    При конфликте (месяц уже занят / свободных не осталось) платёж НЕ создаётся
+    молча — PaymentAttachError (тот же механизм, что «занято другим платежом»
+    выше), если только человек не передал месяц явно в service_periods={purchase_id: date}.
     """
     if not bank_payment_ids:
         return []
@@ -323,6 +376,26 @@ async def attach(
             # строка выписки — подтверждаем ЕГО, а не заводим вторую запись
             # (иначе сумма закупки после загрузки выписки удвоится).
             existing_manual = await find_manual_match(db, pid, bp.payment_number, bp.payment_date, amount)
+
+            # Задача 04.10.2026 («Помесячные платежи — разные месяцы»): месяц
+            # оказания для помесячной закупки — явный выбор человека приоритетнее
+            # авто-резолва; конфликт без выбора → не создаём платёж молча.
+            sp_override = (service_periods or {}).get(pid)
+            if sp_override is not None:
+                service_period = sp_override
+            elif purchase is not None and purchase.is_monthly_payment:
+                exclude_id = existing_manual.id if existing_manual is not None else None
+                sp_result = await resolve_service_period(db, purchase, bp, exclude_payment_id=exclude_id)
+                if sp_result.conflict:
+                    raise ServicePeriodAttachConflict(
+                        f"Закупка №{pid}: не удалось однозначно определить месяц оказания — {sp_result.conflict}",
+                        purchase_id=pid,
+                        occupied_period=sp_result.occupied_period,
+                    )
+                service_period = sp_result.period
+            else:
+                service_period = None
+
             if existing_manual is not None:
                 existing_manual.bank_payment_id = bp.id
                 existing_manual.payment_source = "statement"
@@ -339,6 +412,7 @@ async def attach(
                 existing_manual.basis_date = basis.date
                 existing_manual.basis_key = bk
                 existing_manual.basis_label = basis.label
+                existing_manual.service_period = service_period
                 new_payment = existing_manual
                 created.append(existing_manual)
                 affected_purchases.add(pid)
@@ -361,6 +435,7 @@ async def attach(
                 basis_date=basis.date,
                 basis_key=bk,
                 basis_label=basis.label,
+                service_period=service_period,
             )
             db.add(new_payment)
             created.append(new_payment)

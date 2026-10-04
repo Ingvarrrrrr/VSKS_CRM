@@ -239,6 +239,12 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
             _fpi_kwargs["feo_unit_price"] = item_data.get("feo_unit_price")
         if hasattr(FeoPlannedItem, "feo_amount"):
             _fpi_kwargs["feo_amount"] = item_data.get("feo_amount")
+        # Владелец, 2026-10-04: «Нужность» (need_level, ревизия
+        # p1q3r5s7t9v1) — hasattr-проверка тем же приёмом, что и у
+        # item_type/is_feo_breakdown выше (совместимость, пока миграция
+        # колонки другого агента не применена).
+        if hasattr(FeoPlannedItem, "need_level"):
+            _fpi_kwargs["need_level"] = item_data.get("need_level")
         pi = FeoPlannedItem(**_fpi_kwargs)
         db.add(pi)
         await db.flush()
@@ -254,7 +260,7 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
 
     _tracked = (
         "quantity", "unit", "amount", "item_type", "is_feo_breakdown", "is_internal_plan",
-        "unit_price", "feo_quantity", "feo_unit_price", "feo_amount",
+        "unit_price", "feo_quantity", "feo_unit_price", "feo_amount", "need_level",
     )
     _old_vals = {f: getattr(existing_item, f, None) for f in _tracked}
     ch2 = False
@@ -278,6 +284,8 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         existing_item.feo_unit_price = item_data["feo_unit_price"]; ch2 = True
     if item_data.get("feo_amount") is not None and hasattr(existing_item, "feo_amount") and existing_item.feo_amount != item_data["feo_amount"]:
         existing_item.feo_amount = item_data["feo_amount"]; ch2 = True
+    if item_data.get("need_level") is not None and hasattr(existing_item, "need_level") and existing_item.need_level != item_data["need_level"]:
+        existing_item.need_level = item_data["need_level"]; ch2 = True
     if ch2:
         state.updated += 1
         reason = extra_reason or "обновлена позиция — значения перезаписаны из файла"

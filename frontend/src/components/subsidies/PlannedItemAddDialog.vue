@@ -105,6 +105,15 @@
           label="Обновить тип товара в каталоге"
           class="mb-2"
         />
+        <!-- Статус «нужности» позиции (владелец, 04.10.2026) — NEED_LEVEL_OPTIONS
+             единственный источник вариантов (@/utils/planNeedLevel.ts, Правило №6). -->
+        <v-select
+          v-model="p.plannedItemForm.value.need_level"
+          :items="NEED_LEVEL_OPTIONS"
+          label="Нужность"
+          variant="outlined" density="compact"
+          class="mb-2"
+        />
         <!-- Плановая стоимость за единицу (владелец, 2026-09-01): подставляется из
              каталога при выборе товара (onPlannedItemProductPick), полностью
              редактируема; пока задана и не равна 0 — «Плановая сумма» ниже считается
@@ -330,6 +339,7 @@ import { useDisplay } from 'vuetify'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
+import { NEED_LEVEL_OPTIONS } from '@/utils/planNeedLevel'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { usePlannedItems } from '@/composables/subsidies/usePlannedItems'
 import { formatCurrency } from '@/composables/subsidies/format'

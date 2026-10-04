@@ -20,8 +20,8 @@ from decimal import Decimal
 from app.models.feo_category import FeoCategory
 from app.services.feo_import_common import (
     QUANT, ZERO, build_level_name_index, find_or_create_category, find_uniformly_empty_levels, format_rows,
-    get_cell, level_label, resolve_origin_flags, resolve_target_subsidy_id, row_feo_money, row_plan_money,
-    to_bool, to_dec,
+    get_cell, level_label, normalize_need_level_cell, resolve_origin_flags, resolve_target_subsidy_id,
+    row_feo_money, row_plan_money, to_bool, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
@@ -33,6 +33,7 @@ from app.services.feo_import_budget_conflicts import (
     register_budget_write,
 )
 from app.services.feo_import_item_types import resolve_item_type_for_row
+from app.services.plan_need_level import NEED_LEVEL_LABELS, NEED_LEVEL_LIKELY
 from app.services.feo_import_comments import register_category_comment_intent, register_item_comment_intent
 from app.routers.feo_planned_items import normalize_item_type
 from app.services import feo_history
@@ -138,6 +139,7 @@ async def apply_rows(state) -> None:
     c_row_plan_sum = state.c_row_plan_sum
     c_item_type = state.c_item_type
     c_comment = state.c_comment
+    c_need_level = state.c_need_level
 
     errors = state.errors
     warnings = state.warnings
@@ -310,6 +312,29 @@ async def apply_rows(state) -> None:
         # намерение через один и тот же state (см. app/services/
         # feo_import_comments.py, Правило №5 — не дублируем разбор ячейки).
         raw_comment = get_cell(row, c_comment) if c_comment is not None else None
+
+        # Владелец, 2026-10-04: «Нужность» плановой позиции — читается здесь
+        # же, одним разом ДО веток продвижения/пропуска (та же причина, что и
+        # у raw_comment выше: и orphan-ветка, и обычная ветка позиции должны
+        # получить одно и то же значение, не читать колонку по-разному).
+        # Пусто → DEFAULT_NEED_LEVEL ('likely'); значение не из списка — ОШИБКА
+        # строки (владелец явно потребовал «понятная ошибка с номером строки»,
+        # в отличие от item_type_unknown ниже, который только предупреждение),
+        # но строка продолжает обрабатываться с подставленным по умолчанию
+        # значением — одна неверная подпись не должна ронять весь импорт файла.
+        raw_need_level = get_cell(row, c_need_level) if c_need_level is not None else None
+        need_level = normalize_need_level_cell(raw_need_level)
+        if raw_need_level and need_level is None:
+            errors.append({
+                "kind": "need_level_unknown",
+                "row": row_num,
+                "name": lvl5_name or lvl4_name or lvl3_name or lvl2_name,
+                "message": (
+                    f"Нужность «{raw_need_level}» не распознана (строка {row_num}) — "
+                    f"допустимо: {', '.join(NEED_LEVEL_LABELS.values())}"
+                ),
+            })
+            need_level = NEED_LEVEL_LIKELY
 
         # Защита от сдвига колонок (боевой файл «Субсидия ДНР 2.xlsx»): название
         # уровня N+1, случайно набранное в числовой колонке уровня N, — вернуть
@@ -691,6 +716,7 @@ async def apply_rows(state) -> None:
                         "feo_qty": None, "feo_unit": None, "feo_unit_price": None, "feo_amount": None,
                         "item_type": _orphan_item_type, "is_active": True,
                         "is_feo_breakdown": _orphan_is_feo, "is_internal_plan": _orphan_is_plan,
+                        "need_level": need_level,
                         "path": [c.name for c in _prev_cats_in_row],
                     })
                     register_item_comment_intent(state, row_num, raw_comment)
@@ -830,6 +856,13 @@ async def apply_rows(state) -> None:
                 "name": lvl5_name or lvl2_name,
                 "message": f"Значение «{raw_item_type}» не распознано (ожидались: товар/услуга/работа) — не заполнено",
             })
+
+        # Владелец, 2026-10-04: «Нужность» уже разобрана ОДИН раз выше (строка
+        # ~325, до веток продвижения/пропуска) — здесь был дубль того же
+        # разбора той же колонки для той же строки (Правило №6, НЕ заводим
+        # второй разбор same-row значения), к тому же звавший не импортированную
+        # в этом файле normalize_need_level → NameError на каждом импорте ФЭО.
+        # need_level из первого разбора уже в scope этой итерации цикла.
 
         # Считать все данные по уровням (raw, без приоритизации)
         _lv = [
@@ -1219,6 +1252,7 @@ async def apply_rows(state) -> None:
                         # готовое значение, а не пересчитывает.
                         "is_feo_breakdown": _row_is_feo_breakdown,
                         "is_internal_plan": _row_is_internal_plan,
+                        "need_level": need_level,
                     }
                     plan_writes.setdefault(cat.id, []).append(row_num)
                 else:
@@ -1241,6 +1275,7 @@ async def apply_rows(state) -> None:
                             "from_feo_fallback": plan_qty is None and plan_amt is None,
                             "is_feo_breakdown": _row_is_feo_breakdown,
                             "is_internal_plan": _row_is_internal_plan,
+                            "need_level": need_level,
                         }
                         plan_writes.setdefault(cat.id, []).append(row_num)
 
@@ -1398,6 +1433,7 @@ async def apply_rows(state) -> None:
                     "is_active": is_active,
                     "is_feo_breakdown": _row_is_feo_breakdown,
                     "is_internal_plan": _row_is_internal_plan,
+                    "need_level": need_level,
                     "path": [c.name for c in cats_in_row],
                 })
                 register_item_comment_intent(state, row_num, raw_comment)

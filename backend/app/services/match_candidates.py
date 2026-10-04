@@ -24,6 +24,7 @@ from app.models.bank_statement import BankPayment
 from app.models.purchase import Purchase
 from app.models.payment import Payment
 from app.services.acceptance_docs import sum_docs_amount as _sum_docs_amount
+from app.services.payment_service_period import resolve_service_period
 
 # Tolerance for sum match — копейки от округления
 AMOUNT_TOL = Decimal("0.02")
@@ -212,6 +213,28 @@ async def build_candidates(bp: BankPayment, db: AsyncSession) -> list[dict]:
                     "kind": "text_only",
                     "label": f"Только по тексту ({int(sim*100)}%) — суммы не сходятся",
                 })
+
+    # Задача 04.10.2026 («Помесячные платежи — разные месяцы»): для кандидата на
+    # помесячную закупку (Purchase.is_monthly_payment=True) показываем вычисленный
+    # месяц оказания или причину, почему он неоднозначен — см.
+    # app/services/payment_service_period.py. Кандидат НЕ убирается ни в каком
+    # случае, это только подсказка для менеджера перед подтверждением.
+    purchases_by_id = {p.id: p for p in purchases}
+    for c in candidates:
+        monthly_pid = next(
+            (
+                pid for pid in c["purchase_ids"]
+                if purchases_by_id.get(pid) is not None and purchases_by_id[pid].is_monthly_payment
+            ),
+            None,
+        )
+        if monthly_pid is None:
+            continue
+        sp_result = await resolve_service_period(db, purchases_by_id[monthly_pid], bp)
+        if sp_result.period:
+            c["service_period"] = sp_result.period.isoformat()
+        elif sp_result.conflict:
+            c["service_period_conflict"] = sp_result.conflict
 
     # Дедуп: одинаковые purchase_ids → keep max score
     seen: dict[tuple, dict] = {}

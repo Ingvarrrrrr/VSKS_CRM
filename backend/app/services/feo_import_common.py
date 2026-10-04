@@ -8,6 +8,7 @@ app/services/feo_import_engine.py до разрезания на этапы, П�
 from decimal import Decimal
 
 from app.models.feo_category import FeoCategory
+from app.services.plan_need_level import NEED_LEVEL_LABELS, NEED_LEVEL_LIKELY, NEED_LEVELS
 from app.utils.text import normalize_feo_name
 
 ZERO = Decimal("0")
@@ -80,6 +81,38 @@ def fmt(v) -> str:
 def norm(s: str) -> str:
     """Нормализация имени уровня для сравнения."""
     return normalize_feo_name(s)
+
+
+# Обратный индекс (русская подпись в нижнем регистре -> код) — построен один
+# раз на импорт модуля из НЕДИНСТВЕННОГО источника подписей (Правило №6):
+# app/services/plan_need_level.py::NEED_LEVEL_LABELS. Этот модуль НЕ заводит
+# свой список значений/подписей need_level — только интерпретирует ячейку
+# файла импорта в код, которого тот модуль понимает без доп. разбора (его
+# normalize_need_level принимает только точные коды и по построению не
+# отличает «пусто» от «мусора» — обоим подставляет 'likely' без сигнала об
+# ошибке; парсеру импорта ФЭО нужно отличать эти два случая, чтобы «мусор»
+# стал понятной построчной ошибкой, см. feo_import_apply.py).
+_NEED_LEVEL_LABEL_TO_CODE: dict[str, str] = {label.lower(): code for code, label in NEED_LEVEL_LABELS.items()}
+
+
+def normalize_need_level_cell(v: str | None) -> str | None:
+    """Ячейка колонки «Нужность» импорта ФЭО -> код need_level.
+
+    Принимает код ('likely'/'nice_to_have') ИЛИ русскую подпись
+    (NEED_LEVEL_LABELS) — регистр и крайние пробелы не важны. Пустая ячейка
+    -> NEED_LEVEL_LIKELY (умолчание). Нераспознанное значение -> None —
+    вызывающий код (feo_import_apply.py) обязан сам завести построчную
+    ошибку с номером строки и списком допустимых подписей, а не проглатывать
+    её сюда."""
+    if v is None:
+        return NEED_LEVEL_LIKELY
+    s = str(v).strip()
+    if not s:
+        return NEED_LEVEL_LIKELY
+    s_low = s.lower()
+    if s_low in NEED_LEVELS:
+        return s_low
+    return _NEED_LEVEL_LABEL_TO_CODE.get(s_low)
 
 
 def resolve_target_subsidy_id(

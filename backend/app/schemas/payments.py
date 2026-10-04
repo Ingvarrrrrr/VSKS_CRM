@@ -174,5 +174,12 @@ class BankPaymentMatchUpdate(BaseModel):
 
 class BankPaymentConfirm(BaseModel):
     purchase_ids: List[int]
+    # Задача 04.10.2026 («Помесячные платежи — разные месяцы»): необязательный
+    # явный выбор месяца оказания человеком, если авто-резолв
+    # (app/services/payment_service_period.py) дал конфликт — {purchase_id:
+    # "YYYY-MM-DD" (первое число месяца)}. Ключи — строки (JSON), приводятся
+    # к int в роутере. Фронту: при 409 от /confirm с кодом SERVICE_PERIOD_CONFLICT
+    # нужен выбор месяца и повторный вызов с этим полем.
+    service_periods: Optional[dict[str, date]] = None
 
 

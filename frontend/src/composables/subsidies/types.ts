@@ -12,6 +12,19 @@ export interface SubsidyRow {
   id: number; name: string; year: number; budget: number | null
   calculated_budget?: number
   description?: string; planned: number; paid: number; contracted: number
+  // Карточка «Оплачено» (владелец, 05.10.2026) — paid = «по отметке сотрудников»
+  // (payment_amount + payment_amount_declared, см. backend/app/services/
+  // subsidy_paid_breakdown.py::paid_breakdown_by_subsidy, ПРАВИЛО №6 — тот же
+  // источник, что и SubsidyKpiCards.vue). paid_confirmed — «из них подтверждено
+  // выпиской» (payment_amount, confirmed_by_statement=True), показывается
+  // рядом мельче. *_by_kind — разбивка товары/услуги/без типа той же сумме.
+  // Не путать с widget.paid (status='paid' only) — другая величина, не трогается.
+  // paid_declared — то же число, что и paid (SubsidyKpiCards.vue читает отсюда
+  // по имени backend-поля напрямую, остальные потребители — через paid выше).
+  paid_declared?: number
+  paid_confirmed?: number
+  paid_declared_by_kind?: { goods: number; services: number; unspecified: number } | null
+  paid_confirmed_by_kind?: { goods: number; services: number; unspecified: number } | null
   plan_schedule: number; ordered: number
   feo_filled?: boolean
   feo_budget_total?: number
@@ -29,7 +42,11 @@ export interface SubsidyRow {
   work: number
   contracts: number
   delivered: number
+  // «Поставлено, не оплачено» (владелец, 05.10.2026) = «Поставлено» − «Оплачено
+  // по отметке сотрудников» (paid_declared), не ниже 0 — см. backend
+  // app/routers/dashboard_charts.py::total_delivered_unpaid (ПРАВИЛО №6).
   delivered_unpaid: number
+  delivered_unpaid_declared_by_kind?: { goods: number; services: number; unspecified: number } | null
   // Раздел B/C (план ancient-prancing-music.md, 21.09): та же накопительная
   // корзина закупок, что и work/ordered/contracts/delivered/delivered_unpaid/
   // paid выше, но по стадиям (`${stage}_amount` = w.amount и т.п.) плюс

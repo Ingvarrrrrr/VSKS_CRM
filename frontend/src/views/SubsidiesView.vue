@@ -489,7 +489,21 @@ async function loadAll() {
       is_sandbox: s.is_sandbox ?? false,
       copied_from_id: s.copied_from_id ?? null,
       calculated_budget: s.calculated_budget ?? 0,
-      planned: s.planned_tree ?? s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
+      // Дефект (прод, «ХО (копия)», 05.10.2026): paid = total_paid (status='paid'
+      // only) показывал 0 для закупок, оплаченных по отметке/выпиской, но ещё не
+      // переведённых в статус 'paid'. paid_declared — тот же источник, что уже
+      // показывает SubsidyKpiCards.vue (ПРАВИЛО №6, backend/app/services/
+      // subsidy_paid_breakdown.py) — «оплачено по отметке сотрудников».
+      planned: s.planned_tree ?? s.total_planned, paid: s.paid_declared ?? s.total_paid, contracted: s.total_confirmed,
+      // Баг 05.10.2026 (найден при этом фиксе): SubsidyKpiCards.vue уже читал
+      // .paid_declared/.paid_confirmed напрямую, но это поле никогда не
+      // попадало сюда из API-ответа — карточка молча показывала 0 для обоих
+      // чисел дуали. paid выше = тот же paid_declared, под отдельным именем —
+      // ОДИН источник (ПРАВИЛО №6), просто два потребителя читают по-разному.
+      paid_declared: s.paid_declared ?? s.total_paid ?? 0,
+      paid_confirmed: s.paid_confirmed ?? 0,
+      paid_declared_by_kind: s.paid_declared_by_kind ?? null,
+      paid_confirmed_by_kind: s.paid_confirmed_by_kind ?? null,
       plan_schedule: s.total_plan_schedule ?? 0,
       ordered: s.total_ordered ?? 0,
       feo_budget_total: s.feo_budget_total ?? 0,
@@ -526,6 +540,7 @@ async function loadAll() {
       contracts: s.total_contracts ?? 0,
       delivered: s.total_delivered ?? 0,
       delivered_unpaid: s.total_delivered_unpaid ?? 0,
+      delivered_unpaid_declared_by_kind: s.delivered_unpaid_declared_by_kind ?? null,
       widget: s.widget ?? null,
       ceiling_warn_percent: s.ceiling_warn_percent ?? 90,
       ceiling_total: s.ceiling_total ?? 0,
@@ -612,7 +627,12 @@ async function silentRefreshSubsidies() {
         is_sandbox: s.is_sandbox ?? false,
         copied_from_id: s.copied_from_id ?? null,
         calculated_budget: s.calculated_budget ?? 0,
-        planned: s.planned_tree ?? s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
+        // Тот же фикс, что и в loadAll() выше (ПРАВИЛО №6 — не вторая формула).
+        planned: s.planned_tree ?? s.total_planned, paid: s.paid_declared ?? s.total_paid, contracted: s.total_confirmed,
+        paid_declared: s.paid_declared ?? s.total_paid ?? 0,
+        paid_confirmed: s.paid_confirmed ?? 0,
+        paid_declared_by_kind: s.paid_declared_by_kind ?? null,
+        paid_confirmed_by_kind: s.paid_confirmed_by_kind ?? null,
         plan_schedule: s.total_plan_schedule ?? 0,
         ordered: s.total_ordered ?? 0,
         feo_budget_total: s.feo_budget_total ?? 0,
@@ -649,6 +669,7 @@ async function silentRefreshSubsidies() {
         contracts: s.total_contracts ?? 0,
         delivered: s.total_delivered ?? 0,
         delivered_unpaid: s.total_delivered_unpaid ?? 0,
+        delivered_unpaid_declared_by_kind: s.delivered_unpaid_declared_by_kind ?? null,
         widget: s.widget ?? null,
         ceiling_warn_percent: s.ceiling_warn_percent ?? 90,
         ceiling_total: s.ceiling_total ?? 0,

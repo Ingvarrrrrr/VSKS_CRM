@@ -238,3 +238,73 @@ class TestDashboardChartsTypeSplit:
         assert row["budget_unspecified"] == pytest.approx(100_000.0)
         split_sum = row["budget_goods"] + row["budget_services"] + row["budget_unspecified"]
         assert split_sum == pytest.approx(row["feo_budget_total"]), "Правило №6: split обязан суммироваться в scalar"
+
+
+@pytest.mark.asyncio
+class TestDeliveredUnpaidDeclared:
+    """Карточка «Поставлено, не оплачено» (владелец, 05.10.2026) = «Поставлено»
+    минус «Оплачено по отметке сотрудников» (paid_declared), не ниже 0, по
+    типам тоже — см. dashboard_charts.py total_delivered_unpaid /
+    delivered_unpaid_declared_by_kind. Сценарий владельца: поставлено 1000
+    (товар 600 / услуга 400), отмечено оплаченным 700 (товар 600 / услуга 100)
+    -> не оплачено 300 (товар 0 / услуга 300). widget["delivered_unpaid"]
+    (старый смысл: status='delivered' без paid) НЕ трогается — проверяем
+    отдельно, что он остался прежним.
+    """
+
+    async def test_delivered_unpaid_declared_matches_owner_scenario(self, client, superadmin_headers, db_session):
+        subsidy = await _make_subsidy(db_session)
+        # p1: delivered, товар 600, отмечено оплаченным целиком (600)
+        await _make_purchase(
+            db_session, subsidy.id, status="delivered",
+            contract_price=Decimal("600"), payment_amount_declared=Decimal("600"),
+            items=[("товар", 600)],
+        )
+        # p2: delivered, услуга 400, отмечено оплаченным частично (100)
+        await _make_purchase(
+            db_session, subsidy.id, status="delivered",
+            contract_price=Decimal("400"), payment_amount_declared=Decimal("100"),
+            items=[("услуга", 400)],
+        )
+
+        resp = await client.get(
+            "/api/dashboard/charts", params={"scope": "dashboard", "type_split": "true"},
+            headers=superadmin_headers,
+        )
+        assert resp.status_code == 200
+        row = _find_subsidy_row(resp.json(), subsidy.id)
+
+        # «Поставлено» = 1000, «Оплачено по отметке» = 700
+        assert row["total_delivered"] == pytest.approx(1000.0)
+        assert row["paid_declared"] == pytest.approx(700.0)
+        # Новая карточка: 1000 − 700 = 300
+        assert row["total_delivered_unpaid"] == pytest.approx(300.0)
+        by_kind = row["delivered_unpaid_declared_by_kind"]
+        assert by_kind["goods"] == pytest.approx(0.0)
+        assert by_kind["services"] == pytest.approx(300.0)
+        assert by_kind["unspecified"] == pytest.approx(0.0)
+
+        # Старое поле widget["delivered_unpaid"] (status='delivered' без paid)
+        # остаётся прежним смыслом — ВСЯ сумма (ни одна из этих закупок не
+        # перешла в статус 'paid'), читается дашбордом (useDashboardData.ts).
+        assert row["widget"]["delivered_unpaid"]["amount"] == pytest.approx(1000.0)
+
+    async def test_delivered_unpaid_declared_floors_at_zero(self, client, superadmin_headers, db_session):
+        """Отмечено оплаченным больше, чем поставлено (частичная предоплата
+        задним числом/округление) — не уходим в минус."""
+        subsidy = await _make_subsidy(db_session)
+        await _make_purchase(
+            db_session, subsidy.id, status="delivered",
+            contract_price=Decimal("100"), payment_amount_declared=Decimal("150"),
+            items=[("товар", 100)],
+        )
+        resp = await client.get(
+            "/api/dashboard/charts", params={"scope": "dashboard", "type_split": "true"},
+            headers=superadmin_headers,
+        )
+        row = _find_subsidy_row(resp.json(), subsidy.id)
+        assert row["total_delivered_unpaid"] == pytest.approx(0.0)
+        by_kind = row["delivered_unpaid_declared_by_kind"]
+        assert by_kind["goods"] == pytest.approx(0.0)
+        assert by_kind["services"] == pytest.approx(0.0)
+        assert by_kind["unspecified"] == pytest.approx(0.0)

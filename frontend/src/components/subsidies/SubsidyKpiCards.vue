@@ -185,22 +185,19 @@
           <div class="kpi-icon-box"><v-icon icon="mdi-cash-check" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_paid) }}</div>
-            <div class="kpi-label">Оплачено</div>
-            <!-- Задача (владелец, 05.10.2026): две величины — «подтверждено
-                 выпиской» и «по отметке сотрудников», с разбивкой товары/услуги.
-                 Подтверждённая сумма оранжевая, если она меньше отмеченной —
-                 не всё отмеченное ещё нашлось в выписке. -->
+            <div class="kpi-label">Оплачено (по отметке)</div>
+            <!-- Задача (владелец, 05.10.2026): основное число карточки — «по
+                 отметке сотрудников» (kpi-value выше, = paid_declared), рядом
+                 мельче «из них подтверждено выпиской», с разбивкой товары/
+                 услуги для обеих сумм. Подтверждённая сумма подсвечена, если
+                 она меньше отмеченной — не всё отмеченное ещё нашлось в выписке. -->
             <div class="kpi-paid-dual">
+              <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidDeclaredByKind.goods) }} / усл. {{ formatCurrencyRound(paidDeclaredByKind.services) }}</div>
               <div class="kpi-paid-dual-row" :class="{ 'kpi-paid-dual-warn': paidNotFullyConfirmed }">
-                <span class="kpi-paid-dual-label">подтверждено выпиской:</span>
+                <span class="kpi-paid-dual-label">из них подтверждено выпиской:</span>
                 <span class="kpi-paid-dual-amount">{{ formatCurrencyRound(paidConfirmedTotal) }}</span>
               </div>
               <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidConfirmedByKind.goods) }} / усл. {{ formatCurrencyRound(paidConfirmedByKind.services) }}</div>
-              <div class="kpi-paid-dual-row">
-                <span class="kpi-paid-dual-label">по отметке сотрудников:</span>
-                <span class="kpi-paid-dual-amount">{{ formatCurrencyRound(paidDeclaredTotal) }}</span>
-              </div>
-              <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidDeclaredByKind.goods) }} / усл. {{ formatCurrencyRound(paidDeclaredByKind.services) }}</div>
             </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('paid')">
@@ -407,7 +404,14 @@ const kpiSubTarget_ordered           = computed(() => ctx.selectedSubsidy.value?
 const kpiSubTarget_contracts         = computed(() => ctx.selectedSubsidy.value?.contracts         ?? 0)
 const kpiSubTarget_delivered         = computed(() => ctx.selectedSubsidy.value?.delivered         ?? 0)
 const kpiSubTarget_delivered_unpaid  = computed(() => ctx.selectedSubsidy.value?.delivered_unpaid  ?? 0)
-const kpiSubTarget_paid              = computed(() => ctx.selectedSubsidy.value?.paid              ?? 0)
+// Дефект (прод, «ХО (копия)», 05.10.2026): .paid — это total_paid (status=
+// 'paid' only, см. dashboard_charts.py:112), показывал 0 для закупок,
+// оплаченных по отметке/выпиской, но ещё не переведённых в статус 'paid'.
+// Решение владельца: ОСНОВНОЕ число карточки — «по отметке сотрудников»
+// (paid_declared), «подтверждено выпиской» — секундарная строка под ним (см.
+// шаблон ниже). kpiSubTarget_paid читает ТОТ ЖЕ источник, что paidDeclaredTotal
+// (ПРАВИЛО №6 — не вторая формула), .paid остаётся фолбэком для старого бэка.
+const kpiSubTarget_paid              = computed(() => Number(ctx.selectedSubsidy.value?.paid_declared ?? ctx.selectedSubsidy.value?.paid ?? 0))
 // Задача (владелец, 05.10.2026) — карточка «Оплачено»: ДВЕ величины словами
 // владельца, «по отметке сотрудников» и «подтверждено выпиской» — готовые
 // поля бэкенда (dashboard_charts.py::subsidy_stats, см. app/services/
@@ -467,6 +471,16 @@ function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; u
       services: (totals.feo_services || 0) - (totals.plan_services || 0),
       unspecified: (totals.feo_unspecified || 0) - (totals.plan_unspecified || 0),
     }
+  }
+  // «Поставлено, не оплачено» (владелец, 05.10.2026) — по типам источник НЕ
+  // widget.delivered_unpaid (тот означает status='delivered' без paid, его же
+  // читает дашборд через effectiveWidgets/stageTypeSplit, ПРАВИЛО №6 — старое
+  // поле не трогаем), а отдельное точное поле delivered_unpaid_declared_by_kind
+  // (delivered − paid_declared по типам, см. backend dashboard_charts.py).
+  if (stage === 'delivered_unpaid') {
+    const k = ctx.selectedSubsidy.value?.delivered_unpaid_declared_by_kind
+    if (!k) return null
+    return { goods: Number(k.goods) || 0, services: Number(k.services) || 0, unspecified: Number(k.unspecified) || 0 }
   }
   const w = (ctx.selectedSubsidy.value?.widget as any)?.[stage]
   if (!w) return null

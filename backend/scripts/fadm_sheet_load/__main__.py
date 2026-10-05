@@ -191,7 +191,34 @@ async def run_goodsservice_mode(args: argparse.Namespace) -> int:
     return 0
 
 
+async def run_copy_docs_mode(args: argparse.Namespace) -> int:
+    from .sheet_v2_docs import run_copy_docs
+    from .sheet_v2_docs_report import render_copy_docs_report
+
+    async with async_session() as db:
+        try:
+            pairs, counters = await run_copy_docs(
+                db, target_name=args.name, source_name=args.source,
+            )
+            report = render_copy_docs_report(pairs, counters, dry_run=args.dry_run)
+        except Exception:
+            await db.rollback()
+            raise
+
+        print(report)
+
+        if args.dry_run:
+            await db.rollback()
+            print("DRY-RUN: изменения отменены (rollback).")
+        else:
+            await db.commit()
+            print("Готово: документы скопированы.")
+    return 0
+
+
 async def main_async(args: argparse.Namespace) -> int:
+    if args.copy_docs:
+        return await run_copy_docs_mode(args)
     if args.goodsservice:
         return await run_goodsservice_mode(args)
 
@@ -212,6 +239,9 @@ def main() -> None:
     parser.add_argument("--csv", help="Путь к CSV таблицы первого загрузчика (внутри контейнера)")
     parser.add_argument("--goodsservice", help="Путь к scripts/data/fadm_2026_goodsservice.csv — "
                          "режим v2 (пересборка из листа GoodsService, задание 05.10.2026)")
+    parser.add_argument("--copy-docs", action="store_true",
+                         help="Постфактум для уже существующей --name: скопировать документы/чеки двойника "
+                              "из --source на закупки --name по (contractor_id, сумма) — см. sheet_v2_docs.py")
     parser.add_argument("--source", required=True, help='Имя субсидии-источника, напр. "ФАДМ_2026"')
     parser.add_argument("--name", help='Имя новой субсидии, напр. "ФАДМ 2026_2" (не нужно для --match-only)')
     parser.add_argument("--dry-run", action="store_true", help="Всё в транзакции, откат в конце, только отчёт")
@@ -229,7 +259,12 @@ def main() -> None:
                               "Можно указывать несколько раз. Только с --relink.")
     args = parser.parse_args()
 
-    if args.goodsservice:
+    if args.copy_docs:
+        if args.match_only or args.relink or args.ensure_employee or args.replace or args.goodsservice:
+            parser.error("--copy-docs несовместим с --match-only/--relink/--ensure-employee/--replace/--goodsservice")
+        if not args.name:
+            parser.error("--name обязателен для --copy-docs (целевая субсидия, уже существующая)")
+    elif args.goodsservice:
         if args.match_only or args.relink or args.ensure_employee:
             parser.error("--goodsservice несовместим с --match-only/--relink/--ensure-employee")
         if not args.name:

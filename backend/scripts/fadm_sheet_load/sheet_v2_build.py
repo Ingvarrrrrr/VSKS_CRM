@@ -124,6 +124,8 @@ class BuildCountersV2:
     payments_u_mismatch: list = field(default_factory=list)  # [{label, note}] — контроль U (не фильтр)
     contract_filled_from_payment: int = 0  # номер/дата договора разобраны из назначения платежа (S/T были «Нет данных»)
     inn_missing: int = 0  # строки без настоящего ИНН (R = заглушка/пусто)
+    advance_entries: list = field(default_factory=list)  # [{label, employee_name, employee_id, contractor_from_source}]
+    executor_from_source: int = 0  # сколько закупок получили исполнителя от двойника в старой ФАДМ_2026
     by_status_amount: dict = field(default_factory=dict)
     by_kind_amount: dict = field(default_factory=dict)
 
@@ -218,11 +220,100 @@ async def _resolve_contractor_id(db: AsyncSession, row: SheetRowV2, org_id: Opti
     return cid
 
 
-def _apply_advance_fields(p: Purchase, employee_id: int) -> None:
+async def _load_source_executors_by_contractor(db: AsyncSession, source_id: int) -> dict[int, tuple]:
+    """contractor_id → (assigned_user_id, responsible_person), самый частый
+    исполнитель этого контрагента в СТАРОЙ ФАДМ_2026 — владелец, уточнение
+    05.10.2026, п.5: «исполнители ... из старой ФАДМ_2026». contractor_id
+    ОБЩИЙ между субсидиями (find_or_create_contractor не делит по subsidy_id,
+    см. app/services/contractor_resolve.py) — тот же ИНН в новой закупке даёт
+    ТОТ ЖЕ Contractor.id, что и в старой, поэтому матч по contractor_id —
+    настоящий twin, не угадывание. Полного переноса файлов/чеков (files_copy.py
+    первого загрузчика) здесь НЕТ — он работан по id ЗАКУПКИ-двойника, которого
+    у v2 нет построчного сопоставления; см. отчёт."""
+    rows = (await db.execute(
+        select(Purchase.contractor_id, Purchase.assigned_user_id, Purchase.responsible_person).where(
+            Purchase.subsidy_id == source_id, Purchase.contractor_id.isnot(None),
+        )
+    )).all()
+    counts: dict[tuple, int] = {}
+    for cid, uid, resp in rows:
+        if uid is None and not resp:
+            continue
+        key = (cid, uid, resp)
+        counts[key] = counts.get(key, 0) + 1
+    best: dict[int, tuple] = {}
+    best_count: dict[int, int] = {}
+    for (cid, uid, resp), cnt in counts.items():
+        if cnt > best_count.get(cid, 0):
+            best[cid] = (uid, resp)
+            best_count[cid] = cnt
+    return best
+
+
+async def _load_source_advance_contractors(db: AsyncSession, source_id: int) -> dict[int, int]:
+    """employee_id → контрагент (магазин), чаще всего встречавшийся на его
+    авансовых закупках в СТАРОЙ субсидии ФАДМ_2026 — владелец, уточнение
+    05.10.2026: «контрагент — магазин из старой ФАДМ, если был». Упрощённая
+    версия twin-поиска первого загрузчика (match.py) — там двойник ищется
+    построчно по контрагенту+сумме; здесь, раз у v2 нет построчного
+    сопоставления со старой субсидией вообще, берём САМЫЙ ЧАСТЫЙ контрагент
+    того же сотрудника в источнике (не выдумываем — это реальный исторический
+    магазин этого человека, не угадывание)."""
+    rows = (await db.execute(
+        select(Purchase.reimbursement_user_id, Purchase.contractor_id).where(
+            Purchase.subsidy_id == source_id,
+            Purchase.purchase_method == "advance",
+            Purchase.reimbursement_user_id.isnot(None),
+            Purchase.contractor_id.isnot(None),
+        )
+    )).all()
+    counts: dict[tuple[int, int], int] = {}
+    for uid, cid in rows:
+        counts[(uid, cid)] = counts.get((uid, cid), 0) + 1
+    best: dict[int, int] = {}
+    best_count: dict[int, int] = {}
+    for (uid, cid), cnt in counts.items():
+        if cnt > best_count.get(uid, 0):
+            best[uid], best_count[uid] = cid, cnt
+    return best
+
+
+def _apply_source_executor(p: Purchase, contractor_id: Optional[int], source_executors: dict[int, tuple],
+                            counters: BuildCountersV2) -> None:
+    """Исполнитель/ответственный — от двойника в старой ФАДМ_2026 по тому же
+    контрагенту (см. _load_source_executors_by_contractor). Только если
+    закупка ещё НЕ авансовая (там исполнитель — сам сотрудник, см.
+    _apply_advance_fields) и сама ещё без исполнителя (insert_purchase_with_items
+    иначе мог подставить current_user по умолчанию — не перетираем решение
+    этого хелпера возможной более поздней подстановкой: вызывать ДО любых
+    других присвоений assigned_user_id)."""
+    if not contractor_id or p.purchase_method == "advance":
+        return
+    hit = source_executors.get(contractor_id)
+    if not hit:
+        return
+    uid, resp = hit
+    if uid:
+        p.assigned_user_id = uid
+    if resp and not p.responsible_person:
+        p.responsible_person = resp
+    counters.executor_from_source += 1
+
+
+def _apply_advance_fields(p: Purchase, employee_id: int, *, counters: BuildCountersV2, label: str,
+                           employee_name: str, source_advance_contractors: dict[int, int]) -> None:
     p.purchase_method = "advance"
     p.assigned_user_id = employee_id
     p.reimbursement_user_id = employee_id
-    p.contractor_id = None  # контрагент авансовой закупки — не сам сотрудник (ПРАВИЛО №6, advance.py)
+    # Контрагент авансовой закупки — НЕ сам сотрудник (ПРАВИЛО №6, advance.py);
+    # если у этого сотрудника в старой ФАДМ_2026 уже встречался магазин —
+    # переносим его (владелец, уточнение 05.10.2026), иначе пусто.
+    p.contractor_id = source_advance_contractors.get(employee_id)
+    counters.advance_purchases += 1
+    counters.advance_entries.append({
+        "label": label, "employee_name": employee_name, "employee_id": employee_id,
+        "contractor_from_source": p.contractor_id,
+    })
 
 
 def _items_data(rows: list[SheetRowV2], category_id: Optional[int]) -> list[PurchaseItemCreate]:
@@ -258,7 +349,8 @@ async def _finalize_contract(db: AsyncSession, p: Purchase, *, is_head: bool = F
 async def build_single(db: AsyncSession, subsidy: Subsidy, group: PurchaseGroupV2,
                         category_id: Optional[int], contractor_id: Optional[int],
                         employee_id: Optional[int], current_user, counters: BuildCountersV2,
-                        pending_payments: list) -> Purchase:
+                        pending_payments: list, source_advance_contractors: dict[int, int],
+                        source_executors: dict[int, tuple]) -> Purchase:
     rows = group.rows
     main = rows[0]
     status = resolve_status(main) if len(rows) == 1 else max(
@@ -280,24 +372,28 @@ async def build_single(db: AsyncSession, subsidy: Subsidy, group: PurchaseGroupV
     )
     p, _items = await insert_purchase_with_items(db, data, current_user, items_data=items_data, total_nmck=group.total_amount)
     p.task_comment = f"Таблица GoodsService: закупка {group.purchase_no} (ИНН {group.inn})"
+    label = f"{group.contractor} №{group.purchase_no}"
     if employee_id:
-        _apply_advance_fields(p, employee_id)
+        _apply_advance_fields(p, employee_id, counters=counters, label=label,
+                              employee_name=group.contractor, source_advance_contractors=source_advance_contractors)
+    else:
+        _apply_source_executor(p, contractor_id, source_executors, counters)
     if not real_number:
         p.contract_number = await generate_temp_contract_number(p, db)
         p.contract_number_is_temporary = True
     await _finalize_contract(db, p)
     counters.single_purchases += 1
-    label = f"{group.contractor} №{group.purchase_no}"
     for r in rows:
-        if r.payment_numbers:
-            pending_payments.append(PendingPayment(purchase_id=p.id, row=r, label=label))
+        pending_payments.append(PendingPayment(purchase_id=p.id, row=r, label=label))
     return p
 
 
 async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGroupV2,
                            feo_lookup: FeoNameLookup, na_category_id: Optional[int],
                            employee_lookup: EmployeeLookup, org_id: Optional[int],
-                           current_user, counters: BuildCountersV2, pending_payments: list) -> Purchase:
+                           current_user, counters: BuildCountersV2, pending_payments: list,
+                           source_advance_contractors: dict[int, int],
+                           source_executors: dict[int, tuple]) -> Purchase:
     group_employee_id = employee_lookup.find_one(group.contractor)
     head_contractor_id = None if group_employee_id else await _resolve_contractor_id(db, SheetRowV2(
         row=0, event="", contract_kind=group.contract_kind, purchase_no=group.purchase_no,
@@ -327,6 +423,8 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
     )
     head, _ = await insert_purchase_with_items(db, head_data, current_user, items_data=[], total_nmck=None)
     head.task_comment = f"Таблица GoodsService: закупка {group.purchase_no} (рамочный договор, ИНН {group.inn})"
+    if not group_employee_id:
+        _apply_source_executor(head, head_contractor_id, source_executors, counters)
     if not head_contract_number:
         head.contract_number = await generate_temp_contract_number(head, db)
         head.contract_number_is_temporary = True
@@ -370,7 +468,11 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
         child, _ = await insert_purchase_with_items(db, child_data, current_user, items_data=items_data, total_nmck=order_total)
         child.task_comment = f"Таблица GoodsService: закупка {group.purchase_no}, заказ {order_no}"
         if group_employee_id:
-            _apply_advance_fields(child, group_employee_id)
+            _apply_advance_fields(child, group_employee_id, counters=counters,
+                                  label=f"{group.contractor} №{group.purchase_no}, заказ {order_no}",
+                                  employee_name=group.contractor, source_advance_contractors=source_advance_contractors)
+        else:
+            _apply_source_executor(child, contractor_id, source_executors, counters)
         child.parent_purchase_id = head.id
         await ensure_contract_linked(child, db)
         await _assign_framework_seq(child, db)
@@ -380,8 +482,7 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
         counters.framework_orders += 1
         label = f"{group.contractor} №{group.purchase_no}, заказ {order_no}"
         for r in rows:
-            if r.payment_numbers:
-                pending_payments.append(PendingPayment(purchase_id=child.id, row=r, label=label))
+            pending_payments.append(PendingPayment(purchase_id=child.id, row=r, label=label))
 
     head.contract_price = child_totals
     return head
@@ -401,9 +502,21 @@ async def delete_target_subsidy(db: AsyncSession, subsidy: Subsidy) -> None:
     расширено на bank_payment-привязки ЭТОЙ субсидии. Строки bank_payments
     (сама выписка) НЕ удаляются — только Payment (разноска)."""
     from app.models.payment import Payment
+    from app.models.bank_statement import BankPayment
     purchase_ids = (await db.execute(
         select(Purchase.id).where(Purchase.subsidy_id == subsidy.id)
     )).scalars().all()
+    contract_ids = (await db.execute(
+        select(Contract.id).where(Contract.subsidy_id == subsidy.id)
+    )).scalars().all()
+    # Строки выписки остаются, но их «легаси»-привязки (авто-матч при загрузке
+    # выписки) к удаляемым договорам/закупкам надо снять, иначе FK не даст удалить.
+    if contract_ids:
+        await db.execute(update(BankPayment).where(BankPayment.matched_contract_id.in_(contract_ids))
+                         .values(matched_contract_id=None))
+    if purchase_ids:
+        await db.execute(update(BankPayment).where(BankPayment.matched_purchase_id.in_(purchase_ids))
+                         .values(matched_purchase_id=None))
     if purchase_ids:
         await db.execute(delete(Payment).where(Payment.purchase_id.in_(purchase_ids)))
         await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id.in_(purchase_ids)))
@@ -522,6 +635,8 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
         await db.flush()
 
     employee_lookup = await load_employee_lookup(db, new_subsidy.org_id)
+    source_advance_contractors = await _load_source_advance_contractors(db, source.id)
+    source_executors = await _load_source_executors_by_contractor(db, source.id)
     groups, plan_rows = group_rows_v2(rows)
 
     counters = BuildCountersV2()
@@ -532,7 +647,7 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
             if group.is_framework and len(group.distinct_orders) >= 1:
                 await build_framework(db, new_subsidy, group, feo_lookup, na_category_id,
                                       employee_lookup, new_subsidy.org_id, current_user, counters,
-                                      pending_payments)
+                                      pending_payments, source_advance_contractors, source_executors)
                 continue
 
             main = group.rows[0] if group.rows else None
@@ -541,7 +656,7 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
                                                  label=f"{group.contractor} №{group.purchase_no}") if main else na_category_id
             contractor_id = None if employee_id else (await _resolve_contractor_id(db, main, new_subsidy.org_id, counters) if main else None)
             await build_single(db, new_subsidy, group, category_id, contractor_id, employee_id, current_user, counters,
-                               pending_payments)
+                               pending_payments, source_advance_contractors, source_executors)
 
         for row in plan_rows:
             # Плановые позиции (M=False, задание) — здесь на реальной выгрузке

@@ -82,6 +82,23 @@ def _u_control_note(row: SheetRowV2, bp: BankPayment) -> Optional[str]:
     return f"лист ожидал №{','.join(row.payment_numbers)}, GALA нашла №{doc_no or bp.id} (по ИНН+сумме+соглашению)"
 
 
+def _dedup_by_purchase(pending: list[PendingPayment]) -> list[PendingPayment]:
+    """Один элемент pending — одна СТРОКА листа, но платёж ищется на пару
+    (закупка D, заказ E, ИНН) — ОДИН раз, не по разу на каждую строку-позицию
+    внутри заказа (прод-находка 05.10.2026: «ЦЕНТРАВТО» заказ 5 — 17 строк
+    общей поставки P=89 360,02 — без дедупликации это 17 одинаковых попыток
+    поиска и 17 одинаковых «не найдено» в отчёте вместо одной). Все строки
+    одного purchase_id делят один P (delivery_payment_target) — берём первую."""
+    seen: set[int] = set()
+    out: list[PendingPayment] = []
+    for item in pending:
+        if item.purchase_id in seen:
+            continue
+        seen.add(item.purchase_id)
+        out.append(item)
+    return out
+
+
 async def attach_pending_payments(db: AsyncSession, subsidy_id: int, pending: list[PendingPayment],
                                    counters) -> None:
     """Платежи привязываются ОДНИМ проходом после того, как ВСЕ закупки
@@ -91,6 +108,14 @@ async def attach_pending_payments(db: AsyncSession, subsidy_id: int, pending: li
     на 217 строках реально не завершается за разумное время (прод-находка
     дневного прогона 05.10.2026). Один вызов на всю субсидию — тот же набор
     групп, что видел бы router в проде.
+
+    Несколько кандидатов с одинаковой суммой/ИНН (владелец, уточнение
+    05.10.2026, п.3): «если сумма у этого ИНН уже занята — следующая
+    незанятая строка выписки». app/services/payment_lookup.py::attach сам
+    отказывает («уже разнесён другой закупке» / «назначение уже использовано»)
+    — это НЕ правится в app/* (запрещено задачей), а обходится ЗДЕСЬ: при
+    отказе пробуем СЛЕДУЮЩЕГО кандидата (уже отсортированы по дате), а не
+    сдаёмся после первого же.
 
     counters — build.BuildCountersV2, не импортируется типом здесь (вынесло
     бы циклическим импортом build.py↔payments.py); duck-typing достаточно —
@@ -102,18 +127,9 @@ async def attach_pending_payments(db: AsyncSession, subsidy_id: int, pending: li
         for pid in g.purchase_ids:
             by_purchase[pid] = g
 
-    # Один физический платёж может быть назначением сразу НЕСКОЛЬКИХ строк
-    # листа (несколько заказов рамочного, оплаченных одним п/п) — attach_payment
-    # сама делит сумму платежа ПРОПОРЦИОНАЛЬНО между ВСЕМИ заказами группы за
-    # один вызов, вызываем её РОВНО ОДИН раз на пару (группа, bank_payment_id);
-    # used_bp_ids — вообще все уже успешно привязанные id в этом прогоне, чтобы
-    # следующая строка с той же суммой/ИНН бралась со следующего неиспользованного
-    # кандидата, а не повторно пыталась занять тот же (ту же роль here играет
-    # exclude_ids в find_bank_payment_candidates).
-    seen_group_payment: set[tuple[int, int]] = set()
     used_bp_ids: set[int] = set()
 
-    for item in pending:
+    for item in _dedup_by_purchase(pending):
         row, label = item.row, item.label
         if not (row.paid or row.delivered):
             continue  # нечего привязывать — поставки не было
@@ -122,39 +138,44 @@ async def attach_pending_payments(db: AsyncSession, subsidy_id: int, pending: li
         if not candidates:
             counters.payments_not_found.append({
                 "doc_no": ",".join(row.payment_numbers) or "(нет в листе)", "inn": row.inn,
-                "amount": str(row.delivery_payment_target), "label": label, "reason": "не найдено (ИНН+сумма+соглашение+исполнен)",
+                "amount": str(row.delivery_payment_target), "label": label,
+                "reason": "не найдено (ИНН+сумма+соглашение+исполнен)",
             })
             continue
 
-        bp = candidates[0]
         group = by_purchase.get(item.purchase_id)
         if group is None:
             counters.payments_not_found.append({
                 "doc_no": ",".join(row.payment_numbers), "inn": row.inn,
-                "amount": str(row.delivery_payment_target), "label": label, "reason": "закупка не входит ни в одну платёжную группу",
+                "amount": str(row.delivery_payment_target), "label": label,
+                "reason": "закупка не входит ни в одну платёжную группу",
             })
             continue
 
-        dedup_key = (id(group), bp.id)
-        if dedup_key in seen_group_payment:
-            continue
-        seen_group_payment.add(dedup_key)
-
-        note = _u_control_note(row, bp)
-        if note:
-            counters.payments_u_mismatch.append({"label": label, "note": note})
-
-        try:
-            created = await attach_payment(db, group, [bp.id])
+        last_error: Optional[str] = None
+        attached_ok = False
+        for bp in candidates:
+            try:
+                created = await attach_payment(db, group, [bp.id])
+            except PaymentAttachError as e:
+                last_error = str(e)
+                continue  # следующий кандидат по дате (владелец, п.3)
             if created:
                 counters.payments_attached += 1
                 counters.payments_attached_amount += sum((p.amount or Decimal("0")) for p in created)
                 used_bp_ids.add(bp.id)
+                note = _u_control_note(row, bp)
+                if note:
+                    counters.payments_u_mismatch.append({"label": label, "note": note})
                 await _backfill_contract_from_payment(db, created, bp, counters)
-        except PaymentAttachError as e:
+            attached_ok = True
+            break
+
+        if not attached_ok:
             counters.payments_not_found.append({
                 "doc_no": ",".join(row.payment_numbers), "inn": row.inn,
-                "amount": str(row.delivery_payment_target), "label": label, "reason": str(e),
+                "amount": str(row.delivery_payment_target), "label": label,
+                "reason": last_error or "не найдено",
             })
 
 

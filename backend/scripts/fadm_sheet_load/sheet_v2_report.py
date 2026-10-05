@@ -53,6 +53,14 @@ def render_report_v2(rows: list[SheetRowV2], subsidy_name: str, counters: BuildC
                  f"найдено существующих {counters.contractors_found_existing}, "
                  f"ИНН не определён (R — заглушка/пусто): {counters.inn_missing}")
     lines.append(f"Авансовые закупки: {counters.advance_purchases}")
+    if counters.advance_entries:
+        lines.append("  Список:")
+        for a in counters.advance_entries:
+            src = f", контрагент из старой ФАДМ_2026: #{a['contractor_from_source']}" if a["contractor_from_source"] else ""
+            lines.append(f"    - {a['label']} — {a['employee_name']} (user#{a['employee_id']}){src}")
+    lines.append(f"Исполнитель подставлен от двойника в старой ФАДМ_2026 (по контрагенту): "
+                 f"{counters.executor_from_source} закупок. Копирование файлов/чеков двойника — НЕ реализовано "
+                 f"(нет построчного twin-сопоставления закупок в v2, см. первый загрузчик match.py/files_copy.py)")
     lines.append("")
 
     lines.append(f"ФЭО-направление: сопоставлено по имени {counters.feo_matched}, "

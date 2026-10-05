@@ -29,6 +29,8 @@ from app.models.subsidy import Subsidy
 from app.models.subsidy_payment_control_code import SubsidyPaymentControlCode
 from app.services.bank_payment_subsidy_scope import subsidy_scope_clause
 from app.services.bank_statement_parser import EXECUTED_STATUSES
+from app.services.payment_control_near_miss import build_near_miss
+from app.services.purchase_sheet_ref import resolve_sheet_ref
 
 AMOUNT_TOL = Decimal("0.02")
 _NO_CODE = "__NO_CODE__"
@@ -84,6 +86,7 @@ class _Row:
     amount_diff: float
     unknown_code: bool
     duplicate_with: list
+    near_miss: list
 
 
 def _purchase_brief(p: Purchase, amount: Decimal) -> dict:
@@ -92,6 +95,10 @@ def _purchase_brief(p: Purchase, amount: Decimal) -> dict:
         "registry_number": p.registry_number,
         "subject": p.subject or p.item_name,
         "amount": float(amount),
+        # План 2026-10-06-statement-control, контракт API: номер закупки/
+        # заказа из таблицы владельца, если есть (ПРАВИЛО №6 — один резолв,
+        # app/services/purchase_sheet_ref.py, тот же для экспорта).
+        "sheet_ref": resolve_sheet_ref(p),
     }
 
 
@@ -132,6 +139,14 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
     counts: dict[str, int] = defaultdict(int)
     article_stat: dict[str, dict] = {}
     from_payment_unrefined_count = 0
+    # Контрольный лист (план 2026-10-06-statement-control, п.3): «привязано N
+    # из M платёжек, сумма A из B, не хватает C» — считается тут же, в одном
+    # проходе по исполненным строкам выписки, а не вторым запросом.
+    stmt_search_count = 0
+    attached_count = 0
+    unattached_count = 0
+    unattached_total = Decimal(0)
+    unattached_numbers: list[str] = []
 
     def _article_bucket(code: Optional[str]) -> dict:
         key = code or _NO_CODE
@@ -169,6 +184,15 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
         matched_amount = sum((Decimal(str(pay.amount or 0)) for pay in linked), Decimal(0))
         diff = amount - matched_amount
 
+        if search_this:
+            stmt_search_count += 1
+            if linked:
+                attached_count += 1
+            else:
+                unattached_count += 1
+                unattached_total += amount
+                unattached_numbers.append(bp.payment_number or f"№{bp.id}")
+
         if not search_this:
             status = "not_reconciled"
         elif linked:
@@ -200,6 +224,7 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             amount_diff=float(diff) if search_this else 0.0,
             unknown_code=unknown,
             duplicate_with=[],
+            near_miss=[],
         ))
 
     # ------------------------------------------------------------------
@@ -275,9 +300,20 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
                     duplicate_with=[
                         (o.registry_number or f"закупка №{o.id}") for o in plist if o is not p
                     ],
+                    near_miss=[],
                 ))
             counts["duplicate"] += len(plist)
     rows.extend(duplicate_purchase_rows)
+
+    # ------------------------------------------------------------------
+    # near_miss — подсказки к непривязанным строкам (план п.4). После дублей,
+    # чтобы считать только для строк, ОСТАВШИХСЯ registry_only.
+    # ------------------------------------------------------------------
+    for r in rows:
+        if r.status == "registry_only":
+            r.near_miss = await build_near_miss(
+                db, subsidy.id, Decimal(str(r.amount)), r.payee_inn, r.purpose_text, purchase_ids,
+            )
 
     # ------------------------------------------------------------------
     # declared_unconfirmed — заявлено человеком, выпиской не подтверждено (для закупок этой субсидии)
@@ -310,6 +346,7 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             amount_diff=0.0,
             unknown_code=False,
             duplicate_with=[],
+            near_miss=[],
         ))
 
     # ------------------------------------------------------------------
@@ -391,6 +428,7 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             "amount_diff": r.amount_diff,
             "unknown_code": r.unknown_code,
             "duplicate_with": r.duplicate_with,
+            "near_miss": r.near_miss,
         }
 
     status_order = {
@@ -425,6 +463,13 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             "not_executed_total": float(not_executed_total),
             "unknown_code_total": float(unknown_code_total),
             "from_payment_unrefined_count": from_payment_unrefined_count,
+            # Контракт API, план 2026-10-06-statement-control, п.3 — «привязано
+            # N из M платёжек, сумма A из B, не хватает C».
+            "statement_count": stmt_search_count,
+            "attached_count": attached_count,
+            "unattached_count": unattached_count,
+            "unattached_total": float(unattached_total),
+            "unattached_numbers": unattached_numbers,
         },
         "counts": {
             "match": counts.get("match", 0),

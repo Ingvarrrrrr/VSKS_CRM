@@ -23,6 +23,13 @@ export interface PaymentControlTotals {
   not_executed_total: number
   unknown_code_total: number
   from_payment_unrefined_count: number
+  // Квик-план 2026-10-06 (statement-control): контрольный итог сверху окна
+  // «Сверка» — «привязано N из M платёжек · A из B ₽ · не хватает C ₽».
+  statement_count?: number
+  attached_count?: number
+  unattached_count?: number
+  unattached_total?: number
+  unattached_numbers?: string[]
 }
 
 export interface PaymentControlCounts {
@@ -60,6 +67,25 @@ export interface PaymentControlRowPurchase {
   registry_number: string | null
   subject: string | null
   amount: number
+  // Строка листа «закупка N, заказ M» (квик-план 06.10) — null, если бэкенд
+  // ещё не прислал (старый контракт), тогда показываем только РЕЕ.
+  sheet_ref?: string | null
+}
+
+// «Почти совпало» — подсказки к непривязанной платёжке (status=registry_only),
+// квик-план 2026-10-06: тот же ИНН/акт/сумма нескольких заказов, причина
+// словами владельца собирается на фронте по коду reason.
+export type PaymentControlNearMissReason = 'amount_close' | 'same_act' | 'orders_sum' | string
+
+export interface PaymentControlNearMiss {
+  purchase_id: number
+  registry_number: string | null
+  subject: string | null
+  contractor_name: string | null
+  amount: number
+  delta: number
+  reason: PaymentControlNearMissReason
+  can_fix_amount: boolean
 }
 
 export interface PaymentControlRow {
@@ -78,6 +104,8 @@ export interface PaymentControlRow {
   amount_diff: number
   unknown_code: boolean
   duplicate_with: string[]
+  // Только для status==='registry_only' — подсказки «почти совпало».
+  near_miss?: PaymentControlNearMiss[]
 }
 
 export interface PaymentControlNotExecuted {
@@ -183,11 +211,49 @@ export function useSubsidyPaymentControl() {
     return res.items || []
   }
 
-  async function attachPurchase(subsidyId: number, bpId: number, purchaseId: number): Promise<{ ok: boolean; warnings: string[] }> {
+  async function attachPurchase(
+    subsidyId: number,
+    bpId: number,
+    purchaseId: number,
+    fixAmount?: boolean,
+  ): Promise<{ ok: boolean; warnings: string[]; fixed_amount?: { from: number; to: number } }> {
     return apiFetch(`/subsidies/${subsidyId}/payment-control/bank-payments/${bpId}/attach`, {
       method: 'POST',
-      body: JSON.stringify({ purchase_id: purchaseId }),
+      body: JSON.stringify(fixAmount ? { purchase_id: purchaseId, fix_amount: true } : { purchase_id: purchaseId }),
     })
+  }
+
+  // Выгрузка контрольного листа в Excel (квик-план 06.10) — файл, не JSON:
+  // тот же способ скачивания, что и useFleetExport.ts (fetch + bearer-токен +
+  // blob), apiFetch здесь не подходит — он парсит JSON-ответ.
+  const exporting = ref(false)
+  async function exportXlsx(subsidyId: number): Promise<void> {
+    exporting.value = true
+    try {
+      const token = localStorage.getItem('auth_token') || ''
+      const res = await fetch(`/api/subsidies/${subsidyId}/payment-control/export.xlsx`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`
+        try { const j = await res.json(); if (j?.message) msg = j.message } catch { /* not json */ }
+        throw new Error(msg)
+      }
+      const blob = await res.blob()
+      const cd = res.headers.get('Content-Disposition') ?? ''
+      const match = cd.match(/filename[^;=\n]*=(?:(['"])(.+?)\1|([^;\n]+))/i)
+      const filename = (match ? (match[2] ?? match[3]) : null)?.trim() || `Сверка_выписки_${subsidyId}.xlsx`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } finally {
+      exporting.value = false
+    }
   }
 
   async function createPurchaseFromPayment(
@@ -205,5 +271,6 @@ export function useSubsidyPaymentControl() {
     data, loading, loadError, load, reload,
     codesData, codesLoading, codesSaving, loadCodes, saveCodes,
     fetchCandidates, attachPurchase, createPurchaseFromPayment,
+    exporting, exportXlsx,
   }
 }

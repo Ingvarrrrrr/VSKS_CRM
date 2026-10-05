@@ -148,6 +148,10 @@ async def upload_bank_statement(
         rows_unchanged = 0
         rows_merged_legacy = 0
         rows_ambiguous = 0
+        # План 2026-10-06-statement-control, п.5: после коммита прогона —
+        # автосопоставление по субсидиям, затронутым вставленными/обновлёнными
+        # строками (см. touched_bank_payments ниже, используется после commit).
+        touched_bank_payments: list[BankPayment] = []
 
         for pr in parsed_rows:
             # Строки с отклонёнными/аннулированными статусами теперь ИМПОРТИРУЮТСЯ
@@ -177,6 +181,7 @@ async def upload_bank_statement(
                 await recompute_if_now_executed(db, existing, was_executed)
                 if changed:
                     rows_updated += 1
+                    touched_bank_payments.append(existing)
                 else:
                     rows_unchanged += 1
                 continue
@@ -240,6 +245,7 @@ async def upload_bank_statement(
                     db.add(bp)
                     await db.flush()
                 rows_imported += 1
+                touched_bank_payments.append(bp)
             except IntegrityError:
                 rows_dup += 1
                 continue
@@ -288,6 +294,17 @@ async def upload_bank_statement(
 
     await db.commit()
     await db.refresh(import_run)
+
+    # План 2026-10-06-statement-control, п.5: автосопоставление по
+    # субсидиям, затронутым этим прогоном — ПОСЛЕ коммита прогона (см.
+    # app/services/payment_control_import_hook.py). Ошибка сопоставления не
+    # должна ронять уже сохранённый импорт.
+    try:
+        from app.services.payment_control_import_hook import auto_match_after_import
+        import_run.auto_matched = await auto_match_after_import(db, touched_bank_payments)
+    except Exception:
+        logging.getLogger(__name__).warning("auto-match after import failed", exc_info=True)
+        import_run.auto_matched = {"auto_matched": {}, "errors": ["internal error, see logs"]}
 
     # Задача 05.10.2026 («Журнал загрузок выписки»): УБРАНО автоудаление
     # успешной ('done') партии — владелец не мог найти свою загрузку в журнале

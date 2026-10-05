@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -214,6 +215,7 @@ async def get_bank_payment_candidates(
 
 class _AttachBody(BaseModel):
     purchase_id: int
+    fix_amount: Optional[bool] = False
 
 
 @router.post("/{sid}/payment-control/bank-payments/{bp_id}/attach")
@@ -232,6 +234,15 @@ async def attach_bank_payment(
     purchase = await db.get(Purchase, body.purchase_id)
     if not purchase or purchase.subsidy_id != sid:
         raise HTTPException(404, "Закупка не найдена в этой субсидии")
+
+    fixed_amount: Optional[dict] = None
+    if body.fix_amount:
+        from app.services.payment_control_fix_amount import fix_purchase_amount, AmountFixNotAllowed
+        try:
+            fixed_amount = await fix_purchase_amount(db, purchase, Decimal(str(bp.amount or 0)))
+        except AmountFixNotAllowed as exc:
+            await db.rollback()
+            raise HTTPException(422, str(exc))
 
     from app.services.payment_target import PaymentGroup
     from app.services.payment_lookup import attach, PaymentAttachError, ServicePeriodAttachConflict
@@ -267,7 +278,10 @@ async def attach_bank_payment(
         raise HTTPException(409, str(exc))
 
     await db.commit()
-    return {"ok": True, "warnings": warnings}
+    result = {"ok": True, "warnings": warnings}
+    if fixed_amount is not None:
+        result["fixed_amount"] = fixed_amount
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -306,3 +320,47 @@ async def create_purchase_from_bank_payment_endpoint(
         "registry_number": result.purchase.registry_number,
         "warnings": result.warnings,
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /payment-control/export.xlsx
+# ---------------------------------------------------------------------------
+
+@router.get("/{sid}/payment-control/export.xlsx")
+async def export_payment_control_xlsx(
+    sid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Контрольный лист в Excel — ПРАВИЛО №6, переиспользует тот же
+    build_payment_control(), что и GET /payment-control (см. докстринг
+    app/services/payment_control_export.py)."""
+    from app.services.subsidy_payment_control import build_payment_control
+    from app.services.payment_control_export import build_payment_control_xlsx
+
+    subsidy = await _get_subsidy_for_read(sid, db, current_user)
+    data = await build_payment_control(db, subsidy)
+    buf = build_payment_control_xlsx(data, subsidy.name or f"Субсидия №{subsidy.id}")
+
+    filename = f"payment-control-{sid}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /statement — лист «Выписка» субсидии
+# ---------------------------------------------------------------------------
+
+@router.get("/{sid}/statement")
+async def get_subsidy_statement(
+    sid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    from app.services.subsidy_statement_sheet import build_statement_sheet
+
+    subsidy = await _get_subsidy_for_read(sid, db, current_user)
+    return await build_statement_sheet(db, subsidy)

@@ -67,7 +67,11 @@ from app.services.item_type_split import kind_of
 from app.services.payment_matcher import apply_advance_report_override
 from app.services.payment_service_period import resolve_service_period
 from app.services.payment_target import PaymentGroup
-from app.services.purchase_payments import recompute_purchase_payments, find_manual_match
+from app.services.purchase_payments import (
+    recompute_purchase_payments,
+    find_manual_match,
+    find_manual_match_same_period,
+)
 
 AMOUNT_TOL = Decimal("0.02")
 
@@ -461,6 +465,15 @@ async def attach(
                 service_period = sp_result.period
             else:
                 service_period = None
+
+            # План 2026-10-06-statement-control, п.2 «выписка замещает
+            # отметку»: find_manual_match() выше требует точного совпадения
+            # суммы (допуск 0.02) — если пары нет, но у ТОЙ ЖЕ закупки/месяца
+            # есть неподтверждённая ручная отметка, выписка поглощает её ДАЖЕ
+            # при другой сумме (владелец: записи сотрудников могут быть с
+            # ошибками, эталон — выписка). Второй Payment не заводится.
+            if existing_manual is None:
+                existing_manual = await find_manual_match_same_period(db, pid, service_period)
 
             if existing_manual is not None:
                 existing_manual.bank_payment_id = bp.id

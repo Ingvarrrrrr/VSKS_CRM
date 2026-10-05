@@ -10,6 +10,7 @@ Payment.confirmed_by_statement=True; ручные неподтверждённы
 бы» по одному лишь слову человека.
 """
 from __future__ import annotations
+from datetime import date as _date
 from decimal import Decimal
 from typing import Optional
 from sqlalchemy import select
@@ -115,6 +116,42 @@ async def find_manual_match(
             return c
 
     return None
+
+
+async def find_manual_match_same_period(
+    db: AsyncSession,
+    purchase_id: int,
+    service_period=None,
+) -> Optional[Payment]:
+    """План 2026-10-06-statement-control, п.2 «выписка замещает отметку»:
+    платёжка, привязываемая вручную к закупке (окно «Сверка» —
+    app/routers/subsidy_payment_control.py::attach_bank_payment →
+    app/services/payment_lookup.py::attach), поглощает НЕподтверждённую
+    ручную отметку ТОЙ ЖЕ закупки (для помесячной — ТОГО ЖЕ service_period)
+    даже при ДРУГОЙ сумме — в отличие от find_manual_match() выше, который
+    требует точного совпадения номера/даты/суммы.
+
+    Вызывающий код (attach()) сам решает, когда применять эту абсорбцию
+    (только когда find_manual_match() по точному совпадению ничего не
+    нашёл) — ПРАВИЛО №6, здесь только одна точка этой логики, вторая не
+    заводится ни в create_payments_from_bank(), ни где-либо ещё."""
+    if not purchase_id:
+        return None
+    candidates = (await db.execute(
+        select(Payment).where(
+            Payment.purchase_id == purchase_id,
+            Payment.payment_source == "manual",
+            Payment.confirmed_by_statement == False,  # noqa: E712
+        )
+    )).scalars().all()
+    if service_period is not None:
+        candidates = [c for c in candidates if c.service_period == service_period]
+    else:
+        candidates = [c for c in candidates if c.service_period is None]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: (c.payment_date or _date.min, c.id))
+    return candidates[0]
 
 
 async def recompute_purchase_payments(db: AsyncSession, purchase_id: int) -> Purchase:

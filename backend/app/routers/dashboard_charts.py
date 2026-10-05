@@ -539,6 +539,8 @@ async def dashboard_charts(
             # остаются как есть для мест, которые уже их используют.
             "paid_declared": (_paid_breakdown_map_entry := paid_breakdown_map.get(row.id) or {}).get("declared", 0.0),
             "paid_confirmed": _paid_breakdown_map_entry.get("confirmed", 0.0),
+            # «по отметке − по выписке» (план 2026-10-06 п.1; фронт показывает так же).
+            "paid_diff": round(_paid_breakdown_map_entry.get("declared", 0.0) - _paid_breakdown_map_entry.get("confirmed", 0.0), 2),
             "paid_declared_by_kind": _paid_breakdown_map_entry.get("declared_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
             "paid_confirmed_by_kind": _paid_breakdown_map_entry.get("confirmed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
             "total_plan_schedule": float(row.total_plan_schedule),  # SUM work_in_progress planned_total_price

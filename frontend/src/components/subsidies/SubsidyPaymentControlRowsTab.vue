@@ -56,15 +56,12 @@
           <td style="min-width:260px">
             <template v-if="r.status === 'match'">
               <v-icon color="success" size="16">mdi-check-circle</v-icon>
-              <a
-                v-for="p in r.purchases"
-                :key="p.id"
-                :href="`/orders/${p.id}/edit`"
-                target="_blank"
-                class="ml-1"
-              >
-                <v-chip size="x-small" color="success" variant="tonal">{{ p.registry_number || '#' + p.id }}</v-chip>
-              </a>
+              <div v-for="p in r.purchases" :key="p.id" class="d-flex align-center gap-1 flex-wrap ml-1 mt-1">
+                <a :href="`/orders/${p.id}/edit`" target="_blank">
+                  <v-chip size="x-small" color="success" variant="tonal">{{ p.registry_number || '#' + p.id }}</v-chip>
+                </a>
+                <span v-if="p.sheet_ref" class="text-caption text-medium-emphasis">{{ p.sheet_ref }}</span>
+              </div>
             </template>
 
             <template v-else-if="r.status === 'registry_only'">
@@ -76,6 +73,27 @@
                 <v-btn size="x-small" variant="tonal" color="primary" @click="emit('find', r)">Найти закупку</v-btn>
                 <v-btn size="x-small" variant="tonal" color="success" @click="emit('create', r)">Создать закупку по платёжке</v-btn>
               </div>
+              <!-- «Почти совпало» (квик-план 06.10) — подсказки с причиной словами
+                   владельца; «Привязать и исправить сумму» только если
+                   can_fix_amount (одна позиция в закупке либо Δ ≤ 1 ₽). -->
+              <div v-if="r.near_miss && r.near_miss.length" class="near-miss-block mt-2">
+                <div class="text-caption text-medium-emphasis mb-1">Почти совпало:</div>
+                <div v-for="nm in r.near_miss" :key="nm.purchase_id" class="near-miss-item mb-1">
+                  <div class="d-flex align-center flex-wrap gap-1">
+                    <a :href="`/orders/${nm.purchase_id}/edit`" target="_blank">
+                      <v-chip size="x-small" color="warning" variant="tonal">{{ nm.registry_number || '#' + nm.purchase_id }}</v-chip>
+                    </a>
+                    <span class="text-caption">{{ nm.subject || '—' }} · {{ nm.contractor_name || 'без контрагента' }} · {{ formatCurrency(nm.amount) }}</span>
+                  </div>
+                  <div class="text-caption text-medium-emphasis">{{ nearMissReasonText(nm) }}</div>
+                  <div class="d-flex flex-wrap gap-1 mt-1">
+                    <v-btn size="x-small" variant="tonal" color="success" :loading="attachingKey === attachKey(r, nm.purchase_id)" @click="onAttachNearMiss(r, nm, false)">Привязать</v-btn>
+                    <v-btn v-if="nm.can_fix_amount" size="x-small" variant="tonal" color="orange" :loading="attachingKey === attachKey(r, nm.purchase_id) + ':fix'" @click="onAttachNearMiss(r, nm, true)">
+                      Привязать и исправить сумму закупки на {{ formatCurrency(r.amount) }}
+                    </v-btn>
+                  </div>
+                </div>
+              </div>
             </template>
 
             <template v-else-if="r.status === 'amount_mismatch'">
@@ -83,10 +101,13 @@
               <span class="text-caption text-warning ml-1">
                 расхождение {{ formatCurrency(r.amount_diff) }}
               </span>
-              <div v-if="r.purchases.length" class="mt-1">
-                <a v-for="p in r.purchases" :key="p.id" :href="`/orders/${p.id}/edit`" target="_blank" class="mr-1">
-                  <v-chip size="x-small" color="warning" variant="tonal">{{ p.registry_number || '#' + p.id }}</v-chip>
-                </a>
+              <div v-if="r.purchases.length" class="d-flex flex-wrap gap-1 mt-1">
+                <div v-for="p in r.purchases" :key="p.id" class="d-flex align-center gap-1">
+                  <a :href="`/orders/${p.id}/edit`" target="_blank">
+                    <v-chip size="x-small" color="warning" variant="tonal">{{ p.registry_number || '#' + p.id }}</v-chip>
+                  </a>
+                  <span v-if="p.sheet_ref" class="text-caption text-medium-emphasis">{{ p.sheet_ref }}</span>
+                </div>
               </div>
             </template>
 
@@ -125,18 +146,62 @@
 // который открывает соответствующие диалоги — сами действия идут через общий
 // composable useSubsidyPaymentControl.ts (ПРАВИЛО №6).
 import { computed, ref } from 'vue'
-import type { PaymentControlRow, PaymentControlArticle } from '@/composables/subsidies/useSubsidyPaymentControl'
+import type {
+  PaymentControlRow, PaymentControlArticle, PaymentControlNearMiss, useSubsidyPaymentControl,
+} from '@/composables/subsidies/useSubsidyPaymentControl'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { useToast } from '@/composables/useToast'
+import { describeApiError } from '@/utils/apiErrorMessage'
 import PaymentPurposeCell from '@/components/subsidies/PaymentPurposeCell.vue'
 
 const props = defineProps<{
   rows: PaymentControlRow[]
   articles: PaymentControlArticle[]
+  subsidyId: number
+  control: ReturnType<typeof useSubsidyPaymentControl>
 }>()
 const emit = defineEmits<{
   (e: 'find', row: PaymentControlRow): void
   (e: 'create', row: PaymentControlRow): void
 }>()
+
+const toast = useToast()
+const attachingKey = ref<string | null>(null)
+
+function attachKey(r: PaymentControlRow, purchaseId: number): string {
+  return `${r.bank_payment_ids[0]}:${purchaseId}`
+}
+
+const NEAR_MISS_REASON_LABELS: Record<string, (nm: PaymentControlNearMiss) => string> = {
+  amount_close: (nm) => `та же организация, разница ${formatCurrency(Math.abs(nm.delta))}`,
+  same_act: () => 'тот же акт/УПД в назначении',
+  orders_sum: () => 'сумма нескольких заказов договора',
+}
+function nearMissReasonText(nm: PaymentControlNearMiss): string {
+  const fn = NEAR_MISS_REASON_LABELS[nm.reason]
+  return fn ? fn(nm) : (nm.reason || 'похоже на эту закупку')
+}
+
+async function onAttachNearMiss(r: PaymentControlRow, nm: PaymentControlNearMiss, fixAmount: boolean) {
+  const bpId = r.bank_payment_ids[0]
+  if (!bpId) return
+  const key = fixAmount ? attachKey(r, nm.purchase_id) + ':fix' : attachKey(r, nm.purchase_id)
+  attachingKey.value = key
+  try {
+    const res = await props.control.attachPurchase(props.subsidyId, bpId, nm.purchase_id, fixAmount)
+    for (const w of (res.warnings || [])) toast.addToast(w, 'warning')
+    if (res.fixed_amount) {
+      toast.success(`Закупка привязана, сумма закупки исправлена с ${formatCurrency(res.fixed_amount.from)} на ${formatCurrency(res.fixed_amount.to)}`)
+    } else {
+      toast.success('Закупка привязана к платёжке')
+    }
+    await props.control.reload()
+  } catch (e: any) {
+    toast.addToast(describeApiError(e, { fallback: 'Не удалось привязать закупку' }), 'error')
+  } finally {
+    attachingKey.value = null
+  }
+}
 
 const onlyProblem = ref(true)
 const articleFilter = ref<string | null>(null)
@@ -176,3 +241,10 @@ function fmtDate(d: string | null): string {
   return new Date(d).toLocaleDateString('ru-RU')
 }
 </script>
+
+<style scoped>
+.near-miss-block {
+  border-left: 2px solid rgba(251, 146, 60, 0.5);
+  padding-left: 6px;
+}
+</style>

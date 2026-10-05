@@ -185,19 +185,25 @@
           <div class="kpi-icon-box"><v-icon icon="mdi-cash-check" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_paid) }}</div>
-            <div class="kpi-label">Оплачено (по отметке)</div>
-            <!-- Задача (владелец, 05.10.2026): основное число карточки — «по
-                 отметке сотрудников» (kpi-value выше, = paid_declared), рядом
-                 мельче «из них подтверждено выпиской», с разбивкой товары/
-                 услуги для обеих сумм. Подтверждённая сумма подсвечена, если
-                 она меньше отмеченной — не всё отмеченное ещё нашлось в выписке. -->
+            <div class="kpi-label">Оплачено (по выписке)</div>
+            <!-- Квик-план 06.10 (statement-control, «выписка главная»): основное
+                 число карточки теперь «по выписке» (paid_confirmed — эталон,
+                 записи сотрудников могут быть с ошибками), вторая строка — «по
+                 отметке сотрудников» (paid_declared), с разбивкой товары/услуги
+                 для обеих. Расхождение (отметка − выписка) — отдельной строкой
+                 оранжевым, только если они не совпадают. Было наоборот
+                 (05.10.2026) — перерешено владельцем 06.10.2026. -->
             <div class="kpi-paid-dual">
-              <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidDeclaredByKind.goods) }} / усл. {{ formatCurrencyRound(paidDeclaredByKind.services) }}</div>
-              <div class="kpi-paid-dual-row" :class="{ 'kpi-paid-dual-warn': paidNotFullyConfirmed }">
-                <span class="kpi-paid-dual-label">из них подтверждено выпиской:</span>
-                <span class="kpi-paid-dual-amount">{{ formatCurrencyRound(paidConfirmedTotal) }}</span>
-              </div>
               <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidConfirmedByKind.goods) }} / усл. {{ formatCurrencyRound(paidConfirmedByKind.services) }}</div>
+              <div class="kpi-paid-dual-row">
+                <span class="kpi-paid-dual-label">по отметке сотрудников:</span>
+                <span class="kpi-paid-dual-amount">{{ formatCurrencyRound(paidDeclaredTotal) }}</span>
+              </div>
+              <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidDeclaredByKind.goods) }} / усл. {{ formatCurrencyRound(paidDeclaredByKind.services) }}</div>
+              <div v-if="paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
+                <span class="kpi-paid-dual-label">расхождение:</span>
+                <span class="kpi-paid-dual-amount">{{ paidDiff >= 0 ? '+' : '−' }}{{ formatCurrencyRound(Math.abs(paidDiff)) }}</span>
+              </div>
             </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('paid')">
@@ -404,25 +410,28 @@ const kpiSubTarget_ordered           = computed(() => ctx.selectedSubsidy.value?
 const kpiSubTarget_contracts         = computed(() => ctx.selectedSubsidy.value?.contracts         ?? 0)
 const kpiSubTarget_delivered         = computed(() => ctx.selectedSubsidy.value?.delivered         ?? 0)
 const kpiSubTarget_delivered_unpaid  = computed(() => ctx.selectedSubsidy.value?.delivered_unpaid  ?? 0)
-// Дефект (прод, «ХО (копия)», 05.10.2026): .paid — это total_paid (status=
-// 'paid' only, см. dashboard_charts.py:112), показывал 0 для закупок,
-// оплаченных по отметке/выпиской, но ещё не переведённых в статус 'paid'.
-// Решение владельца: ОСНОВНОЕ число карточки — «по отметке сотрудников»
-// (paid_declared), «подтверждено выпиской» — секундарная строка под ним (см.
-// шаблон ниже). kpiSubTarget_paid читает ТОТ ЖЕ источник, что paidDeclaredTotal
-// (ПРАВИЛО №6 — не вторая формула), .paid остаётся фолбэком для старого бэка.
-const kpiSubTarget_paid              = computed(() => Number(ctx.selectedSubsidy.value?.paid_declared ?? ctx.selectedSubsidy.value?.paid ?? 0))
-// Задача (владелец, 05.10.2026) — карточка «Оплачено»: ДВЕ величины словами
-// владельца, «по отметке сотрудников» и «подтверждено выпиской» — готовые
-// поля бэкенда (dashboard_charts.py::subsidy_stats, см. app/services/
-// subsidy_paid_breakdown.py), Правило №6 — не считаем здесь заново.
+// Квик-план 06.10.2026 (statement-control, «выписка главная»): эталон —
+// выписка (paid_confirmed), записи сотрудников (paid_declared) могут быть с
+// ошибками. ОСНОВНОЕ число карточки теперь «по выписке» — kpiSubTarget_paid
+// читает paid_confirmed (ранее, 05.10.2026, было наоборот — paid_declared;
+// перерешено владельцем). .paid остаётся фолбэком для совсем старого бэка.
+const kpiSubTarget_paid              = computed(() => Number(ctx.selectedSubsidy.value?.paid_confirmed ?? ctx.selectedSubsidy.value?.paid ?? 0))
+// Задача (владелец, 06.10.2026) — карточка «Оплачено»: ДВЕ величины словами
+// владельца, «по выписке» (главная) и «по отметке сотрудников» (вторая) —
+// готовые поля бэкенда (dashboard_charts.py::subsidy_stats: paid_confirmed,
+// paid_declared, paid_diff), Правило №6 — не считаем здесь заново формулу,
+// только берём готовый paid_diff если бэкенд его прислал, иначе считаем
+// разницу локально (declared − confirmed) для обратной совместимости.
 const paidDeclaredTotal = computed(() => Number(ctx.selectedSubsidy.value?.paid_declared ?? 0))
 const paidConfirmedTotal = computed(() => Number(ctx.selectedSubsidy.value?.paid_confirmed ?? 0))
 const paidDeclaredByKind = computed(() => ctx.selectedSubsidy.value?.paid_declared_by_kind ?? { goods: 0, services: 0, unspecified: 0 })
 const paidConfirmedByKind = computed(() => ctx.selectedSubsidy.value?.paid_confirmed_by_kind ?? { goods: 0, services: 0, unspecified: 0 })
-// Не всё отмеченное подтверждено выпиской — сигнал цветом (не механика, см.
-// feedback_mechanics_vs_signalling.md), а не блокировка.
-const paidNotFullyConfirmed = computed(() => paidConfirmedTotal.value < paidDeclaredTotal.value - 0.5)
+const paidDiff = computed(() => {
+  const explicit = ctx.selectedSubsidy.value?.paid_diff
+  if (explicit != null) return Number(explicit)
+  return paidDeclaredTotal.value - paidConfirmedTotal.value
+})
+const paidHasDiscrepancy = computed(() => Math.abs(paidDiff.value) > 0.5)
 const kpiSubTarget_free              = computed(() => ctx.selectedBudget.value - ctx.selectedPlannedTotal.value)
 // Задача 3 (владелец, 04.10.2026) — готовое поле бэкенда, не считаем здесь (Правило №6).
 const monthlyFutureToYearEnd = computed(() => ctx.selectedSubsidy.value?.monthly_future_to_year_end ?? 0)

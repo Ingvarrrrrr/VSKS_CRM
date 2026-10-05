@@ -25,6 +25,8 @@ export interface SubsidyRow {
   paid_confirmed?: number
   paid_declared_by_kind?: { goods: number; services: number; unspecified: number } | null
   paid_confirmed_by_kind?: { goods: number; services: number; unspecified: number } | null
+  // «по отметке − по выписке» от бэкенда (dashboard_charts.py::subsidy_stats, план 06.10.2026).
+  paid_diff?: number
   plan_schedule: number; ordered: number
   feo_filled?: boolean
   feo_budget_total?: number

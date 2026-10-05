@@ -114,6 +114,11 @@ class BankStatementImportOut(BaseModel):
     rows_ambiguous: int = 0
     status: str = "processing"
     error_message: Optional[str] = None
+    # План 2026-10-06-statement-control, п.5: автосопоставление по
+    # субсидиям, затронутым этим импортом (см. app/routers/bank_statements.py)
+    # — не персистентная колонка, проставляется на ORM-объект ответа только
+    # для сериализации этого конкретного ответа.
+    auto_matched: Optional[dict] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -7,6 +7,13 @@
         <span v-if="data?.as_of" class="text-caption text-medium-emphasis ml-2">на {{ fmtDate(data.as_of) }}</span>
         <v-spacer />
         <v-btn icon="mdi-refresh" variant="text" :loading="control.loading.value" @click="control.reload()" />
+        <v-btn
+          icon="mdi-file-excel"
+          variant="text"
+          :loading="control.exporting.value"
+          title="Выгрузить в Excel"
+          @click="onExport"
+        />
         <v-btn icon="mdi-close" variant="text" @click="dialog = false" />
       </v-card-title>
 
@@ -22,6 +29,36 @@
         </v-alert>
 
         <template v-else-if="data">
+          <!-- Контрольный итог (квик-план 06.10, statement-control): привязано
+               N из M платёжек, сумма A из B ₽, не хватает C ₽ (K платёжек);
+               номера непривязанных — кликабельны, переводят на вкладку
+               «Выписка» и прокручивают/подсвечивают строку. -->
+          <v-sheet
+            v-if="data.totals.statement_count != null"
+            rounded="lg"
+            :color="unattachedCount > 0 ? 'orange-lighten-5' : 'green-lighten-5'"
+            class="pa-3 mb-3"
+          >
+            <div class="text-body-2">
+              <b>Привязано {{ data.totals.attached_count ?? 0 }} из {{ data.totals.statement_count }} платёжек</b>
+              · {{ formatCurrency((data.totals.reconciled_total || 0) - (data.totals.unattached_total || 0)) }} из {{ formatCurrency(data.totals.reconciled_total || 0) }} ₽
+              <template v-if="unattachedCount > 0">
+                · <span class="text-error font-weight-bold">не хватает {{ formatCurrency(data.totals.unattached_total || 0) }} ₽ ({{ unattachedCount }} платёжек)</span>
+              </template>
+            </div>
+            <div v-if="unattachedNumbers.length" class="d-flex flex-wrap gap-1 mt-2">
+              <v-chip
+                v-for="num in unattachedNumbers"
+                :key="num"
+                size="x-small"
+                color="error"
+                variant="tonal"
+                class="cursor-pointer"
+                @click="goToStatementNumber(num)"
+              >{{ num }}</v-chip>
+            </div>
+          </v-sheet>
+
           <!-- Контрольные суммы -->
           <v-sheet rounded="lg" border class="pa-3 mb-4">
             <div class="d-flex flex-wrap gap-x-6 gap-y-2 text-body-2">
@@ -39,6 +76,7 @@
           <v-tabs v-model="tab" class="mb-3">
             <v-tab value="articles">Статьи</v-tab>
             <v-tab value="rows">Платёжки</v-tab>
+            <v-tab value="statement">Выписка</v-tab>
             <v-tab value="not_executed">Не исполнены</v-tab>
           </v-tabs>
 
@@ -55,9 +93,15 @@
               <SubsidyPaymentControlRowsTab
                 :rows="data.rows"
                 :articles="data.articles"
+                :subsidy-id="props.subsidyId!"
+                :control="control"
                 @find="onFind"
                 @create="onCreate"
               />
+            </v-window-item>
+
+            <v-window-item value="statement">
+              <SubsidyStatementTab :subsidy-id="props.subsidyId" :highlight-number="highlightStatementNumber" />
             </v-window-item>
 
             <v-window-item value="not_executed">
@@ -124,10 +168,13 @@ import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useSubsidyPaymentControl, type PaymentControlRow } from '@/composables/subsidies/useSubsidyPaymentControl'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { useToast } from '@/composables/useToast'
+import { describeApiError } from '@/utils/apiErrorMessage'
 import SubsidyPaymentControlArticlesTab from '@/components/subsidies/SubsidyPaymentControlArticlesTab.vue'
 import SubsidyPaymentControlRowsTab from '@/components/subsidies/SubsidyPaymentControlRowsTab.vue'
 import SubsidyPaymentControlCandidatesDialog from '@/components/subsidies/SubsidyPaymentControlCandidatesDialog.vue'
 import SubsidyPaymentControlCreatePurchaseDialog from '@/components/subsidies/SubsidyPaymentControlCreatePurchaseDialog.vue'
+import SubsidyStatementTab from '@/components/subsidies/SubsidyStatementTab.vue'
 
 const props = defineProps<{
   subsidyId: number | null | undefined
@@ -140,10 +187,31 @@ const control = props.control
 const data = computed(() => control.data.value)
 
 const tab = ref('articles')
+const toast = useToast()
 
 function fmtDate(d: string | null): string {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('ru-RU')
+}
+
+// Контрольный итог (квик-план 06.10) — номера непривязанных платёжек, клик по
+// чипу переводит на вкладку «Выписка» и подсвечивает/прокручивает строку там
+// (не дублируем список строк здесь — один источник, SubsidyStatementTab.vue).
+const unattachedCount = computed(() => data.value?.totals.unattached_count ?? 0)
+const unattachedNumbers = computed(() => data.value?.totals.unattached_numbers ?? [])
+const highlightStatementNumber = ref<string | null>(null)
+function goToStatementNumber(num: string) {
+  tab.value = 'statement'
+  highlightStatementNumber.value = num
+}
+
+async function onExport() {
+  if (!props.subsidyId) return
+  try {
+    await control.exportXlsx(props.subsidyId)
+  } catch (e: any) {
+    toast.addToast(describeApiError(e, { fallback: 'Не удалось выгрузить сверку' }), 'error')
+  }
 }
 
 const candidatesDialog = ref(false)

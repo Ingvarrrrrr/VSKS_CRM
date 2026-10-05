@@ -288,139 +288,15 @@ async def match_payments_endpoint(
     (товары/услуги) авто-разносит РОВНО ОДНОГО свободного кандидата, если он
     единственный (см. find_candidates — auto=True); неоднозначные и ненайденные
     остаются в отчёте без изменений. dry_run=true (умолчание) — ничего не
-    пишет, только считает, что было бы сделано."""
+    пишет, только считает, что было бы сделано.
+
+    Тело прогона вынесено в app/services/payment_matching_run.py::
+    run_match_payments (Правило №6) — та же функция вызывается напрямую (без
+    HTTP) из app/routers/bank_statements.py после импорта выписки, план
+    2026-10-06-statement-control, п.5."""
     await _get_subsidy_for_payments(subsidy_id, db, current_user)
-    from app.services.payment_target import build_groups, suspicious_groups
-    from app.services.payment_lookup import find_candidates, attach, PaymentAttachError
-
-    groups = await build_groups(db, subsidy_id)
-    susp = await suspicious_groups(db, subsidy_id=subsidy_id)
-
-    report = {
-        "subsidy_id": subsidy_id,
-        "dry_run": dry_run,
-        "groups_total": len(groups),
-        "attached": [],
-        "ambiguous": [],
-        "not_found": [],
-        "suspicious": [_suspicious_group_to_dict(s) for s in susp],
-    }
-
-    for g in groups:
-        cands = await find_candidates(db, g)
-        group_attached: list[dict] = []
-        group_ambiguous: list[dict] = []
-        group_had_target = False
-
-        for kind in ("goods", "services"):
-            kind_amount = g.goods_amount if kind == "goods" else g.services_amount
-            if not kind_amount:
-                continue
-            group_had_target = True
-            kind_cands = cands.get(kind, [])
-            auto_cand = next((c for c in kind_cands if c.auto), None)
-
-            if auto_cand:
-                if dry_run:
-                    group_attached.append({
-                        "kind": kind, "bank_payment_id": auto_cand.bank_payment_id,
-                        "amount": float(auto_cand.amount), "basis_label": auto_cand.basis_label,
-                    })
-                else:
-                    try:
-                        created = await attach(db, g, [auto_cand.bank_payment_id])
-                        group_attached.append({
-                            "kind": kind, "bank_payment_id": auto_cand.bank_payment_id,
-                            "amount": float(auto_cand.amount), "basis_label": auto_cand.basis_label,
-                            "payment_ids": [p.id for p in created],
-                        })
-                    except PaymentAttachError as exc:
-                        await db.rollback()
-                        group_ambiguous.append({"kind": kind, "reason": str(exc)})
-            elif kind_cands:
-                reasons = sorted({c.reason for c in kind_cands if c.reason} or {"нет свободного кандидата"})
-                group_ambiguous.append({"kind": kind, "reason": "; ".join(reasons)})
-
-        if group_attached:
-            report["attached"].append({
-                "group_key": g.group_key, "registry_number": g.registry_number, "items": group_attached,
-            })
-        if group_ambiguous:
-            report["ambiguous"].append({
-                "group_key": g.group_key, "registry_number": g.registry_number, "items": group_ambiguous,
-            })
-        if group_had_target and not group_attached and not group_ambiguous:
-            report["not_found"].append({"group_key": g.group_key, "registry_number": g.registry_number})
-
-    # Задача 05.10.2026 («три расширения штатного сопоставления»): группы,
-    # которые простой пасс выше не закрыл (not_found/ambiguous — обычный
-    # find_candidates ищет РОВНО ОДИН платёж на ВСЮ сумму группы), донабираются
-    # помесячным/рамочным/авансовым поиском — см.
-    # app/services/payment_lookup_multi.py (ПРАВИЛО №6: пишет туда же, через
-    # тот же attach()).
-    from app.services.payment_lookup_multi import match_monthly, match_framework, match_advance
-
-    handled_keys = {a["group_key"] for a in report["attached"]}
-    pending_groups = [g for g in groups if g.group_key not in handled_keys]
-
-    purchase_ids_all = [pid for g in pending_groups for pid in g.purchase_ids]
-    purchases_by_id = {}
-    if purchase_ids_all:
-        purchase_rows = (await db.execute(
-            select(Purchase).where(Purchase.id.in_(purchase_ids_all))
-        )).scalars().all()
-        purchases_by_id = {p.id: p for p in purchase_rows}
-
-    multi_report = {
-        "monthly": {"attached": [], "ambiguous": []},
-        "framework": {"attached": [], "ambiguous": []},
-        "advance": {"attached": [], "ambiguous": []},
-    }
-
-    for g in pending_groups:
-        monthly_purchase = next(
-            (purchases_by_id[pid] for pid in g.purchase_ids if purchases_by_id.get(pid) and purchases_by_id[pid].is_monthly_payment),
-            None,
-        )
-        if monthly_purchase is not None:
-            r = await match_monthly(db, g, monthly_purchase, dry_run=dry_run)
-            multi_report["monthly"]["attached"].extend(
-                {**item, "group_key": g.group_key} for item in r["attached"]
-            )
-            multi_report["monthly"]["ambiguous"].extend(
-                {**item, "group_key": g.group_key} for item in r["ambiguous"]
-            )
-
-    framework_groups = [g for g in pending_groups if g.is_framework]
-    if framework_groups:
-        r = await match_framework(db, framework_groups, dry_run=dry_run)
-        multi_report["framework"]["attached"].extend(r["attached"])
-        multi_report["framework"]["ambiguous"].extend(r["ambiguous"])
-
-    advance_pairs = []
-    for g in pending_groups:
-        adv_purchase = next(
-            (
-                purchases_by_id[pid] for pid in g.purchase_ids
-                if purchases_by_id.get(pid)
-                and purchases_by_id[pid].purchase_method == "advance"
-                and purchases_by_id[pid].reimbursement_user_id
-            ),
-            None,
-        )
-        if adv_purchase is not None:
-            advance_pairs.append((g, adv_purchase))
-    if advance_pairs:
-        r = await match_advance(db, advance_pairs, dry_run=dry_run)
-        multi_report["advance"]["attached"].extend(r["attached"])
-        multi_report["advance"]["ambiguous"].extend(r["ambiguous"])
-
-    report["multi"] = multi_report
-
-    if not dry_run:
-        await db.commit()
-
-    return report
+    from app.services.payment_matching_run import run_match_payments
+    return await run_match_payments(db, subsidy_id, dry_run=dry_run)
 
 
 @router.get("/{pid}/vat-payment-check")

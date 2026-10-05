@@ -1020,3 +1020,19 @@
   border-radius: 8px; padding: 6px 12px; margin-bottom: 10px;
 }
 .rev-pending-item { display: inline-flex; align-items: center; }
+
+/* Переход «к строке» из сводных предупреждений мастера «Импорт факта»
+   (FactImportStepRows.vue/FactImportStepGroups.vue, useRowJump.ts) — кратко
+   подсвечивает строку/карточку после скролла. Класс БЕЗ префикса
+   .subsidies-page: мастер открывается в v-dialog, Vuetify телепортирует его
+   содержимое в .v-overlay-container вне .subsidies-page (тот же случай, что
+   feo-imap-* в докстринге наверху файла), а повторять этот блок в <style
+   scoped> каждого шага смысла нет — ЕДИНСТВЕННОЕ место, где класс стилизуется
+   (ПРАВИЛО №6), от scoped-копий нас спасает то, что subsidies.css уже
+   загружен глобально к моменту, когда мастер открывается со страницы субсидии. */
+@keyframes row-jump-flash-pulse {
+  0%, 100% { background-color: transparent; box-shadow: none; }
+  30% { background-color: rgba(255, 193, 7, 0.35); box-shadow: inset 0 0 0 2px rgba(255, 152, 0, 0.9); }
+}
+.row-jump-flash { animation: row-jump-flash-pulse 1.6s ease-out 1; }
+tr.row-jump-flash { outline: 2px solid rgba(255, 152, 0, 0.9); outline-offset: -1px; }

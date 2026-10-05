@@ -6,26 +6,66 @@
     <v-checkbox v-model="onlyNeedsDecision" label="Нужно решение" density="compact" hide-details />
     <v-checkbox v-model="onlyWarnings" label="Предупреждения" density="compact" hide-details />
     <v-checkbox v-model="showSkipped" label="Показывать пропущенные" density="compact" hide-details />
+    <v-chip v-if="isolatedRows" size="small" variant="tonal" color="primary" closable @click:close="isolatedRows = null">
+      показаны только отобранные строки
+    </v-chip>
     <v-spacer />
     <v-switch
       v-model="factImport.decisions.include_payroll" label="Включить ФОТ" color="teal"
       density="compact" hide-details @update:model-value="onIncludePayrollChange" />
   </div>
 
-  <v-alert v-if="needsContractCount > 0" type="warning" variant="tonal" density="compact" class="mb-2">
-    В {{ needsContractCount }} строках заполнено «Законтрактовано», но статус «В работе» — отметьте
+  <!-- Сводные предупреждения мастера (жалоба владельца 05.10.2026: не говорят,
+       какие строки, нельзя кликнуть, неверное склонение «в 1 строках») — текст
+       через rowsInPhrase (ПРАВИЛО №6, utils/pluralize.ts), под текстом чипы
+       строк (RowWarningChips.vue, клик → useRowJump → секция «переход к
+       строке» ниже). -->
+  <v-alert v-if="contractRows.length" type="warning" variant="tonal" density="compact" class="mb-2">
+    {{ rowsInPhrase(contractRows.length) }} заполнено «Законтрактовано», но статус «В работе» — отметьте
     галочкой, если договор уже подписан. Пример: статус «на стадии заключения договора», законтрактовано
     = весь план — отмечена → закупка «Заключён» на эту сумму, не отмечена → «В работе» без суммы договора.
     <v-btn size="x-small" variant="tonal" class="ml-2" @click="onMarkAllContracts">Отметить все</v-btn>
+    <RowWarningChips :rows="contractRows" show-isolate-button :isolated="isIsolatedTo(contractRows)"
+      @update:isolated="v => setIsolated(v, contractRows)" />
   </v-alert>
-  <v-alert v-if="needsStatusCount > 0" type="error" variant="tonal" density="compact" class="mb-2">
-    В {{ needsStatusCount }} строках статус не распознан — выберите его в колонке «Статус».
+  <v-alert v-if="statusRows.length" type="error" variant="tonal" density="compact" class="mb-2">
+    {{ rowsInPhrase(statusRows.length) }} статус не распознан — выберите его в колонке «Статус».
+    <RowWarningChips :rows="statusRows" show-isolate-button :isolated="isIsolatedTo(statusRows)"
+      @update:isolated="v => setIsolated(v, statusRows)" />
+  </v-alert>
+  <v-alert v-if="notFoundRows.length" type="warning" variant="tonal" density="compact" class="mb-2">
+    {{ rowsInPhrase(notFoundRows.length) }} плановая позиция не найдена или сопоставление неоднозначно —
+    выберите её в колонке «Сопоставление».
+    <RowWarningChips :rows="notFoundRows" show-isolate-button :isolated="isIsolatedTo(notFoundRows)"
+      @update:isolated="v => setIsolated(v, notFoundRows)" />
+  </v-alert>
+  <v-alert v-if="overPlanRows.length" type="warning" variant="tonal" density="compact" class="mb-2">
+    {{ rowsInPhrase(overPlanRows.length) }} факт превышает план — выберите решение в колонке «Превышение».
+    <RowWarningChips :rows="overPlanRows" show-isolate-button :isolated="isIsolatedTo(overPlanRows)"
+      @update:isolated="v => setIsolated(v, overPlanRows)" />
+  </v-alert>
+  <v-alert v-if="alreadyPurchasedRows.length" type="info" variant="tonal" density="compact" class="mb-2">
+    {{ rowsInPhrase(alreadyPurchasedRows.length) }} позиция уже закуплена ранее — проверьте, что закупка не задвоится.
+    <RowWarningChips :rows="alreadyPurchasedRows" show-isolate-button :isolated="isIsolatedTo(alreadyPurchasedRows)"
+      @update:isolated="v => setIsolated(v, alreadyPurchasedRows)" />
+  </v-alert>
+  <v-alert v-if="normalizedStatusRows.length" type="info" variant="tonal" density="compact" class="mb-2">
+    {{ rowsInPhrase(normalizedStatusRows.length) }} статус из файла автоматически приведён к одному из принятых —
+    проверьте соответствие в колонке «Статус».
+    <RowWarningChips :rows="normalizedStatusRows" show-isolate-button :isolated="isIsolatedTo(normalizedStatusRows)"
+      @update:isolated="v => setIsolated(v, normalizedStatusRows)" />
+  </v-alert>
+  <v-alert v-if="payrollRows.length" type="info" variant="tonal" density="compact" class="mb-2">
+    {{ rowsInPhrase(payrollRows.length) }} отмечены как ФОТ — попадут в импорт только при включённом переключателе
+    «Включить ФОТ».
+    <RowWarningChips :rows="payrollRows" show-isolate-button :isolated="isIsolatedTo(payrollRows)"
+      @update:isolated="v => setIsolated(v, payrollRows)" />
   </v-alert>
 
   <!-- 🔵 правка 3: оверлей на серию кликов (debounce ~500мс, см.
        queuePreviewRefresh в useFactImport.ts) — таблица остаётся видимой и
        кликабельной, не мигает полным factImport.loading на каждую галочку. -->
-  <div class="fisr-table-wrap">
+  <div class="fisr-table-wrap" ref="tableWrapRef">
     <div v-if="factImport.previewRefreshing" class="fisr-overlay">
       <v-progress-circular indeterminate size="28" color="teal" />
     </div>
@@ -38,8 +78,8 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="r in filteredRows" :key="r.row"
-          :class="{ 'fisr-row--decision': r.needs_contract_decision, 'fisr-row--needs-status': r.needs_status, 'fisr-row--skip': r.skip }">
+        <tr v-for="r in filteredRows" :key="r.row" :data-row-anchor="r.row"
+          :class="{ 'fisr-row--decision': r.needs_contract_decision, 'fisr-row--needs-status': r.needs_status, 'fisr-row--skip': r.skip, 'row-jump-flash': rowJumpState.highlightedRow === r.row }">
           <td>{{ r.row }}</td>
           <td>
             <div class="text-caption text-medium-emphasis">{{ r.path.join(' › ') }}</div>
@@ -113,10 +153,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useFactImport, type FactImportRow, type FactImportOverPlanChoice } from '@/composables/subsidies/useFactImport'
+import { useRowJump } from '@/composables/subsidies/useRowJump'
 import FactImportRowPlanPicker from './FactImportRowPlanPicker.vue'
+import RowWarningChips from './RowWarningChips.vue'
 import { formatMoney } from '@/utils/formatMoney'
+import { rowsInPhrase } from '@/utils/pluralize'
 
 const props = defineProps<{ subsidyId: number | null }>()
 const subsidyId = computed(() => props.subsidyId)
@@ -131,6 +174,10 @@ const statusFilter = ref<string | null>(null)
 const onlyNeedsDecision = ref(false)
 const onlyWarnings = ref(false)
 const showSkipped = ref(true)
+// «Показать только эти строки» (один из сводных предупреждений выше) —
+// держит набор строк одного предупреждения; второй клик на той же кнопке или
+// крестик чипа над таблицей снимает изоляцию.
+const isolatedRows = ref<number[] | null>(null)
 
 // 🔵 правка 3: статусы — ровно 6 из preview.statuses (код→подпись с бэка),
 // не собственный список фронта (ПРАВИЛО №6).
@@ -143,6 +190,7 @@ function rowStatusCode(r: FactImportRow): string {
 }
 
 const filteredRows = computed(() => visibleRows.value.filter(r => {
+  if (isolatedRows.value && !isolatedRows.value.includes(r.row)) return false
   if (statusFilter.value && rowStatusCode(r) !== statusFilter.value) return false
   // «Нужно решение» — статус не распознан (needs_status) ИЛИ нужно решить
   // договор/превышение/сопоставление; найденная и не спорная строка скрыта.
@@ -155,8 +203,30 @@ const filteredRows = computed(() => visibleRows.value.filter(r => {
   return true
 }))
 
-const needsContractCount = computed(() => visibleRows.value.filter(r => r.needs_contract_decision).length)
-const needsStatusCount = computed(() => visibleRows.value.filter(r => r.needs_status).length)
+// Наборы строк под каждое сводное предупреждение (ПРАВИЛО №6 — одно условие,
+// один источник: то же needs_contract_decision/needs_status/match.state/
+// isOverPlan/statusNormalizedHint/is_payroll, которыми уже помечена каждая
+// строка в таблице ниже, здесь просто собраны в список номеров для чипов).
+const contractRows = computed(() => visibleRows.value.filter(r => r.needs_contract_decision).map(r => r.row))
+const statusRows = computed(() => visibleRows.value.filter(r => r.needs_status).map(r => r.row))
+const notFoundRows = computed(() =>
+  visibleRows.value.filter(r => r.match.state === 'not_found' || r.match.state === 'ambiguous').map(r => r.row))
+const overPlanRows = computed(() => visibleRows.value.filter(isOverPlan).map(r => r.row))
+const alreadyPurchasedRows = computed(() =>
+  visibleRows.value.filter(r => r.match.state === 'already_purchased').map(r => r.row))
+const normalizedStatusRows = computed(() =>
+  visibleRows.value.filter(r => !!statusNormalizedHint(r)).map(r => r.row))
+const payrollRows = computed(() => visibleRows.value.filter(r => r.is_payroll).map(r => r.row))
+
+function isIsolatedTo(rows: number[]): boolean {
+  if (!isolatedRows.value) return false
+  if (isolatedRows.value.length !== rows.length) return false
+  const set = new Set(rows)
+  return isolatedRows.value.every(r => set.has(r))
+}
+function setIsolated(on: boolean, rows: number[]) {
+  isolatedRows.value = on ? [...rows] : null
+}
 
 // Решения по строке (пропуск/галочка договора/превышение/статус) меняют то,
 // что покажет сервер (сумма группы, needs_contract_decision и т.п.) —
@@ -208,6 +278,25 @@ function onPickerClose(open: boolean) {
 function onIncludePayrollChange() {
   queuePreviewRefresh()
 }
+
+// Переход «к строке» (useRowJump.ts, ЕДИНЫЙ механизм мастера) — чип в одном
+// из предупреждений выше кладёт номер строки в общее состояние; этот шаг (он
+// активен — виден на экране) сам снимает СВОИ фильтры, которые могли бы
+// скрыть строку, и скроллит к <tr data-row-anchor="N"> внутри .fisr-table-wrap.
+const { state: rowJumpState, clearPendingRow, scrollToRowEl } = useRowJump()
+const tableWrapRef = ref<HTMLElement | null>(null)
+watch(() => rowJumpState.pendingRow, (row) => {
+  if (row == null) return
+  statusFilter.value = null
+  onlyNeedsDecision.value = false
+  onlyWarnings.value = false
+  showSkipped.value = true
+  if (isolatedRows.value && !isolatedRows.value.includes(row)) isolatedRows.value = null
+  nextTick(() => {
+    scrollToRowEl(tableWrapRef.value, row)
+    clearPendingRow()
+  })
+})
 </script>
 
 <style scoped>

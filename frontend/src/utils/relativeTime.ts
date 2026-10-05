@@ -3,6 +3,8 @@
  * где показывается свежесть точки местоположения (индикатор кнопки смены,
  * карта диспетчера, карточка сотрудника, свой трек). 2026-09.
  */
+import { pluralRu } from './pluralize'
+
 export function formatRelativeTime(iso: string | Date | null | undefined): string {
   if (!iso) return 'нет данных'
   const date = typeof iso === 'string' ? new Date(iso) : iso
@@ -38,14 +40,6 @@ function pluralHours(n: number): string {
 }
 function pluralDays(n: number): string {
   return pluralRu(n, 'день', 'дня', 'дней')
-}
-
-function pluralRu(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10
-  const mod100 = n % 100
-  if (mod10 === 1 && mod100 !== 11) return one
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few
-  return many
 }
 
 /** Порог «данные свежие» / «устаревшие» / «давно нет данных» — используется для

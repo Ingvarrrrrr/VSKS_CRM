@@ -17,8 +17,14 @@ export function useWishApprovers(deps: {
   flushFeoAutosave: () => Promise<boolean>
   notifyLocalUpdate: () => void
   loadWishes: () => Promise<void>
+  // Прод 05.10, заявка №113: loadWishes() ниже обновляет только вкладку «Мои»,
+  // а решение по согласованию чаще принимают со вкладки «На согласование мне»
+  // (incoming) или «Заявки сотрудников» (all) — используем тот же механизм,
+  // что и остальные composable'ы заявок (WishFormDialog.vue передаёт
+  // props.reloadActiveTab), не заводим второй способ обновления списка.
+  reloadActiveTab: () => Promise<void>
 }) {
-  const { ctx, apiFetch, form, flushFeoAutosave, notifyLocalUpdate, loadWishes } = deps
+  const { ctx, apiFetch, form, flushFeoAutosave, notifyLocalUpdate, loadWishes, reloadActiveTab } = deps
   const { showSnack, currentUserId, isAdmin, requiresConsent, showExcessWarnings, showPurchaseSync } = ctx
   const { editingWishId, editingWish, wishForm, isWishEditable, wishPayloadSnapshotJson, wishFormSavedSnapshot, saveWish, handleMissingFeoCategoryError, orgUsers, setIsChainApprover } = form
 
@@ -272,6 +278,10 @@ export function useWishApprovers(deps: {
       showPurchaseSync(res.purchase_sync)
       await loadWishOnce()
       await loadWishes()
+      // Прод 05.10, заявка №113: обновить именно активную вкладку (incoming/all),
+      // не только «Мои» — иначе список продолжает показывать старый статус до
+      // ручного «Обновить», и повторное открытие заявки из него откатывает окно.
+      await reloadActiveTab()
       refreshMyPendingApprovals()  // бейдж «мои согласования» в сайдбаре
     } catch (e: any) {
       const handled = editingWish.value ? await handleMissingFeoCategoryError(e, editingWish.value) : false

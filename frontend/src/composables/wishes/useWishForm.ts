@@ -705,12 +705,27 @@ export function useWishForm(deps: {
         const fresh = await apiFetch<any>(`/wishes/${wish.id}`)
         if (Array.isArray(fresh?.items)) rawItems = fresh.items
         if (editingWish.value && editingWish.value.id === wish.id) {
+          // Прод 05.10, заявка №113: список (строка wish) мог устареть между
+          // загрузкой вкладки и открытием карточки (другой согласующий успел
+          // решить) — шапочные поля, которые окно показывает (статус, кто
+          // согласовал/отклонил, причина, закупка, режим согласования), берём
+          // из СВЕЖЕГО ответа, а не из строки списка.
           editingWish.value = {
             ...editingWish.value,
             contracted_locked: fresh?.contracted_locked,
             contracted_locked_reason: fresh?.contracted_locked_reason,
             source: fresh?.source,
+            status: fresh?.status ?? editingWish.value.status,
+            approved_by: fresh?.approved_by,
+            rejected_by: fresh?.rejected_by,
+            rejected_at: fresh?.rejected_at,
+            rejected_by_name: fresh?.rejected_by_name,
+            rejection_reason: fresh?.rejection_reason,
+            purchase_id: fresh?.purchase_id,
+            purchases: fresh?.purchases,
+            approval_mode: fresh?.approval_mode,
           }
+          if (fresh?.status) wishForm.value.status = fresh.status
         }
       } catch {}
       if (!rawItems.length && Array.isArray((wish as any).items) && (wish as any).items.length > 0) {

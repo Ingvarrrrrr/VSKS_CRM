@@ -1600,6 +1600,7 @@ const approvers = useWishApprovers({
   flushFeoAutosave: () => autosave.flushFeoAutosave(),
   notifyLocalUpdate: () => wishLive.markLocalUpdate(),
   loadWishes: props.loadWishes,
+  reloadActiveTab: props.reloadActiveTab,
 })
 
 const wishLive = useWishLive({
@@ -1618,6 +1619,10 @@ const wishLive = useWishLive({
   onExternalChange: () => {
     props.loadWishes()
     props.loadAllWishes()
+    // Прод 05.10, заявка №113: чужое решение по согласованию, увиденное живым
+    // поллером, тоже должно обновить активную вкладку (incoming), не только
+    // «Мои»/«Заявки сотрудников».
+    props.reloadActiveTab()
     refreshMyPendingApprovals()
   },
 })

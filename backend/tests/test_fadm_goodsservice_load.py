@@ -56,9 +56,11 @@ def _row(**kw) -> list[str]:
         "final_price": 13, "final_sum": 14, "sum_to_pay_delivery": 15,
         "sum_to_pay_contract": 16, "inn": 17, "contract_number": 18,
         "contract_date": 19, "payment_doc": 20, "payment_purpose": 21,
-        "payment_date": 22, "goods_services": 29, "feo_direction": 30,
+        "payment_date": 22, "plan_y": 24, "goods_services": 29, "feo_direction": 30,
         "feo_type": 31, "purchase_done": 44, "contract_signed": 45,
-        "ordered": 46, "delivered": 47, "paid": 48,
+        "ordered": 46, "delivered": 47, "paid": 48, "to_order_ax": 49,
+        "ordered_amt_ay": 50, "delivered_amt_az": 51, "monthly_ba": 52,
+        "likely_bb": 53, "nice_to_have_bc": 54, "paid_amt_bd": 55,
     }
     r[2] = kw.pop("contract_kind", "Разовый")
     for key, val in kw.items():
@@ -130,7 +132,7 @@ async def test_goodsservice_loader_three_contract_types(db_session, tmp_path):
         # Разовый, с платежом
         _row(purchase_no="1", order_no="1", subject="Разовая закупка", item_name="Товар А",
              contractor="ООО Ромашка", plan_price="1000", plan_sum="1000", confirmed="True",
-             final_price="1000", final_sum="1000", sum_to_pay_delivery="1000",
+             final_price="1000", final_sum="1000", sum_to_pay_delivery="1000", plan_y="1000",
              inn="7700000001", contract_number="Д-1", contract_date="2026-01-01",
              payment_doc="555", payment_purpose="оплата", payment_date="2026-03-02",
              goods_services="Товары", contract_signed="True", delivered="True",
@@ -138,12 +140,12 @@ async def test_goodsservice_loader_three_contract_types(db_session, tmp_path):
         # Рамочный накопительный — голова неявная, 2 заказа
         _row(purchase_no="2", order_no="1", subject="Заказ 1", item_name="Услуга Б",
              contractor="ООО Рамка", inn="7700000002", plan_price="500", plan_sum="500",
-             final_sum="500", contract_number="Р-2", contract_date="2026-01-05",
+             final_sum="500", plan_y="500", contract_number="Р-2", contract_date="2026-01-05",
              goods_services="Услуги", contract_signed="True", ordered="True",
              contract_kind="Рамочный накопительный"),
         _row(purchase_no="2", order_no="2", subject="Заказ 2", item_name="Услуга Б2",
              contractor="ООО Рамка", inn="7700000002", plan_price="700", plan_sum="700",
-             final_sum="700", contract_number="Р-2", contract_date="2026-01-05",
+             final_sum="700", plan_y="700", contract_number="Р-2", contract_date="2026-01-05",
              goods_services="Услуги", contract_signed="True", ordered="True",
              contract_kind="Рамочный накопительный"),
         # Рамочный с суммой — служебная строка-лимит + 1 заказ
@@ -153,13 +155,13 @@ async def test_goodsservice_loader_three_contract_types(db_session, tmp_path):
              contract_number="Л-3", contract_date="2026-01-10",
              contract_kind="Рамочный с суммой"),
         _row(purchase_no="3", order_no="1", subject="Заказ лимита 1", item_name="Товар В",
-             contractor="ООО Лимит", inn="7700000003", plan_sum="300", final_sum="300",
+             contractor="ООО Лимит", inn="7700000003", plan_sum="300", final_sum="300", plan_y="300",
              contract_number="Л-3", contract_date="2026-01-10",
              goods_services="Товары", contract_signed="True",
              contract_kind="Рамочный с суммой"),
         # Авансовая — контрагент = ФИО сотрудника
         _row(purchase_no="4", order_no="1", subject="Авансовый отчёт", item_name="Канцтовары",
-             contractor="Петрова Анна Ивановна", plan_sum="200", final_sum="200",
+             contractor="Петрова Анна Ивановна", plan_sum="200", final_sum="200", plan_y="200",
              contract_number="АВАНСОВЫЙ ОТЧЕТ 7", goods_services="Товары",
              contract_signed="True", ordered="True", contract_kind="Разовый"),
     ]
@@ -191,18 +193,56 @@ async def test_goodsservice_loader_three_contract_types(db_session, tmp_path):
     assert advance.assigned_user_id == employee.id
     assert advance.reimbursement_user_id == employee.id
 
-    # Лимит рамки — Contract.max_amount головы «Рамочный с суммой»
-    limit_head = next(p for p in purchases if p.purchase_contract_type == "framework_cumulative"
-                      and p.parent_purchase_id is None and p.contract_price and p.contract_price > 0
-                      and any(o.parent_purchase_id == p.id for o in purchases if o.contract_price == Decimal("300")))
+    # Доп. задание 05.10.2026, п.1 — голова рамочного НЕ несёт сумму заказов.
+    # «Рамочный с суммой»: purchase_contract_type='framework_with_amount',
+    # Contract.max_amount И Purchase.contract_price головы = лимит (5000),
+    # НЕ Σ заказов (300).
+    limit_head = next(p for p in purchases if p.purchase_contract_type == "framework_with_amount"
+                      and p.parent_purchase_id is None)
+    assert limit_head.contract_price == Decimal("5000")
     contract = await db_session.get(Contract, limit_head.contract_id)
     assert contract is not None
     assert contract.max_amount == Decimal("5000")
 
+    # «Рамочный накопительный»: голова без суммы (контракт денег не держит) —
+    # НЕ 500+700=1200 (прежний баг, задвоение с заказами в «Ведётся работа»).
+    cumulative_head = next(p for p in purchases if p.purchase_contract_type == "framework_cumulative"
+                           and p.parent_purchase_id is None)
+    assert not cumulative_head.contract_price
+
+    # Доп. задание 05.10.2026, п.2 — план из Y: каждая позиция закупки
+    # привязана к своей FeoPlannedItem (feo_planned_item_id), созданной ИЗ Y.
+    from app.models.purchase_item import PurchaseItem
+    # Голова рамочного с суммой несёт одну позицию на лимит (товар/услуга по
+    # заказам, см. sheet_v2_build.py::build_framework) — она не часть плана
+    # из Y, исключаем ЯВНО по id головы (НЕ через purchase_contract_type ==
+    # 'framework_with_amount' в WHERE — у single/advance этот столбец NULL,
+    # а "NULL == 'строка'" в SQL даёт NULL, а не False, и NOT(NULL) тоже NULL
+    # → WHERE NULL молча роняет строку из результата: прод-находка этого же
+    # прогона, словила single+advance позиции (1000+200) по ошибке).
+    with_amount_head_ids = [p.id for p in purchases
+                            if p.purchase_contract_type == "framework_with_amount" and p.parent_purchase_id is None]
+    items = (await db_session.execute(
+        select(PurchaseItem).join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .where(Purchase.subsidy_id == subsidy.id)
+        .where(Purchase.id.notin_(with_amount_head_ids) if with_amount_head_ids else True)
+    )).scalars().all()
+    assert items, "нет ни одной позиции закупки"
+    assert all(it.feo_planned_item_id is not None for it in items), \
+        "позиция закупки не привязана к плановой позиции (план из Y)"
+    plan_ids = {it.feo_planned_item_id for it in items}
+
+    from app.models.feo_planned_item import FeoPlannedItem
+    plan_total = (await db_session.execute(
+        select(FeoPlannedItem.amount).where(FeoPlannedItem.id.in_(plan_ids))
+    )).scalars().all()
+    # Σ Y = 1000+500+700+300+200 = 2700 (лимит-строка Y не задана — служебная, не позиция)
+    assert sum((Decimal(str(v or 0)) for v in plan_total), Decimal("0")) == Decimal("2700")
+
     # Платёж привязан к разовой закупке по номеру+ИНН+сумме+дате
     assert counters.payments_attached == 1
     single = next(p for p in purchases if p.purchase_method == "single" and p.parent_purchase_id is None
-                  and p.purchase_contract_type != "framework_cumulative")
+                  and not p.purchase_contract_type)
     from app.models.payment import Payment
     payments = (await db_session.execute(
         select(Payment).where(Payment.purchase_id == single.id)

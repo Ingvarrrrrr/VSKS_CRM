@@ -276,9 +276,15 @@ async def dashboard_charts(
     #     (purchases.contract_id) с нужным статусом. Разовый договор подписывается ПОД
     #     конкретную закупку — без неё запись осиротевшая и не должна раздувать виджет
     #     (было замечено на ЦентрПоиск_2026: 53 млн вместо фактических 402 тыс., см. баг-репорт 2026-08).
-    #   framework_with_amount → max_amount договора БЕЗУСЛОВНО, просто при status='active'.
-    #     Рамочный договор с суммой подписывается заранее, закупки по нему делаются постепенно
-    #     позже — поэтому он уже «заключён», даже если ни одной закупки по нему ещё не заведено.
+    #   framework_with_amount → max(лимит договора, Σ заказов ordered+), просто при status='active'.
+    #     Рамочный договор с суммой подписывается заранее — он уже «заключён», даже если ни
+    #     одной закупки по нему ещё не заведено (тогда Σ заказов=0, побеждает лимит). Решение
+    #     владельца 05.10.2026: если заказы (дети, parent_purchase_id→голова) УЖЕ превысили
+    #     лимит головы — «Заключено» обязано показать фактическую Σ заказов, не застрявший
+    #     лимит (та же величина использована для «законтрактовано»/контроля плана — ПРАВИЛО №6,
+    #     не вторая формула). ЕДИНАЯ точка с aggregate_scope_expr()/in_aggregate_scope()
+    #     (app/services/purchase_amounts.py) — там же решается, что сами заказы (не голова)
+    #     несут Заказано/Ведётся работа/Поставлено/Оплачено.
     #   framework_cumulative → SUM(COALESCE(p.contract_price, p.planned_total_price))
     #     по закупкам с contract_id=договор и status in (contracted,ordered,delivered,paid)
     _contracted_purchase_exists = (
@@ -286,10 +292,29 @@ async def dashboard_charts(
         .where(Purchase.contract_id == Contract.id)
         .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
     )
+    # Σ заказов (детей, parent_purchase_id IS NOT NULL — реальная связь, не догадка по типу)
+    # framework_with_amount головы с её Contract.id, статус ordered/delivered/paid — та же
+    # величина, что «Заказано»/«Ведётся работа» теперь считают по детям (aggregate_scope_expr).
+    _fwa_children_sum = (
+        select(func.coalesce(func.sum(effective_amount_expr()), 0))
+        .where(Purchase.contract_id == Contract.id)
+        .where(Purchase.parent_purchase_id.isnot(None))
+        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
+        .correlate(Contract)
+        .scalar_subquery()
+    )
     contract_single_q = (
         select(
             Contract.subsidy_id,
-            func.coalesce(func.sum(Contract.max_amount), 0).label("amt"),
+            func.coalesce(func.sum(
+                case(
+                    (
+                        Contract.contract_type == "framework_with_amount",
+                        func.greatest(func.coalesce(Contract.max_amount, 0), _fwa_children_sum),
+                    ),
+                    else_=Contract.max_amount,
+                )
+            ), 0).label("amt"),
             func.count(Contract.id).label("cnt"),
         )
         .where(Contract.status == "active")

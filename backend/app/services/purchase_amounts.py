@@ -491,151 +491,101 @@ def in_aggregate_scope(
     own_max_amount: Optional[Decimal] = None,
     has_children: bool = False,
 ) -> bool:
-    """Владелец (2026-09-06, уточнено тем же днём после прод-находки —
-    см. ⚠️ ниже) — решение по рамочным договорам в ИТОГАХ (по субсидии/
-    категории ФЭО/дашборду). Исключение действует ТОЛЬКО при РЕАЛЬНО
-    существующей связи parent_purchase_id — не по одному факту «это голова
-    рамочного договора»:
-      - разовый договор: его сумма — «законтрактовано», участвует в Σ как
-        обычно (не исключается).
-      - рамочный С ПРЕДЕЛЬНОЙ СУММОЙ (framework_with_amount) с Contract.
-        max_amount заданным: голова несёт «законтрактовано» целиком (её
-        effective = max_amount, см. effective_amount_expr()/purchase_
-        amounts()), а «заказано» — ТОЛЬКО по детям (сумма отправленных
-        заявок). ДЕТИ такой головы (parent_purchase_id указывает на неё,
-        связь РЕАЛЬНО есть) в Σ НЕ входят (их деньги уже внутри потолка
-        головы). Если у головы нет ни одного ребёнка — этот случай просто не
-        возникает (нет строк, которые надо было бы исключить).
-      - рамочный НАКОПИТЕЛЬНЫЙ (framework_cumulative) БЕЗ max_amount:
-        предельной суммы нет вообще, «заказано» = Σ детей. Сама ГОЛОВА
-        исключается из Σ ТОЛЬКО если у нЕЁ есть хотя бы один ребёнок по
-        parent_purchase_id (has_children=True) — деньги тогда реально
-        перенесены в детей, и не исключить голову значило бы задвоить. Если
-        детей НЕТ (has_children=False, текущая реальность на проде — см. ⚠️
-        ниже) — голова считается ОБЫЧНОЙ закупкой, своей суммой по стадии,
-        Σ НЕ теряет её деньги.
-      - всё остальное — включается как обычно (в т.ч. framework_with_amount
-        голова/дети БЕЗ заданного max_amount — нет потолка для представления
-        отдельно, входят как обычные закупки; framework_cumulative дети —
-        всегда входят, это и есть их «заказано»).
+    """Решение владельца (05.10.2026, заменяет решение 2026-09-06 для
+    framework_with_amount — см. git-историю) — кто участвует в Σ «по статусу»
+    (Заказано/Поставлено/Поставлено не оплачено/Оплачено/Ведётся работа) по
+    субсидии/категории ФЭО/дашборду:
+      - разовый договор / закупка без типа договора: как обычно, не исключается.
+      - рамочный (И framework_with_amount, И framework_cumulative) — ГОЛОВА
+        (parent_purchase_id IS NULL) исключается из ЭТИХ сумм, ТОЛЬКО если у
+        неё есть хотя бы один РЕАЛЬНО связанный ребёнок (parent_purchase_id
+        указывает на неё, has_children=True) — её деньги в статусных суммах
+        несут сами заказы, голова здесь — организационная запись (даже если
+        у неё задан Contract.max_amount: предельная сумма — отдельная
+        величина для карточки «Заключено договоров»/«Законтрактовано», см.
+        dashboard_charts.py::contract_single_q, а не для Заказано/Ведётся
+        работа). Головы БЕЗ ни одного ребёнка (has_children=False, фактическая
+        реальность для старых framework_cumulative-записей — см. ⚠️ ниже)
+        продолжают считаться обычной закупкой по своей стадии — Σ их не
+        теряет.
+      - ЛЮБОЙ ребёнок рамочной головы (parent_purchase_id указывает на
+        реальную framework-голову) — ВСЕГДА в Σ, своей суммой по стадии
+        (effective_amount_expr()). Раньше (до 05.10.2026) дети
+        framework_with_amount-головы с заданным max_amount исключались
+        (деньги считались «уже внутри потолка головы») — из-за этого
+        Заказано/Ведётся работа у ФАДМ_2026 показывали только лимит головы,
+        а реальные заказы пропадали из этих карточек; владелец отменил это
+        исключение: голова и заказы теперь РАЗНЫЕ карточки (голова — предел
+        для «Заключено», заказы — факт для «Заказано» и далее).
 
-    ⚠️ ФАКТ ТЕКУЩИХ ДАННЫХ (владелец, 2026-09-06): заказы под рамочным
-    договором в проде связаны между собой ОБЩИМ contract_id (см.
-    framework_contract_total в app/routers/purchases.py — рамочный итог там
-    считается именно по Σ/группировке contract_id, не parent_purchase_id), а
-    НЕ через parent_purchase_id — эта FK-колонка в реальных данных занята
-    другой, не связанной фичей («разбить закупку на несколько», purchases.py
-    ~4317) и НИ РАЗУ не используется для связи голова→заказ рамочного
-    договора (проверено: 5 строк во всей БД, все framework_cumulative без
-    единой связи через неё). Из-за этого has_children сейчас практически
-    всегда False, и полная семантика владельца («заказано = Σ заявок по
-    договору, потолок — в законтрактовано») ПОКА не реализуется этим
-    предикатом — она требует явной модели связи «голова → её заказы» (общий
-    contract_id уже есть, но однозначно определить голову среди нескольких
-    закупок с одним contract_id без parent_purchase_id нельзя, см. head_count
-    в load_purchase_amounts()/effective_amount_expr()). Это волна 4c, не эта:
-    здесь предикат — консервативная заглушка, которая не теряет деньги на
-    текущих данных (has_children=False → никого не исключает) и включится
-    сама, когда parent_purchase_id начнёт реально проставляться.
+    ⚠️ ФАКТ ТЕКУЩИХ ДАННЫХ (владелец, 2026-09-06, остаётся в силе): часть
+    старых framework_cumulative-записей на проде связана между собой общим
+    contract_id, а НЕ parent_purchase_id (эта FK-колонка занята несвязанной
+    фичей «разбить закупку на несколько», purchases.py ~4317) — для таких
+    голов has_children=False, и они продолжают считаться обычной закупкой
+    (см. test_aggregate_scope_uncapped_cumulative_head_without_children_stays_in_scope).
+    Новые загрузчики (ФАДМ 2026_2 и далее) обязаны проставлять
+    parent_purchase_id реально, иначе эта функция не увидит связь.
 
     Используется как дополнительный фильтр в местах, где по субсидии/
     категории считается Σ purchase_amounts()/effective_amount_expr() (см.
     aggregate_scope_expr() — SQL-эквивалент с той же семантикой):
-    dashboard.py::subsidy_q, subsidies.py::_calculate_spent(_bulk),
-    feo_categories.py::get_purchase_totals.
+    dashboard_charts.py::subsidy_q, subsidies.py::_calculate_spent(_bulk),
+    feo_categories.py::get_purchase_totals, feo_plan_reads.py.
 
-    parent_max_amount/own_max_amount/has_children резолвятся ВЫЗЫВАЮЩИМ
-    КОДОМ (эта функция не ходит в БД) — Contract.max_amount родителя ЭТОЙ
-    закупки (по её parent_purchase_id), Contract.max_amount ЕЁ СОБСТВЕННОГО
-    договора, и есть ли хоть одна закупка с parent_purchase_id == p.id,
-    соответственно; None у max_amount — «нет родителя»/«нет договора»/
-    «max_amount не задан» (не путать с 0 — легитимным значением).
-
-    ⚠️ Найдено QA (2026-09-06, вторая находка): parent_max_amount ОБЯЗАН быть
-    None, если родитель САМ не рамочная голова (purchase_contract_type НЕ в
-    FRAMEWORK_TYPES) — max_amount есть у Contract вообще, не только у
-    рамочных (на проде контракт 64, contract_type='single', имеет
-    max_amount=4125 — его 5 «детей» через несвязанную фичу «разбить закупку»
-    иначе ошибочно посчитались бы «детьми головы с потолком» и потерялись бы
-    из Σ). См. эту же проверку в aggregate_scope_expr()
-    (ParentRow.purchase_contract_type.in_(FRAMEWORK_TYPES)).
+    parent_max_amount — оставлен параметром ради обратной совместимости
+    вызовов, но БОЛЬШЕ НЕ ВЛИЯЕТ на результат (раньше решал исключение
+    ребёнка — правило 05.10.2026 детей никогда не исключает); own_max_amount/
+    has_children резолвятся вызывающим кодом (эта функция не ходит в БД) —
+    задан ли Contract.max_amount у СОБСТВЕННОГО договора закупки и есть ли
+    хоть одна закупка с parent_purchase_id == p.id, соответственно.
     """
-    is_child_of_capped_head = (
-        getattr(p, "parent_purchase_id", None) is not None
-        and parent_max_amount is not None
-    )
-    is_uncapped_cumulative_head_with_children = (
-        getattr(p, "purchase_contract_type", None) == "framework_cumulative"
+    _ = parent_max_amount  # больше не используется — см. докстринг выше
+    is_head = (
+        getattr(p, "purchase_contract_type", None) in FRAMEWORK_TYPES
         and getattr(p, "parent_purchase_id", None) is None
-        and own_max_amount is None
-        and has_children
     )
-    return not (is_child_of_capped_head or is_uncapped_cumulative_head_with_children)
+    if is_head and has_children:
+        return False
+    return True
 
 
 def aggregate_scope_expr():
-    """SQL-эквивалент in_aggregate_scope() (см. её докстринг, включая ⚠️ про
-    реальный факт данных — parent_purchase_id сейчас НЕ используется для
-    связи «голова рамочного → её заказ», это волна 4c) — коррелированными
-    подзапросами резолвит parent_max_amount/own_max_amount/has_children сам,
-    без участия вызывающего. Исключение — ТОЛЬКО при реально существующей
-    связи parent_purchase_id (EXISTS, а не по одному факту «это голова»).
+    """SQL-эквивалент in_aggregate_scope() (см. её докстринг — решение
+    владельца 05.10.2026): исключается ТОЛЬКО рамочная ГОЛОВА (framework_
+    cumulative ИЛИ framework_with_amount, parent_purchase_id IS NULL) с
+    РЕАЛЬНО существующим ребёнком (EXISTS по parent_purchase_id) — её деньги
+    в статусных суммах (Заказано/Поставлено/Оплачено/Ведётся работа) несут
+    сами заказы. Дети рамочных голов (и вообще любые закупки) больше никогда
+    не исключаются этим предикатом — до 05.10.2026 дети framework_with_amount
+    с заданным Contract.max_amount исключались («их деньги уже внутри потолка
+    головы»), из-за чего статусные карточки у таких субсидий показывали
+    только лимит головы без самих заказов; владелец это отменил — голова
+    участвует только в отдельной карточке «Заключено договоров»
+    (dashboard_charts.py::contract_single_q), не здесь.
 
     Применять ЧЕРЕЗ JOIN-условие (не отдельным WHERE) там, где Purchase
     LEFT JOIN-ится к родительской сущности (Subsidy и т.п.) — иначе строки
     без закупок (или закупки которых ВСЕ исключены этим предикатом) исчезнут
     из результата вместе с самой родительской строкой (см. пример в
-    dashboard.py::subsidy_q — .outerjoin(Purchase, and_(Purchase.subsidy_id
-    == Subsidy.id, aggregate_scope_expr()))). В местах без такого JOIN
-    (subsidies.py::_calculate_spent, feo_categories.py::get_purchase_totals —
-    обычный WHERE-фильтр без родительской сущности, которую нужно сохранить)
-    можно и обычным .where(aggregate_scope_expr()).
+    dashboard_charts.py::subsidy_q — .outerjoin(Purchase, and_(Purchase.
+    subsidy_id == Subsidy.id, aggregate_scope_expr()))). В местах без такого
+    JOIN (subsidies.py::_calculate_spent, feo_categories.py::
+    get_purchase_totals — обычный WHERE-фильтр без родительской сущности,
+    которую нужно сохранить) можно и обычным .where(aggregate_scope_expr()).
     """
-    from app.models.contract import Contract
     from sqlalchemy.orm import aliased
 
-    ParentRow = aliased(Purchase)
-    ParentContract = aliased(Contract)
-    OwnContract = aliased(Contract)
     ChildRow = aliased(Purchase)
 
-    # ⚠️ Найдено QA (2026-09-06, вторая находка): родитель обязан САМ быть
-    # рамочной головой (purchase_contract_type в FRAMEWORK_TYPES) — иначе
-    # обычная закупка, чей parent_purchase_id указывает на РАЗОВУЮ закупку
-    # (несвязанная фича «разбить закупку», purchases.py ~4317; на проде —
-    # id=810, purchase_contract_type='single', 5 дочерних 811-815), но чей
-    # Contract.max_amount ЗАДАН (max_amount — общее поле контракта, не только
-    # рамочных; на проде у контракта 64 (id=810) max_amount=4125 при
-    # contract_type='single') — ошибочно классифицировалась бы как «ребёнок
-    # головы с потолком» и терялась из Σ (проверено: subsidy_id=7 теряла 5
-    # обычных закупок, пока эта проверка не была добавлена).
-    parent_max_amount = (
-        select(ParentContract.max_amount)
-        .select_from(ParentRow)
-        .join(ParentContract, ParentContract.id == ParentRow.contract_id)
-        .where(
-            ParentRow.id == Purchase.parent_purchase_id,
-            ParentRow.purchase_contract_type.in_(tuple(FRAMEWORK_TYPES)),
-        )
-        .correlate(Purchase)
-        .scalar_subquery()
+    is_head_cond = and_(
+        Purchase.purchase_contract_type.in_(tuple(FRAMEWORK_TYPES)),
+        Purchase.parent_purchase_id.is_(None),
     )
-    is_child_of_capped_head = and_(
-        Purchase.parent_purchase_id.isnot(None),
-        parent_max_amount.isnot(None),
-    )
-
-    own_max_amount = (
-        select(OwnContract.max_amount)
-        .where(OwnContract.id == Purchase.contract_id)
-        .correlate(Purchase)
-        .scalar_subquery()
-    )
-    # has_children — РЕАЛЬНАЯ проверка (EXISTS), не догадка по типу договора:
-    # хоть одна закупка, чей parent_purchase_id указывает на ЭТУ строку.
-    # На текущих данных (см. ⚠️ в докстринге) такой строки не находится
-    # НИКОГДА для рамочных — предикат поэтому никого не исключает, пока
-    # parent_purchase_id не начнёт реально проставляться (волна 4c).
+    # has_children — РЕАЛЬНАЯ проверка (EXISTS): хоть одна закупка, чей
+    # parent_purchase_id указывает на ЭТУ строку (а не догадка по типу
+    # договора/contract_id — см. ⚠️ в докстринге in_aggregate_scope про
+    # старые framework_cumulative-записи без этой связи).
     has_children = (
         select(literal(1))
         .select_from(ChildRow)
@@ -643,23 +593,11 @@ def aggregate_scope_expr():
         .correlate(Purchase)
         .exists()
     )
-    is_uncapped_cumulative_head = and_(
-        Purchase.purchase_contract_type == "framework_cumulative",
-        Purchase.parent_purchase_id.is_(None),
-        own_max_amount.is_(None),
-        has_children,
-    )
+    is_excluded_head = and_(is_head_cond, has_children)
 
-    # ⚠️ NULL-ловушка (найдена QA, 2026-09-06): `purchase_contract_type ==
-    # "framework_cumulative"` — это `=`, а не `IS`; для закупки с purchase_
-    # contract_type IS NULL (обычная, не рамочная — таких большинство) это
-    # сравнение в SQL даёт NULL (не FALSE!), NULL распространяется через AND/OR
-    # до самого верха, и `~NULL` — снова NULL. В WHERE/JOIN ON (в отличие от
-    # CASE WHEN, который NULL молча трактует как «не совпало» и идёт в ELSE)
-    # NULL-условие — это ОТКАЗ строки: ЛЮБАЯ обычная закупка без purchase_
-    # contract_type тихо выпадала бы из Σ агрегатов (проверено QA:
-    # test_aggregate_scope_single_purchase_unaffected/
-    # test_delivered_purchase_same_number_everywhere ловят это точно). Финальный
-    # coalesce(..., True) — «не смогли доказать исключение → включаем» —
-    # тот же безопасный дефолт, что и «всё остальное как есть» в докстринге.
-    return func.coalesce(~(is_child_of_capped_head | is_uncapped_cumulative_head), True)
+    # ⚠️ NULL-ловушка (найдена QA, 2026-09-06, остаётся в силе): `purchase_
+    # contract_type IN (...)` для NULL (обычная закупка — таких большинство)
+    # даёт NULL, не FALSE; NULL распространяется через AND/OR, и `~NULL` —
+    # снова NULL, что в WHERE/JOIN ON означает ОТКАЗ строки. Финальный
+    # coalesce(..., True) — «не смогли доказать исключение → включаем».
+    return func.coalesce(~is_excluded_head, True)

@@ -589,9 +589,13 @@ async def _make_subsidy_for_agg(db_session, budget=1_000_000):
 
 @pytest.mark.asyncio
 async def test_aggregate_scope_capped_head_excludes_children(db_session, make_purchase):
-    """Голова framework_with_amount с max_amount=600000 + два ребёнка
-    (47262.50 и 10000, отправленные заявки) — Σ по субсидии = 600000
-    (только голова; дети исключены — их деньги внутри потолка головы)."""
+    """Решение владельца 05.10.2026 (заменяет решение 2026-09-06): голова
+    framework_with_amount с max_amount=600000 + два ребёнка (47262.50 paid и
+    10000 ordered) — Σ статусных агрегатов по субсидии = 57262.50 (ТОЛЬКО
+    дети своими суммами; голова — организационная запись, исключена, т.к. у
+    неё есть реальные дети). Голова продолжает нести «Заключено договоров»
+    отдельной карточкой (dashboard_charts.py::contract_single_q, не
+    aggregate_scope_expr)."""
     from app.routers.subsidies import _calculate_spent
     from app.services.purchase_amounts import aggregate_scope_expr, in_aggregate_scope
 
@@ -615,21 +619,21 @@ async def test_aggregate_scope_capped_head_excludes_children(db_session, make_pu
     )
 
     spent = await _calculate_spent(db_session, subsidy.id)
-    assert Decimal(str(spent)) == Decimal("600000")
+    assert Decimal(str(spent)) == Decimal("57262.50")
 
     # Python-side предикат согласен с SQL-стороной (parity)
-    assert in_aggregate_scope(head, parent_max_amount=None, own_max_amount=Decimal("600000")) is True
-    assert in_aggregate_scope(child1, parent_max_amount=Decimal("600000")) is False
-    assert in_aggregate_scope(child2, parent_max_amount=Decimal("600000")) is False
+    assert in_aggregate_scope(head, own_max_amount=Decimal("600000"), has_children=True) is False
+    assert in_aggregate_scope(child1, parent_max_amount=Decimal("600000")) is True
+    assert in_aggregate_scope(child2, parent_max_amount=Decimal("600000")) is True
 
     from sqlalchemy import select
     rows = (await db_session.execute(
         select(Purchase.id, aggregate_scope_expr()).where(Purchase.id.in_([head.id, child1.id, child2.id]))
     )).all()
     scope_by_id = dict(rows)
-    assert scope_by_id[head.id] is True
-    assert scope_by_id[child1.id] is False
-    assert scope_by_id[child2.id] is False
+    assert scope_by_id[head.id] is False
+    assert scope_by_id[child1.id] is True
+    assert scope_by_id[child2.id] is True
 
 
 @pytest.mark.asyncio
@@ -727,3 +731,64 @@ async def test_aggregate_scope_single_purchase_unaffected(db_session, make_purch
     spent = await _calculate_spent(db_session, subsidy.id)
     assert Decimal(str(spent)) == Decimal("12345")
     assert in_aggregate_scope(p) is True
+
+
+@pytest.mark.asyncio
+async def test_framework_with_amount_head_vs_orders_dashboard_charts(client, superadmin_headers, db_session):
+    """Решение владельца 05.10.2026: framework_with_amount — «Заключено
+    договоров» = max(лимит головы, Σ заказов ordered+), «Заказано»/
+    «Поставлено»/«Ведётся работа» — ТОЛЬКО по заказам (голова исключена, см.
+    aggregate_scope_expr()). Случай 1: лимит 1000, заказы 300(ordered)+
+    200(delivered) → Заключено 1000, Заказано 500, Поставлено 200, Ведётся
+    работа 500 (без головы). Случай 2: тот же Σ заказов, лимит 400 → Заключено
+    500 (заказы превысили лимит)."""
+    resp = await client.post(
+        "/api/subsidies/",
+        json={"name": f"Тест-FWA-{uuid.uuid4().hex[:8]}", "year": 2026},
+        headers=superadmin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    sid = resp.json()["id"]
+
+    contract = Contract(
+        number=f"Д-FWA-{uuid.uuid4().hex[:8]}", contract_type="framework_with_amount",
+        subsidy_id=sid, subject="Рамочный с суммой", status="active", max_amount=Decimal("1000"),
+    )
+    db_session.add(contract)
+    await db_session.flush()
+    head = Purchase(
+        subsidy_id=sid, item_name="Рамочная голова", status="contracted",
+        contract_id=contract.id, purchase_contract_type="framework_with_amount",
+        parent_purchase_id=None,
+    )
+    db_session.add(head)
+    await db_session.flush()
+    child_ordered = Purchase(
+        subsidy_id=sid, item_name="Заказ 1", status="ordered",
+        contract_id=contract.id, contract_price=Decimal("300"),
+        purchase_contract_type="framework_with_amount", parent_purchase_id=head.id,
+    )
+    child_delivered = Purchase(
+        subsidy_id=sid, item_name="Заказ 2", status="delivered",
+        contract_id=contract.id, contract_price=Decimal("200"),
+        purchase_contract_type="framework_with_amount", parent_purchase_id=head.id,
+    )
+    db_session.add_all([child_ordered, child_delivered])
+    await db_session.commit()
+
+    resp = await client.get("/api/dashboard/charts?scope=managed", headers=superadmin_headers)
+    assert resp.status_code == 200, resp.text
+    row = next(s for s in resp.json()["subsidy_stats"] if s["id"] == sid)
+    assert Decimal(str(row["total_contracts"])) == Decimal("1000")
+    assert Decimal(str(row["total_ordered"])) == Decimal("500")
+    assert Decimal(str(row["total_delivered"])) == Decimal("200")
+    assert Decimal(str(row["total_work"])) == Decimal("500")
+
+    contract.max_amount = Decimal("400")
+    db_session.add(contract)
+    await db_session.commit()
+
+    resp2 = await client.get("/api/dashboard/charts?scope=managed", headers=superadmin_headers)
+    assert resp2.status_code == 200, resp2.text
+    row2 = next(s for s in resp2.json()["subsidy_stats"] if s["id"] == sid)
+    assert Decimal(str(row2["total_contracts"])) == Decimal("500")

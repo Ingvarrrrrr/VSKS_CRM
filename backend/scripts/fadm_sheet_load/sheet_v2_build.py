@@ -53,7 +53,8 @@ from app.routers.purchase_budget import _assign_framework_seq
 from .advance import EmployeeLookup, load_employee_lookup
 from .match import find_source_subsidy
 from .sheet_v2_parse import (
-    PurchaseGroupV2, SheetRowV2, group_rows_v2, need_level_for, resolve_status, valid_inn,
+    FRAMEWORK_LIMIT_FROM_Y, KIND_FRAMEWORK_WITH_AMOUNT, PlanGroupV2, PurchaseGroupV2, SheetRowV2,
+    group_rows_v2, is_plan_only, need_level_for, plan_groups_v2, resolve_status, valid_inn,
 )
 from .sheet_v2_payments import PendingPayment, attach_pending_payments
 
@@ -123,6 +124,7 @@ class BuildCountersV2:
     payments_not_found: list = field(default_factory=list)  # [{doc_no, inn, amount, reason}]
     payments_u_mismatch: list = field(default_factory=list)  # [{label, note}] — контроль U (не фильтр)
     contract_filled_from_payment: int = 0  # номер/дата договора разобраны из назначения платежа (S/T были «Нет данных»)
+    framework_limit_calculated: list = field(default_factory=list)  # [{label, amount}] — лимит расчётный (нет строки-лимита в листе)
     inn_missing: int = 0  # строки без настоящего ИНН (R = заглушка/пусто)
     advance_entries: list = field(default_factory=list)  # [{label, employee_name, employee_id, contractor_from_source}]
     executor_from_source: int = 0  # сколько закупок получили исполнителя от двойника в старой ФАДМ_2026
@@ -317,7 +319,9 @@ def _apply_advance_fields(p: Purchase, employee_id: int, *, counters: BuildCount
     })
 
 
-def _items_data(rows: list[SheetRowV2], category_id: Optional[int]) -> list[PurchaseItemCreate]:
+def _items_data(rows: list[SheetRowV2], category_id: Optional[int],
+                 plan_item_by_key: Optional[dict] = None) -> list[PurchaseItemCreate]:
+    plan_item_by_key = plan_item_by_key or {}
     out = []
     for r in rows:
         out.append(PurchaseItemCreate(
@@ -328,9 +332,51 @@ def _items_data(rows: list[SheetRowV2], category_id: Optional[int]) -> list[Purc
             total_price=r.amount,
             unit_price=r.final_price or r.plan_price or None,
             feo_category_id=category_id,
+            # Плановая позиция «на каждую поставку (D,E,ИНН)» из Y (задание
+            # 05.10.2026, доп. п.2) — построена заранее в _build_plan_items_v2,
+            # ЭТА строка листа принадлежит ровно одному ключу plan_key.
+            feo_planned_item_id=plan_item_by_key.get(r.plan_key),
             match_confirmed=True,
         ))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Плановые позиции из Y (задание 05.10.2026, доп. п.2 и п.3) — построены ОДИН
+# РАЗ до создания закупок, по ключу (ИНН, закупка D, заказ E):
+#   - если ключ стал реальной закупкой — позиции закупки привязываются к
+#     этой FeoPlannedItem (feo_planned_item_id, см. _items_data выше);
+#   - если ключ ещё НЕ заказан (is_plan_only у всех его строк) — сама
+#     FeoPlannedItem и есть план (резерв), need_level по BC/BB/BA
+#     (need_level_for), закупка-черновик НЕ создаётся (задание, п.3).
+# ---------------------------------------------------------------------------
+async def _build_plan_items_v2(db: AsyncSession, rows: list[SheetRowV2], feo_lookup: FeoNameLookup,
+                                na_category_id: Optional[int], counters: BuildCountersV2) -> dict:
+    from types import SimpleNamespace
+    from app.services.plan_autoassign import create_auto_planned_item
+    from app.services.plan_need_level import normalize_need_level
+
+    groups = plan_groups_v2(rows)
+    plan_item_by_key: dict[tuple, int] = {}
+    for key, group in groups.items():
+        main = group.main_row
+        category_id = _resolve_feo_category(main, feo_lookup, na_category_id, counters,
+                                             label=f"план {group.key}")
+        it = SimpleNamespace(
+            item_name=main.item_name or main.subject,
+            quantity=None,
+            unit=main.unit or None,
+            total_price=group.amount,
+            unit_price=None,
+            item_type=_kind_item_type(group.item_kind),
+        )
+        fpi = await create_auto_planned_item(db, it, category_id or na_category_id,
+                                              note="импорт GoodsService (план Y, ключ "
+                                                   f"{group.key})")
+        if not group.is_ordered:
+            fpi.need_level = normalize_need_level(need_level_for(main))
+        plan_item_by_key[key] = fpi.id
+    return plan_item_by_key
 
 
 # Привязка платежей — вынесена в sheet_v2_payments.py (ПРАВИЛО №5), см. импорт
@@ -351,13 +397,13 @@ async def build_single(db: AsyncSession, subsidy: Subsidy, group: PurchaseGroupV
                         category_id: Optional[int], contractor_id: Optional[int],
                         employee_id: Optional[int], current_user, counters: BuildCountersV2,
                         pending_payments: list, source_advance_contractors: dict[int, int],
-                        source_executors: dict[int, tuple]) -> Purchase:
+                        source_executors: dict[int, tuple], plan_item_by_key: dict) -> Purchase:
     rows = group.rows
     main = rows[0]
     status = resolve_status(main) if len(rows) == 1 else max(
         (resolve_status(r) for r in rows), key=lambda s: ["draft", "work_in_progress", "contracted", "ordered", "delivered"].index(s)
     )
-    items_data = _items_data(rows, category_id)
+    items_data = _items_data(rows, category_id, plan_item_by_key)
     real_number = _real_contract_number(main.contract_number)
     data = PurchaseCreate(
         subsidy_id=subsidy.id,
@@ -394,7 +440,21 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
                            employee_lookup: EmployeeLookup, org_id: Optional[int],
                            current_user, counters: BuildCountersV2, pending_payments: list,
                            source_advance_contractors: dict[int, int],
-                           source_executors: dict[int, tuple]) -> Purchase:
+                           source_executors: dict[int, tuple], plan_item_by_key: dict) -> Purchase:
+    # Задание 05.10.2026, доп. п.1: голова рамочного НЕ несёт сумму заказов.
+    # «Рамочный с суммой» → лимит на Contract.max_amount/contract_price головы;
+    # «Рамочный накопительный» → голова без суммы (контракт денег не держит,
+    # см. app/routers/dashboard_charts.py:273-334 — именно так читает «Заключено»/
+    # «Ведётся работа» штатный код, не второй механизм здесь).
+    contract_type = (FRAMEWORK_TYPE if group.contract_kind != KIND_FRAMEWORK_WITH_AMOUNT
+                      else "framework_with_amount")
+    # item_type головы — по её заказам (большая сумма), задание п.1.
+    _kind_sums: dict[str, Decimal] = {}
+    for r in group.rows:
+        _kind_sums[r.item_kind] = _kind_sums.get(r.item_kind, Decimal("0")) + r.amount
+    _dominant_kind = max(_kind_sums, key=_kind_sums.get) if _kind_sums else None
+    head_item_type = _kind_item_type(_dominant_kind) if _dominant_kind else None
+
     group_employee_id = employee_lookup.find_one(group.contractor)
     head_contractor_id = None if group_employee_id else await _resolve_contractor_id(db, SheetRowV2(
         row=0, event="", contract_kind=group.contract_kind, purchase_no=group.purchase_no,
@@ -407,6 +467,16 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
         contract_signed=False, ordered=False, delivered=False, paid=False,
     ), org_id, counters)
 
+    # Решение владельца 05.10.2026, доп. правка: Егорова №98 — «Рамочный с
+    # суммой» БЕЗ строки-лимита в листе вовсе (FRAMEWORK_LIMIT_FROM_Y) — лимит
+    # считается как Σ Y её заказов (111 000), отчёт отмечает его «расчётный».
+    limit_amount = group.limit_amount
+    limit_is_calculated = False
+    if limit_amount is None and contract_type == "framework_with_amount" \
+            and (group.inn, group.purchase_no) in FRAMEWORK_LIMIT_FROM_Y:
+        limit_amount = sum((r.plan_y for r in group.rows), Decimal("0")) or None
+        limit_is_calculated = True
+
     raw_contract_number = group.limit_row.contract_number if group.limit_row else (group.rows[0].contract_number if group.rows else "")
     head_contract_date = group.limit_row.contract_date if group.limit_row else (group.rows[0].contract_date if group.rows else None)
     head_contract_number = _real_contract_number(raw_contract_number)
@@ -416,7 +486,8 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
         status="contracted",
         contractor_id=head_contractor_id,
         purchase_method="single",
-        purchase_contract_type=FRAMEWORK_TYPE,
+        purchase_contract_type=contract_type,
+        item_type=head_item_type,
         subject=f"{group.contractor} — рамочный договор (закупка {group.purchase_no})",
         contract_number=head_contract_number,
         contract_date=head_contract_date if head_contract_number else None,
@@ -430,23 +501,50 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
         head.contract_number = await generate_temp_contract_number(head, db)
         head.contract_number_is_temporary = True
     await _finalize_contract(db, head, is_head=True)
-    if group.limit_amount:
+    if limit_amount:
         contract = await db.get(Contract, head.contract_id)
         if contract:
-            contract.max_amount = group.limit_amount
+            contract.max_amount = limit_amount
+        # «Рамочный с суммой» — contract_price головы = лимит (задание п.1),
+        # НЕ Σ заказов (та ошибка и ломала «Ведётся работа» > «Запланировано»).
+        head.contract_price = limit_amount
+        # Решение владельца 05.10.2026 (доп. правка, п.3) — «без типа» в
+        # «Ведётся работа»: голова рамочного с суммой несёт деньги (contract_price
+        # = лимит, status='contracted'), но items=[] — раскладка по типу
+        # (app/services/dashboard_type_split.py) для «work»/«ordered» смотрит
+        # на СОБСТВЕННЫЕ позиции закупки, у головы их не было → весь лимит
+        # уходил в «без типа». Заводим ОДНУ позицию головы на сумму лимита,
+        # типом — её же head_item_type (по заказам, уже посчитан выше).
+        from app.models.purchase_item import PurchaseItem as _PurchaseItem
+        db.add(_PurchaseItem(
+            purchase_id=head.id,
+            item_name=f"Лимит договора {head.contract_number}",
+            item_type=head_item_type,
+            quantity=Decimal("1"),
+            total_price=limit_amount,
+            unit_price=limit_amount,
+            feo_category_id=na_category_id,
+            match_confirmed=True,
+        ))
+        await db.flush()
+        await copy_items_to_contract(db, head.id)
+        await recalc_purchase_money(db, head)
+        if limit_is_calculated:
+            counters.framework_limit_calculated.append({
+                "label": f"{group.contractor} №{group.purchase_no}", "amount": str(limit_amount),
+            })
     counters.framework_heads += 1
 
     order_rows: dict[str, list[SheetRowV2]] = {}
     for r in group.rows:
         order_rows.setdefault(r.order_no, []).append(r)
 
-    child_totals = Decimal("0")
     for order_no, rows in order_rows.items():
         main = rows[0]
         category_id = _resolve_feo_category(main, feo_lookup, na_category_id, counters,
                                              label=f"{group.contractor} №{group.purchase_no}, заказ {order_no}")
         contractor_id = None if group_employee_id else await _resolve_contractor_id(db, main, org_id, counters)
-        items_data = _items_data(rows, category_id)
+        items_data = _items_data(rows, category_id, plan_item_by_key)
         order_total = sum((r.amount for r in rows), Decimal("0"))
         status = resolve_status(main)
         if status == "draft":
@@ -457,7 +555,7 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
             status=status,
             contractor_id=contractor_id,
             purchase_method="advance" if group_employee_id else "single",
-            purchase_contract_type=FRAMEWORK_TYPE,
+            purchase_contract_type=contract_type,
             contract_number=head.contract_number,
             contract_date=head.contract_date,
             feo_category_id=category_id,
@@ -479,14 +577,41 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
         await _assign_framework_seq(child, db)
         await copy_items_to_contract(db, child.id)
         await recalc_purchase_money(db, child)
-        child_totals += child.contract_price or order_total
         counters.framework_orders += 1
         label = f"{group.contractor} №{group.purchase_no}, заказ {order_no}"
         for r in rows:
             pending_payments.append(PendingPayment(purchase_id=child.id, row=r, label=label))
 
-    head.contract_price = child_totals
     return head
+
+
+async def _finalize_single_contract_amounts(db: AsyncSession, subsidy_id: int) -> None:
+    """Решение владельца 05.10.2026 (доп. правка, п.2) — «Заключено
+    договоров» для разовых считает Contract.max_amount (dashboard_charts.py
+    ::contract_single_q), а наш загрузчик его никогда не проставлял (как и
+    первый загрузчик build.py — там же нет ни одного site max_amount=... для
+    разовых) — отсюда «Заключено» < «Заказано». Один проход ПОСЛЕ создания
+    ВСЕХ закупок субсидии: по каждому Contract разового типа (purchase_contract_type
+    IS NULL — framework_* имеют отдельную обработку в build_framework выше) —
+    max_amount = Σ эффективной суммы (contract_price, фолбэк planned_total_price)
+    ВСЕХ закупок субсидии, привязанных к этому договору (несколько разовых
+    закупок с общим номером S/T+контрагентом ensure_contract_linked УЖЕ сводит
+    в один Contract — здесь просто суммируем то, что он свёл)."""
+    rows = (await db.execute(
+        select(Purchase.contract_id, Purchase.contract_price, Purchase.planned_total_price).where(
+            Purchase.subsidy_id == subsidy_id,
+            Purchase.purchase_contract_type.is_(None),
+            Purchase.contract_id.isnot(None),
+        )
+    )).all()
+    totals: dict[int, Decimal] = {}
+    for contract_id, contract_price, planned_total_price in rows:
+        amt = contract_price if contract_price is not None else (planned_total_price or Decimal("0"))
+        totals[contract_id] = totals.get(contract_id, Decimal("0")) + (amt or Decimal("0"))
+    for contract_id, total in totals.items():
+        contract = await db.get(Contract, contract_id)
+        if contract and total:
+            contract.max_amount = total
 
 
 # ---------------------------------------------------------------------------
@@ -644,11 +769,23 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
     pending_payments: list[PendingPayment] = []
 
     with _silence_paid_confirmation_notifications():
+        # Задание 05.10.2026, доп. п.2/3 — плановые позиции из Y строятся ОДИН
+        # РАЗ, ДО закупок: каждая строка-поставка (кроме «Установка предельной
+        # суммы») попадает РОВНО в одну FeoPlannedItem по ключу (ИНН, D, E);
+        # заказанные строки привязывают к ней свою будущую PurchaseItem
+        # (_items_data ниже), ещё не заказанные (is_plan_only) остаются
+        # самостоятельным планом с need_level по BC/BB/BA — отдельных
+        # закупок-черновиков для них НЕ создаём (plan_rows из group_rows_v2
+        # используется только тут — group_rows_v2 сама их не кладёт в groups).
+        plan_item_by_key = await _build_plan_items_v2(db, rows, feo_lookup, na_category_id, counters)
+        await db.flush()
+
         for group in groups:
             if group.is_framework and len(group.distinct_orders) >= 1:
                 await build_framework(db, new_subsidy, group, feo_lookup, na_category_id,
                                       employee_lookup, new_subsidy.org_id, current_user, counters,
-                                      pending_payments, source_advance_contractors, source_executors)
+                                      pending_payments, source_advance_contractors, source_executors,
+                                      plan_item_by_key)
                 continue
 
             main = group.rows[0] if group.rows else None
@@ -657,28 +794,12 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
                                                  label=f"{group.contractor} №{group.purchase_no}") if main else na_category_id
             contractor_id = None if employee_id else (await _resolve_contractor_id(db, main, new_subsidy.org_id, counters) if main else None)
             await build_single(db, new_subsidy, group, category_id, contractor_id, employee_id, current_user, counters,
-                               pending_payments, source_advance_contractors, source_executors)
-
-        for row in plan_rows:
-            # Плановые позиции (M=False, задание) — здесь на реальной выгрузке
-            # GoodsService их 0 (все строки подтверждены), ветка оставлена на
-            # случай будущих строк с M=False.
-            category_id = _resolve_feo_category(row, feo_lookup, na_category_id, counters, label=row.subject)
-            fpi = FeoPlannedItem(
-                feo_category_id=category_id,
-                name=row.item_name or row.subject,
-                quantity=row.qty or Decimal("1"),
-                item_type=_kind_item_type(row.item_kind),
-                amount=row.amount,
-                is_active=True,
-                auto_created=True,
-                notes=f"импорт GoodsService ({need_level_for(row)})",
-            )
-            db.add(fpi)
+                               pending_payments, source_advance_contractors, source_executors, plan_item_by_key)
 
         await db.flush()
         if pending_payments:
             await attach_pending_payments(db, new_subsidy.id, pending_payments, counters)
+        await _finalize_single_contract_amounts(db, new_subsidy.id)
 
     await db.flush()
     return new_subsidy, counters

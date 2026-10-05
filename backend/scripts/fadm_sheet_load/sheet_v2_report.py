@@ -78,6 +78,10 @@ def render_report_v2(rows: list[SheetRowV2], subsidy_name: str, counters: BuildC
                  f"{_fmt(counters.payments_attached_amount)} (контроль AW {_fmt(CONTROL_TOTALS['paid'])})")
     lines.append(f"  Номер/дата договора разобраны из назначения платежа (S/T были «Нет данных»): "
                  f"{counters.contract_filled_from_payment}")
+    if counters.framework_limit_calculated:
+        lines.append("  Лимит рамочного РАСЧЁТНЫЙ (нет строки-лимита в листе, Σ Y заказов):")
+        for c in counters.framework_limit_calculated:
+            lines.append(f"    - {c['label']}: {c['amount']}")
     if counters.payments_u_mismatch:
         lines.append(f"  Контроль U (номер п/п в листе) разошёлся с найденным GALA ({len(counters.payments_u_mismatch)}):")
         for m in counters.payments_u_mismatch[:30]:

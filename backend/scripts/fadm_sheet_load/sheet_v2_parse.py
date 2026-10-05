@@ -72,6 +72,7 @@ IDX_CONTRACT_DATE = 19
 IDX_PAYMENT_DOC = 20
 IDX_PAYMENT_PURPOSE = 21
 IDX_PAYMENT_DATE = 22
+IDX_PLAN_Y = 24             # Y — «Запланировано» (AX+AY), источник плановых позиций (задание 05.10.2026 доп.)
 IDX_GOODS_SERVICES = 29
 IDX_FEO_DIRECTION = 30      # AE
 IDX_FEO_TYPE = 31           # AF
@@ -84,6 +85,13 @@ IDX_CONTRACT_SIGNED = 45    # AT
 IDX_ORDERED = 46            # AU
 IDX_DELIVERED = 47          # AV
 IDX_PAID = 48               # AW
+IDX_TO_ORDER_AX = 49        # AX — «Планируется заказать»
+IDX_ORDERED_AMT_AY = 50     # AY — «Заказано» (сумма)
+IDX_DELIVERED_AMT_AZ = 51   # AZ — «Поставлено» (сумма)
+IDX_MONTHLY_BA = 52         # BA — «Ежемесячные платежи» (будущие месяцы своего рамочного)
+IDX_LIKELY_BB = 53          # BB — «Реальные будущие траты, от части можно отказаться»
+IDX_NICE_TO_HAVE_BC = 54    # BC — «Выдуманные будущие траты»
+IDX_PAID_AMT_BD = 55        # BD — «Оплачено» (сумма, сверка с выпиской)
 IDX_UPD_NUMBER = 64         # BM
 IDX_EXPENSE_CODE = 71       # BT
 
@@ -91,6 +99,44 @@ KIND_SINGLE = "Разовый"
 KIND_FRAMEWORK_CUMULATIVE = "Рамочный накопительный"
 KIND_FRAMEWORK_WITH_AMOUNT = "Рамочный с суммой"
 FRAMEWORK_KINDS = {KIND_FRAMEWORK_CUMULATIVE, KIND_FRAMEWORK_WITH_AMOUNT}
+
+# Решение владельца 05.10.2026 (доп. правка): колонка C листа (вид договора)
+# ошибочно размечает «Рамочный с суммой» у 13 ключей (ИНН, D) — из них
+# РЕАЛЬНО рамочные с суммой только 4 (владелец разобрал вручную): Егорова
+# №6 (лимит в листе 207 900), Егорова №98 (лимита в листе НЕТ — строки-лимита
+# нет вовсе, считаем лимит = Σ Y её поставок = 111 000, см. _effective_limit
+# в sheet_v2_build.py — отчёт отмечает его «лимит расчётный»), ООО «Ремстрой»
+# №2 (1 400 000), ООО «Предрейсовый» №8 (584 032). ОСТАЛЬНЫЕ ключи с той же
+# меткой колонки C — РАЗОВЫЕ (ООО «Новый Вкус» №102, ИП Соболев №103, Цыганов
+# №98) — лист ошибся, принудительно переопределяем на KIND_SINGLE. Ключи
+# №109–114 (ИНН-заглушка «Не найден») сюда не входят вовсе — это плановые
+# позиции (see PLAN_ONLY_PURCHASE_NOS ниже), не закупки.
+FRAMEWORK_WITH_AMOUNT_OVERRIDE: set = {
+    ("930702695519", "6"), ("930702695519", "98"),
+    ("7729632071", "2"), ("7704351079", "8"),
+}
+SINGLE_OVERRIDE: set = {
+    ("7704499886", "102"), ("621102708058", "103"), ("772905105906", "98"),
+}
+# Ключи, у которых ЕЩЁ НЕТ строки-лимита («Установка предельной суммы
+# договора») — лимит считается как Σ Y её поставок (see sheet_v2_build.py).
+FRAMEWORK_LIMIT_FROM_Y: set = {("930702695519", "98")}
+
+# Решение владельца 05.10.2026: №109–114 («Запланировано на основании
+# заявок», ИНН-заглушка «Не найден» в R) — ВСЕГДА плановые позиции
+# (need_level='likely', это и есть BB), НЕ закупки, даже притом что M
+# (confirmed, индекс 12) в листе ошибочно стоит True у этих строк (что без
+# этого списка исключений обмануло бы is_plan_only — см. её докстринг).
+PLAN_ONLY_PURCHASE_NOS: set = {"109", "110", "111", "112", "113", "114"}
+
+
+def _apply_contract_kind_override(inn: str, purchase_no: str, raw_kind: str) -> str:
+    key = (inn, purchase_no)
+    if key in FRAMEWORK_WITH_AMOUNT_OVERRIDE:
+        return KIND_FRAMEWORK_WITH_AMOUNT
+    if key in SINGLE_OVERRIDE:
+        return KIND_SINGLE
+    return raw_kind
 
 LIMIT_MARKER = "установка предельной суммы договора"
 
@@ -183,6 +229,21 @@ class SheetRowV2:
     ordered: bool
     delivered: bool
     paid: bool
+    plan_y: Decimal = Decimal("0")
+    to_order_ax: Decimal = Decimal("0")
+    ordered_amt_ay: Decimal = Decimal("0")
+    delivered_amt_az: Decimal = Decimal("0")
+    monthly_ba: Decimal = Decimal("0")
+    likely_bb: Decimal = Decimal("0")
+    nice_to_have_bc: Decimal = Decimal("0")
+    paid_amt_bd: Decimal = Decimal("0")
+
+    @property
+    def plan_key(self) -> tuple[str, str, str]:
+        """Ключ плановой позиции — «на каждую поставку (D, E, ИНН)» (задание
+        05.10.2026, доп. п.2), ОБЩИЙ для sheet_v2_build.py (создание
+        FeoPlannedItem из Y) и для привязки созданных PurchaseItem к ней."""
+        return (self.inn, self.purchase_no, self.order_no)
 
     @property
     def is_limit_row(self) -> bool:
@@ -233,11 +294,13 @@ def _row(raw: list[str], row_num: int) -> SheetRowV2:
     def g(idx: int) -> str:
         return raw[idx] if idx < len(raw) else ""
 
+    _inn = _norm(g(IDX_INN))
+    _purchase_no = _norm(g(IDX_PURCHASE_NO))
     return SheetRowV2(
         row=row_num,
         event=_norm(g(IDX_EVENT)),
-        contract_kind=_norm(g(IDX_CONTRACT_KIND)),
-        purchase_no=_norm(g(IDX_PURCHASE_NO)),
+        contract_kind=_apply_contract_kind_override(_inn, _purchase_no, _norm(g(IDX_CONTRACT_KIND))),
+        purchase_no=_purchase_no,
         order_no=_norm(g(IDX_ORDER_NO)),
         subject=_norm(g(IDX_SUBJECT)),
         item_name=_norm(g(IDX_ITEM_NAME)),
@@ -266,6 +329,14 @@ def _row(raw: list[str], row_num: int) -> SheetRowV2:
         ordered=_parse_bool(g(IDX_ORDERED)),
         delivered=_parse_bool(g(IDX_DELIVERED)),
         paid=_parse_bool(g(IDX_PAID)),
+        plan_y=_parse_decimal(g(IDX_PLAN_Y)),
+        to_order_ax=_parse_decimal(g(IDX_TO_ORDER_AX)),
+        ordered_amt_ay=_parse_decimal(g(IDX_ORDERED_AMT_AY)),
+        delivered_amt_az=_parse_decimal(g(IDX_DELIVERED_AMT_AZ)),
+        monthly_ba=_parse_decimal(g(IDX_MONTHLY_BA)),
+        likely_bb=_parse_decimal(g(IDX_LIKELY_BB)),
+        nice_to_have_bc=_parse_decimal(g(IDX_NICE_TO_HAVE_BC)),
+        paid_amt_bd=_parse_decimal(g(IDX_PAID_AMT_BD)),
     )
 
 
@@ -302,27 +373,39 @@ def resolve_status(row: "SheetRowV2") -> str:
 
 
 def is_plan_only(row: "SheetRowV2") -> bool:
-    """Строка — плановая позиция, а не закупка: нет подтверждения поставки
-    (M=False) И ни один из флагов действия (AS..AW) не взведён (задание:
-    «строки без подтверждения и «будущие траты» — не закупки, а плановые
-    позиции»)."""
+    """Строка — плановая позиция, а не закупка (ОБЩЕЕ правило, решение
+    владельца 05.10.2026, вторая доп. правка — заменяет списком-исключением
+    №109-114 и ненадёжный M (встречается True по ошибке даже у явно
+    незаказанных строк, прод-находка — «Установка экспидиционного багажника»
+    №122, «Турне-Транс» №21/131-136 и др. AY='ещё не заказали' при M=True)):
+    AY (ordered_amt_ay) = 0 И AX (to_order_ax) > 0 → ещё не заказано →
+    плановая позиция, НЕ закупка. ИСКЛЮЧЕНИЕ — BA>0 (ежемесячный платёж
+    БУДУЩЕГО месяца СВОЕГО уже заключённого рамочного договора, владелец,
+    там же, п.3): такая строка остаётся обычным заказом (order_no уже
+    существует внутри реальной рамочной группы) со статусом «Договор
+    заключён» — resolve_status() уже даёт его по AT, без особого кода."""
     if row.is_limit_row:
         return False
-    if row.confirmed:
+    if row.monthly_ba:
         return False
-    return not (row.purchase_done or row.contract_signed or row.ordered or row.delivered or row.paid)
+    return row.to_order_ax > 0 and not row.ordered_amt_ay
 
 
 def need_level_for(row: "SheetRowV2") -> str:
     """Классификация плановой позиции на need_level — см.
     app.services.plan_need_level (NEED_LEVEL_LIKELY/NEED_LEVEL_NICE_TO_HAVE).
-    Эвристика (нет прямой колонки need_level в GoodsService): AJ «способ
-    закупки» заполнен и квартал (AL) близкий → вероятно понадобится (likely);
-    иначе — резерв/можно отказаться (nice_to_have). Расхождения с прежним
-    fadm_2026_sheet.csv — в отчёт загрузчика (см. sheet_v2_report.py)."""
-    if _norm(row.event) or _norm(row.subject):
-        return "likely"
-    return "nice_to_have"
+    Владелец, доп. задание 05.10.2026 п.3 (вместо прежней эвристики по AJ/AL —
+    лист сам раскладывает «ещё не заказано» (AX) по трём столбцам): BC
+    «Выдуманные будущие траты» → nice_to_have; BB «Реальные будущие траты, от
+    части можно отказаться» → likely; BA «Ежемесячные платежи будущих
+    месяцев» → тоже likely (это реальный график уже заключённого рамочного
+    договора, просто ещё не наступивший месяц — см. ограничение в докстринге
+    sheet_v2_build.py::_load_future_month_rows: отдельного размещения как
+    будущего заказа своего договора эта версия загрузчика не делает, см.
+    отчёт)."""
+    if row.nice_to_have_bc:
+        return "nice_to_have"
+    return "likely"
 
 
 def valid_inn(raw: Optional[str]) -> Optional[str]:
@@ -414,6 +497,55 @@ def group_rows_v2(rows: list[SheetRowV2]) -> tuple[list[PurchaseGroupV2], list[S
 
     groups = [by_key[k] for k in order if by_key[k].rows or by_key[k].limit_row]
     return groups, plan_rows
+
+
+@dataclass
+class PlanGroupV2:
+    """Одна плановая позиция «на каждую поставку (D, E, ИНН)» (задание
+    05.10.2026, доп. п.2) — amount = Σ Y (plan_y) строк этого ключа,
+    НЕЗАВИСИМО от того, стали ли эти строки закупкой (покупка привязывается к
+    ней через feo_planned_item_id) или остались незаказанными (BA/BB/BC —
+    сама FeoPlannedItem и есть план, без закупки)."""
+    key: tuple[str, str, str]
+    rows: list[SheetRowV2] = field(default_factory=list)
+
+    @property
+    def amount(self) -> Decimal:
+        return sum((r.plan_y for r in self.rows), Decimal("0"))
+
+    @property
+    def item_kind(self) -> str:
+        sums: dict[str, Decimal] = {}
+        for r in self.rows:
+            sums[r.item_kind] = sums.get(r.item_kind, Decimal("0")) + (r.plan_y or r.amount)
+        return max(sums, key=sums.get) if sums else "services"
+
+    @property
+    def main_row(self) -> SheetRowV2:
+        return self.rows[0]
+
+    @property
+    def is_ordered(self) -> bool:
+        """Хотя бы одна строка ключа уже вошла в закупку (не is_plan_only) —
+        тогда плановая позиция привязывается к реальной PurchaseItem, а не
+        остаётся самостоятельным резервом."""
+        return any(not is_plan_only(r) for r in self.rows)
+
+
+def plan_groups_v2(rows: list[SheetRowV2]) -> dict[tuple[str, str, str], PlanGroupV2]:
+    """Группировка ВСЕХ строк (включая будущие is_plan_only) по ключу
+    (ИНН, закупка D, заказ E) — источник плановых позиций из Y (задание
+    05.10.2026, доп. п.2). Σ amount по всем группам = Σ Y листа (контроль
+    15 880 100, см. CONTROL_TOTALS в sheet_v2_report.py)."""
+    out: dict[tuple[str, str, str], PlanGroupV2] = {}
+    for r in rows:
+        if r.is_limit_row:
+            continue
+        key = r.plan_key
+        if key not in out:
+            out[key] = PlanGroupV2(key=key)
+        out[key].rows.append(r)
+    return out
 
 
 def totals_report(rows: list[SheetRowV2]) -> dict:

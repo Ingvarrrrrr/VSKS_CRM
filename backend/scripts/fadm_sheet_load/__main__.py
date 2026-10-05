@@ -156,6 +156,7 @@ async def run_goodsservice_mode(args: argparse.Namespace) -> int:
     from .sheet_v2_parse import parse_goodsservice_csv
     from .sheet_v2_build import run_build_v2
     from .sheet_v2_report import render_report_v2
+    from .sheet_v2_dashboard_check import compute_subsidy_dashboard_stats, paid_by_statement, render_dashboard_comparison
 
     rows = parse_goodsservice_csv(args.goodsservice)
     if not rows:
@@ -176,11 +177,17 @@ async def run_goodsservice_mode(args: argparse.Namespace) -> int:
                 replace=args.replace,
             )
             report = render_report_v2(rows, args.name, counters, dry_run=args.dry_run)
+            # Задание 05.10.2026, доп. п.5 — карточки ДО записи, ОДНОЙ
+            # транзакцией с созданием (см. докстринг sheet_v2_dashboard_check.py).
+            dash_stats = await compute_subsidy_dashboard_stats(db, current_user, subsidy.id)
+            paid_stmt_total = await paid_by_statement(db, subsidy.id)
+            dash_report = render_dashboard_comparison(dash_stats, paid_stmt_total)
         except Exception:
             await db.rollback()
             raise
 
         print(report)
+        print(dash_report)
 
         if args.dry_run:
             await db.rollback()

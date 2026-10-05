@@ -45,7 +45,7 @@ def _build_ho_workbook(rows: list) -> bytes:
 
 
 def _row(l3, amount, fact_price, fact_amount, paid=None, contracted=None,
-         status_raw=None, purchase_no=None, supplier=None, item_name=None):
+         status_raw=None, purchase_no=None, supplier=None, item_name=None, item_type=None):
     r = [None] * 28
     r[0] = "ХО_2026"
     r[5] = l3
@@ -55,6 +55,12 @@ def _row(l3, amount, fact_price, fact_amount, paid=None, contracted=None,
     # тесты этого файла (level-3 текст совпадал с именем плановой позиции).
     if item_name is not None:
         r[7] = item_name
+    # item_type (опционально, см. test_commit_normalizes_item_type_case ниже) —
+    # колонка "Товар/услуга/работа" (r[8]), как в файле владельца («Товар»/
+    # «Услуга» с большой буквы) — дефект (прод, «ХО (копия)», 05.10.2026):
+    # commit.py писал это значение в purchase_items.item_type буквально.
+    if item_type is not None:
+        r[8] = item_type
     r[16], r[17] = fact_price, amount
     r[19], r[20] = fact_price, fact_amount
     r[21], r[22] = paid, contracted
@@ -214,3 +220,101 @@ async def test_commit_without_supplier_groups_by_category(client, auth_headers, 
     assert p.contract_price is None  # «в работе» без договора — владелец
     cis = (await db_session.execute(select(ContractItem).where(ContractItem.purchase_id == p.id))).scalars().all()
     assert cis == []
+
+
+async def test_commit_normalizes_item_type_case(client, auth_headers, test_user, db_session, subsidy_with_plan):
+    """Дефект (прод, субсидия «ХО (копия)», 05.10.2026): файл несёт «Товар»/
+    «Услуга» с большой буквы (как у владельца) — commit.py обязан записать
+    purchase_items.item_type НОРМАЛИЗОВАННЫМ (normalize_item_type, ПРАВИЛО
+    №6 — app/services/item_types.py), а не буквально текст файла, иначе любой
+    потребитель, сравнивающий item_type строкой, относит позицию в «без
+    типа» (см. app/services/item_type_split.py::kind_of — читает через ту же
+    normalize_item_type, но сама запись в БД раньше нормализацию не проходила)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 80000, 80000, paid=80000, status_raw="Оплачено",
+             purchase_no="42", supplier="ООО Ромашка", item_type="Товар"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/commit",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    purchases = (await db_session.execute(select(Purchase).where(Purchase.subsidy_id == subsidy.id))).scalars().all()
+    assert len(purchases) == 1
+    items = (await db_session.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == purchases[0].id)
+    )).scalars().all()
+    assert len(items) == 1
+    # Записано каноническое значение, не буквальный текст файла "Товар".
+    assert items[0].item_type == "товар"
+
+    from app.services.item_type_split import kind_of, KIND_GOODS
+    assert kind_of(items[0].item_type) == KIND_GOODS
+
+
+async def test_commit_work_in_progress_without_fact_uses_plan_amount(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Дефект (прод, 05.10.2026, РЕЕ-2026-02795 и др.): строка «Ведётся работа»
+    БЕЗ факта и БЕЗ законтрактованной суммы (только план: кол-во × цена) —
+    commit.py брал amount = fact_amount ИЛИ contracted, оба None → total_price
+    позиции записывался 0, хотя quantity/unit_price заполнялись из плана
+    (50 × 8200) — несогласованная позиция «50×8200=0,00». planned_item_
+    consumption/total_nmck после неё тоже считали 0. Фикс — фоллбэк на
+    row.plan.amount, когда ни факта, ни договора нет (ПРАВИЛО №6: тот же
+    принцип, что «план = НМЦД, пока факта нет» у обычного создания закупки)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    item_combo = FeoPlannedItem(feo_category_id=cat.id, name="Комбинезоны", amount=410000, is_active=True)
+    db_session.add(item_combo)
+    await db_session.commit()
+
+    # Строка собрана напрямую (не через _row) — нужны колонки «Плановое
+    # количество»/«Плановая цена за единицу» (r[15]/r[16]), которые _row
+    # никогда не заполняет (см. её докстринг выше); позиции факта (18-20) и
+    # «Законтрактовано» (22) оставлены пустыми — именно это сочетание и
+    # воспроизводит дефект.
+    r = [None] * 28
+    r[0] = "ХО_2026"
+    r[5] = "Комбинезоны"
+    r[15], r[16], r[17] = 50, 8200, 410000
+    r[24] = "В работе"
+    content = _build_ho_workbook([r])
+
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/commit",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["purchases_created"] == 1
+
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    purchases = (await db_session.execute(select(Purchase).where(Purchase.subsidy_id == subsidy.id))).scalars().all()
+    assert len(purchases) == 1
+    p = purchases[0]
+    assert p.status == "work_in_progress"
+    assert float(p.planned_total_price) == 410000
+    assert float(p.total_nmck) == 410000
+
+    items = (await db_session.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == p.id)
+    )).scalars().all()
+    assert len(items) == 1
+    assert float(items[0].quantity) == 50
+    assert float(items[0].unit_price) == 8200
+    assert float(items[0].total_price) == 410000

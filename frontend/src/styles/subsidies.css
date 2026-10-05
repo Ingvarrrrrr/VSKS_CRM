@@ -147,6 +147,8 @@
 .subsidies-page .summary-sep   { width: 1px; height: 32px; background: var(--crm-border-strong); flex-shrink: 0; }
 .subsidies-page .summary-label { font-size: 11px; color: var(--crm-text-faint); text-transform: uppercase; letter-spacing: 0.04em; transition: color 0.15s; }
 .subsidies-page .summary-value { font-size: 15px; font-weight: 700; color: var(--crm-text); }
+/* «Оплачено (по отметке)» — секундарная строка «подтверждено выпиской» (05.10.2026) */
+.subsidies-page .summary-sub   { font-size: 10px; color: var(--crm-text-faint); white-space: nowrap; }
 
 /* ── Detail panel ── */
 .subsidies-page .detail-panel {

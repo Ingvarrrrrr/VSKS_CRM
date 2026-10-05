@@ -81,6 +81,9 @@ function buildSubsidyList(ctx: Pick<SubsidyDetailContext, 'allSubsidies'>) {
     ordered:          nonSandboxSubsidies.value.reduce((s, x) => s + x.ordered,            0),
     contracted:       nonSandboxSubsidies.value.reduce((s, x) => s + (x.contracted || 0),  0),
     paid:             nonSandboxSubsidies.value.reduce((s, x) => s + x.paid,               0),
+    // «Оплачено (по отметке)» выше уже = x.paid (см. SubsidiesView.vue, ПРАВИЛО
+    // №6) — paid_confirmed рядом мельче, «из них подтверждено выпиской».
+    paid_confirmed:   nonSandboxSubsidies.value.reduce((s, x) => s + (x.paid_confirmed || 0), 0),
     work:             nonSandboxSubsidies.value.reduce((s, x) => s + x.work,               0),
     contracts:        nonSandboxSubsidies.value.reduce((s, x) => s + x.contracts,          0),
     delivered:        nonSandboxSubsidies.value.reduce((s, x) => s + x.delivered,          0),

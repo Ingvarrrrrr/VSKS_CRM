@@ -18,7 +18,15 @@
       <span style="color:#3B82F6">{{ formatCurrencyShort(item.ordered) }}</span>
     </template>
     <template #item.paid="{ item }">
-      <span style="color:var(--color-paid)">{{ formatCurrencyShort(item.paid) }}</span>
+      <div class="d-flex flex-column">
+        <span style="color:var(--color-paid)">{{ formatCurrencyShort(item.paid) }}</span>
+        <!-- «по отметке» (item.paid) против «подтверждено выпиской» — та же
+             пара чисел, что и карточка «Оплачено» (SubsidyKpiCards.vue), один
+             источник — backend/app/services/subsidy_paid_breakdown.py. -->
+        <span v-if="item.paid_confirmed != null" class="text-caption text-medium-emphasis" style="font-size:10px">
+          выпиской: {{ formatCurrencyShort(item.paid_confirmed) }}
+        </span>
+      </div>
     </template>
     <template #item.contractor_name="{ item }">
       <span v-if="item.contractor_name" class="d-flex align-center">

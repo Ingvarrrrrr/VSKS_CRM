@@ -21,8 +21,9 @@
     </div>
     <div class="summary-sep" />
     <div class="summary-item summary-item--link" @click="ctx.router.push('/orders?status=paid')">
-      <span class="summary-label">Оплачено</span>
+      <span class="summary-label">Оплачено (по отметке)</span>
       <span class="summary-value" style="color:var(--color-paid)">{{ formatCurrency(totals.paid) }}</span>
+      <span class="summary-sub">из них подтверждено выпиской: {{ formatCurrency(totals.paid_confirmed) }}</span>
     </div>
     <div class="summary-sep" />
     <div class="summary-item summary-item--link" @click="ctx.router.push('/dashboard')">

@@ -25,6 +25,18 @@ from app.services.historical_fact_import.preview import build_preview
 # _fmt_money шаблонов документов (единственный существующий money-форматтер
 # на бэкенде с нужным видом «19 800,80»), не заводим второй.
 from app.services.documents.formatting import _fmt_money
+# Дефект (прод, субсидия «ХО (копия)», 2026-10-05): файл импорта факта несёт
+# «Товар»/«Услуга» как в оригинале (регистр/форма — произвольные), row["item_type"]
+# остаётся СЫРЫМ текстом файла (preview.py его просто копирует для показа
+# человеку как есть). normalize_item_type — ЕДИНСТВЕННЫЙ источник нормализации
+# (app/services/item_types.py, ПРАВИЛО №6) — применяем его ЗДЕСЬ, в момент
+# записи в purchase_items.item_type/fake_item для плановой позиции, чтобы в
+# БД попадало каноническое значение ("товар"/"услуга"/"работа"), а не текст
+# файла. Разбивка товары/услуги (item_type_split.py::kind_of) уже сама
+# нормализует на чтении — этот фикс не про неё, а про то, что должно лежать
+# в самой колонке для любого другого потребителя, который сравнивает
+# item_type буквально (PurchaseItemsEditor.vue и т.п. ждут "товар"/"услуга").
+from app.services.item_types import normalize_item_type
 
 _RANK = {"work_in_progress": 1, "contracted": 2, "ordered": 3, "delivered": 4, "paid": 5}
 
@@ -209,7 +221,7 @@ async def commit_import(
                         quantity=_dec(row["fact"]["qty"]) or _dec(row["plan"]["qty"]),
                         unit=row.get("unit"),
                         total_price=_dec(row["plan"]["amount"]) or _dec(row["fact"]["amount"]),
-                        item_type=row.get("item_type"),
+                        item_type=normalize_item_type(row.get("item_type")),
                     )
                     new_fpi = await create_auto_planned_item(db, fake_item, eff_cat_id, note="импортом факта (02.10.2026)")
                     planned_item_id = new_fpi.id
@@ -217,6 +229,18 @@ async def commit_import(
 
             row_status = row["status"]
             amount = row["fact"]["amount"] if row["fact"]["amount"] is not None else row["contracted"]
+            # ИСПРАВЛЕНО (прод, 05.10.2026, РЕЕ-2026-02795 и др.): «Ведётся
+            # работа» БЕЗ факта и БЕЗ договора (needs_contract_decision ниже не
+            # взводится — для него нужен row["contracted"], а здесь он пуст) —
+            # amount оставался None → _dec(None) or Decimal(0) → total_price=0,
+            # хотя qty_dec/price_dec ниже ВСЁ РАВНО берут plan.qty/plan.price
+            # (ненулевые) — позиция выходила «50 × 8200 = 0,00». Фоллбэк на
+            # plan.amount ТОЙ ЖЕ строки — тот же принцип, что и у обычного
+            # создания закупки без факта (план = НМЦД, пока факта нет);
+            # planned_item_consumption/recalc_purchase_money считают из
+            # total_price позиции, вторая формула здесь не нужна (ПРАВИЛО №6).
+            if amount is None:
+                amount = row["plan"]["amount"]
 
             if row["needs_contract_decision"]:
                 if row["row"] in contract_confirmed:
@@ -247,7 +271,7 @@ async def commit_import(
 
             items_data.append(PurchaseItemCreate(
                 item_name=row["name"],
-                item_type=row.get("item_type"),
+                item_type=normalize_item_type(row.get("item_type")),
                 quantity=qty_dec,
                 unit=row.get("unit"),
                 unit_price=price_dec,

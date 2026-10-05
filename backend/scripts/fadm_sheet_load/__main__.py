@@ -181,13 +181,17 @@ async def run_goodsservice_mode(args: argparse.Namespace) -> int:
             # транзакцией с созданием (см. докстринг sheet_v2_dashboard_check.py).
             dash_stats = await compute_subsidy_dashboard_stats(db, current_user, subsidy.id)
             paid_stmt_total = await paid_by_statement(db, subsidy.id)
-            dash_report = render_dashboard_comparison(dash_stats, paid_stmt_total)
+            future_monthly_total = sum((r.monthly_ba for r in rows), Decimal("0"))
+            dash_report = render_dashboard_comparison(dash_stats, paid_stmt_total, future_monthly_total)
+            from .sheet_v2_dashboard_check import debug_unspecified_work_rows
+            debug_report = await debug_unspecified_work_rows(db, current_user, subsidy.id)
         except Exception:
             await db.rollback()
             raise
 
         print(report)
         print(dash_report)
+        print(debug_report)
 
         if args.dry_run:
             await db.rollback()

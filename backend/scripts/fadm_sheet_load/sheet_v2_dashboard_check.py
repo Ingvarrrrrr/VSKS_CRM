@@ -35,6 +35,43 @@ def _f(v) -> Decimal:
     return Decimal(str(v or 0))
 
 
+async def debug_unspecified_work_rows(db: AsyncSession, current_user, subsidy_id: int) -> str:
+    """Диагностика (владелец, доп. правка 05.10.2026, п.2) — построчно, какие
+    закупки субсидии дают «без типа» в этапе «work» (compute_type_split_detail,
+    ТА ЖЕ функция, что и дашборд — не вторая формула). Только для отчёта
+    загрузчика, в БД ничего не пишет."""
+    from app.auth.visibility import get_visible_subsidy_ids
+    from app.routers.dashboard import _apply_purchase_org_filter
+    from app.services.dashboard_type_split import compute_type_split_detail
+
+    visible_subsidy_ids = await get_visible_subsidy_ids(current_user, db, "dashboard")
+    detail = await compute_type_split_detail(
+        db, apply_filter=lambda q: _apply_purchase_org_filter(q, current_user, subsidy_ids=visible_subsidy_ids),
+        use_sids=True, visible_subsidy_ids=visible_subsidy_ids, org_ids=None, stage="work",
+    )
+    from app.models.purchase import Purchase
+    bad_rows = [r for r in detail["rows"] if r["kind"] == "unspecified" and r["amount"]]
+    purchase_ids = {r["purchase_id"] for r in bad_rows if r.get("purchase_id")}
+    purchases = {}
+    if purchase_ids:
+        rows = (await db.execute(
+            select(Purchase).where(Purchase.id.in_(purchase_ids), Purchase.subsidy_id == subsidy_id)
+        )).scalars().all()
+        purchases = {p.id: p for p in rows}
+    lines = [f"=== Без типа в «work» — построчно (compute_type_split_detail) ==="]
+    total = Decimal("0")
+    for r in bad_rows:
+        p = purchases.get(r.get("purchase_id"))
+        if p is None:
+            continue
+        total += _f(r["amount"])
+        lines.append(f"  purchase#{p.id} статус={p.status} тип_договора={p.purchase_contract_type} "
+                     f"родитель={p.parent_purchase_id} subject={p.subject!r} "
+                     f"сумма_без_типа={_f(r['amount'])} item_name={r.get('item_name')!r}")
+    lines.append(f"Σ без типа (эта субсидия): {total}")
+    return "\n".join(lines)
+
+
 async def compute_subsidy_dashboard_stats(db: AsyncSession, current_user, subsidy_id: int) -> dict:
     """Вызов штатного роутера напрямую (см. докстринг модуля). scope="dashboard"
     — тот же режим видимости, что у вкладки «Дашборд» владельца."""
@@ -61,7 +98,8 @@ async def paid_by_statement(db: AsyncSession, subsidy_id: int) -> Decimal:
     return sum((_f(a) for a in rows), Decimal("0"))
 
 
-def render_dashboard_comparison(stats: dict, paid_statement_total: Decimal) -> str:
+def render_dashboard_comparison(stats: dict, paid_statement_total: Decimal,
+                                 future_monthly_total: Decimal = Decimal("0")) -> str:
     lines = []
     lines.append("=== Карточки GALA vs лист (ДО записи, /api/dashboard/charts) ===")
     lines.append("")
@@ -88,7 +126,15 @@ def render_dashboard_comparison(stats: dict, paid_statement_total: Decimal) -> s
     row("Оплачено по выписке (сверка)", paid_statement_total, None, None, "paid_statement")
     du_w = stats.get("widget", {}).get("delivered_unpaid", {})
     row("Поставлено, не оплачено", du_w.get("amount"), None, None, "delivered_unpaid")
-    row("Ещё не заказано: ежемесячные", stats.get("not_committed_likely"), None, None, "future_monthly")
+    # Решение владельца 05.10.2026 (5-я доп. правка): «ещё не заказано —
+    # ежемесячные» (BA) — это НЕ плановая позиция (not_committed_likely мешает
+    # BA с BB «скорее всего») — BA уже реальные будущие заказы СВОИХ рамочных
+    # договоров (status='contracted', не "план"). Сверяем Σ BA НАПРЯМУЮ по
+    # листу (future_monthly_total, считает вызывающий код из SheetRowV2 —
+    # ОДИН источник, не вторая формула: то же monthly_ba, что уже парсит
+    # sheet_v2_parse.py), а не через dashboard-метрику, которой для такой
+    # величины просто нет штатного поля.
+    row("Ещё не заказано: ежемесячные (BA, Σ по листу)", future_monthly_total, None, None, "future_monthly")
 
     lines.append("")
     lines.append(f"«Заключено договоров» (widget.contracts): {_f(stats.get('widget', {}).get('contracts', {}).get('amount'))}")

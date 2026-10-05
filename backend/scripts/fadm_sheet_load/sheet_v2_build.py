@@ -597,6 +597,30 @@ async def _finalize_single_contract_amounts(db: AsyncSession, subsidy_id: int) -
     ВСЕХ закупок субсидии, привязанных к этому договору (несколько разовых
     закупок с общим номером S/T+контрагентом ensure_contract_linked УЖЕ сводит
     в один Contract — здесь просто суммируем то, что он свёл)."""
+    # Решение владельца 05.10.2026 (5-я доп. правка) — прод-находка: один
+    # авансовый/разовый БЕЗ номера/контрагента/даты договора (всё NULL) может
+    # достаться ensure_contract_linked ТОМУ ЖЕ Contract, что и рамочная ГОЛОВА
+    # с тем же (NULL,NULL,NULL) (у голов рамочного-накопительного для
+    # сотрудника-авансовой тоже contractor_id=None, номер — temp) — редкое
+    # совпадение матчинга по (number, contractor_id, date). Если такое
+    # случилось, задание max_amount «утекало» бы в голову через
+    # effective_amount_expr() (Contract.max_amount для ровно одной головы на
+    # contract_id) и «без типа» в «Ведётся работа» (у головы нет позиций) —
+    # прод-пример: СОЛОДИЛОВА ЕКАТЕРИНА ГЕННАДЬЕВНА, рамочный №22, 3500.
+    # Поэтому ИСКЛЮЧАЕМ contract_id рамочных голов этой субсидии из набора,
+    # которому проставляем max_amount здесь — они не должны пересекаться с
+    # разовыми/авансовыми по построению (ПРАВИЛО №6: один Contract — один
+    # смысл суммы, не два источника одновременно).
+    framework_head_contract_ids = set((await db.execute(
+        select(Purchase.contract_id).where(
+            Purchase.subsidy_id == subsidy_id,
+            Purchase.purchase_contract_type.isnot(None),
+            Purchase.purchase_contract_type.like("framework%"),
+            Purchase.parent_purchase_id.is_(None),
+            Purchase.contract_id.isnot(None),
+        )
+    )).scalars().all())
+
     rows = (await db.execute(
         select(Purchase.contract_id, Purchase.contract_price, Purchase.planned_total_price).where(
             Purchase.subsidy_id == subsidy_id,
@@ -606,6 +630,8 @@ async def _finalize_single_contract_amounts(db: AsyncSession, subsidy_id: int) -
     )).all()
     totals: dict[int, Decimal] = {}
     for contract_id, contract_price, planned_total_price in rows:
+        if contract_id in framework_head_contract_ids:
+            continue
         amt = contract_price if contract_price is not None else (planned_total_price or Decimal("0"))
         totals[contract_id] = totals.get(contract_id, Decimal("0")) + (amt or Decimal("0"))
     for contract_id, total in totals.items():

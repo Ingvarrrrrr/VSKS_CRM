@@ -239,11 +239,15 @@ class SheetRowV2:
     paid_amt_bd: Decimal = Decimal("0")
 
     @property
-    def plan_key(self) -> tuple[str, str, str]:
-        """Ключ плановой позиции — «на каждую поставку (D, E, ИНН)» (задание
-        05.10.2026, доп. п.2), ОБЩИЙ для sheet_v2_build.py (создание
+    def plan_key(self) -> tuple[str, str, str, str]:
+        """Ключ плановой позиции — «на каждую поставку (D, E, ИНН), на
+        каждый ТИП AD» (задание 05.10.2026, 4-я доп. правка — владелец:
+        смешанная поставка, где часть строк товары, часть услуги (Цыганов
+        №33 заказ 1, ЦЕНТРАВТО №3 заказ 5), должна дать ДВЕ плановые позиции,
+        не одну с одним типом — иначе план товары/услуги расходится на сумму
+        «вытесненного» типа). ОБЩИЙ для sheet_v2_build.py (создание
         FeoPlannedItem из Y) и для привязки созданных PurchaseItem к ней."""
-        return (self.inn, self.purchase_no, self.order_no)
+        return (self.inn, self.purchase_no, self.order_no, self.item_kind)
 
     @property
     def is_limit_row(self) -> bool:

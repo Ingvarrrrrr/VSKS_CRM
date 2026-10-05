@@ -98,6 +98,7 @@
     </v-tabs>
 
     <WishFilterPanel
+      v-model:search-text="searchText"
       :filters="filters"
       :account-options="accountOptions"
       :org-options-filtered="orgOptionsFiltered"
@@ -105,9 +106,18 @@
       :mobile="mobile"
     />
 
+    <!-- Владелец (поиск на телефоне, 2026-10-05): ничего не найдено по searchText —
+         одно место для всех трёх вкладок (ПРАВИЛО №6), вместо «no-data» самой
+         таблицы/карточек вкладки (её трогать нельзя — файл другого исполнителя). -->
+    <div v-if="searchEmptyState" class="text-center py-10">
+      <div class="text-body-1 text-medium-emphasis mb-3">Ничего не найдено по «{{ searchText.trim() }}»</div>
+      <v-btn variant="tonal" prepend-icon="mdi-filter-off" @click="searchText = ''">Сбросить поиск</v-btn>
+    </div>
+
     <!-- ── MY WISHES TAB ── -->
     <div v-if="activeTab === 'my'">
       <WishMyTab
+        v-if="!searchEmptyState"
         ref="wishMyTabRef"
         :items="myWishesFiltered"
         :headers="wishHeaders"
@@ -143,7 +153,7 @@
     </div>
 
     <!-- ── INCOMING FOR APPROVAL TAB ── -->
-    <div v-if="activeTab === 'incoming'">
+    <div v-if="activeTab === 'incoming' && !searchEmptyState">
       <WishIncomingTab
         :items="incomingWishesFiltered"
         :headers="wishHeaders"
@@ -164,7 +174,7 @@
     </div>
 
     <!-- ── ALL WISHES TAB (manager/admin) ── -->
-    <div v-if="ctx.isManagerOrAdmin.value && activeTab === 'all'">
+    <div v-if="ctx.isManagerOrAdmin.value && activeTab === 'all' && !searchEmptyState">
       <WishAllTab
         :items="allWishesFiltered"
         :headers="wishHeadersAll"
@@ -314,12 +324,27 @@ const {
   getWishExportRows,
   colFilters,
   colSort,
+  searchText,
   myWishesFiltered,
   incomingWishesFiltered,
   allWishesFiltered,
   wishSubsidyNameOptions,
   showWishColumnPicker,
 } = useWishColumnMenu({ myWishes, incomingWishes, allWishes, activeTab })
+
+// Владелец (поиск на телефоне, 2026-10-05): пустой результат поиска — единый
+// текст + «Сбросить поиск» на все три вкладки (см. шаблон выше). searchText
+// живёт в useWishColumnMenu.ts (ПРАВИЛО №6 — тот же конвейер applyColFilters,
+// что и остальные фильтры/сортировка колонок), не сбрасывается при переключении
+// вкладок — ref общий на компонент.
+const activeWishesFiltered = computed(() => {
+  if (activeTab.value === 'my') return myWishesFiltered.value
+  if (activeTab.value === 'incoming') return incomingWishesFiltered.value
+  return allWishesFiltered.value
+})
+const searchEmptyState = computed(() =>
+  !!searchText.value.trim() && activeWishesFiltered.value.length === 0,
+)
 
 async function loadWishes() {
   loading.value = true

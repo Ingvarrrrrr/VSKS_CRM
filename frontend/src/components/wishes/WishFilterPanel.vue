@@ -4,22 +4,38 @@
        свёрнута в одну горизонтальную прокручиваемую строку — «Фильтры · N» + чипы
        активных фильтров с крестиком (сброс конкретного фильтра). На десктопе
        вид и поведение НЕ меняются (та же v-card всегда развёрнута). -->
-  <div v-if="mobile && !expanded" class="mb-4 d-flex ga-2" style="overflow-x:auto; padding-bottom:2px">
-    <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-filter-variant" style="flex:none" @click="expanded = true">
-      Фильтры<template v-if="activeFilterChips.length"> · {{ activeFilterChips.length }}</template>
-    </v-btn>
-    <v-chip
-      v-for="c in activeFilterChips"
-      :key="c.key"
-      size="small"
-      variant="tonal"
-      closable
-      style="flex:none"
-      @click="expanded = true"
-      @click:close="clearOne(c.key)"
-    >
-      {{ c.label }}
-    </v-chip>
+  <div v-if="mobile && !expanded" class="mb-4">
+    <!-- Владелец (поиск на телефоне, 2026-10-05): «одно поле — ввожу буквы, остаются
+         только подходящие заявки» — над строкой «Фильтры · N». font-size 16px НЕ
+         косметика: iOS Safari зумит страницу при фокусе на поле мельче 16px (PWA). -->
+    <v-text-field
+      v-model="searchText"
+      placeholder="Поиск: номер, предмет, автор, субсидия…"
+      prepend-inner-icon="mdi-magnify"
+      variant="outlined"
+      density="compact"
+      clearable
+      hide-details
+      class="wish-search-field mb-2"
+      @click:clear="searchText = ''"
+    />
+    <div class="d-flex ga-2" style="overflow-x:auto; padding-bottom:2px">
+      <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-filter-variant" style="flex:none" @click="expanded = true">
+        Фильтры<template v-if="activeFilterChips.length"> · {{ activeFilterChips.length }}</template>
+      </v-btn>
+      <v-chip
+        v-for="c in activeFilterChips"
+        :key="c.key"
+        size="small"
+        variant="tonal"
+        closable
+        style="flex:none"
+        @click="expanded = true"
+        @click:close="clearOne(c.key)"
+      >
+        {{ c.label }}
+      </v-chip>
+    </div>
   </div>
 
   <v-card v-else variant="outlined" class="mb-4">
@@ -156,6 +172,11 @@ const props = defineProps<{
 
 const ctx = useWishesContext()
 
+// Владелец (поиск на телефоне, 2026-10-05): v-model:search-text из WishesView.vue —
+// searchText хранится в useWishColumnMenu.ts (ПРАВИЛО №6, applyColFilters — общий
+// конвейер фильтрации для всех трёх вкладок), здесь только поле ввода.
+const searchText = defineModel<string>('searchText', { default: '' })
+
 // Владелец (мобильные карточки, 2026-10-05): свёрнутое состояние панели на
 // телефоне — по умолчанию свёрнута (первый экран не съедают фильтры), тап по
 // кнопке/чипу разворачивает полную панель выше, «Свернуть» возвращает обратно.
@@ -190,3 +211,11 @@ function clearOne(key: keyof WishFiltersState) {
   ;(props.filters as any)[key] = isId ? null : ''
 }
 </script>
+
+<style scoped>
+/* iOS Safari зумит страницу при фокусе на поле с font-size < 16px (PWA) — поле
+   поиска обязано держать реальный 16px на <input>, не только на обёртке. */
+.wish-search-field :deep(input) {
+  font-size: 16px;
+}
+</style>

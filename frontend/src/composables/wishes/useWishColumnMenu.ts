@@ -125,8 +125,47 @@ export function useWishColumnMenu(options: {
     return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? '')))
   }
 
+  // ── Поиск (телефон, 2026-10-05): одно поле строкой в WishFilterPanel.vue —
+  // «ввожу буквы, остаются только подходящие заявки». ПРАВИЛО №6 — не второй
+  // конвейер фильтрации: ещё одно условие ВНУТРИ applyColFilters, работает на
+  // всех трёх вкладках вместе с колоночными фильтрами/сортировкой. Локальный,
+  // без запросов к серверу — applyColFilters уже вызывается на computed'ах ниже.
+  const searchText = ref('')
+  // ё=е, без учёта регистра, обрезка пробелов — как в поиске контрагентов проекта.
+  function normalizeSearchText(s: string): string {
+    return s.toLowerCase().replace(/ё/g, 'е').trim()
+  }
+  const searchWords = computed(() => {
+    const q = normalizeSearchText(searchText.value)
+    return q ? q.split(/\s+/).filter(Boolean) : []
+  })
+  // Один общий «мешок текста» на заявку — номер, предмет, автор+соавторы, кому
+  // (согласующие/получатель), субсидия, мероприятие, исполнитель, номер реестра
+  // закупки (свой + из w.purchases), сумма (цифрами без пробелов — «486000»
+  // находит «486 000 ₽»). Хелперы те же, что уже используются в applyColFilters/
+  // колонках ниже (wishRecipients/wishItemsTotal) — не дублируем вычисление суммы.
+  function wishSearchHaystack(w: Wish): string {
+    const parts: (string | null | undefined)[] = [
+      String(w.id ?? ''), `№${w.id ?? ''}`,
+      w.title, w.creator_name, ...(w.member_names || []),
+      wishRecipients(w), w.assigned_to_name,
+      (w as any).subsidy_name, (w as any).event_name, (w as any).executor_name,
+      w.registry_number, ...((w.purchases || []).map(p => p.registry_number)),
+    ]
+    const sum = wishItemsTotal(w)
+    if (sum != null) parts.push(String(Math.round(sum)))
+    return normalizeSearchText(parts.filter(Boolean).join(' '))
+  }
+  function applySearch(rows: Wish[]): Wish[] {
+    if (!searchWords.value.length) return [...rows]
+    return rows.filter(r => {
+      const hay = wishSearchHaystack(r)
+      return searchWords.value.every(w => hay.includes(w))
+    })
+  }
+
   function applyColFilters(rows: Wish[]): Wish[] {
-    let result = [...rows]
+    let result = applySearch(rows)
     // text filters
     if (colFilters.value.number_col?.type === 'text' && colFilters.value.number_col.q)
       result = result.filter(r => String(r.id ?? '').includes(colFilters.value.number_col.q.trim()))
@@ -215,6 +254,7 @@ export function useWishColumnMenu(options: {
     getWishExportRows,
     colFilters,
     colSort,
+    searchText,
     myWishesFiltered,
     incomingWishesFiltered,
     allWishesFiltered,

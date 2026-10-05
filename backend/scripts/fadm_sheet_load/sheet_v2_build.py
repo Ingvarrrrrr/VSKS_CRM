@@ -287,14 +287,15 @@ def _apply_source_executor(p: Purchase, contractor_id: Optional[int], source_exe
     иначе мог подставить current_user по умолчанию — не перетираем решение
     этого хелпера возможной более поздней подстановкой: вызывать ДО любых
     других присвоений assigned_user_id)."""
-    if not contractor_id or p.purchase_method == "advance":
+    if p.purchase_method == "advance":
         return
-    hit = source_executors.get(contractor_id)
+    hit = source_executors.get(contractor_id) if contractor_id else None
+    # insert_purchase_with_items ставит исполнителем запускающего (Администратора);
+    # без исполнителя в источнике поле должно остаться пустым (владелец, 04–05.10).
+    p.assigned_user_id = hit[0] if hit and hit[0] else None
     if not hit:
         return
     uid, resp = hit
-    if uid:
-        p.assigned_user_id = uid
     if resp and not p.responsible_person:
         p.responsible_person = resp
     counters.executor_from_source += 1

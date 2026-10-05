@@ -235,12 +235,31 @@ def _normalize_purpose_key(text: str) -> str:
 
 def basis_key(bp) -> str:
     """Документ, если распознан (kind:номер@дата), иначе нормализованный
-    текст назначения. Пример: акт б/н от 15.04.2026 → 'act:БН@2026-04-15'."""
+    текст назначения. Пример: акт б/н от 15.04.2026 → 'act:БН@2026-04-15'.
+
+    Задача 2026-10-05 («разбор сверки ФАДМ 2026_2», п.1): если у bp есть id
+    (строка выписки, реально сохранённый BankPayment — оба писателя,
+    app/services/payment_lookup.py::attach и
+    app/services/purchase_payments.py::create_payments_from_bank, зовут
+    basis_key ИМЕННО на таком объекте) — id дописывается в ключ. Причина:
+    ДВЕ РАЗНЫЕ строки выписки (разные bank_payment_id — п/п 297 и 379 на
+    проде) с ОДИНАКОВЫМ текстом назначения (частичная оплата одного и того
+    же УПД/акта двумя траншами) раньше получали одинаковый basis_key и
+    сталкивались на partial unique индексе (purchase_id, basis_key) —
+    хотя это два совершенно законных платежа, не дубль (дубль — та же
+    строка выписки, см. app/services/payment_lookup.py::attach docstring).
+    basis_label (человекочитаемая подпись) по-прежнему БЕЗ этого суффикса —
+    на UI не влияет, меняется только защитный ключ уникальности."""
     basis = extract_basis(bp)
     if basis.kind and basis.number:
         num_norm = normalize_doc_number(basis.number)
         date_part = basis.date.isoformat() if basis.date else ""
-        return f"{basis.kind}:{num_norm}@{date_part}"
+        key = f"{basis.kind}:{num_norm}@{date_part}"
+    else:
+        purpose = getattr(bp, "purpose_text", None) or ""
+        key = _normalize_purpose_key(purpose)
 
-    purpose = getattr(bp, "purpose_text", None) or ""
-    return _normalize_purpose_key(purpose)
+    bp_id = getattr(bp, "id", None)
+    if bp_id is not None:
+        key = f"{key}#{bp_id}"
+    return key

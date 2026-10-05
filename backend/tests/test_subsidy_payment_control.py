@@ -139,6 +139,71 @@ async def test_duplicate_same_inn_amount_date(db_session, test_org):
 
 
 # ---------------------------------------------------------------------------
+# 4б. Дубль (в) НЕ должен срабатывать на заказы ОДНОГО рамочного договора
+#     (общий parent_purchase_id) — задача 2026-10-05, п.2 (Ростелеком/Егорова:
+#     несколько месяцев с одинаковым контрагентом+суммой, без пары в выписке —
+#     это месяцы рамки, а не дубль).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_framework_siblings_same_amount_not_flagged_duplicate(db_session, test_org):
+    sub = await _make_subsidy(db_session, test_org.id, agreement_number="АГР-4б")
+    contractor = await _make_contractor(db_session)
+
+    head = Purchase(
+        subsidy_id=sub.id, contractor_id=contractor.id,
+        contract_price=Decimal("0"), status="contracted",
+        purchase_contract_type="framework_with_amount",
+    )
+    db_session.add(head)
+    await db_session.commit()
+    await db_session.refresh(head)
+
+    child1 = Purchase(
+        subsidy_id=sub.id, contractor_id=contractor.id,
+        contract_price=Decimal("25650.00"), status="contracted",
+        parent_purchase_id=head.id, is_monthly_payment=True,
+    )
+    child2 = Purchase(
+        subsidy_id=sub.id, contractor_id=contractor.id,
+        contract_price=Decimal("25650.00"), status="contracted",
+        parent_purchase_id=head.id, is_monthly_payment=True,
+    )
+    db_session.add_all([child1, child2])
+    await db_session.commit()
+
+    result = await build_payment_control(db_session, sub)
+    dup_keys = {r["key"] for r in result["rows"] if r["status"] == "duplicate"}
+    assert f"purchase-{child1.id}" not in dup_keys
+    assert f"purchase-{child2.id}" not in dup_keys
+
+
+@pytest.mark.asyncio
+async def test_non_framework_siblings_same_amount_still_flagged_duplicate(db_session, test_org):
+    """Контроль: БЕЗ общего parent_purchase_id/contract_id правило (в) работает
+    как раньше — два разовых заказа одного контрагента на одну сумму без пары
+    в выписке остаются дублем."""
+    sub = await _make_subsidy(db_session, test_org.id, agreement_number="АГР-4в")
+    contractor = await _make_contractor(db_session)
+
+    p1 = Purchase(
+        subsidy_id=sub.id, contractor_id=contractor.id,
+        contract_price=Decimal("10000.00"), status="contracted",
+    )
+    p2 = Purchase(
+        subsidy_id=sub.id, contractor_id=contractor.id,
+        contract_price=Decimal("10000.00"), status="contracted",
+    )
+    db_session.add_all([p1, p2])
+    await db_session.commit()
+
+    result = await build_payment_control(db_session, sub)
+    dup_keys = {r["key"] for r in result["rows"] if r["status"] == "duplicate"}
+    assert f"purchase-{p1.id}" in dup_keys
+    assert f"purchase-{p2.id}" in dup_keys
+
+
+# ---------------------------------------------------------------------------
 # 5. Строка видна двум субсидиям по соглашению
 # ---------------------------------------------------------------------------
 

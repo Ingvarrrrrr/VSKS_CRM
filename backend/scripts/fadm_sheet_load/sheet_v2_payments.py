@@ -48,20 +48,57 @@ class PendingPayment:
 
 async def find_bank_payment_candidates(db: AsyncSession, row: SheetRowV2,
                                         exclude_ids: set[int]) -> list[BankPayment]:
-    """Кандидаты — ИНН + сумма P + «Исполнен» + соглашение в «Документ-основание»
-    (см. docstring модуля); отсортированы по дате (раньше — приоритетнее, как
-    ежемесячные платежи первого загрузчика), уже использованные в этом же
-    прогоне (exclude_ids) не предлагаются повторно."""
+    """Кандидаты — ИНН + «Исполнен» + соглашение в «Документ-основание»
+    (см. docstring модуля), сузить дальше можно ДВУМЯ способами:
+
+    Задача 2026-10-05 («разбор сверки ФАДМ 2026_2», п.3): если лист (колонка U,
+    row.payment_numbers) уже указывает номер п/п — это помесячный/рамочный заказ,
+    где реальная сумма платежа МОЖЕТ отличаться от плановой P
+    (delivery_payment_target, см. app/services/payment_service_period.py —
+    платёж ложится на свой месяц по дате акта в назначении, а не по сумме) —
+    тогда берём СТРОГО эту строку выписки по номеру, сумму НЕ сверяем. Только
+    если номера в листе нет — откатываемся на прежний поиск ИНН+сумма (±0.02).
+    Кандидат с номером из листа, который уже занят ДРУГОЙ поставкой (ошибка
+    листа — см. owner-пример «Егорова №8» с тем же номером 354, что и №5) —
+    привязка не подменяется суммовым поиском, вызывающий код (attach_pending_payments)
+    просто получит пустой/отказанный список и запишет это в отчёт.
+
+    Отсортированы по дате (раньше — приоритетнее, как ежемесячные платежи
+    первого загрузчика); уже использованные в этом же прогоне (exclude_ids) не
+    предлагаются повторно."""
     inn = valid_inn(row.inn)
-    amount = row.delivery_payment_target
-    if not inn or not amount:
+    if not inn:
         return []
-    q = select(BankPayment).where(
+
+    base_q = select(BankPayment).where(
         BankPayment.payee_inn == inn,
         BankPayment.status.in_(EXECUTED_STATUSES),
         BankPayment.basis_doc_text.ilike(f"%{AGREEMENT_NUMBER}%"),
     ).order_by(BankPayment.payment_date.asc().nulls_last(), BankPayment.id.asc())
-    candidates = (await db.execute(q)).scalars().all()
+
+    if row.payment_numbers:
+        rows = (await db.execute(base_q)).scalars().all()
+        by_number = []
+        for bp in rows:
+            if bp.id in exclude_ids:
+                continue
+            doc_no = (bp.payment_number or "").strip()
+            if not doc_no:
+                continue
+            if any(doc_no == n or doc_no.endswith(n) for n in row.payment_numbers):
+                by_number.append(bp)
+        if by_number:
+            return by_number
+        # Номер в листе есть, но в выписке такой строки нет (или уже занята
+        # exclude_ids в этом прогоне) — НЕ откатываемся на поиск по сумме:
+        # лист явно указал конкретную строку, подмена суммой замаскировала бы
+        # ошибку листа (owner-пример «Егорова №6/№8», см. docstring выше).
+        return []
+
+    amount = row.delivery_payment_target
+    if not amount:
+        return []
+    candidates = (await db.execute(base_q)).scalars().all()
     out = []
     for bp in candidates:
         if bp.id in exclude_ids:

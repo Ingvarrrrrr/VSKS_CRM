@@ -234,6 +234,12 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
                     counts["duplicate"] += 1
 
     # (в) ≥2 закупки субсидии с одинаковым контрагентом и суммой договора без пары в выписке
+    #
+    # Задача 2026-10-05 («разбор сверки ФАДМ 2026_2», п.2): заказы ОДНОГО рамочного
+    # договора (общий parent_purchase_id — дочерние заказы головы, ИЛИ общий
+    # Contract.id) с одинаковой суммой — это ПОМЕСЯЦЕВЫЕ заказы (Ростелеком, Предрейсовый,
+    # Егорова и т.п.), не дубли; framework_key ниже группирует их отдельно и такие
+    # бакеты (framework_key is not None) в дубли не попадают.
     all_subsidy_purchases = (await db.execute(
         select(Purchase).where(Purchase.subsidy_id == subsidy.id)
     )).scalars().all()
@@ -242,9 +248,13 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
     for p in all_subsidy_purchases:
         if p.id in matched_purchase_ids or not p.contractor_id or p.contract_price is None:
             continue
-        by_contractor_amount[(p.contractor_id, round(float(p.contract_price), 2))].append(p)
+        framework_key = p.parent_purchase_id or p.contract_id
+        by_contractor_amount[(p.contractor_id, round(float(p.contract_price), 2), framework_key)].append(p)
     duplicate_purchase_rows = []
     for key, plist in by_contractor_amount.items():
+        _contractor_id, _amount, framework_key = key
+        if framework_key is not None:
+            continue  # заказы одного рамочного договора — не дубли, см. примечание выше
         if len(plist) > 1:
             for p in plist:
                 duplicate_purchase_rows.append(_Row(

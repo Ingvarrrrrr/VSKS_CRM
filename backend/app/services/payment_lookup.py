@@ -15,11 +15,22 @@
 
 Плюс: только исполненные (EXECUTED_STATUSES), уже разнесённый платёж (есть Payment
 с этим bank_payment_id — по закупке ТОЙ ЖЕ субсидии, см. _attached_bank_payment_ids_in_subsidy)
-не предлагается вовсе, а платёж со свободной суммой, но уже использованным
-«назначением» (basis_key) в ЭТОЙ группе — предлагается с явной причиной, не
-автозагружается. Одна и та же строка МОЖЕТ быть разнесена на закупки ДВУХ разных
+не предлагается вовсе. Одна и та же строка МОЖЕТ быть разнесена на закупки ДВУХ разных
 субсидий с общим номером соглашения (план, п.2) — занятость считается внутри
 субсидии, не глобально.
+
+Задача 2026-10-05 («разбор сверки ФАДМ 2026_2», п.1): занятость — ТОЛЬКО по
+идентичности строки выписки (bank_payment_id / внешний external_doc_id строки,
+см. _attached_bank_payment_ids_in_subsidy), а НЕ по тексту назначения
+(basis_key). Раньше _used_basis_index блокировал привязку ВТОРОЙ, другой строки
+выписки, если её назначение (нормализованный текст/документ-основание)
+текстуально совпадало с уже разнесённым платежом — реальный случай: два разных
+п/п одного контрагента по одному и тому же договору/УПД (частичная оплата
+двумя траншами) получали ОДИНАКОВЫЙ basis_key и вторая строка ложно считалась
+«уже использованным назначением». basis_key остаётся как human-readable
+метаданные платежа (см. Payment.basis_key), но дублем теперь считается только
+повторная попытка разнести ТУ ЖЕ строку (bank_payment_id) — см.
+_attached_bank_payment_ids_in_subsidy ниже, единственная проверка занятости.
 
 Автозагрузка (см. find_candidates): среди свободных (неиспользованных) кандидатов
 берётся первый по дате платежа — это и есть правило «для ежемесячных» из плана:
@@ -107,20 +118,6 @@ class Candidate:
     # кандидат НЕ убирается (ручная привязка остаётся доступна), но никогда не
     # получает auto=True, чтобы match-payments не переоткрывал тот же запрос.
     previously_rejected: bool = False
-
-
-async def _used_basis_index(db: AsyncSession, purchase_ids: list[int]) -> dict[str, Payment]:
-    """basis_key → Payment, уже занявший это назначение среди закупок группы."""
-    if not purchase_ids:
-        return {}
-    rows = (await db.execute(
-        select(Payment).where(
-            Payment.purchase_id.in_(purchase_ids),
-            Payment.matched_confirmed == True,  # noqa: E712
-            Payment.basis_key.isnot(None),
-        )
-    )).scalars().all()
-    return {p.basis_key: p for p in rows}
 
 
 async def _monthly_purchase(db: AsyncSession, purchase_ids: list[int]) -> Optional[Purchase]:
@@ -232,7 +229,6 @@ async def find_candidates(db: AsyncSession, group: PaymentGroup) -> dict[str, li
     if group.subsidy_id is None or not group.contractor_inn:
         return result
 
-    used_basis = await _used_basis_index(db, group.purchase_ids)
     monthly_purchase = await _monthly_purchase(db, group.purchase_ids)
 
     for kind, target_amount in (("goods", group.goods_amount), ("services", group.services_amount)):
@@ -254,7 +250,6 @@ async def find_candidates(db: AsyncSession, group: PaymentGroup) -> dict[str, li
         candidates: list[Candidate] = []
         for bp in bps:
             basis = extract_basis(bp)
-            bk = _basis_key(bp)
             code = _expense_code(bp)
             code_kind = await expense_kind(db, code)
 
@@ -273,13 +268,6 @@ async def find_candidates(db: AsyncSession, group: PaymentGroup) -> dict[str, li
                 payment_number=bp.payment_number,
                 payment_date=bp.payment_date,
             )
-
-            used_payment = used_basis.get(bk) if bk else None
-            if used_payment:
-                cand.free = False
-                doc = used_payment.document_number or "?"
-                dt = used_payment.payment_date.strftime("%d.%m.%Y") if used_payment.payment_date else "?"
-                cand.reason = f"назначение уже использовано платежом №{doc} от {dt}"
 
             if bp.id in rejected_ids:
                 cand.previously_rejected = True
@@ -379,10 +367,11 @@ async def attach(
     if allocations is not None and len(bank_payment_ids) > 1:
         raise PaymentAttachError("allocations можно передать только для одного bank_payment_id за раз")
 
-    used_basis = await _used_basis_index(db, group.purchase_ids)
     # Занятость строки — ВНУТРИ субсидии группы (план 2026-10-04-fadm-statement,
     # п.2): закупка другой субсидии с тем же номером соглашения уже могла
-    # опереться на эту же строку — это не конфликт.
+    # опереться на эту же строку — это не конфликт. Задача 2026-10-05, п.1:
+    # единственный признак занятости — bank_payment_id (эта же строка выписки),
+    # НЕ текст назначения (basis_key) — см. докстринг модуля.
     attached_ids = await _attached_bank_payment_ids_in_subsidy(db, bank_payment_ids, group.subsidy_id)
     rejected_ids = await _rejected_bank_payment_ids(db, bank_payment_ids, group.purchase_ids)
 
@@ -404,13 +393,6 @@ async def attach(
             raise PaymentAttachError(f"Платёж №{bp_id} не найден")
         if (bp.status or "").upper().strip() not in EXECUTED_STATUSES:
             raise PaymentAttachError(f"Платёж №{bp_id} не исполнен (статус «{bp.status}»)")
-
-        bk = _basis_key(bp)
-        used_payment = used_basis.get(bk) if bk else None
-        if used_payment:
-            doc = used_payment.document_number or "?"
-            dt = used_payment.payment_date.strftime("%d.%m.%Y") if used_payment.payment_date else "?"
-            raise PaymentAttachError(f"Назначение уже использовано платежом №{doc} от {dt}")
 
         code = _expense_code(bp)
         code_kind = await expense_kind(db, code)
@@ -442,6 +424,7 @@ async def attach(
                 allocated_so_far += share
 
         basis = extract_basis(bp)
+        bk = _basis_key(bp)
         new_payment = None
         for pid, amount in purchase_alloc.items():
             if amount == 0:
@@ -531,8 +514,6 @@ async def attach(
                 f"Платёж №{bp_id} конфликтует с уже существующей записью (занято другим платежом)"
             ) from exc
 
-        if bk:
-            used_basis[bk] = new_payment  # тот же вызов не сможет занять то же назначение повторно
         attached_ids.add(bp_id)
 
     for pid in affected_purchases:

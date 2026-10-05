@@ -82,7 +82,44 @@ redistributable == budget − committed. Без бюджета (budget <= 0) и�
 иной: redistributable == planned_not_committed (budget в формулу не входит,
 free всё равно считается как budget − planned, т.е. может быть
 отрицательным/нулевым — это отдельное поле, не трогается;
-redistributable_unplanned в этой ветке — 0.0, не free)."""
+redistributable_unplanned в этой ветке — 0.0, не free).
+
+РЕШЕНИЕ ВЛАДЕЛЬЦА (06.10.2026, «бюджет = план, когда ФЭО не введён»): у
+субсидии без сумм «по ФЭО» и без ручного budget (effective budget = "budget"
+выше, <= 0) «бюджет ФЭО» для ПОКАЗА на экране временно = planned_tree
+(«Запланировано») — владелец потом поправит суммы руками. Это решение
+коснулось ТОЛЬКО того, что видно на карточках «Бюджет (ФЭО)»/«Остаток
+субсидии»; "budget" (поле выше, effective_subsidy_budget) НЕ меняется —
+его продолжают читать app.services.subsidy_revision_preview.py и
+subsidy_revision_floor.py (корректировка утверждённой субсидии), трогать их
+поведение этой задачей не нужно и запрещено владельцем.
+
+Новые поля (эта же точка, не вторая формула):
+  budget_basis   = budget, если budget > 0, иначе planned_tree. «Бюджет для
+                   показа» — то единственное число, которое теперь читают
+                   dashboard_charts.py (calculated_budget/feo_budget_total/
+                   budget_discrepancy) и фронт (useFeoTreeAmounts.selectedBudget,
+                   SubsidyKpiCards.vue/SubsidyMoneyCards.vue карточки).
+  budget_from_plan = True, когда budget <= 0 И planned > 0 (т.е. budget_basis
+                   пришлось взять из плана, не из ФЭО/ручного бюджета) — флаг
+                   для подписи «по плану — суммы ФЭО не введены» на фронте.
+  free_basis     = budget_basis − planned. Для budget_from_plan это 0.0
+                   (budget_basis == planned в этой ветке) — используется
+                   ТОЛЬКО для показа («Свободно»/«не запланировано» на
+                   карточках); "free" выше (budget − planned, может быть
+                   отрицательным без бюджета) НЕ меняется — его читает
+                   корректировка через effective_subsidy_budget, формула та же.
+  balance_by_marks/balance_by_statement — теперь budget_basis − paid_marked/
+                   paid_confirmed, None только если budget_basis <= 0 (раньше
+                   было от budget — для budget_from_plan budget<=0 всегда
+                   давало None, хотя план и оплата есть; теперь считается от
+                   budget_basis, тот же paid_marked/paid_confirmed источник).
+  redistributable_unplanned — теперь read как free_basis, когда budget_basis
+                   > 0 (при budget_from_plan это 0.0 автоматически, т.к.
+                   free_basis == 0 в этой ветке — не отдельная формула).
+                   redistributable (budget_basis − committed, тот же фолбэк
+                   planned − committed без budget_basis) и инвариант
+                   unplanned+nice+likely == redistributable не меняются."""
 from typing import Optional
 
 from sqlalchemy import select
@@ -94,16 +131,33 @@ from app.services.subsidy_budget import calculate_budgets_bulk, effective_subsid
 
 
 async def _plan_floor_added_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
-    """{subsidy_id: {"plan_floor_added", "not_committed_likely", "not_committed_nice"}}
-    — Σ по КОРНЕВЫМ узлам compute_feo_plan_tree, на субсидию — та же техника
-    root-узлов, что subsidy_committed_totals применяет к committed/plan_* (не
-    вторая формула «пола плана»/«нужности» — оба поля уже посчитаны деревом:
-    plan_floor_added через plan_floor_addition, app.services.feo_plan_common;
-    not_committed_likely/not_committed_nice — Задача 2, владелец 04.10.2026,
-    см. compute_feo_plan_tree). Обе разбивки читаются ОДНИМ вызовом дерева,
-    второй раз его строить не нужно."""
+    """{subsidy_id: {"plan_floor_added", "not_committed_likely", "not_committed_nice",
+    "paid_marked", "paid_confirmed"}} — Σ по КОРНЕВЫМ узлам compute_feo_plan_tree,
+    на субсидию — та же техника root-узлов, что subsidy_committed_totals
+    применяет к committed/plan_* (не вторая формула «пола плана»/«нужности»/
+    «оплаты» — все поля уже посчитаны деревом: plan_floor_added через
+    plan_floor_addition, app.services.feo_plan_common; not_committed_likely/
+    not_committed_nice — Задача 2, владелец 04.10.2026; paid_marked/
+    paid_confirmed — app.services.feo_plan_payments.paid_consumption_by_category,
+    см. compute_feo_plan_tree). Все разбивки читаются ОДНИМ вызовом дерева,
+    второй раз его строить не нужно.
+
+    ВНИМАНИЕ (задача «Остаток субсидии», владелец 06.10.2026): paid_marked/
+    paid_confirmed здесь — ТОТ ЖЕ источник данных (Purchase.payment_amount/
+    payment_amount_declared), что и app.services.subsidy_paid_breakdown.
+    paid_breakdown_by_subsidy (который кормит dashboard_charts.py::paid_declared/
+    paid_confirmed — карточку «Оплачено» на вкладке «Субсидии»), НО другая
+    техника агрегации (Σ по корням дерева ФЭО с распределением по ratio
+    категорий, а не прямой SQL по Purchase с PLANNED_STATUSES/scope). На живых
+    данных числа могут не совпадать копейка-в-копейку — задача явно требует
+    остаток считать ОТСЮДА (корни дерева), это задокументированное решение
+    владельца, а не вторая формула «по ошибке» (см. отчёт сессии с цифрами
+    live-сверки)."""
     result: dict[int, dict] = {
-        sid: {"plan_floor_added": 0.0, "not_committed_likely": 0.0, "not_committed_nice": 0.0}
+        sid: {
+            "plan_floor_added": 0.0, "not_committed_likely": 0.0, "not_committed_nice": 0.0,
+            "paid_marked": 0.0, "paid_confirmed": 0.0,
+        }
         for sid in subsidy_ids
     }
     if not subsidy_ids:
@@ -118,6 +172,8 @@ async def _plan_floor_added_by_subsidy(db: AsyncSession, subsidy_ids: list[int])
             result[sid]["plan_floor_added"] += float(node.get("plan_floor_added", 0.0) or 0.0)
             result[sid]["not_committed_likely"] += float(node.get("not_committed_likely", 0.0) or 0.0)
             result[sid]["not_committed_nice"] += float(node.get("not_committed_nice", 0.0) or 0.0)
+            result[sid]["paid_marked"] += float(node.get("paid_marked", 0.0) or 0.0)
+            result[sid]["paid_confirmed"] += float(node.get("paid_confirmed", 0.0) or 0.0)
     return result
 
 
@@ -135,6 +191,13 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
         "redistributable_unplanned": float,   # free, если budget > 0, иначе 0.0 («не запланировано» в карточке «Можно перераспределить»)
         "committed_missing_fact_items": int,  # позиций в договоре без суммы договора (fallback по плановой цене)
         "plan_floor_added": float,            # сумма «пола плана» (закрытые позиции без собственного плана) узлов субсидии
+        "balance_paid_marked": float,         # оплачено по отметке (включает подтверждённое выпиской) — Σ paid_marked корней дерева
+        "balance_paid_confirmed": float,      # подтверждено выпиской — Σ paid_confirmed корней дерева
+        "balance_by_marks": float | None,     # «Остаток субсидии» по отметке = budget_basis − balance_paid_marked; None, если budget_basis <= 0
+        "balance_by_statement": float | None, # «Остаток субсидии» по выписке = budget_basis − balance_paid_confirmed; None, если budget_basis <= 0
+        "budget_basis": float,                # budget, если budget > 0, иначе planned («бюджет для показа», решение владельца 06.10.2026)
+        "budget_from_plan": bool,             # True, когда budget <= 0 и planned > 0 (budget_basis взят из плана)
+        "free_basis": float,                  # budget_basis − planned (для показа; "free" не трогается)
     }} — см. докстринг модуля для источника каждого поля (ПРАВИЛО №6: ни одно
     поле здесь не пересчитывается заново, только собирается воедино и
     комбинируется в three производных free/planned_not_committed/redistributable)."""
@@ -190,19 +253,40 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
                 "unspecified": tt.get("feo_unspecified", 0.0) - committed_by_kind["unspecified"],
             }
 
-        # Без официального бюджета budget − committed не несёт смысла
+        # budget_basis — «бюджет для показа» (решение владельца 06.10.2026,
+        # см. докстринг модуля): budget, если задан официальный бюджет,
+        # иначе planned (пока владелец не введёт суммы по ФЭО). budget САМ
+        # не меняется — его продолжают читать subsidy_revision_preview.py/
+        # subsidy_revision_floor.py байт-в-байт как раньше.
+        budget_from_plan = budget <= 0 and planned > 0
+        budget_basis = budget if budget > 0 else planned
+        free_basis = budget_basis - planned  # = 0.0 при budget_from_plan (budget_basis == planned)
+
+        # Без budget_basis budget_basis − committed не несёт смысла
         # («перераспределить от бюджета», которого нет) — та же логика фолбэка,
         # что в feo_plan_tree.py (redistributable=None без бюджета, фронт
         # подставляет planned_not_committed). Здесь всегда отдаём число (не
         # None — это НЕ узел дерева, а готовая карточка), поэтому фолбэк сразу
         # на planned_not_committed/planned_not_committed_by_kind (см. докстринг
-        # модуля).
-        if budget > 0:
-            redistributable = budget - committed
-            redistributable_unplanned = budget - planned  # = free, та же ветка budget>0
+        # модуля). Ветка теперь по budget_basis (а не budget напрямую) — это
+        # ТА ЖЕ формула budget_basis − committed, которая при budget>0 даёт
+        # budget − committed байт-в-байт как раньше (budget_basis == budget),
+        # а при budget_from_plan — planned − committed (то же число, что и
+        # раньше давала ветка budget<=0, см. докстринг модуля, проверено
+        # test_subsidy_money_summary.py).
+        if budget_basis > 0:
+            redistributable = budget_basis - committed
+            redistributable_unplanned = free_basis  # = budget_basis − planned, 0.0 при budget_from_plan
+            if budget_from_plan and redistributable_by_kind is None:
+                # budget_basis взят из плана (нет официального бюджета и нет
+                # заполненного дерева по типам) — та же точка фолбэка, что и
+                # раньше применялась в ветке "budget <= 0" (см. ниже), просто
+                # budget_from_plan уже отдельно отличает её от «ни бюджета, ни
+                # плана» случая.
+                redistributable_by_kind = dict(planned_not_committed_by_kind)
         else:
             redistributable = planned - committed
-            redistributable_unplanned = 0.0  # нет бюджета — «не запланировано от бюджета» не определено
+            redistributable_unplanned = 0.0  # нет бюджета и плана — «не запланировано от бюджета» не определено
             if redistributable_by_kind is None:
                 redistributable_by_kind = dict(planned_not_committed_by_kind)
 
@@ -223,6 +307,27 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
             # по статусу плановой позиции (need_level), см. compute_feo_plan_tree.
             "not_committed_likely": plan_floor_map.get(sid, {}).get("not_committed_likely", 0.0),
             "not_committed_nice": plan_floor_map.get(sid, {}).get("not_committed_nice", 0.0),
+            "budget_basis": budget_basis,
+            "budget_from_plan": budget_from_plan,
+            "free_basis": free_basis,
         }
+        # «Остаток субсидии» (владелец, 06.10.2026) = бюджет для показа − уже
+        # проведённые оплаты. Поступление на счёт пока = бюджету ФЭО (ввода
+        # поступлений нет), поэтому это же число — «остаток на счёте».
+        # budget_basis <= 0 (ни бюджета, ни плана) — оба поля None («бюджет не
+        # введён», та же ветка budget_basis>0/else, что у redistributable
+        # выше). При budget_from_plan budget_basis = planned > 0, поэтому
+        # остаток теперь считается (раньше был None из-за budget <= 0 — тот
+        # самый разрыв, который решает эта задача).
+        balance_paid_marked = plan_floor_map.get(sid, {}).get("paid_marked", 0.0)
+        balance_paid_confirmed = plan_floor_map.get(sid, {}).get("paid_confirmed", 0.0)
+        result[sid]["balance_paid_marked"] = balance_paid_marked
+        result[sid]["balance_paid_confirmed"] = balance_paid_confirmed
+        if budget_basis > 0:
+            result[sid]["balance_by_marks"] = budget_basis - balance_paid_marked
+            result[sid]["balance_by_statement"] = budget_basis - balance_paid_confirmed
+        else:
+            result[sid]["balance_by_marks"] = None
+            result[sid]["balance_by_statement"] = None
 
     return result

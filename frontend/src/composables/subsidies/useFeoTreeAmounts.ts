@@ -575,14 +575,28 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
 
   // Обновляет справочный расчёт (feo_filled/feo_budget_total/calculated_budget) карточки
   // субсидии в списке после любой правки дерева ФЭО.
+  //
+  // budget_from_plan (решение владельца 06.10.2026, см. докстринг backend
+  // subsidy_money_summary.py) — calculated_budget/feo_budget_total у такой
+  // субсидии = planned_tree с СЕРВЕРА (budget_basis), а не Σ feoEffectiveFor
+  // листьев дерева: это разные числа (totalFeoEffective может включать
+  // расчётные оценки по факту/плану листьев без собственного ФЭО-финансирования,
+  // см. комментарий selectedBudget выше), и перезапись здесь затёрла бы
+  // серверное значение фронтовой оценкой до следующей перезагрузки с бэка —
+  // ровно разрыв, который чинит эта задача. Поэтому для budget_from_plan
+  // calculated_budget/feo_budget_total НЕ трогаем, оставляем как пришло с
+  // сервера; обновляем только feo_filled (признак заполненности дерева, он не
+  // завязан на budget_from_plan).
   function syncFeoFilled() {
     if (!selectedId.value) return
     const total = feoTree.value.reduce((sum, root) => sum + feoEffectiveFor(root), 0)
     const s = allSubsidies.value.find(x => x.id === selectedId.value)
     if (s) {
       s.feo_filled = total > 0
-      s.feo_budget_total = total
-      s.calculated_budget = total
+      if (!s.budget_from_plan) {
+        s.feo_budget_total = total
+        s.calculated_budget = total
+      }
     }
   }
 

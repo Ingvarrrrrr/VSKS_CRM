@@ -66,6 +66,10 @@ export interface SubsidyRow {
   not_committed_likely?: number | null
   not_committed_nice?: number | null
   monthly_future_to_year_end?: number | null
+  // Решение владельца 06.10.2026 (budget_from_plan, см. докстринг backend
+  // app/services/subsidy_money_summary.py) — budget выше временно взят из
+  // плана (бюджета по ФЭО/вручную нет).
+  budget_from_plan?: boolean
 }
 
 // Владелец (2026-08-30): «субсидии у потолка» — сумма заказанного (включая
@@ -280,6 +284,23 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const totalMonthlyFutureToYearEnd = computed(() =>
     filteredSubsidies.value.reduce((s, x) => s + (x.monthly_future_to_year_end ?? 0), 0)
   )
+  // «Остаток субсидии» (владелец, 06.10.2026) — Σ готовых полей бэкенда
+  // balance_by_marks/balance_by_statement по видимым субсидиям, та же схема
+  // суммирования, что у totalRedistributable выше (Правило №6, не формула).
+  // Субсидии без бюджета (balance_by_marks == null) не суммируются —
+  // отдельный счётчик totalBalanceNoBudgetCount для подписи карточки.
+  const totalBalanceByMarks = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.balance_by_marks ?? 0), 0)
+  )
+  const totalBalanceByStatement = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.balance_by_statement ?? 0), 0)
+  )
+  const totalBalanceNoBudgetCount = computed(() =>
+    filteredSubsidies.value.filter(x => x.balance_by_marks == null).length
+  )
+  const totalBalanceHasAny = computed(() =>
+    filteredSubsidies.value.some(x => x.balance_by_marks != null)
+  )
   const totalRedistributableByKind = computed<TypeSplitByKind>(() => {
     const acc: TypeSplitByKind = { goods: 0, services: 0, unspecified: 0 }
     for (const x of filteredSubsidies.value) {
@@ -329,6 +350,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const kpiTarget_free             = computed(() => totalBudget.value - totalPlanSchedule.value)
   const kpiTarget_redistributable  = computed(() => totalRedistributable.value)
   const kpiTarget_economy          = computed(() => totalEconomy.value ?? 0)  // useAnimatedNumber требует number; «—» для null решается в карточке ниже
+  const kpiTarget_balance          = computed(() => totalBalanceHasAny.value ? totalBalanceByMarks.value : 0)
 
   const kpiAnim_budget           = useAnimatedNumber(kpiTarget_budget,           800)
   const kpiAnim_plan_schedule    = useAnimatedNumber(kpiTarget_plan_schedule,    800)
@@ -341,6 +363,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const kpiAnim_free             = useAnimatedNumber(kpiTarget_free,             800)
   const kpiAnim_redistributable  = useAnimatedNumber(kpiTarget_redistributable,  800)
   const kpiAnim_economy          = useAnimatedNumber(kpiTarget_economy,          800)
+  const kpiAnim_balance          = useAnimatedNumber(kpiTarget_balance,          800)
 
   // ── KPI Cards (widgets — накопительная логика) ────
   const kpiCards = computed(() => {
@@ -512,6 +535,29 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         split: undefined,
         note: formatEconomyUnmeasuredText(totalEconomyNoPlannedPriceItems.value, totalEconomyUnmeasuredByReason.value) || null,
       },
+      // «Остаток субсидии» (владелец, 06.10.2026) = бюджет ФЭО − оплачено, Σ
+      // готовых полей по видимым субсидиям (ПРАВИЛО №6, та же схема, что и
+      // «Можно перераспределить» выше — не новая формула). Субсидии без
+      // бюджета не суммируются — отмечены отдельной строкой.
+      {
+        key: 'balance',
+        label: 'Остаток субсидии',
+        icon: 'mdi-bank-outline',
+        amount: totalBalanceHasAny.value ? Math.abs(kpiAnim_balance.value) : null,
+        count: 0,
+        countLabel: '',
+        tooltip: 'бюджет ФЭО минус оплаченное. Пока поступление на счёт = бюджету ФЭО (ввод поступлений появится позже)',
+        monthly: null,
+        over: totalBalanceHasAny.value && totalBalanceByMarks.value < 0,
+        split: undefined,
+        notes: totalBalanceHasAny.value ? [
+          `по отметке: ${formatCurrency(totalBalanceByMarks.value)}`,
+          `подтверждено выпиской: ${formatCurrency(totalBalanceByStatement.value)}`,
+        ] : undefined,
+        note: totalBalanceNoBudgetCount.value > 0
+          ? `без бюджета: ${totalBalanceNoBudgetCount.value} субсид${totalBalanceNoBudgetCount.value === 1 ? 'ии' : 'ий'}`
+          : null,
+      },
     ]
   })
 
@@ -560,6 +606,14 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         not_committed_likely: s.not_committed_likely ?? null,
         not_committed_nice: s.not_committed_nice ?? null,
         monthly_future_to_year_end: s.monthly_future_to_year_end ?? null,
+        // «Остаток субсидии» (владелец, 06.10.2026) — готовые поля бэкенда,
+        // фронт не считает (Правило №6, см. composables/subsidies/types.ts).
+        balance_paid_marked: s.balance_paid_marked ?? null,
+        balance_paid_confirmed: s.balance_paid_confirmed ?? null,
+        balance_by_marks: s.balance_by_marks ?? null,
+        balance_by_statement: s.balance_by_statement ?? null,
+        // Решение владельца 06.10.2026 — см. composables/subsidies/types.ts.
+        budget_from_plan: s.budget_from_plan ?? false,
       }))
 
       statusCounts.value = chartsData.status_counts
@@ -595,6 +649,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
     totalRedistributable, totalEconomy, totalEconomyNoPlannedPriceItems,
     totalCommittedMissingFactItems, totalPlannedNotCommitted, totalRedistributableByKind,
     totalNotCommittedLikely, totalNotCommittedNice, totalMonthlyFutureToYearEnd,
+    totalBalanceByMarks, totalBalanceByStatement, totalBalanceNoBudgetCount, totalBalanceHasAny,
     overrunSubsidies, effectiveWidgets, kpiCards,
     loadAll,
   }

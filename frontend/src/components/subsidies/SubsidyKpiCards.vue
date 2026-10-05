@@ -18,6 +18,10 @@
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_budget) }}</div>
             <div class="kpi-label">Бюджет (ФЭО)</div>
+            <!-- Решение владельца 06.10.2026 (budget_from_plan, см. докстринг
+                 backend subsidy_money_summary.py): бюджета по ФЭО/вручную нет —
+                 показанное число временно взято из плана. -->
+            <div v-if="ctx.selectedSubsidy.value?.budget_from_plan" class="text-caption text-medium-emphasis">по плану — суммы ФЭО не введены</div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('budget')">
                 <div v-for="row in splitRowsFor('budget')" :key="row.kind" class="kpi-split-row"

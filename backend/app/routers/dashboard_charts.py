@@ -495,10 +495,19 @@ async def dashboard_charts(
         planned_amt = planned_amounts_map.get(row.id, 0.0)
         # planned_tree = правильное «Запланировано» = план дерева ФЭО (= «Свободно» = budget − planned_tree)
         planned_tree = planned_tree_map.get(row.id, 0.0)
-        # «Свободно» = budget − planned_tree (совпадает с панелью ФЭО вкладки «Субсидии»)
-        remaining = _money.get("free", effective_budget - planned_tree)
-        # discrepancy-чип показывается только при превышении (planned_tree > budget)
-        discrepancy = (effective_budget - planned_tree) if planned_tree > effective_budget else None
+        # budget_basis/budget_from_plan — решение владельца 06.10.2026 (см.
+        # докстринг subsidy_money_summary.py): «бюджет для показа» — budget,
+        # если задан, иначе planned_tree. ПОКАЗ (calculated_budget/
+        # feo_budget_total/remaining/budget_discrepancy ниже) читает
+        # budget_basis; "budget"/effective_budget САМИ не меняются — их
+        # продолжают читать subsidy_revision_preview.py/subsidy_revision_floor.py.
+        budget_basis = _money.get("budget_basis", effective_budget if effective_budget > 0 else planned_tree)
+        budget_from_plan = bool(_money.get("budget_from_plan", effective_budget <= 0 and planned_tree > 0))
+        # «Свободно» для показа = budget_basis − planned_tree (= free_basis; при
+        # budget_from_plan это 0.0, т.к. budget_basis == planned_tree)
+        remaining = _money.get("free_basis", budget_basis - planned_tree)
+        # discrepancy-чип показывается только при превышении (planned_tree > budget_basis)
+        discrepancy = (budget_basis - planned_tree) if planned_tree > budget_basis else None
         _economy = economy_by_subsidy_map.get(row.id) or {}
         sub_obj = sub_objs.get(row.id)
         contractor_name = None
@@ -526,7 +535,7 @@ async def dashboard_charts(
             # бюджета. effective_budget (ниже, из effective_subsidy_budget)
             # остаётся числом — это то, что реально используется для расчётов.
             "budget": float(row.budget) if row.budget is not None else None,
-            "calculated_budget": effective_budget,
+            "calculated_budget": budget_basis,
             "total_planned": float(row.total_planned),
             "total_confirmed": float(row.total_confirmed),
             "total_paid": float(row.total_paid),
@@ -539,10 +548,25 @@ async def dashboard_charts(
             # остаются как есть для мест, которые уже их используют.
             "paid_declared": (_paid_breakdown_map_entry := paid_breakdown_map.get(row.id) or {}).get("declared", 0.0),
             "paid_confirmed": _paid_breakdown_map_entry.get("confirmed", 0.0),
+            # План 2026-10-06-statement-control, п.1: разница для подсветки на
+            # карточке «Оплачено» — выписка (confirmed) минус отметка
+            # сотрудников (declared); ПРАВИЛО №6, считается тут же из двух
+            # полей выше, второй источник не заводится.
             # «по отметке − по выписке» (план 2026-10-06 п.1; фронт показывает так же).
             "paid_diff": round(_paid_breakdown_map_entry.get("declared", 0.0) - _paid_breakdown_map_entry.get("confirmed", 0.0), 2),
             "paid_declared_by_kind": _paid_breakdown_map_entry.get("declared_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
             "paid_confirmed_by_kind": _paid_breakdown_map_entry.get("confirmed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+            # «Остаток субсидии» (владелец, 06.10.2026) — budget − оплачено,
+            # ДВЕ версии (по отметке/по выписке). Источник — subsidy_money_summary
+            # (balance_by_marks/balance_by_statement, Σ paid_marked/paid_confirmed
+            # КОРНЕЙ дерева ФЭО, см. докстринг subsidy_money_summary.py про
+            # расхождение этой техники с paid_declared/paid_confirmed выше —
+            # задача явно требует источник дерева для остатка). None, если
+            # бюджет не введён (budget <= 0).
+            "balance_paid_marked": _money.get("balance_paid_marked", 0.0),
+            "balance_paid_confirmed": _money.get("balance_paid_confirmed", 0.0),
+            "balance_by_marks": _money.get("balance_by_marks"),
+            "balance_by_statement": _money.get("balance_by_statement"),
             "total_plan_schedule": float(row.total_plan_schedule),  # SUM work_in_progress planned_total_price
             # total_ordered = SQL-агрегат по НЕежемесячным (row.total_ordered) + начисление по
             # ежемесячным (monthly_ordered_map) — обязаны складываться в одно число: карточка
@@ -558,8 +582,13 @@ async def dashboard_charts(
             "monthly_future_to_year_end": monthly_future_map.get(row.id, 0.0),
             "total_feo_planned": feo_planned_map.get(row.id, 0.0),  # NEW 12-01: SUM FeoPlannedItem.amount
             "planned_tree": planned_tree,  # единый источник: план дерева ФЭО (ручные + заявки)
-            "feo_budget_total": effective_budget,
+            "feo_budget_total": budget_basis,
             "feo_filled": calc > 0,
+            # Решение владельца 06.10.2026 (см. докстринг subsidy_money_summary.py):
+            # True, когда официального бюджета нет, а calculated_budget/
+            # feo_budget_total выше временно = план. Подпись «по плану — суммы
+            # ФЭО не введены» на карточках «Бюджет (ФЭО)»/«Остаток субсидии».
+            "budget_from_plan": budget_from_plan,
             "contractor_id": sub_obj.contractor_id if sub_obj else None,
             "contractor_name": contractor_name,
             "contractor_inn": contractor_inn,

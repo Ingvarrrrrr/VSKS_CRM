@@ -64,6 +64,88 @@ async def test_subsidy_money_summary_invariant_and_values(
 
 
 @pytest.mark.asyncio
+async def test_subsidy_money_summary_balance_by_marks_and_statement(
+    client, superadmin_headers, db_session, test_org,
+):
+    """«Остаток субсидии» (владелец, 06.10.2026) = бюджет ФЭО − оплачено, две
+    версии: по отметке сотрудников (balance_by_marks) и по выписке
+    (balance_by_statement). Бюджет 100k, закупка оплачена 30k по отметке
+    (payment_amount_declared) и 20k подтверждено выпиской (payment_amount) —
+    paid_marked = declared+confirmed = 50k, paid_confirmed = 20k,
+    balance_by_marks = 100k-50k = 50k, balance_by_statement = 100k-20k = 80k."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=100_000)
+    leaf = await _make_category(db_session, subsidy.id, name="Остаток", budget=Decimal("100000"))
+    fpi = await _make_planned_item(db_session, leaf.id, "Станок", 1, 100_000)
+    purchase, _item = await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, 1, 100_000)
+    purchase.payment_amount_declared = Decimal("30000")
+    purchase.payment_amount = Decimal("20000")
+    db_session.add(purchase)
+    await db_session.commit()
+
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+
+    assert row["balance_paid_marked"] == pytest.approx(50_000.0)
+    assert row["balance_paid_confirmed"] == pytest.approx(20_000.0)
+    assert row["balance_by_marks"] == pytest.approx(50_000.0)
+    assert row["balance_by_statement"] == pytest.approx(80_000.0)
+
+
+@pytest.mark.asyncio
+async def test_subsidy_money_summary_balance_none_without_budget(
+    client, superadmin_headers, db_session, test_org,
+):
+    """Ни бюджета (budget <= 0), ни плана (planned <= 0) — budget_basis тоже
+    <= 0, balance_by_marks/balance_by_statement = None («бюджет не введён»),
+    не отрицательное число. (С планом > 0 — см. budget_from_plan ниже, решение
+    владельца 06.10.2026: тогда budget_basis берётся из плана и остаток
+    считается.)"""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
+    await _make_category(db_session, subsidy.id, name="Без бюджета и без плана")
+
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+
+    assert row["budget"] == pytest.approx(0.0)
+    assert row["budget_basis"] == pytest.approx(0.0)
+    assert row["budget_from_plan"] is False
+    assert row["balance_by_marks"] is None
+    assert row["balance_by_statement"] is None
+
+
+@pytest.mark.asyncio
+async def test_subsidy_money_summary_budget_from_plan_balance(
+    client, superadmin_headers, db_session, test_org,
+):
+    """Решение владельца 06.10.2026 («бюджет = план, когда ФЭО не введён»,
+    см. докстринг subsidy_money_summary.py): субсидия без бюджета (ни ручного,
+    ни «по ФЭО») с планом 100k, оплачено 30k по отметке — budget_basis
+    должен подставиться из плана (100k), а "budget" (effective_subsidy_budget)
+    остаться 0.0 (его читает корректировка, не трогаем)."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
+    leaf = await _make_category(db_session, subsidy.id, name="По плану")
+    fpi = await _make_planned_item(db_session, leaf.id, "Станок", 1, 100_000)
+    purchase, _item = await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, 1, 100_000)
+    purchase.payment_amount_declared = Decimal("30000")
+    db_session.add(purchase)
+    await db_session.commit()
+
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+
+    assert row["budget"] == pytest.approx(0.0)  # не трогаем — читает корректировка
+    assert row["planned"] == pytest.approx(100_000.0)
+    assert row["budget_basis"] == pytest.approx(100_000.0)
+    assert row["budget_from_plan"] is True
+    assert row["free_basis"] == pytest.approx(0.0)
+    assert row["balance_paid_marked"] == pytest.approx(30_000.0)
+    assert row["balance_by_marks"] == pytest.approx(70_000.0)
+    # Инвариант сохраняется и при budget_from_plan.
+    assert row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"] \
+        == pytest.approx(row["redistributable"])
+
+
+@pytest.mark.asyncio
 async def test_subsidy_money_summary_no_purchases_redistributable_eq_budget(
     client, superadmin_headers, db_session, test_org,
 ):

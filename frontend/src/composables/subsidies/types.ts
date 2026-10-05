@@ -25,7 +25,10 @@ export interface SubsidyRow {
   paid_confirmed?: number
   paid_declared_by_kind?: { goods: number; services: number; unspecified: number } | null
   paid_confirmed_by_kind?: { goods: number; services: number; unspecified: number } | null
-  // «по отметке − по выписке» от бэкенда (dashboard_charts.py::subsidy_stats, план 06.10.2026).
+  // Квик-план 06.10.2026 (statement-control): готовая разница paid_declared −
+  // paid_confirmed от бэкенда (dashboard_charts.py::subsidy_stats) — карточка
+  // «Оплачено» (SubsidyKpiCards.vue) берёт отсюда, не считает заново (Правило
+  // №6); при отсутствии поля (старый бэк) считает локально тем же выражением.
   paid_diff?: number
   plan_schedule: number; ordered: number
   feo_filled?: boolean
@@ -115,6 +118,22 @@ export interface SubsidyRow {
   // заполнена — такие позиции учтены в committed по плановой цене (см.
   // подсказку карточки «Можно перераспределить»).
   committed_missing_fact_items?: number | null
+  // «Остаток субсидии» (владелец, 06.10.2026) = бюджет ФЭО − оплачено.
+  // Поступление пока = бюджету ФЭО (ввода поступлений нет). Две версии:
+  // по отметке сотрудников (balance_by_marks) и по выписке (balance_by_statement).
+  // Источник — backend/app/services/subsidy_money_summary.py (ПРАВИЛО №6,
+  // Σ paid_marked/paid_confirmed КОРНЕЙ дерева ФЭО — готовые поля, фронт не считает).
+  // null — бюджет не введён (budget <= 0).
+  balance_paid_marked?: number | null
+  balance_paid_confirmed?: number | null
+  balance_by_marks?: number | null
+  balance_by_statement?: number | null
+  // Решение владельца 06.10.2026 (budget_basis = план, когда ФЭО не введён и
+  // ручного бюджета нет, см. backend/app/services/subsidy_money_summary.py) —
+  // true, когда calculated_budget/feo_budget_total/remaining выше временно
+  // взяты из planned_tree, а не из бюджета. Карточки «Бюджет (ФЭО)»/«Остаток
+  // субсидии» показывают подпись «по плану — суммы ФЭО не введены».
+  budget_from_plan?: boolean
   // «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
   // is_sandbox=true — копия, не входит в итоги дашборда/аккаунта, свои цифры
   // считаются как обычно. copied_from_id — исходная субсидия (если это копия).

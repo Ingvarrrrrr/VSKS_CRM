@@ -57,6 +57,39 @@
     </template>
   </v-tooltip>
 
+  <!-- «Остаток субсидии» (владелец, 06.10.2026) = бюджет ФЭО − оплачено. Пока
+       поступление на счёт = бюджету ФЭО (ввода поступлений нет), поэтому это
+       же число читается и как «остаток на счёте». Крупно — по отметке
+       сотрудников (balance_by_marks), строкой ниже — то же по выписке
+       (balance_by_statement). Готовые поля бэкенда (subsidy_money_summary.py,
+       ПРАВИЛО №6) — фронт не считает. -->
+  <v-tooltip location="bottom" :disabled="true">
+    <template #activator="{ props: tip }">
+      <div v-bind="tip" class="kpi-card kpi-balance" :class="{ 'kpi-over': (balanceByMarks ?? 0) < 0 }"
+        title="Бюджет ФЭО минус оплаченное. Пока поступление на счёт = бюджету ФЭО (ввод поступлений появится позже)"
+      >
+        <div class="kpi-icon-box"><v-icon icon="mdi-bank-outline" size="26" /></div>
+        <div class="kpi-body">
+          <div class="kpi-value" :class="balanceByMarks != null && balanceByMarks < 0 ? 'text-error' : ''">
+            {{ balanceByMarks != null ? formatCurrencyRound(balanceByMarks) : 'бюджет не введён' }}
+          </div>
+          <div class="kpi-label">Остаток субсидии</div>
+          <!-- Решение владельца 06.10.2026 (budget_from_plan, см. докстринг
+               backend subsidy_money_summary.py): бюджета по ФЭО/вручную нет —
+               остаток временно считается от плана. -->
+          <div v-if="props.subsidy?.budget_from_plan" class="text-caption text-medium-emphasis">по плану — суммы ФЭО не введены</div>
+          <div v-if="balanceByMarks != null" class="kpi-sub-note kpi-balance-notes text-caption text-medium-emphasis">
+            <div class="kpi-balance-note-row">по отметке: {{ formatCurrencyRound(balanceByMarks) }}</div>
+            <div class="kpi-balance-note-row" :class="{ 'text-error': (balanceByStatement ?? 0) < 0 }">
+              подтверждено выпиской: {{ balanceByStatement != null ? formatCurrencyRound(balanceByStatement) : '—' }}
+            </div>
+            <div class="kpi-balance-note-row kpi-balance-hint">бюджет ФЭО − оплачено; пока поступление = бюджету ФЭО</div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </v-tooltip>
+
   <v-tooltip location="bottom" :disabled="true">
     <template #activator="{ props: tip }">
       <div v-bind="tip" class="kpi-card kpi-economy" :class="{ 'kpi-over': (economyTotal ?? 0) < 0, 'kpi-unmeasured': economyTotal == null }"

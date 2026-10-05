@@ -798,4 +798,10 @@ export interface FeoImportResult {
   remap_aborted_reason?: string | null
   version_created?: boolean
   deletes_applied?: boolean
+  // Решение владельца 05.10.2026: файл шаблона ФЭО мог нести необязательный
+  // блок «Факт» (статусы уже прошедших закупок) — мастер ФЭО после успешной
+  // загрузки предлагает перейти в «Импорт факта» с ТЕМ ЖЕ файлом, см.
+  // app/services/feo_import_fact_summary.py (единственный источник счёта).
+  has_fact_columns?: boolean
+  fact_rows?: number
 }

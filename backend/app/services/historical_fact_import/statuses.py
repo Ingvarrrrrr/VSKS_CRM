@@ -78,6 +78,17 @@ _RAW_TO_CODE: dict[str, tuple[str, Optional[bool]]] = {
 }
 
 
+def status_code_from_raw(status_raw: Optional[str]) -> Optional[str]:
+    """Сырой текст ячейки «Правильный статус» -> код из STATUS_CODES, либо
+    None, если значение не распознано (или пусто). Единственное место,
+    знающее сопоставление сырого текста файла коду (Правило №6) — и
+    `resolve_status` ниже, и счётчик `fact_rows` шаблона ФЭО (см.
+    app/services/feo_import_fact_summary.py) читают код ТОЛЬКО отсюда, не
+    заводят свой разбор _RAW_TO_CODE по месту."""
+    entry = _RAW_TO_CODE.get(_norm(status_raw))
+    return entry[0] if entry is not None else None
+
+
 def resolve_status(status_raw: Optional[str]) -> dict:
     """{target_status: код из STATUS_CODES|None, needs_payment, recognized,
     correction: str|None}.

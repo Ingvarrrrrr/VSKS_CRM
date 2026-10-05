@@ -358,6 +358,23 @@ export function useFactImport() {
     factImport.show = true
   }
 
+  // Решение владельца 05.10.2026: после успешной загрузки шаблона ФЭО
+  // (блок «Факт» заполнен хоть в одной строке — has_fact_columns/fact_rows,
+  // см. FeoImportResult) мастер ФЭО предлагает перейти сюда С ТЕМ ЖЕ файлом
+  // и листом — не заставлять выбирать файл повторно (шаг 1 целиком
+  // пропускается, минуя `loadSheets`). ПРАВИЛО №6: сам предпросмотр — тот же
+  // `loadPreview()`, которым обычный путь (loadSheets → шаг 2) и так
+  // пользуется, второй парсер не заводим.
+  async function openWizardWithFile(subsidyId: number, file: File, sheet: string) {
+    resetWizard(subsidyId)
+    factImport.file = file
+    factImport.selectedSheet = sheet
+    factImport.sheets = [{ name: sheet, rows: 0, header_row_guess: 1 }]
+    factImport.show = true
+    await loadPreview()
+    factImport.step = 2
+  }
+
   function basePath(): string {
     return `/subsidies/${factImport.subsidyId}/fact-import`
   }
@@ -709,6 +726,7 @@ export function useFactImport() {
     factImport,
     FACT_IMPORT_TARGET_FIELDS,
     openWizard,
+    openWizardWithFile,
     resetWizard,
     loadSheets,
     loadPreview,

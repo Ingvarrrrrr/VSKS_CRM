@@ -38,6 +38,9 @@ from app.database import get_db
 from app.auth.permissions import require_tab
 from app.routers import feo_categories as fc
 from app.services.feo_import_engine import _do_feo_import
+from app.services.feo_import_fact_summary import (
+    count_fact_rows, detect_fact_columns_by_header, has_fact_columns,
+)
 from app.services.feo_import_links import _relink_feo_category, _feo_category_load  # noqa: F401 (re-export)
 from app.services.feo_import_params import resolve_feo_import_mapped_params
 # Регистрация FeoImportRun в Base.metadata (журнал истории ФЭО, волна 1, 22.09)
@@ -199,7 +202,17 @@ async def import_feo_from_excel(
     c_budget    = find_col(["финансирование", "бюджет", "budget"])
     c_active    = find_col(["активна", "активен", "active"])
 
-    return await _do_feo_import(
+    # Решение владельца 05.10.2026: опциональный блок «Факт» шаблона ФЭО
+    # (см. feo_import_template.py) — НЕ резервирует колонки через find_col/
+    # _used_cols выше (отдельное, непересекающееся по словам пространство),
+    # НЕ передаётся в _do_feo_import (план строится как прежде) — только
+    # посчитан для ответа, фронт по нему предложит перейти в «Импорт факта»
+    # (ПРАВИЛО №6 — единственное место этой детекции, см. docstring модуля).
+    _fact_cols = detect_fact_columns_by_header(raw_headers)
+    _has_fact = has_fact_columns(_fact_cols)
+    _fact_rows = count_fact_rows(rows[1:], _fact_cols["c_fact_status"])
+
+    result = await _do_feo_import(
         rows=rows[1:],
         c_subsidy=c_subsidy, c_lvl2=c_lvl2, c_lvl3=c_lvl3, c_lvl4=c_lvl4,
         c_lvl5=c_lvl5, c_qty=c_qty, c_unit=c_unit, c_item_amt=c_item_amt,
@@ -226,6 +239,9 @@ async def import_feo_from_excel(
         item_type_decisions=item_type_decisions,
         filename=file.filename, sheet_name=None,
     )
+    result["has_fact_columns"] = _has_fact
+    result["fact_rows"] = _fact_rows
+    return result
 
 
 @router.post("/import-mapped")
@@ -433,6 +449,16 @@ async def import_feo_mapped(
 
     data_rows = all_rows[header_row_offset + 1:]
 
+    # Решение владельца 05.10.2026: опциональный блок «Факт» шаблона ФЭО —
+    # см. то же пояснение у /import выше. Ручной маппинг (этот эндпоинт) не
+    # знает о блоке «Факт» вовсе (мастер сопоставления колонок его не
+    # предлагает), поэтому детекция идёт по заголовку файла напрямую, той же
+    # единственной функцией (Правило №6).
+    _fact_header = [str(h).strip().lower() if h is not None else "" for h in (all_rows[header_row_offset] or [])]
+    _fact_cols = detect_fact_columns_by_header(_fact_header)
+    _has_fact = has_fact_columns(_fact_cols)
+    _fact_rows = count_fact_rows(data_rows, _fact_cols["c_fact_status"])
+
     # Оставшиеся ~40 col_* читаются напрямую из `_p` (уже разрешённых форма/query,
     # см. resolve_feo_import_mapped_params выше) — им не нужно промежуточное
     # переприсваивание локальной переменной, они используются только здесь.
@@ -440,7 +466,7 @@ async def import_feo_mapped(
         v = _p[name]
         return v if v >= 0 else None
 
-    return await _do_feo_import(
+    result = await _do_feo_import(
         rows=data_rows,
         c_subsidy=_c("col_subsidy"),
         c_lvl2=col_lvl2,
@@ -496,3 +522,6 @@ async def import_feo_mapped(
         item_type_decisions=item_type_decisions,
         filename=file.filename, sheet_name=target_sheet,
     )
+    result["has_fact_columns"] = _has_fact
+    result["fact_rows"] = _fact_rows
+    return result

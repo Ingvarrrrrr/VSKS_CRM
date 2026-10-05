@@ -163,6 +163,19 @@ def _map_columns_format(header: list) -> list:
             field = "plan_price"
         elif "сумма плана" in h:
             field = "plan_amount"
+        # Шаблон ФЭО (решение владельца 05.10.2026, app/routers/
+        # feo_import_template.py) — необязательный блок «Факт» с явными
+        # заголовками «Факт: Количество/Цена/Сумма», В ОТЛИЧИЕ от одноимённой
+        # тройки «Факт» (одна ячейка на 3 колонки) образца ХО ниже. Объявлены
+        # ПЕРЕД веткой h.strip()=="факт", чтобы "факт: сумма" не пыталась
+        # совпасть с ней (там строгое равенство "факт", не совпало бы и так,
+        # но порядок рядом — для читаемости).
+        elif "факт: количество" in h or "факт количество" in h:
+            field = "fact_qty"
+        elif "факт: цена" in h or "факт цена" in h:
+            field = "fact_price"
+        elif "факт: сумма" in h or "факт сумма" in h:
+            field = "fact_amount"
         elif h.strip() == "факт":
             cols.append({"index": i, "letter": _col_letter(i), "header": header[i], "field": "fact_qty"})
             if i + 1 < n:

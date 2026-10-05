@@ -407,6 +407,23 @@
               {{ w.message }}
             </div>
           </v-alert>
+          <!-- Решение владельца 05.10.2026: файл несёт заполненный блок
+               «Факт» — предложить перейти в «Импорт факта» с ТЕМ ЖЕ файлом. -->
+          <v-alert
+            v-if="feoImport.result?.has_fact_columns && (feoImport.result?.fact_rows ?? 0) > 0"
+            type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-swap-outline">
+            <div class="d-flex flex-wrap align-center gap-3">
+              <span>
+                В файле есть статусы и факт по {{ feoImport.result!.fact_rows }}
+                {{ feoPluralRu(feoImport.result!.fact_rows!, ['строке', 'строкам', 'строкам']) }}.
+                Загрузить уже прошедшие закупки?
+              </span>
+              <v-btn size="small" color="primary" variant="flat" prepend-icon="mdi-arrow-right-bold"
+                @click="goToFactImport">
+                Перейти к импорту факта
+              </v-btn>
+            </div>
+          </v-alert>
           <div v-if="feoImport.result" class="d-flex flex-wrap gap-2 mb-3">
             <v-chip color="success" variant="flat"
               :disabled="!feoImport.result.created_details?.length"
@@ -609,12 +626,14 @@
 import { useDisplay } from 'vuetify'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useFeoImport } from '@/composables/subsidies/useFeoImport'
+import { useFactImport } from '@/composables/subsidies/useFactImport'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { MAX_UPLOAD_SIZE_MB, checkUploadSize } from '@/constants/uploadLimits'
 import FeoImportMappingStep from './FeoImportMappingStep.vue'
 import FeoImportItemTypeConflicts from './FeoImportItemTypeConflicts.vue'
 
 const { mobile } = useDisplay()
+const ctx = useSubsidyDetailCtx()
 const {
   feoImport, feoImportTargetSubsidyName, feoResultPanels, feoToggleResultPanel,
   feoDuplicateGroups, feoResolutionFor, feoSetResolution,
@@ -624,7 +643,23 @@ const {
   feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoMappingValid,
   feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,
   doFeoImport, doFeoMappedImport, closeFeoImport, feoRecomputeNow,
-} = useFeoImport(useSubsidyDetailCtx())
+} = useFeoImport(ctx)
+
+// Решение владельца 05.10.2026: «Перейти к импорту факта» (карточка шага 5
+// выше) — тот же файл/лист, который только что загрузил план ФЭО, передаём
+// в useFactImport().openWizardWithFile (ПРАВИЛО №6 — единственный источник
+// открытия мастера факта с готовым файлом, второй путь не заводим).
+const { openWizardWithFile } = useFactImport()
+function goToFactImport() {
+  const file = feoImport.file
+  const sheet = feoImport.selectedSheet || ''
+  const subsidyId = ctx.selectedId.value
+  if (!file || !subsidyId) return
+  // Захватываем файл/лист/субсидию ДО closeFeoImport — он очищает
+  // feoImport.file/selectedSheet (см. useFeoImport.ts::closeFeoImport).
+  closeFeoImport()
+  openWizardWithFile(subsidyId, file, sheet)
+}
 </script>
 
 <style scoped>

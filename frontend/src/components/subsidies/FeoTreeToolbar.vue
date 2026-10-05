@@ -164,7 +164,16 @@
       </v-btn>
       <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
       <template v-if="ctx.canEditFeo.value">
-        <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">Шаблон</v-btn>
+        <v-tooltip location="bottom" max-width="320">
+          <template #activator="{ props: feoTemplateTooltipProps }">
+            <v-btn v-bind="feoTemplateTooltipProps" size="small" variant="outlined" prepend-icon="mdi-download-outline"
+              @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">Шаблон</v-btn>
+          </template>
+          <!-- Решение владельца 05.10.2026: субсидию, у которой часть закупок
+               уже прошла, грузят ОДНИМ файлом — необязательный блок «Факт». -->
+          Если часть закупок уже прошла — заполните блок «Факт»: после загрузки плана система предложит загрузить их.
+        </v-tooltip>
+        <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
         <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
         <!-- «Импорт факта» (план breezy-mixing-lovelace.md, Часть 2) — уже
              совершённые закупки из таблиц ведения субсидии. Та же видимость,

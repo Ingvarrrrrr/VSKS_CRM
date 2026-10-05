@@ -61,6 +61,12 @@ export function useOrdersData(options: {
       const statuses = filters.status.split(',').map(s => s.trim()).filter(Boolean)
       r = r.filter(o => statuses.includes(o.status))
     }
+    // Решение владельца 05.10.2026: клик по КПИ-карточке этапа (OrdersStageKpiCards.vue) —
+    // фильтр НАКОПИТЕЛЬНЫЙ (дошедшие до этапа), отдельное поле от обычного
+    // filters.status (точное совпадение) — см. его докстринг в useOrdersFilters.ts.
+    if (filters.stageCumulative && filters.stageCumulative.length) {
+      r = r.filter(o => filters.stageCumulative!.includes(o.status))
+    }
     if (filters.subsidyId) r = r.filter(o => o.subsidy_id === filters.subsidyId)
     if (filters.wishId) r = r.filter(o => (o as any).wish_id === filters.wishId)
     if (filters.feoCategoryId) {

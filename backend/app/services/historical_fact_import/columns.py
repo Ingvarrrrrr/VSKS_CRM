@@ -27,7 +27,7 @@ from app.services.import_preview_sheets import read_preview_sheets, read_full_sh
 # Хинты для detect_header_row/listing — общий словарь слов обоих форматов,
 # достаточно широкий, чтобы найти заголовок независимо от формата файла.
 _HEADER_HINTS = (
-    "уровень", "план", "факт", "оплач", "законтракт", "статус", "поставщик",
+    "уровень", "план", "факт", "оплач", "аванс", "законтракт", "статус", "поставщик",
     "№ закупки", "наименование", "подкатегория", "количество", "сумма",
     "ед. изм", "товар/услуга",
 )
@@ -51,16 +51,23 @@ TEMPLATE_HEADER[16] = "Плановая цена за единицу"
 TEMPLATE_HEADER[17] = "Сумма плана"
 TEMPLATE_HEADER[18] = "Факт"
 TEMPLATE_HEADER[21] = "Оплачено "
-TEMPLATE_HEADER[22] = "Законтрактовано"
-TEMPLATE_HEADER[24] = "Правильный статус"
-TEMPLATE_HEADER[25] = "№ Закупки"
-TEMPLATE_HEADER[27] = "Поставщик "
+# Задача 2 (владелец, 05.10.2026) — «Аванс (да/нет)»: оплачено ДО поставки
+# (см. statuses.py/commit.py — Аванс=да переводит статус «Оплачено» строки в
+# закупку status='ordered', is_prepayment=true, поставлено 0). Вставлена
+# СРАЗУ после «Оплачено» (владелец), остальные поля блока сдвинуты на одну
+# позицию (22→23 и т.д.) — массив стал на 1 длиннее (29).
+TEMPLATE_HEADER.append(None)
+TEMPLATE_HEADER[22] = "Аванс (да/нет)"
+TEMPLATE_HEADER[23] = "Законтрактовано"
+TEMPLATE_HEADER[25] = "Правильный статус"
+TEMPLATE_HEADER[26] = "№ Закупки"
+TEMPLATE_HEADER[28] = "Поставщик "
 
 FIELDS = (
     "path_l2", "path_l3", "path_l4", "plan_item_name", "item_type", "unit",
     "plan_qty", "plan_price", "plan_amount",
     "fact_qty", "fact_price", "fact_amount",
-    "paid", "contracted", "status", "status_raw", "purchase_no", "supplier",
+    "paid", "advance", "contracted", "status", "status_raw", "purchase_no", "supplier",
     "comment",
 )
 
@@ -186,6 +193,11 @@ def _map_columns_format(header: list) -> list:
             continue
         elif "оплач" in h:
             field = "paid"
+        elif "аванс" in h:
+            # Задача 2 (владелец, 05.10.2026) — «Аванс (да/нет)», сразу после
+            # «Оплачено» в обоих шаблонах (historical_fact_import/template.py
+            # и feo_import_template.py) — см. TEMPLATE_HEADER выше.
+            field = "advance"
         elif "законтракт" in h:
             field = "contracted"
         elif "правильный статус" in h:

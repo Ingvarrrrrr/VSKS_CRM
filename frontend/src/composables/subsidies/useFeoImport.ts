@@ -207,6 +207,12 @@ const FEO_TARGET_FIELDS = [
   { value: 'fact_price',        title: 'Факт: Цена',          required: false, group: 'fact' },
   { value: 'fact_amount',       title: 'Факт: Сумма',         required: false, group: 'fact' },
   { value: 'fact_paid',         title: 'Оплачено',            required: false, group: 'fact' },
+  // Задача 2 (владелец, 05.10.2026): «Аванс (да/нет)» — оплачено ДО поставки,
+  // см. колонку шаблона сразу после «Оплачено» (app/routers/feo_import_
+  // template.py) и app/services/historical_fact_import/columns.py (header
+  // "аванс" → field "advance"). Автоопределение по заголовку работает и без
+  // ручного маппинга — здесь только для списка полей сетки мастера.
+  { value: 'fact_advance',      title: 'Аванс (да/нет)',      required: false, group: 'fact' },
   { value: 'fact_contracted',   title: 'Законтрактовано',     required: false, group: 'fact' },
   { value: 'fact_supplier',     title: 'Поставщик',           required: false, group: 'fact' },
   { value: 'fact_purchase_no',  title: '№ закупки',           required: false, group: 'fact' },

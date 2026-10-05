@@ -31,7 +31,7 @@ from tests.test_feo_import_tree import _cleanup_subsidy, _get_categories, _get_i
 
 _FACT_HEADERS = [
     "Правильный статус", "Факт: Количество", "Факт: Цена", "Факт: Сумма",
-    "Оплачено", "Законтрактовано", "Поставщик", "№ закупки",
+    "Оплачено", "Аванс (да/нет)", "Законтрактовано", "Поставщик", "№ закупки",
 ]
 
 
@@ -58,9 +58,9 @@ async def test_template_has_fact_block_and_status_dropdown(db_session, superadmi
     wb = load_workbook(io.BytesIO(body))
     ws = wb["Категории ФЭО"]
     headers = [c.value for c in ws[1]]
-    assert headers[-8:] == [
+    assert headers[-9:] == [
         "Правильный статус", "Факт: Количество", "Факт: Цена", "Факт: Сумма",
-        "Оплачено", "Законтрактовано", "Поставщик", "№ закупки",
+        "Оплачено", "Аванс (да/нет)", "Законтрактовано", "Поставщик", "№ закупки",
     ], headers
 
     ws3 = wb["Справочники"]
@@ -93,7 +93,7 @@ async def test_import_with_fact_columns_builds_same_plan_and_reports_counts(db_s
     при построении дерева (Правило №6: единственный источник факта — Импорт
     факта, этот импорт их только считает)."""
     headers = _PLAN_HEADERS + _FACT_HEADERS
-    row = _PLAN_ROW + ["Заключён договор", "2", "500", "1000", "500", "1000", "ООО Тест", "РЕЕ-1"]
+    row = _PLAN_ROW + ["Заключён договор", "2", "500", "1000", "500", "нет", "1000", "ООО Тест", "РЕЕ-1"]
     subsidy, result = await _import_rows(db_session, superadmin_user, headers, [row])
     try:
         assert result["errors"] == [], result["errors"]
@@ -129,7 +129,7 @@ async def test_import_fact_row_with_plan_status_not_counted(db_session, superadm
     """Блок «Факт» присутствует (колонки есть), но статус строки — «План
     закупок» (ещё не факт) -> has_fact_columns=True, fact_rows=0."""
     headers = _PLAN_HEADERS + _FACT_HEADERS
-    row = _PLAN_ROW + ["План закупок", "", "", "", "", "", "", ""]
+    row = _PLAN_ROW + ["План закупок", "", "", "", "", "", "", "", ""]
     subsidy, result = await _import_rows(db_session, superadmin_user, headers, [row])
     try:
         assert result["errors"] == [], result["errors"]
@@ -148,7 +148,7 @@ async def test_fact_import_preview_autodetects_feo_template_columns(db_session, 
 
     subsidy = await _make_subsidy(db_session)
     headers = ["Субсидия"] + _PLAN_HEADERS + _FACT_HEADERS
-    row = [subsidy.name] + _PLAN_ROW + ["Заключён договор", "2", "500", "1000", "500", "1000", "ООО Тест", "РЕЕ-1"]
+    row = [subsidy.name] + _PLAN_ROW + ["Заключён договор", "2", "500", "1000", "500", "нет", "1000", "ООО Тест", "РЕЕ-1"]
     upload = _mk_xlsx_upload(headers, [row])
     content = await upload.read()
     try:

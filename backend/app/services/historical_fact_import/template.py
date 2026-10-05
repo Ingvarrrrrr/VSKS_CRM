@@ -43,7 +43,7 @@ async def build_template_workbook(db: AsyncSession, subsidy_id: int) -> bytes:
             plan_item_name = None
         levels = ([None] * 3 + path_parts)[-3:]  # последние 3 уровня → l2/l3/l4
 
-        row = [None] * 28
+        row = [None] * len(columns_mod.TEMPLATE_HEADER)
         row[0] = "ХО_2026" if subsidy_id else None
         row[4], row[5], row[6] = levels[0], levels[1], levels[2]
         row[7] = plan_item_name
@@ -70,6 +70,23 @@ async def build_template_workbook(db: AsyncSession, subsidy_id: int) -> bytes:
     last_row = max(ws.max_row, 2)
     dv.add(f"Y2:Y{last_row + 200}")  # запас строк под дозапись вручную
     ws.add_data_validation(dv)
+
+    # Задача 2 (владелец, 05.10.2026) — «Аванс (да/нет)»: выпадающий список
+    # через лист «Справочники» (тот же приём, что статус выше), колонка B.
+    # Колонка листа «Импорт факта» — Z (индекс 22, 0-based) после сдвига
+    # TEMPLATE_HEADER (columns.py).
+    ref["B1"] = "Аванс (да/нет)"
+    ref["B2"] = "Да"
+    ref["B3"] = "Нет"
+    dv_advance = DataValidation(
+        type="list",
+        formula1="Справочники!$B$2:$B$3",
+        allow_blank=True,
+        showErrorMessage=False,
+    )
+    adv_letter = columns_mod._col_letter(22)
+    dv_advance.add(f"{adv_letter}2:{adv_letter}{last_row + 200}")
+    ws.add_data_validation(dv_advance)
 
     buf = BytesIO()
     wb.save(buf)

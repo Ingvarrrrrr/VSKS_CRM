@@ -381,6 +381,26 @@ async def dashboard_charts(
         sid = r.subsidy_id
         contracts_map[sid] = contracts_map.get(sid, 0.0) + float(r.amt)
         contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + int(r.cnt)
+    # Решение владельца 05.10.2026 («любая оплата = был договор, хоть
+    # упрощённый по чеку/счёту» + находка «Заключён 19,05М < Заказано 22,2М»
+    # на стенде, субсидия «ХО»): «Заключено договоров» обязано по построению
+    # покрывать ВСЕ committed-закупки — ДВА добавочных слагаемых, ЕДИНЫЙ
+    # хелпер (app/services/stage_cumulative.py, Правило №6, см. его докстринг
+    # за разбором обеих причин разрыва). sid_list уже прошёл видимость/org/
+    # sandbox через subsidy_q выше.
+    from app.services.stage_cumulative import committed_uncounted_by_subsidy, single_contract_topup_by_subsidy
+    _uncounted_map = await committed_uncounted_by_subsidy(db, subsidy_ids=sid_list)
+    for sid, d in _uncounted_map.items():
+        contracts_map[sid] = contracts_map.get(sid, 0.0) + d["amount"]
+        contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + d["count"]
+    # single-договоры с max_amount IS NULL (или заниженным) — настоящая
+    # причина разрыва на «ХО»: cs_rows выше буквально суммирует Contract.
+    # max_amount, SQL SUM молча теряет NULL-строки. Топ-ап = разница (та же
+    # идея, что greatest(max_amount, Σ заказов) для framework_with_amount).
+    _single_topup_map = await single_contract_topup_by_subsidy(db, subsidy_ids=sid_list)
+    for sid, d in _single_topup_map.items():
+        contracts_map[sid] = contracts_map.get(sid, 0.0) + d["amount"]
+        contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + d["count"]
 
     # Глобальные итоги — сумма по регруппированным строкам, КРОМЕ копий для
     # экспериментов (sandbox_ids_in_scope — см. выше; на scope=dashboard эта

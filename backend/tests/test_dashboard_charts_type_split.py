@@ -105,9 +105,18 @@ EXPECTED = {
     "plan_schedule": {"amount": 4200.0, "goods": 2900.0, "services": 1000.0, "unspecified": 300.0},
     "work": {"amount": 3200.0, "goods": 2300.0, "services": 600.0, "unspecified": 300.0},
     "ordered": {"amount": 1700.0, "goods": 1300.0, "services": 100.0, "unspecified": 300.0},
-    # "contracts" (владелец 02.10.2026): рамочная ГОЛОВА (p6, contracted) НЕ
-    # занимает деньги — только размещённый заказ (p7, ordered, 400, goods).
-    "contracts": {"amount": 400.0, "goods": 400.0, "services": 0.0, "unspecified": 0.0},
+    # "contracts" (владелец 02.10.2026 + 05.10.2026): рамочная ГОЛОВА (p6,
+    # contracted, привязана к Contract) НЕ занимает деньги сама по себе —
+    # только размещённый заказ (p7, ordered, 400, goods). Решение владельца
+    # 05.10.2026 («любая оплата = был договор, хоть упрощённый по чеку/
+    # счёту») добавило закупки БЕЗ формального Contract, дошедшие до
+    # committed-статуса (p3 ordered/800 товар, p4 delivered/300 без типа, p5
+    # paid/200 товар+услуга) — p6 остаётся исключённым (у него ЕСТЬ Contract,
+    # просто статус contracted недостаточен для рамочного), p7 остаётся
+    # единственным вкладом через Contract. Итог = {p3,p4,p5,p7} — тот же
+    # набор закупок, что и "ordered" (совпадение этой фикстуры: нет отдельной
+    # закупки со статусом "contracted" без договора).
+    "contracts": {"amount": 1700.0, "goods": 1300.0, "services": 100.0, "unspecified": 300.0},
     "delivered": {"amount": 500.0, "goods": 100.0, "services": 100.0, "unspecified": 300.0},
     "delivered_unpaid": {"amount": 300.0, "goods": 0.0, "services": 0.0, "unspecified": 300.0},
     "paid": {"amount": 200.0, "goods": 100.0, "services": 100.0, "unspecified": 0.0},

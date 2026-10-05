@@ -203,6 +203,12 @@ async def commit_import(
         paid_total = Decimal(0)
         target_status: Optional[str] = None
         group_category_ids: set = set()
+        # Задача 2 (владелец, 05.10.2026) — «Аванс (да/нет)»: хоть одна строка
+        # группы с is_advance=True → созданная закупка несёт is_prepayment=
+        # True (оплачено ДО поставки, статус уже override-нут preview.py в
+        # "ordered" — committed_amounts.py уже признаёт её законтрактованной,
+        # но «Поставлено» она не формирует, пока статус не станет delivered+).
+        group_is_advance = False
 
         for row in group_rows:
             row_key = str(row["row"])
@@ -283,6 +289,8 @@ async def commit_import(
             total_amount += amount_dec
             if row["paid"]:
                 paid_total += _dec(row["paid"])
+            if row.get("is_advance"):
+                group_is_advance = True
 
             if row_status and (target_status is None or _RANK.get(row_status, 0) > _RANK.get(target_status, 0)):
                 target_status = row_status
@@ -322,6 +330,8 @@ async def commit_import(
             db, data, current_user, items_data=items_data, total_nmck=total_amount,
         )
         p.import_run_id = run.id
+        if group_is_advance:
+            p.is_prepayment = True
 
         # «План не трогаем, но у ИСТОРИЧЕСКОЙ закупки своего плана не было —
         # план=факт на момент постановки» (см. docstring recalc_purchase_money:

@@ -25,6 +25,12 @@ export interface OrdersFiltersState {
   onlyUnseen: boolean
   periodFrom: string
   periodTo: string
+  // Решение владельца 05.10.2026: клик по КПИ-карточке этапа (OrdersStageKpiCards.vue)
+  // фильтрует реестр НАКОПИТЕЛЬНО (дошедшие до этапа), в отличие от
+  // обычного фильтра `status` (точное совпадение) — отдельное поле, чтобы
+  // не ломать комма-протокол `status` (см. его докстринг выше) и backend
+  // ?status=, который ожидает ровно один код.
+  stageCumulative: string[] | null
 }
 
 const FILTER_PRESETS_KEY = 'orders_filter_presets'
@@ -54,6 +60,7 @@ export function useOrdersFilters(options: {
     onlyUnseen: false,
     periodFrom: '',
     periodTo: '',
+    stageCumulative: null,
   })
 
   // ── Link task mode (from ?link_task=ID) ──

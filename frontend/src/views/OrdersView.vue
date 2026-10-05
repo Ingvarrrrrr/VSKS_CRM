@@ -10,6 +10,19 @@
       @open-export="exportDialogRef?.open()"
     />
 
+    <OrdersStageKpiCards
+      :contracts="stageKpis.contracts.value"
+      :ordered="stageKpis.ordered.value"
+      :delivered="stageKpis.delivered.value"
+      :paid="stageKpis.paid.value"
+      :active="activeStageKpi"
+      @stage-click="onStageKpiClick"
+    />
+    <v-chip v-if="filters.stageCumulative" color="deep-orange" variant="tonal" size="small" closable class="mb-3"
+      @click:close="filters.stageCumulative = null">
+      Этап: {{ activeStageKpi === 'contracts' ? 'Заключён договор' : activeStageKpi === 'ordered' ? 'Заказано' : activeStageKpi === 'delivered' ? 'Поставлено' : 'Оплачено' }} и далее
+    </v-chip>
+
     <OrdersFilterBar
       :filters="filters"
       :subsidies="subsidies"
@@ -186,6 +199,11 @@ import { useOrdersData } from '@/composables/orders/useOrdersData'
 import { usePurchaseStop } from '@/composables/orders/usePurchaseStop'
 import { orderTypeOptions, statusItems } from '@/composables/orders/ordersLabels'
 import type { Purchase } from '@/composables/orders/ordersTypes'
+// Решение владельца 05.10.2026: КПИ-карточки этапов над реестром «Закупки» —
+// тот же бэк-источник, что карточка субсидии/дашборд (Правило №6).
+import OrdersStageKpiCards from '@/components/orders/OrdersStageKpiCards.vue'
+import { useOrdersStageKpis } from '@/composables/orders/useOrdersStageKpis'
+import { KPI_STAGE_CUMULATIVE_STATUSES } from '@/utils/itemTypeKind'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 const authStore = useAuthStore()
@@ -229,6 +247,26 @@ const {
 } = useOrdersData({
   filters, matchesColumnFilters, localSort, getRowField,
   showSnack,
+})
+
+// Решение владельца 05.10.2026: КПИ-карточки этапов над реестром — та же
+// субсидия, на которую отфильтрован реестр (filters.subsidyId), либо все
+// видимые (не sandbox), если фильтр не выбран.
+const stageKpis = useOrdersStageKpis(computed(() => filters.subsidyId))
+stageKpis.load()
+watch(() => filters.subsidyId, () => stageKpis.load())
+function onStageKpiClick(stage: string) {
+  const cumulative = (KPI_STAGE_CUMULATIVE_STATUSES as Record<string, string[]>)[stage]
+  if (!cumulative) return
+  const isActive = JSON.stringify(filters.stageCumulative) === JSON.stringify(cumulative)
+  filters.stageCumulative = isActive ? null : cumulative
+}
+const activeStageKpi = computed(() => {
+  if (!filters.stageCumulative) return null
+  for (const [key, statuses] of Object.entries(KPI_STAGE_CUMULATIVE_STATUSES as Record<string, string[]>)) {
+    if (JSON.stringify(statuses) === JSON.stringify(filters.stageCumulative)) return key
+  }
+  return null
 })
 
 // Владелец, 2026-09-15: остановка/возобновление закупки — общий composable

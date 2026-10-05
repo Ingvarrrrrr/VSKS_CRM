@@ -90,6 +90,17 @@ async def build_preview(
             # выпадающего списка (6 кодов), не создаётся молча.
             needs_status = True
 
+        # Задача 2 (владелец, 05.10.2026) — «Аванс (да/нет)»: строка со
+        # статусом «Оплачено» и Аванс=да означает оплату ДО поставки — закупка
+        # обязана встать в статус «Заказано» (ordered), не «Оплачено»
+        # (committed_amounts.py — «Заключён договор» уже включает её, но
+        # «Поставлено»/статус «Оплачено» нет, пока поставка не отмечена
+        # отдельно). commit.py прочитает is_advance ниже и выставит
+        # Purchase.is_prepayment=True на созданной закупке.
+        is_advance = bool(row.get("advance")) and status_info["target_status"] == "paid"
+        if is_advance:
+            status_info = {**status_info, "target_status": "ordered"}
+
         is_payroll = statuses_mod.is_payroll_path(row["path"], row["name"])
 
         warnings: list[str] = []
@@ -104,6 +115,8 @@ async def build_preview(
             warnings.append(status_info["correction"])
         if status_info["target_status"] == "contracted" and status_info["needs_payment"] and not row["paid"]:
             warnings.append('Статус «Заключён договор» (из «Оплачено частично»), но «Оплачено» не заполнено')
+        if is_advance:
+            warnings.append("аванс: оплачено до поставки")
 
         plan_amount = row["plan"]["amount"]
         contract_amount_for_row = fact_amount if fact_amount is not None else row["contracted"]
@@ -179,6 +192,8 @@ async def build_preview(
                 "amount": float(row["fact"]["amount"]) if row["fact"]["amount"] is not None else None,
             },
             "paid": float(row["paid"]) if row["paid"] is not None else None,
+            "advance": bool(row.get("advance")),
+            "is_advance": is_advance,
             "contracted": float(row["contracted"]) if row["contracted"] is not None else None,
             "supplier": row["supplier"],
             "purchase_no": row["purchase_no"],

@@ -62,6 +62,7 @@ EXPECTED_TEMPLATE_HEADERS = [
     "Факт: Цена",
     "Факт: Сумма",
     "Оплачено",
+    "Аванс (да/нет)",
     "Законтрактовано",
     "Поставщик",
     "№ закупки",
@@ -81,7 +82,7 @@ async def test_template_headers_match_fixed_contract(db_session, superadmin_user
     ws = wb["Категории ФЭО"]
     headers = [c.value for c in ws[1]]
     assert headers == EXPECTED_TEMPLATE_HEADERS, headers
-    assert len(headers) == 28
+    assert len(headers) == 29
 
 
 def test_resolve_fact_columns_explicit_overrides_header_detection():

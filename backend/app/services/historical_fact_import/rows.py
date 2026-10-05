@@ -42,6 +42,21 @@ def _to_text(v) -> Optional[str]:
     return s or None
 
 
+_ADVANCE_TRUE = {"да", "yes", "true", "1", "y", "аванс"}
+
+
+def _to_advance_bool(v) -> bool:
+    """Колонка «Аванс (да/нет)» (задача 2, владелец 05.10.2026) — пусто/«нет»/
+    что угодно непризнанное = False (постоплата, текущее поведение), «да»/
+    «yes»/«true»/«1» = True. Не блокирующий список (как и остальные dropdown
+    колонки шаблона — lesson feedback_excel_template_dropdowns), нераспознанный
+    текст не считается авансом."""
+    s = _to_text(v)
+    if not s:
+        return False
+    return s.strip().lower().replace("ё", "е") in _ADVANCE_TRUE
+
+
 def parse_rows(detected: dict, columns: list, header_row: int) -> list:
     """Возвращает [{row, name, path, item_type, unit, plan:{...}, fact:{...},
     paid, contracted, status_raw, purchase_no, supplier, comment}, ...].
@@ -103,6 +118,7 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
             fact_qty = (fact_amount / fact_price)
 
         paid = _to_dec(get(raw_row, "paid"))
+        advance = _to_advance_bool(get(raw_row, "advance"))
         contracted = _to_dec(get(raw_row, "contracted"))
         status_raw = _to_text(get(raw_row, "status_raw")) or _to_text(get(raw_row, "status"))
         purchase_no = _to_text(get(raw_row, "purchase_no"))
@@ -120,6 +136,7 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
             "plan": {"qty": plan_qty, "price": plan_price, "amount": plan_amount},
             "fact": {"qty": fact_qty, "price": fact_price, "amount": fact_amount},
             "paid": paid,
+            "advance": advance,
             "contracted": contracted,
             "status_raw": status_raw,
             "purchase_no": purchase_no,

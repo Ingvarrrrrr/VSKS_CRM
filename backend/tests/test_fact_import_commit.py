@@ -318,3 +318,129 @@ async def test_commit_work_in_progress_without_fact_uses_plan_amount(
     assert float(items[0].quantity) == 50
     assert float(items[0].unit_price) == 8200
     assert float(items[0].total_price) == 410000
+
+
+def _build_ho_workbook_with_advance(rows: list) -> bytes:
+    """Та же раскладка, что _build_ho_workbook, + колонка «Аванс (да/нет)»
+    сразу после «Оплачено» (задача 2, владелец 05.10.2026) — индексы блока
+    «Факт» сдвинуты на 1 (columns.py::TEMPLATE_HEADER)."""
+    wb = Workbook()
+    ws = wb.active
+    header = [None] * 29
+    header[0] = "Субсидия"
+    header[4] = "Уровень 2 (Направление расходов по ФЭО)"
+    header[5] = "Уровень 3 (Тип расходов по ФЭО)"
+    header[6] = "Уровень 4 (Конкретизированный)"
+    header[7] = "Плановая позиция (папка НЕ создаётся)"
+    header[8] = "Товар/услуга/работа"
+    header[14] = "Ед. изм. плана"
+    header[15] = "Плановое количество"
+    header[16] = "Плановая цена за единицу"
+    header[17] = "Сумма плана"
+    header[18] = "Факт"
+    header[21] = "Оплачено "
+    header[22] = "Аванс (да/нет)"
+    header[23] = "Законтрактовано"
+    header[25] = "Правильный статус"
+    header[26] = "№ Закупки"
+    header[28] = "Поставщик "
+    ws.append(header)
+    for r in rows:
+        ws.append(r)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _row_advance(l3, amount, fact_price, fact_amount, *, paid=None, advance=None,
+                  contracted=None, status_raw=None, purchase_no=None, supplier=None):
+    r = [None] * 29
+    r[0] = "ХО_2026"
+    r[5] = l3
+    r[16], r[17] = fact_price, amount
+    r[19], r[20] = fact_price, fact_amount
+    r[21], r[22], r[23] = paid, advance, contracted
+    r[25] = status_raw
+    r[26], r[28] = purchase_no, supplier
+    return r
+
+
+async def test_commit_advance_sets_ordered_status_and_is_prepayment(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Задача 2 (владелец, 05.10.2026): строка «Оплачено» + Аванс=да →
+    закупка в статусе «Заказано» (ordered), is_prepayment=True, платёж «по
+    отметке» всё равно создаётся (сумма зарезервирована, поставка ещё не
+    отмечена)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook_with_advance([
+        _row_advance(
+            "Аренда оборудования", 80000, 80000, 80000,
+            paid=80000, advance="да", status_raw="Оплачено",
+            purchase_no="42", supplier="ООО Ромашка",
+        ),
+    ])
+
+    preview_resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    preview = preview_resp.json()
+    row = preview["rows"][0]
+    assert row["status"] == "ordered"
+    assert any("аванс" in w for w in row["warnings"]), row["warnings"]
+
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/commit",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["purchases_created"] == 1
+    assert data["payments_created"] == 1
+
+    from app.models.purchase import Purchase
+    purchases = (await db_session.execute(select(Purchase).where(Purchase.subsidy_id == subsidy.id))).scalars().all()
+    assert len(purchases) == 1
+    p = purchases[0]
+    assert p.status == "ordered"
+    assert p.is_prepayment is True
+
+
+async def test_commit_no_advance_keeps_paid_status(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Аванс=нет (или пусто) — поведение не меняется: статус «Оплачено»,
+    is_prepayment не выставляется."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook_with_advance([
+        _row_advance(
+            "Аренда оборудования", 80000, 80000, 80000,
+            paid=80000, advance="нет", status_raw="Оплачено",
+            purchase_no="42", supplier="ООО Ромашка",
+        ),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/commit",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    from app.models.purchase import Purchase
+    purchases = (await db_session.execute(select(Purchase).where(Purchase.subsidy_id == subsidy.id))).scalars().all()
+    assert len(purchases) == 1
+    p = purchases[0]
+    assert p.status == "paid"
+    assert not p.is_prepayment

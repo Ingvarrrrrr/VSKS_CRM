@@ -56,7 +56,10 @@ from .sheet_v2_parse import (
     FRAMEWORK_LIMIT_FROM_Y, KIND_FRAMEWORK_WITH_AMOUNT, PlanGroupV2, PurchaseGroupV2, SheetRowV2,
     group_rows_v2, is_plan_only, need_level_for, plan_groups_v2, resolve_status, valid_inn,
 )
-from .sheet_v2_payments import PendingPayment, attach_pending_payments
+from .sheet_v2_payments import (
+    PendingPayment, attach_pending_payments, create_declared_payments_for_paid_rows,
+    ensure_declared_floor_after_statement,
+)
 
 FRAMEWORK_TYPE = "framework_cumulative"
 # Строка 1 листа GoodsService: E1=15 880 100 (план), F1=4 380 000 (товары),
@@ -130,6 +133,12 @@ class BuildCountersV2:
     executor_from_source: int = 0  # сколько закупок получили исполнителя от двойника в старой ФАДМ_2026
     by_status_amount: dict = field(default_factory=dict)
     by_kind_amount: dict = field(default_factory=dict)
+    # Задание владельца 05.10.2026, п.3 — AW «оплачено по отметке сотрудников»
+    # (create_declared_payments_for_paid_rows, sheet_v2_payments.py).
+    declared_payments_created: int = 0
+    declared_payments_amount: Decimal = Decimal("0")
+    declared_payments_topup: int = 0
+    declared_payments_topup_amount: Decimal = Decimal("0")
 
 
 def _kind_item_type(kind: str) -> Optional[str]:
@@ -824,7 +833,21 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
 
         await db.flush()
         if pending_payments:
+            # AW «оплачено по отметке» — ДО привязки банковской выписки: заводит
+            # ручные Payment-заглушки (declared), которые attach_pending_payments
+            # ниже затем ПОДТВЕРДИТ (confirmed_by_statement=True) через тот же
+            # find_manual_match, что и обычная ручная отметка + поздняя выписка
+            # (см. докстринг create_declared_payments_for_paid_rows) — порядок
+            # вызовов обязателен, иначе выписка создаст второй платёж.
+            _declared_run_id = await create_declared_payments_for_paid_rows(db, new_subsidy.id, pending_payments, counters, current_user)
             await attach_pending_payments(db, new_subsidy.id, pending_payments, counters)
+            # Находка dry-run 05.10.2026 (п.1, вторая сессия): группировка
+            # payment_target.build_groups может размазать один bank_payment по
+            # НЕСКОЛЬКИМ закупкам одной платёжной группы — «отметка» конкретной
+            # поставки с AW проседает ниже P. Довосполняем остаток ПОСЛЕ
+            # привязки выписки (см. докстринг ensure_declared_floor_after_statement,
+            # payment_lookup.py не трогаем — запрещено заданием).
+            await ensure_declared_floor_after_statement(db, pending_payments, counters, _declared_run_id)
         await _finalize_single_contract_amounts(db, new_subsidy.id)
 
     await db.flush()

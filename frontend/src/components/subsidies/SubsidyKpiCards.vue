@@ -186,6 +186,22 @@
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_paid) }}</div>
             <div class="kpi-label">Оплачено</div>
+            <!-- Задача (владелец, 05.10.2026): две величины — «подтверждено
+                 выпиской» и «по отметке сотрудников», с разбивкой товары/услуги.
+                 Подтверждённая сумма оранжевая, если она меньше отмеченной —
+                 не всё отмеченное ещё нашлось в выписке. -->
+            <div class="kpi-paid-dual">
+              <div class="kpi-paid-dual-row" :class="{ 'kpi-paid-dual-warn': paidNotFullyConfirmed }">
+                <span class="kpi-paid-dual-label">подтверждено выпиской:</span>
+                <span class="kpi-paid-dual-amount">{{ formatCurrencyRound(paidConfirmedTotal) }}</span>
+              </div>
+              <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidConfirmedByKind.goods) }} / усл. {{ formatCurrencyRound(paidConfirmedByKind.services) }}</div>
+              <div class="kpi-paid-dual-row">
+                <span class="kpi-paid-dual-label">по отметке сотрудников:</span>
+                <span class="kpi-paid-dual-amount">{{ formatCurrencyRound(paidDeclaredTotal) }}</span>
+              </div>
+              <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidDeclaredByKind.goods) }} / усл. {{ formatCurrencyRound(paidDeclaredByKind.services) }}</div>
+            </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('paid')">
                 <div v-for="row in splitRowsFor('paid')" :key="row.kind" class="kpi-split-row"
@@ -392,6 +408,17 @@ const kpiSubTarget_contracts         = computed(() => ctx.selectedSubsidy.value?
 const kpiSubTarget_delivered         = computed(() => ctx.selectedSubsidy.value?.delivered         ?? 0)
 const kpiSubTarget_delivered_unpaid  = computed(() => ctx.selectedSubsidy.value?.delivered_unpaid  ?? 0)
 const kpiSubTarget_paid              = computed(() => ctx.selectedSubsidy.value?.paid              ?? 0)
+// Задача (владелец, 05.10.2026) — карточка «Оплачено»: ДВЕ величины словами
+// владельца, «по отметке сотрудников» и «подтверждено выпиской» — готовые
+// поля бэкенда (dashboard_charts.py::subsidy_stats, см. app/services/
+// subsidy_paid_breakdown.py), Правило №6 — не считаем здесь заново.
+const paidDeclaredTotal = computed(() => Number(ctx.selectedSubsidy.value?.paid_declared ?? 0))
+const paidConfirmedTotal = computed(() => Number(ctx.selectedSubsidy.value?.paid_confirmed ?? 0))
+const paidDeclaredByKind = computed(() => ctx.selectedSubsidy.value?.paid_declared_by_kind ?? { goods: 0, services: 0, unspecified: 0 })
+const paidConfirmedByKind = computed(() => ctx.selectedSubsidy.value?.paid_confirmed_by_kind ?? { goods: 0, services: 0, unspecified: 0 })
+// Не всё отмеченное подтверждено выпиской — сигнал цветом (не механика, см.
+// feedback_mechanics_vs_signalling.md), а не блокировка.
+const paidNotFullyConfirmed = computed(() => paidConfirmedTotal.value < paidDeclaredTotal.value - 0.5)
 const kpiSubTarget_free              = computed(() => ctx.selectedBudget.value - ctx.selectedPlannedTotal.value)
 // Задача 3 (владелец, 04.10.2026) — готовое поле бэкенда, не считаем здесь (Правило №6).
 const monthlyFutureToYearEnd = computed(() => ctx.selectedSubsidy.value?.monthly_future_to_year_end ?? 0)
@@ -562,6 +589,35 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
 .kpi-split-dot-unspecified { background: #94A3B8; }
 .kpi-split-loading {
   opacity: 0.6;
+}
+/* Карточка «Оплачено» (05.10.2026) — «подтверждено выпиской» / «по отметке
+   сотрудников», каждая со своей строкой товары/услуги. */
+.kpi-paid-dual {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.kpi-paid-dual-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+.kpi-paid-dual-label {
+  opacity: 0.75;
+}
+.kpi-paid-dual-amount {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.kpi-paid-dual-warn .kpi-paid-dual-amount {
+  color: #fb923c;
+}
+.kpi-paid-dual-sub {
+  font-size: 10.5px;
+  opacity: 0.6;
+  margin-bottom: 3px;
 }
 .kpi-type-excess-block {
   display: flex;

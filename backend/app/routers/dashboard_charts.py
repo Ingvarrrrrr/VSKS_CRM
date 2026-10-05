@@ -453,6 +453,12 @@ async def dashboard_charts(
     from app.services.purchase_economy import purchase_economy_by_subsidy as _economy_by_subsidy_fn
     money_summary_map = await _money_summary_fn(db, sid_list)
     economy_by_subsidy_map = await _economy_by_subsidy_fn(db, sid_list)
+    # Карточка «Оплачено» (владелец, 05.10.2026) — ДВЕ величины: «по отметке
+    # сотрудников» и «подтверждено выпиской» (+ товары/услуги). ПРАВИЛО №6 —
+    # тот же источник, что дерево ФЭО (см. докстринг subsidy_paid_breakdown.py);
+    # существующие total_paid/widget.paid (status='paid' only) НЕ трогаются.
+    from app.services.subsidy_paid_breakdown import paid_breakdown_by_subsidy as _paid_breakdown_fn
+    paid_breakdown_map = await _paid_breakdown_fn(db, sid_list)
 
     subsidy_stats = []
     for row in subsidy_rows:
@@ -504,6 +510,17 @@ async def dashboard_charts(
             "total_planned": float(row.total_planned),
             "total_confirmed": float(row.total_confirmed),
             "total_paid": float(row.total_paid),
+            # Задача (владелец, 05.10.2026) — карточка «Оплачено» на вкладке
+            # «Субсидии»: paid_declared («по отметке сотрудников») и
+            # paid_confirmed («подтверждено выпиской») — см. докстринг
+            # app/services/subsidy_paid_breakdown.py (ПРАВИЛО №6, тот же
+            # источник, что paid_marked/paid_confirmed дерева ФЭО). НЕ
+            # заменяет total_paid/widget.paid (status='paid' only) — те
+            # остаются как есть для мест, которые уже их используют.
+            "paid_declared": (_paid_breakdown_map_entry := paid_breakdown_map.get(row.id) or {}).get("declared", 0.0),
+            "paid_confirmed": _paid_breakdown_map_entry.get("confirmed", 0.0),
+            "paid_declared_by_kind": _paid_breakdown_map_entry.get("declared_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+            "paid_confirmed_by_kind": _paid_breakdown_map_entry.get("confirmed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
             "total_plan_schedule": float(row.total_plan_schedule),  # SUM work_in_progress planned_total_price
             # total_ordered = SQL-агрегат по НЕежемесячным (row.total_ordered) + начисление по
             # ежемесячным (monthly_ordered_map) — обязаны складываться в одно число: карточка

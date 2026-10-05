@@ -24,6 +24,10 @@ CONTROL = {
     "ordered": (Decimal("12649132.81"), Decimal("2779247.01"), Decimal("9869885.80")),
     "delivered": (Decimal("12464098.81"), Decimal("2599247.01"), Decimal("9864851.80")),
     "paid_statement": (Decimal("10236833.92"), Decimal("2468425.72"), Decimal("7768408.20")),
+    # Владелец, дополнение 05.10.2026 (п.3) — «Подтверждено выпиской»
+    # (Payment.confirmed_by_statement=True, 115 платежей выписки); без
+    # разбивки товары/услуги — владелец дал только общую сумму.
+    "paid_confirmed": (Decimal("8848230.38"), None, None),
     "delivered_unpaid": (Decimal("2227264.89"), Decimal("130821.29"), Decimal("2096443.60")),
     "future_monthly": (Decimal("373611.40"), Decimal("0"), Decimal("373611.40")),
     "future_likely": (Decimal("1838000.00"), Decimal("100000.00"), Decimal("1738000.00")),
@@ -124,6 +128,18 @@ def render_dashboard_comparison(stats: dict, paid_statement_total: Decimal,
     delivered_w = stats.get("widget", {}).get("delivered", {})
     row("Поставлено", delivered_w.get("amount"), delivered_w.get("delivered_goods"), delivered_w.get("delivered_services"), "delivered")
     row("Оплачено по выписке (сверка)", paid_statement_total, None, None, "paid_statement")
+    # Задание владельца 05.10.2026, п.3 — «Оплачено по отметке» (AW, см.
+    # sheet_v2_payments.py::create_declared_payments_for_paid_rows) обязано
+    # сойтись с BD листа (товары/услуги); «подтверждено выпиской» — тот же
+    # контроль, но до загрузки выписки должен быть 0 (ПРАВИЛО №6 — оба поля
+    # из dashboard_charts.py::subsidy_stats, см. app/services/
+    # subsidy_paid_breakdown.py, не вторая формула здесь).
+    declared_by_kind = stats.get("paid_declared_by_kind") or {}
+    row("Оплачено по отметке", stats.get("paid_declared"),
+        declared_by_kind.get("goods"), declared_by_kind.get("services"), "paid_statement")
+    confirmed_by_kind = stats.get("paid_confirmed_by_kind") or {}
+    row("Подтверждено выпиской", stats.get("paid_confirmed"),
+        confirmed_by_kind.get("goods"), confirmed_by_kind.get("services"), "paid_confirmed")
     du_w = stats.get("widget", {}).get("delivered_unpaid", {})
     row("Поставлено, не оплачено", du_w.get("amount"), None, None, "delivered_unpaid")
     # Решение владельца 05.10.2026 (5-я доп. правка): «ещё не заказано —

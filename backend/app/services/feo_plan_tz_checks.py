@@ -25,6 +25,22 @@ def _fmt_money(d: Decimal) -> str:
     return f"{d:,.2f} ₽"
 
 
+def _funding_hint_header(feo_planned_item_id, feo_category_id, total_d: Decimal, planned_total):
+    """Заголовок X-Funding-Hint для 409 ниже (владелец, доп. контракт
+    05.10.2026) — amount = превышение ТЗ над планом (НЕ сама сумма ТЗ), та же
+    величина, что бросает этот 409. Local import — избегаем цикла модулей на
+    верхнем уровне (feo_plan_tz_checks.py — низкоуровневый сервис, которым
+    пользуются многие роутеры; app.services.plan_funding_sources импортирует
+    app.services.feo_plan, который сам тянет немало — см. аналогичный приём
+    «лениво внутри функции» по всему проекту)."""
+    from app.services.plan_funding_sources import build_funding_hint_header
+
+    excess = total_d - (planned_total if planned_total is not None else Decimal("0"))
+    if excess < 0:
+        excess = Decimal("0")
+    return build_funding_hint_header(feo_planned_item_id, feo_category_id, excess)
+
+
 async def assert_tz_not_over_plan(
     db: AsyncSession,
     *,
@@ -287,7 +303,8 @@ async def assert_tz_not_over_plan(
         409,
         f"ТЗ позиции «{name}»{siblings_note} превышает план: " + "; ".join(violations) + ". "
         "Измените плановую позицию в Плане закупок (потребует согласования, если "
-        "выходит за ФЭО) или уменьшите ТЗ."
+        "выходит за ФЭО) или уменьшите ТЗ.",
+        headers=_funding_hint_header(feo_planned_item_id, feo_category_id, total_d, planned_total),
     )
 
 

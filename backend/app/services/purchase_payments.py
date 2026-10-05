@@ -19,6 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.payment import Payment
 from app.models.purchase import Purchase
 
+# План 2026-10-04-fadm-statement (доработка после приёмки 04.10): статусы
+# закупки, на которых подтверждённая выпиской сумма ≥ порога заводит запрос
+# «Оплачено» (см. recompute_purchase_payments/_request_paid_confirmation ниже).
+# Единственное место, где решается этот набор — ПРАВИЛО №6.
+PAID_CONFIRMATION_ELIGIBLE_STATUSES = {"contracted", "ordered", "delivered"}
+
 
 class ServicePeriodConflict(Exception):
     """Платёж помесячной закупки не удалось однозначно отнести к месяцу оказания
@@ -144,8 +150,27 @@ async def recompute_purchase_payments(db: AsyncSession, purchase_id: int) -> Pur
     numbers = [str(pay.document_number) for pay in confirmed if pay.document_number]
     p.payment_doc_number = "; ".join(numbers) if numbers else None
 
-    # Auto-transition в paid: ТОЛЬКО подтверждённая казначейством сумма достигла
-    # порога — ручное «отмечено человеком» само по себе закупку не закрывает.
+    # Было: автопереход в paid, молча, только со статуса 'delivered'. Владелец
+    # (04.10.2026, план 2026-10-04-fadm-statement): «оплата найдена в выписке →
+    # закупка в Оплачено через согласование, НЕЗАВИСИМО от того, отмечена ли
+    # поставка» — приёмка 04.10 показала, что из 20 закупок с найденной оплатой
+    # запрос создавался только у 3 (гейт был === 'delivered'). Расширено на
+    # PAID_CONFIRMATION_ELIGIBLE_STATUSES ниже — ЕДИНСТВЕННОЕ место, где решается,
+    # какие статусы годятся (ПРАВИЛО №6): contracted/ordered/delivered (деньги уже
+    # обязательство — договор заключён), НЕ wishes/plan_schedule/work_in_progress
+    # (обязательства ещё нет), НЕ paid (уже оплачено), НЕ остановленные
+    # (stopped_at — см. app/services/purchase_stop.py). Подтверждённая
+    # казначейством сумма, достигшая порога, больше НЕ ставит paid сама —
+    # заводит запрос согласующим субсидии (см. _request_paid_confirmation ниже);
+    # статус меняется только через app/routers/purchase_paid_confirmations.py::
+    # confirm, штатным переходом (через delivered, если нужно — см. его докстринг).
+    #
+    # Владелец (повторно, после QA-находки с «fallback для без-субсидийных»):
+    # «молчаливого перевода в Оплачено не должно быть НИГДЕ» — закупка БЕЗ
+    # subsidy_id (некого просить подтвердить) НЕ получает никакого особого
+    # случая, никакого автоматического paid; статус такой закупки меняет
+    # только человек вручную обычным переходом (app/routers/purchase_transitions.py).
+    #
     # ПРАВИЛО №6 (2026-09-05): порог = amounts.contract ?? amounts.plan — «сколько
     # должны» (сырые колонки БЕЗ фолбэков на Σ ContractItem/Σ PurchaseItem), это
     # НЕ то же самое, что purchase_amounts().effective (тот для закупки в статусе
@@ -156,11 +181,85 @@ async def recompute_purchase_payments(db: AsyncSession, purchase_id: int) -> Pur
     from app.services.purchase_amounts import purchase_amounts as _purchase_amounts_fn
     _pa = _purchase_amounts_fn(p)
     threshold = _pa.contract if _pa.contract is not None else (_pa.plan if _pa.plan is not None else Decimal(0))
-    if total_confirmed > 0 and total_confirmed >= threshold and p.status == "delivered":
-        p.status = "paid"
+    if (
+        total_confirmed > 0 and total_confirmed >= threshold
+        and not getattr(p, "stopped_at", None)
+        and p.subsidy_id is not None
+        and p.status in PAID_CONFIRMATION_ELIGIBLE_STATUSES
+    ):
+        await _request_paid_confirmation(db, p)
 
     await db.flush()
     return p
+
+
+async def _request_paid_confirmation(db: AsyncSession, p: Purchase) -> None:
+    """Завести запрос подтверждения «Оплачено», если его ещё нет (не больше
+    одной pending-записи на закупку — частичный уникальный индекс модели) и
+    уведомить согласующих субсидии. Статус закупки НЕ меняет — только после
+    явного confirm (app/routers/purchase_paid_confirmations.py). Ошибка
+    доставки уведомления не должна ронять сохранение платежа — см. try/except
+    ниже (тот же паттерн, что app/services/purchase_transition_core.py)."""
+    from app.models.purchase_paid_confirmation import PurchasePaidConfirmation
+
+    if not p.subsidy_id:
+        return  # нет субсидии — некого спрашивать; закупка остаётся delivered
+
+    existing = (await db.execute(
+        select(PurchasePaidConfirmation).where(
+            PurchasePaidConfirmation.purchase_id == p.id,
+            PurchasePaidConfirmation.status == "pending",
+        )
+    )).scalar_one_or_none()
+    if existing is not None:
+        return  # уже ждёт решения — второй запрос не плодим
+
+    confirmation = PurchasePaidConfirmation(
+        purchase_id=p.id,
+        subsidy_id=p.subsidy_id,
+        amount_confirmed=p.payment_amount,
+    )
+    db.add(confirmation)
+    await db.flush()
+
+    try:
+        from app.services.sandbox_guard import purchase_is_sandbox
+        if await purchase_is_sandbox(db, p):
+            return
+        from app.models.subsidy_approver import SubsidyApprover
+        from app.models.user import User
+        from app.notifications import notify_purchase_paid_confirmation_requested
+        from app.services.notify_after_commit import queue_after_commit
+
+        approver_ids = (await db.execute(
+            select(SubsidyApprover.user_id).where(
+                SubsidyApprover.subsidy_id == p.subsidy_id,
+                SubsidyApprover.user_id.isnot(None),
+            )
+        )).scalars().all()
+        for uid in {uid for uid in approver_ids if uid}:
+            user = await db.get(User, uid)
+            if user:
+                # QA-находка (05.10.2026): recompute_purchase_payments вызывается
+                # ВНУТРИ более широких транзакций, которые коммитят в конце —
+                # импорт выписки (app/routers/bank_statements.py, через
+                # app/services/bank_payment_dedup.py::recompute_if_now_executed,
+                # цикл по строкам) и reject (app/routers/purchase_paid_
+                # confirmations.py — recompute ДО финального commit отклонения).
+                # Прямой await здесь слал уведомление ДО того, как вызывающий
+                # код успевал откатить всё на более поздней ошибке/решении —
+                # теперь отправка откладывается до реального after_commit этой
+                # же сессии (см. app/services/notify_after_commit.py); при
+                # rollback ничего не уходит.
+                queue_after_commit(
+                    db,
+                    lambda u=user: notify_purchase_paid_confirmation_requested(p, u, confirmation),
+                )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "paid-confirmation notify failed for purchase %s", p.id, exc_info=True,
+        )
 
 
 async def create_payments_from_bank(

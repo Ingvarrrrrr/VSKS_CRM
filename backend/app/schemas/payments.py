@@ -108,6 +108,10 @@ class BankStatementImportOut(BaseModel):
     rows_unmatched: int = 0
     rows_dup: int = 0
     rows_no_subsidy: int = 0
+    rows_updated: int = 0
+    rows_unchanged: int = 0
+    rows_merged_legacy: int = 0
+    rows_ambiguous: int = 0
     status: str = "processing"
     error_message: Optional[str] = None
 

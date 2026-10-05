@@ -39,6 +39,13 @@ class Purchase(Base):
     # app/models/__init__.py (см. её докстринг), а строковый relationship()
     # потребовал бы этого для configure_mappers().
     import_run_id = Column(Integer, ForeignKey("fact_import_runs.id", ondelete="SET NULL"), nullable=True)
+    # План .planning/quick/2026-10-05-payment-control/PLAN.md, п.1 («Без заявки»):
+    # закупка заведена сервисом app/services/purchase_from_bank_payment.py прямо
+    # из строки выписки (BankPayment), без заявки — позиции не детализированы.
+    # По ней карточка закупки и сверка показывают пометку «внесена по платёжке
+    # № … от …, без заявки» (см. SubsidyPaymentControlDialog.vue счётчик
+    # from_payment_unrefined_count).
+    created_from_bank_payment_id = Column(Integer, ForeignKey("bank_payments.id", ondelete="SET NULL"), nullable=True)
     status = Column(String(30), default="wishes")
     substatus = Column(String(30), nullable=True)          # tz_forming / kp_collecting / on_platform
     is_monthly_payment = Column(Boolean, default=False)    # ежемесячный платёж

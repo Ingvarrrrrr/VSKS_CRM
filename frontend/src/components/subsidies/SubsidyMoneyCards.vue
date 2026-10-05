@@ -43,6 +43,15 @@
           <div v-if="committedMissingFactItems > 0" class="kpi-sub-note text-caption" style="color:#B45309">
             {{ committedMissingFactItems }} позиций в договоре без суммы договора — учтены по плановой цене
           </div>
+          <!-- «Где взять деньги» (план .planning/quick/2026-10-05-funding-sources/
+               PLAN.md, п.2г) — отрицательное «Можно перераспределить» =
+               превышение бюджета субсидии целиком (нет единой корневой
+               ФЭО-категории, поэтому category_id не передаём — бэкенд
+               трактует запрос без category_id/planned_item_id как уровень
+               субсидии, target.kind='subsidy'). -->
+          <v-btn v-if="(redistributable ?? 0) < 0 && props.subsidy?.id" size="x-small" variant="text" color="deep-purple"
+            prepend-icon="mdi-cash-sync" class="mt-1" @click.stop="funding.openFundingSources({ subsidyId: props.subsidy!.id, amount: -(redistributable ?? 0) })"
+          >Где взять деньги</v-btn>
         </div>
       </div>
     </template>
@@ -72,11 +81,14 @@ import { formatCurrencyRound } from '@/composables/subsidies/format'
 import { KIND_LABELS, type ItemTypeKind } from '@/utils/itemTypeKind'
 import { formatEconomyUnmeasuredText } from '@/utils/economyUnmeasured'
 import type { SubsidyRow } from '@/composables/subsidies/types'
+import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 
 const props = defineProps<{
   subsidy: SubsidyRow | null
   isSplit: boolean
 }>()
+
+const funding = useFundingSources()
 
 interface SplitRow { kind: ItemTypeKind; label: string; amount: number }
 

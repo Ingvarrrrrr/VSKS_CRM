@@ -2000,6 +2000,7 @@ import { ACTIONS } from '@/constants/permissionActions'
 import { ADMIN_ROLES, MANAGER_ROLES } from '@/constants/roles'
 import { useContractorsStore } from '@/stores/contractors'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 import { listContractItems, replaceAllContractItems } from '@/api/contractItems'
 import type { ContractItem } from '@/types/contractItem'
 import { useOrgConfig } from '@/composables/useOrgConfig'
@@ -3155,6 +3156,9 @@ const showSnack = (
 ) => {
   toast.addToast(text, color, opts)
 }
+// «Где взять деньги» при 409 «ТЗ/договор над плановой позицией» — см. catch в
+// doSave() ниже (план .planning/quick/2026-10-05-funding-sources/PLAN.md, п.2в).
+const funding = useFundingSources()
 
 // Владелец, 2026-09-15: остановка/возобновление закупки с карточки — тот же
 // общий composable, что и вкладка «Закупки» (OrdersView.vue), ПРАВИЛО №6.
@@ -5216,6 +5220,28 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
     } else if (e?.status === 403) {
       // Показываем полный detail из бэка (не generic «ошибка»)
       showSnack(e?.payload?.message || e?.detail || 'Нет доступа', 'error')
+    } else if (e?.status === 409 && /превышает план/.test(e?.payload?.message || e?.detail || '') && form.subsidy_id
+      && (e?.fundingHint || (isEdit.value && purchaseId.value))) {
+      // «ТЗ/договор над плановой позицией» (план .planning/quick/2026-10-05-
+      // funding-sources/PLAN.md, п.2в) — жёсткий 409 (feo_plan_tz_checks.py),
+      // без обходов. Источник подсказки (Правило №6, второй подбор не
+      // заводим): если бэкенд прислал заголовок X-Funding-Hint (api.ts ::
+      // err.fundingHint) — берём его напрямую, он единственный доступен и при
+      // СОЗДАНИИ закупки (purchaseId ещё нет — обычный GET /purchases/{id}/
+      // funding-hint неоткуда взять). Иначе (старый бэкенд без заголовка) —
+      // как раньше, funding-hint по сохранённой закупке, только в редактировании.
+      const subsidyId = form.subsidy_id
+      const fundingHint = e?.fundingHint
+      showSnack(describeApiError(e, { fallback: 'Ошибка сохранения' }), 'error', {
+        actionText: 'Где взять деньги',
+        onAction: () => {
+          if (fundingHint) {
+            funding.openFundingSourcesFromHint(subsidyId, fundingHint)
+          } else if (purchaseId.value) {
+            void funding.openFundingSourcesForPurchase(subsidyId, purchaseId.value)
+          }
+        },
+      })
     } else {
       // describeApiError (utils/apiErrorMessage.ts, ПРАВИЛО №6) — единая
       // распаковка ошибки apiFetch; покрывает в т.ч. 422 FEO_CATEGORY_LOCKED_

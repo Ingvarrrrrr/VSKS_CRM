@@ -477,70 +477,22 @@ async def get_or_create_unallocated(
     # feo_category.edit целиком (см. докстринг хелпера).
     await _check_unallocated_write_access(current_user, db, sub.org_id, body.subsidy_id)
 
-    # Загрузить родителя, если указан
-    parent: Optional[FeoCategory] = None
-    if body.parent_id is not None:
-        parent = (await db.execute(
-            select(FeoCategory).where(FeoCategory.id == body.parent_id)
-        )).scalar_one_or_none()
-        if not parent:
-            raise HTTPException(status_code=404, detail="Родительская категория не найдена")
-        if parent.subsidy_id != body.subsidy_id:
-            raise HTTPException(
-                status_code=422,
-                detail="Родительская категория относится к другой субсидии",
-            )
+    # ПРАВИЛО №6: find-or-create вынесен в app/services/feo_unallocated.py —
+    # тот же код используют и этот эндпоинт, и app/services/
+    # purchase_from_bank_payment.py (закупка без выбранного направления ФЭО).
+    from app.services.feo_unallocated import get_or_create_unallocated as _get_or_create_unallocated
 
-    # Найти существующую (все варианты имён для обратной совместимости)
-    stmt = (
-        select(FeoCategory)
-        .where(FeoCategory.subsidy_id == body.subsidy_id)
-        .where(FeoCategory.is_active.is_(True))
-        .where(func.lower(FeoCategory.name).in_([
-            "не определена",
-            "нераспределённое",
-            "нераспределенное",
-        ]))
-    )
-    if body.parent_id is None:
-        stmt = stmt.where(FeoCategory.parent_id.is_(None))
-    else:
-        stmt = stmt.where(FeoCategory.parent_id == body.parent_id)
-
-    existing = (await db.execute(stmt.order_by(FeoCategory.id).limit(1))).scalars().first()
-    if existing:
-        return {
-            "id": existing.id,
-            "name": existing.name,
-            "subsidy_id": existing.subsidy_id,
-            "parent_id": existing.parent_id,
-            "created": False,
-        }
-
-    # Создать новую
-    new_level = (parent.level + 1) if parent is not None else 1
-    new_cat = FeoCategory(
-        name="Не определена",
-        subsidy_id=body.subsidy_id,
-        parent_id=body.parent_id,
-        level=new_level,
-        sort_order=9999,
-        is_active=True,
-    )
-    db.add(new_cat)
-    await db.flush()
-    await feo_history.record_created(
-        db, feo_history.ENTITY_FEO_CATEGORY, new_cat.id, current_user,
-        source=feo_history.SOURCE_MANUAL, commit=False,
+    cat, created = await _get_or_create_unallocated(
+        db, body.subsidy_id, body.parent_id, current_user=current_user,
     )
     await db.commit()
-    await db.refresh(new_cat)
+    await db.refresh(cat)
     return {
-        "id": new_cat.id,
-        "name": new_cat.name,
-        "subsidy_id": new_cat.subsidy_id,
-        "parent_id": new_cat.parent_id,
-        "created": True,
+        "id": cat.id,
+        "name": cat.name,
+        "subsidy_id": cat.subsidy_id,
+        "parent_id": cat.parent_id,
+        "created": created,
     }
 
 

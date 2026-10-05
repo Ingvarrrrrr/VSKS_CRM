@@ -65,6 +65,7 @@ assert_no_unapproved_excess САМ ПО СЕБЕ НЕ блокирует сам�
 затронутым категориям — та же семантика «approved снимает блок», что и у
 assert_no_unapproved_excess, но не дублирует её код и не трогает feo_plan.py).
 """
+import json
 from decimal import Decimal
 from typing import Optional
 
@@ -74,6 +75,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services import plan_excess_kinds as PEK
+
+
+def _funding_hint_header(cat_violations: list[dict]) -> dict:
+    """Заголовок X-Funding-Hint (владелец, доп. контракт 05.10.2026) — первое
+    нарушение категории уже несёт feo_planned_item_id/excess_amount (см.
+    _tz_check_units/collect_tz_over_plan_violations выше — excess_amount там
+    ПРЕВЫШЕНИЕ над планом, НЕ сама сумма ТЗ, которую несёт поле "amount",
+    используемое для другой величины — PlanExcessApproval.excess_amount,
+    ПРАВИЛО №6: это поведение не трогаем, читаем excess_amount отдельно).
+    Local import — см. аналогичный приём в
+    app.services.feo_plan_tz_checks._funding_hint_header."""
+    from app.services.plan_funding_sources import build_funding_hint_header
+
+    if not cat_violations:
+        return {}
+    first = cat_violations[0]
+    amount = first.get("excess_amount", first.get("amount"))
+    return build_funding_hint_header(first.get("feo_planned_item_id"), first.get("feo_category_id"), amount)
 
 
 def _tz_check_units(items, fallback_category_id: Optional[int]) -> list[dict]:
@@ -178,11 +197,30 @@ async def collect_tz_over_plan_violations(
         except HTTPException as e:
             msg = e.detail if isinstance(e.detail, str) else str(e.detail)
             total = Decimal(str(unit["total_price"] or 0)) + Decimal(str(unit["sibling_total"] or 0))
+            # excess_amount (владелец, доп. контракт 05.10.2026, X-Funding-Hint) —
+            # ПРЕВЫШЕНИЕ ТЗ над планом (НЕ сама сумма ТЗ, см. "amount" ниже,
+            # который остаётся как раньше для register_tz_excess_approvals —
+            # ПРАВИЛО №6, существующее поведение не трогаем), читается из
+            # заголовка X-Funding-Hint, который assert_tz_not_over_plan уже
+            # проставляет на КАЖДОМ своём 409 (app.services.feo_plan_tz_checks.
+            # _funding_hint_header) — одна и та же величина, не вторая формула.
+            # Фолбэк на "amount" (total), если заголовок почему-то не пришёл —
+            # не должно случаться, но не теряем данные молча.
+            excess_amount = float(total)
+            hint_header = (e.headers or {}).get("X-Funding-Hint") if hasattr(e, "headers") else None
+            if hint_header:
+                try:
+                    hint_amount = json.loads(hint_header).get("amount")
+                    if hint_amount is not None:
+                        excess_amount = float(hint_amount)
+                except (ValueError, TypeError):
+                    pass
             violations.append({
                 "feo_category_id": unit["feo_category_id"],
                 "feo_planned_item_id": unit["feo_planned_item_id"],
                 "item_name": unit["item_name"],
                 "amount": float(total),
+                "excess_amount": excess_amount,
                 "message": msg,
             })
     return violations
@@ -425,4 +463,5 @@ async def assert_no_pending_tz_excess(
                 "feo_category_id": cid,
                 "plan_excess_approval_id": appr.id if appr else None,
             },
+            headers=_funding_hint_header(cat_violations),
         )

@@ -33,6 +33,10 @@
       </v-alert>
 
       <template v-else>
+        <!-- Запрос «подтвердите перевод в Оплачено» по найденной в выписке
+             оплате (задание владельца 04.10.2026) -->
+        <PurchasePaidConfirmationBanner :purchase-id="purchaseId" @changed="emit('changed')" />
+
         <!-- Таблица платежей -->
         <v-table v-if="payments.length" density="compact" class="mb-3">
           <thead>
@@ -303,6 +307,7 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import ServicePeriodPickDialog from '@/components/payments/ServicePeriodPickDialog.vue'
+import PurchasePaidConfirmationBanner from '@/components/payments/PurchasePaidConfirmationBanner.vue'
 import { isServicePeriodConflict, extractConflictPurchaseId, extractConflictMessage } from '@/composables/payments/useServicePeriodConflict'
 
 const { mobile } = useDisplay()

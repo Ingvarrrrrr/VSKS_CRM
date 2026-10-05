@@ -89,3 +89,7 @@ from app.models.user_consent import UserConsent, PersonalDataRequest  # noqa: F4
 from app.models.purchase_category import PurchaseCategory, product_purchase_categories  # noqa: F401
 # Корректировка утверждённой субсидии через проверку, волна 1 (2026-10-02)
 from app.models.subsidy_revision import SubsidyRevision, SubsidyRevisionOp  # noqa: F401
+# Подтверждение «Оплачено» согласующими субсидии (план 2026-10-04-fadm-statement)
+from app.models.purchase_paid_confirmation import PurchasePaidConfirmation  # noqa: F401
+from app.models.purchase_paid_confirmation_rejection import PurchasePaidConfirmationRejection  # noqa: F401
+from app.models.subsidy_payment_control_code import SubsidyPaymentControlCode  # noqa: F401

@@ -153,6 +153,13 @@ from app.routers import purchase_stop
 # как feo_plan_reads/feo_import/feo_tree_ops выше.
 from app.routers import feo_planned_items_matching
 from app.routers import feo_planned_items_reports
+# «Где взять деньги» при превышении плана (план .planning/quick/2026-10-05-
+# funding-sources/PLAN.md) — POST .../{item_id}/reduce на сегмент длиннее
+# catch-all "/{item_id}" feo_planned_items.router (тот же принцип, что у
+# feo_planned_items_reports выше), GET funding-sources/funding-hint — на
+# собственных путях (/api/subsidies/{id}/funding-sources,
+# /api/purchases/{id}/funding-hint), без catch-all-конфликтов.
+from app.routers import plan_funding_sources
 from app.routers import feo_planned_items
 # Комментарии (мини-чат) к плановым позициям/категориям ФЭО (владелец, Волна 4,
 # п.16, 2026-09-13) — собственный префикс /api/feo-comments, не пересекается ни
@@ -162,6 +169,19 @@ from app.routers import plan_excess as plan_excess_router
 # Корректировка утверждённой субсидии через проверку (волна 3A, 02.10.2026) —
 # собственный префикс /api/subsidy-revisions, без catch-all, порядок не важен.
 from app.routers import subsidy_revisions as subsidy_revisions_router
+# Подтверждение «Оплачено» согласующими субсидии (план 2026-10-04-fadm-statement,
+# п.3) — собственные префиксы /api/subsidies/{id}/paid-confirmations,
+# /api/purchases/{pid}/paid-confirmation, /api/paid-confirmations/{id}/*;
+# ни один путь не совпадает по форме+методу с catch-all'ами subsidies.router
+# (/{sid}, 1 сегмент) или purchases.router (/{pid}, 1 сегмент) — у всех минимум
+# на сегмент больше, порядок регистрации не важен.
+from app.routers import purchase_paid_confirmations as purchase_paid_confirmations_router
+# Контрольные суммы «выписка ↔ закупки» по субсидии (план
+# .planning/quick/2026-10-05-payment-control/PLAN.md) — префикс
+# /api/subsidies/{sid}/payment-control/... (минимум на сегмент глубже catch-all
+# subsidies.router("/{sid}"), порядок регистрации не важен, тот же принцип,
+# что и у paid-confirmations выше).
+from app.routers import subsidy_payment_control as subsidy_payment_control_router
 from app.routers import telegram_webhook
 # Отслеживание местоположения сотрудников (владелец, 2026-09): смены/точки +
 # разовый запрос местоположения через мессенджер. Второй роутер тоже висит на
@@ -341,10 +361,13 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(feo_categories.router)
     app.include_router(feo_planned_items_matching.router)
     app.include_router(feo_planned_items_reports.router)
+    app.include_router(plan_funding_sources.router)
     app.include_router(feo_planned_items.router)
     app.include_router(feo_comments.router)
     app.include_router(plan_excess_router.router)
     app.include_router(subsidy_revisions_router.router)
+    app.include_router(purchase_paid_confirmations_router.router)
+    app.include_router(subsidy_payment_control_router.router)
     app.include_router(settings_router.router)
     app.include_router(dashboard.router)
     # Соседи dashboard.router после резки монолита 1641→core (Правило №5, 2026-09-08):

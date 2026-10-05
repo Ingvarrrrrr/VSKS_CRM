@@ -115,7 +115,12 @@ def register_error_handlers(app: FastAPI) -> None:
         if exc.status_code >= 500:
             await _save_incident(request, payload["message"], repr(exc.detail),
                                  payload["code"], correlation_id)
-        return JSONResponse(status_code=exc.status_code, content=payload)
+        # Владелец, доп. контракт 05.10.2026 («Где взять деньги»): HTTPException
+        # может нести headers (напр. X-Funding-Hint на 409 «ТЗ/договор над
+        # плановой позицией», см. app.services.plan_funding_sources.
+        # build_funding_hint_header) — ДО этой правки они терялись молча, этот
+        # обработчик строил JSONResponse без headers=exc.headers вовсе.
+        return JSONResponse(status_code=exc.status_code, content=payload, headers=exc.headers)
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):

@@ -33,7 +33,7 @@ from app.models.subsidy import Subsidy
 from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
 from app.services.feo_plan import assert_no_unapproved_excess
-from app.services.tz_excess_approval import assert_no_pending_tz_excess
+from app.services.tz_excess_approval import assert_no_pending_tz_excess, collect_tz_over_plan_violations
 from app.services.tz_items import tz_required
 from app.services.type_excess_approval import (
     collect_type_excess_violations, register_type_excess_approvals,
@@ -75,18 +75,110 @@ async def _autofill_accepted_fields(purchase: Purchase, db: AsyncSession) -> Non
             it.accepted_unit = it.unit
 
 
+async def _notify_status_change(p: Purchase, pid: int, target_status: str, current_user, db: AsyncSession) -> None:
+    """Уведомить участников закупки + исполнителей связанных задач об изменении
+    статуса — вынесено из apply_purchase_status_transition (план
+    2026-10-04-fadm-statement, доработка «confirm атомарен»: при
+    commit=False/send_notification=False вызывающий — app/routers/
+    purchase_paid_confirmations.py::confirm — копит пройденные статусы и зовёт
+    это же самое ЕДИНСТВЕННОЕ место сам, но ТОЛЬКО после успешного коммита
+    всей цепочки целиком (ПРАВИЛО №6 — не второй текст уведомления)."""
+    try:
+        from app.services.sandbox_guard import purchase_is_sandbox
+        if await purchase_is_sandbox(db, p):
+            raise RuntimeError("sandbox purchase — notifications silenced")
+        from app.notifications import notify_purchase_status_changed
+        from app.models.purchase_event import PurchaseMember
+        from app.models.task import Task, TaskAssignee
+        from app.models.user import User
+
+        notify_user_ids: set[int] = set()
+        notify_users = []
+
+        members_r = await db.execute(
+            select(PurchaseMember).where(PurchaseMember.purchase_id == pid)
+        )
+        for m in members_r.scalars().all():
+            if m.user_id != current_user.id:
+                notify_user_ids.add(m.user_id)
+
+        if p.assigned_user_id and p.assigned_user_id != current_user.id:
+            notify_user_ids.add(p.assigned_user_id)
+
+        linked_tasks_r = await db.execute(
+            select(Task.id).where(Task.purchase_id == pid)
+        )
+        linked_task_ids = [r[0] for r in linked_tasks_r.all()]
+        if linked_task_ids:
+            ta_r = await db.execute(
+                select(TaskAssignee.user_id).where(
+                    TaskAssignee.task_id.in_(linked_task_ids)
+                )
+            )
+            for r in ta_r.all():
+                if r[0] != current_user.id:
+                    notify_user_ids.add(r[0])
+
+        for uid in notify_user_ids:
+            u = await db.get(User, uid)
+            if u:
+                notify_users.append(u)
+
+        if notify_users:
+            await notify_purchase_status_changed(
+                p, current_user.full_name or current_user.username,
+                target_status, notify_users
+            )
+    except Exception:
+        pass
+
+
 async def apply_purchase_status_transition(
     p: Purchase, pid: int, target_status: str, current_user, db: AsyncSession,
-    current_idx: int, target_idx: int,
+    current_idx: int, target_idx: int, event_note: str = None,
+    commit: bool = True, send_notification: bool = True,
+    skip_plan_excess_gates: bool = False, plan_excess_messages_out: list = None,
 ) -> list[dict]:
     """Гейты + смена статуса + побочные эффекты — БЕЗ permission/direction
     проверок (это ответственность вызывающего). current_idx/target_idx —
     позиции в STATUS_ORDER, уже посчитанные вызывающим (нужны только для
     гейта превышения ниже: он срабатывает на любом forward-переходе).
     Возвращает excess_warnings (мягкие предупреждения — владелец, 2026-09-03:
-    «перекос ветки — предупреждение, не блокировка»). Коммитит сам (как и
-    раньше — единый db.commit() перехода).
-    """
+    «перекос ветки — предупреждение, не блокировка»). По умолчанию коммитит
+    сам (как и раньше — единый db.commit() перехода) и шлёт уведомление сам.
+
+    event_note — необязательная человекочитаемая пометка (план
+    2026-10-04-fadm-statement, доработка приёмки: подтверждение «Оплачено»
+    идёт через delivered тем же штатным переходом, не обходя гейты — чтобы в
+    истории закупки это читалось не как обычное «Поставлено», а как
+    «Поставлено (по подтверждению оплаты)») — кладётся в PurchaseEvent.data,
+    НЕ меняет ни один из гейтов/побочных эффектов выше.
+
+    commit/send_notification=False — доработка «confirm атомарен» (план
+    2026-10-04-fadm-statement): app/routers/purchase_paid_confirmations.py::
+    confirm идёт по НЕСКОЛЬКО статусов подряд (contracted→ordered→delivered→
+    paid) и обязан откатить ВСЕ пройденные шаги разом, если какой-то из них
+    заблокирован гейтом. db.commit() коммитит ВСЮ сессию целиком, а не только
+    SAVEPOINT (проверено эмпирически) — значит коммитить (и уведомлять) можно
+    только ОДИН раз, когда ВСЯ цепочка уже прошла гейты; при commit=False эта
+    функция только db.flush() (следующий гейт в цепочке обязан видеть
+    изменения этого шага) и НЕ шлёт уведомление — вызывающий сам коммитит в
+    конце и сам зовёт _notify_status_change() для каждого пройденного шага.
+
+    skip_plan_excess_gates/plan_excess_messages_out — решение владельца (план
+    2026-10-04-fadm-statement, доработка «оплата из выписки — факт»): оплата,
+    найденная в выписке, НЕ блокируется превышением плана по категории ФЭО —
+    ни «план над ФЭО» (assert_no_unapproved_excess, кроме жёсткого
+    НЕПРОХОДИМОГО потолка субсидии PLAN_OVER_SUBSIDY_CEILING — его не обходит
+    даже это), ни «ТЗ/договор над плановой позицией» (assert_no_pending_tz_
+    excess). Используется ТОЛЬКО вызывающим из app/routers/
+    purchase_paid_confirmations.py (confirm и сухой прогон для blocked_reason)
+    — все остальные вызовы (ручной переход, wish_distribution.py) передают
+    False/None и ведут себя ровно как раньше. При skip_plan_excess_gates=True
+    HTTPException от этих ДВУХ гейтов ловится здесь же, текст сообщения
+    складывается в plan_excess_messages_out (если передан) вместо того чтобы
+    блокировать переход; прочие гейты (закрывающие документы, позиции
+    договора, превышение ПО ТИПУ/согласовать-некому) НЕ затронуты."""
     # Ленивые импорты — во избежание цикла роутер↔сервис (тем же приёмом, что
     # app/services/wish_distribution.py тянет хелперы app/routers/wishes.py).
     from app.routers.purchase_transitions import TRANSITION_REQUIRED, FIELD_LABELS, STATUS_LABELS
@@ -232,8 +324,33 @@ async def apply_purchase_status_transition(
         if not _gate_cat_ids and p.feo_category_id:
             _gate_cat_ids.add(p.feo_category_id)
         for _cid in _gate_cat_ids:
-            excess_warnings.extend(await assert_no_unapproved_excess(db, _cid))
-        await assert_no_pending_tz_excess(db, p.items, fallback_category_id=p.feo_category_id)
+            if skip_plan_excess_gates:
+                try:
+                    excess_warnings.extend(await assert_no_unapproved_excess(db, _cid))
+                except HTTPException as _plan_exc:
+                    _detail = _plan_exc.detail
+                    if isinstance(_detail, dict) and _detail.get("code") == "PLAN_OVER_SUBSIDY_CEILING":
+                        raise  # непроходимый потолок субсидии — confirm его НЕ обходит
+                    _msg = _detail.get("message") if isinstance(_detail, dict) else str(_detail)
+                    if plan_excess_messages_out is not None:
+                        plan_excess_messages_out.append(_msg)
+            else:
+                excess_warnings.extend(await assert_no_unapproved_excess(db, _cid))
+        if skip_plan_excess_gates:
+            # НЕ зовём assert_no_pending_tz_excess (её 409-текст — только
+            # «категория + имена позиций», без сумм) — collect_tz_over_plan_
+            # violations ДАЁТ ТЕ ЖЕ нарушения (вызывает ту же assert_tz_not_over_plan
+            # внутри, ПРАВИЛО №6 — не вторая проверка) с готовым текстом «план
+            # X ₽, в ТЗ Y ₽ (больше на Z ₽)» на каждую позицию — то, что нужно
+            # для plan_excess_warning (категория/план/факт/превышение).
+            _tz_violations = await collect_tz_over_plan_violations(
+                db, p.items, fallback_category_id=p.feo_category_id,
+            )
+            if _tz_violations and plan_excess_messages_out is not None:
+                for _v in _tz_violations:
+                    plan_excess_messages_out.append(_v["message"])
+        else:
+            await assert_no_pending_tz_excess(db, p.items, fallback_category_id=p.feo_category_id)
         _type_violations = await collect_type_excess_violations(db, p.subsidy_id, _gate_cat_ids)
         if _type_violations:
             excess_warnings.extend(await register_type_excess_approvals(
@@ -286,71 +403,44 @@ async def apply_purchase_status_transition(
     if target_status == "contracted":
         await ensure_contract_linked(p, db)
 
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
 
     # Auto-log status change event
     try:
         from app.models.purchase_event import PurchaseEvent
+        _event_data = {"from": old_status, "to": target_status}
+        # Владелец (доработка «оплата из выписки — факт»): если на пути к paid
+        # хоть один шаг обошёл превышение плана (plan_excess_messages_out
+        # пополнился выше или на более раннем шаге той же цепочки — список
+        # общий на весь _walk_to_paid), финальное событие «Оплачено» несёт
+        # отдельную пометку — п.3 задачи, в историю закупки.
+        if target_status == "paid" and plan_excess_messages_out:
+            _bypass_note = "Оплачено по выписке при несогласованном превышении плана"
+            event_note = f"{event_note}; {_bypass_note}" if event_note else _bypass_note
+        if event_note:
+            _event_data["note"] = event_note
         db.add(PurchaseEvent(
             purchase_id=pid,
             user_id=getattr(current_user, "id", None),
             event_type="status_changed",
-            data={"from": old_status, "to": target_status},
+            data=_event_data,
         ))
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
     except Exception:
         pass
 
     # Notify purchase members + linked task assignees about status change —
     # копия-песочница молчит (план breezy-mixing-lovelace.md, Часть Б; ПРАВИЛО
-    # №6 — единый предикат app.services.sandbox_guard).
-    try:
-        from app.services.sandbox_guard import purchase_is_sandbox
-        if await purchase_is_sandbox(db, p):
-            raise RuntimeError("sandbox purchase — notifications silenced")
-        from app.notifications import notify_purchase_status_changed
-        from app.models.purchase_event import PurchaseMember
-        from app.models.task import Task, TaskAssignee
-        from app.models.user import User
-
-        notify_user_ids: set[int] = set()
-        notify_users = []
-
-        members_r = await db.execute(
-            select(PurchaseMember).where(PurchaseMember.purchase_id == pid)
-        )
-        for m in members_r.scalars().all():
-            if m.user_id != current_user.id:
-                notify_user_ids.add(m.user_id)
-
-        if p.assigned_user_id and p.assigned_user_id != current_user.id:
-            notify_user_ids.add(p.assigned_user_id)
-
-        linked_tasks_r = await db.execute(
-            select(Task.id).where(Task.purchase_id == pid)
-        )
-        linked_task_ids = [r[0] for r in linked_tasks_r.all()]
-        if linked_task_ids:
-            ta_r = await db.execute(
-                select(TaskAssignee.user_id).where(
-                    TaskAssignee.task_id.in_(linked_task_ids)
-                )
-            )
-            for r in ta_r.all():
-                if r[0] != current_user.id:
-                    notify_user_ids.add(r[0])
-
-        for uid in notify_user_ids:
-            u = await db.get(User, uid)
-            if u:
-                notify_users.append(u)
-
-        if notify_users:
-            await notify_purchase_status_changed(
-                p, current_user.full_name or current_user.username,
-                target_status, notify_users
-            )
-    except Exception:
-        pass
+    # №6 — единый предикат app.services.sandbox_guard). При send_notification=False
+    # вызывающий отправит это сам после атомарного коммита всей цепочки — см.
+    # docstring выше и _notify_status_change.
+    if send_notification:
+        await _notify_status_change(p, pid, target_status, current_user, db)
 
     return excess_warnings

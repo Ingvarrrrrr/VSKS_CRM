@@ -125,21 +125,29 @@ async def upload_bank_statement(
         import_run.sheet_name = active_sheet
         rows_total = len(parsed_rows)
 
-        # Дедуп по external_doc_id — устойчивый natural key («Идентификатор
-        # документа»), в отличие от source_row_hash не требует побайтового
-        # совпадения строки. Если идентификатор уже есть в БД (или дважды
-        # встречается внутри этого же файла) — строка пропускается ЦЕЛИКОМ,
-        # существующая запись НЕ обновляется (уникальный идентификатор = платёж
-        # уже загружен, перезаписи не нужно).
+        # Дедуп по external_doc_id + запасной ключ для LEGACY-строк без него —
+        # см. app/services/bank_payment_dedup.py (владелец, 05.10.2026: прежняя
+        # версия пропускала совпавший external_doc_id ЦЕЛИКОМ без обновления
+        # полей, а строки без id вообще не искали пару — задваивались при
+        # перезаливке и навсегда застревали со старым статусом).
+        from app.services.bank_payment_dedup import (
+            DedupAction, apply_mutable_fields, find_dedup_target, recompute_if_now_executed,
+        )
+        from app.services.bank_statement_parser import EXECUTED_STATUSES as _EXECUTED_STATUSES
+
         ext_ids_in_file = {pr.external_doc_id for pr in parsed_rows if pr.external_doc_id}
-        seen_external_ids: set = set()
+        existing_by_ext_id: dict = {}
         if ext_ids_in_file:
             existing_rows = (await db.execute(
-                select(BankPayment.external_doc_id).where(
-                    BankPayment.external_doc_id.in_(ext_ids_in_file)
-                )
+                select(BankPayment).where(BankPayment.external_doc_id.in_(ext_ids_in_file))
             )).scalars().all()
-            seen_external_ids.update(x for x in existing_rows if x)
+            existing_by_ext_id = {r.external_doc_id: r for r in existing_rows}
+
+        seen_in_file: set = set()
+        rows_updated = 0
+        rows_unchanged = 0
+        rows_merged_legacy = 0
+        rows_ambiguous = 0
 
         for pr in parsed_rows:
             # Строки с отклонёнными/аннулированными статусами теперь ИМПОРТИРУЮТСЯ
@@ -150,9 +158,32 @@ async def upload_bank_statement(
                 rows_skipped += 1
                 continue
 
-            if pr.external_doc_id and pr.external_doc_id in seen_external_ids:
-                rows_dup += 1
+            if pr.external_doc_id:
+                if pr.external_doc_id in seen_in_file:
+                    # Дважды в ЭТОМ ЖЕ файле — настоящий интра-файловый дубль.
+                    rows_dup += 1
+                    continue
+                seen_in_file.add(pr.external_doc_id)
+
+            dedup = await find_dedup_target(db, pr, existing_by_ext_id)
+            if dedup.action in (DedupAction.EXACT_UPDATE, DedupAction.MERGE_LEGACY):
+                existing = dedup.existing
+                was_executed = (existing.status or "").upper().strip() in _EXECUTED_STATUSES
+                if dedup.action == DedupAction.MERGE_LEGACY:
+                    existing.external_doc_id = pr.external_doc_id
+                    existing_by_ext_id[pr.external_doc_id] = existing
+                    rows_merged_legacy += 1
+                changed = apply_mutable_fields(existing, pr)
+                await recompute_if_now_executed(db, existing, was_executed)
+                if changed:
+                    rows_updated += 1
+                else:
+                    rows_unchanged += 1
                 continue
+            if dedup.action == DedupAction.AMBIGUOUS:
+                rows_ambiguous += 1
+                # Не склеиваем — строка вставляется как новая (см. ниже), чтобы
+                # не потерять деньги; спорный случай остаётся в счётчике отчёта.
 
             # Субсидия/орг — прямая привязка по basis_doc_number (независимо
             # от того, опознан ли контрагент; ср. auto_match, который требует
@@ -200,14 +231,16 @@ async def upload_bank_statement(
                 source_row_hash=pr.source_row_hash,
                 matched_confirmed=False,
             )
-            db.add(bp)
             try:
-                await db.flush()
+                # SAVEPOINT (begin_nested), а не db.rollback() на весь transact —
+                # иначе откат одной коллизии source_row_hash стёр бы ВСЕ update/
+                # merge_legacy строк, уже обработанные раньше в этом же прогоне
+                # (dedup выше теперь тоже пишет в эту же транзакцию).
+                async with db.begin_nested():
+                    db.add(bp)
+                    await db.flush()
                 rows_imported += 1
-                if pr.external_doc_id:
-                    seen_external_ids.add(pr.external_doc_id)
             except IntegrityError:
-                await db.rollback()
                 rows_dup += 1
                 continue
 
@@ -233,6 +266,10 @@ async def upload_bank_statement(
         import_run.rows_imported = rows_imported
         import_run.rows_skipped = rows_skipped
         import_run.rows_dup = rows_dup
+        import_run.rows_updated = rows_updated
+        import_run.rows_unchanged = rows_unchanged
+        import_run.rows_merged_legacy = rows_merged_legacy
+        import_run.rows_ambiguous = rows_ambiguous
         import_run.rows_matched = rows_matched
         import_run.rows_unmatched = rows_unmatched
         import_run.rows_no_subsidy = rows_no_subsidy

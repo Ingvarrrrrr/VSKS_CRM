@@ -23,6 +23,7 @@
     <PaymentReconciliationDialog
       v-model="reconciliationDialog"
       v-model:filter="reconciliationFilter"
+      v-model:subsidy-id="reconciliationSubsidyId"
       :loading="reconciliationLoading"
       :reconciliation="reconciliation"
       :filtered-rows="filteredReconciliationRows"
@@ -32,6 +33,7 @@
       :reconciliation-status-color="reconciliationStatusColor"
       :reconciliation-status-label="reconciliationStatusLabel"
       @match="openMatchById"
+      @update:subsidy-id="openReconciliation"
     />
 
     <PaymentsFilterBar
@@ -194,6 +196,7 @@ const {
 
 const {
   reconciliationDialog, reconciliationLoading, reconciliation, reconciliationFilter,
+  reconciliationSubsidyId,
   filteredReconciliationRows, openReconciliation,
   reconciliationRowClass, reconciliationStatusColor, reconciliationStatusLabel,
 } = usePaymentsReconciliation({ importId, error })

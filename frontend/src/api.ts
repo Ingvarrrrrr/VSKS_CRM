@@ -236,6 +236,18 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     err.status = res.status
     err.detail = payload.message
     err.payload = payload
+    // «Где взять деньги» (план .planning/quick/2026-10-05-funding-sources/
+    // PLAN.md) — 409 «ТЗ/договор над плановой позицией» несёт заголовок
+    // X-Funding-Hint ({planned_item_id, category_id, amount}), чтобы вызывающий
+    // код открыл диалог без отдельного GET /purchases/{id}/funding-hint (его у
+    // ещё не сохранённой закупки при создании просто нет). Не ломает остальных
+    // потребителей apiFetch — поле добавочное, null если заголовка нет/не JSON.
+    const fundingHintHeader = res.headers.get('X-Funding-Hint')
+    if (fundingHintHeader) {
+      try { err.fundingHint = JSON.parse(fundingHintHeader) } catch { err.fundingHint = null }
+    } else {
+      err.fundingHint = null
+    }
     throw err
   }
   // 204 No Content (DELETE endpoints) или пустое тело — нечего парсить.

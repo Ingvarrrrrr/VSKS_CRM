@@ -63,6 +63,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services import plan_excess_kinds as PEK
 
 
+def _funding_hint_header(cat_violations: list[dict]) -> dict:
+    """Заголовок X-Funding-Hint (владелец, доп. контракт 05.10.2026) — см.
+    _funding_hint_header в app.services.tz_excess_approval (та же идея, те же
+    поля violation). Local import — избегаем цикла модулей на верхнем уровне."""
+    from app.services.plan_funding_sources import build_funding_hint_header
+
+    if not cat_violations:
+        return {}
+    first = cat_violations[0]
+    return build_funding_hint_header(
+        first.get("feo_planned_item_id"), first.get("feo_category_id"), first.get("amount"),
+    )
+
+
 def _fmt_qty(d: Decimal) -> str:
     """Количество без хвостовых нулей (2, не 2.0000)."""
     s = f"{d:,.4f}".rstrip("0").rstrip(".")
@@ -139,6 +153,11 @@ def _contract_vs_purchase_violation(
         "feo_category_id": cat_id,
         "item_name": name,
         "amount": float(amount),
+        # Для X-Funding-Hint (владелец, доп. контракт 05.10.2026) — `pi` почти
+        # всегда настоящий PurchaseItem (ORM), у него есть feo_planned_item_id;
+        # getattr на случай обёртки без этого атрибута (см. докстринг функции
+        # выше про SimpleNamespace/Pydantic-обёртки).
+        "feo_planned_item_id": getattr(pi, "feo_planned_item_id", None),
         "message": (
             f"Позиция договора «{name}» превышает соответствующую позицию закупки/ТЗ: "
             + "; ".join(diffs) + "."
@@ -402,6 +421,7 @@ async def assert_no_pending_contract_excess(
                 "feo_category_id": cid,
                 "plan_excess_approval_id": appr.id if appr else None,
             },
+            headers=_funding_hint_header(cat_violations),
         )
 
 

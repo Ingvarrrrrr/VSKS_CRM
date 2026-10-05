@@ -62,6 +62,15 @@
             </span>
           </div>
 
+          <!-- Запросы «подтвердите перевод в Оплачено» по найденным в выписке
+               платежам (задание владельца 04.10.2026) — ничего не рендерит,
+               если pending-запросов нет. -->
+          <PaidConfirmationsPanel :subsidy-id="selectedId" />
+
+          <!-- Сверка «выписка ↔ закупки» по субсидии (задание 05.10.2026):
+               красный баннер при расхождении, зелёная строка если сходится. -->
+          <SubsidyPaymentControlBanner :subsidy-id="selectedId" />
+
           <!-- KPI mini-cards for selected subsidy -->
           <SubsidyKpiCards />
 
@@ -145,6 +154,8 @@ import SubsidyListTable from '@/components/subsidies/SubsidyListTable.vue'
 import SubsidyCardsGrid from '@/components/subsidies/SubsidyCardsGrid.vue'
 import SubsidySummaryBar from '@/components/subsidies/SubsidySummaryBar.vue'
 import SubsidyKpiCards from '@/components/subsidies/SubsidyKpiCards.vue'
+import PaidConfirmationsPanel from '@/components/subsidies/PaidConfirmationsPanel.vue'
+import SubsidyPaymentControlBanner from '@/components/subsidies/SubsidyPaymentControlBanner.vue'
 import FeoTreeToolbar from '@/components/subsidies/FeoTreeToolbar.vue'
 import FeoTreeTable from '@/components/subsidies/FeoTreeTable.vue'
 import FeoImportRunsPanel from '@/components/subsidies/FeoImportRunsPanel.vue'

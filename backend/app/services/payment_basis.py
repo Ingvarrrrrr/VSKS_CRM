@@ -12,6 +12,13 @@
                        один платёж» (используется и в UI, и в проверках).
   normalize_doc_number — перенесено сюда из payment_matcher.py (Этап 3);
                        в payment_matcher.py оставлен ре-экспорт.
+  clean_purpose_subject(purpose_text) — назначение платежа БЕЗ технического
+                       префикса «(КБК;код)»/«(КБК)» и БЕЗ упоминания
+                       «Соглашение № ... от ...» — единственное место этой
+                       очистки (ПРАВИЛО №6), используется
+                       app/services/purchase_from_bank_payment.py («Создать
+                       закупку по платёжке» — наименование позиции, когда
+                       код расходов не найден в справочнике).
 """
 from __future__ import annotations
 
@@ -46,6 +53,51 @@ RX_EXPENSE_CODE = re.compile(
 )
 
 
+def _first_code_line(raw: str) -> str:
+    """Живая выписка (ФАДМ, 21.09.2026): ячейка «Детализированный код» иногда
+    несёт НЕСКОЛЬКО кодов, разделённых переносом строки (один казначейский
+    платёж закрывает документ сразу по двум КРЦС, напр. '0300022\\n0300033') —
+    колонка bank_payments.expense_code — VARCHAR(10), на такую строку падает
+    StringDataRightTruncationError и импорт выписки обрывается ЦЕЛИКОМ.
+    Берём первый код (как и раньше для ОДНОй строки): сортировка/разбор по
+    второму коду этого же платежа — отдельная задача, здесь — не терять
+    импорт СЕЙЧАС (деньги по строке всё равно одни, назначение видно в
+    purpose_text целиком)."""
+    first = re.split(r"[\r\n]+", raw.strip())[0].strip()
+    return first
+
+
+# Технический префикс «(<КБК>;<КОД>)» или просто «(<КБК>)» в начале purpose_text
+# (см. RX_EXPENSE_CODE выше) — пользователю в наименовании позиции закупки не
+# нужен, см. clean_purpose_subject().
+_RX_LEADING_CODE_PREFIX = re.compile(
+    r"^\([0-9A-ZА-Я]{4,15}(?:;[0-9A-ZА-Я]{4,10})?\)\s*",
+    re.IGNORECASE | re.UNICODE,
+)
+# «Соглашение № 091-10-2026-008 от 28.01.2026» (в любом месте строки, с «№»
+# или без) — одинаковое у ВСЕХ платежей субсидии, не идентифицирует саму
+# покупку (см. тот же довод в payment_basis.py::_BASIS_PRIORITY выше).
+_RX_AGREEMENT_MENTION = re.compile(
+    r"Соглашени[ея]\s*№?\s*[0-9A-ZА-Я./-]+\s*от\s*\d{1,2}\.\d{1,2}\.\d{2,4}\.?",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def clean_purpose_subject(purpose_text: Optional[str]) -> str:
+    """Назначение платежа без технического префикса «(КБК;код)» и без
+    упоминания «Соглашение № ... от ...». Используется, когда код расходов
+    не найден в справочнике ExpenseCode — тогда наименование позиции берётся
+    из самого назначения (см. app/services/purchase_from_bank_payment.py).
+    Пустая строка на входе/после очистки → "" (решает вызывающий, чем заменить)."""
+    text = (purpose_text or "").strip()
+    if not text:
+        return ""
+    text = _RX_LEADING_CODE_PREFIX.sub("", text, count=1)
+    text = _RX_AGREEMENT_MENTION.sub(" ", text)
+    text = re.sub(r"\s+", " ", text).strip(" .,-")
+    return text
+
+
 def expense_code(bp) -> Optional[str]:
     """Код расходов: сначала из колонок выписки, иначе регуляркой из purpose_text.
 
@@ -53,15 +105,17 @@ def expense_code(bp) -> Optional[str]:
     > короткий код колонки (expense_code_short_col, 4 знака) > regex
     «(<КБК>;<КОД>)» из purpose_text. bp — ParsedRow или объект с такими же
     атрибутами (см. docstring модуля); отсутствующие атрибуты просто
-    игнорируются через getattr.
+    игнорируются через getattr. Многострочную ячейку (несколько кодов сразу,
+    см. _first_code_line) схлопывает до первого кода — иначе значение не
+    помещается в bank_payments.expense_code (VARCHAR(10)) и падает весь импорт.
     """
     detail = getattr(bp, "expense_code_detail_col", None)
     if detail and str(detail).strip():
-        return str(detail).strip()
+        return _first_code_line(str(detail))[:10]
 
     short = getattr(bp, "expense_code_short_col", None)
     if short and str(short).strip():
-        return str(short).strip()
+        return _first_code_line(str(short))[:10]
 
     purpose = getattr(bp, "purpose_text", None)
     if purpose:

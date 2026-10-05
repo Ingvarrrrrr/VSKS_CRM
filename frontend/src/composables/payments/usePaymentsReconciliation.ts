@@ -13,6 +13,9 @@ export function usePaymentsReconciliation(options: {
   const reconciliationLoading = ref(false)
   const reconciliation = ref<any>(null)
   const reconciliationFilter = ref('')
+  // Необязательный выбор субсидии — сверка по выписке только этой субсидии
+  // (задание 05.10.2026, тот же сервис, что и сверка на странице «Субсидии»).
+  const reconciliationSubsidyId = ref<number | null>(null)
 
   const filteredReconciliationRows = computed(() => {
     const rows = reconciliation.value?.rows || []
@@ -31,10 +34,11 @@ export function usePaymentsReconciliation(options: {
     reconciliation.value = null
     reconciliationFilter.value = ''
     try {
-      const url = importId.value
-        ? `/payments/reconciliation?import_id=${importId.value}`
-        : '/payments/reconciliation'
-      reconciliation.value = await apiFetch<any>(url)
+      const params = new URLSearchParams()
+      if (importId.value) params.set('import_id', String(importId.value))
+      if (reconciliationSubsidyId.value) params.set('subsidy_id', String(reconciliationSubsidyId.value))
+      const qs = params.toString()
+      reconciliation.value = await apiFetch<any>(`/payments/reconciliation${qs ? '?' + qs : ''}`)
     } catch (e: any) {
       error('Ошибка сверки: ' + (e?.payload?.message || e?.message || ''))
     } finally {
@@ -70,6 +74,7 @@ export function usePaymentsReconciliation(options: {
 
   return {
     reconciliationDialog, reconciliationLoading, reconciliation, reconciliationFilter,
+    reconciliationSubsidyId,
     filteredReconciliationRows, openReconciliation,
     reconciliationRowClass, reconciliationStatusColor, reconciliationStatusLabel,
   }

@@ -244,9 +244,14 @@ async def attach_payments_endpoint(
             for k, v in data.service_periods.items()
         }
 
+    # Доработка плана 2026-10-04-fadm-statement: ручная привязка пары, отклонённой
+    # ранее при подтверждении «Оплачено», разрешена — attach() дописывает сюда
+    # предупреждение, не блокирует запись (см. app/services/payment_lookup.py).
+    warnings: list[str] = []
     try:
         created = await attach(
             db, group, data.bank_payment_ids, allocations=allocations, service_periods=service_periods,
+            warnings_out=warnings,
         )
     except ServicePeriodAttachConflict as exc:
         await db.rollback()
@@ -266,7 +271,8 @@ async def attach_payments_endpoint(
                 "basis_label": p.basis_label,
             }
             for p in created
-        ]
+        ],
+        "warnings": warnings,
     }
 
 

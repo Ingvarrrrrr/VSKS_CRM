@@ -389,6 +389,7 @@ async def match_bank_payment(
 @router.get("/reconciliation")
 async def reconciliation(
     import_id: Optional[int] = None,
+    subsidy_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
     _=Depends(require_action("payment.confirm")),
@@ -405,7 +406,24 @@ async def reconciliation(
     - declared_unconfirmed (жёлтый, владелец 2026-08-19): «у нас отмечено, в
       выписке нет» — ручной платёж, который человек считает прошедшим, но
       казначейство его ещё не подтвердило
+
+    subsidy_id (план .planning/quick/2026-10-05-payment-control/PLAN.md) —
+    срез по субсидии: тот же сервис сверки по статьям расходов, что и
+    GET /api/subsidies/{id}/payment-control (ПРАВИЛО №6 — не вторая копия).
     """
+    if subsidy_id is not None:
+        from app.models.subsidy import Subsidy
+        from app.auth.visibility import get_visible_subsidy_ids
+        from app.services.subsidy_payment_control import build_payment_control
+
+        subsidy = await db.get(Subsidy, subsidy_id)
+        if not subsidy:
+            raise HTTPException(status_code=404, detail="Субсидия не найдена")
+        vis = await get_visible_subsidy_ids(current_user, db, "payment_registry")
+        if vis is not None and subsidy_id not in vis:
+            raise HTTPException(status_code=403, detail="Нет доступа к сверке платежей этой субсидии")
+        return await build_payment_control(db, subsidy)
+
     from app.services.payment_reconciliation import build_reconciliation
     org_ids = get_org_filter(current_user)
     rows = await build_reconciliation(
@@ -478,10 +496,29 @@ async def confirm_bank_payment(
         raise HTTPException(status_code=404, detail="BankPayment не найден")
     if not bp.matched_contract_id:
         raise HTTPException(status_code=422, detail="BankPayment не привязан к контракту — выполните /match сначала")
-    if bp.matched_confirmed:
-        raise HTTPException(status_code=409, detail="Платёж уже подтверждён")
     if not body.purchase_ids:
         raise HTTPException(status_code=422, detail="Список purchase_ids не может быть пустым")
+
+    # План 2026-10-04-fadm-statement, п.2: bp.matched_confirmed — ОДИН общий флаг
+    # на строку выписки, но строка может принадлежать НЕСКОЛЬКИМ субсидиям с
+    # одинаковым номером соглашения (bank_payment_subsidy_scope.py) — первый
+    # confirm одной субсидии не должен блокировать confirm для закупки другой.
+    # Блокируем только точный повтор: эта же строка уже разнесена ХОТЯ БЫ на
+    # одну из ЗАПРОШЕННЫХ сейчас закупок (настоящий повтор запроса). Разные
+    # закупки/субсидии проверяет ниже create_payments_from_bank — там же
+    # частичный уникальный индекс (bank_payment_id, purchase_id) как backstop.
+    if bp.matched_confirmed:
+        already = (await db.execute(
+            select(Payment.purchase_id).where(
+                Payment.bank_payment_id == bp.id,
+                Payment.purchase_id.in_(body.purchase_ids),
+            )
+        )).scalars().all()
+        if already:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Платёж уже подтверждён и разнесён на закупку №{already[0]}",
+            )
 
     from app.services.purchase_payments import ServicePeriodConflict
     from app.services.payment_service_period import service_period_conflict_detail

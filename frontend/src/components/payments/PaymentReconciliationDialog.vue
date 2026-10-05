@@ -7,6 +7,20 @@
         Сверка платежей: реестр vs закупки
         <span v-if="importId" class="text-caption text-medium-emphasis ml-2">Импорт #{{ importId }}</span>
         <v-spacer />
+        <v-autocomplete
+          v-model="subsidyId"
+          :items="subsidyOptions"
+          item-title="name"
+          item-value="id"
+          label="Субсидия (необязательно)"
+          density="compact"
+          variant="outlined"
+          hide-details
+          clearable
+          :loading="subsidiesLoading"
+          style="max-width:280px"
+          class="mr-2"
+        />
         <v-btn icon="mdi-close" variant="text" @click="dialogOpen = false" />
       </v-card-title>
       <v-card-text class="pa-4">
@@ -115,10 +129,33 @@
 </template>
 
 <script setup lang="ts">
+import { ref, onMounted } from 'vue'
 import { formatMoney } from '@/composables/payments/paymentsFormat'
+import { apiFetch } from '@/api'
 
 const dialogOpen = defineModel<boolean>({ required: true })
 const filterQuery = defineModel<string>('filter', { required: true })
+// Необязательный выбор субсидии — сверка только по выписке/закупкам этой
+// субсидии (задание 05.10.2026), тот же эндпоинт GET /payments/reconciliation
+// с новым параметром subsidy_id (ПРАВИЛО №6 — не второй сервис сверки).
+const subsidyId = defineModel<number | null>('subsidyId', { default: null })
+
+interface SubsidyOption { id: number; name: string }
+const subsidyOptions = ref<SubsidyOption[]>([])
+const subsidiesLoading = ref(false)
+
+onMounted(async () => {
+  subsidiesLoading.value = true
+  try {
+    const res = await apiFetch<any[]>('/subsidies/')
+    subsidyOptions.value = (Array.isArray(res) ? res : (res as any)?.items || [])
+      .map((s: any) => ({ id: s.id, name: s.name || s.title || `Субсидия #${s.id}` }))
+  } catch {
+    subsidyOptions.value = []
+  } finally {
+    subsidiesLoading.value = false
+  }
+})
 
 defineProps<{
   loading: boolean

@@ -53,6 +53,7 @@
     </v-btn>
     <toast-container />
     <install-pwa-banner />
+    <funding-sources-dialog />
   </v-app>
 </template>
 
@@ -66,6 +67,12 @@ import { initTableResize } from './composables/useTableResize'
 import { totalUnread } from './composables/useChat'
 import ToastContainer from './components/ToastContainer.vue'
 import InstallPwaBanner from './components/InstallPwaBanner.vue'
+// «Где взять деньги» (план .planning/quick/2026-10-05-funding-sources/PLAN.md)
+// — смонтирован один раз глобально, как ToastContainer/ApiErrorDialog, потому
+// что открывается из нескольких несвязанных страниц (дерево ФЭО, форма
+// закупки, панель подтверждений оплаты) через module-level singleton
+// useFundingSources.ts (Правило №6).
+import FundingSourcesDialog from './components/subsidies/FundingSourcesDialog.vue'
 import { useAuthStore } from './stores/auth'
 
 const route = useRoute()

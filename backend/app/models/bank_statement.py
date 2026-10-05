@@ -30,6 +30,16 @@ class BankStatementImport(Base):
     # Этап 1: сколько строк прогона не удалось привязать к субсидии
     # (basis_doc_number не найден ни в одной Subsidy) — subsidy_id/org_id остались NULL.
     rows_no_subsidy = Column(Integer, default=0)
+    # Дедуп повторной загрузки (владелец, 05.10.2026, см.
+    # app/services/bank_payment_dedup.py): rows_updated — строка уже была в БД
+    # (по external_doc_id), изменяемые поля реально изменились; rows_unchanged —
+    # была, но ничего не изменилось; rows_merged_legacy — склеена с legacy-
+    # строкой без external_doc_id (проставлен id); rows_ambiguous — >1 legacy-
+    # кандидата, не склеено, вставлена новая строка (попала и в rows_imported).
+    rows_updated = Column(Integer, default=0)
+    rows_unchanged = Column(Integer, default=0)
+    rows_merged_legacy = Column(Integer, default=0)
+    rows_ambiguous = Column(Integer, default=0)
     # processing | done | error
     status = Column(String(20), default="processing")
     error_message = Column(Text, nullable=True)

@@ -2,16 +2,24 @@
 поиск и загрузка казначейских платежей в группу закупки (см. app/services/payment_target.py).
 
 Платёж подходит группе, когда сходятся ВСЕ четыре признака:
-  1. субсидия  — bank_payments.subsidy_id == субсидия закупки (чужие/NULL не рассматриваются);
+  1. субсидия  — строка видна субсидии группы по правилу
+                 app/services/bank_payment_subsidy_scope.py::subsidy_scope_clause
+                 (bp.subsidy_id == субсидии ИЛИ номер соглашения субсидии встречается
+                 в назначении/основании строки — план 2026-10-04-fadm-statement, п.1:
+                 subsidy_id у строки может остаться NULL, если номер соглашения был
+                 пуст в момент импорта выписки);
   2. ИНН       — payee_inn контрагента == ИНН контрагента группы;
   3. сумма     — abs(bp.amount - сумма группы по типу) <= 0.02;
   4. код       — kind='товар' → товарная сумма, kind in ('услуга','работа') → сумма услуг;
                  нераспознанный код НЕ блокирует.
 
 Плюс: только исполненные (EXECUTED_STATUSES), уже разнесённый платёж (есть Payment
-с этим bank_payment_id — по любой закупке) не предлагается вовсе, а платёж со
-свободной суммой, но уже использованным «назначением» (basis_key) в ЭТОЙ группе —
-предлагается с явной причиной, не автозагружается.
+с этим bank_payment_id — по закупке ТОЙ ЖЕ субсидии, см. _attached_bank_payment_ids_in_subsidy)
+не предлагается вовсе, а платёж со свободной суммой, но уже использованным
+«назначением» (basis_key) в ЭТОЙ группе — предлагается с явной причиной, не
+автозагружается. Одна и та же строка МОЖЕТ быть разнесена на закупки ДВУХ разных
+субсидий с общим номером соглашения (план, п.2) — занятость считается внутри
+субсидии, не глобально.
 
 Автозагрузка (см. find_candidates): среди свободных (неиспользованных) кандидатов
 берётся первый по дате платежа — это и есть правило «для ежемесячных» из плана:
@@ -35,6 +43,8 @@ from app.models.bank_statement import BankPayment
 from app.models.payment import Payment
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.subsidy import Subsidy
+from app.services.bank_payment_subsidy_scope import subsidy_scope_clause
 from app.services.bank_statement_parser import EXECUTED_STATUSES
 from app.services.payment_basis import (
     expense_code as _expense_code,
@@ -91,6 +101,12 @@ class Candidate:
     # это только подсказка для менеджера перед подтверждением/загрузкой.
     service_period: Optional[str] = None
     service_period_conflict: Optional[str] = None
+    # Доработка плана 2026-10-04-fadm-statement: пара (эта строка выписки, эта
+    # закупка) уже была отклонена согласующим субсидии при подтверждении
+    # «Оплачено» (см. app/models/purchase_paid_confirmation_rejection.py) —
+    # кандидат НЕ убирается (ручная привязка остаётся доступна), но никогда не
+    # получает auto=True, чтобы match-payments не переоткрывал тот же запрос.
+    previously_rejected: bool = False
 
 
 async def _used_basis_index(db: AsyncSession, purchase_ids: list[int]) -> dict[str, Payment]:
@@ -122,13 +138,46 @@ async def _monthly_purchase(db: AsyncSession, purchase_ids: list[int]) -> Option
     return rows[0] if rows else None
 
 
-async def _attached_bank_payment_ids(db: AsyncSession, bank_payment_ids: list[int]) -> set[int]:
-    """bank_payment_id, у которых УЖЕ есть Payment (неважно, на какую закупку) —
-    такие не предлагаются повторно нигде."""
+async def _rejected_bank_payment_ids(
+    db: AsyncSession, bank_payment_ids: list[int], purchase_ids: list[int],
+) -> set[int]:
+    """bank_payment_id, отклонённые РАНЕЕ хотя бы для одной из закупок группы
+    (см. app/models/purchase_paid_confirmation_rejection.py — доработка плана
+    2026-10-04-fadm-statement: без этой памяти авто-match-payments тут же
+    снова предлагал ту же пару после reject, переоткрывая тот же запрос по
+    кругу). Не убирает кандидата из списка — только не даёт auto=True (см.
+    find_candidates) и возвращается в attach() как warnings_out для ручной
+    привязки человеком."""
+    if not bank_payment_ids or not purchase_ids:
+        return set()
+    from app.models.purchase_paid_confirmation_rejection import PurchasePaidConfirmationRejection
+    rows = (await db.execute(
+        select(PurchasePaidConfirmationRejection.bank_payment_id).where(
+            PurchasePaidConfirmationRejection.bank_payment_id.in_(bank_payment_ids),
+            PurchasePaidConfirmationRejection.purchase_id.in_(purchase_ids),
+        )
+    )).scalars().all()
+    return {r for r in rows if r is not None}
+
+
+async def _attached_bank_payment_ids_in_subsidy(
+    db: AsyncSession, bank_payment_ids: list[int], subsidy_id: int,
+) -> set[int]:
+    """bank_payment_id, у которых УЖЕ есть Payment на закупке ЭТОЙ субсидии —
+    план 2026-10-04-fadm-statement, п.2: занятость строки выписки считается
+    ВНУТРИ субсидии, не глобально (закупка другой субсидии с тем же номером
+    соглашения, см. bank_payment_subsidy_scope.py, вправе опереться на ту же
+    строку). Раньше (_attached_bank_payment_ids, до этой задачи) проверка была
+    глобальной по ЛЮБОЙ закупке — именно это блокировало вторую субсидию."""
     if not bank_payment_ids:
         return set()
     rows = (await db.execute(
-        select(Payment.bank_payment_id).where(Payment.bank_payment_id.in_(bank_payment_ids))
+        select(Payment.bank_payment_id)
+        .join(Purchase, Purchase.id == Payment.purchase_id)
+        .where(
+            Payment.bank_payment_id.in_(bank_payment_ids),
+            Purchase.subsidy_id == subsidy_id,
+        )
     )).scalars().all()
     return {r for r in rows if r is not None}
 
@@ -141,10 +190,13 @@ async def _eligible_bank_payments(
     (с причиной), а не молча выкидываются."""
     if not target_amount or target_amount <= 0 or not group.contractor_inn or group.subsidy_id is None:
         return []
+    subsidy = await db.get(Subsidy, group.subsidy_id)
+    if subsidy is None:
+        return []
     lo, hi = target_amount - AMOUNT_TOL, target_amount + AMOUNT_TOL
     rows = (await db.execute(
         select(BankPayment).where(
-            BankPayment.subsidy_id == group.subsidy_id,
+            subsidy_scope_clause(subsidy),
             BankPayment.payee_inn == group.contractor_inn,
             BankPayment.amount >= lo,
             BankPayment.amount <= hi,
@@ -189,10 +241,15 @@ async def find_candidates(db: AsyncSession, group: PaymentGroup) -> dict[str, li
         bps = await _eligible_bank_payments(db, group, target_amount, kind)
         if not bps:
             continue
-        attached_ids = await _attached_bank_payment_ids(db, [bp.id for bp in bps])
+        attached_ids = await _attached_bank_payment_ids_in_subsidy(
+            db, [bp.id for bp in bps], group.subsidy_id
+        )
         bps = [bp for bp in bps if bp.id not in attached_ids]
         if not bps:
             continue
+        rejected_ids = await _rejected_bank_payment_ids(
+            db, [bp.id for bp in bps], group.purchase_ids,
+        )
 
         candidates: list[Candidate] = []
         for bp in bps:
@@ -224,6 +281,14 @@ async def find_candidates(db: AsyncSession, group: PaymentGroup) -> dict[str, li
                 dt = used_payment.payment_date.strftime("%d.%m.%Y") if used_payment.payment_date else "?"
                 cand.reason = f"назначение уже использовано платежом №{doc} от {dt}"
 
+            if bp.id in rejected_ids:
+                cand.previously_rejected = True
+                if not cand.reason:
+                    cand.reason = (
+                        "эту пару (строка выписки/закупка) уже отклоняли при подтверждении "
+                        "«Оплачено» — привяжите вручную, только если уверены"
+                    )
+
             if monthly_purchase is not None:
                 sp_result = await resolve_service_period(db, monthly_purchase, bp)
                 if sp_result.period:
@@ -235,7 +300,9 @@ async def find_candidates(db: AsyncSession, group: PaymentGroup) -> dict[str, li
 
         candidates.sort(key=lambda c: (c.payment_date or _date.min, c.bank_payment_id))
 
-        free = [c for c in candidates if c.free]
+        # Отклонённые ранее пары не участвуют в авто-выборе (см. previously_rejected
+        # выше) — иначе match-payments тут же переоткрыл бы тот же запрос подтверждения.
+        free = [c for c in candidates if c.free and not c.previously_rejected]
         if len(free) == 1:
             free[0].auto = True
         elif len(free) >= 2:
@@ -282,6 +349,7 @@ async def attach(
     bank_payment_ids: list[int],
     allocations: Optional[dict[int, Decimal]] = None,
     service_periods: Optional[dict[int, _date]] = None,
+    warnings_out: Optional[list[str]] = None,
 ) -> list[Payment]:
     """Создаёт Payment(ы) для каждого bank_payment_id, разнося сумму платежа между
     заказами группы. allocations — явное {purchase_id: сумма}, применимо ТОЛЬКО
@@ -300,21 +368,36 @@ async def attach(
     При конфликте (месяц уже занят / свободных не осталось) платёж НЕ создаётся
     молча — PaymentAttachError (тот же механизм, что «занято другим платежом»
     выше), если только человек не передал месяц явно в service_periods={purchase_id: date}.
-    """
+
+    warnings_out — необязательный список (мутируется in-place): ручная привязка
+    пары, отклонённой РАНЕЕ при подтверждении «Оплачено» (см.
+    app/models/purchase_paid_confirmation_rejection.py), РАЗРЕШЕНА — платёж
+    создаётся как обычно, но сюда дописывается предупреждение, чтобы router
+    (app/routers/purchase_payment_matching.py) вернул его в ответе."""
     if not bank_payment_ids:
         return []
     if allocations is not None and len(bank_payment_ids) > 1:
         raise PaymentAttachError("allocations можно передать только для одного bank_payment_id за раз")
 
     used_basis = await _used_basis_index(db, group.purchase_ids)
-    attached_ids = await _attached_bank_payment_ids(db, bank_payment_ids)
+    # Занятость строки — ВНУТРИ субсидии группы (план 2026-10-04-fadm-statement,
+    # п.2): закупка другой субсидии с тем же номером соглашения уже могла
+    # опереться на эту же строку — это не конфликт.
+    attached_ids = await _attached_bank_payment_ids_in_subsidy(db, bank_payment_ids, group.subsidy_id)
+    rejected_ids = await _rejected_bank_payment_ids(db, bank_payment_ids, group.purchase_ids)
 
     created: list[Payment] = []
     affected_purchases: set[int] = set()
 
     for bp_id in bank_payment_ids:
         if bp_id in attached_ids:
-            raise PaymentAttachError(f"Платёж №{bp_id} уже разнесён по другой закупке")
+            raise PaymentAttachError(f"Платёж №{bp_id} уже разнесён по другой закупке этой субсидии")
+
+        if bp_id in rejected_ids and warnings_out is not None:
+            warnings_out.append(
+                f"Платёж №{bp_id}: эту пару (строка выписки/закупка) уже отклоняли при "
+                "подтверждении «Оплачено» — проверьте перед подтверждением заново"
+            )
 
         bp = await db.get(BankPayment, bp_id)
         if not bp:

@@ -484,6 +484,13 @@
             @click.stop="ctx.requestPlanExcessApproval(node)"
           >Согласовать</v-btn>
         </template>
+        <!-- «Где взять деньги» (план .planning/quick/2026-10-05-funding-sources/
+             PLAN.md, п.2а) — рядом с превышением, независимо от статуса
+             согласования: подбор незаконтрактованных остатков по дереву ФЭО,
+             см. composables/subsidies/useFundingSources.ts. -->
+        <v-btn size="x-small" variant="text" color="deep-purple" prepend-icon="mdi-cash-sync"
+          @click.stop="subsidyId != null && funding.openFundingSources({ subsidyId, categoryId: node.id, amount: ctx.excessFor(node)!.amount })"
+        >Где взять деньги</v-btn>
       </div>
       <!-- «Заметный сигнал превышения» — виновная закупка, из-за которой всё превысило. -->
       <div v-if="ctx.excessCulpritFor(node)" class="feo-excess-culprit">
@@ -894,6 +901,9 @@ import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
 import { useFeoTreeAmounts } from '@/composables/subsidies/useFeoTreeAmounts'
 import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
+import { useFundingSources } from '@/composables/subsidies/useFundingSources'
+
+const funding = useFundingSources()
 
 const props = defineProps<{ node: FeoNode }>()
 // ФИКС (найден QA стека отмены, доп. волна 2026-09-14): `const node = props.node`

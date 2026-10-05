@@ -8,7 +8,12 @@
           <div class="text-body-2 text-medium-emphasis">Загрузка позиций…</div>
         </div>
       </v-overlay>
-      <v-card-title class="pa-4 pb-2 d-flex align-center justify-space-between">
+      <!-- Шапка: на компьютере — заголовок + undo/redo, без изменений.
+           На телефоне (макет «Вариант А», владелец): «‹» закрывает окно,
+           заголовок короче, второстепенные кнопки v-card-actions уезжают
+           в меню «⋮» (WishDialogMobileMenu.vue) — условия видимости там те
+           же, что и в десктопной версии ниже (Правило №6, см. @click ниже). -->
+      <v-card-title v-if="!mobile" class="pa-4 pb-2 d-flex align-center justify-space-between">
         <span>{{ editingWishId ? `Заявка №${editingWishId}${wishDialogTitleSuffix}` : 'Новая заявка' }}</span>
         <!-- Phase 31-07: Undo/Redo кнопки -->
         <div class="d-flex ga-1 align-center">
@@ -32,8 +37,54 @@
           />
         </div>
       </v-card-title>
-      <!-- B6 — от кого/кому/дата/статус -->
-      <v-card-subtitle v-if="editingWish" class="pa-4 pt-0 d-flex flex-wrap" style="gap:16px">
+      <v-card-title v-else class="pa-2 pb-1 d-flex align-center ga-1">
+        <v-btn icon="mdi-chevron-left" variant="text" density="comfortable" @click="wishDialog = false" />
+        <span class="text-subtitle-1 font-weight-medium flex-grow-1 text-truncate mx-1">
+          {{ editingWishId ? `Заявка №${editingWishId}` : 'Новая заявка' }}
+        </span>
+        <div v-if="isWishEditable" class="d-flex ga-1 align-center">
+          <v-btn
+            :disabled="!undoRedoWish.canUndo.value"
+            icon="mdi-undo"
+            size="x-small"
+            variant="text"
+            :color="undoRedoWish.canUndo.value ? '#fb923c' : undefined"
+            title="Отменить (Ctrl+Z)"
+            @click="undoRedoWish.undo()"
+          />
+          <v-btn
+            :disabled="!undoRedoWish.canRedo.value"
+            icon="mdi-redo"
+            size="x-small"
+            variant="text"
+            :color="undoRedoWish.canRedo.value ? '#fb923c' : undefined"
+            title="Повторить (Ctrl+Y)"
+            @click="undoRedoWish.redo()"
+          />
+        </div>
+        <v-menu v-if="editingWishId && editingWish">
+          <template #activator="{ props: mobileMenuProps }">
+            <v-btn v-bind="mobileMenuProps" icon="mdi-dots-vertical" variant="text" density="comfortable" />
+          </template>
+          <WishDialogMobileMenu
+            :wish="editingWish"
+            :downloading-excel="actions.downloadingExcelId.value === editingWishId"
+            :copying="actions.copyingId.value === editingWishId"
+            :related-purchases="purchaseNav.relatedPurchases.value"
+            :purchase-nav-loading="purchaseNav.loading.value"
+            :hidden-purchases-count="editingWish.status !== 'converted' ? distReset.hiddenPurchasesCount.value : 0"
+            @download-excel="(withPhoto: boolean) => actions.downloadWishExcel(editingWish as any, withPhoto)"
+            @copy-wish="actions.copyWish(editingWish)"
+            @go-to-purchase="(id: number | null) => id == null ? purchaseNav.goToSinglePurchase(editingWish!) : purchaseNav.goToPurchase(id, editingWish!)"
+            @reset-split="distReset.openResetDialog()"
+            @convert-to-advance="actions.openConvertToAdvanceDialog(editingWish!)"
+            @stop-wish="actions.openStopDialog(editingWish!)"
+          />
+        </v-menu>
+      </v-card-title>
+      <!-- B6 — от кого/кому/дата/статус; на телефоне в режиме согласующего её
+           заменяет сводка WishDecisionSummary в теле карточки (см. ниже). -->
+      <v-card-subtitle v-if="editingWish && !mobileAssigneeDecisionMode" class="pa-4 pt-0 d-flex flex-wrap" style="gap:16px">
         <div><b>От кого:</b> <span class="font-weight-medium">{{ ctx.shortName(editingWish.creator_name) || '—' }}</span><span
           v-if="ctx.wishCoAuthors(editingWish).length" class="text-medium-emphasis">, {{ ctx.wishCoAuthors(editingWish).join(', ') }}</span></div>
         <div><b>Кому:</b> {{ ctx.wishRecipients(editingWish) || '—' }}</div>
@@ -56,7 +107,22 @@
           {{ ctx.rejectedByLine(editingWish) }}
         </v-alert>
       </div>
-      <v-card-text class="pa-4">
+      <v-card-text class="pa-4" :class="{ 'wish-mobile-content-pad': mobileAssigneeDecisionMode }">
+        <WishDecisionSummary
+          v-if="mobileAssigneeDecisionMode && editingWish"
+          class="mb-4"
+          :wish="editingWish"
+          :items="wishForm.items"
+          :total-amount="totalNmck"
+          :subsidy-name="selectedSubsidyName"
+          :desired-date="wishForm.desired_date"
+          :contract-form-label="contractFormLabel"
+          :approvers="wishApprovers"
+          :current-user-id="ctx.currentUserId"
+          :approval-status-label="approvalStatusLabel"
+          :approval-status-color="approvalStatusColor"
+          :feo-category-name-by-id="ctx.feoCategoryNameById"
+        />
         <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт в красной рамке на всю ширину -->
         <div v-if="editingWish?.stopped_at" class="wish-stopped-banner wish-stopped-banner--large mb-3">
           <v-icon icon="mdi-alert-octagon" size="26" class="mr-2" />
@@ -86,33 +152,35 @@
             </ul>
           </div>
         </v-alert>
-        <v-alert
-          v-if="!isWishEditable && canAssigneeAct"
-          type="warning"
-          variant="tonal"
-          density="compact"
-          class="mb-3"
-        >
-          Вы согласующий. Проверьте позиции и используйте кнопки ниже — «Распределить и одобрить», «Быстрое одобрение» или «Отклонить».
-        </v-alert>
-        <v-alert
-          v-else-if="!isWishEditable && isDialogCreator && wishForm.status === 'submitted'"
-          type="info"
-          variant="tonal"
-          density="compact"
-          class="mb-3"
-        >
-          Заявка отправлена на согласование — редактирование недоступно. Вернуть можно, только если согласующий отклонит её.
-        </v-alert>
-        <v-alert
-          v-else-if="!isWishEditable"
-          type="info"
-          variant="tonal"
-          density="compact"
-          class="mb-3"
-        >
-          Заявка в статусе «{{ statusLabel[wishForm.status] || wishForm.status }}» — редактирование недоступно. Редактировать можно только черновик или отклонённую заявку.
-        </v-alert>
+        <template v-if="!mobileAssigneeDecisionMode">
+          <v-alert
+            v-if="!isWishEditable && canAssigneeAct"
+            type="warning"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            Вы согласующий. Проверьте позиции и используйте кнопки ниже — «Распределить и одобрить», «Быстрое одобрение» или «Отклонить».
+          </v-alert>
+          <v-alert
+            v-else-if="!isWishEditable && isDialogCreator && wishForm.status === 'submitted'"
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            Заявка отправлена на согласование — редактирование недоступно. Вернуть можно, только если согласующий отклонит её.
+          </v-alert>
+          <v-alert
+            v-else-if="!isWishEditable"
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            Заявка в статусе «{{ statusLabel[wishForm.status] || wishForm.status }}» — редактирование недоступно. Редактировать можно только черновик или отклонённую заявку.
+          </v-alert>
+        </template>
         <v-form ref="wishFormRef" @submit.prevent>
 
           <!-- Баннер: редактирование одобренной/конвертированной заявки -->
@@ -154,10 +222,16 @@
 
           <!-- Section 1: Основная информация -->
           <v-card variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 pa-4 pb-2">
+            <v-card-title
+              class="text-subtitle-1 pa-4 pb-2 d-flex align-center"
+              :class="{ 'wish-mobile-section-title': mobileCollapseActive }"
+              @click="mobileCollapseActive && toggleMobileSection('basic')"
+            >
               <v-icon class="mr-2">mdi-information-outline</v-icon>Основная информация
+              <v-spacer v-if="mobileCollapseActive" />
+              <v-icon v-if="mobileCollapseActive">{{ isMobileSectionOpen('basic') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
-            <v-card-text class="pa-4 pt-2">
+            <v-card-text v-show="isMobileSectionOpen('basic')" class="pa-4 pt-2">
               <v-row dense>
                 <v-col cols="12">
                   <v-text-field
@@ -296,10 +370,16 @@
 
           <!-- Section 2: Позиции -->
           <v-card variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 pa-4 pb-2">
+            <v-card-title
+              class="text-subtitle-1 pa-4 pb-2 d-flex align-center"
+              :class="{ 'wish-mobile-section-title': mobileCollapseActive }"
+              @click="mobileCollapseActive && toggleMobileSection('items')"
+            >
               <v-icon class="mr-2">mdi-format-list-numbered</v-icon>Позиции
+              <v-spacer v-if="mobileCollapseActive" />
+              <v-icon v-if="mobileCollapseActive">{{ isMobileSectionOpen('items') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
-            <v-card-text class="pa-4 pt-2">
+            <v-card-text v-show="isMobileSectionOpen('items')" class="pa-4 pt-2">
               <v-switch
                 v-if="wishForm.subsidy_id"
                 v-model="wishForm.feo_per_item"
@@ -483,10 +563,16 @@
 
           <!-- Section: Категория ФЭО — согласующий -->
           <v-card v-if="wishForm.subsidy_id && !isWishEditable && canEditWishFeo" variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 pa-4 pb-2">
+            <v-card-title
+              class="text-subtitle-1 pa-4 pb-2 d-flex align-center"
+              :class="{ 'wish-mobile-section-title': mobileCollapseActive }"
+              @click="mobileCollapseActive && toggleMobileSection('feo-approver')"
+            >
               <v-icon class="mr-2">mdi-sitemap</v-icon>Категория ФЭО (согласующий)
+              <v-spacer v-if="mobileCollapseActive" />
+              <v-icon v-if="mobileCollapseActive">{{ isMobileSectionOpen('feo-approver') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
-            <v-card-text class="pa-4 pt-2">
+            <v-card-text v-show="isMobileSectionOpen('feo-approver')" class="pa-4 pt-2">
               <template v-if="!wishForm.feo_per_item">
                 <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
                   Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
@@ -524,10 +610,16 @@
 
           <!-- Section: Дополнительно -->
           <v-card variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 pa-4 pb-2">
+            <v-card-title
+              class="text-subtitle-1 pa-4 pb-2 d-flex align-center"
+              :class="{ 'wish-mobile-section-title': mobileCollapseActive }"
+              @click="mobileCollapseActive && toggleMobileSection('extra')"
+            >
               <v-icon class="mr-2">mdi-information-outline</v-icon>Дополнительно
+              <v-spacer v-if="mobileCollapseActive" />
+              <v-icon v-if="mobileCollapseActive">{{ isMobileSectionOpen('extra') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
-            <v-card-text class="pa-4 pt-2">
+            <v-card-text v-show="isMobileSectionOpen('extra')" class="pa-4 pt-2">
               <v-row dense>
                 <v-col cols="12">
                   <v-autocomplete
@@ -579,12 +671,18 @@
 
           <!-- Section: Участники заявки -->
           <v-card v-if="isWishEditable || editingWishId" variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 pa-4 pb-2">
+            <v-card-title
+              class="text-subtitle-1 pa-4 pb-2 d-flex align-center"
+              :class="{ 'wish-mobile-section-title': mobileCollapseActive }"
+              @click="mobileCollapseActive && toggleMobileSection('members')"
+            >
               <v-icon class="mr-2" color="primary">mdi-account-multiple-plus</v-icon>
               Участники заявки
               <v-chip class="ml-2" size="x-small" variant="tonal">{{ wishMembers.length }}</v-chip>
+              <v-spacer v-if="mobileCollapseActive" />
+              <v-icon v-if="mobileCollapseActive">{{ isMobileSectionOpen('members') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
-            <v-card-text class="pa-4 pt-2">
+            <v-card-text v-show="isMobileSectionOpen('members')" class="pa-4 pt-2">
               <v-autocomplete
                 v-model="participantToAdd"
                 :items="orgUsers"
@@ -645,7 +743,11 @@
 
           <!-- Section: Согласующие необходимости закупки -->
           <v-card v-if="isWishEditable || editingWishId" variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 pa-4 pb-2 d-flex flex-wrap align-center ga-1">
+            <v-card-title
+              class="text-subtitle-1 pa-4 pb-2 d-flex flex-wrap align-center ga-1"
+              :class="{ 'wish-mobile-section-title': mobileCollapseActive }"
+              @click="mobileCollapseActive && toggleMobileSection('approvers')"
+            >
               <v-icon class="mr-2" color="primary">mdi-account-check</v-icon>
               Согласующие необходимости закупки
               <v-chip class="ml-2" size="x-small" variant="tonal">{{ wishApprovers.length }}</v-chip>
@@ -653,11 +755,12 @@
               <v-chip size="x-small" :color="approvalMode === 'sequential' ? 'blue' : 'teal'" variant="tonal">
                 {{ approvalMode === 'sequential' ? 'Последовательно' : 'Параллельно' }}
               </v-chip>
+              <v-icon v-if="mobileCollapseActive" class="ml-1">{{ isMobileSectionOpen('approvers') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
-            <div class="text-caption text-medium-emphasis px-4 pb-2">
+            <div v-show="isMobileSectionOpen('approvers')" class="text-caption text-medium-emphasis px-4 pb-2">
               Здесь подтверждают, что закупка вообще нужна. Согласование превышения плана ФЭО — отдельно, в разделе субсидии, и доступно только уполномоченным.
             </div>
-            <v-card-text class="pa-4 pt-2">
+            <v-card-text v-show="isMobileSectionOpen('approvers')" class="pa-4 pt-2">
               <v-alert
                 v-if="!editingWishId"
                 type="info"
@@ -926,10 +1029,16 @@
 
           <!-- Section: На исполнение (видна согласующему) -->
           <v-card v-if="canAssigneeAct || (editingWish && editingWish.status === 'approved' && (editingWish.assigned_to === ctx.currentUserId || ctx.isAdmin.value))" variant="outlined" class="mb-4 bg-amber-lighten-5">
-            <v-card-title class="text-subtitle-1 font-weight-bold pa-4 pb-2">
+            <v-card-title
+              class="text-subtitle-1 font-weight-bold pa-4 pb-2 d-flex align-center"
+              :class="{ 'wish-mobile-section-title': mobileCollapseActive }"
+              @click="mobileCollapseActive && toggleMobileSection('execution')"
+            >
               <v-icon class="mr-2" color="orange-darken-4">mdi-account-clock</v-icon>На исполнение
+              <v-spacer v-if="mobileCollapseActive" />
+              <v-icon v-if="mobileCollapseActive">{{ isMobileSectionOpen('execution') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
-            <v-card-text class="pa-4 pt-2">
+            <v-card-text v-show="isMobileSectionOpen('execution')" class="pa-4 pt-2">
               <v-row dense>
                 <v-col cols="12" md="6">
                   <v-autocomplete
@@ -1016,10 +1125,16 @@
 
           <!-- Section 3: Обоснование и сроки -->
           <v-card variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 pa-4 pb-2">
+            <v-card-title
+              class="text-subtitle-1 pa-4 pb-2 d-flex align-center"
+              :class="{ 'wish-mobile-section-title': mobileCollapseActive }"
+              @click="mobileCollapseActive && toggleMobileSection('justification')"
+            >
               <v-icon class="mr-2">mdi-text-box-check-outline</v-icon>Обоснование и сроки
+              <v-spacer v-if="mobileCollapseActive" />
+              <v-icon v-if="mobileCollapseActive">{{ isMobileSectionOpen('justification') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
-            <v-card-text class="pa-4 pt-2">
+            <v-card-text v-show="isMobileSectionOpen('justification')" class="pa-4 pt-2">
               <v-row dense>
                 <v-col cols="12">
                   <v-textarea
@@ -1053,7 +1168,11 @@
         </v-form>
       </v-card-text>
 
-      <v-card-actions class="px-4 pb-4 flex-wrap">
+      <!-- На телефоне «Закрыть» уже в шапке (кнопка «‹»), второстепенные кнопки
+           (Excel/копия/переход в закупку/сброс разбивки/авансовый отчёт/
+           остановка) — в меню «⋮» там же (WishDialogMobileMenu.vue). Десктоп —
+           без изменений, этот блок целиком. -->
+      <v-card-actions v-if="!mobile" class="px-4 pb-4 flex-wrap">
         <v-btn variant="text" @click="wishDialog = false">Закрыть</v-btn>
         <v-menu v-if="editingWishId && editingWish">
           <template #activator="{ props: menuProps }">
@@ -1214,8 +1333,95 @@
           </v-btn>
         </template>
       </v-card-actions>
+
+      <!-- Телефон, не режим согласующего (тот ниже — закреплённая панель):
+           те же основные кнопки, что на компьютере, но без «Закрыть» и без
+           второстепенных (они в шапке/меню «⋮»), раскладка на всю ширину. -->
+      <v-card-actions
+        v-if="mobile && !(canAssigneeAct && editingWish)"
+        class="px-4 pb-4 d-flex flex-column ga-2 align-stretch"
+      >
+        <template v-if="isWishEditable && (!editingWishId || ['draft', 'rejected'].includes((wishForm as any).status))">
+          <v-btn color="grey" variant="tonal" block :loading="saving" @click="saveWish(false)">
+            Сохранить черновик
+          </v-btn>
+          <v-tooltip :disabled="!wishFeoCategoryMissing" location="top">
+            <template #activator="{ props: tipProps }">
+              <span v-bind="tipProps" class="w-100">
+                <v-btn block color="primary" variant="flat" :loading="saving"
+                       :class="{ 'wish-btn-blocked': wishFeoCategoryMissing }"
+                       @click="wishFeoCategoryMissing ? onHighlightMissingFeoCategory() : saveWish(true)">
+                  Отправить на согласование
+                </v-btn>
+              </span>
+            </template>
+            {{ wishFeoCategoryMissingTooltip }}
+          </v-tooltip>
+        </template>
+        <template v-else-if="isWishEditable && editingWish && ['approved', 'converted'].includes(editingWish.status)">
+          <v-btn color="primary" variant="tonal" block :loading="saving" @click="saveWish(false)">
+            Сохранить изменения
+          </v-btn>
+          <v-btn v-if="canDistributeWish(editingWish, ctx)" color="primary" variant="tonal" block prepend-icon="mdi-view-column-outline"
+                 @click="actions.openKanbanDialog(editingWish); wishDialog = false">
+            Распределить
+          </v-btn>
+          <v-btn v-if="ctx.isManagerOrAdmin.value && editingWish.status === 'approved'" color="primary" variant="flat" block prepend-icon="mdi-cart-arrow-right"
+                 @click="actions.openConvertDialog(editingWish); wishDialog = false">
+            Передать в План закупок
+          </v-btn>
+          <v-btn v-else-if="editingWish.status === 'converted' && editingWish.purchase_id" color="primary" variant="flat" block prepend-icon="mdi-cart-arrow-right"
+                 @click="ctx.goToWishPurchases(editingWish); wishDialog = false">
+            Перейти в {{ (editingWish.purchases?.length || editingWish.purchase_ids?.length || 1) > 1 ? 'закупки' : 'закупку' }}
+          </v-btn>
+        </template>
+      </v-card-actions>
+
+      <!-- Телефон, режим согласующего (canAssigneeAct && editingWish) — закреплённая
+           нижняя панель (макет «Вариант А»): переключатель ТЗ + «Отклонить»/
+           «Одобрить…». «Одобрить…» открывает WishApproveSheet, которая только
+           эмитит — вызовы actions.openKanbanDialog/approveWish делает этот файл
+           (Правило №6). -->
+      <div v-if="mobile && canAssigneeAct && editingWish" class="wish-mobile-approve-bar">
+        <div v-if="form.canWaiveTz.value && !editingWish.tz_not_required" class="mb-2">
+          <div class="text-caption text-medium-emphasis mb-1">Техническое задание</div>
+          <v-btn-toggle
+            :model-value="actions.quickApproveTzNotRequired.value"
+            mandatory
+            density="compact"
+            color="deep-purple"
+            @update:model-value="(v: boolean) => { actions.quickApproveTzNotRequired.value = v }"
+          >
+            <v-btn :value="false" size="small">С ТЗ</v-btn>
+            <v-btn :value="true" size="small">Без ТЗ</v-btn>
+          </v-btn-toggle>
+        </div>
+        <div class="d-flex ga-2">
+          <v-btn color="error" variant="tonal" class="flex-grow-1" prepend-icon="mdi-close"
+                 @click="actions.openRejectDialog(editingWish); wishDialog = false">
+            Отклонить
+          </v-btn>
+          <v-btn color="primary" variant="flat" class="flex-grow-2" style="flex-grow:2"
+                 @click="approveSheetOpen = true">
+            Одобрить…
+          </v-btn>
+        </div>
+      </div>
     </v-card>
   </v-dialog>
+
+  <WishApproveSheet
+    v-if="editingWish"
+    v-model="approveSheetOpen"
+    :wish-number="editingWishId ?? ''"
+    :items-count="wishForm.items.length"
+    :can-waive-tz="form.canWaiveTz.value && !editingWish.tz_not_required"
+    :tz-not-required="actions.quickApproveTzNotRequired.value"
+    :loading="actions.approvingId.value === editingWish.id"
+    @update:tz-not-required="(v: boolean) => { actions.quickApproveTzNotRequired.value = v }"
+    @distribute="approveSheetOpen = false; actions.openKanbanDialog(editingWish); wishDialog = false"
+    @quick-approve="onMobileQuickApprove"
+  />
 
   <!-- Стрелочки от кнопки отправки к незаполненным полям (как в Закупке) -->
   <ValidationArrows
@@ -1321,7 +1527,7 @@
 // wishApprovers/feoAutosaveSaving/feoAutosavePending и функции открытия/действий)
 // через defineExpose — единственное официально разрешённое место для него по
 // заданию, здесь расширенное на этот один непреодолимый случай.
-import { computed } from 'vue'
+import { ref, computed, reactive, nextTick } from 'vue'
 import { useWishLive } from '@/composables/useWishLive'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
@@ -1332,6 +1538,9 @@ import WishKanbanDialog from './WishKanbanDialog.vue'
 import WishActionDialogs from './WishActionDialogs.vue'
 import WishConvertedEditGate from './WishConvertedEditGate.vue'
 import WishTzSection from './WishTzSection.vue'
+import WishDecisionSummary from './WishDecisionSummary.vue'
+import WishApproveSheet from './WishApproveSheet.vue'
+import WishDialogMobileMenu from './WishDialogMobileMenu.vue'
 import { apiFetch } from '@/api'
 import {
   useWishesContext, statusLabel, priorityOptions,
@@ -1544,6 +1753,66 @@ const wishDialogTitleSuffix = computed(() => {
 // останавливается по watch(isOpen) внутри себя.
 void wishLive
 
+// ── Мобильный вид (макет «Вариант А», владелец, 05.10) — ТОЛЬКО под mobile,
+// десктоп (props.mobile === false) этот блок не задействует ни одного из
+// computed/реактивов ниже (все читаются из шаблона за v-if="mobile"/
+// :class="{ ...: mobileCollapseActive }", которые на компьютере всегда false). ──
+
+// Единственное условие «показываем сводку согласующего вместо обычной формы» —
+// используется и в шапке (скрыть v-card-subtitle), и в теле (сводка +
+// сворачиваемые разделы), и в оранжевом алерте выше (Правило №6 — одно условие,
+// не копия в трёх местах).
+const mobileAssigneeDecisionMode = computed(() => props.mobile && !isWishEditable.value && canAssigneeAct.value)
+const mobileCollapseActive = mobileAssigneeDecisionMode
+
+// Какие разделы формы сейчас раскрыты на телефоне в режиме согласующего — по
+// умолчанию все свёрнуты (нужный раздел находят через заголовок или через
+// стрелку highlightMissingFeoCategory, см. onHighlightMissingFeoCategory).
+const openMobileSections = reactive<Record<string, boolean>>({})
+function toggleMobileSection(key: string) { openMobileSections[key] = !openMobileSections[key] }
+function isMobileSectionOpen(key: string): boolean {
+  return !mobileCollapseActive.value || !!openMobileSections[key]
+}
+
+// highlightMissingFeoCategory() (useWishForm.ts) ищет [data-field="feo_category"]
+// внутри wishFormRef.value.$el — на телефоне в свёрнутом режиме этот узел лежит
+// в разделе «Позиции» (v-show, не v-if — элемент в DOM есть и свёрнутым, но
+// скрыт display:none, scrollIntoView по нему бессмыслен). Раскрываем раздел
+// ПЕРЕД вызовом оригинальной функции, как и требует задание.
+async function onHighlightMissingFeoCategory() {
+  if (mobileCollapseActive.value) {
+    openMobileSections.items = true
+    await nextTick()
+  }
+  highlightMissingFeoCategory()
+}
+
+// Форма договора — то же самое значение/справочник, что выбирается в разделе
+// «Основная информация» (contractFormOptions, единый источник
+// item_forms.json::contract_forms, см. импорт в начале файла) — здесь только
+// резолвим title по текущему value для карточки-сводки WishDecisionSummary.
+const contractFormLabel = computed(() => {
+  const v = (wishForm.value as any)?.contract_form
+  if (!v) return null
+  return contractFormOptions.find(o => o.value === v)?.title || v
+})
+
+// Нижняя закреплённая панель телефона (режим согласующего) — «Одобрить…»
+// открывает WishApproveSheet; сам шит только эмитит, вызовы actions.* здесь.
+const approveSheetOpen = ref(false)
+function onMobileQuickApprove() {
+  if (!editingWish.value) return
+  if (wishFeoCategoryMissing.value) {
+    approveSheetOpen.value = false
+    onHighlightMissingFeoCategory()
+    return
+  }
+  actions.approveWish(editingWish.value, actions.quickApproveTzNotRequired.value).then(() => {
+    approveSheetOpen.value = false
+    wishDialog.value = false
+  })
+}
+
 defineExpose({
   openCreate,
   openEdit,
@@ -1583,5 +1852,29 @@ defineExpose({
 }
 .v-theme--dark .feo-category-highlight {
   background: rgba(99, 102, 241, 0.1);
+}
+
+/* Мобильный вид (макет «Вариант А», владелец, 05.10) — ТОЛЬКО то, что
+   применяется через mobile-специфичные классы/v-if ниже, десктопные стили
+   выше не трогались. */
+.wish-mobile-section-title {
+  cursor: pointer;
+  user-select: none;
+}
+/* Запас под закреплённую нижнюю панель согласующего, чтобы последний раздел
+   формы не прятался под ней. */
+.wish-mobile-content-pad {
+  padding-bottom: 200px !important;
+}
+.wish-mobile-approve-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5; /* внутри уже высокого стека fullscreen v-dialog — достаточно
+                  перебить обычный контент самой карточки */
+  background: var(--crm-surface, rgb(var(--v-theme-surface)));
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
 }
 </style>

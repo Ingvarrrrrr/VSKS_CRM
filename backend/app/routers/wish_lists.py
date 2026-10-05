@@ -325,13 +325,20 @@ async def list_wishes(
     # (WishItem), ОДНИМ агрегирующим запросом на всю страницу (без N+1 и без
     # загрузки всех позиций построчно).
     items_total_map: dict[int, Decimal] = {}
+    items_count_map: dict[int, int] = {}
     if wish_ids:
         itres = await db.execute(
-            select(WishItem.wish_id, func.coalesce(func.sum(WishItem.total_price), 0))
+            select(
+                WishItem.wish_id,
+                func.coalesce(func.sum(WishItem.total_price), 0),
+                func.count(WishItem.id),
+            )
             .where(WishItem.wish_id.in_(wish_ids))
             .group_by(WishItem.wish_id)
         )
-        items_total_map = {wid: total for wid, total in itres.all()}
+        for wid, total, cnt in itres.all():
+            items_total_map[wid] = total
+            items_count_map[wid] = cnt
 
     out_list = []
     for w in wishes:
@@ -341,6 +348,7 @@ async def list_wishes(
         enriched.purchase_ids = purchases_map.get(w.id, [])
         enriched.purchases = purchase_summaries_map.get(w.id, [])
         enriched.items_total = items_total_map.get(w.id, Decimal("0"))
+        enriched.items_count = items_count_map.get(w.id, 0)
         _unseen = unseen_map.get(w.id, [])
         enriched.unseen_fields = _unseen
         enriched.unseen_changes_count = len(_unseen)

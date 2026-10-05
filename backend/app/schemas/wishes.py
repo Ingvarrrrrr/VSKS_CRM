@@ -455,6 +455,9 @@ class WishOut(BaseModel):
     # одним агрегирующим запросом (см. list_wishes); карточка — из уже
     # загруженных items, без доп. запроса.
     items_total: Optional[Decimal] = None
+    # Число позиций заявки (WishItem) — тем же батч-запросом, что items_total
+    # в list_wishes (см. wish_lists.py); на карточке не проставляется отдельно.
+    items_count: Optional[int] = None
 
     class Config:
         from_attributes = True

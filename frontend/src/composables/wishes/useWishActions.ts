@@ -34,6 +34,23 @@ export function canDistributeWish(
   return ctx.isManagerOrAdmin.value || wish.assigned_to === ctx.currentUserId
 }
 
+// canDecideFromList — ЕДИНЫЙ предикат «может одобрить/отклонить прямо из списка»
+// (ПРАВИЛО №6, мобильная приёмка карточек заявок, 2026-10-05). Раньше условие
+// `ctx.isManagerOrAdmin.value || item.assigned_to === ctx.currentUserId` жило
+// инлайном только в WishIncomingTab.vue (шаблон, рядом с кнопками «Одобрить»/
+// «Отклонить») — теперь общий экспорт для таблицы ТАМ ЖЕ и для мобильных
+// карточек (WishCard.vue) на вкладках «На согласование мне»/«Заявки сотрудников».
+// Участник цепочки согласования без этого права видит вместо кнопок решения
+// «Открыть и согласовать»/«Согласовать» — согласование происходит внутри карточки
+// заявки (см. WishFormDialog.vue, панель «Согласующие»).
+export function canDecideFromList(
+  wish: Pick<Wish, 'status' | 'assigned_to'>,
+  ctx: Pick<WishesContext, 'isManagerOrAdmin' | 'currentUserId'>,
+): boolean {
+  if (wish.status !== 'submitted') return false
+  return ctx.isManagerOrAdmin.value || wish.assigned_to === ctx.currentUserId
+}
+
 export function useWishActions(deps: {
   ctx: WishesContext
   apiFetch: typeof import('@/api').apiFetch

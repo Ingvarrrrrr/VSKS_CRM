@@ -1,5 +1,64 @@
 <template>
+  <!-- Мобильные карточки (владелец, 2026-10-05): на телефоне 9-колоночная таблица
+       нечитаема — WishCard.vue (общий компонент, ПРАВИЛО №6) + слот действий,
+       канбан/одобрение открывается тем же путём, что и на десктопе. На десктопе
+       вид и поведение НЕ меняются (та же v-data-table, что и раньше). -->
+  <div v-if="mobile">
+    <v-row dense>
+      <v-col v-for="item in items" :key="item.id" cols="12" sm="6">
+        <WishCard
+          :wish="item"
+          show-header-meta
+          show-awaiting-chip
+          show-subsidy
+          :sum-label="false"
+          title-clamp
+          @open="$emit('open-edit', item)"
+        >
+          <template #actions>
+            <v-menu>
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" icon="mdi-dots-vertical" size="x-small" variant="text" :loading="downloadingExcelId === item.id" @click.stop />
+              </template>
+              <v-list density="compact">
+                <v-list-item prepend-icon="mdi-image" title="Excel с фото" @click="$emit('download-excel', item, true)" />
+                <v-list-item prepend-icon="mdi-image-off" title="Excel без фото" @click="$emit('download-excel', item, false)" />
+                <v-list-item
+                  v-if="canDistributeWish(item, ctx) && item.status !== 'submitted'"
+                  prepend-icon="mdi-view-column-outline"
+                  title="Распределить"
+                  @click="$emit('kanban', item)"
+                />
+              </v-list>
+            </v-menu>
+            <template v-if="item.status === 'submitted'">
+              <template v-if="canDecideFromList(item, ctx)">
+                <v-btn size="small" variant="tonal" color="error" @click.stop="$emit('reject', item)">
+                  Отклонить
+                </v-btn>
+                <v-btn size="small" variant="flat" color="primary" :loading="approvingId === item.id" @click.stop="$emit('open-approve-sheet', item)">
+                  Одобрить…
+                </v-btn>
+              </template>
+              <v-btn v-else size="small" variant="tonal" color="primary" @click.stop="$emit('open-edit', item)">
+                Открыть и согласовать
+              </v-btn>
+            </template>
+          </template>
+        </WishCard>
+      </v-col>
+    </v-row>
+    <div v-if="!items.length" class="text-center py-10">
+      <v-icon icon="mdi-hand-heart-outline" size="48" color="grey-lighten-1" class="mb-3" />
+      <div class="text-medium-emphasis">Нет заявок на согласование</div>
+    </div>
+    <!-- Владелец: отступ ≥120px под списком — та же причина, что у «Моих заявок»
+         (кнопка чата/нижнее меню перекрывают кнопки последней карточки). -->
+    <div style="height:120px" />
+  </div>
+
   <v-data-table
+    v-else
     v-resizable-columns="'wishes-incoming'"
     :headers="headers"
     :items="items"
@@ -190,9 +249,11 @@
           Распределить
         </v-btn>
         <template v-if="item.status === 'submitted'">
-          <!-- Одобрить/Отклонить — только менеджер+ или назначенный согласующий.
+          <!-- Одобрить/Отклонить — только менеджер+ или назначенный согласующий, см.
+               canDecideFromList (useWishActions.ts, ПРАВИЛО №6 — тот же предикат,
+               что и в мобильных карточках этой вкладки, выше).
                Участник цепочки (chain approver, employee) одобряет через диалог — кнопка «Согласовать» там. -->
-          <template v-if="ctx.isManagerOrAdmin.value || item.assigned_to === ctx.currentUserId">
+          <template v-if="canDecideFromList(item, ctx)">
             <v-btn size="x-small" variant="tonal" color="success" :loading="approvingId === item.id" @click="$emit('approve', item)">
               Одобрить
             </v-btn>
@@ -223,12 +284,13 @@
 // (596-795) из WishesView.vue. Действия эмитятся наверх, обрабатываются теми же
 // функциями useWishForm/useWishActions, что и раньше.
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
+import WishCard from '@/components/wishes/WishCard.vue'
 import {
   useWishesContext, statusColor, statusLabel, GALA_ORANGE,
   shortName, wishCoAuthors, wishRecipients, wishItemsTotal, formatDate, formatPrice,
   stoppedByLine, rejectedByLine,
 } from '@/composables/wishes/useWishesContext'
-import { canDistributeWish } from '@/composables/wishes/useWishActions'
+import { canDistributeWish, canDecideFromList } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
 defineProps<{
@@ -240,6 +302,7 @@ defineProps<{
   subsidyNameOptions: (string | number | null)[]
   downloadingExcelId: number | null
   approvingId: number | null
+  mobile: boolean
 }>()
 
 defineEmits<{
@@ -248,6 +311,10 @@ defineEmits<{
   (e: 'approve', item: Wish): void
   (e: 'reject', item: Wish): void
   (e: 'download-excel', item: Wish, withPhotos: boolean): void
+  // Владелец (мобильные карточки, 2026-10-05): «Одобрить…» на карточке открывает
+  // WishApproveSheet (один экземпляр в WishesView.vue) вместо прямого quick-approve —
+  // там можно выбрать «с ТЗ/без ТЗ» и «Распределить», как в WishFormDialog.vue.
+  (e: 'open-approve-sheet', item: Wish): void
 }>()
 
 const ctx = useWishesContext()

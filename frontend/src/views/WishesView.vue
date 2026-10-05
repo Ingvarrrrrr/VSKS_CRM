@@ -83,7 +83,17 @@
     <!-- Tabs (visible to all authenticated users) -->
     <v-tabs v-model="activeTab" class="mb-4">
       <v-tab value="my">Мои заявки</v-tab>
-      <v-tab value="incoming">На согласование мне</v-tab>
+      <v-tab value="incoming">
+        На согласование мне
+        <!-- Владелец (мобильные карточки, 2026-10-05): сколько заявок реально ждут
+             РЕШЕНИЯ ТЕКУЩЕГО пользователя (canDecideFromList — тот же предикат, что
+             у кнопок «Одобрить»/«Отклонить»), не просто «сколько submitted». Данные
+             входящих уже грузятся при входе в раздел (onMounted ниже), досрочной
+             подгрузки не требуется — см. отчёт исполнителя. -->
+        <v-chip v-if="incomingAwaitingCount" size="x-small" color="orange" variant="tonal" class="ml-2">
+          {{ incomingAwaitingCount }}
+        </v-chip>
+      </v-tab>
       <v-tab v-if="ctx.isManagerOrAdmin.value" value="all">Заявки сотрудников</v-tab>
     </v-tabs>
 
@@ -92,6 +102,7 @@
       :account-options="accountOptions"
       :org-options-filtered="orgOptionsFiltered"
       :reset-filters="resetFilters"
+      :mobile="mobile"
     />
 
     <!-- ── MY WISHES TAB ── -->
@@ -142,11 +153,13 @@
         :subsidy-name-options="wishSubsidyNameOptions"
         :downloading-excel-id="downloadingExcelId"
         :approving-id="approvingId"
+        :mobile="mobile"
         @open-edit="onOpenEdit"
         @kanban="onKanban"
         @approve="onApprove"
         @reject="onReject"
         @download-excel="onDownloadExcel"
+        @open-approve-sheet="onOpenApproveSheet"
       />
     </div>
 
@@ -165,6 +178,7 @@
         :all-filters="allFilters"
         :wish-counts="wishCounts"
         :all-wishes-truncated="allWishesTruncated"
+        :mobile="mobile"
         @filter-change="onAllFilterChange"
         @open-edit="onOpenEdit"
         @kanban="onKanban"
@@ -172,6 +186,7 @@
         @reject="onReject"
         @convert="onConvert"
         @download-excel="onDownloadExcel"
+        @open-approve-sheet="onOpenApproveSheet"
       />
     </div>
 
@@ -181,6 +196,26 @@
       :reload-active-tab="reloadActiveTab"
       :load-wishes="loadWishes"
       :load-all-wishes="loadAllWishes"
+    />
+
+    <!-- Владелец (мобильные карточки, 2026-10-05): ОДИН экземпляр шита «Одобрить…»
+         на все мобильные карточки вкладок «На согласование мне»/«Заявки сотрудников»
+         (ПРАВИЛО №6) — компонент создаёт параллельный исполнитель
+         (components/wishes/WishApproveSheet.vue), контракт пропсов/эмитов
+         зафиксирован в задании сессии. distribute → тот же onKanban, что у кнопки
+         «Распределить» в таблицах; quick-approve → actions.approveWish через
+         formDialogRef, тот же путь, что у «Одобрить без согласования остальных»
+         в WishFormDialog.vue. -->
+    <WishApproveSheet
+      v-model="approveSheetOpen"
+      :wish-number="approveSheetWish?.id ?? ''"
+      :items-count="approveSheetWish?.items_count ?? null"
+      :can-waive-tz="canWaiveTz"
+      :tz-not-required="approveSheetTzNotRequired"
+      :loading="approvingId === approveSheetWish?.id"
+      @update:tz-not-required="v => approveSheetTzNotRequired = v"
+      @distribute="onApproveSheetDistribute"
+      @quick-approve="onApproveSheetQuickApprove"
     />
 
     <!-- Владелец, 2026-09-02: редактор колонок ОДИН на все три вкладки заявок
@@ -218,11 +253,14 @@ import { useCardView } from '@/composables/useCardView'
 import { provideWishesContext } from '@/composables/wishes/useWishesContext'
 import { useWishFilters } from '@/composables/wishes/useWishFilters'
 import { useWishColumnMenu } from '@/composables/wishes/useWishColumnMenu'
+import { canDecideFromList } from '@/composables/wishes/useWishActions'
+import { ACTIONS } from '@/constants/permissionActions'
 import WishFilterPanel from '@/components/wishes/WishFilterPanel.vue'
 import WishMyTab from '@/components/wishes/WishMyTab.vue'
 import WishIncomingTab from '@/components/wishes/WishIncomingTab.vue'
 import WishAllTab from '@/components/wishes/WishAllTab.vue'
 import WishFormDialog from '@/components/wishes/WishFormDialog.vue'
+import WishApproveSheet from '@/components/wishes/WishApproveSheet.vue'
 import type { Wish, Subsidy, FeoCategory, EventItem, User, PendingWishConsent } from '@/composables/wishes/wishTypes'
 
 const route = useRoute()
@@ -324,6 +362,15 @@ const allWishesTruncated = computed(() => {
   return allWishes.value.length < total ? total : null
 })
 
+// Владелец (мобильные карточки, 2026-10-05): счётчик на вкладке «На согласование
+// мне» — сколько заявок реально ждут решения ТЕКУЩЕГО пользователя, тот же
+// предикат canDecideFromList, что у кнопок «Одобрить»/«Отклонить» (ПРАВИЛО №6).
+// incomingWishes грузится в onMounted ниже независимо от того, какая вкладка
+// активна — досрочной подгрузки при открытии раздела не требуется.
+const incomingAwaitingCount = computed(() =>
+  incomingWishes.value.filter(w => canDecideFromList(w, ctx)).length,
+)
+
 async function loadIncoming() {
   loadingIncoming.value = true
   try {
@@ -360,6 +407,32 @@ function onKanban(w: Wish) { formDialogRef.value?.openKanbanDialog(w) }
 function onConvert(w: Wish) { formDialogRef.value?.openConvertDialog(w) }
 function onForceStatus(w: Wish) { formDialogRef.value?.openRowForceStatus(w) }
 function onDownloadExcel(w: Wish, withPhotos: boolean) { formDialogRef.value?.downloadWishExcel(w, withPhotos) }
+
+// ── Мобильные карточки (2026-10-05): шит «Одобрить…» (WishApproveSheet.vue,
+// файл параллельного исполнителя) — один экземпляр на все карточки Incoming/All. ──
+const approveSheetOpen = ref(false)
+const approveSheetWish = ref<Wish | null>(null)
+const approveSheetTzNotRequired = ref(false)
+// Право «Без ТЗ» — тот же predicate, что в WishFormDialog.vue/useWishForm.ts:622
+// (can(ACTIONS.PURCHASE_TZ_WAIVE)), посчитан здесь напрямую через ctx.can —
+// useWishForm.ts инстанциируется только внутри WishFormDialog.vue (файл другого
+// исполнителя, его не трогаем) и не экспонирует canWaiveTz наружу.
+const canWaiveTz = computed(() => ctx.can(ACTIONS.PURCHASE_TZ_WAIVE!))
+function onOpenApproveSheet(w: Wish) {
+  approveSheetWish.value = w
+  approveSheetTzNotRequired.value = false
+  approveSheetOpen.value = true
+}
+function onApproveSheetDistribute() {
+  if (!approveSheetWish.value) return
+  approveSheetOpen.value = false
+  onKanban(approveSheetWish.value)
+}
+async function onApproveSheetQuickApprove() {
+  if (!approveSheetWish.value) return
+  await formDialogRef.value?.approveWish(approveSheetWish.value, approveSheetTzNotRequired.value)
+  approveSheetOpen.value = false
+}
 
 // Индикаторы загрузки для кнопок в строках таблиц — читаются реактивно из
 // WishFormDialog.vue (владеет useWishActions), см. её defineExpose.

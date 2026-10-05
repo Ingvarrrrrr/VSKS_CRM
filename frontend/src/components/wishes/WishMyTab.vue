@@ -267,51 +267,22 @@
         </template>
       </v-data-table>
 
-      <!-- Cards view (my wishes) -->
+      <!-- Cards view (my wishes) — WishCard.vue, ПРАВИЛО №6 (один источник карточки
+           на все три вкладки заявок), props воспроизводят СТАРЫЙ вид этой карточки
+           1:1 (showRegistryNumber вместо нового заголовка №/дата, без обрезки
+           заголовка, подпись «Сумма: ...» мелко) — см. WishCard.vue. -->
       <div v-else>
         <v-row dense>
           <v-col v-for="w in pagedWishes" :key="w.id" cols="12" sm="6" lg="4">
-            <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="$emit('open-edit', w)">
-              <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт на всю ширину карточки -->
-              <div v-if="w.stopped_at" class="wish-stopped-banner ma-2 mb-0">
-                <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
-                <span class="wish-stopped-banner__title">{{ w.stopped_partial ? 'ОСТАНОВЛЕНА ЧАСТИЧНО' : 'ЗАЯВКА ОСТАНОВЛЕНА' }}</span>
-                <span class="wish-stopped-banner__meta">{{ stoppedByLine(w) }}</span>
-              </div>
-              <v-card-item class="pb-1">
-                <template #prepend>
-                  <v-icon icon="mdi-hand-heart-outline" color="primary" size="20" />
-                </template>
-                <v-card-title class="text-body-2 font-weight-bold" style="overflow-wrap:anywhere">
-                  {{ w.title || '—' }}
-                </v-card-title>
-              </v-card-item>
-              <v-card-text class="py-1 flex-grow-1">
-                <div class="d-flex flex-wrap align-center ga-1 mb-2">
-                  <v-chip :color="statusColor[w.status]" size="x-small" variant="tonal">
-                    {{ statusLabel[w.status] }}
-                  </v-chip>
-                  <span v-if="w.registry_number" class="text-caption text-medium-emphasis">{{ w.registry_number }}</span>
-                </div>
-                <div v-if="w.creator_name" class="text-caption text-medium-emphasis mb-1">
-                  От: <span class="font-weight-medium text-high-emphasis">{{ shortName(w.creator_name) }}</span><span
-                    v-if="wishCoAuthors(w).length">, {{ wishCoAuthors(w).join(', ') }}</span>
-                </div>
-                <div v-if="wishRecipients(w)" class="text-caption text-medium-emphasis mb-1">
-                  Кому: <span class="font-weight-medium text-high-emphasis">{{ wishRecipients(w) }}</span>
-                </div>
-                <div v-if="w.executor_name" class="text-caption text-medium-emphasis mb-1">
-                  Исполнитель: <span class="font-weight-medium text-high-emphasis">{{ w.executor_name }}</span>
-                </div>
-                <div v-if="w.execution_deadline" class="text-caption text-medium-emphasis mb-1">
-                  Срок: <span class="font-weight-medium">{{ formatDate(w.execution_deadline) }}</span>
-                </div>
-                <div v-if="wishItemsTotal(w) != null" class="text-caption text-medium-emphasis mb-1">
-                  Сумма: <span class="font-weight-medium">{{ formatPrice(wishItemsTotal(w)!) }}</span>
-                </div>
-              </v-card-text>
-              <v-divider />
-              <v-card-actions class="py-1" @click.stop>
+            <WishCard
+              :wish="w"
+              show-registry-number
+              show-recipients
+              show-executor
+              show-deadline
+              @open="$emit('open-edit', w)"
+            >
+              <template #actions>
                 <v-menu>
                   <template #activator="{ props: menuProps }">
                     <v-btn v-bind="menuProps" icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === w.id" title="Скачать в Excel" @click.stop />
@@ -392,8 +363,8 @@
                 >
                   {{ wishPurchasesLabel(w) }}
                 </v-btn>
-              </v-card-actions>
-            </v-card>
+              </template>
+            </WishCard>
           </v-col>
         </v-row>
         <div v-if="!pagedWishes.length" class="text-center py-10">
@@ -409,6 +380,10 @@
           class="d-flex justify-center mt-4"
           @update:model-value="v => $emit('update:cards-page', v)"
         />
+        <!-- Владелец (мобильные карточки, 2026-10-05): нижний отступ ≥120px, чтобы
+             оранжевая кнопка чата и нижнее меню не закрывали кнопки последней
+             карточки; FAB «+» (WishesView.vue) не затрагивается. -->
+        <div class="wish-cards-bottom-spacer" />
       </div>
   </div>
 </template>
@@ -421,6 +396,7 @@
 // Действия эмитятся наверх (WishesView.vue), которая вызывает те же функции
 // useWishForm/useWishActions, что и раньше.
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
+import WishCard from '@/components/wishes/WishCard.vue'
 import {
   useWishesContext, statusColor, statusLabel, GALA_ORANGE,
   shortName, wishCoAuthors, wishRecipients, wishItemsTotal, formatDate, formatPrice,
@@ -458,3 +434,16 @@ defineEmits<{
 
 const ctx = useWishesContext()
 </script>
+
+<style scoped>
+/* Владелец (мобильные карточки, 2026-10-05): нижний отступ ≥120px под списком
+   карточек на телефоне — оранжевая кнопка чата и нижнее меню иначе закрывают
+   действия последней карточки. На десктопе (где пользователь тоже может
+   выбрать вид «карточки» через v-btn-toggle) отступ не нужен — ограничено
+   медиа-запросом по ширине экрана, а не JS-условием. */
+@media (max-width: 600px) {
+  .wish-cards-bottom-spacer {
+    height: 120px;
+  }
+}
+</style>

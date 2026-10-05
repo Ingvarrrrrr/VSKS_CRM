@@ -17,7 +17,68 @@
       Показаны первые {{ items.length }} из {{ allWishesTruncated }} — уточните фильтры, чтобы увидеть остальные
     </div>
 
+    <!-- Мобильные карточки (владелец, 2026-10-05) — тот же подход, что в
+         WishIncomingTab.vue, см. комментарий там. -->
+    <div v-if="mobile">
+      <v-row dense>
+        <v-col v-for="item in items" :key="item.id" cols="12" sm="6">
+          <WishCard
+            :wish="item"
+            show-header-meta
+            show-awaiting-chip
+            show-subsidy
+            :sum-label="false"
+            title-clamp
+            @open="$emit('open-edit', item)"
+          >
+            <template #actions>
+              <v-menu>
+                <template #activator="{ props: menuProps }">
+                  <v-btn v-bind="menuProps" icon="mdi-dots-vertical" size="x-small" variant="text" :loading="downloadingExcelId === item.id" @click.stop />
+                </template>
+                <v-list density="compact">
+                  <v-list-item prepend-icon="mdi-image" title="Excel с фото" @click="$emit('download-excel', item, true)" />
+                  <v-list-item prepend-icon="mdi-image-off" title="Excel без фото" @click="$emit('download-excel', item, false)" />
+                  <v-list-item
+                    v-if="canDistributeWish(item, ctx) && item.status !== 'submitted'"
+                    prepend-icon="mdi-view-column-outline"
+                    title="Распределить"
+                    @click="$emit('kanban', item)"
+                  />
+                  <v-list-item
+                    v-if="item.status === 'approved' && ctx.isManagerOrAdmin.value"
+                    prepend-icon="mdi-cart-arrow-right"
+                    title="Передать в план закупок"
+                    @click="$emit('convert', item)"
+                  />
+                </v-list>
+              </v-menu>
+              <template v-if="item.status === 'submitted'">
+                <template v-if="canDecideFromList(item, ctx)">
+                  <v-btn size="small" variant="tonal" color="error" @click.stop="$emit('reject', item)">
+                    Отклонить
+                  </v-btn>
+                  <v-btn size="small" variant="flat" color="primary" :loading="approvingId === item.id" @click.stop="$emit('open-approve-sheet', item)">
+                    Одобрить…
+                  </v-btn>
+                </template>
+                <v-btn v-else size="small" variant="tonal" color="primary" @click.stop="$emit('open-edit', item)">
+                  Открыть и согласовать
+                </v-btn>
+              </template>
+            </template>
+          </WishCard>
+        </v-col>
+      </v-row>
+      <div v-if="!items.length" class="text-center py-10">
+        <v-icon icon="mdi-hand-heart-outline" size="48" color="grey-lighten-1" class="mb-3" />
+        <div class="text-medium-emphasis">Нет заявок от подчинённых</div>
+      </div>
+      <div style="height:120px" />
+    </div>
+
     <v-data-table
+      v-else
       v-resizable-columns="'wishes-all'"
       :headers="headers"
       :items="items"
@@ -264,12 +325,13 @@
 // WishAllTab.vue — вкладка «Заявки сотрудников» (менеджер/админ). Дословный перенос
 // шаблона (797-1036) из WishesView.vue.
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
+import WishCard from '@/components/wishes/WishCard.vue'
 import {
   useWishesContext, statusColor, statusLabel, GALA_ORANGE,
   shortName, wishCoAuthors, wishRecipients, wishItemsTotal, formatDate, formatPrice,
   stoppedByLine, rejectedByLine, purchaseMenuLabel, wishPurchasesLabel,
 } from '@/composables/wishes/useWishesContext'
-import { canDistributeWish } from '@/composables/wishes/useWishActions'
+import { canDistributeWish, canDecideFromList } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
 defineProps<{
@@ -285,6 +347,7 @@ defineProps<{
   allFilters: { value: string; label: string }[]
   wishCounts: Record<string, number>
   allWishesTruncated: number | null
+  mobile: boolean
 }>()
 
 defineEmits<{
@@ -295,6 +358,7 @@ defineEmits<{
   (e: 'reject', item: Wish): void
   (e: 'convert', item: Wish): void
   (e: 'download-excel', item: Wish, withPhotos: boolean): void
+  (e: 'open-approve-sheet', item: Wish): void
 }>()
 
 const ctx = useWishesContext()

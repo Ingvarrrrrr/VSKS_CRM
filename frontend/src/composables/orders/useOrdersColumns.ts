@@ -10,12 +10,16 @@ export const allColumns: ColumnDef[] = [
   // _rownum добавляется отдельно через tableHeaders computed (всегда первая колонка, не зависит от LS)
   { title: '', key: 'data-table-expand', width: 48, sortable: false, group: 'core' },
   { title: 'Реестр. №', key: 'registry_number', width: 140, group: 'core' },
-  { title: 'Предмет договора', key: 'subject', group: 'core' },
+  // Владелец (2026-10-06): колонки без width схлопывались почти до нуля под
+  // глобальным table-layout:fixed (App.vue) — текст разваливался по буквам
+  // (как уже чинили для ContractsTable «№ документа», см. useContractsColumns.ts).
+  // Любая видимая по умолчанию ('core') колонка ОБЯЗАНА иметь width.
+  { title: 'Предмет договора', key: 'subject', width: 260, group: 'core' },
   { title: 'Контрагент', key: 'contractor_name', width: 220, group: 'core' },
-  { title: 'Субсидия', key: 'subsidy_name', group: 'core' },
-  { title: 'Цена', key: 'effective_price', align: 'end', sortable: false, group: 'core' },
-  { title: '№ договора', key: 'contract_number', group: 'core' },
-  { title: 'Дата договора', key: 'contract_date', group: 'core' },
+  { title: 'Субсидия', key: 'subsidy_name', width: 180, group: 'core' },
+  { title: 'Цена', key: 'effective_price', width: 120, align: 'end', sortable: false, group: 'core' },
+  { title: '№ договора', key: 'contract_number', width: 140, group: 'core' },
+  { title: 'Дата договора', key: 'contract_date', width: 130, group: 'core' },
   { title: 'Тип', key: 'purchase_type', width: 110, sortable: false, group: 'core' },
   { title: 'Статус', key: 'status', width: 130, group: 'core' },
   { title: 'Согласование', key: 'approval_status', width: 130, sortable: true, group: 'core' },

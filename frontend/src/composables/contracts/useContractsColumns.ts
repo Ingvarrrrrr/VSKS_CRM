@@ -21,7 +21,9 @@ export function useContractsColumns(isAdmin: boolean) {
     { title: 'Тип', key: 'contract_type', width: 170, group: 'core' },
     { title: 'Способ', key: 'purchase_method', width: 130, group: 'core' },
     { title: 'Контрагент', key: 'contractor_name', width: 220, group: 'core' },
-    { title: 'Субсидия', key: 'subsidy_name', group: 'core' },
+    // Владелец (2026-10-06): та же причина, что у «№ документа» выше — core-колонка
+    // без width схлопывается почти до нуля под table-layout:fixed (App.vue).
+    { title: 'Субсидия', key: 'subsidy_name', width: 180, group: 'core' },
     { title: 'Предельная сумма', key: 'max_amount', align: 'end', width: 140, group: 'core' },
     { title: 'Заказано', key: 'total_ordered', align: 'end', width: 120, group: 'core' },
     { title: 'Поставлено', key: 'total_delivered', align: 'end', width: 120, group: 'core' },
@@ -29,7 +31,7 @@ export function useContractsColumns(isAdmin: boolean) {
     { title: 'Ост. (заказ)', key: 'remaining_ordered', align: 'end', width: 130, group: 'core' },
     { title: 'Не поставлено', key: 'remaining_delivered', align: 'end', width: 140, group: 'core' },
     { title: 'Не оплачено', key: 'remaining_paid', align: 'end', width: 130, group: 'core' },
-    { title: 'Предмет договора', key: 'subject', group: 'core' },
+    { title: 'Предмет договора', key: 'subject', width: 260, group: 'core' },
     { title: 'Тип позиции', key: 'item_type', width: 90, group: 'core' },
     { title: 'Срок', key: 'end_date', width: 110, group: 'core' },
     // all — дополнительные поля из ContractOut / Contract модели

@@ -6,7 +6,6 @@
        (см. composables/orders/ordersSearch.ts) — единая точка фильтрации. -->
   <v-data-table
       v-resizable-columns="'orders'"
-      ref="ordersTableRef"
       :headers="headers"
       :items="items"
       :loading="loading"
@@ -509,12 +508,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
 import { purchaseSubstatusLabel } from '@/constants/purchaseStatus'
-import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResize'
 import { getRowField, uniqValues } from '@/composables/orders/useOrdersColumns'
 import {
   STATUS_ORDER, STATUS_LABEL, STATUS_COLOR, APPROVAL_STATUS_COLOR, APPROVAL_STATUS_LABEL,
@@ -558,19 +555,6 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
-const ordersTableRef = ref<any>(null)
-
-onMounted(() => {
-  // Enable column resize after table renders
-  setTimeout(() => {
-    const el = ordersTableRef.value?.$el?.querySelector('table') || document.querySelector('.v-data-table table')
-    if (el) {
-      el.setAttribute('data-resize-id', 'orders')
-      addResizeHandles(el)
-      restoreTableWidths(el)
-    }
-  }, 500)
-})
 </script>
 
 <style scoped>

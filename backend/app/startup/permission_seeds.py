@@ -637,6 +637,46 @@ async def _subsidy_correct_action():
         logging.getLogger(__name__).warning(f"subsidy.correct action seed skipped (non-fatal): {e}")
 
 
+async def _account_owner_all_rights():
+    # Владелец (2026-10-06): «Владелец аккаунта может всё. Он один в аккаунте,
+    # может быть передан, но он один». На проде у роли account_owner стояли
+    # granted=False для admin.billing/admin.organizations/subsidy.correct, и
+    # отсутствовал один ключ целиком — владелец не видел «Биллинг» в меню.
+    # Эта функция ИДЕМПОТЕНТНО выставляет account_owner granted=True для
+    # ВСЕХ строк permission_tabs и permission_actions, какие есть в БД на
+    # момент старта — включая появившиеся позже (сид бежит при каждом старте,
+    # поэтому новый ключ любого другого сида подхватится здесь же при
+    # следующем перезапуске). Фактическое поведение (owner обходит матрицу
+    # целиком) реализовано отдельно и главным образом в
+    # app.auth.permissions._get_effective_simple — этот сид лишь синхронизирует
+    # отображаемую матрицу (/permissions/roles), чтобы в UI AdminRolesView не
+    # было визуального расхождения с реальными правами владельца.
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionTab, PermissionAction, RolePermission
+        async with async_session() as db:
+            tab_keys = {r for r, in (await db.execute(_sel(PermissionTab.tab_key))).all()}
+            action_keys = {r for r, in (await db.execute(_sel(PermissionAction.action_key))).all()}
+            all_keys = tab_keys | action_keys
+            existing_rows = (await db.execute(_sel(RolePermission).where(
+                RolePermission.role_name == "account_owner",
+            ))).scalars().all()
+            existing_by_key = {r.key: r for r in existing_rows}
+            changed = False
+            for key in all_keys:
+                row = existing_by_key.get(key)
+                if row is None:
+                    db.add(RolePermission(role_name="account_owner", key=key, granted=True))
+                    changed = True
+                elif not row.granted:
+                    row.granted = True
+                    changed = True
+            if changed:
+                await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"account_owner all-rights seed skipped (non-fatal): {e}")
+
+
 async def run():
     """Вызывает все idempotent сиды прав в исходном порядке (см. app/__init__.py.lifespan до разрезания)."""
     await _payment_registry_tab_and_actions()
@@ -655,3 +695,4 @@ async def run():
     await _purchase_tz_waive_action()
     await _advance_payment_decision_action()
     await _subsidy_correct_action()
+    await _account_owner_all_rights()

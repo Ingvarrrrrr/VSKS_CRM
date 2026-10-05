@@ -95,7 +95,11 @@
         class="mb-3"
         @update:model-value="onRoleChange"
       />
-      <div v-if="manageBlockedReason" class="text-caption mb-2" style="color:#b71c1c">
+      <div v-if="isTargetOwner" class="text-caption mb-2" style="color:#1565c0">
+        <v-icon size="13" color="primary" class="mr-1">mdi-shield-crown-outline</v-icon>
+        Владелец аккаунта — все права всегда.
+      </div>
+      <div v-else-if="manageBlockedReason" class="text-caption mb-2" style="color:#b71c1c">
         <v-icon size="13" color="error" class="mr-1">mdi-lock-outline</v-icon>
         {{ manageBlockedReason }}
       </div>
@@ -128,7 +132,7 @@
               <td class="perm-cell">
                 <div v-if="g.tab" class="d-flex align-center">
                   <v-tooltip
-                    :text="isLocked(g.tab.tab_key) ? manageBlockedReason : ''"
+                    :text="isLocked(g.tab.tab_key) ? lockTooltip() : ''"
                     location="top"
                     :disabled="!isLocked(g.tab.tab_key)"
                   >
@@ -171,7 +175,7 @@
                     class="d-flex align-center"
                   >
                     <v-tooltip
-                      :text="isLocked(a.action_key) ? manageBlockedReason : ''"
+                      :text="isLocked(a.action_key) ? lockTooltip() : ''"
                       location="top"
                       :disabled="!isLocked(a.action_key)"
                     >
@@ -366,13 +370,27 @@ const currentUserEffectiveRole = computed(() => {
   return combineRoleRank(currentUserGlobalRole, orgRole)
 })
 
+// Владелец 2026-10-06: «владелец аккаунта может всё» — глобальная роль
+// account_owner не блокируется ранговой проверкой (зеркалит backend
+// assert_can_manage_user_access / update_role_matrix: current_user.role ==
+// "account_owner" обходит сравнение рангов целиком, кроме цели-superadmin,
+// которую этот UI и не показывает в списке ролей).
 const isHierarchyBlocked = computed(() => {
   if (isSelfEdit.value) return false
-  if (currentUserEffectiveRole.value === 'superadmin') return false
+  if (currentUserGlobalRole === 'superadmin') return false
+  if (currentUserGlobalRole === 'account_owner') return false
   const actorRank = ROLE_RANK[currentUserEffectiveRole.value] ?? 0
   const targetRank = ROLE_RANK[currentOrgRole.value] ?? 0
   return actorRank <= targetRank
 })
+
+// Владелец 2026-10-06, пункт 4: у ЦЕЛЕВОГО пользователя с глобальной ролью
+// account_owner все галочки всегда включены и недоступны для снятия — он
+// «владелец аккаунта», а не предмет настройки допусков. Единая точка:
+// зеркалит app.auth.permissions._get_effective_simple (бэкенд всё равно
+// отдаёт ему полный набор ключей, даже если здесь что-то щёлкнуть).
+const isTargetOwner = computed(() => props.userRole === 'account_owner')
+const OWNER_LOCK_REASON = 'У владельца аккаунта все права всегда.'
 
 // Общий гейт: свои допуски не трогает никто (кроме владельца аккаунта и
 // суперадмина), чужие — только если ты строго выше по лестнице ролей.
@@ -392,6 +410,13 @@ const manageBlockedReason = computed(() => {
   }
   return ''
 })
+
+// Подсказка конкретно у чекбоксов — у владельца-цели это НЕ "недостаточно
+// прав" (текст manageBlockedReason), а отдельное объяснение без красного
+// оттенка смысла "ошибка доступа".
+function lockTooltip(): string {
+  return isTargetOwner.value ? OWNER_LOCK_REASON : manageBlockedReason.value
+}
 
 const isRoleChangeBlocked = computed(() => isManageBlocked.value)
 
@@ -489,6 +514,7 @@ const currentOrgRole = computed(() => {
 const hasOverrides = computed(() => Object.keys(overrides.value).length > 0)
 
 function isGranted(key: string): boolean {
+  if (isTargetOwner.value) return true
   if (key in overrides.value) return overrides.value[key]
   return roleDefaults.value[currentOrgRole.value]?.has(key) ?? false
 }
@@ -504,7 +530,7 @@ function overrideState(key: string): string | null {
 // у себя. Теперь бэкенд запрещает менять СВОИ допуски целиком и допуски
 // равных/старших по роли — зеркалим isManageBlocked на каждый чекбокс.
 function isLocked(_key: string): boolean {
-  return isManageBlocked.value
+  return isTargetOwner.value || isManageBlocked.value
 }
 
 // Владелец 2026-09-15 (Правило №6): единственный источник подписей ролей —

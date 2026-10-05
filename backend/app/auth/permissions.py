@@ -140,6 +140,20 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
     # Модель A: UOA-роль — самодостаточный источник полномочий по орг, членство
     # (user_organizations) НЕ требуется. Полномочия ≠ трудоустройство.
 
+    # Владелец (2026-10-06): «Владелец аккаунта может всё. Он один в аккаунте».
+    # ЕДИНОЕ место, где account_owner (ГЛОБАЛЬНАЯ роль user.role, не орг-роль)
+    # получает ВСЕ существующие tab_key + action_key — так же, как superadmin.
+    # Персональные overrides (granted=False) и дефолты матрицы ролей (role_
+    # permissions) НЕ ограничивают владельца: этот return стоит раньше, чем
+    # матрица/overrides вообще читаются. has_org_key/require_tab/require_action/
+    # _has_key_in_any_org все идут через _get_effective_simple (напрямую или
+    # через _get_effective) — второй формулы «владелец = всё» в проекте нет.
+    if user.role == "account_owner":
+        from app.models.permission import PermissionTab, PermissionAction
+        tab_keys = {r for r, in (await db.execute(select(PermissionTab.tab_key))).all()}
+        action_keys = {r for r, in (await db.execute(select(PermissionAction.action_key))).all()}
+        return tab_keys | action_keys
+
     # Step 0/0b: resolve effective role — see _resolve_role_for_org (единая
     # функция, Правило №6, владелец 2026-09-15: max(global, org_role) вместо
     # подмены глобальной роли орг-ролью).
@@ -298,22 +312,30 @@ async def assert_can_manage_user_access(
 ) -> None:
     """403 if current_user is not allowed to edit target_user's permissions/role.
 
-    - superadmin bypasses (technical SaaS role).
-    - account_owner bypasses the self-edit guard (владелец 2026-09-15): он
-      единственный, кому позволено настраивать СВОИ собственные допуски —
-      иначе владелец аккаунта, у которого UOA-роль в какой-то орге ниже
-      глобальной, не мог поправить самому себе org_admin-допуски в этой орге.
-    - Editing your own access is otherwise always forbidden (self-escalation/
-      self-lockout guard, in BOTH directions — see SELF_LOCKOUT_PROTECTED_KEYS
-      in permissions.py router for the narrower legacy check this supersedes).
-    - Otherwise the actor's rank must be STRICTLY greater than the target's —
-      кроме account_owner на самом себе, где ранги равны по определению и это
-      разрешено (см. выше).
+    - superadmin bypasses (technical SaaS role), включая правку допусков
+      account_owner.
+    - account_owner (владелец 2026-10-06, «владелец аккаунта может всё»)
+      bypasses ранговую проверку И self-edit guard целиком — настраивает
+      допуски любого сотрудника и самого себя, ЕДИНСТВЕННОЕ исключение —
+      superadmin (техническая SaaS-роль, её не трогает никто кроме неё самой).
+    - Для всех остальных ролей: editing your own access is always forbidden
+      (self-escalation/self-lockout guard, in BOTH directions — see
+      SELF_LOCKOUT_PROTECTED_KEYS in permissions.py router for the narrower
+      legacy check this supersedes), а чужое — только если ранг actor'а
+      СТРОГО выше ранга target'а.
     """
     if current_user.role == "superadmin":
         return
+    if current_user.role == "account_owner":
+        target_user = await db.get(User, target_user_id)
+        if target_user is not None and target_user.role == "superadmin":
+            raise HTTPException(403, "Нельзя менять допуски суперадмина.")
+        return
+    # account_owner обработан выше и сюда никогда не доходит — is_self здесь
+    # всегда означает ОБЫЧНОГО пользователя, редактирующего самого себя,
+    # что запрещено без исключений.
     is_self = target_user_id == current_user.id
-    if is_self and current_user.role != "account_owner":
+    if is_self:
         raise HTTPException(
             403,
             "Нельзя менять свои собственные допуски. Обратитесь к владельцу аккаунта.",
@@ -324,10 +346,6 @@ async def assert_can_manage_user_access(
     actor_rank = await get_user_rank(current_user, db, org_id)
     target_role_name = await _resolve_role_for_org(target_user, db, org_id)
     target_rank = _ROLE_PRIORITY.get(target_role_name, 1)
-    if is_self:
-        # account_owner на самом себе: ранги равны (actor_rank == target_rank),
-        # общее правило "строго выше" его бы заблокировало — обходим намеренно.
-        return
     if actor_rank <= target_rank:
         target_label = ROLE_LABELS_RU.get(target_role_name, target_role_name)
         raise HTTPException(
@@ -475,8 +493,13 @@ async def has_org_key(
     Решение 2026-07-06: write-права НЕ наследуются по иерархии «ставлю задачи»
     (в отличие от видимости/вкладок в _get_effective) — иерархическое поглощение
     даёт только read. Менять можно лишь там, где есть собственная роль или
-    персональный грант на конкретную субсидию (subsidy_id)."""
-    if user.role in ("superadmin", "account_owner"):
+    персональный грант на конкретную субсидию (subsidy_id).
+
+    account_owner здесь НЕ проверяется отдельной строкой (Правило №6, владелец
+    2026-10-06) — весь набор ключей он уже получает из _get_effective_simple
+    (единственное место, где считается "владелец = всё", см. комментарий там);
+    следующая строка пропускает его сама, без второй формулы."""
+    if user.role == "superadmin":
         return True
     if key in await _get_effective_simple(user, db, org_id, include_subsidy_grants=False):
         return True

@@ -97,7 +97,11 @@ async def update_role_matrix(
     # персональные overrides. Правило то же: править дефолты роли можно
     # только СТРОГО ниже своей — своя роль и роли выше недоступны никому,
     # кроме superadmin.
-    if current_user.role != "superadmin":
+    # Владелец 2026-10-06: account_owner не блокируется этой проверкой —
+    # «владелец аккаунта может всё», правит дефолты ЛЮБОЙ роли (кроме
+    # superadmin, который сюда и не попадает: ROLES/role_name=="superadmin"
+    # отсечены проверкой выше).
+    if current_user.role not in ("superadmin", "account_owner"):
         actor_rank = await get_user_rank(current_user, db, None)
         target_rank = _ROLE_PRIORITY.get(role_name, 0)
         if actor_rank <= target_rank:

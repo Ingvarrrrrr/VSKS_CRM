@@ -34,6 +34,13 @@ async def get_me(
 
     Superadmin (D-05.3) всегда получает полный набор tabs+actions, даже если у него
     нет org_id — иначе фронтенд гейтит все вкладки через authStore.hasTab() = false.
+
+    account_owner (владелец 2026-10-06, «владелец аккаунта может всё») —
+    та же ветка ниже, по той же причине: без активной org_id фронт иначе
+    гейтит все вкладки. Источник истины один — app.auth.permissions.
+    _get_effective_simple уже отдаёт владельцу все ключи независимо от org_id,
+    но этот ранний return избавляет от edge-case пустого org_id в выборе орги
+    ниже по функции.
     """
     out = UserOut.model_validate(current_user)
     out.has_license_scan = bool(current_user.license_scan)
@@ -46,8 +53,9 @@ async def get_me(
     )
     from app.models.permission import PermissionTab, PermissionAction
 
-    if current_user.role == "superadmin":
-        # D-05.3: superadmin sees all tabs + actions, независимо от org_id
+    if current_user.role in ("superadmin", "account_owner"):
+        # D-05.3 / владелец 2026-10-06: superadmin и account_owner видят все
+        # tabs + actions, независимо от org_id
         tabs_rows = await db.execute(select(PermissionTab.tab_key))
         actions_rows = await db.execute(select(PermissionAction.action_key))
         tabs = sorted(r for r, in tabs_rows)

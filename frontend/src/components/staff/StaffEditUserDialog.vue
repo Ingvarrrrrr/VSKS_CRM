@@ -1,8 +1,13 @@
 <template>
-  <v-dialog v-model="dialog.show" max-width="500" :fullscreen="mobile">
+  <v-dialog v-model="dialog.show" max-width="960" :fullscreen="mobile">
     <v-card>
       <v-card-title class="pa-4">Редактировать: {{ dialog.full_name || dialog.email }}</v-card-title>
       <v-card-text class="pa-4 pt-0">
+        <!-- Правка ширины окна (960 вместо 500) 2026-10-05: персональные поля
+             оставлены узкой колонкой по центру, чтобы текстовые поля (ФИО,
+             телефон и т.п.) не растягивались уродливо на всю ширину. Таблица
+             прав ниже, наоборот, использует всю ширину карточки. -->
+        <div class="staff-form-narrow">
         <div v-if="dialog.userId" class="d-flex flex-column align-center mb-4">
           <div class="text-caption text-medium-emphasis mb-2">Фотография сотрудника</div>
           <div class="staff-photo-rect" @click="openStaffPhotoUpload">
@@ -334,6 +339,7 @@
             >Удалить скан</v-btn>
           </v-card>
         </v-expand-transition>
+        </div>
 
         <!-- 17-08: «Доступ» section — per-user per-org permission overrides (D-04/D-05.2/D-08) -->
         <UserPermissionsSection
@@ -459,6 +465,10 @@ async function onLicenseScanFile(ev: Event) {
 </script>
 
 <style scoped>
+/* Правка ширины окна 2026-10-05: персональные поля узкой колонкой, не на
+   всю ширину расширенного (960) диалога. */
+.staff-form-narrow { max-width: 560px; margin: 0 auto; }
+
 /* Avatar picker + фото профиля + скан ВУ — перенесено из StaffView.vue */
 .avatar-pick { cursor: pointer; border-radius: 50%; padding: 2px; border: 2px solid transparent; transition: all 0.2s; }
 .avatar-pick:hover { border-color: rgba(var(--v-theme-primary), 0.3); transform: scale(1.1); }

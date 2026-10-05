@@ -119,13 +119,13 @@
             <tr>
               <th style="min-width:200px">Область</th>
               <th style="min-width:220px">Только просмотр</th>
-              <th style="min-width:260px">Редактирование</th>
+              <th style="min-width:420px">Редактирование</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="g in permGroups" :key="g.key">
-              <td class="font-weight-medium">{{ g.title }}</td>
-              <td>
+              <td class="font-weight-medium perm-area-cell">{{ g.title }}</td>
+              <td class="perm-cell">
                 <div v-if="g.tab" class="d-flex align-center">
                   <v-tooltip
                     :text="isLocked(g.tab.tab_key) ? manageBlockedReason : ''"
@@ -245,6 +245,38 @@
     </v-card-text>
   </v-card>
 </template>
+
+<style scoped>
+/* Дефект 06.10: строки таблицы прав разной высоты, «Область» уезжала вбок
+   (окно было 500px при таблице от 680px). Окно расширено в
+   StaffEditUserDialog.vue до 960 — здесь чиним саму таблицу: ячейки
+   выровнены по верху (а не по центру, из-за чего при разном числе действий
+   в области строка "плавала"), подпись права переносится обычным текстом
+   по словам, а не по буквам. */
+.permissions-table :deep(td),
+.permissions-table :deep(th) {
+  vertical-align: top;
+}
+.perm-area-cell {
+  white-space: normal;
+  word-break: normal;
+  padding-top: 14px !important;
+}
+.perm-cell {
+  white-space: normal;
+}
+.permissions-table :deep(.v-label) {
+  white-space: normal;
+  word-break: normal;
+  line-height: 1.3;
+}
+.permissions-table :deep(.v-selection-control) {
+  align-items: flex-start;
+}
+.permissions-table :deep(.v-selection-control__wrapper) {
+  margin-top: 1px;
+}
+</style>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'

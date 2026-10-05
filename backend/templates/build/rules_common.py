@@ -334,7 +334,7 @@ def _make_rules():
             r"№\s+\S+\s+от\s+\S+\s+г\.",
             S,
         ),
-        "заключенного с {{ subsidy_ministry_name }} "
+        "заключенного с {{ subsidy_ministry_name or '____________________' }} "
         "№ {{ subsidy_agreement_number }} от {{ subsidy_agreement_date }} г.",
     ))
 
@@ -347,7 +347,7 @@ def _make_rules():
             r"№\s+\S+\s+от\s+\S+\s+г\.",
             S,
         ),
-        "заключенного между ВСКС и {{ subsidy_ministry_name }} "
+        "заключенного между {{ customer_short_name }} и {{ subsidy_ministry_name or '____________________' }} "
         "№ {{ subsidy_agreement_number }} от {{ subsidy_agreement_date }} г.",
     ))
 
@@ -358,7 +358,7 @@ def _make_rules():
             r"предоставившим субсидию \(Министерств\w+[\s\S]{1,80}?Российской Федерации\),",
             S,
         ),
-        "предоставившим субсидию ({{ subsidy_ministry_name }}),",
+        "предоставившим субсидию ({{ subsidy_ministry_name or '____________________' }}),",
     ))
 
     # п.4.6: «В случае уменьшения Министерству труда ... как получателю»
@@ -368,7 +368,7 @@ def _make_rules():
             r"В случае уменьшения Министерств\w+[\s\S]{1,80}?Российской Федерации\s+как получателю",
             S,
         ),
-        "В случае уменьшения {{ subsidy_ministry_name }} как получателю",
+        "В случае уменьшения {{ subsidy_ministry_name or '____________________' }} как получателю",
     ))
 
     # Методика: «Соглашения заключенного с Министерством труда ... Российской Федерации.»
@@ -378,7 +378,7 @@ def _make_rules():
             r"Соглашения заключенного с Министерств\w+[\s\S]{1,80}?Российской Федерации\.",
             S,
         ),
-        "Соглашения заключенного с {{ subsidy_ministry_name }}.",
+        "Соглашения заключенного с {{ subsidy_ministry_name or '____________________' }}.",
     ))
 
     # R7 ФАДМ — gph/repair_vehicle: «заключенного между ВСКС и Федеральным агентством
@@ -392,7 +392,7 @@ def _make_rules():
             r"№\s+\S+\s+от\s+\S+\s+г\.",
             S,
         ),
-        "заключенного между ВСКС и {{ subsidy_grantor_name }} "
+        "заключенного между {{ customer_short_name }} и {{ subsidy_grantor_name or '____________________' }} "
         "№ {{ subsidy_agreement_number }} от {{ subsidy_agreement_date }} г.",
     ))
 
@@ -403,7 +403,7 @@ def _make_rules():
             r"предоставившим субсидию \(Федеральным агентством по делам молодежи\),",
             S,
         ),
-        "предоставившим субсидию ({{ subsidy_grantor_name }}),",
+        "предоставившим субсидию ({{ subsidy_grantor_name or '____________________' }}),",
     ))
 
     # R7 repair_framework — региональный бюджет:
@@ -420,9 +420,9 @@ def _make_rules():
             S,
         ),
         "Соглашения № {{ subsidy_agreement_number }} о предоставлении субсидии "
-        "из бюджета {{ subsidy_grantor_name }} в {{ contract_date_year }} году "
+        "из бюджета {{ subsidy_grantor_name or '____________________' }} в {{ contract_date_year }} году "
         "от {{ subsidy_agreement_date }}, "
-        "заключенного между {{ customer_full_name }} и {{ subsidy_ministry_name }}.",
+        "заключенного между {{ customer_full_name }} и {{ subsidy_ministry_name or '____________________' }}.",
     ))
 
     # ── 6. РЕКВИЗИТЫ ЗАКАЗЧИКА — раздел «Адреса и реквизиты» ─────────────
@@ -865,7 +865,7 @@ def _make_rules():
             r"(в течение)\s+_+\s+\(_+\)\s+(рабочих дней с даты принятия решения Покупателя)",
             S,
         ),
-        r"\g<1> {{ payment_term_days }} ({{ payment_term_days }}) \g<2>",
+        r"\g<1> {{ payment_term_days or '____' }} ({{ payment_term_days_words or '____' }}) \g<2>",
     ))
 
     # «в течение ____ (_____) рабочих дней с момента заключения настоящего Договора» (предоплата)
@@ -875,7 +875,7 @@ def _make_rules():
             r"(в течение)\s+_+\s+\(_+\)\s+(рабочих дней с момента заключения настоящего Договора,\s+при условии получения)",
             S,
         ),
-        r"\g<1> {{ payment_term_days }} ({{ payment_term_days }}) \g<2>",
+        r"\g<1> {{ payment_term_days or '____' }} ({{ payment_term_days_words or '____' }}) \g<2>",
     ))
 
     # ── 15. GOODS: срок поставки / выборки / приёмки ───────────────────────
@@ -888,7 +888,7 @@ def _make_rules():
             S,
         ),
         "{%- if delivery_date %}в срок до {{ delivery_date }} г."
-        "{%- else %}в течение {{ service_term_days }} ({{ service_term_days }}) календарных дней с момента заключения{%- endif %}",
+        "{%- else %}в течение {{ service_term_days or '____' }} ({{ service_term_days_words or '____' }}) календарных дней с момента заключения{%- endif %}",
     ))
 
     # Выборка — адрес Поставщика
@@ -908,7 +908,7 @@ def _make_rules():
             r"(обеспечить выборку товара получателем в течение)\s+_+\s+\(_+\)\s+(рабочих дней с момента получения от Поставщика уведомления)",
             S,
         ),
-        r"\g<1> {{ acceptance_term_days }} ({{ acceptance_term_days }}) \g<2>",
+        r"\g<1> {{ acceptance_term_days or '____' }} ({{ acceptance_term_days_words or '____' }}) \g<2>",
     ))
 
     # Доставка — адрес Покупателя
@@ -928,7 +928,7 @@ def _make_rules():
             r"(Приемка товара осуществляется Покупателем в течение)\s+_+\s+\(_+\)\s+(рабочих дней после получения им от Поставщика)",
             S,
         ),
-        r"\g<1> {{ acceptance_term_days }} ({{ acceptance_term_days }}) \g<2>",
+        r"\g<1> {{ acceptance_term_days or '____' }} ({{ acceptance_term_days_words or '____' }}) \g<2>",
     ))
 
     # ── 16. GOODS: пени и штрафы (penalty_rate) ────────────────────────────

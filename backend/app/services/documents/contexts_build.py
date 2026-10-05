@@ -24,6 +24,7 @@ from app.services.documents.contexts import (
 )
 from app.services.documents.morphology import _inflect_phrase_genitive
 from app.services.documents.stages_amounts import resolve_vat_exemption_article
+from app.services.documents.contexts_extra import contractor_org_type_for_docs
 
 
 def build_base_context_part1(
@@ -186,8 +187,9 @@ async def build_base_context_part2(
         "contract_date_day":   cd_day,
         "contract_date_month": cd_month,
         "contract_date_year":  cd_year,
-        # Тип контрагента
-        "contractor_org_type": (c.org_type or "") if c else "",
+        # Тип контрагента — единый расчёт (ПРАВИЛО №6), см.
+        # contexts_extra.contractor_org_type_for_docs.
+        "contractor_org_type": contractor_org_type_for_docs(c),
         # Phase 27.2-08: краткое название = поле "Краткое наименование *" из карточки контрагента
         # напрямую (Contractor.name), без вытаскивания из кавычек.
         "contractor_short_name": (c.name or "") if c else "",

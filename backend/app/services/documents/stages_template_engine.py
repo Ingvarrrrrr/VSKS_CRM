@@ -4,6 +4,7 @@ and the two InlineImage-producing helpers (product photo / base64 signature).
 Split out of app/routers/documents.py::generate_document (wave 3f refactor).
 """
 import logging
+from io import BytesIO
 
 from fastapi import HTTPException
 from docxtpl import DocxTemplate
@@ -12,18 +13,32 @@ logger = logging.getLogger(__name__)
 
 
 def build_docx_template(template_path: str, pid: int, doc_type: str) -> DocxTemplate:
-    """Load DocxTemplate, lazily normalizing legacy-uploaded templates first."""
+    """Load DocxTemplate, lazily normalizing legacy-uploaded templates first.
+
+    ВАЖНО: генерация НИКОГДА не пишет в template_path (доказанный дефект —
+    рендер стирал комментарии-подсказки прямо из файла шаблона на диске,
+    как у глобальных шаблонов backend/templates/*.docx, так и навсегда у
+    /app/uploads/templates/subsidies/<id>/*.docx). Normalize-при-загрузке
+    живёт в app.routers.subsidy_templates и пишет на диск там осознанно
+    (явные upload/admin-эндпоинты). Здесь — работа с копией в памяти:
+    файл читается один раз в bytes, при необходимости нормализуется через
+    чистую _normalize_docx_bytes (без I/O), DocxTemplate строится из
+    BytesIO. Физический файл шаблона не открывается на запись никогда.
+    """
     try:
-        # Templates are normalized at upload time (subsidies.py
-        # _normalize_docx_template). For files uploaded BEFORE that fix
-        # landed we lazily rewrite them on first render: scan + replace +
-        # atomic rename, so subsequent renders hit the fast path with no
-        # extra IO and InlineImage placeholders sit in a single contiguous
-        # run (required for the drawing element to be inserted).
+        with open(template_path, 'rb') as _f:
+            _data = _f.read()
+
+        # Templates are normalized at upload time (subsidy_templates.py
+        # _normalize_docx_template, which writes to disk there). For files
+        # uploaded BEFORE that fix landed we lazily normalize the in-memory
+        # copy on render: scan + replace, so InlineImage placeholders sit in
+        # a single contiguous run (required for the drawing element to be
+        # inserted) — the template file on disk is left untouched.
         try:
             import zipfile as _zf
             needs_norm = False
-            with _zf.ZipFile(template_path, 'r') as _zin:
+            with _zf.ZipFile(BytesIO(_data), 'r') as _zin:
                 for _name in _zin.namelist():
                     if _name == 'word/document.xml' or _name.startswith('word/header') or _name.startswith('word/footer'):
                         _bytes = _zin.read(_name)
@@ -31,13 +46,13 @@ def build_docx_template(template_path: str, pid: int, doc_type: str) -> DocxTemp
                             needs_norm = True
                             break
             if needs_norm:
-                from app.routers.subsidies import _normalize_docx_template as _norm
-                _stats = _norm(template_path)
-                logger.info("lazy normalize on render %s: %s", template_path, _stats)
+                from app.routers.subsidy_templates import _normalize_docx_bytes as _norm_bytes
+                _data, _stats = _norm_bytes(_data)
+                logger.info("lazy normalize on render (in-memory, template file untouched) %s: %s", template_path, _stats)
         except Exception as _scan_e:
             logger.warning("lazy normalize scan failed for %s: %s", template_path, _scan_e)
 
-        tpl = DocxTemplate(template_path)
+        tpl = DocxTemplate(BytesIO(_data))
     except HTTPException:
         raise
     except Exception as e:

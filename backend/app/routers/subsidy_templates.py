@@ -115,8 +115,10 @@ async def list_subsidy_templates(
     return result
 
 
-def _normalize_docx_template(path: str) -> dict:
-    """Strip Word-internal markers that split jinja-placeholders across runs.
+def _normalize_docx_bytes(data: bytes) -> tuple[bytes, dict]:
+    """Pure, in-memory transform: strip Word-internal markers that split
+    jinja-placeholders across runs. No disk I/O — takes the raw .docx bytes
+    of a zip package and returns (cleaned_bytes, stats).
 
     Word inserts <w:proofErr/>, bookmarks, comments, lastRenderedPageBreak
     between runs inside `{{ var }}` / `{% ... %}` blocks during user editing.
@@ -124,16 +126,18 @@ def _normalize_docx_template(path: str) -> dict:
     MUST be inside a single contiguous run — otherwise the drawing element
     is silently dropped.
 
-    Touches ONLY xml files where jinja syntax may live (document/header/
+    Touches ONLY xml parts where jinja syntax may live (document/header/
     footer/footnotes/endnotes). Avoiding [Content_Types].xml and *.rels —
     rewriting those breaks the package and was the root cause of the
     Phase 26-VV revert.
 
-    Writes the cleaned bytes through a tempfile + atomic replace so the
-    on-disk file stays valid even if a write is interrupted.
+    This is the single place the strip logic lives (Правило №6) — both the
+    disk-writing wrapper below (explicit upload/admin normalize endpoints)
+    and the render-time lazy normalize (stages_template_engine.py, which
+    must NEVER write back to the template file on disk) call this.
     """
+    import io as _io
     import zipfile as _zipfile
-    import tempfile as _tempfile
 
     JINJA_BEARING = ('word/document.xml',)
     JINJA_BEARING_PREFIXES = ('word/header', 'word/footer')
@@ -145,36 +149,65 @@ def _normalize_docx_template(path: str) -> dict:
         return any(name.startswith(p) and name.endswith('.xml') for p in JINJA_BEARING_PREFIXES)
 
     stats = {"proofErr": 0, "bookmark": 0, "comment": 0, "pageBreak": 0}
+    out_buf = _io.BytesIO()
+    with _zipfile.ZipFile(_io.BytesIO(data), 'r') as zin:
+        with _zipfile.ZipFile(out_buf, 'w', _zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                part = zin.read(item.filename)
+                if _is_jinja_bearing(item.filename):
+                    xml = part.decode('utf-8', errors='replace')
+                    before_proof = xml.count('<w:proofErr')
+                    xml = re.sub(r'<w:proofErr\s[^/]*?/>', '', xml)
+                    stats["proofErr"] += before_proof - xml.count('<w:proofErr')
+
+                    before_bm = xml.count('<w:bookmark')
+                    xml = re.sub(r'<w:bookmarkStart\s[^/]*?/>', '', xml)
+                    xml = re.sub(r'<w:bookmarkEnd\s[^/]*?/>', '', xml)
+                    stats["bookmark"] += before_bm - xml.count('<w:bookmark')
+
+                    before_cm = xml.count('<w:comment')
+                    xml = re.sub(r'<w:commentRangeStart\s[^/]*?/>', '', xml)
+                    xml = re.sub(r'<w:commentRangeEnd\s[^/]*?/>', '', xml)
+                    xml = re.sub(r'<w:commentReference\s[^/]*?/>', '', xml)
+                    stats["comment"] += before_cm - xml.count('<w:comment')
+
+                    before_pb = xml.count('<w:lastRenderedPageBreak')
+                    xml = re.sub(r'<w:lastRenderedPageBreak\s*/>', '', xml)
+                    stats["pageBreak"] += before_pb - xml.count('<w:lastRenderedPageBreak')
+
+                    part = xml.encode('utf-8')
+                zout.writestr(item, part)
+    return out_buf.getvalue(), stats
+
+
+def _normalize_docx_template(path: str) -> dict:
+    """Disk-writing wrapper around `_normalize_docx_bytes`.
+
+    ⚠️ Используется ТОЛЬКО `normalize_all_existing_templates` ниже — явный
+    админский bulk-эндпоинт, вызываемый сознательно и предупреждающий, что
+    он СТИРАЕТ подсказки (Word-комментарии) из файлов на диске безвозвратно.
+
+    upload_subsidy_template / upload_global_template НЕ вызывают эту
+    функцию (фикс 2026-10-06): организация загружает свой шаблон со своими
+    комментариями-подсказками — он должен остаться на диске ровно таким,
+    каким загружен. Нормализация для рендера происходит лениво, в памяти,
+    при каждой генерации (см. stages_template_engine.py::build_docx_template,
+    использует `_normalize_docx_bytes` прямо на in-memory копии).
+
+    Writes the cleaned bytes through a tempfile + atomic replace so the
+    on-disk file stays valid even if a write is interrupted.
+    """
+    import tempfile as _tempfile
+
     tmp_fd, tmp_path = _tempfile.mkstemp(suffix=".docx", dir=os.path.dirname(path) or None)
     os.close(tmp_fd)
+    stats = {"proofErr": 0, "bookmark": 0, "comment": 0, "pageBreak": 0}
     try:
-        with _zipfile.ZipFile(path, 'r') as zin:
-            with _zipfile.ZipFile(tmp_path, 'w', _zipfile.ZIP_DEFLATED) as zout:
-                for item in zin.infolist():
-                    data = zin.read(item.filename)
-                    if _is_jinja_bearing(item.filename):
-                        xml = data.decode('utf-8', errors='replace')
-                        before_proof = xml.count('<w:proofErr')
-                        xml = re.sub(r'<w:proofErr\s[^/]*?/>', '', xml)
-                        stats["proofErr"] += before_proof - xml.count('<w:proofErr')
-
-                        before_bm = xml.count('<w:bookmark')
-                        xml = re.sub(r'<w:bookmarkStart\s[^/]*?/>', '', xml)
-                        xml = re.sub(r'<w:bookmarkEnd\s[^/]*?/>', '', xml)
-                        stats["bookmark"] += before_bm - xml.count('<w:bookmark')
-
-                        before_cm = xml.count('<w:comment')
-                        xml = re.sub(r'<w:commentRangeStart\s[^/]*?/>', '', xml)
-                        xml = re.sub(r'<w:commentRangeEnd\s[^/]*?/>', '', xml)
-                        xml = re.sub(r'<w:commentReference\s[^/]*?/>', '', xml)
-                        stats["comment"] += before_cm - xml.count('<w:comment')
-
-                        before_pb = xml.count('<w:lastRenderedPageBreak')
-                        xml = re.sub(r'<w:lastRenderedPageBreak\s*/>', '', xml)
-                        stats["pageBreak"] += before_pb - xml.count('<w:lastRenderedPageBreak')
-
-                        data = xml.encode('utf-8')
-                    zout.writestr(item, data)
+        with open(path, 'rb') as f:
+            data = f.read()
+        cleaned, stats = _normalize_docx_bytes(data)
+        with open(tmp_path, 'wb') as f:
+            f.write(cleaned)
         os.replace(tmp_path, path)
         logger.info("docx normalize %s: %s", path, stats)
     except Exception as e:
@@ -185,6 +218,48 @@ def _normalize_docx_template(path: str) -> dict:
             except OSError:
                 pass
     return stats
+
+
+def _peek_normalize_stats(path: str) -> dict:
+    """Informational-only: сколько маркеров (proofErr/bookmark/comment/
+    pageBreak) `_normalize_docx_bytes` бы вычистил — НЕ применяет изменения
+    к файлу на диске. Используется upload-эндпоинтами, чтобы вернуть в
+    ответе прежнее поле `normalized` без мутации загруженного шаблона."""
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        _cleaned, stats = _normalize_docx_bytes(data)
+        return stats
+    except Exception as e:
+        logger.warning("docx normalize peek failed for %s: %s", path, e)
+        return {"proofErr": 0, "bookmark": 0, "comment": 0, "pageBreak": 0}
+
+
+def _validate_renders_in_memory(path: str, doc_type: str) -> None:
+    """Trial-render check for upload endpoints: builds a DocxTemplate from
+    a normalized IN-MEMORY copy of `path` (never writes back) and renders
+    with an empty context. Raises HTTPException(400) and deletes `path` on
+    failure — same behavior as before, just without mutating the uploaded
+    file to get there (normalization that used to happen on disk now runs
+    only on the throwaway copy used for this check)."""
+    if DocxTemplate is None:
+        return
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        normalized, _stats = _normalize_docx_bytes(data)
+        from io import BytesIO as _BytesIO
+        tpl = DocxTemplate(_BytesIO(normalized))
+        tpl.render({})
+    except Exception as e:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=400,
+            detail=f"Шаблон некорректен: {type(e).__name__}: {str(e)[:200]}"
+        )
 
 
 def _repair_docx_template(path: str) -> list[str]:
@@ -315,23 +390,20 @@ async def upload_subsidy_template(
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    norm_stats = _normalize_docx_template(dest)
+    # НЕ нормализуем файл на диске — организация загружает свой шаблон со
+    # своими комментариями-подсказками, он должен остаться на диске ровно
+    # таким, каким загружен (тот же дефект, что был в генерации — см.
+    # stages_template_engine.py). Нормализация при необходимости происходит
+    # лениво, в памяти, на каждом рендере (build_docx_template). Здесь —
+    # только диагностическая оценка (informational, не применяется к файлу).
+    norm_stats = _peek_normalize_stats(dest)
     repairs = _repair_docx_template(dest)
 
-    # Trial render: validate docxtpl syntax before confirming upload
-    if DocxTemplate is not None:
-        try:
-            tpl = DocxTemplate(dest)
-            tpl.render({})
-        except Exception as e:
-            try:
-                os.remove(dest)
-            except OSError:
-                pass
-            raise HTTPException(
-                status_code=400,
-                detail=f"Шаблон некорректен: {type(e).__name__}: {str(e)[:200]}"
-            )
+    # Trial render: validate docxtpl syntax before confirming upload — на
+    # НОРМАЛИЗОВАННОЙ IN-MEMORY копии (нормализация могла быть нужна, чтобы
+    # шаблон вообще собрался корректно для InlineImage), файл на диске не
+    # трогаем.
+    _validate_renders_in_memory(dest, doc_type)
 
     return {
         "ok": True,
@@ -407,23 +479,14 @@ async def upload_global_template(
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    norm_stats = _normalize_docx_template(dest)
+    # НЕ нормализуем на диске — та же причина, что в upload_subsidy_template
+    # выше: загруженный глобальный шаблон должен сохранить свои комментарии-
+    # подсказки на диске ровно как загружен.
+    norm_stats = _peek_normalize_stats(dest)
     repairs = _repair_docx_template(dest)
 
-    # Trial render: validate docxtpl syntax before confirming upload
-    if DocxTemplate is not None:
-        try:
-            tpl = DocxTemplate(dest)
-            tpl.render({})
-        except Exception as e:
-            try:
-                os.remove(dest)
-            except OSError:
-                pass
-            raise HTTPException(
-                status_code=400,
-                detail=f"Шаблон некорректен: {type(e).__name__}: {str(e)[:200]}"
-            )
+    # Trial render на нормализованной IN-MEMORY копии — файл на диске не трогаем.
+    _validate_renders_in_memory(dest, doc_type)
 
     return {"ok": True, "doc_type": doc_type, "repairs": repairs, "normalized": norm_stats}
 
@@ -436,6 +499,14 @@ async def normalize_all_existing_templates(
 
     Walks SUBSIDY_TEMPLATES_BASE and TEMPLATES_BASE, strips Word-internal
     markers from each file. Idempotent — safe to call multiple times.
+
+    ⚠️ ОСОЗНАННО РАЗРУШИТЕЛЬНО: вместе с proofErr/bookmark/pageBreak-маркерами
+    безвозвратно СТИРАЕТ Word-комментарии (подсказки к полям) из КАЖДОГО
+    затронутого файла на диске — ровно то, что раньше происходило случайно,
+    на каждом рендере (см. _normalize_docx_template выше). Вызывать только
+    сознательно, понимая, что подсказки пользователей после этого исчезнут.
+    Обычная генерация и upload-эндпоинты нормализацию на диск больше не
+    делают — она им не нужна (in-memory на рендере / peek-only на upload).
     """
     processed = []
     errors = []

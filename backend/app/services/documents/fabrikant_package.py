@@ -48,6 +48,12 @@ from .docx_post import _strip_tech_spec_legend
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
 from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
 from app.services.purchase_economy import purchase_economy_one as _purchase_economy_one_fn
+from .contractor_override import load_contractor_override, merge_contractor_override
+from .contexts_extra import (
+    add_prepayment_context,
+    add_day_words_context,
+    contractor_org_type_for_docs,
+)
 
 import logging
 
@@ -285,6 +291,11 @@ async def render_fabrikant_package_files(
         "Устава",
     )
     c = p.contractor
+    # Владелец (05.10.2026, план «Шаблоны договоров», п.5): правка реквизитов
+    # исполнителя на уровне субсидии перекрывает карточку контрагента — тот
+    # же единственный источник, что и в generate.py (ПРАВИЛО №6).
+    _contractor_override_z = await load_contractor_override(db, p.subsidy_id, p.contractor_id)
+    c = merge_contractor_override(c, _contractor_override_z)
     ctr_sig_z = _signatory_split(
         c.signatory if c else "",
         last=getattr(c, 'signatory_last_name', None) if c else None,
@@ -518,6 +529,9 @@ async def render_fabrikant_package_files(
         "procurement_order_number": (p.procurement_order_number or "").strip(),
     }
     context.update(ci_ctx_z)
+    # is_prepayment/prepayment_date — единый расчёт, см. ПРАВИЛО №6 выше.
+    add_prepayment_context(context, p)
+    add_day_words_context(context, p)
     context["initiator_name_gen"] = ""
     context["initiator_position_gen"] = ""
     context["responsible_name_gen"] = _to_gen_fio(resolved_responsible)
@@ -530,7 +544,8 @@ async def render_fabrikant_package_files(
         else ((c.signatory or "") if c else "")
     )
     context["contractor_bank_details"] = (c.bank_name or "") if c else ""
-    context["contractor_org_type"] = (c.org_type or "") if c else ""
+    # Единый расчёт (ПРАВИЛО №6), см. contexts_extra.contractor_org_type_for_docs.
+    context["contractor_org_type"] = contractor_org_type_for_docs(c)
 
     # ── Which templates to render ─────────────────────────────────────────────
     # tech_spec_request with fallback to contract_tz — резолюция ЧЕРЕЗ единый

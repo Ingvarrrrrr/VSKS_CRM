@@ -25,7 +25,11 @@ import zipfile
 
 from docx import Document
 
-from backend.templates.build.comments_ru import COND_COMMENTS, VAR_COMMENTS
+from backend.templates.build.comments_ru import (
+    BLANK_COMMENTS,
+    COND_COMMENTS,
+    VAR_COMMENTS,
+)
 
 _AUTHOR = "Подсказка"
 _INITIALS = "П"
@@ -87,6 +91,19 @@ def _iter_all_paragraphs(doc: Document):
         yield from _walk_table(tbl)
 
 
+def _all_runs(p) -> list:
+    """paragraph.runs из python-docx возвращает только runs — прямые дети
+    <w:p> и пропускает runs ВНУТРИ <w:hyperlink> (известное ограничение
+    python-docx) — из-за этого теги в гиперссылках (встречается в
+    repair_framework — ссылка «ЗАЯВКА №{{ repair_request_number }}»)
+    оставались без подсказки молча (не попадали даже в uncovered). Берём
+    runs напрямую из XML-дерева абзаца — это ловит и вложенные в
+    hyperlink."""
+    from docx.oxml.ns import qn
+    from docx.text.run import Run
+    return [Run(r, p) for r in p._p.findall(".//" + qn("w:r"))]
+
+
 def apply_comments(doc: Document) -> tuple[int, list[str]]:
     """Проходит все абзацы/ячейки документа, вешает комментарии на теги.
 
@@ -98,10 +115,28 @@ def apply_comments(doc: Document) -> tuple[int, list[str]]:
     uncovered: list[str] = []
 
     for p in _iter_all_paragraphs(doc):
-        runs = p.runs
+        runs = _all_runs(p)
         if not runs:
             continue
         text = "".join(r.text or "" for r in runs)
+
+        # Подсказки на голых прочерках-бланках (не {{ }}/{% %} — поля,
+        # которые организация заполняет вручную в своём экземпляре
+        # шаблона, см. rules_order.py O17).
+        for anchor, comment_text in BLANK_COMMENTS.items():
+            start = text.find(anchor)
+            if start == -1:
+                continue
+            end = start + len(anchor)
+            span_runs = _runs_for_span(runs, start, end)
+            if not span_runs:
+                continue
+            comment = doc.add_comment(
+                span_runs, text=comment_text, author=_AUTHOR, initials=_INITIALS
+            )
+            comment._comment_elm.date = _FIXED_COMMENT_DATE
+            n_comments += 1
+
         if "{{" not in text and "{%" not in text:
             continue
 

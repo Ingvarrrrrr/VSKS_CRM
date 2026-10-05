@@ -20,6 +20,20 @@ from backend.templates.build.sources import SOURCES
 from backend.templates.build import docxedit
 from backend.templates.build import rules_order
 from backend.templates.build import rules_comments
+from backend.templates.build.rules_customer import (
+    apply_customer_rules,
+    apply_customer_cross_paragraph_rules,
+)
+from backend.templates.build.rules_contractor import (
+    apply_contractor_rules,
+    apply_framework_dual_requisites,
+    apply_contractor_inn_ogrn_wrap,
+)
+from backend.templates.build.rules_payment import (
+    apply_payment_prepayment_wrap,
+    apply_services_delivery_rules,
+)
+from backend.templates.build.rules_methodology import apply_methodology_rules
 from backend.templates.build.rules_common import (
     RULES as COMMON_RULES,
     apply_common_rules,
@@ -82,10 +96,17 @@ def _build_methodology(
     out_dir: pathlib.Path,
 ) -> pathlib.Path:
     """
-    Методички — справочный текст, не бланк. Никаких normalize()/rules:
-    просто отрезаем от w:body всё, что идёт ДО абзаца-заголовка
-    «МЕТОДИЧЕСКИЕ РЕКОМЕНДАЦИИ», сам заголовок и всё после — не трогаем.
+    Методички — справочный текст, не бланк. Отрезаем от w:body всё, что
+    идёт ДО абзаца-заголовка «МЕТОДИЧЕСКИЕ РЕКОМЕНДАЦИИ» (сам заголовок и
+    всё после — остаётся). Правила R1-R6/T4/подсказки — НЕ применяются
+    (методичка не бланк для заполнения). Ревью 2026-10-05: методичка
+    приклеивается к готовому договору «как есть» (docxcompose, без Jinja),
+    поэтому реальные реквизиты ВСКС внутри неё нейтрализуются на обычный
+    текст «Заказчик» через rules_methodology.py (не {{ customer_* }} —
+    тег без рендера остался бы тегом в документе для контрагента).
+    normalize() нужен для надёжного regex-поиска по склеенным ранам.
     """
+    docxedit.normalize(root)
     ns = {"w": W}
     body = root.find("w:body", ns)
     if body is None:
@@ -117,12 +138,17 @@ def _build_methodology(
             f"элементом w:body после отсечения"
         )
 
+    meth_counts: dict[str, int] = {}
+    apply_methodology_rules(root, meth_counts)
+
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{doc_type}.docx"
     docxedit.save(zip_bytes, root, str(out_path))
 
     n_paras = _count_paras(root)
-    print(f"  {doc_type}: абзацев={n_paras} (методичка, без normalize/правил)")
+    print(f"  {doc_type}: абзацев={n_paras} (методичка)")
+    for rid, n in meth_counts.items():
+        print(f"    {rid}: {n}")
 
     return out_path
 
@@ -380,6 +406,11 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
     ns = {"w": W}
     paragraphs = root.findall(".//w:p", ns)
 
+    # CUST: случаи, где литерал ВСКС — отдельный абзац целиком (подпись
+    # «Заказчик»/«ВСКС» на разных строках, ЕКС-номер отдельной строкой у
+    # ГПХ) — до R3/C-правил, т.к. не зависит от порядка остальных замен.
+    apply_customer_cross_paragraph_rules(paragraphs, counts)
+
     # R3 должен сработать ДО правил C08/C09 (они заменяют текст ЮЛ/ИП).
     # После вставки {%p if/else/endif %} список paragraphs устарел —
     # пересобираем его заново для apply_common_rules.
@@ -391,6 +422,21 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
     # Применяем общие правила к каждому абзацу (inline-замены, включая R1/R2)
     for p in paragraphs:
         apply_common_rules(p, counts)
+        apply_customer_rules(p, counts)
+        apply_contractor_rules(doc_type, p, counts)
+        apply_services_delivery_rules(doc_type, p, counts)
+
+    # repair_framework: два одинаковых по тексту блока реквизитов (Заказчик
+    #/Исполнитель) — требуют знания позиции соседних абзацев, generic-проход
+    # выше их сознательно пропускает (см. docstring в rules_contractor.py).
+    if doc_type == "contract_repair_framework":
+        paragraphs = root.findall(".//w:p", ns)
+        apply_framework_dual_requisites(paragraphs, counts)
+    else:
+        # ИНН/КПП + ОГРН + ИНН + ОГРНИП — четыре абзаца подряд, оборачиваем
+        # в if/else по contractor_org_type (см. docstring в rules_contractor.py).
+        paragraphs = root.findall(".//w:p", ns)
+        apply_contractor_inn_ogrn_wrap(paragraphs, counts)
 
     # Пересобираем список после inline-замен
     paragraphs = root.findall(".//w:p", ns)
@@ -406,6 +452,11 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
     if doc_type == "contract_goods_single":
         paragraphs = root.findall(".//w:p", ns)
         apply_r4_delivery_wrap(paragraphs, counts)
+
+    # PAY: предоплата/постоплата по переключателю is_prepayment
+    # (goods_single/services/services_food/repair_framework)
+    paragraphs = root.findall(".//w:p", ns)
+    apply_payment_prepayment_wrap(doc_type, paragraphs, counts)
 
     # R6: ретроактивность — абзацный тег вокруг п. 425
     paragraphs = root.findall(".//w:p", ns)
@@ -481,6 +532,45 @@ def build_all(doc_types: list[str], out_dir: pathlib.Path) -> dict[str, pathlib.
     return results
 
 
+def _check_offbuild(install_dir: pathlib.Path) -> bool:
+    """
+    contract.docx/contract_tz.docx/tech_spec_request.docx/tech_spec_contract.docx
+    — вне SOURCES, их не пересобрать из первоисточника. Проверка: берём
+    committed-файлы, прогоняем КОПИИ через полный patch_offbuild.patch_all
+    (контент-правила ВСКС + навеска подсказок), сравниваем sha256 с
+    committed. Расхождение значит, что кто-то вручную вернул литерал ВСКС
+    или подсказки разошлись с comments_ru.py.
+    """
+    import shutil
+    from backend.templates.build import patch_offbuild
+
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = pathlib.Path(tmp)
+        for name in patch_offbuild.COMMENTED_FILES:
+            committed = install_dir / name
+            if not committed.exists():
+                continue
+            copy_path = tmp_path / name
+            shutil.copy2(committed, copy_path)
+
+        patch_offbuild.patch_all(tmp_path)
+
+        for name in patch_offbuild.COMMENTED_FILES:
+            committed = install_dir / name
+            copy_path = tmp_path / name
+            if not committed.exists() or not copy_path.exists():
+                continue
+            h_built = _sha256(copy_path)
+            h_comm = _sha256(committed)
+            if h_built == h_comm:
+                print(f"  {name} (off-build): OK (идентично)")
+            else:
+                print(f"  {name} (off-build): РАСХОЖДЕНИЕ — литерал ВСКС или подсказки разошлись")
+                ok = False
+    return ok
+
+
 def check_mode(doc_types: list[str]) -> bool:
     install_dir = _TEMPLATES_DIR
     ok = True
@@ -505,6 +595,9 @@ def check_mode(doc_types: list[str]) -> bool:
                 print(f"    committed: {h_comm}")
                 print(f"    rebuilt:   {h_built}")
                 ok = False
+
+    if not _check_offbuild(install_dir):
+        ok = False
     return ok
 
 
@@ -530,7 +623,22 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    doc_types = [args.only] if args.only else list(SOURCES.keys())
+    # contract_services_large/contract_services_small — мёртвые как
+    # САМОСТОЯТЕЛЬНЫЕ выходные файлы (doc_types.py резолвит одноимённые
+    # doc_type-алиасы в contract_services.docx, не в эти файлы, см.
+    # DOC_TYPES в app/services/documents/doc_types.py). Ключи в SOURCES
+    # остаются — на них ссылаются contract_services/methodology_large/
+    # methodology_small (SOURCES["..."] = SOURCES["contract_services_large"]
+    # и т.п.) — но сами файлы *.docx больше не нужны на диске, поэтому
+    # исключаем их из набора по умолчанию (--only всё же их собрать может,
+    # для разовой проверки источника).
+    _DEAD_STANDALONE_BUILD_TARGETS = frozenset({
+        "contract_services_large", "contract_services_small",
+    })
+    doc_types = (
+        [args.only] if args.only
+        else [dt for dt in SOURCES.keys() if dt not in _DEAD_STANDALONE_BUILD_TARGETS]
+    )
 
     if args.check:
         print("=== РЕЖИМ ПРОВЕРКИ ===")
@@ -549,6 +657,18 @@ def main() -> None:
 
     results = build_all(doc_types, out_dir)
     print(f"\nСобрано: {len(results)}/{len(doc_types)} файлов")
+
+    if args.install:
+        from backend.templates.build import patch_offbuild
+        offbuild_counts = patch_offbuild.patch_all(out_dir)
+        for name, counts in offbuild_counts.items():
+            uncovered = counts.get("uncovered") or []
+            n_comments = counts.get("comments")
+            print(f"  {name} (off-build, вне SOURCES): {counts}")
+            if n_comments is not None:
+                print(f"    комментариев Word повешено: {n_comments}")
+            for raw in uncovered:
+                print(f"    WARN тег без пояснения в comments_ru.py: {raw}")
 
 
 if __name__ == "__main__":

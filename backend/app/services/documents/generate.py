@@ -55,6 +55,12 @@ from app.services.documents.contexts_extra import (
     add_fabrikant_context,
     add_misc_purchase_context,
     add_contractor_signatory_context,
+    add_prepayment_context,
+    add_day_words_context,
+)
+from app.services.documents.contractor_override import (
+    load_contractor_override,
+    merge_contractor_override,
 )
 from app.services.documents.stages_receipts import build_contract_items_and_receipts_context
 from app.services.documents.stages_render import render_template
@@ -120,6 +126,11 @@ async def generate_document_bytes(
     )
 
     c = p.contractor
+    # Владелец (05.10.2026, план «Шаблоны договоров», п.5): правка реквизитов
+    # исполнителя на уровне субсидии (SubsidyContractorOverride) перекрывает
+    # карточку контрагента в документе — не мутирует ORM Contractor.
+    _contractor_override = await load_contractor_override(db, p.subsidy_id, p.contractor_id)
+    c = merge_contractor_override(c, _contractor_override)
     cd_day, cd_month, cd_year = contract_date_parts(p)
 
     # Amounts / VAT (preserved UnboundLocalError('art') bug — see module docstring).
@@ -151,6 +162,8 @@ async def generate_document_bytes(
     await add_fabrikant_context(context, db, p)
     add_misc_purchase_context(context, p, subsidy)
     add_contractor_signatory_context(context, c)
+    add_prepayment_context(context, p)
+    add_day_words_context(context, p)
 
     # Contract-items context + advance-report receipts (own try/except → 500).
     receipt_png_paths = await build_contract_items_and_receipts_context(context, p, db, tpl, pid, doc_type)

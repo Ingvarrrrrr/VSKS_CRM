@@ -231,6 +231,79 @@ def add_misc_purchase_context(context: dict, p: Purchase, subsidy) -> None:
         context["applications_review_date"] = ""
 
 
+def add_prepayment_context(context: dict, p: Purchase) -> None:
+    """Владелец (05.10.2026, план «Шаблоны договоров», п.3): признак и дата
+    предоплаты — пункт об оплате печатает вариант с суммой аванса (уже есть
+    в контексте как advance_amount, см. add_phase28_context выше) при
+    is_prepayment=True, иначе вариант со сроком оплаты (payment_term_days,
+    см. add_misc_purchase_context). ПРАВИЛО №6: один расчёт — вызывается из
+    generate.py и fabrikant_package.py, не копируется вторым литералом.
+    """
+    context["is_prepayment"] = bool(getattr(p, "is_prepayment", False))
+    context["prepayment_date"] = _fmt_date(p.prepayment_date) if getattr(p, "prepayment_date", None) else ""
+
+
+def _day_count_to_words(n) -> str:
+    """int/numeric-строка дней → числительное словами ("7" → "семь").
+    Пусто/None/не число → "". Переиспользует formatting._chunk_to_words —
+    второй механизм прописи чисел не заводим (ПРАВИЛО №6)."""
+    if n is None or n == "":
+        return ""
+    try:
+        from app.services.documents.formatting import _chunk_to_words
+        return _chunk_to_words(int(n))
+    except (TypeError, ValueError):
+        return ""
+
+
+def add_day_words_context(context: dict, p: Purchase) -> None:
+    """Владелец (05.10.2026, живая генерация договора): шаблоны печатают срок
+    цифрой и цифрой же в скобках — «в течение {{ payment_term_days }}
+    ({{ payment_term_days }}) рабочих дней» — вместо прописи между ними.
+    Нашли grep'ом по backend/templates/*.docx (word/document.xml,
+    `\\{\\{ x \\}\\} \\(\\{\\{ x \\}\\}\\)`): payment_term_days (contract_services,
+    contract_services_food, contract_repair_framework, contract_goods_single),
+    service_term_days и acceptance_term_days (contract_goods_single).
+    ПРАВИЛО №6: один расчёт — вызывается из generate.py и fabrikant_package.py.
+
+    Дефект (05.10.2026): acceptance_term_days/payment_term_days печатаются
+    цифрой с умолчанием (5 / 10 при None — см. add_phase28_context и
+    add_misc_purchase_context выше), а пропись считалась от сырого p.* (None
+    → ""). Пропись ДОЛЖНА совпадать с тем, что уже напечатано цифрой — читаем
+    из context[...] (эта функция вызывается ПОСЛЕ add_phase28_context /
+    add_misc_purchase_context / build_base_context_part2 — там эти ключи уже
+    положены в контекст с тем же умолчанием), не из p напрямую.
+    """
+    context["payment_term_days_words"] = _day_count_to_words(context.get("payment_term_days"))
+    context["service_term_days_words"] = _day_count_to_words(context.get("service_term_days"))
+    context["acceptance_term_days_words"] = _day_count_to_words(context.get("acceptance_term_days"))
+
+
+def contractor_org_type_for_docs(c) -> str:
+    """Тип контрагента для шаблонов (ОГРН/ОГРНИП, преамбула «в лице ИП…»).
+
+    Владелец (05.10.2026): в локальной БД у большинства контрагентов
+    org_type пустой — ИП с пустым org_type печатался как юрлицо (ОГРН
+    вместо ОГРНИП). ПРАВИЛО №6: единственный расчёт, вызывается из
+    contexts_build.py (build_base_context_part2) и fabrikant_package.py —
+    раньше там было по копии `(c.org_type or "") if c else ""`.
+
+    Непустой org_type — как есть (strip). Пустой + ИНН из 12 цифр — 'ИП'
+    (10 цифр — ИНН юрлица, 12 — ИП/физлицо). Иначе пустой — "" (как раньше,
+    например пустой org_type + пустой ИНН). 'Самозанятый' не трогаем — это
+    непустой org_type, возвращается как есть.
+    """
+    if not c:
+        return ""
+    org_type = (c.org_type or "").strip()
+    if org_type:
+        return org_type
+    inn_digits = _re_dept.sub(r"\D", "", c.inn or "")
+    if len(inn_digits) == 12:
+        return "ИП"
+    return ""
+
+
 def add_contractor_signatory_context(context: dict, c) -> None:
     # Phase 23: расширенные поля подписанта Исполнителя (name_genitive, initials, ogrnip)
     ctr_sig = _signatory_split(

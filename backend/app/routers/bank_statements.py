@@ -289,14 +289,12 @@ async def upload_bank_statement(
     await db.commit()
     await db.refresh(import_run)
 
-    # Этап 1: успешная партия ('done') удаляется автоматически — платежи
-    # остаются (у них уже проставлены external_doc_id/org_id/subsidy_id, партия
-    # им больше не нужна для идентификации; import_id → NULL через ON DELETE
-    # SET NULL). Партии с ошибкой ('error') остаются в журнале для разбора.
-    if import_run.status == "done":
-        out = BankStatementImportOut.model_validate(import_run)
-        await db.delete(import_run)
-        await db.commit()
-        return out
-
+    # Задача 05.10.2026 («Журнал загрузок выписки»): УБРАНО автоудаление
+    # успешной ('done') партии — владелец не мог найти свою загрузку в журнале
+    # (см. backend/scripts/restore_import_run_20261005.sql — восстановление
+    # конкретного прогона 05.10.2026, стёртого прежним поведением). Прогон
+    # остаётся в GET /api/payments/imports со всеми счётчиками
+    # (rows_imported/rows_updated/rows_merged_legacy/...), платежи продолжают
+    # нести import_id (раньше он уходил в NULL ровно в этот момент). Партии с
+    # ошибкой ('error') и так оставались — поведение для них не изменилось.
     return import_run

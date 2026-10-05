@@ -32,6 +32,7 @@ from app.services.bank_statement_parser_helpers import (
     parse_purpose,
 )
 from app.services.bank_statement_parser_maps import (
+    BLOCK_FIELDS as _BLOCK_FIELDS,
     EXECUTED_STATUSES,
     HEADER_MAP,
     RX_INN,
@@ -174,9 +175,19 @@ def _extract_headers(ws, header_row: int = 1) -> list[str]:
             out.append(sub)
         elif main == sub:
             out.append(main)
-        elif main in HEADER_MAP:
+        elif main in HEADER_MAP and HEADER_MAP[main] not in _BLOCK_FIELDS:
             # known single-row header — sub скорее всего contamination
-            # (data row или повтор), берём только main
+            # (data row или повтор), берём только main.
+            # Исключение — payer_block/payee_block: это легитимный
+            # merged-заголовок («Реквизиты получателя» и т.п.) с РЕАЛЬНЫМИ
+            # под-заголовками (ИНН/КПП/Наименование) на следующей строке —
+            # сворачивать их в main было бы contamination в обратную
+            # сторону (баг 05.10, PrintScroller_21-09-2026: все payee_name
+            # пустые, т.к. ИНН/КПП/Наименование схлопывались в один
+            # "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ" ключ и payee_block-парсинг вытаскивал
+            # только ИНН регуляркой). Для этих полей строим composite key,
+            # он совпадает с уже существующими "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ (ИНН)"
+            # и т.п. записями HEADER_MAP.
             out.append(main)
         else:
             out.append(f"{main} ({sub})")

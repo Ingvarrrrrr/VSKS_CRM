@@ -92,6 +92,16 @@ HEADER_MAP: dict[str, str] = {
 }
 
 
+# Поля-«контейнеры» старого однострочного формата («Реквизиты плательщика» /
+# «Реквизиты получателя» без разбивки на колонки) — HEADER_MAP мапит их целым
+# блоком на payer_block/payee_block, откуда payee_inn/payer_inn вытаскиваются
+# регуляркой по ИНН, а payee_name/payer_name остаются пустыми. Эти два
+# значения — единственное место, которое знает про такие поля; _extract_headers
+# (bank_statement_parser_rows) и любой другой код обязаны сверяться по этому
+# множеству, а не по строковому сравнению с "payer_block"/"payee_block".
+BLOCK_FIELDS: frozenset[str] = frozenset({"payer_block", "payee_block"})
+
+
 def _normalize_lookup_key(h: str) -> str:
     """Если ключ composite 'MAIN (SUB)' и MAIN в HEADER_MAP — вернуть MAIN.
 

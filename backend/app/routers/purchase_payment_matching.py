@@ -351,6 +351,71 @@ async def match_payments_endpoint(
         if group_had_target and not group_attached and not group_ambiguous:
             report["not_found"].append({"group_key": g.group_key, "registry_number": g.registry_number})
 
+    # Задача 05.10.2026 («три расширения штатного сопоставления»): группы,
+    # которые простой пасс выше не закрыл (not_found/ambiguous — обычный
+    # find_candidates ищет РОВНО ОДИН платёж на ВСЮ сумму группы), донабираются
+    # помесячным/рамочным/авансовым поиском — см.
+    # app/services/payment_lookup_multi.py (ПРАВИЛО №6: пишет туда же, через
+    # тот же attach()).
+    from app.services.payment_lookup_multi import match_monthly, match_framework, match_advance
+
+    handled_keys = {a["group_key"] for a in report["attached"]}
+    pending_groups = [g for g in groups if g.group_key not in handled_keys]
+
+    purchase_ids_all = [pid for g in pending_groups for pid in g.purchase_ids]
+    purchases_by_id = {}
+    if purchase_ids_all:
+        purchase_rows = (await db.execute(
+            select(Purchase).where(Purchase.id.in_(purchase_ids_all))
+        )).scalars().all()
+        purchases_by_id = {p.id: p for p in purchase_rows}
+
+    multi_report = {
+        "monthly": {"attached": [], "ambiguous": []},
+        "framework": {"attached": [], "ambiguous": []},
+        "advance": {"attached": [], "ambiguous": []},
+    }
+
+    for g in pending_groups:
+        monthly_purchase = next(
+            (purchases_by_id[pid] for pid in g.purchase_ids if purchases_by_id.get(pid) and purchases_by_id[pid].is_monthly_payment),
+            None,
+        )
+        if monthly_purchase is not None:
+            r = await match_monthly(db, g, monthly_purchase, dry_run=dry_run)
+            multi_report["monthly"]["attached"].extend(
+                {**item, "group_key": g.group_key} for item in r["attached"]
+            )
+            multi_report["monthly"]["ambiguous"].extend(
+                {**item, "group_key": g.group_key} for item in r["ambiguous"]
+            )
+
+    framework_groups = [g for g in pending_groups if g.is_framework]
+    if framework_groups:
+        r = await match_framework(db, framework_groups, dry_run=dry_run)
+        multi_report["framework"]["attached"].extend(r["attached"])
+        multi_report["framework"]["ambiguous"].extend(r["ambiguous"])
+
+    advance_pairs = []
+    for g in pending_groups:
+        adv_purchase = next(
+            (
+                purchases_by_id[pid] for pid in g.purchase_ids
+                if purchases_by_id.get(pid)
+                and purchases_by_id[pid].purchase_method == "advance"
+                and purchases_by_id[pid].reimbursement_user_id
+            ),
+            None,
+        )
+        if adv_purchase is not None:
+            advance_pairs.append((g, adv_purchase))
+    if advance_pairs:
+        r = await match_advance(db, advance_pairs, dry_run=dry_run)
+        multi_report["advance"]["attached"].extend(r["attached"])
+        multi_report["advance"]["ambiguous"].extend(r["ambiguous"])
+
+    report["multi"] = multi_report
+
     if not dry_run:
         await db.commit()
 

@@ -59,6 +59,7 @@ from app.models.user import User
 from .parse import parse_csv
 
 DEFAULT_BUDGET = Decimal("15880100.00")
+GOODSSERVICE_AGREEMENT_NUMBER = "091-10-2026-008"
 
 
 async def _pick_current_user(db) -> User:
@@ -151,7 +152,49 @@ async def run_build_mode(args: argparse.Namespace, rows) -> int:
     return 0
 
 
+async def run_goodsservice_mode(args: argparse.Namespace) -> int:
+    from .sheet_v2_parse import parse_goodsservice_csv
+    from .sheet_v2_build import run_build_v2
+    from .sheet_v2_report import render_report_v2
+
+    rows = parse_goodsservice_csv(args.goodsservice)
+    if not rows:
+        print(f"CSV {args.goodsservice} пуст или не содержит строк", file=sys.stderr)
+        return 1
+
+    async with async_session() as db:
+        try:
+            current_user = await _pick_current_user(db)
+            subsidy, counters = await run_build_v2(
+                db,
+                rows=rows,
+                source_name=args.source,
+                target_name=args.name,
+                budget=DEFAULT_BUDGET,
+                agreement_number=GOODSSERVICE_AGREEMENT_NUMBER,
+                current_user=current_user,
+                replace=args.replace,
+            )
+            report = render_report_v2(rows, args.name, counters, dry_run=args.dry_run)
+        except Exception:
+            await db.rollback()
+            raise
+
+        print(report)
+
+        if args.dry_run:
+            await db.rollback()
+            print("DRY-RUN: изменения отменены (rollback).")
+        else:
+            await db.commit()
+            print(f"Готово: субсидия id={subsidy.id} «{subsidy.name}» сохранена.")
+    return 0
+
+
 async def main_async(args: argparse.Namespace) -> int:
+    if args.goodsservice:
+        return await run_goodsservice_mode(args)
+
     rows = parse_csv(args.csv)
     if not rows:
         print(f"CSV {args.csv} пуст или не содержит строк", file=sys.stderr)
@@ -166,7 +209,9 @@ async def main_async(args: argparse.Namespace) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--csv", required=True, help="Путь к CSV таблицы (внутри контейнера)")
+    parser.add_argument("--csv", help="Путь к CSV таблицы первого загрузчика (внутри контейнера)")
+    parser.add_argument("--goodsservice", help="Путь к scripts/data/fadm_2026_goodsservice.csv — "
+                         "режим v2 (пересборка из листа GoodsService, задание 05.10.2026)")
     parser.add_argument("--source", required=True, help='Имя субсидии-источника, напр. "ФАДМ_2026"')
     parser.add_argument("--name", help='Имя новой субсидии, напр. "ФАДМ 2026_2" (не нужно для --match-only)')
     parser.add_argument("--dry-run", action="store_true", help="Всё в транзакции, откат в конце, только отчёт")
@@ -184,14 +229,22 @@ def main() -> None:
                               "Можно указывать несколько раз. Только с --relink.")
     args = parser.parse_args()
 
-    if args.match_only and (args.dry_run or args.replace or args.relink):
-        parser.error("--match-only несовместим с --dry-run/--replace/--relink (он ничего не создаёт и не удаляет)")
-    if args.relink and args.replace:
-        parser.error("--relink несовместим с --replace (--relink не пересоздаёт субсидию)")
-    if args.ensure_employee and not args.relink:
-        parser.error("--ensure-employee работает только вместе с --relink")
-    if not args.match_only and not args.name:
-        parser.error("--name обязателен вне режима --match-only")
+    if args.goodsservice:
+        if args.match_only or args.relink or args.ensure_employee:
+            parser.error("--goodsservice несовместим с --match-only/--relink/--ensure-employee")
+        if not args.name:
+            parser.error("--name обязателен для --goodsservice")
+    else:
+        if not args.csv:
+            parser.error("--csv обязателен вне режима --goodsservice")
+        if args.match_only and (args.dry_run or args.replace or args.relink):
+            parser.error("--match-only несовместим с --dry-run/--replace/--relink (он ничего не создаёт и не удаляет)")
+        if args.relink and args.replace:
+            parser.error("--relink несовместим с --replace (--relink не пересоздаёт субсидию)")
+        if args.ensure_employee and not args.relink:
+            parser.error("--ensure-employee работает только вместе с --relink")
+        if not args.match_only and not args.name:
+            parser.error("--name обязателен вне режима --match-only")
 
     exit_code = asyncio.run(main_async(args))
     sys.exit(exit_code)

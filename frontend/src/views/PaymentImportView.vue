@@ -94,6 +94,18 @@
             </span>
           </template>
 
+          <!-- Обновлено (существующие строки, у которых изменились поля при переимпорте) -->
+          <template #item.rows_updated="{ item }">
+            <span class="text-mono">{{ item.rows_updated ?? '—' }}</span>
+          </template>
+
+          <!-- Склеено со старыми (legacy-строки без external_doc_id, найденные по совпадению) -->
+          <template #item.rows_merged_legacy="{ item }">
+            <span class="text-mono" :class="item.rows_merged_legacy > 0 ? 'text-info' : ''">
+              {{ item.rows_merged_legacy ?? '—' }}
+            </span>
+          </template>
+
           <!-- Статус -->
           <template #item.status="{ item }">
             <v-chip
@@ -186,6 +198,10 @@
                     <span :class="item.rows_dup > 0 ? 'text-secondary' : ''">
                       Дубл.: <strong class="text-mono">{{ item.rows_dup ?? '—' }}</strong>
                     </span>
+                    <span>Обновл.: <strong class="text-mono">{{ item.rows_updated ?? '—' }}</strong></span>
+                    <span :class="item.rows_merged_legacy > 0 ? 'text-info' : ''">
+                      Склеено: <strong class="text-mono">{{ item.rows_merged_legacy ?? '—' }}</strong>
+                    </span>
                   </div>
                 </v-card-text>
                 <v-divider />
@@ -264,6 +280,8 @@ const allColumns: ColumnDef[] = [
   { title: 'Сматч.', key: 'rows_matched', width: 90, align: 'end' },
   { title: 'Не сматч.', key: 'rows_unmatched', width: 100, align: 'end' },
   { title: 'Дубл.', key: 'rows_dup', width: 80, align: 'end' },
+  { title: 'Обновлено', key: 'rows_updated', width: 100, align: 'end' },
+  { title: 'Склеено со старыми', key: 'rows_merged_legacy', width: 130, align: 'end' },
   { title: 'Статус', key: 'status', width: 110 },
   { title: '', key: 'actions', width: 80, sortable: false },
 ]

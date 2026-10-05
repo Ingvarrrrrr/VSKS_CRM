@@ -49,6 +49,7 @@ from app.services.bank_statement_parser_helpers import (  # noqa: F401
 )
 from app.services.bank_statement_parser_maps import (  # noqa: F401
     BASIS_DOC_PATTERN,
+    BLOCK_FIELDS,
     DOC_PATTERNS,
     EXECUTED_STATUSES,
     HEADER_MAP,

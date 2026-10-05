@@ -6,6 +6,7 @@
         'imap-col--over': dragOverTarget === target.key,
         'imap-col--filled': isTargetFilled(target.key),
         'imap-col--required': target.required && !isTargetFilled(target.key),
+        'imap-col--group-fact': target.group === 'fact',
       }"
       @dragover.prevent="dragOverTarget = target.key"
       @dragleave="dragOverTarget = null"
@@ -70,6 +71,11 @@ export interface ImportMappingTargetField {
   label: string
   required?: boolean
   hint?: string
+  // Владелец, 05.10.2026 (мастер ФЭО): визуально выделить необязательный
+  // блок «Факт» своей колонкой — единственное значение сейчас 'fact', но
+  // поле общее (не только для ФЭО), другие вызовы (ProductsImportDialog.vue)
+  // просто не передают group — для них класс не добавится.
+  group?: string
 }
 
 const props = defineProps<{
@@ -177,6 +183,18 @@ function ignoreColumn(idx: number) {
 .imap-col--required {
   border-color: #ef9a9a;
   background: #fff8f8;
+}
+/* Блок «Факт» (мастер ФЭО, владелец 05.10.2026) — тот же красный, что и
+   заливка колонок U-AB в Excel-шаблоне (feo_import_template.py::fill_fact),
+   только светлее/пунктиром, чтобы не спорить с --required/--filled. */
+.imap-col--group-fact {
+  border-color: #e57373;
+  background: #fff5f5;
+}
+.imap-col--group-fact.imap-col--filled {
+  border-style: solid;
+  border-color: #c62828;
+  background: #fff0f0;
 }
 .imap-col-hdr {
   font-size: 11px;

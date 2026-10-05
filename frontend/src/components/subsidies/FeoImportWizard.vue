@@ -640,7 +640,7 @@ const {
   feoBudgetConflictGroups, feoBudgetResolutionFor, feoSetBudgetResolution,
   feoCategorySumConflictGroups, feoCatSumResolutionFor, feoSetCatSumResolution,
   feoUnmatchedNeedsMapping, feoHasSuggestions, feoAcceptAllSuggestions,
-  feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoMappingValid,
+  feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoMappingValid, feoDragMapping,
   feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,
   doFeoImport, doFeoMappedImport, closeFeoImport, feoRecomputeNow,
 } = useFeoImport(ctx)
@@ -648,17 +648,36 @@ const {
 // Решение владельца 05.10.2026: «Перейти к импорту факта» (карточка шага 5
 // выше) — тот же файл/лист, который только что загрузил план ФЭО, передаём
 // в useFactImport().openWizardWithFile (ПРАВИЛО №6 — единственный источник
-// открытия мастера факта с готовым файлом, второй путь не заводим).
+// открытия мастера факта с готовым файлом, второй путь не заводим). Заодно
+// переводим уже сделанное человеком сопоставление колонок (feoDragMapping,
+// ключи FEO_TARGET_FIELDS) в ключи FACT_IMPORT_TARGET_FIELDS
+// (useFactImport.ts) — чтобы мастер факта не заставлял сопоставлять те же
+// колонки второй раз (задача 2026-10-05, п.2).
 const { openWizardWithFile } = useFactImport()
+// feo-ключ -> факт-ключ; поля, у которых нет смысловой пары на стороне
+// факта (code/appendix/active/budget), не переводятся.
+const FEO_TO_FACT_FIELD_MAP: Record<string, string> = {
+  lvl2: 'path_l2', lvl3: 'path_l3', lvl4: 'path_l4',
+  lvl5: 'plan_item_name', item_type: 'item_type',
+  row_plan_unit: 'unit', row_plan_qty: 'plan_qty', row_plan_price: 'plan_price', row_plan_sum: 'plan_amount',
+  comment: 'comment',
+  fact_status: 'status', fact_qty: 'fact_qty', fact_price: 'fact_price', fact_amount: 'fact_amount',
+  fact_paid: 'paid', fact_contracted: 'contracted', fact_supplier: 'supplier', fact_purchase_no: 'purchase_no',
+}
 function goToFactImport() {
   const file = feoImport.file
   const sheet = feoImport.selectedSheet || ''
   const subsidyId = ctx.selectedId.value
   if (!file || !subsidyId) return
-  // Захватываем файл/лист/субсидию ДО closeFeoImport — он очищает
-  // feoImport.file/selectedSheet (см. useFeoImport.ts::closeFeoImport).
+  const m = feoDragMapping.value
+  const factMapping: Record<string, number | null> = {}
+  for (const [feoKey, factKey] of Object.entries(FEO_TO_FACT_FIELD_MAP)) {
+    if (m[feoKey] != null) factMapping[factKey] = m[feoKey]
+  }
+  // Захватываем файл/лист/субсидию/маппинг ДО closeFeoImport — он очищает
+  // feoImport.file/selectedSheet/feoDragMapping (см. useFeoImport.ts::closeFeoImport).
   closeFeoImport()
-  openWizardWithFile(subsidyId, file, sheet)
+  openWizardWithFile(subsidyId, file, sheet, factMapping)
 }
 </script>
 

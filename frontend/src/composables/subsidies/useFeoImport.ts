@@ -151,28 +151,30 @@ export function feoRecomputeNow() {
 
 const feoImportTargetSubsidy = ref<number | null>(null)
 
-// FEO column mapping
+// FEO column mapping — Правило №6 (один источник списка колонок): целевые
+// поля этого списка = РОВНО колонки актуального шаблона A-AB
+// (backend/app/routers/feo_import_template.py::headers, зафиксировано тестом
+// test_feo_import_mapped_fact_and_need_level.py::EXPECTED_TEMPLATE_HEADERS),
+// в том же порядке и с теми же подписями. Устаревшие поля старого
+// 37-колоночного формата (qty_lvl2/3/4, unit_lvl2/3/4, amt_lvl2/3/4,
+// feo_qty_lvl*/feo_unit_lvl*/feo_amount_lvl*/feo_sum_lvl*, plan_sum_lvl2/3/4,
+// generic Ур.5 quantity/unit/item_amt/item_price) убраны из ручного выбора
+// (владелец, 05.10.2026) — они дублируют row_feo_*/row_plan_* нового
+// шаблона. Backend продолжает их ЧИТАТЬ (не трогали ни _do_feo_import, ни
+// find_col в app/routers/feo_import.py) — старые файлы грузятся как раньше
+// через автоопределение (/import, FeoCategoriesView.vue), просто в этом
+// ручном мастере (SubsidiesView → FeoImportWizard) их больше нельзя выбрать
+// руками. `group` — только для подсветки блока «Факт» в сетке
+// (ImportMappingGrid.vue), на мэппинг/отправку не влияет.
 const FEO_TARGET_FIELDS = [
   { value: 'subsidy',  title: 'Субсидия (название)',                          required: true },
   { value: 'lvl2',     title: 'Уровень 2 — Направление расходов по ФЭО',     required: true },
-  { value: 'qty_lvl2',      title: 'Количество для Уровня 2 (Направление)',       required: false },
-  { value: 'unit_lvl2',     title: 'Единица измерения для Уровня 2',              required: false },
-  { value: 'amt_lvl2',      title: 'Плановая стоимость за ед. для Уровня 2 (Направление)', required: false },
-  { value: 'plan_sum_lvl2', title: 'Сумма плана (Ур.2)',                          required: false },
   { value: 'lvl3',          title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
-  { value: 'qty_lvl3',      title: 'Количество для Уровня 3 (Тип расходов)',      required: false },
-  { value: 'unit_lvl3',     title: 'Единица измерения для Уровня 3',              required: false },
-  { value: 'amt_lvl3',      title: 'Плановая стоимость за ед. для Уровня 3 (Тип расходов)', required: false },
-  { value: 'plan_sum_lvl3', title: 'Сумма плана (Ур.3)',                          required: false },
   { value: 'lvl4',          title: 'Уровень 4 — Конкретизированный',              required: false },
-  { value: 'qty_lvl4',      title: 'Количество для Уровня 4 (Конкретизир.)',      required: false },
-  { value: 'unit_lvl4',     title: 'Единица измерения для Уровня 4',              required: false },
-  { value: 'amt_lvl4',      title: 'Плановая стоимость за ед. для Уровня 4 (Конкретизир.)', required: false },
-  { value: 'plan_sum_lvl4', title: 'Сумма плана (Ур.4)',                          required: false },
   { value: 'lvl5',          title: 'Плановая позиция (папку не создаёт)',        required: false },
-  { value: 'item_type',       title: 'Товар/услуга',                             required: false },
-  // Новый плоский 18-колоночный шаблон (2026-08-14): одна пара колонок «по ФЭО»/«плана»
-  // на всю строку — вместо колонок-на-каждый-уровень выше. См. col_row_* в _do_feo_import.
+  { value: 'item_type',       title: 'Товар/услуга/работа',                     required: false },
+  // Плоский шаблон (2026-08-14): одна пара колонок «по ФЭО»/«плана» на всю
+  // строку — вместо колонок-на-каждый-уровень. См. col_row_* в _do_feo_import.
   { value: 'row_feo_qty',     title: 'Количество по ФЭО',                        required: false },
   { value: 'row_feo_unit',    title: 'Ед. изм. по ФЭО',                          required: false },
   { value: 'row_feo_price',   title: 'Цена за единицу по ФЭО',                   required: false },
@@ -181,31 +183,33 @@ const FEO_TARGET_FIELDS = [
   { value: 'row_plan_unit',   title: 'Ед. изм. плана',                           required: false },
   { value: 'row_plan_price',  title: 'Плановая цена за единицу',                 required: false },
   { value: 'row_plan_sum',    title: 'Сумма плана',                              required: false },
-  { value: 'quantity',      title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
-  { value: 'unit',          title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
-  { value: 'item_amt',      title: 'Сумма по позиции (Ур.5)',                     required: false },
-  { value: 'item_price',    title: 'Цена за ед. (Ур.5)',                          required: false },
-  { value: 'feo_qty_lvl2',    title: 'Кол-во по ФЭО (Ур.2)',                     required: false },
-  { value: 'feo_unit_lvl2',   title: 'Ед. изм. по ФЭО (Ур.2)',                  required: false },
-  { value: 'feo_amount_lvl2', title: 'Стоимость по ФЭО (Ур.2)',                  required: false },
-  { value: 'feo_sum_lvl2',    title: 'Сумма по ФЭО (Ур.2)',                      required: false },
-  { value: 'feo_qty_lvl3',    title: 'Кол-во по ФЭО (Ур.3)',                     required: false },
-  { value: 'feo_unit_lvl3',   title: 'Ед. изм. по ФЭО (Ур.3)',                  required: false },
-  { value: 'feo_amount_lvl3', title: 'Стоимость по ФЭО (Ур.3)',                  required: false },
-  { value: 'feo_sum_lvl3',    title: 'Сумма по ФЭО (Ур.3)',                      required: false },
-  { value: 'feo_qty_lvl4',    title: 'Кол-во по ФЭО (Ур.4)',                     required: false },
-  { value: 'feo_unit_lvl4',   title: 'Ед. изм. по ФЭО (Ур.4)',                  required: false },
-  { value: 'feo_amount_lvl4', title: 'Стоимость по ФЭО (Ур.4)',                  required: false },
-  { value: 'feo_sum_lvl4',    title: 'Сумма по ФЭО (Ур.4)',                      required: false },
-  { value: 'code',     title: 'Код категории ФЭО (Ур.2–4)',                 required: false },
-  { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
-  { value: 'budget',   title: 'Финансирование по ФЭО (Ур.2–4)', required: false },
-  { value: 'active',   title: 'Активна (да / нет)',                          required: false },
+  { value: 'code',     title: 'Код',                                        required: false },
+  { value: 'appendix', title: 'Приложение',                                 required: false },
+  { value: 'active',   title: 'Активна',                                    required: false },
+  { value: 'budget',   title: 'Финансирование (устар., можно не заполнять)', required: false },
   // Владелец, 22.09: уходит в ленту комментариев плановой позиции строки
   // (или категории строки, если позиции нет) — см. c_comment в
   // app/routers/feo_import.py, register_*_comment_intent в
   // app/services/feo_import_comments.py.
   { value: 'comment',  title: 'Комментарий',                                 required: false },
+  // Владелец, 2026-10-04: насколько нужна плановая позиция (выпадающий
+  // список на листе «Справочники» шаблона) — см. c_need_level в
+  // app/services/feo_import_core.py, plan_need_level.py.
+  { value: 'need_level', title: 'Нужность',                                  required: false },
+  // --- Блок «Факт» (владелец, 05.10.2026) — НЕОБЯЗАТЕЛЬНЫЙ, заполняется
+  // только для строк, по которым закупка уже прошла. На план/дерево НЕ
+  // влияет (_do_feo_import эти поля не принимает вовсе) — считается только
+  // для has_fact_columns/fact_rows (app/services/feo_import_fact_summary.py)
+  // и передаётся мастеру «Импорт факта» при переходе с тем же файлом
+  // (useFactImport.ts::openWizardWithFile).
+  { value: 'fact_status',       title: 'Правильный статус',  required: false, group: 'fact' },
+  { value: 'fact_qty',          title: 'Факт: Количество',   required: false, group: 'fact' },
+  { value: 'fact_price',        title: 'Факт: Цена',          required: false, group: 'fact' },
+  { value: 'fact_amount',       title: 'Факт: Сумма',         required: false, group: 'fact' },
+  { value: 'fact_paid',         title: 'Оплачено',            required: false, group: 'fact' },
+  { value: 'fact_contracted',   title: 'Законтрактовано',     required: false, group: 'fact' },
+  { value: 'fact_supplier',     title: 'Поставщик',           required: false, group: 'fact' },
+  { value: 'fact_purchase_no',  title: '№ закупки',           required: false, group: 'fact' },
 ]
 const feoDragMapping = ref<Record<string, number | null>>({})
 const feoIgnoredCols = ref<number[]>([])
@@ -411,51 +415,20 @@ function feoIgnoreColumn(idx: number) {
 function feoAutoMap(headers: string[]) {
   const mapping: Record<string, number | null> = {}
   for (const f of FEO_TARGET_FIELDS) mapping[f.value] = null
+  // Владелец, 05.10.2026: КЛЮЧИ ограничены полями актуального шаблона (см.
+  // докстринг FEO_TARGET_FIELDS выше) — старые per-level/Ур.5-generic ключи
+  // убраны ВМЕСТЕ с полями, которые они заполняли (поле больше не
+  // существует в FEO_TARGET_FIELDS — оставлять для него ключ автоподбора
+  // было бы мёртвым кодом, подбирающим невидимое поле).
   const KEYWORDS: Record<string, string[]> = {
     subsidy:  ['субсидия'],
     lvl2:     ['уровень 2', 'направление расходов', 'level 2'],
-    qty_lvl2:  ['кол-во (ур.2)', 'кол-во ур.2', 'количество (ур.2)'],
-    unit_lvl2: ['ед. изм. (ур.2)', 'ед.изм. ур.2', 'единица ур.2'],
-    // amt_lvl2 = цена за ед. — только специфичные алиасы, без «сумма» (сумму забирает plan_sum_lvl2)
-    amt_lvl2:  ['плановая стоимость за ед. (ур.2)', 'плановая стоимость (ур.2)', 'стоимость за ед. (ур.2)', 'стоимость ур.2'],
-    plan_sum_lvl2: ['сумма плана (ур.2)', 'плановая сумма (ур.2)', 'сумма ур.2'],
-    lvl3:      ['уровень 3', 'тип расходов', 'level 3'],
-    qty_lvl3:  ['кол-во (ур.3)', 'кол-во ур.3', 'количество (ур.3)'],
-    unit_lvl3: ['ед. изм. (ур.3)', 'ед.изм. ур.3', 'единица ур.3'],
-    // amt_lvl3 = цена за ед.
-    amt_lvl3:  ['плановая стоимость за ед. (ур.3)', 'плановая стоимость (ур.3)', 'стоимость за ед. (ур.3)', 'стоимость ур.3'],
-    plan_sum_lvl3: ['сумма плана (ур.3)', 'плановая сумма (ур.3)', 'сумма ур.3'],
-    lvl4:         ['уровень 4', 'конкретизир', 'level 4'],
-    qty_lvl4:     ['кол-во (ур.4)', 'кол-во ур.4', 'количество (ур.4)'],
-    unit_lvl4:    ['ед. изм. (ур.4)', 'ед.изм. ур.4', 'единица ур.4'],
-    // amt_lvl4 = цена за ед.
-    amt_lvl4:     ['плановая стоимость за ед. (ур.4)', 'плановая стоимость (ур.4)', 'стоимость за ед. (ур.4)', 'стоимость ур.4'],
-    plan_sum_lvl4: ['сумма плана (ур.4)', 'плановая сумма (ур.4)', 'сумма ур.4'],
-    // feo_sum_* идут ДО feo_amount_* (более специфичны «сумма по фэо»)
-    feo_sum_lvl2:    ['сумма по фэо (ур.2)', 'сумма по фэо ур.2'],
-    // Бэкенд (see find_col в import_feo_from_excel) НЕ имеет generic-фолбэка без
-    // «(Ур.2)» для этих трёх — иначе эти ключи перехватывали бы плоские колонки
-    // нового 18-колоночного шаблона («Количество по ФЭО» и т.п.), которые обязаны
-    // достаться row_feo_qty/row_feo_unit/row_feo_price ниже
-    feo_qty_lvl2:    ['кол-во по фэо (ур.2)', 'кол-во по фэо ур.2'],
-    feo_unit_lvl2:   ['ед. изм. по фэо (ур.2)', 'ед. изм. по фэо ур.2'],
-    feo_amount_lvl2: ['стоимость по фэо (ур.2)', 'стоимость по фэо ур.2'],
-    feo_sum_lvl3:    ['сумма по фэо (ур.3)', 'сумма по фэо ур.3'],
-    feo_qty_lvl3:    ['кол-во по фэо (ур.3)', 'кол-во по фэо ур.3'],
-    feo_unit_lvl3:   ['ед. изм. по фэо (ур.3)', 'ед. изм. по фэо ур.3'],
-    feo_amount_lvl3: ['стоимость по фэо (ур.3)', 'стоимость по фэо ур.3'],
-    feo_sum_lvl4:    ['сумма по фэо (ур.4)', 'сумма по фэо ур.4'],
-    feo_qty_lvl4:    ['кол-во по фэо (ур.4)', 'кол-во по фэо ур.4'],
-    feo_unit_lvl4:   ['ед. изм. по фэо (ур.4)', 'ед. изм. по фэо ур.4'],
-    feo_amount_lvl4: ['стоимость по фэо (ур.4)', 'стоимость по фэо ур.4'],
+    lvl3:     ['уровень 3', 'тип расходов', 'level 3'],
+    lvl4:     ['уровень 4', 'конкретизир', 'level 4'],
     lvl5:     ['плановая позиция', 'уровень 5', 'плановый товар', 'level 5'],
-    // Новый плоский 18-колоночный шаблон (2026-08-14): одна пара «по ФЭО»/«плана» на
-    // всю строку. Объявлены ПОСЛЕ всех per-level ключей выше и ДО generic-фолбэков
-    // ниже (quantity/unit/item_amt/item_price) — порядок и слова совпадают с
-    // col_row_* в import_feo_mapped/import_feo_from_excel (backend). lvl5 обязан
-    // резолвиться раньше item_type, иначе «Уровень 5 (Плановый товар/услуга)»
-    // старого шаблона перехватит item_type своим «товар/услуга» — здесь lvl5 уже
-    // объявлен строкой выше, порядок соблюдён.
+    // Плоский шаблон (2026-08-14): одна пара «по ФЭО»/«плана» на всю строку.
+    // lvl5 объявлен строкой выше item_type — иначе «товар/услуга» в заголовке
+    // lvl5 старого формата перехватил бы item_type.
     row_feo_qty:    ['количество по фэо'],
     row_feo_unit:   ['ед. изм. по фэо'],
     row_feo_price:  ['цена за единицу по фэо', 'цена за ед. по фэо'],
@@ -468,15 +441,24 @@ function feoAutoMap(headers: string[]) {
     code:     ['код'],
     appendix: ['приложение'],
     budget:   ['финансирование', 'бюджет'],
-    quantity: ['количество (ур.5)', 'количество ур.5', 'кол-во (ур.5)', 'кол-во ур.5'],
-    unit:     ['ед. измерения (ур.5)', 'ед. изм. (ур.5)', 'ед.изм. ур.5', 'единица ур.5', 'ед. изм', 'ед.изм', 'единица'],
-    // item_amt = итог позиции (amount); item_price = цена за ед. — специфичные ключи первыми
-    item_amt:   ['сумма по позиции (ур.5)', 'сумма плановая', 'сумма (ур.5)', 'плановая стоимость за ед. (ур.5)', 'плановая стоимость (ур.5)', 'стоимость за ед. (ур.5)', 'стоимость ур.5', 'сумма ур'],
-    item_price: ['цена за ед. (ур.5)', 'стоимость за ед. (ур.5)'],
     active:   ['активна', 'активен'],
     // Слово в слово те же ключи, что и c_comment в app/routers/feo_import.py
     // (find_col) — рассинхрон мастера и бэкенда уже ломал импорт 14.08.
     comment:  ['комментарий', 'примечание'],
+    // Владелец, 2026-10-04 — слово в слово c_need_level (find_col) в
+    // app/routers/feo_import.py.
+    need_level: ['нужность'],
+    // Владелец, 05.10.2026 — слово в слово _FACT_KEYWORDS в
+    // app/services/feo_import_fact_summary.py (Правило №6: та же дублирующая
+    // пара ключевых слов на фронте/бэке, какой уже пользуется comment выше).
+    fact_status:      ['правильный статус'],
+    fact_qty:         ['факт: количество', 'факт количество'],
+    fact_price:       ['факт: цена', 'факт цена'],
+    fact_amount:      ['факт: сумма', 'факт сумма'],
+    fact_paid:        ['оплачено'],
+    fact_contracted:  ['законтрактовано'],
+    fact_supplier:    ['поставщик'],
+    fact_purchase_no: ['№ закупки', 'номер закупки'],
   }
   // Каждая колонка достаётся ровно одному полю: без этого generic-ключи
   // («ед. изм») утаскивали колонку Ур.2 в поле Ур.5
@@ -619,36 +601,15 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       fd.append('col_code',     String(m['code']     ?? -1))
       fd.append('col_appendix', String(m['appendix'] ?? -1))
       fd.append('col_budget',   String(m['budget']   ?? -1))
-      fd.append('col_quantity', String(m['quantity'] ?? -1))
-      fd.append('col_unit',      String(m['unit']      ?? -1))
-      fd.append('col_item_amt',  String(m['item_amt']  ?? -1))
       fd.append('col_active',    String(m['active']    ?? -1))
-      fd.append('col_qty_lvl2',  String(m['qty_lvl2']  ?? -1))
-      fd.append('col_qty_lvl3',  String(m['qty_lvl3']  ?? -1))
-      fd.append('col_qty_lvl4',  String(m['qty_lvl4']  ?? -1))
-      fd.append('col_unit_lvl2', String(m['unit_lvl2'] ?? -1))
-      fd.append('col_unit_lvl3', String(m['unit_lvl3'] ?? -1))
-      fd.append('col_unit_lvl4', String(m['unit_lvl4'] ?? -1))
-      fd.append('col_amt_lvl2',  String(m['amt_lvl2']  ?? -1))
-      fd.append('col_amt_lvl3',  String(m['amt_lvl3']  ?? -1))
-      fd.append('col_amt_lvl4',  String(m['amt_lvl4']  ?? -1))
-      fd.append('col_feo_qty_lvl2',    String(m['feo_qty_lvl2']    ?? -1))
-      fd.append('col_feo_unit_lvl2',   String(m['feo_unit_lvl2']   ?? -1))
-      fd.append('col_feo_amount_lvl2', String(m['feo_amount_lvl2'] ?? -1))
-      fd.append('col_feo_qty_lvl3',    String(m['feo_qty_lvl3']    ?? -1))
-      fd.append('col_feo_unit_lvl3',   String(m['feo_unit_lvl3']   ?? -1))
-      fd.append('col_feo_amount_lvl3', String(m['feo_amount_lvl3'] ?? -1))
-      fd.append('col_feo_qty_lvl4',    String(m['feo_qty_lvl4']    ?? -1))
-      fd.append('col_feo_unit_lvl4',   String(m['feo_unit_lvl4']   ?? -1))
-      fd.append('col_feo_amount_lvl4', String(m['feo_amount_lvl4'] ?? -1))
-      fd.append('col_feo_sum_lvl2', String(m['feo_sum_lvl2'] ?? -1))
-      fd.append('col_feo_sum_lvl3', String(m['feo_sum_lvl3'] ?? -1))
-      fd.append('col_feo_sum_lvl4', String(m['feo_sum_lvl4'] ?? -1))
-      fd.append('col_plan_sum_lvl2', String(m['plan_sum_lvl2'] ?? -1))
-      fd.append('col_plan_sum_lvl3', String(m['plan_sum_lvl3'] ?? -1))
-      fd.append('col_plan_sum_lvl4', String(m['plan_sum_lvl4'] ?? -1))
-      fd.append('col_item_price',    String(m['item_price']    ?? -1))
-      // Новый плоский 18-колоночный шаблон (2026-08-14)
+      // Устаревшие поля старого 37-колоночного формата (qty_lvl2/3/4,
+      // unit_lvl2/3/4, amt_lvl2/3/4, feo_qty_lvl*/feo_unit_lvl*/
+      // feo_amount_lvl*/feo_sum_lvl*, plan_sum_lvl2/3/4, generic Ур.5
+      // quantity/unit/item_amt/item_price) убраны из FEO_TARGET_FIELDS
+      // (владелец, 05.10.2026, см. докстринг там) — m[...] для них уже не
+      // определён, backend принимает их параметры дефолтом -1 (Query(-1)),
+      // второй раз явно слать не нужно.
+      // Новый плоский шаблон (2026-08-14)
       fd.append('col_row_feo_qty',    String(m['row_feo_qty']    ?? -1))
       fd.append('col_row_feo_unit',   String(m['row_feo_unit']   ?? -1))
       fd.append('col_row_feo_price',  String(m['row_feo_price']  ?? -1))
@@ -659,6 +620,19 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       fd.append('col_row_plan_sum',   String(m['row_plan_sum']   ?? -1))
       fd.append('col_item_type',      String(m['item_type']      ?? -1))
       fd.append('col_comment',        String(m['comment']        ?? -1))
+      // Владелец, 2026-10-04: «Нужность».
+      fd.append('col_need_level',     String(m['need_level']     ?? -1))
+      // Владелец, 05.10.2026: блок «Факт» — на план/дерево не влияет, см.
+      // докстринг FEO_TARGET_FIELDS. col_fact_status передаётся и в
+      // «Импорт факта» при переходе (goToFactImport в FeoImportWizard.vue).
+      fd.append('col_fact_status',      String(m['fact_status']      ?? -1))
+      fd.append('col_fact_qty',         String(m['fact_qty']         ?? -1))
+      fd.append('col_fact_price',       String(m['fact_price']       ?? -1))
+      fd.append('col_fact_amount',      String(m['fact_amount']      ?? -1))
+      fd.append('col_fact_paid',        String(m['fact_paid']        ?? -1))
+      fd.append('col_fact_contracted',  String(m['fact_contracted']  ?? -1))
+      fd.append('col_fact_supplier',    String(m['fact_supplier']    ?? -1))
+      fd.append('col_fact_purchase_no', String(m['fact_purchase_no'] ?? -1))
       if (remapEntries.length) fd.append('remap', JSON.stringify(remapEntries))
       // Волна 4, п.23 + не слать то, что ничего не меняет (см.
       // _isDefaultFeoResolution выше): решения человека по группам дублей

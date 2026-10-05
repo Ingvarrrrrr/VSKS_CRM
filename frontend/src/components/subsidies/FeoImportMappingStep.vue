@@ -39,6 +39,12 @@
   <v-alert v-if="!feoMappingValid" type="warning" density="compact" icon="mdi-alert" class="mt-3">
     Укажите столбцы «Субсидия» и «Уровень 2 / Направление»
   </v-alert>
+  <!-- Владелец, 05.10.2026: блок «Факт» (красные колонки сетки выше) —
+       отдельный необязательный канал, не влияет на план. -->
+  <v-alert type="info" variant="tonal" density="compact" icon="mdi-information-outline" class="mt-3">
+    Блок «Факт» заполняется только для строк, по которым закупка уже прошла.
+    Из него система после загрузки плана предложит загрузить эти закупки.
+  </v-alert>
 </template>
 
 <script setup lang="ts">
@@ -56,6 +62,6 @@ const {
 // {value,title,required} — маппинг имён полей, поведение автоподбора и
 // валидации не тронуто (живёт в useFeoImport.ts).
 const feoTargetFields = computed(() =>
-  FEO_TARGET_FIELDS.map((f: any) => ({ key: f.value, label: f.title, required: f.required }))
+  FEO_TARGET_FIELDS.map((f: any) => ({ key: f.value, label: f.title, required: f.required, group: f.group }))
 )
 </script>

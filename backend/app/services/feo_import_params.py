@@ -32,6 +32,15 @@ _COL_INT_FIELDS = frozenset({
     "col_row_plan_qty", "col_row_plan_unit", "col_row_plan_price", "col_row_plan_sum",
     "col_item_type",
     "col_comment",
+    # Владелец, 2026-10-04: «Нужность» (см. c_need_level в feo_import_core.py).
+    "col_need_level",
+    # Владелец, 05.10.2026: блок «Факт» шаблона ФЭО — эти 8 полей в
+    # _do_feo_import НЕ передаются (план/дерево не меняют), только
+    # перекрывают автоопределение по заголовку в resolve_fact_columns
+    # (app/services/feo_import_fact_summary.py) — ручное сопоставление
+    # побеждает угадывание по словам в заголовке.
+    "col_fact_status", "col_fact_qty", "col_fact_price", "col_fact_amount",
+    "col_fact_paid", "col_fact_contracted", "col_fact_supplier", "col_fact_purchase_no",
 })
 
 INT_FIELDS = _COL_INT_FIELDS | {"header_row_offset", "default_subsidy_id"}

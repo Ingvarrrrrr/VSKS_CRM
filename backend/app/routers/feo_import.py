@@ -39,7 +39,7 @@ from app.auth.permissions import require_tab
 from app.routers import feo_categories as fc
 from app.services.feo_import_engine import _do_feo_import
 from app.services.feo_import_fact_summary import (
-    count_fact_rows, detect_fact_columns_by_header, has_fact_columns,
+    count_fact_rows, detect_fact_columns_by_header, has_fact_columns, resolve_fact_columns,
 )
 from app.services.feo_import_links import _relink_feo_category, _feo_category_load  # noqa: F401 (re-export)
 from app.services.feo_import_params import resolve_feo_import_mapped_params
@@ -302,6 +302,22 @@ async def import_feo_mapped(
     # Владелец, 22.09: колонка «Комментарий» — уходит в ленту комментариев
     # (feo_comments), см. пояснение у c_comment в /import выше.
     col_comment: int = Query(-1),
+    # Владелец, 2026-10-04: «Нужность» — см. c_need_level в /import выше.
+    col_need_level: int = Query(-1),
+    # Владелец, 05.10.2026: блок «Факт» шаблона ФЭО — ручное сопоставление
+    # мастера теперь предлагает эти 8 полей ОТДЕЛЬНЫМИ целевыми колонками
+    # (useFeoImport.ts::FEO_TARGET_FIELDS, группа «Факт»). В _do_feo_import
+    # НЕ передаются (план/дерево не меняют) — только перекрывают
+    # автоопределение по заголовку в resolve_fact_columns ниже (Правило №6 —
+    # тот же фасад, что и у /import, явный выбор человека побеждает угадывание).
+    col_fact_status: int = Query(-1),
+    col_fact_qty: int = Query(-1),
+    col_fact_price: int = Query(-1),
+    col_fact_amount: int = Query(-1),
+    col_fact_paid: int = Query(-1),
+    col_fact_contracted: int = Query(-1),
+    col_fact_supplier: int = Query(-1),
+    col_fact_purchase_no: int = Query(-1),
     default_subsidy_id: int = Query(-1),
     dry_run: bool = Query(False),
     remap: str = Query(""),
@@ -349,6 +365,11 @@ async def import_feo_mapped(
         col_row_plan_price=col_row_plan_price, col_row_plan_sum=col_row_plan_sum,
         col_item_type=col_item_type,
         col_comment=col_comment,
+        col_need_level=col_need_level,
+        col_fact_status=col_fact_status, col_fact_qty=col_fact_qty,
+        col_fact_price=col_fact_price, col_fact_amount=col_fact_amount,
+        col_fact_paid=col_fact_paid, col_fact_contracted=col_fact_contracted,
+        col_fact_supplier=col_fact_supplier, col_fact_purchase_no=col_fact_purchase_no,
         default_subsidy_id=default_subsidy_id,
         dry_run=dry_run, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,
@@ -449,22 +470,34 @@ async def import_feo_mapped(
 
     data_rows = all_rows[header_row_offset + 1:]
 
-    # Решение владельца 05.10.2026: опциональный блок «Факт» шаблона ФЭО —
-    # см. то же пояснение у /import выше. Ручной маппинг (этот эндпоинт) не
-    # знает о блоке «Факт» вовсе (мастер сопоставления колонок его не
-    # предлагает), поэтому детекция идёт по заголовку файла напрямую, той же
-    # единственной функцией (Правило №6).
-    _fact_header = [str(h).strip().lower() if h is not None else "" for h in (all_rows[header_row_offset] or [])]
-    _fact_cols = detect_fact_columns_by_header(_fact_header)
-    _has_fact = has_fact_columns(_fact_cols)
-    _fact_rows = count_fact_rows(data_rows, _fact_cols["c_fact_status"])
-
     # Оставшиеся ~40 col_* читаются напрямую из `_p` (уже разрешённых форма/query,
     # см. resolve_feo_import_mapped_params выше) — им не нужно промежуточное
-    # переприсваивание локальной переменной, они используются только здесь.
+    # переприсваивание локальной переменной. Определён ДО блока «Факт» ниже —
+    # тот же `_c` нужен и там, чтобы прочитать явное сопоставление col_fact_*.
     def _c(name: str):
         v = _p[name]
         return v if v >= 0 else None
+
+    # Решение владельца 05.10.2026: опциональный блок «Факт» шаблона ФЭО —
+    # см. то же пояснение у /import выше. Мастер сопоставления колонок
+    # (useFeoImport.ts) теперь ПРЕДЛАГАЕТ блок «Факт» своими целевыми полями
+    # (col_fact_*) — если человек сопоставил их явно, это побеждает
+    # автоопределение по заголовку (resolve_fact_columns, Правило №6 — один
+    # источник решения «где колонка факта» для обоих эндпоинтов импорта ФЭО).
+    _fact_header = [str(h).strip().lower() if h is not None else "" for h in (all_rows[header_row_offset] or [])]
+    _fact_explicit = {
+        "c_fact_status": _c("col_fact_status"),
+        "c_fact_qty": _c("col_fact_qty"),
+        "c_fact_price": _c("col_fact_price"),
+        "c_fact_amount": _c("col_fact_amount"),
+        "c_fact_paid": _c("col_fact_paid"),
+        "c_fact_contracted": _c("col_fact_contracted"),
+        "c_fact_supplier": _c("col_fact_supplier"),
+        "c_fact_purchase_no": _c("col_fact_purchase_no"),
+    }
+    _fact_cols = resolve_fact_columns(_fact_header, _fact_explicit)
+    _has_fact = has_fact_columns(_fact_cols)
+    _fact_rows = count_fact_rows(data_rows, _fact_cols["c_fact_status"])
 
     result = await _do_feo_import(
         rows=data_rows,
@@ -515,6 +548,7 @@ async def import_feo_mapped(
         c_row_plan_sum=_c("col_row_plan_sum"),
         c_item_type=_c("col_item_type"),
         c_comment=_c("col_comment"),
+        c_need_level=_c("col_need_level"),
         default_subsidy_id=default_subsidy_id if default_subsidy_id > 0 else None,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,

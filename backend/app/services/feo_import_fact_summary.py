@@ -68,6 +68,28 @@ def detect_fact_columns_by_header(raw_headers: list[str]) -> dict[str, Optional[
     return result
 
 
+def resolve_fact_columns(
+    raw_headers: list[str],
+    explicit: Optional[dict[str, Optional[int]]] = None,
+) -> dict[str, Optional[int]]:
+    """Задача 05.10.2026 (ручное сопоставление /import-mapped): мастер
+    сопоставления колонок теперь предлагает блок «Факт» как ОТДЕЛЬНЫЕ целевые
+    поля (col_fact_* в app/routers/feo_import.py) — если человек явно
+    сопоставил колонку, это ПОБЕЖДАЕТ автоопределение по заголовку (значения
+    `explicit` — те же ключи, что в FACT_FIELDS, индекс >= 0 или None/отсутствует,
+    если поле не сопоставлено вручную). Правило №6 — единственная функция,
+    решающая, какая колонка несёт факт: `detect_fact_columns_by_header` выше
+    остаётся внутренней деталью (автоопределение), эта функция — фасад над ней
+    для обоих эндпоинтов импорта ФЭО (/import — explicit всегда None,
+    /import-mapped — explicit из явного маппинга)."""
+    result = detect_fact_columns_by_header(raw_headers)
+    if explicit:
+        for field, idx in explicit.items():
+            if field in result and idx is not None and idx >= 0:
+                result[field] = idx
+    return result
+
+
 def has_fact_columns(fact_cols: dict[str, Optional[int]]) -> bool:
     return any(v is not None for v in fact_cols.values())
 

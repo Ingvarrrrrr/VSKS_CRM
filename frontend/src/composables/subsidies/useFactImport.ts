@@ -365,11 +365,21 @@ export function useFactImport() {
   // пропускается, минуя `loadSheets`). ПРАВИЛО №6: сам предпросмотр — тот же
   // `loadPreview()`, которым обычный путь (loadSheets → шаг 2) и так
   // пользуется, второй парсер не заводим.
-  async function openWizardWithFile(subsidyId: number, file: File, sheet: string) {
+  // mapping (владелец, 05.10.2026) — сопоставление колонок, которое человек
+  // уже сделал на шаге мастера ФЭО (useFeoImport.ts::feoDragMapping,
+  // переведённое в ключи FACT_IMPORT_TARGET_FIELDS в FeoImportWizard.vue::
+  // goToFactImport) — передаём сюда, чтобы loadPreview() ниже отправило его
+  // backend'у ГОТОВЫМ (hasMapping=true), не заставляя автоопределение
+  // угадывать колонки по заголовку второй раз (Правило №6).
+  async function openWizardWithFile(
+    subsidyId: number, file: File, sheet: string,
+    mapping?: Record<string, number | null>,
+  ) {
     resetWizard(subsidyId)
     factImport.file = file
     factImport.selectedSheet = sheet
     factImport.sheets = [{ name: sheet, rows: 0, header_row_guess: 1 }]
+    if (mapping && Object.keys(mapping).length) factImport.mapping = mapping
     factImport.show = true
     await loadPreview()
     factImport.step = 2

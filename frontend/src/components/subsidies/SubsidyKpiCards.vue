@@ -68,13 +68,16 @@
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_work) }}</div>
             <div class="kpi-label">Ведётся работа</div>
-            <!-- Задача (владелец, 06.10.2026) — расшифровка состава «Ведётся
-                 работа»: «Заказано» (эта же карточка в этом компоненте) +
-                 ежемесячные по уже заключённым договорам до конца года
-                 (monthlyFutureToYearEnd, готовое поле ниже) — оба числа уже
-                 есть, здесь ничего не складывается заново (Правило №6). -->
-            <div v-if="monthlyFutureToYearEnd > 0" class="kpi-sub-note text-caption text-medium-emphasis">
-              заказано {{ formatCurrency(kpiSubTarget_ordered) }} + договоры без заказа (будущие месяцы) {{ formatCurrency(monthlyFutureToYearEnd) }}
+            <!-- Задача (владелец, 06.10.2026, ИСПРАВЛЕНО координатором) —
+                 расшифровка состава «Ведётся работа»: «Заказано» (эта же
+                 карточка в этом компоненте) + договоры без заказа —
+                 дочерние заказы рамочных договоров в статусе 'contracted'
+                 (contractedNotOrdered, готовое поле ниже; НЕ monthlyFutureToYearEnd
+                 — тот график payment-платежей тут ни при чём, см. backend/app/
+                 services/stage_cumulative.py::contracted_not_ordered_by_subsidy) —
+                 оба числа уже есть, здесь ничего не складывается заново (Правило №6). -->
+            <div v-if="contractedNotOrdered > 0" class="kpi-sub-note text-caption text-medium-emphasis">
+              заказано {{ formatCurrency(kpiSubTarget_ordered) }} + договоры без заказа (будущие месяцы) {{ formatCurrency(contractedNotOrdered) }}
             </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('work')">
@@ -469,6 +472,10 @@ const freeDiffRounded = computed(() => roundMoney(ctx.selectedBudget.value - ctx
 const kpiSubTarget_free              = computed(() => freeDiffRounded.value)
 // Задача 3 (владелец, 04.10.2026) — готовое поле бэкенда, не считаем здесь (Правило №6).
 const monthlyFutureToYearEnd = computed(() => ctx.selectedSubsidy.value?.monthly_future_to_year_end ?? 0)
+// «Договоры без заказа» для подписи «Ведётся работа» (06.10.2026, ИСПРАВЛЕНО
+// координатором — см. комментарий у места использования выше): дочерние
+// заказы рамочных договоров в статусе 'contracted', НЕ is_monthly_payment-график.
+const contractedNotOrdered = computed(() => ctx.selectedSubsidy.value?.contracted_not_ordered ?? 0)
 
 const kpiSubAnim_budget            = useAnimatedNumber(kpiSubTarget_budget,           800)
 const kpiSubAnim_plan_schedule     = useAnimatedNumber(kpiSubTarget_plan_schedule,    800)

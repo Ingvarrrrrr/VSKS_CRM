@@ -22,12 +22,15 @@ raw агрегируется сразу на уровень субсидии (а
 одновременно раскладывается по kind_of(item_type_effective) — та же функция
 kind_of, что и dashboard_type_split.py/item_type_split.py.
 
-monthly_future_by_kind ниже — та же Σ, что dashboard_monthly_accrual.
-compute_monthly_future_map (ПРАВИЛО №6, не вторая формула графика платежей:
-читает compute_monthly_future_rows — построчный разбор, вынесенный ИЗ
-compute_monthly_future_map специально под эту задачу), только раскладывает
-сумму КАЖДОЙ закупки по товар/услуга через item_type_split.purchase_type_shares
-(та же техника, что dashboard_type_split.py применяет к остальным этапам).
+ИСПРАВЛЕНО (находка координатора 06.10.2026): «ежемесячные/договоры без
+заказа» для этой карточки больше НЕ считаются через is_monthly_payment-график
+(monthly_future_by_kind/compute_monthly_future_map) — на проде id=89 разрыв
+«Ведётся работа» − «Заказано» целиком состоял из дочерних заказов рамочных
+договоров в статусе 'contracted' (is_monthly_payment=False у всех), график
+платежей тут ни при чём. Источник — app.services.stage_cumulative.
+contracted_not_ordered_by_subsidy/contracted_not_ordered_need_level_split
+(ПРАВИЛО №6 — тот же effective_amount_expr(), что и остальные суммы этого
+модуля); вызывается из subsidy_money_summary.py, не отсюда.
 
 over_plan_categories_by_subsidy — красная строка карточки «по направлению
 законтрактовано сверх плана»: читает committed/plan КОРНЕВЫХ узлов дерева
@@ -98,65 +101,6 @@ async def not_committed_raw_by_subsidy(db: AsyncSession, subsidy_ids: list[int])
         else:
             d["likely_raw"] += raw
         d["by_kind"][kind_of(info["item_type_effective"])] += raw
-    return result
-
-
-async def monthly_future_by_kind(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
-    """{subsidy_id: {"amount": float, "by_kind": {...}}} — ИСПРАВЛЕНО (находка
-    координатора 06.10.2026, двойной счёт): subsidy_money_summary.py читает
-    ТОЛЬКО `amount` отсюда (сумма «ежемесячные до конца года» для отдельной
-    строки карточки). `by_kind` здесь НЕ используется вызывающим кодом — сама
-    ежемесячная сумма уже часть той же плановой позиции, что и так попадает в
-    not_committed_raw_by_subsidy['by_kind'] (monthly-позиция = обычная
-    FeoPlannedItem с need_level по умолчанию 'likely'), прибавлять её ПОВЕРХ
-    было бы задвоением goods/services. `by_kind` оставлен в возврате на
-    случай отдельного построчного drill (не требуется текущим планом), но
-    use-case "товары/услуги карточки" его не трогает — см. докстринг
-    модуля.
-
-    См. докстринг
-    модуля. subsidy_ids уже отфильтрованы по видимости вызывающим кодом
-    (простой IN-фильтр здесь — та же техника, что остальные Σ-функции этого
-    модуля, видимость не изобретается заново)."""
-    from app.models.purchase import Purchase
-    from app.models.purchase_item import PurchaseItem
-    from app.services.dashboard_monthly_accrual import compute_monthly_future_rows
-    from app.services.item_type_split import purchase_type_shares, split_amount_by_shares
-
-    result: dict[int, dict] = {
-        sid: {"amount": 0.0, "by_kind": _empty_kind_bucket()} for sid in subsidy_ids
-    }
-    if not subsidy_ids:
-        return result
-
-    def _filter(q):
-        return q.where(Purchase.subsidy_id.in_(subsidy_ids))
-
-    rows = await compute_monthly_future_rows(db, _filter)
-    if not rows:
-        return result
-
-    purchase_ids = [r["purchase_id"] for r in rows]
-    items_by_purchase: dict[int, list] = {}
-    item_rows = (await db.execute(
-        select(PurchaseItem.purchase_id, PurchaseItem.item_type, PurchaseItem.total_price)
-        .where(PurchaseItem.purchase_id.in_(purchase_ids))
-    )).all()
-    for it in item_rows:
-        items_by_purchase.setdefault(it.purchase_id, []).append(it)
-
-    for r in rows:
-        sid = r["subsidy_id"]
-        if sid not in result:
-            continue
-        amount = r["amount"]
-        shares = purchase_type_shares(items_by_purchase.get(r["purchase_id"], []))
-        g, s, u = split_amount_by_shares(amount, shares)
-        d = result[sid]
-        d["amount"] += amount
-        d["by_kind"][KIND_GOODS] += float(g)
-        d["by_kind"][KIND_SERVICES] += float(s)
-        d["by_kind"][KIND_UNSPECIFIED] += float(u)
     return result
 
 

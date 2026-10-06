@@ -130,8 +130,19 @@ not_committed_nice/not_committed_likely/redistributable_by_kind больше Н�
 по ВСЕМ плановым позициям субсидии, без клэмпа, см. её докстринг за формулой);
 "redistributable" (сумма трёх строк) не меняется — алгебраически то же число,
 просто собранное иначе (см. test_redistributable_raw.py). Новые поля
-monthly_future_to_redistribute/over_plan_categories — см. докстринг
-app.services.redistributable_raw."""
+contracted_not_ordered/over_plan_categories — см. докстринг
+app.services.redistributable_raw/app.services.stage_cumulative.
+
+ИСПРАВЛЕНО (находка координатора 06.10.2026, двойной счёт): «договоры без
+заказа» (ранее поле monthly_future_to_redistribute) считались через
+is_monthly_payment-график платежей — на проде id=89 реальный разрыв «Ведётся
+работа»−«Заказано» целиком состоял из дочерних заказов рамочных договоров в
+статусе 'contracted' (is_monthly_payment=False у всех), график тут ни при
+чём. Источник теперь — app.services.stage_cumulative.
+contracted_not_ordered_by_subsidy/contracted_not_ordered_need_level_split;
+поле переименовано в contracted_not_ordered и ВЫЧИТАЕТСЯ из
+not_committed_nice/not_committed_likely (по need_level), а не прибавляется
+поверх — см. комментарий у места сборки ниже."""
 from typing import Optional
 
 from sqlalchemy import select
@@ -140,9 +151,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.subsidy import Subsidy
 from app.services.committed_amounts import subsidy_committed_totals
 from app.services.redistributable_raw import (
-    monthly_future_by_kind as _monthly_future_by_kind_fn,
     not_committed_raw_by_subsidy as _not_committed_raw_fn,
     over_plan_categories_by_subsidy as _over_plan_categories_fn,
+)
+from app.services.stage_cumulative import (
+    contracted_not_ordered_need_level_split as _contracted_not_ordered_split_fn,
 )
 from app.services.subsidy_budget import calculate_budgets_bulk, effective_subsidy_budget
 
@@ -206,7 +219,7 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
         "redistributable": float,             # budget − committed («Можно перераспределить»)
         "redistributable_by_kind": {"goods","services","unspecified"},  # RAW (06.10.2026) — см. app.services.redistributable_raw
         "redistributable_unplanned": float,   # free, если budget > 0, иначе 0.0 («не запланировано» в карточке «Можно перераспределить»)
-        "monthly_future_to_redistribute": float,  # «ежемесячные по договорам до конца года» (06.10.2026)
+        "contracted_not_ordered": float,  # «договоры без заказа» (06.10.2026, переименовано из monthly_future_to_redistribute)
         "over_plan_categories": [{"category_id","name","excess_amount"}],  # направления с committed > plan (06.10.2026)
         "committed_missing_fact_items": int,  # позиций в договоре без суммы договора (fallback по плановой цене)
         "plan_floor_added": float,            # сумма «пола плана» (закрытые позиции без собственного плана) узлов субсидии
@@ -254,7 +267,10 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
     # из _plan_floor_added_by_subsidy (та клэмпнутая версия остаётся только для
     # дерева/узлов — ничего в ней не меняем, см. docstring модуля там).
     raw_not_committed_map = await _not_committed_raw_fn(db, subsidy_ids)
-    monthly_future_kind_map = await _monthly_future_by_kind_fn(db, subsidy_ids)
+    # «Договоры без заказа» (дочерние заказы рамочных договоров 'contracted',
+    # ещё не оформленные как отдельная закупка) — ИСПРАВЛЕНО 06.10.2026, см.
+    # докстринг модуля и app.services.stage_cumulative.
+    contracted_not_ordered_split_map = await _contracted_not_ordered_split_fn(db, subsidy_ids=subsidy_ids)
     over_plan_categories_map = await _over_plan_categories_fn(db, subsidy_ids)
 
     for sid in subsidy_ids:
@@ -323,29 +339,30 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
         # п.1) — подстроки и разбивка по типу БЕЗ клэмпа дерева по направлениям,
         # см. докстринг app.services.redistributable_raw.
         #
-        # ИСПРАВЛЕНО (находка координатора, двойной счёт): «ежемесячные по
-        # договорам до конца года» — это НЕЗАКАЗАННЫЕ будущие месяцы уже
-        # существующего договора, т.е. часть плановой позиции, которая и так
-        # попадает в not_committed_raw_by_subsidy (обычно в 'likely' — monthly-
-        # позиции по умолчанию need_level='likely', см. plan_need_level.py).
-        # monthly_future_to_redistribute — это ВЫРЕЗКА (отдельная строка) ИЗ
-        # likely_raw, а не ДОБАВКА к нему: redistributable = not_planned +
-        # nice_raw + (likely_raw − monthly_future) + monthly_future ==
-        # not_planned + nice_raw + likely_raw (алгебраически ничего не
-        # меняется, см. test_redistributable_raw.py). redistributable_by_kind
-        # ниже читает raw_by_kind КАК ЕСТЬ (без второго прибавления monthly —
-        # monthly уже внутри likely_raw/by_kind, т.к. это та же плановая
-        # позиция) — monthly_future_by_kind используется только для суммы
-        # monthly_future_to_redistribute, её собственный by_kind здесь не
-        # участвует (иначе товары/услуги задваивают ежемесячную часть).
+        # ИСПРАВЛЕНО (находка координатора 06.10.2026, двойной счёт): «договоры
+        # без заказа» (дочерние заказы рамочных договоров, status='contracted' —
+        # контракт заключён, заказ как отдельная закупка ещё не создан) НЕ
+        # считаются committed_status_predicate для framework-закупок
+        # (FRAMEWORK_COMMITTED_STATUSES = {ordered, delivered, paid}, БЕЗ
+        # 'contracted' — committed_amounts.py) — поэтому их плановая позиция
+        # целиком остаётся «не законтрактовано» в not_committed_raw_by_subsidy
+        # (обычно в 'likely'). Это и есть ВЫРЕЗКА (отдельная строка), а не
+        # ДОБАВКА: redistributable = not_planned + nice_raw' + likely_raw' +
+        # contracted_not_ordered, где nice_raw'/likely_raw' — raw МИНУС свою
+        # долю contracted_not_ordered (по need_level плановой позиции заказа,
+        # app.services.stage_cumulative.contracted_not_ordered_need_level_split)
+        # — алгебраически та же Σ nice_raw+likely_raw, просто поделённая на 3
+        # строки вместо 2 (см. test_redistributable_raw.py). redistributable_by_kind
+        # ниже читает raw_by_kind КАК ЕСТЬ — contracted_not_ordered НЕ
+        # прибавляется и НЕ вычитается там (по п.2 задачи — by_kind не трогаем,
+        # товары/услуги уже включают эту сумму целиком внутри nice_raw/likely_raw).
         _raw = raw_not_committed_map.get(sid) or {"nice_raw": 0.0, "likely_raw": 0.0, "by_kind": {}}
-        _monthly_future_kind = monthly_future_kind_map.get(sid) or {"amount": 0.0, "by_kind": {}}
-        not_committed_nice_raw = _raw["nice_raw"]
-        monthly_future_to_redistribute = _monthly_future_kind["amount"]
-        # «Скорее всего понадобится» БЕЗ ежемесячных (та часть likely_raw,
-        # которая НЕ показана отдельной строкой «ежемесячные…») — вырезаем,
-        # не прибавляем (см. комментарий выше).
-        not_committed_likely_raw = _raw["likely_raw"] - monthly_future_to_redistribute
+        _contracted_not_ordered = contracted_not_ordered_split_map.get(sid) or {"nice": 0.0, "likely": 0.0}
+        contracted_not_ordered = _contracted_not_ordered["nice"] + _contracted_not_ordered["likely"]
+        # «Хотелось бы»/«Скорее всего» БЕЗ договоров-без-заказа (вырезаем по
+        # need_level заказа, не прибавляем — см. комментарий выше).
+        not_committed_nice_raw = _raw["nice_raw"] - _contracted_not_ordered["nice"]
+        not_committed_likely_raw = _raw["likely_raw"] - _contracted_not_ordered["likely"]
         _raw_by_kind = dict(_raw.get("by_kind") or {})
         # «Не запланировано» (redistributable_unplanned) не привязано к
         # конкретной категории/типу — кладём в «без типа», чтобы Σ by_kind всё
@@ -379,11 +396,11 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
             "redistributable_unplanned": redistributable_unplanned,
             "committed_missing_fact_items": _committed.get("committed_missing_fact_items", 0),
             "plan_floor_added": plan_floor_map.get(sid, {}).get("plan_floor_added", 0.0),
-            # Новые поля карточки «Можно перераспределить» (план sleepy-
-            # fluttering-walrus.md п.1): «ежемесячные по договорам до конца
-            # года» — отдельная строка (та же Σ, что monthly_future_to_year_end
-            # в dashboard_charts.py, ПРАВИЛО №6, см. докстринг redistributable_raw.py).
-            "monthly_future_to_redistribute": monthly_future_to_redistribute,
+            # «Договоры без заказа» (план sleepy-fluttering-walrus.md п.1,
+            # переименовано 06.10.2026 из monthly_future_to_redistribute —
+            # находка координатора, см. докстринг модуля и
+            # app.services.stage_cumulative.contracted_not_ordered_by_subsidy).
+            "contracted_not_ordered": contracted_not_ordered,
             # Красная строка «законтрактовано сверх плана по направлению X» —
             # см. docstring over_plan_categories_by_subsidy.
             "over_plan_categories": over_plan_categories_map.get(sid, []),
@@ -394,9 +411,10 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
             # app.services.redistributable_raw.not_committed_raw_by_subsidy
             # (compute_feo_plan_tree node['not_committed_nice']/['not_committed_likely']
             # остаются как есть — та клэмпнутая версия нужна ТОЛЬКО самому дереву/узлам).
-            # not_committed_likely — УЖЕ БЕЗ ежемесячных (см. вырезку выше,
-            # находка координатора 06.10.2026) — monthly_future_to_redistribute
-            # показывается отдельной строкой, не прибавляется поверх likely.
+            # not_committed_likely/not_committed_nice — УЖЕ БЕЗ «договоров без
+            # заказа» (см. вырезку выше, находка координатора 06.10.2026) —
+            # contracted_not_ordered показывается отдельной строкой, не
+            # прибавляется поверх likely/nice.
             "not_committed_likely": not_committed_likely_raw,
             "not_committed_nice": not_committed_nice_raw,
             "budget_basis": budget_basis,

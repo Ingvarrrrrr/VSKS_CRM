@@ -530,7 +530,11 @@ async def dashboard_charts(
             # Новые поля карточки «Можно перераспределить» (владелец, 06.10.2026,
             # план sleepy-fluttering-walrus.md п.1) — см. докстринг
             # app.services.redistributable_raw/subsidy_money_summary.py.
-            "monthly_future_to_redistribute": _money.get("monthly_future_to_redistribute", 0.0),
+            # ИЗМЕНЕНО (находка координатора): переименовано из
+            # monthly_future_to_redistribute в contracted_not_ordered —
+            # реальный источник не is_monthly_payment-график, а дочерние
+            # заказы рамочных договоров в статусе 'contracted'.
+            "contracted_not_ordered": _money.get("contracted_not_ordered", 0.0),
             "over_plan_categories": _money.get("over_plan_categories", []),
             # ИСПРАВЛЕНО 02.10.2026: economy_total=None (ни одна позиция субсидии
             # не измерена) пропускается как null, не форсится в 0.0 — см.

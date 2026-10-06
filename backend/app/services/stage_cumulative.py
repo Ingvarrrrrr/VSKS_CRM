@@ -63,12 +63,15 @@ from sqlalchemy import and_ as sqland, case, func, literal, not_ as sqlnot, or_ 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract import Contract
+from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
+from app.models.purchase_item import PurchaseItem
 from app.services.committed_amounts import (
     FRAMEWORK_COMMITTED_STATUSES,
     SINGLE_COMMITTED_STATUSES,
     committed_status_predicate,
 )
+from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE
 from app.services.purchase_amounts import effective_amount_expr
 
 # Контракты этих трёх типов (и ТОЛЬКО этих, СО status='active') уже учтены
@@ -276,4 +279,87 @@ async def contracted_total_by_subsidy(
         d["amount"] += d0["amount"]
         d["count"] += d0["count"]
 
+    return result
+
+
+async def contracted_not_ordered_by_subsidy(
+    db: AsyncSession,
+    *,
+    subsidy_ids: Optional[list[int]] = None,
+) -> dict[int, float]:
+    """{subsidy_id: amount} — «Договоры без заказа» (владелец/координатор,
+    06.10.2026, план sleepy-fluttering-walrus.md п.1, задача «карточка
+    "Можно перераспределить"»): дочерние заказы рамочных договоров
+    (Purchase.parent_purchase_id IS NOT NULL) в статусе 'contracted' (договор
+    на эту партию уже заключён, сам заказ как отдельная закупка ещё не
+    оформлен) — ровно та часть dashboard_charts.py::w_ordered (который
+    складывает status IN ('contracted','ordered')), которая НЕ входит в
+    total_ordered (только ordered/delivered/paid) — т.е. разрыв «Ведётся
+    работа» − «Заказано».
+
+    ИСПРАВЛЕНО (находка координатора 06.10.2026): раньше карточка «Можно
+    перераспределить» искала эту сумму через is_monthly_payment-график
+    платежей (app.services.dashboard_monthly_accrual.compute_monthly_future_map)
+    — на проде id=89 все такие заказы is_monthly_payment=False, разрыв был
+    найден нулевым. Реальный источник разницы — именно эти «договор заключён,
+    заказ ещё не создан» дочерние закупки. Сумма — effective_amount_expr()
+    (ПРАВИЛО №6, та же величина, что и w_ordered/committed в этом модуле, не
+    вторая формула «суммы закупки»)."""
+    result: dict[int, float] = {sid: 0.0 for sid in (subsidy_ids or [])}
+    if subsidy_ids is not None and not subsidy_ids:
+        return result
+
+    stmt = (
+        select(Purchase.subsidy_id, func.coalesce(func.sum(effective_amount_expr()), 0).label("amt"))
+        .where(Purchase.status == "contracted")
+        .where(Purchase.parent_purchase_id.isnot(None))
+        .where(Purchase.stopped_at.is_(None))
+    )
+    if subsidy_ids is not None:
+        stmt = stmt.where(Purchase.subsidy_id.in_(subsidy_ids))
+    stmt = stmt.group_by(Purchase.subsidy_id)
+    rows = (await db.execute(stmt)).all()
+    for r in rows:
+        result[r.subsidy_id] = float(r.amt or 0)
+    return result
+
+
+async def contracted_not_ordered_need_level_split(
+    db: AsyncSession,
+    *,
+    subsidy_ids: Optional[list[int]] = None,
+) -> dict[int, dict]:
+    """{subsidy_id: {"nice": float, "likely": float}} — ТА ЖЕ сумма
+    contracted_not_ordered_by_subsidy выше, разложенная по need_level
+    (app.services.plan_need_level) плановых позиций этих заказов, чтобы
+    карточка «Можно перераспределить» могла ВЫЧЕСТЬ её из «хотелось бы»/
+    «скорее всего» (а не прибавлять поверх — находка координатора про
+    двойной счёт). 'nice' — Σ PurchaseItem.total_price позиций, привязанных
+    (feo_planned_item_id) к FeoPlannedItem с need_level='nice_to_have'; 'likely'
+    довыводится ОСТАТКОМ (total − nice, тот же приём «likely остатком», что и
+    not_committed_likely узла дерева, см. feo_plan_tree.py) — не вторая Σ,
+    клэмп в [0, total] на случай расхождения между Σ purchase_items.total_price
+    и effective_amount_expr() покупки (см. purchase_amounts.py — у 'contracted'
+    контракта фолбэк на Σ items ТОЛЬКО если contract_price пуст)."""
+    totals = await contracted_not_ordered_by_subsidy(db, subsidy_ids=subsidy_ids)
+    result: dict[int, dict] = {sid: {"nice": 0.0, "likely": totals.get(sid, 0.0)} for sid in totals}
+    if not totals:
+        return result
+
+    nice_stmt = (
+        select(Purchase.subsidy_id, func.coalesce(func.sum(PurchaseItem.total_price), 0).label("amt"))
+        .join(Purchase, Purchase.id == PurchaseItem.purchase_id)
+        .join(FeoPlannedItem, FeoPlannedItem.id == PurchaseItem.feo_planned_item_id)
+        .where(Purchase.status == "contracted")
+        .where(Purchase.parent_purchase_id.isnot(None))
+        .where(Purchase.stopped_at.is_(None))
+        .where(Purchase.subsidy_id.in_(list(totals.keys())))
+        .where(FeoPlannedItem.need_level == NEED_LEVEL_NICE_TO_HAVE)
+        .group_by(Purchase.subsidy_id)
+    )
+    nice_rows = (await db.execute(nice_stmt)).all()
+    for r in nice_rows:
+        total = totals.get(r.subsidy_id, 0.0)
+        nice = max(0.0, min(float(r.amt or 0), total))
+        result[r.subsidy_id] = {"nice": nice, "likely": total - nice}
     return result

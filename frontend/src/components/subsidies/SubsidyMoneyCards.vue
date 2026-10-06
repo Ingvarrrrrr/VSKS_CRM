@@ -1,13 +1,13 @@
 <!-- Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.5), дополнено 06.10.2026
      (sleepy-fluttering-walrus.md, п.1): карточки для вкладки «Субсидии» —
      «Можно перераспределить» (теперь 4 строки: не запланировано / хотелось бы
-     можно отказаться / скорее всего понадобится / ежемесячные по договорам до
-     конца года + красные строки превышения плана по направлениям ФЭО) и
+     можно отказаться / скорее всего понадобится / договоры без заказа (будущие
+     месяцы) + красные строки превышения плана по направлениям ФЭО) и
      «Экономия по закупкам». Вынесены в отдельный компонент (Правило №5 —
      SubsidyKpiCards.vue уже > 500 строк, новые карточки туда не дописываются,
      только один вызов). Поля ВСЕ приходят готовыми с бэкенда (redistributable/
      redistributable_by_kind/redistributable_unplanned/not_committed_nice/
-     not_committed_likely/monthly_future_to_redistribute/over_plan_categories/
+     not_committed_likely/contracted_not_ordered/over_plan_categories/
      committed_missing_fact_items/economy_total/economy_no_planned_price_items —
      см. SubsidyRow в composables/subsidies/types.ts) — фронт ничего не считает
      (Правило №6). Рендерится внутри того же `.detail-kpis` контейнера родителя,
@@ -25,19 +25,20 @@
         <div class="kpi-body">
           <div class="kpi-value">{{ redistributable != null ? formatCurrency(redistributable) : '—' }}</div>
           <div class="kpi-label">Можно перераспределить</div>
-          <!-- Задача 1 (владелец, 04.10.2026 → доп. 06.10.2026): раньше одна
-               строка «не запланировано X (Свободно) + в плане без договоров Y» —
-               теперь четыре строки с разбивкой «в плане без договоров» по
-               статусу плановой позиции (not_committed_likely/_nice, см.
-               SubsidyRow в composables/subsidies/types.ts) + ежемесячные по
-               уже заключённым договорам до конца года (monthly_future_to_redistribute,
-               готовое поле бэкенда, см. app.services.dashboard_monthly_accrual).
+          <!-- Задача 1 (владелец, 04.10.2026 → доп. 06.10.2026, исправлено
+               координатором): раньше одна строка «не запланировано X
+               (Свободно) + в плане без договоров Y» — теперь четыре строки с
+               разбивкой «в плане без договоров» по статусу плановой позиции
+               (not_committed_likely/_nice, см. SubsidyRow в composables/
+               subsidies/types.ts) + «договоры без заказа» (contracted_not_ordered,
+               готовое поле бэкенда — дочерние заказы рамочных договоров в
+               статусе 'contracted', см. app.services.stage_cumulative).
                «хотелось бы» показываем даже при 0 ₽, чтобы категория была видна. -->
           <div v-if="redistributable != null" class="kpi-sub-note kpi-redistributable-notes text-caption text-medium-emphasis">
             <div class="kpi-redistributable-note-row">не запланировано: {{ formatCurrency(redistributableUnplanned) }}</div>
             <div class="kpi-redistributable-note-row">хотелось бы, можно отказаться: {{ formatCurrency(notCommittedNice) }}</div>
             <div class="kpi-redistributable-note-row">скорее всего понадобится: {{ formatCurrency(notCommittedLikely) }}</div>
-            <div class="kpi-redistributable-note-row">ежемесячные по договорам до конца года: {{ formatCurrency(monthlyFutureToRedistribute) }}</div>
+            <div class="kpi-redistributable-note-row">договоры без заказа (будущие месяцы): {{ formatCurrency(contractedNotOrdered) }}</div>
           </div>
           <div v-if="isSplit" class="kpi-split-rows" @click.stop>
             <template v-if="splitRows.length">
@@ -155,7 +156,7 @@ const notCommittedLikely = computed(() => props.subsidy?.not_committed_likely ??
 const notCommittedNice = computed(() => props.subsidy?.not_committed_nice ?? 0)
 const committedMissingFactItems = computed(() => props.subsidy?.committed_missing_fact_items ?? 0)
 // Задача (владелец, 06.10.2026) — готовые поля бэкенда, фронт не считает (Правило №6).
-const monthlyFutureToRedistribute = computed(() => props.subsidy?.monthly_future_to_redistribute ?? 0)
+const contractedNotOrdered = computed(() => props.subsidy?.contracted_not_ordered ?? 0)
 const overPlanCategories = computed(() => props.subsidy?.over_plan_categories ?? [])
 // null-безопасно (02.10.2026, приёмка): нет данных (поле не пришло или
 // бэкенд явно вернул null) — показываем «—», а не 0 ₽ (0 — это РЕАЛЬНОЕ

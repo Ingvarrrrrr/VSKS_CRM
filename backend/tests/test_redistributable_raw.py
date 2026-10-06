@@ -22,7 +22,6 @@ committed_by_planned_item — ПРАВИЛО №6, вторая формула �
 
 Переиспользует фабрики test_feo_plan_tree_scenarios.py/test_money_committed.py
 (ПРАВИЛО №6 — вторая копия не заводится)."""
-from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -30,9 +29,12 @@ import pytest
 from app.services.committed_amounts import subsidy_committed_totals
 from app.services.feo_plan import compute_feo_plan_tree
 from app.services.redistributable_raw import (
-    monthly_future_by_kind,
     not_committed_raw_by_subsidy,
     over_plan_categories_by_subsidy,
+)
+from app.services.stage_cumulative import (
+    contracted_not_ordered_by_subsidy,
+    contracted_not_ordered_need_level_split,
 )
 from app.services.subsidy_money_summary import subsidy_money_summary
 from tests.test_feo_plan_tree_scenarios import _make_category, _make_planned_item, _make_subsidy
@@ -109,11 +111,10 @@ async def test_not_committed_raw_matches_tree_total_without_miscategorization(db
 
 
 @pytest.mark.asyncio
-async def test_monthly_future_by_kind_empty_without_monthly_purchases(db_session, test_org):
+async def test_contracted_not_ordered_empty_without_framework_children(db_session, test_org):
     subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
-    result = await monthly_future_by_kind(db_session, [subsidy.id])
-    assert result[subsidy.id]["amount"] == 0.0
-    assert sum(result[subsidy.id]["by_kind"].values()) == pytest.approx(0.0)
+    result = await contracted_not_ordered_by_subsidy(db_session, subsidy_ids=[subsidy.id])
+    assert result[subsidy.id] == 0.0
 
 
 @pytest.mark.asyncio
@@ -128,66 +129,85 @@ async def test_over_plan_categories_empty_when_within_plan(db_session, test_org)
 
 
 @pytest.mark.asyncio
-async def test_monthly_future_is_carved_out_of_likely_not_added_on_top(db_session, test_org):
-    """Находка координатора (06.10.2026, двойной счёт): «ежемесячные по
-    договорам до конца года» — это НЕЗАКАЗАННЫЕ будущие месяцы уже
-    существующего договора, т.е. часть той же плановой позиции, которая и так
-    сидит в not_committed_raw_by_subsidy (обычно в 'likely', see
-    plan_need_level.py — умолчание). monthly_future_to_redistribute обязан
-    быть ВЫРЕЗКОЙ из not_committed_likely (отдельная строка карточки), а не
-    добавкой поверх него, и redistributable_by_kind НЕ должен прибавлять
-    monthly ещё раз (иначе товары/услуги задваивают ежемесячную часть).
+async def test_contracted_not_ordered_is_carved_out_of_likely_not_added_on_top(db_session, test_org):
+    """Находка координатора (06.10.2026, ДВА исправления подряд): сначала
+    «ежемесячные по договорам» искали через is_monthly_payment-график — на
+    проде id=89 разрыв «Ведётся работа»−«Заказано» целиком состоял из
+    ДОЧЕРНИХ ЗАКАЗОВ РАМОЧНЫХ ДОГОВОРОВ в статусе 'contracted' (договор уже
+    заключён, сам заказ как закупка ещё не оформлен) — is_monthly_payment=
+    False у всех. committed_status_predicate НЕ считает 'contracted' для
+    framework-закупок (FRAMEWORK_COMMITTED_STATUSES={ordered,delivered,paid}),
+    поэтому плановая позиция такого заказа целиком остаётся «не
+    законтрактовано» в not_committed_raw_by_subsidy. contracted_not_ordered
+    обязан быть ВЫРЕЗКОЙ из not_committed_likely/not_committed_nice (по
+    need_level заказа), а не добавкой поверх, и redistributable_by_kind НЕ
+    трогается (товары/услуги уже включают эту сумму — по заданию
+    координатора).
 
     Бюджет субсидии/категории не задаём (budget_from_plan=True) — тогда
-    budget_basis == planned и redistributable_unplanned == 0 РОВНО, что
-    убирает лишнюю переменную из проверки by_kind (не запланировано не
-    примешивается к "без типа")."""
+    budget_basis == planned и redistributable_unplanned == 0 РОВНО."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+
     subsidy = await _make_subsidy(db_session, test_org.id, budget=0)
-    cat = await _make_category(db_session, subsidy.id, name="Ежемесячный договор")
-    item = await _make_planned_item(db_session, cat.id, "Услуга связи", 1, 500_000)
+    cat = await _make_category(db_session, subsidy.id, name="Рамочный договор")
+    item = await _make_planned_item(db_session, cat.id, "Услуга связи", 1, 250_000)
     item.item_type = "услуга"
     await db_session.commit()
 
-    # Ежемесячный договор — is_monthly_payment, НЕ привязан к плановой
-    # позиции (feo_planned_item_id=None), контракт на 360 000 (12×30 000),
-    # начало 01.01.2026 — к «сегодня» (2026-10-06 по системным часам теста)
-    # 10 месяцев начислено (300 000), 2 месяца в будущем (60 000).
-    from app.models.purchase import Purchase
-    p = Purchase(
-        subsidy_id=subsidy.id,
-        feo_category_id=cat.id,
-        item_name="Интернет",
-        status="contracted",
-        is_monthly_payment=True,
-        monthly_payment_amount=Decimal("30000"),
-        service_start_date=date(2026, 1, 1),
-        contract_price=Decimal("360000"),
-        total_nmck=Decimal("360000"),
-        nmck=Decimal("360000"),
+    # Рамочная голова (сам договор) + дочерний заказ в статусе 'contracted'
+    # (контракт заключён, заказ как отдельная закупка ещё НЕ создан) — ровно
+    # находка координатора. Позиция заказа привязана к плановой позиции item
+    # (need_level по умолчанию 'likely').
+    head = Purchase(
+        subsidy_id=subsidy.id, item_name="Рамочный договор",
+        status="contracted", purchase_contract_type="framework_with_amount",
     )
-    db_session.add(p)
+    db_session.add(head)
+    await db_session.flush()
+    child = Purchase(
+        subsidy_id=subsidy.id, feo_category_id=cat.id, item_name="Заказ по рамочному",
+        status="contracted", purchase_contract_type="framework_with_amount",
+        parent_purchase_id=head.id,
+        contract_price=Decimal("250000"), total_nmck=Decimal("250000"), nmck=Decimal("250000"),
+    )
+    db_session.add(child)
+    await db_session.flush()
+    pi = PurchaseItem(
+        purchase_id=child.id, item_name="Услуга связи", quantity=Decimal("1"), unit="шт",
+        unit_price=Decimal("250000"), total_price=Decimal("250000"), item_type="услуга",
+        feo_category_id=cat.id, feo_planned_item_id=item.id, over_plan=False,
+    )
+    db_session.add(pi)
     await db_session.commit()
 
     raw_map = await not_committed_raw_by_subsidy(db_session, [subsidy.id])
     likely_raw = raw_map[subsidy.id]["likely_raw"]
+    assert likely_raw == pytest.approx(250_000.0)  # 'contracted' не считается committed для framework
+
+    contracted_total = await contracted_not_ordered_by_subsidy(db_session, subsidy_ids=[subsidy.id])
+    assert contracted_total[subsidy.id] == pytest.approx(250_000.0)
+    split = await contracted_not_ordered_need_level_split(db_session, subsidy_ids=[subsidy.id])
+    assert split[subsidy.id]["nice"] == pytest.approx(0.0)
+    assert split[subsidy.id]["likely"] == pytest.approx(250_000.0)
 
     summary = await subsidy_money_summary(db_session, [subsidy.id])
     row = summary[subsidy.id]
 
     assert row["redistributable_unplanned"] == pytest.approx(0.0)
-    assert row["monthly_future_to_redistribute"] == pytest.approx(60_000.0)
-    # Вырезка, не добавка: likely карточки = likely_raw МИНУС ежемесячные.
-    assert row["not_committed_likely"] == pytest.approx(likely_raw - 60_000.0)
+    assert row["contracted_not_ordered"] == pytest.approx(250_000.0)
+    # Вырезка, не добавка: likely карточки = likely_raw МИНУС заказ целиком.
+    assert row["not_committed_likely"] == pytest.approx(0.0)
+    assert row["not_committed_nice"] == pytest.approx(0.0)
 
+    # Σ by_kind == итогу (by_kind НЕ уменьшается вырезкой — по заданию).
     by_kind = row["redistributable_by_kind"]
     total_by_kind = by_kind["goods"] + by_kind["services"] + by_kind["unspecified"]
     assert total_by_kind == pytest.approx(row["redistributable"])
-    # Услуга-позиция целиком (500 000) не задваивается ежемесячными 60 000 —
-    # until-фикс услуги были бы 560 000 (500 000 статьи + 60 000 ещё раз).
-    assert by_kind["services"] == pytest.approx(500_000.0)
+    assert by_kind["services"] == pytest.approx(250_000.0)
     assert by_kind["goods"] == pytest.approx(0.0)
 
     # Инвариант карточки: 4 строки складываются в итог ровно.
     assert row["redistributable_unplanned"] + row["not_committed_nice"] \
-        + row["not_committed_likely"] + row["monthly_future_to_redistribute"] \
+        + row["not_committed_likely"] + row["contracted_not_ordered"] \
         == pytest.approx(row["redistributable"])

@@ -15,9 +15,8 @@
         style="background: linear-gradient(90deg, #1e3a5f, #312e81); color: white;">
         <div style="flex:1; min-width:0">
           <div class="text-h6 font-weight-bold" style="line-height:1.2">Заключено договоров</div>
-          <div class="text-caption mt-1" style="opacity:0.75">{{ rows.length }} строк</div>
         </div>
-        <v-chip size="small" variant="tonal" class="mr-2" color="white">{{ contractsCount }} договоров</v-chip>
+        <v-chip size="small" variant="tonal" class="mr-2" color="white">{{ contractsCount }} {{ contractsWord }}</v-chip>
         <v-btn icon="mdi-close" variant="text" color="white" @click="emit('close')" />
       </v-card-title>
 
@@ -47,7 +46,7 @@
               <tr v-for="r in rows" :key="r.contract_id ?? 'u-' + r.subject + r.contract_amount">
                 <td class="px-4 py-2" style="max-width:280px">
                   <div v-if="r.number" style="font-size:13px">{{ r.number }}</div>
-                  <div class="text-caption text-medium-emphasis" style="white-space:normal">{{ r.subject || '—' }}</div>
+                  <div v-if="r.subject && r.subject !== r.number" class="text-caption text-medium-emphasis" style="white-space:normal">{{ r.subject }}</div>
                 </td>
                 <td class="px-4 text-caption">{{ r.contractor_name || '—' }}</td>
                 <td class="px-4 text-caption">{{ r.contract_type_label }}</td>
@@ -61,7 +60,7 @@
             </tbody>
             <tfoot v-if="rows.length">
               <tr>
-                <td colspan="3" class="px-4 text-right font-weight-medium">Итого: {{ contractsCount }} договоров</td>
+                <td colspan="3" class="px-4 text-right font-weight-medium">Итого: {{ contractsCount }} {{ contractsWord }}</td>
                 <td class="text-right px-4 font-weight-bold text-primary">{{ formatCurrency(total) }}</td>
                 <td class="px-4" />
                 <td class="px-4" />
@@ -125,6 +124,18 @@ const cardTotal = ref(0)
 const contractsCount = ref(0)
 
 const mismatch = computed(() => Math.abs(total.value - cardTotal.value) > 0.005)
+
+// Склонение «договор/договора/договоров» (11-14 — всегда «договоров»,
+// иначе по последней цифре: 1 → договор, 2-4 → договора, 0/5-9 → договоров).
+function pluralizeContracts(n: number): string {
+  const mod100 = Math.abs(n) % 100
+  const mod10 = mod100 % 10
+  if (mod100 >= 11 && mod100 <= 14) return 'договоров'
+  if (mod10 === 1) return 'договор'
+  if (mod10 >= 2 && mod10 <= 4) return 'договора'
+  return 'договоров'
+}
+const contractsWord = computed(() => pluralizeContracts(contractsCount.value))
 
 async function load() {
   if (!props.subsidyId) {

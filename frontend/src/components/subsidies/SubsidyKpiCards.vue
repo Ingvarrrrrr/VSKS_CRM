@@ -670,13 +670,16 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
   margin-top: 4px;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 .kpi-paid-dual-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 6px;
+  gap: 2px 6px;
   font-size: 11.5px;
   line-height: 1.3;
+  min-width: 0;
 }
 .kpi-paid-dual-label {
   opacity: 0.75;
@@ -684,6 +687,7 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
 .kpi-paid-dual-amount {
   font-weight: 600;
   white-space: nowrap;
+  margin-left: auto;
 }
 .kpi-paid-dual-warn .kpi-paid-dual-amount {
   color: #fb923c;

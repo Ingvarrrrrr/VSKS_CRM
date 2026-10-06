@@ -161,6 +161,7 @@ import FeoTreeTable from '@/components/subsidies/FeoTreeTable.vue'
 import FeoImportRunsPanel from '@/components/subsidies/FeoImportRunsPanel.vue'
 import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
+import { pickSubsidyMoneyFields } from '@/composables/subsidies/subsidyMoneyFields'
 import SubsidyEventsPanel from '@/components/subsidies/SubsidyEventsPanel.vue'
 import SubsidyEditDialog from '@/components/subsidies/SubsidyEditDialog.vue'
 import SubsidyDeleteDialog from '@/components/subsidies/SubsidyDeleteDialog.vue'
@@ -516,34 +517,13 @@ async function loadAll() {
       remaining: s.remaining ?? null,
       planned_amount: s.planned_amount ?? null,
       budget_discrepancy: s.budget_discrepancy ?? null,
-      // Квик-план 2026-10-02 (PLAN.md п.1, фикс приёмки): карточки «Можно
-      // перераспределить»/«Экономия по закупкам» показывали «—»/0 — поля
-      // приходят с /dashboard/charts (committed_amounts.py/purchase_economy.py),
-      // но раскладка их теряла. Единый источник (Правило №6) — ничего не
-      // считаем здесь, только переносим готовые значения.
-      committed: s.committed ?? null,
-      committed_by_kind: s.committed_by_kind ?? null,
-      planned_not_committed: s.planned_not_committed ?? null,
-      planned_not_committed_by_kind: s.planned_not_committed_by_kind ?? null,
-      redistributable: s.redistributable ?? null,
-      redistributable_by_kind: s.redistributable_by_kind ?? null,
-      redistributable_unplanned: s.redistributable_unplanned ?? null,
-      // Задачи 2-3 (владелец, 04.10.2026): разбивка «в плане без договоров»
-      // по need_level + остаток помесячного до конца года — готовые поля
-      // /dashboard/charts, ничего не считаем (Правило №6).
-      not_committed_likely: s.not_committed_likely ?? null,
-      not_committed_nice: s.not_committed_nice ?? null,
-      monthly_future_to_year_end: s.monthly_future_to_year_end ?? null,
-      economy_total: s.economy_total ?? null,
-      economy_no_planned_price_items: s.economy_no_planned_price_items ?? null,
-      economy_unmeasured_by_reason: s.economy_unmeasured_by_reason ?? null,
-      committed_missing_fact_items: s.committed_missing_fact_items ?? null,
-      // «Остаток субсидии» (владелец, 06.10.2026) — готовые поля бэкенда,
-      // фронт не считает (Правило №6, см. composables/subsidies/types.ts).
-      balance_paid_marked: s.balance_paid_marked ?? null,
-      balance_paid_confirmed: s.balance_paid_confirmed ?? null,
-      balance_by_marks: s.balance_by_marks ?? null,
-      balance_by_statement: s.balance_by_statement ?? null,
+      // Квик-план 2026-10-02 (PLAN.md п.1, фикс приёмки) + фикс 06.10.2026:
+      // карточки «Можно перераспределить»/«Экономия по закупкам» показывали
+      // «—»/0 — поля приходят с /dashboard/charts (committed_amounts.py/
+      // purchase_economy.py и т.д.), но раскладка их теряла. Единый источник
+      // (Правило №6) — список полей в одной функции, не дублируем его здесь
+      // и во втором месте этого файла (см. silentRefreshSubsidies() ниже).
+      ...pickSubsidyMoneyFields(s),
       work: s.total_work ?? 0,
       contracts: s.total_contracts ?? 0,
       delivered: s.total_delivered ?? 0,
@@ -652,34 +632,9 @@ async function silentRefreshSubsidies() {
         remaining: s.remaining ?? null,
         planned_amount: s.planned_amount ?? null,
         budget_discrepancy: s.budget_discrepancy ?? null,
-      // Квик-план 2026-10-02 (PLAN.md п.1, фикс приёмки): карточки «Можно
-      // перераспределить»/«Экономия по закупкам» показывали «—»/0 — поля
-      // приходят с /dashboard/charts (committed_amounts.py/purchase_economy.py),
-      // но раскладка их теряла. Единый источник (Правило №6) — ничего не
-      // считаем здесь, только переносим готовые значения.
-      committed: s.committed ?? null,
-      committed_by_kind: s.committed_by_kind ?? null,
-      planned_not_committed: s.planned_not_committed ?? null,
-      planned_not_committed_by_kind: s.planned_not_committed_by_kind ?? null,
-      redistributable: s.redistributable ?? null,
-      redistributable_by_kind: s.redistributable_by_kind ?? null,
-      redistributable_unplanned: s.redistributable_unplanned ?? null,
-      // Задачи 2-3 (владелец, 04.10.2026): разбивка «в плане без договоров»
-      // по need_level + остаток помесячного до конца года — готовые поля
-      // /dashboard/charts, ничего не считаем (Правило №6).
-      not_committed_likely: s.not_committed_likely ?? null,
-      not_committed_nice: s.not_committed_nice ?? null,
-      monthly_future_to_year_end: s.monthly_future_to_year_end ?? null,
-      economy_total: s.economy_total ?? null,
-      economy_no_planned_price_items: s.economy_no_planned_price_items ?? null,
-      economy_unmeasured_by_reason: s.economy_unmeasured_by_reason ?? null,
-      committed_missing_fact_items: s.committed_missing_fact_items ?? null,
-      // «Остаток субсидии» (владелец, 06.10.2026) — готовые поля бэкенда,
-      // фронт не считает (Правило №6, см. composables/subsidies/types.ts).
-      balance_paid_marked: s.balance_paid_marked ?? null,
-      balance_paid_confirmed: s.balance_paid_confirmed ?? null,
-      balance_by_marks: s.balance_by_marks ?? null,
-      balance_by_statement: s.balance_by_statement ?? null,
+        // Тот же единый источник, что и в loadAll() выше (ПРАВИЛО №6) —
+        // не вторая копия списка полей.
+        ...pickSubsidyMoneyFields(s),
         work: s.total_work ?? 0,
         contracts: s.total_contracts ?? 0,
         delivered: s.total_delivered ?? 0,

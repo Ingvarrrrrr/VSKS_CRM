@@ -128,6 +128,11 @@ export interface SubsidyRow {
   balance_paid_confirmed?: number | null
   balance_by_marks?: number | null
   balance_by_statement?: number | null
+  // 2026-10-06: «Законтрактовано, не заказано» (сумма по заключённым рамочным
+  // договорам, ещё не выбранная заказами) и перерасход по категориям ФЭО —
+  // готовые поля /dashboard/charts, см. composables/subsidies/subsidyMoneyFields.ts.
+  contracted_not_ordered?: number | null
+  over_plan_categories?: Array<{ category_id: number; name: string; excess_amount: number }> | null
   // Решение владельца 06.10.2026 (budget_basis = план, когда ФЭО не введён и
   // ручного бюджета нет, см. backend/app/services/subsidy_money_summary.py) —
   // true, когда calculated_budget/feo_budget_total/remaining выше временно

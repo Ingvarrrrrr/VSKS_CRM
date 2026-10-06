@@ -612,6 +612,12 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         balance_paid_confirmed: s.balance_paid_confirmed ?? null,
         balance_by_marks: s.balance_by_marks ?? null,
         balance_by_statement: s.balance_by_statement ?? null,
+        // 2026-10-06: «Законтрактовано, не заказано» и перерасход по категориям —
+        // те же готовые поля /dashboard/charts, что и в SubsidiesView.vue
+        // (pickSubsidyMoneyFields), но тип строки дашборда другой и не весь
+        // набор денежных полей здесь используется — добавлены точечно.
+        contracted_not_ordered: s.contracted_not_ordered ?? null,
+        over_plan_categories: s.over_plan_categories ?? [],
         // Решение владельца 06.10.2026 — см. composables/subsidies/types.ts.
         budget_from_plan: s.budget_from_plan ?? false,
       }))

@@ -187,6 +187,47 @@ def test_af_not_found_falls_back_to_ag_global_when_unambiguous():
     assert result.stopped_at == "ag_global"
 
 
+def test_af_found_as_grandchild_via_deep_search():
+    """Прод-находка 07.10.2026 (владелец): папка для AF иногда заводится НЕ
+    прямым ребёнком корня, а внуком (level 3) — «Приобретение ОСАГО для
+    автомобилей» создана под «Техническое оснащение деятельности штаба»
+    (level 2, сама дочь корня с тем же именем), хотя соответствует AF, а не
+    AG. AF должен найтись глубоким поиском среди ВСЕХ потомков корня."""
+    nodes = [
+        CategoryNode(1, None, "1. Техническое оснащение деятельности штаба", 1),
+        CategoryNode(10, 1, "Техническое оснащение деятельности штаба", 2),
+        CategoryNode(100, 10, "Приобретение ОСАГО для автомобилей", 3),
+    ]
+    tree = FeoTree(nodes)
+    result = resolve_feo_path(
+        tree, ae="1. Техническое оснащение деятельности штаба",
+        af="Приобретение ОСАГО для автомобилей", ag="",
+    )
+    assert result.category_id == 100
+    assert result.stopped_at == "af_deep"
+    assert result.match_method == "exact"
+    assert not result.ambiguous
+
+
+def test_af_deep_search_ambiguous_with_two_grandchildren():
+    """Два внука с одинаковым именем под РАЗНЫМИ ветками одного корня — не
+    угадываем, остаёмся на AE и помечаем уровень 'af_deep'."""
+    nodes = [
+        CategoryNode(1, None, "Направление", 1),
+        CategoryNode(10, 1, "Ветка А", 2),
+        CategoryNode(100, 10, "Приобретение ОСАГО для автомобилей", 3),
+        CategoryNode(11, 1, "Ветка Б", 2),
+        CategoryNode(101, 11, "Приобретение ОСАГО для автомобилей", 3),
+    ]
+    tree = FeoTree(nodes)
+    result = resolve_feo_path(tree, ae="Направление", af="Приобретение ОСАГО для автомобилей", ag="")
+    assert result.category_id == 1  # остались на корне
+    assert result.stopped_at == "root"
+    assert result.ambiguous
+    assert result.ambiguous_level == "af_deep"
+    assert {c[0] for c in result.ambiguous_candidates} == {100, 101}
+
+
 def test_ae_not_found_returns_none():
     tree = _build_tree()
     result = resolve_feo_path(tree, ae="Направление, которого нет в дереве", af="что угодно", ag="")

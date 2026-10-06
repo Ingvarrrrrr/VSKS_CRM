@@ -18,11 +18,21 @@
 Путь поиска:
   1. Корень по AE — среди категорий уровня 1 (parent_id IS NULL) субсидии.
   2. Среди ДЕТЕЙ найденного корня — по AF.
-  3. Среди ДЕТЕЙ найденного по AF — по AG (если AG пусто — остаёмся на AF).
-  4. Если AF не нашёлся среди детей AE, а AG задан — пробуем AG среди ВСЕХ
-     потомков корня (level 2 и 3), но только если совпадение ОДНОЗНАЧНО
-     (ровно один кандидат) — иначе остаёмся на корне.
-  5. Неоднозначность (>1 подходящей категории) на любом шаге — НЕ угадываем,
+  3. Если AF не нашёлся среди ПРЯМЫХ детей корня — «глубокий» поиск AF среди
+     ВСЕХ потомков корня (level 2 и 3 разом) — владелец, доп. правка
+     07.10.2026: папка для AF иногда заводится на уровень глубже, чем прямой
+     ребёнок (внук корня) — пример с прода: «Приобретение ОСАГО для
+     автомобилей» и «Организация и проведения праздничных мероприятий к
+     25-летию ВСКС» созданы level=3, хотя соответствуют AF, а не AG. Только
+     если совпадение ОДНОЗНАЧНО (ровно один кандидат, те же три уровня
+     сравнения) — иначе остаёмся на корне. Найденный таким образом узел
+     отмечается `stopped_at='af_deep'`.
+  4. Среди ДЕТЕЙ найденного по AF (прямого или «глубокого») — по AG (если AG
+     пусто — остаёмся на AF/af_deep).
+  5. Если AF не нашёлся НИГДЕ (ни среди прямых детей, ни глубоким поиском), а
+     AG задан — пробуем AG среди ВСЕХ потомков корня (level 2 и 3), но только
+     если совпадение ОДНОЗНАЧНО — иначе остаёмся на корне.
+  6. Неоднозначность (>1 подходящей категории) на любом шаге — НЕ угадываем,
      остаёмся на уровне, найденном ДО этого шага, и фиксируем это отдельно
      (`ambiguous=True`), чтобы вызывающий код мог показать это в отчёте.
 
@@ -112,7 +122,7 @@ class CategoryNode:
 class ResolvedPath:
     category_id: Optional[int]
     path: list  # имена категорий от корня до остановки (может быть пустым)
-    stopped_at: str  # 'none' | 'root' | 'af' | 'ag' | 'ag_global'
+    stopped_at: str  # 'none' | 'root' | 'af' | 'af_deep' | 'ag' | 'ag_global'
     reason: str
     ambiguous: bool = False
     ambiguous_level: Optional[str] = None
@@ -222,6 +232,34 @@ def _select_child(nodes: Sequence[CategoryNode], raw_name: str) -> _Selection:
                        ambiguous_candidates=[(n.id, n.name) for n in close])
 
 
+def _finish_from_af(tree: FeoTree, af_node: CategoryNode, base_stopped_at: str,
+                     af_match_method: Optional[str], ag: str) -> ResolvedPath:
+    """Общий хвост алгоритма — AG среди детей УЖЕ найденного AF-узла, будь то
+    прямой ребёнок корня (base_stopped_at='af') или узел, найденный глубоким
+    поиском (base_stopped_at='af_deep') — ОДНА функция, не копия при каждом
+    способе найти af_node (ПРАВИЛО №6)."""
+    path = tree.path_to(af_node)
+    ag_norm = normalize_feo_name(ag)
+    if not ag_norm:
+        return ResolvedPath(af_node.id, path, base_stopped_at, "AG не указан — остаёмся на AF",
+                             match_method=af_match_method)
+
+    ag_sel = _select_child(tree.kids(af_node.id), ag)
+    if ag_sel.ambiguous:
+        return ResolvedPath(
+            af_node.id, path, base_stopped_at, "AG неоднозначен среди детей AF — остаёмся на AF",
+            ambiguous=True, ambiguous_level="ag", ambiguous_candidates=ag_sel.ambiguous_candidates,
+        )
+    if ag_sel.node is None:
+        return ResolvedPath(af_node.id, path, base_stopped_at, "AG не найден среди детей AF — остаёмся на AF",
+                             match_method=af_match_method,
+                             considered_siblings=[n.name for n in tree.kids(af_node.id)])
+
+    ag_node = ag_sel.node
+    return ResolvedPath(ag_node.id, path + [ag_node.name], "ag", "найдено по AE→AF→AG",
+                         match_method=ag_sel.method)
+
+
 def resolve_feo_path(tree: FeoTree, ae: str, af: str, ag: str) -> ResolvedPath:
     """Основная функция — см. докстринг модуля для алгоритма."""
     root_candidates = _find_candidates(tree.roots, ae)
@@ -242,49 +280,43 @@ def resolve_feo_path(tree: FeoTree, ae: str, af: str, ag: str) -> ResolvedPath:
             root.id, path, "root", "AF неоднозначен среди детей AE — остаёмся на AE",
             ambiguous=True, ambiguous_level="af", ambiguous_candidates=af_sel.ambiguous_candidates,
         )
-    if af_sel.node is None:
-        # AF не найден среди ПРЯМЫХ детей корня — пробуем AG среди ВСЕХ
-        # потомков корня (level 2 и 3), только если однозначно.
-        siblings = [n.name for n in tree.kids(root.id)]
-        ag_sel_global = _select_child(tree.descendants(root.id), ag)
-        if ag_sel_global.ambiguous:
-            return ResolvedPath(
-                root.id, path, "root",
-                "AF не найден в детях AE; AG неоднозначен среди потомков AE — остаёмся на AE",
-                ambiguous=True, ambiguous_level="ag_global",
-                ambiguous_candidates=ag_sel_global.ambiguous_candidates,
-                considered_siblings=siblings,
-            )
-        if ag_sel_global.node is not None:
-            node = ag_sel_global.node
-            return ResolvedPath(node.id, tree.path_to(node), "ag_global",
-                                 "AF не найден в детях AE; AG однозначно найден среди всех потомков AE",
-                                 match_method=ag_sel_global.method)
-        return ResolvedPath(root.id, path, "root", "AF не найден в детях AE, AG тоже не найден — остаёмся на AE",
-                             considered_siblings=siblings)
+    if af_sel.node is not None:
+        return _finish_from_af(tree, af_sel.node, "af", af_sel.method, ag)
 
-    af_node = af_sel.node
-    path = path + [af_node.name]
-
-    ag_norm = normalize_feo_name(ag)
-    if not ag_norm:
-        return ResolvedPath(af_node.id, path, "af", "AG не указан — остаёмся на AF",
-                             match_method=af_sel.method)
-
-    ag_sel = _select_child(tree.kids(af_node.id), ag)
-    if ag_sel.ambiguous:
+    # AF не найден среди ПРЯМЫХ детей корня — «глубокий» поиск AF среди ВСЕХ
+    # потомков корня (владелец, доп. правка 07.10.2026 — папка для AF иногда
+    # заведена на уровень глубже, чем прямой ребёнок). Только однозначно.
+    siblings = [n.name for n in tree.kids(root.id)]
+    af_deep_sel = _select_child(tree.descendants(root.id), af)
+    if af_deep_sel.ambiguous:
         return ResolvedPath(
-            af_node.id, path, "af", "AG неоднозначен среди детей AF — остаёмся на AF",
-            ambiguous=True, ambiguous_level="ag", ambiguous_candidates=ag_sel.ambiguous_candidates,
+            root.id, path, "root",
+            "AF не найден в прямых детях AE; AF неоднозначен среди ВСЕХ потомков AE (глубокий поиск) — "
+            "остаёмся на AE",
+            ambiguous=True, ambiguous_level="af_deep", ambiguous_candidates=af_deep_sel.ambiguous_candidates,
+            considered_siblings=siblings,
         )
-    if ag_sel.node is None:
-        return ResolvedPath(af_node.id, path, "af", "AG не найден среди детей AF — остаёмся на AF",
-                             match_method=af_sel.method,
-                             considered_siblings=[n.name for n in tree.kids(af_node.id)])
+    if af_deep_sel.node is not None:
+        return _finish_from_af(tree, af_deep_sel.node, "af_deep", af_deep_sel.method, ag)
 
-    ag_node = ag_sel.node
-    path = path + [ag_node.name]
-    return ResolvedPath(ag_node.id, path, "ag", "найдено по AE→AF→AG", match_method=ag_sel.method)
+    # AF не найден НИГДЕ — пробуем AG среди ВСЕХ потомков корня, только если
+    # совпадение однозначно.
+    ag_sel_global = _select_child(tree.descendants(root.id), ag)
+    if ag_sel_global.ambiguous:
+        return ResolvedPath(
+            root.id, path, "root",
+            "AF не найден в детях AE; AG неоднозначен среди потомков AE — остаёмся на AE",
+            ambiguous=True, ambiguous_level="ag_global",
+            ambiguous_candidates=ag_sel_global.ambiguous_candidates,
+            considered_siblings=siblings,
+        )
+    if ag_sel_global.node is not None:
+        node = ag_sel_global.node
+        return ResolvedPath(node.id, tree.path_to(node), "ag_global",
+                             "AF не найден в детях AE; AG однозначно найден среди всех потомков AE",
+                             match_method=ag_sel_global.method)
+    return ResolvedPath(root.id, path, "root", "AF не найден в детях AE, AG тоже не найден — остаёмся на AE",
+                         considered_siblings=siblings)
 
 
 async def load_feo_tree(db, subsidy_id: int) -> FeoTree:

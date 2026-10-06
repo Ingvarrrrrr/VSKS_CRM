@@ -294,13 +294,24 @@ export function useWishForm(deps: {
     }
   }
 
+  // Авансовый отчёт (editingWish.source === 'advance_report'): дерево выбора
+  // категории ФЭО не должно фильтроваться по «есть план/бюджет» — см. докстринг
+  // includeUnfunded в useFeoLeaves.ts/useFeoTreeNodes.ts (жалоба владельца
+  // 2026-10-06, субсидия «ФАДМ 2026_2»: план исторически занесён импортом на
+  // родительский узел, дети-листья без собственного плана пропадали из дерева,
+  // хотя позиция авансового не требует существующей плановой записи — плановая
+  // создаётся автоматически под выбранную категорию).
+  const wishIsAdvanceReport = computed(() => editingWish.value?.source === 'advance_report')
+
   // ФЭО-дерево субсидии (узлы + листья с бюджетами) — объявлено ПОСЛЕ wishForm (TDZ)
   const { feoLeaves: wishFeoLeaves, feoNodes: wishFeoNodes } = useFeoLeaves({
     subsidyId: computed(() => wishForm.value.subsidy_id),
+    includeUnfunded: wishIsAdvanceReport,
   })
   const { feoTreeNodes: wishFeoTreeNodes, rawNodes: wishFeoTreeRawNodes } = useFeoTreeNodes(
     computed(() => wishForm.value.subsidy_id),
     computed(() => wishFeoSelected.value),
+    wishIsAdvanceReport,
   )
   const { nodeAmounts: wishNodeAmounts } = useFeoNodeAmounts({
     subsidyId: computed(() => wishForm.value.subsidy_id),

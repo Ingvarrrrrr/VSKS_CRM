@@ -89,6 +89,19 @@ export interface UseFeoLeavesOptions {
   subsidyId: Ref<number | null | undefined>
   /** Optional purchase to exclude from residual computation (current edit). */
   excludePurchaseId?: Ref<number | null | undefined>
+  /** Жалоба владельца (2026-10-06, авансовый отчёт в субсидии «ФАДМ 2026_2»):
+   *  построчный выбор категории ФЭО (feoNodes ниже, рендерится в FeoTreeSelect
+   *  каждой строки PurchaseItemsEditor) терял категории-листья без собственного
+   *  плана/бюджета — filterFundedNodes вырезает узел, если ни у него, ни у его
+   *  потомков нет плана (план у части категорий исторически занесён импортом на
+   *  РОДИТЕЛЯ целиком, а не на сами листья: «Бензин», «Ремонт техники», «Закупка
+   *  компьютеров» и т.п.). Для строки авансового отчёта это не косметика —
+   *  позиция НЕ требует существующей плановой записи, плановая создаётся
+   *  автоматически под выбранную категорию (см. memory «Авансовый: плановая на
+   *  каждую строку, без матчинга»), значит категория обязана быть выбираемой ДО
+   *  появления у неё плана. true — не фильтровать (дерево = все категории
+   *  субсидии); по умолчанию (undefined/false) — прежнее поведение. */
+  includeUnfunded?: Ref<boolean>
 }
 
 export function useFeoLeaves(opts: UseFeoLeavesOptions) {
@@ -96,8 +109,8 @@ export function useFeoLeaves(opts: UseFeoLeavesOptions) {
   const feoNodes = ref<FeoNode[]>([])
 
   watch(
-    () => [opts.subsidyId.value, opts.excludePurchaseId?.value] as const,
-    async ([subsidyId, excludeId]) => {
+    () => [opts.subsidyId.value, opts.excludePurchaseId?.value, opts.includeUnfunded?.value] as const,
+    async ([subsidyId, excludeId, includeUnfunded]) => {
       if (!subsidyId) {
         feoLeaves.value = []
         feoNodes.value = []
@@ -110,7 +123,7 @@ export function useFeoLeaves(opts: UseFeoLeavesOptions) {
           apiFetch<FeoNode[]>(`/feo-categories/flat?subsidy_id=${subsidyId}`),
         ])
         feoLeaves.value = leaves
-        feoNodes.value = filterFundedNodes(nodes)
+        feoNodes.value = includeUnfunded ? nodes : filterFundedNodes(nodes)
       } catch {
         feoLeaves.value = []
         feoNodes.value = []

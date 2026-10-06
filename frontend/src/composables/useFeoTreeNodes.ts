@@ -16,6 +16,22 @@ import { filterFundedNodes, type FeoNode } from './useFeoLeaves'
 export function useFeoTreeNodes(
   subsidyId: Ref<number | null | undefined>,
   selectedId: Ref<number | null | undefined>,
+  /** Жалоба владельца (2026-10-06, авансовый отчёт в субсидии «ФАДМ 2026_2»): у
+   *  части категорий план/бюджет исторически занесён ИМПОРТОМ на родительский
+   *  узел целиком (например «Техническое оснащение деятельности штаба»), а не
+   *  на его детей-листья («Бензин», «Ремонт техники», «Закупка компьютеров» и
+   *  т.д.) — filterFundedNodes ниже рекурсивно проверяет план/бюджет у узла
+   *  ИЛИ любого потомка, поэтому такие дети без собственного плана и без своих
+   *  потомков целиком вырезались из дерева выбора, хотя реально существуют.
+   *  Для авансового отчёта это не просто косметика: позиция авансового НЕ
+   *  требует существующей плановой записи — плановая создаётся автоматически
+   *  под конечную категорию (см. memory «Авансовый: плановая на каждую строку,
+   *  без матчинга»), значит категория обязана быть выбираемой ДО того, как у
+   *  неё появился план. includeUnfunded=true отключает фильтр filterFundedNodes
+   *  целиком — дерево показывает ВСЕ категории субсидии. Используется только
+   *  в formMode==='advance_report' (CreateOrderView.vue, WishFormDialog.vue);
+   *  обычные закупки/заявки по-прежнему видят только профинансированные узлы. */
+  includeUnfunded?: Ref<boolean>,
 ) {
   const rawNodes = ref<FeoNode[]>([])
 
@@ -44,7 +60,7 @@ export function useFeoTreeNodes(
   const feoTreeNodes = computed<FeoNode[]>(() => {
     if (!subsidyId.value) return []
     const raw = rawNodes.value
-    const funded = filterFundedNodes(raw)
+    const funded = includeUnfunded?.value ? raw : filterFundedNodes(raw)
     const selId = selectedId.value
     if (selId == null) return funded
     const fundedIds = new Set(funded.map(n => n.id))

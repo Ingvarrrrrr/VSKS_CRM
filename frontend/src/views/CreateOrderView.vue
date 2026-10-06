@@ -3744,9 +3744,15 @@ const feoSkipLast = ref(false)
 // пропадала из дерева выбора в шапке, хотя оставалась выбираемой построчно. См.
 // composables/useFeoTreeNodes.ts (переиспользует filterFundedNodes + цепочку-фолбэк,
 // перенесённую отсюда без изменения поведения).
+// Авансовый отчёт не фильтрует дерево по «есть план/бюджет» — см. докстринг
+// includeUnfunded в useFeoTreeNodes.ts (жалоба владельца 2026-10-06, субсидия
+// «ФАДМ 2026_2»: план исторически занесён на родителя, дети-листья без
+// собственного плана пропадали из дерева, хотя позиция авансового не требует
+// существующей плановой записи — плановая создаётся автоматически).
 const { feoTreeNodes, rawNodes: feoTreeRawNodes } = useFeoTreeNodes(
   computed(() => form.subsidy_id),
   computed(() => form.feo_category_id),
+  computed(() => formMode.value === 'advance_report'),
 )
 const feoNodeById = computed(() => new Map(feoTreeNodes.value.map(n => [n.id, n])))
 const feoSelectedIsLeaf = computed(() => (form.feo_category_id != null ? (feoNodeById.value.get(form.feo_category_id)?.is_leaf ?? false) : false))

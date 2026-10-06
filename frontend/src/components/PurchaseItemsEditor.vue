@@ -1202,6 +1202,12 @@ const {
 } = useFeoLeaves({
   subsidyId: computed(() => props.subsidyId),
   excludePurchaseId: computed(() => props.purchaseIdFeo),
+  // Авансовый отчёт: см. докстринг includeUnfunded в useFeoLeaves.ts — позиция
+  // не требует существующей плановой записи у категории, плановая создаётся
+  // автоматически, значит дерево построчного выбора не должно вырезать
+  // категории-листья без собственного плана (жалоба владельца 2026-10-06,
+  // субсидия «ФАДМ 2026_2»).
+  includeUnfunded: computed(() => props.formMode === 'advance_report'),
 })
 
 // Задача владельца 2026-08-06: остаток по КАЖДОМУ узлу дерева ФЭО (не только листу),

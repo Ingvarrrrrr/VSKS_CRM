@@ -755,6 +755,43 @@ async def dashboard_charts(
             db, apply_filter=_purchase_filter, use_sids=use_sids,
             visible_subsidy_ids=visible_subsidy_ids, org_ids=org_ids,
         )
+        # ИСПРАВЛЕНО (находка координатора 06.10.2026, жалоба владельца «ХО
+        # (копия)»): _purchase_filter выше — ТОТ ЖЕ _apply_purchase_org_filter,
+        # что и basket_q/monthly_ordered_map/monthly_future_map, БЕЗ
+        # explicit_subsidy_ids — он намеренно исключает is_sandbox-копии
+        # ВСЕГДА (тот же not_sandbox_subsidy_ids(None), что держит ГЛОБАЛЬНЫЕ
+        # widgets[stage] без песочницы — см. contracts_amt/monthly_payments_total
+        # чуть выше, тот же sandbox_ids_in_scope). Поэтому raw_split["per_subsidy"]
+        # для копии оставался ПУСТЫМ (ни одной её закупки не прошло фильтр) —
+        # reconcile_split(raw=[0,0,0], target=amount>0) форсил ВСЮ сумму в
+        # "без типа" на КАЖДОМ накопительном этапе ("Ведётся работа"/
+        # "Заказано"/"Поставлено" и т.д.), хотя сами widget[stage]["amount"]
+        # (из subsidy_q, строка копии) и split "contracts" (fc_q/contract_q/
+        # contractless_q/single_active_q внутри compute_type_split_raw — те
+        # фильтруют ПРЯМО по visible_subsidy_ids, без sandbox-исключения
+        # вообще) копию НЕ исключают — отсюда «"Заключено договоров" разбито
+        # верно, остальные — нет» из жалобы владельца.
+        #
+        # Та же политика, что docstring _apply_purchase_org_filter описывает
+        # для explicit_subsidy_ids («карточка копии дёргает те же виджеты с
+        # явным subsidy_id — ей нужны реальные числа, не нули») — здесь
+        # применяем её к sandbox_ids_in_scope (уже готовый список копий В
+        # SCOPE этого ответа, см. его определение выше): пересчитываем
+        # per-subsidy split ТОЛЬКО для них отдельным вызовом с
+        # explicit_subsidy_ids, и подменяем ТОЛЬКО per_subsidy-часть — global
+        # (widgets[stage]) НЕ трогаем, он обязан остаться без песочницы
+        # (та же величина, что уже выверена contracts_amt/monthly_payments_total).
+        if sandbox_ids_in_scope:
+            def _sandbox_purchase_filter(q):
+                return _apply_purchase_org_filter(
+                    q, current_user, subsidy_ids=sandbox_ids_in_scope,
+                    explicit_subsidy_ids=list(sandbox_ids_in_scope),
+                )
+            sandbox_split = await compute_type_split_raw(
+                db, apply_filter=_sandbox_purchase_filter, use_sids=True,
+                visible_subsidy_ids=sandbox_ids_in_scope, org_ids=None,
+            )
+            raw_split["per_subsidy"].update(sandbox_split["per_subsidy"])
         _zero_raw = [Decimal(0), Decimal(0), Decimal(0)]
         for stage in STAGE_KEYS:
             reconciled = reconcile_split(raw_split["global"].get(stage, _zero_raw), widgets[stage]["amount"])

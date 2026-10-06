@@ -201,29 +201,29 @@
         <div v-bind="tip" class="kpi-card kpi-paid" :class="kpi.kpiCardClass('paid')" @click="kpi.onKpiCardClick('paid')">
           <div class="kpi-icon-box"><v-icon icon="mdi-cash-check" size="26" /></div>
           <div class="kpi-body">
+            <!-- Решение владельца (06.10.2026, переигран порядок карточки):
+                 ГЛАВНОЕ крупное число снова «по отметке сотрудников»
+                 (paid_declared) — именно эта запись у исполнителей, выписка
+                 часто ещё не подтверждена/заведена. «Подтверждено выпиской» и
+                 расхождение — строками ниже, тем же порядком и той же
+                 разбивкой товары/услуги, что раньше показывались у главного
+                 числа (ничего не пересчитывается — только порядок строк). -->
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_paid) }}</div>
-            <div class="kpi-label">Оплачено (по выписке)</div>
-            <!-- Квик-план 06.10 (statement-control, «выписка главная»): основное
-                 число карточки теперь «по выписке» (paid_confirmed — эталон,
-                 записи сотрудников могут быть с ошибками), вторая строка — «по
-                 отметке сотрудников» (paid_declared), с разбивкой товары/услуги
-                 для обеих. Расхождение (отметка − выписка) — отдельной строкой
-                 оранжевым, только если они не совпадают. Было наоборот
-                 (05.10.2026) — перерешено владельцем 06.10.2026. -->
+            <div class="kpi-label">Оплачено</div>
             <div class="kpi-paid-dual">
               <!-- Задача 3 (владелец, 06.10.2026): кружки-маркеры товары/услуги —
                    тот же приём, что у остальных карточек (kpi-split-dot-*). -->
               <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
-                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidConfirmedByKind.goods) }}</span>
-                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidConfirmedByKind.services) }}</span>
-              </div>
-              <div class="kpi-paid-dual-row">
-                <span class="kpi-paid-dual-label">по отметке сотрудников:</span>
-                <span class="kpi-paid-dual-amount">{{ formatCurrency(paidDeclaredTotal) }}</span>
-              </div>
-              <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
                 <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidDeclaredByKind.goods) }}</span>
                 <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidDeclaredByKind.services) }}</span>
+              </div>
+              <div class="kpi-paid-dual-row">
+                <span class="kpi-paid-dual-label">подтверждено выпиской:</span>
+                <span class="kpi-paid-dual-amount">{{ formatCurrency(paidConfirmedTotal) }}</span>
+              </div>
+              <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
+                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidConfirmedByKind.goods) }}</span>
+                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidConfirmedByKind.services) }}</span>
               </div>
               <div v-if="paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
                 <span class="kpi-paid-dual-label">расхождение:</span>
@@ -253,10 +253,12 @@
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('free')">
                 <div v-for="row in splitRowsFor('free')" :key="row.kind" class="kpi-split-row"
-                  :class="{ 'kpi-split-row-clickable': hasStageDrill('free'), 'kpi-split-row-active': hasStageDrill('free') && isActiveTypeRow('free', row.kind), 'kpi-split-row-neg': row.amount < 0 }"
-                  @click="hasStageDrill('free') && onTypeRowClick('free', row.kind)">
+                  :class="{ 'kpi-split-row-neg': row.amount !== null && row.amount < 0 }">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }}: {{ row.amount < 0 ? 'превышение' : 'свободно' }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
+                  <!-- row.amount === null — бюджет ФЭО по этому типу не введён
+                       (решение владельца 06.10.2026): показываем «нет данных»,
+                       НЕ считаем превышение из нуля бюджета (см. splitRowsFor). -->
+                  <span class="kpi-split-text">{{ row.label }}: {{ row.amount === null ? 'нет данных по типу (бюджет ФЭО не разбит)' : ((row.amount < 0 ? 'превышение' : 'свободно') + ' ' + formatCurrency(Math.abs(row.amount))) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -282,9 +284,23 @@
     <template v-for="tk in feoTreeExcess.typeExcessKindDefs" :key="tk.kind">
       <div v-if="feoTreeExcess.typeExcessFor(null, tk.kind)" class="kpi-type-excess-row">
         <template v-if="feoTreeExcess.typeExcessFor(null, tk.kind)!.approval?.status === 'pending'">
-          <v-chip size="x-small" color="orange" variant="flat">
-            согласование: {{ tk.label }} на {{ formatCurrency(feoTreeExcess.typeExcessFor(null, tk.kind)!.amount) }} · на согласовании у: {{ feoTreeExcess.typeExcessPendingNames(null, tk.kind) || '—' }}
-          </v-chip>
+          <!-- Жалоба владельца 06.10.2026: «предлагается подтвердить
+               превышение, при этом я не могу посмотреть что это за
+               превышение» — чип кликабелен (раскрывает дерево + стрелки,
+               excessDrilldown.activate), и рядом с кнопками решения — «Где?»
+               как явная вторая точка входа (Правило №6: один activate(), не
+               два механизма поиска виновника). -->
+          <v-tooltip location="top" text="Показать, где превышение">
+            <template #activator="{ props: whereTip }">
+              <v-chip v-bind="whereTip" size="x-small" color="orange" variant="flat" class="kpi-type-excess-chip-clickable" @click="excessDrilldown.activate(tk.kind)">
+                <v-icon icon="mdi-crosshairs-gps" size="12" start />
+                согласование: {{ tk.label }} на {{ formatCurrency(feoTreeExcess.typeExcessFor(null, tk.kind)!.amount) }} · на согласовании у: {{ feoTreeExcess.typeExcessPendingNames(null, tk.kind) || '—' }}
+              </v-chip>
+            </template>
+          </v-tooltip>
+          <v-btn size="x-small" variant="text" color="orange-darken-2" prepend-icon="mdi-crosshairs-gps"
+            @click="excessDrilldown.activate(tk.kind)"
+          >Где?</v-btn>
           <template v-if="feoTreeExcess.typeExcessMyPendingStep(null, tk.kind) && feoTreeExcess.typeExcessFor(null, tk.kind)!.approval?.can_decide">
             <v-btn size="x-small" variant="tonal" color="success"
               :loading="feoTreeExcess.typeExcessDecideLoading.value === feoTreeExcess.typeExcessKey(null, tk.kind)"
@@ -300,23 +316,36 @@
           </div>
         </template>
         <template v-else-if="feoTreeExcess.typeExcessFor(null, tk.kind)!.approved">
-          <v-chip size="x-small" color="grey" variant="flat">
+          <v-chip size="x-small" color="grey" variant="flat" class="kpi-type-excess-chip-clickable" @click="excessDrilldown.activate(tk.kind)">
+            <v-icon icon="mdi-crosshairs-gps" size="12" start />
             {{ tk.label }} на {{ formatCurrency(feoTreeExcess.typeExcessFor(null, tk.kind)!.amount) }} · согласовано · {{ feoTreeExcess.typeExcessResolvedByName(null, tk.kind) }}{{ feoTreeExcess.typeExcessResolvedDate(null, tk.kind) ? ' · ' + feoTreeExcess.typeExcessResolvedDate(null, tk.kind) : '' }}
           </v-chip>
         </template>
         <template v-else-if="feoTreeExcess.typeExcessFor(null, tk.kind)!.approval?.status === 'rejected'">
-          <v-chip size="x-small" color="red" variant="flat">
+          <v-chip size="x-small" color="red" variant="flat" class="kpi-type-excess-chip-clickable" @click="excessDrilldown.activate(tk.kind)">
+            <v-icon icon="mdi-crosshairs-gps" size="12" start />
             {{ tk.label }} — отклонено{{ feoTreeExcess.typeExcessFor(null, tk.kind)!.approval?.comment ? ': ' + feoTreeExcess.typeExcessFor(null, tk.kind)!.approval!.comment : '' }}
           </v-chip>
+          <v-btn size="x-small" variant="text" color="red-darken-1" prepend-icon="mdi-crosshairs-gps"
+            @click="excessDrilldown.activate(tk.kind)"
+          >Где?</v-btn>
           <v-btn size="x-small" variant="tonal" color="red"
             :loading="feoTreeExcess.typeExcessRequestLoading.value === feoTreeExcess.typeExcessKey(null, tk.kind)"
             @click="feoTreeExcess.requestTypeExcessApproval(null, tk.kind)"
           >Согласовать</v-btn>
         </template>
         <template v-else>
-          <v-chip size="x-small" color="red" variant="flat">
-            {{ tk.label }} на {{ formatCurrency(feoTreeExcess.typeExcessFor(null, tk.kind)!.amount) }} — требуется согласование
-          </v-chip>
+          <v-tooltip location="top" text="Показать, где превышение">
+            <template #activator="{ props: whereTip }">
+              <v-chip v-bind="whereTip" size="x-small" color="red" variant="flat" class="kpi-type-excess-chip-clickable" @click="excessDrilldown.activate(tk.kind)">
+                <v-icon icon="mdi-crosshairs-gps" size="12" start />
+                {{ tk.label }} на {{ formatCurrency(feoTreeExcess.typeExcessFor(null, tk.kind)!.amount) }} — требуется согласование
+              </v-chip>
+            </template>
+          </v-tooltip>
+          <v-btn size="x-small" variant="text" color="red-darken-1" prepend-icon="mdi-crosshairs-gps"
+            @click="excessDrilldown.activate(tk.kind)"
+          >Где?</v-btn>
           <v-btn size="x-small" variant="tonal" color="red"
             :loading="feoTreeExcess.typeExcessRequestLoading.value === feoTreeExcess.typeExcessKey(null, tk.kind)"
             @click="feoTreeExcess.requestTypeExcessApproval(null, tk.kind)"
@@ -325,6 +354,11 @@
       </div>
     </template>
   </div>
+
+  <!-- Панель навигации по найденным статьям-виновникам (задание владельца
+       06.10.2026) — отдельный компонент (Правило №5), сам решает, показывать
+       ли себя (activeKind). -->
+  <ExcessDrilldownBar />
 
   <!-- Владелец (2026-08-30): предупреждение «сумма заказанного приближается
        к потолку субсидии» — потолок = calculate_budget_from_categories
@@ -407,9 +441,16 @@ import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 // уже реализуют GET/POST/decide согласования по типу — второй раз этот
 // механизм здесь не заводится (Правило №6).
 import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
+// «Где превышение» (жалоба владельца 06.10.2026: «не могу посмотреть что это
+// за превышение... чтобы раскрылась субсидия и стрелочки привели к каждому
+// пункту») — singleton уже построен SubsidiesView.vue с ctx, здесь
+// переиспользуется без аргумента (тот же приём, что у useFeoTreeExcess()
+// выше).
+import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import {
-  KIND_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill, type ItemTypeKind,
+  KIND_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill,
+  freeByKindFromTypeTotals, type ItemTypeKind,
 } from '@/utils/itemTypeKind'
 import { STATUS_LABELS, STATUS_COLORS } from '@/composables/dashboard/dashboardStatusMaps'
 import { purchaseEffectivePrice } from '@/composables/dashboard/dashboardFormat'
@@ -417,12 +458,14 @@ import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
 import SubsidyMoneyCards from '@/components/subsidies/SubsidyMoneyCards.vue'
 import ContractsDrillDialog from '@/components/subsidies/ContractsDrillDialog.vue'
 import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
+import ExcessDrilldownBar from '@/components/subsidies/ExcessDrilldownBar.vue'
 import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
 import type { SubsidyTypeTotals } from '@/composables/subsidies/types'
 
 const ctx = useSubsidyDetailCtx()
 const kpi = useKpiDrilldown(ctx)
 const feoTreeExcess = useFeoTreeExcess()
+const excessDrilldown = useExcessDrilldown()
 const kpiPrefs = useKpiPrefs()
 const isSplit = computed(() => kpiPrefs.kpiTypeSplit.value === 'split')
 
@@ -431,7 +474,9 @@ const isSplit = computed(() => kpiPrefs.kpiTypeSplit.value === 'split')
 const economyByMethod = useEconomyByMethod({ subsidyId: ctx.selectedId })
 watch(() => ctx.selectedId.value, (id) => { if (id) economyByMethod.load() }, { immediate: true })
 
-interface SplitRow { kind: ItemTypeKind; label: string; amount: number }
+// amount: null — «нет данных по типу» (решение владельца 06.10.2026, см.
+// splitRowsFor('free') ниже) — пока только у карточки «Свободно».
+interface SplitRow { kind: ItemTypeKind; label: string; amount: number | null }
 
 const kpiSubTarget_budget            = computed(() => ctx.selectedBudget.value)
 const kpiSubTarget_plan_schedule     = computed(() => ctx.selectedPlannedTotal.value)
@@ -440,12 +485,11 @@ const kpiSubTarget_ordered           = computed(() => ctx.selectedSubsidy.value?
 const kpiSubTarget_contracts         = computed(() => ctx.selectedSubsidy.value?.contracts         ?? 0)
 const kpiSubTarget_delivered         = computed(() => ctx.selectedSubsidy.value?.delivered         ?? 0)
 const kpiSubTarget_delivered_unpaid  = computed(() => ctx.selectedSubsidy.value?.delivered_unpaid  ?? 0)
-// Квик-план 06.10.2026 (statement-control, «выписка главная»): эталон —
-// выписка (paid_confirmed), записи сотрудников (paid_declared) могут быть с
-// ошибками. ОСНОВНОЕ число карточки теперь «по выписке» — kpiSubTarget_paid
-// читает paid_confirmed (ранее, 05.10.2026, было наоборот — paid_declared;
-// перерешено владельцем). .paid остаётся фолбэком для совсем старого бэка.
-const kpiSubTarget_paid              = computed(() => Number(ctx.selectedSubsidy.value?.paid_confirmed ?? ctx.selectedSubsidy.value?.paid ?? 0))
+// Переигран владельцем 06.10.2026 (карточка «Оплачено», см. шаблон выше):
+// ГЛАВНОЕ число — снова «по отметке сотрудников» (paid_declared), «по
+// выписке» (paid_confirmed) — строкой ниже. .paid остаётся фолбэком для
+// совсем старого бэка (до paid_declared/paid_confirmed).
+const kpiSubTarget_paid              = computed(() => Number(ctx.selectedSubsidy.value?.paid_declared ?? ctx.selectedSubsidy.value?.paid ?? 0))
 // Задача (владелец, 06.10.2026) — карточка «Оплачено»: ДВЕ величины словами
 // владельца, «по выписке» (главная) и «по отметке сотрудников» (вторая) —
 // готовые поля бэкенда (dashboard_charts.py::subsidy_stats: paid_confirmed,
@@ -506,24 +550,17 @@ function subsidyTypeTotals(): SubsidyTypeTotals | null {
 }
 
 function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; unspecified: number } | null {
-  if (stage === 'budget' || stage === 'plan_schedule' || stage === 'free') {
+  // 'free' обрабатывается отдельно в splitRowsFor() ниже (решение владельца
+  // 06.10.2026: без разбивки бюджета ФЭО по типу превышение по типу — ложная
+  // тревога, см. её докстринг) — здесь больше НЕ обрабатывается.
+  if (stage === 'budget' || stage === 'plan_schedule') {
     const totals = subsidyTypeTotals()
     if (!totals) return null
     if (stage === 'budget') {
       return { goods: totals.feo_goods || 0, services: totals.feo_services || 0, unspecified: totals.feo_unspecified || 0 }
     }
-    if (stage === 'plan_schedule') {
-      return { goods: totals.plan_goods || 0, services: totals.plan_services || 0, unspecified: totals.plan_unspecified || 0 }
-    }
-    // free = ФЭО по типу − план по типу (тот же смысл, что и общая карточка).
-    // roundMoney — та же защита от шума плавающей точки, что и у общей суммы
-    // карточки (см. freeDiffRounded) — иначе знак строки «товары»/«услуги»
-    // может случайно перевернуться на значениях, близких к нулю.
-    return {
-      goods: roundMoney((totals.feo_goods || 0) - (totals.plan_goods || 0)),
-      services: roundMoney((totals.feo_services || 0) - (totals.plan_services || 0)),
-      unspecified: roundMoney((totals.feo_unspecified || 0) - (totals.plan_unspecified || 0)),
-    }
+    // plan_schedule
+    return { goods: totals.plan_goods || 0, services: totals.plan_services || 0, unspecified: totals.plan_unspecified || 0 }
   }
   // «Поставлено, не оплачено» (владелец, 05.10.2026) — по типам источник НЕ
   // widget.delivered_unpaid (тот означает status='delivered' без paid, его же
@@ -543,13 +580,44 @@ function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; u
 }
 
 function splitRowsFor(stage: SplitStageKey): SplitRow[] | null {
+  if (stage === 'free') {
+    // Решение владельца (06.10.2026, жалоба «превышение без типа 20 093 275,58
+    // ложная тревога»): «Свободно» по типу = «Бюджет (ФЭО) по типу» − «Запланировано
+    // по типу». Бюджет по типу нередко НЕ разбит (суммы ФЭО заданы на статьях
+    // целиком, без распределения на товары/услуги) — тогда feo_goods/feo_services
+    // стоят 0, а «план по типу» (из плановых позиций, у которых тип ЕСТЬ) —
+    // не 0, и вычитание давало огромное ложное «превышение». Теперь — row.amount
+    // = null («нет данных»), когда у ЭТОЙ конкретной корзины (товары/услуги)
+    // бюджет по типу не введён (feo_<kind> <= 0); посчитанное число — только
+    // когда бюджет по типу у этой корзины реально есть (частичная разбивка —
+    // считаем превышение только для разбитой части, см. задание владельца).
+    // «без типа» НИКОГДА не помечается превышением — у «без типа» нет
+    // самостоятельного бюджета-по-типу, который можно было бы сравнить с
+    // планом (см. docstring type_totals.py: feo_unspecified — остаток, не
+    // отдельно заданная величина), поэтому строка для unspecified не строится.
+    const totals = subsidyTypeTotals()
+    if (!totals) return null
+    const free = freeByKindFromTypeTotals(totals, roundMoney)
+    return [
+      { kind: 'goods', label: KIND_LABELS.goods, amount: free.goods },
+      { kind: 'services', label: KIND_LABELS.services, amount: free.services },
+    ]
+  }
   const raw = rawSplitFor(stage)
   if (!raw) return null
   const rows: SplitRow[] = [
     { kind: 'goods', label: KIND_LABELS.goods, amount: raw.goods },
     { kind: 'services', label: KIND_LABELS.services, amount: raw.services },
   ]
-  if (Math.abs(raw.unspecified) > 0.5) rows.push({ kind: 'unspecified', label: KIND_LABELS.unspecified, amount: raw.unspecified })
+  if (Math.abs(raw.unspecified) > 0.5) {
+    // «Запланировано»: «без типа» — нейтральная подпись (решение владельца
+    // 06.10.2026), не алармирующее «без типа» — сюда попадают и статьи без
+    // плановых позиций, и позиции без указанного типа, это не ошибка.
+    const label = stage === 'plan_schedule'
+      ? 'без разбивки (статьи без плановых позиций или позиции без типа)'
+      : KIND_LABELS.unspecified
+    rows.push({ kind: 'unspecified', label, amount: raw.unspecified })
+  }
   return rows
 }
 
@@ -728,5 +796,10 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
 }
 .kpi-type-excess-text {
   margin-right: 4px;
+}
+/* Задание владельца 06.10.2026 («где превышение») — чип сам кликабелен,
+   не только отдельная кнопка «Где?» рядом с решением. */
+.kpi-type-excess-chip-clickable {
+  cursor: pointer;
 }
 </style>

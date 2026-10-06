@@ -38,6 +38,41 @@ export function kindOf(itemType?: string | null): ItemTypeKind {
 
 export interface TypeShares { goods: number; services: number; unspecified: number }
 
+// freeByKindFromTypeTotals() — ЕДИНСТВЕННАЯ формула «Свободно по типу» =
+// «Бюджет (ФЭО) по типу» − «Запланировано по типу» (SubsidyKpiCards.vue,
+// карточка «Свободно»/«Превышение»). Вынесена сюда (не осталась локальной
+// функцией компонента), чтобы проверяться юнит-тестом без монтирования
+// Vue-дерева — Правило №1 (QA после кода), инвариант проверяется кодом, не
+// только глазами на скриншоте.
+//
+// Решение владельца (06.10.2026, жалоба «ХО (копия)»: «превышение без типа
+// 20 093 275,58» — ложная тревога): «Бюджет (ФЭО)» почти всегда вводится НА
+// СТАТЬЯХ целиком, без разбивки на товары/услуги — тогда feo_goods/
+// feo_services стоят 0, а «План по типу» (из плановых позиций — у НИХ тип
+// есть) — не 0. Вычитание 0 − план давало огромное фиктивное «превышение».
+// Теперь: amount = null («нет данных»), когда у ЭТОЙ КОНКРЕТНОЙ корзины
+// (товары ИЛИ услуги по отдельности) бюджет по типу не введён (feo_<kind> <=
+// 0) — считаем превышение только для той части, где бюджет по типу реально
+// задан (частичная разбивка). «Без типа» никогда не возвращается этой
+// функцией вовсе — у «без типа» нет самостоятельно заданного бюджета-по-типу,
+// сравнивать с планом нечего (feo_unspecified — остаток дерева, не отдельно
+// введённая величина, см. backend app/services/type_totals.py).
+export interface FeoPlanTypeTotals {
+  feo_goods?: number | null; feo_services?: number | null
+  plan_goods?: number | null; plan_services?: number | null
+}
+
+export function freeByKindFromTypeTotals(
+  totals: FeoPlanTypeTotals, round: (v: number) => number = (v) => v,
+): { goods: number | null; services: number | null } {
+  const feoGoods = totals.feo_goods || 0
+  const feoServices = totals.feo_services || 0
+  return {
+    goods: feoGoods > 0 ? round(feoGoods - (totals.plan_goods || 0)) : null,
+    services: feoServices > 0 ? round(feoServices - (totals.plan_services || 0)) : null,
+  }
+}
+
 export interface ShareableItem {
   item_type?: string | null
   total_price?: number | string | null

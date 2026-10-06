@@ -12,6 +12,7 @@ test_subsidy_budget_optional.py), т.к. нужен полноценный HTTP-
 import uuid
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import select
 
 from app.models.subsidy import Subsidy
@@ -86,3 +87,80 @@ async def test_sandbox_copy_row_present_with_flag_but_totals_unchanged(client, s
     # Копия действительно удалена, оригинал цел.
     assert await db_session.get(Subsidy, copy_id) is None
     assert await db_session.get(Subsidy, sid) is not None
+
+
+async def test_sandbox_copy_type_split_matches_original_not_all_unspecified(
+    client, superadmin_headers, db_session,
+):
+    """Находка координатора (06.10.2026, жалоба владельца «ХО (копия)»):
+    _purchase_filter внутри dashboard_charts.py (?type_split=true) — тот же
+    _apply_purchase_org_filter, что basket_q/monthly_ordered_map, БЕЗ
+    explicit_subsidy_ids — он намеренно исключает is_sandbox-копии из ГЛОБАЛЬНЫХ
+    widgets[stage] (как contracts_amt/monthly_payments_total). Но раньше этот
+    же фильтр применялся и к PER-SUBSIDY раскладке закупок копии (raw_split
+    ["per_subsidy"]), оставляя её пустой — reconcile_split форсил ВСЮ сумму
+    карточек «Ведётся работа»/«Заказано»/«Поставлено»/«Оплачено» копии в «без
+    типа», хотя «Заключено договоров» (contracts, у него внутри
+    compute_type_split_raw свой контур БЕЗ sandbox-исключения) считалось
+    верно — ровно симптом с живого стенда. Закреплено: разбивка ВСЕХ этапов
+    копии должна побайтово совпадать с разбивкой оригинала, без «без типа»
+    там, где у позиций закупки есть товар/услуга."""
+    from app.models.purchase_item import PurchaseItem
+
+    sid = await _make_subsidy_with_contract(client, superadmin_headers, db_session)
+    # Доп. закупка в статусе paid с типизированными позициями — чтобы
+    # "work"/"ordered"/"delivered"/"paid" стадии (не только "contracted") тоже
+    # были ненулевыми и проверяемыми.
+    paid_purchase = Purchase(
+        subsidy_id=sid, item_name="Оплаченная закупка", status="paid",
+        payment_amount=Decimal("1000.00"),
+    )
+    db_session.add(paid_purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(
+        purchase_id=paid_purchase.id, item_name="товар", item_type="товар",
+        quantity=Decimal("1"), unit_price=Decimal("600"), total_price=Decimal("600"),
+    ))
+    db_session.add(PurchaseItem(
+        purchase_id=paid_purchase.id, item_name="услуга", item_type="услуга",
+        quantity=Decimal("1"), unit_price=Decimal("400"), total_price=Decimal("400"),
+    ))
+    await db_session.commit()
+
+    copy_resp = await client.post(f"/api/subsidies/{sid}/copy", headers=superadmin_headers)
+    assert copy_resp.status_code == 200, copy_resp.text
+    copy_id = copy_resp.json()["id"]
+
+    try:
+        resp = await client.get(
+            "/api/dashboard/charts", params={"scope": "managed", "type_split": "true"},
+            headers=superadmin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        orig_row = next(s for s in data["subsidy_stats"] if s["id"] == sid)
+        copy_row = next(s for s in data["subsidy_stats"] if s["id"] == copy_id)
+
+        for stage in ("work", "ordered", "delivered", "paid", "contracts", "plan_schedule"):
+            ow = orig_row["widget"][stage]
+            cw = copy_row["widget"][stage]
+            assert cw["amount"] == ow["amount"], stage
+            for kind in ("goods", "services", "unspecified"):
+                key = f"{stage}_{kind}"
+                assert cw[key] == ow[key], f"{stage}/{kind}: копия {cw[key]} != оригинал {ow[key]}"
+            # «paid» этапа копии должен иметь реальную разбивку товар/услуга
+            # (600/400) — НЕ всё в unspecified, хотя закупка без договора.
+            if stage == "paid":
+                assert cw["paid_goods"] == 600.0
+                assert cw["paid_services"] == 400.0
+                assert cw["paid_unspecified"] == 0.0
+
+        # Глобальные widgets (без песочницы) не задвоились правкой — инвариант
+        # Σ(goods+services+unspecified) == amount по-прежнему держится.
+        for stage in ("work", "ordered", "paid", "contracts"):
+            w = data["widgets"][stage]
+            total = w[f"{stage}_goods"] + w[f"{stage}_services"] + w[f"{stage}_unspecified"]
+            assert total == pytest.approx(w["amount"]), stage
+    finally:
+        del_resp = await client.delete(f"/api/subsidies/{copy_id}/sandbox", headers=superadmin_headers)
+        assert del_resp.status_code == 200, del_resp.text

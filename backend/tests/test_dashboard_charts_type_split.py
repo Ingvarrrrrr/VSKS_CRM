@@ -250,6 +250,48 @@ class TestDashboardChartsTypeSplit:
 
 
 @pytest.mark.asyncio
+class TestStageSplitInvariantNoSilentUnspecified:
+    """Жалоба владельца 06.10.2026 («ХО (копия)»): «Ведётся работа»/«Заказано»/
+    «Поставлено» показывали ВСЮ сумму в «без типа», хотя позиции закупок были
+    типизированы — расхождение с «Заключено договоров» (та же субсидия),
+    которая разбивалась верно. Живая проверка (docker exec, subsidy id 75)
+    подтвердила: compute_type_split_raw уже раскладывает каждый накопительный
+    этап по ТЕМ ЖЕ позициям (purchase_type_shares, Правило №6) — здесь
+    закрепляем это тестом на закупке БЕЗ договора вовсе (contract_id=None,
+    как и было у «ХО»), чтобы регрессия не прошла незамеченной: для каждого
+    этапа goods+services+unspecified == amount, и «без типа» == 0, когда у
+    закупки есть ТОЛЬКО типизированные позиции (товар/услуга)."""
+
+    async def test_contractless_paid_purchase_splits_by_items_not_unspecified(
+        self, client, superadmin_headers, db_session,
+    ):
+        subsidy = await _make_subsidy(db_session)
+        # Без Contract вовсе (contract_id не передаётся) — ровно сценарий «ХО»:
+        # committed-закупка подхватывается committed_uncounted_by_subsidy для
+        # "contracts", и той же purchase_type_shares() для остальных этапов.
+        await _make_purchase(
+            db_session, subsidy.id, status="paid",
+            payment_amount=Decimal("1000"),
+            items=[("товар", 600), ("услуга", 400)],
+        )
+
+        resp = await client.get(
+            "/api/dashboard/charts", params={"scope": "dashboard", "type_split": "true"},
+            headers=superadmin_headers,
+        )
+        assert resp.status_code == 200
+        row = _find_subsidy_row(resp.json(), subsidy.id)
+
+        for stage in ("work", "ordered", "delivered", "paid", "contracts"):
+            w = row["widget"][stage]
+            g, s, u = w[f"{stage}_goods"], w[f"{stage}_services"], w[f"{stage}_unspecified"]
+            assert u == pytest.approx(0.0), f"{stage}: вся сумма позиций типизирована, «без типа» обязан быть 0"
+            assert g == pytest.approx(600.0), stage
+            assert s == pytest.approx(400.0), stage
+            assert g + s + u == pytest.approx(w["amount"]), stage
+
+
+@pytest.mark.asyncio
 class TestDeliveredUnpaidDeclared:
     """Карточка «Поставлено, не оплачено» (владелец, 05.10.2026) = «Поставлено»
     минус «Оплачено по отметке сотрудников» (paid_declared), не ниже 0, по

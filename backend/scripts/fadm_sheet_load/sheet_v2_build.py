@@ -22,7 +22,6 @@ _silence_paid_confirmation_notifications ниже: no-op подмена ОДНО
 """
 from __future__ import annotations
 
-import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -51,6 +50,7 @@ from app.services.temp_contract_number import generate_temp_contract_number
 from app.routers.purchase_budget import _assign_framework_seq
 
 from .advance import EmployeeLookup, load_employee_lookup
+from .feo_path_resolve import FeoTree, load_feo_tree, resolve_feo_path
 from .match import find_source_subsidy
 from .sheet_v2_parse import (
     FRAMEWORK_LIMIT_FROM_Y, KIND_FRAMEWORK_WITH_AMOUNT, PlanGroupV2, PurchaseGroupV2, SheetRowV2,
@@ -122,6 +122,8 @@ class BuildCountersV2:
     contractors_found_existing: int = 0
     feo_matched: int = 0
     feo_unmatched: list = field(default_factory=list)   # [{label, ae, af}]
+    feo_ambiguous: list = field(default_factory=list)   # [{label, ae, af, ag, level, candidates}]
+    feo_resolved_shallow: list = field(default_factory=list)  # [{label, ae, af, ag, path}] — остановились выше AF/AG
     payments_attached: int = 0
     payments_attached_amount: Decimal = Decimal("0")
     payments_not_found: list = field(default_factory=list)  # [{doc_no, inn, amount, reason}]
@@ -151,63 +153,35 @@ def _group_item_type(rows: list[SheetRowV2]) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# ФЭО-категории по имени (AE/AF) — построено один раз на субсидию
+# ФЭО-категории по (AE, AF, AG) — ПО ПУТИ дерева, не глобальным поиском имени
+# (баг найден 06.10.2026 — см. docstring feo_path_resolve.py: позиции падали
+# на корень AE, потому что старый FeoNameLookup искал AE/AF/AG среди ВСЕХ
+# категорий субсидии разом, без учёта иерархии, и AG — самый точный уровень —
+# проверялся последним и фактически никогда не использовался). Дерево
+# строится один раз на субсидию (load_feo_tree), сам путь ищет
+# resolve_feo_path — ЕДИНАЯ функция сопоставления (ПРАВИЛО №6), используется
+# и здесь, и в remap_feo_categories.py (пересчёт уже загруженной субсидии).
 # ---------------------------------------------------------------------------
-_LEADING_NUMBER_RE = re.compile(r"^\s*\d+\s*[.)]\s*")
-
-
-def _norm_category_name(raw: str) -> str:
-    """Нормализация имени направления для сравнения AE/AF (строка) с именем
-    категории в дереве ФЭО: дерево хранит имена БЕЗ номера («Техническое
-    оснащение деятельности штаба»), AE/AF в листе — С номером пункта
-    («1. Техническое оснащение деятельности штаба») — прод-находка
-    dry-run 05.10.2026 (0 реальных совпадений без этой нормализации, все 178
-    строк уходили в «Не определена»). Снимаем ведущий «N.»/«N)» И пробелы."""
-    v = (raw or "").strip().lower()
-    return _LEADING_NUMBER_RE.sub("", v).strip()
-
-
-class FeoNameLookup:
-    def __init__(self) -> None:
-        self.by_name: dict[str, int] = {}
-
-    def add(self, name: str, category_id: int, level: int) -> None:
-        norm = _norm_category_name(name)
-        if not norm:
-            return
-        # Глубже — приоритетнее (AF точнее AE); при равной глубине — первый найденный.
-        prev = self._level.get(norm, -1) if hasattr(self, "_level") else -1
-        if not hasattr(self, "_level"):
-            self._level = {}
-        if norm not in self.by_name or level > self._level.get(norm, -1):
-            self.by_name[norm] = category_id
-            self._level[norm] = level
-
-    def find(self, *names: str) -> Optional[int]:
-        for name in names:
-            norm = _norm_category_name(name)
-            if norm and norm in self.by_name:
-                return self.by_name[norm]
-        return None
-
-
-async def _load_feo_lookup(db: AsyncSession, subsidy_id: int) -> FeoNameLookup:
-    rows = (await db.execute(
-        select(FeoCategory.name, FeoCategory.id, FeoCategory.level)
-        .where(FeoCategory.subsidy_id == subsidy_id)
-    )).all()
-    lookup = FeoNameLookup()
-    for name, cid, level in rows:
-        lookup.add(name, cid, level or 0)
-    return lookup
-
-
-def _resolve_feo_category(row: SheetRowV2, lookup: FeoNameLookup, na_category_id: Optional[int],
+def _resolve_feo_category(row: SheetRowV2, feo_tree: FeoTree, na_category_id: Optional[int],
                            counters: BuildCountersV2, label: str) -> Optional[int]:
-    cid = lookup.find(row.feo_type, row.feo_direction, row.feo_appendix_direction)
-    if cid:
+    result = resolve_feo_path(feo_tree, row.feo_direction, row.feo_type, row.feo_appendix_direction)
+    if result.ambiguous:
+        counters.feo_ambiguous.append({
+            "label": label, "ae": row.feo_direction, "af": row.feo_type, "ag": row.feo_appendix_direction,
+            "level": result.ambiguous_level,
+            "candidates": [name for _cid, name in result.ambiguous_candidates],
+        })
+    if result.category_id:
         counters.feo_matched += 1
-        return cid
+        # Путь найден, но остановился не на самом глубоком уровне (AF/AG не
+        # нашлись дальше) — это НЕ ошибка (владелец: лучше остаться выше, чем
+        # угадать), но стоит видеть в отчёте отдельно от полного совпадения.
+        if result.stopped_at == "root" and (row.feo_type or row.feo_appendix_direction):
+            counters.feo_resolved_shallow.append({
+                "label": label, "ae": row.feo_direction, "af": row.feo_type,
+                "ag": row.feo_appendix_direction, "path": " / ".join(result.path),
+            })
+        return result.category_id
     if row.feo_type or row.feo_direction:
         counters.feo_unmatched.append({"label": label, "ae": row.feo_direction, "af": row.feo_type})
     return na_category_id
@@ -359,7 +333,7 @@ def _items_data(rows: list[SheetRowV2], category_id: Optional[int],
 #     FeoPlannedItem и есть план (резерв), need_level по BC/BB/BA
 #     (need_level_for), закупка-черновик НЕ создаётся (задание, п.3).
 # ---------------------------------------------------------------------------
-async def _build_plan_items_v2(db: AsyncSession, rows: list[SheetRowV2], feo_lookup: FeoNameLookup,
+async def _build_plan_items_v2(db: AsyncSession, rows: list[SheetRowV2], feo_tree: FeoTree,
                                 na_category_id: Optional[int], counters: BuildCountersV2) -> dict:
     from types import SimpleNamespace
     from app.services.plan_autoassign import create_auto_planned_item
@@ -369,7 +343,7 @@ async def _build_plan_items_v2(db: AsyncSession, rows: list[SheetRowV2], feo_loo
     plan_item_by_key: dict[tuple, int] = {}
     for key, group in groups.items():
         main = group.main_row
-        category_id = _resolve_feo_category(main, feo_lookup, na_category_id, counters,
+        category_id = _resolve_feo_category(main, feo_tree, na_category_id, counters,
                                              label=f"план {group.key}")
         it = SimpleNamespace(
             item_name=main.item_name or main.subject,
@@ -445,7 +419,7 @@ async def build_single(db: AsyncSession, subsidy: Subsidy, group: PurchaseGroupV
 
 
 async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGroupV2,
-                           feo_lookup: FeoNameLookup, na_category_id: Optional[int],
+                           feo_tree: FeoTree, na_category_id: Optional[int],
                            employee_lookup: EmployeeLookup, org_id: Optional[int],
                            current_user, counters: BuildCountersV2, pending_payments: list,
                            source_advance_contractors: dict[int, int],
@@ -550,7 +524,7 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
 
     for order_no, rows in order_rows.items():
         main = rows[0]
-        category_id = _resolve_feo_category(main, feo_lookup, na_category_id, counters,
+        category_id = _resolve_feo_category(main, feo_tree, na_category_id, counters,
                                              label=f"{group.contractor} №{group.purchase_no}, заказ {order_no}")
         contractor_id = None if group_employee_id else await _resolve_contractor_id(db, main, org_id, counters)
         items_data = _items_data(rows, category_id, plan_item_by_key)
@@ -758,7 +732,7 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
 
     na_category, _created = await get_or_create_unallocated(db, new_subsidy.id, current_user=None)
     na_category_id = na_category.id if na_category else None
-    feo_lookup = await _load_feo_lookup(db, new_subsidy.id)
+    feo_tree = await load_feo_tree(db, new_subsidy.id)
 
     if na_category_id:
         # Бюджет ФЭО листа GoodsService — строка 1 листа даёт его НАПРЯМУЮ
@@ -812,12 +786,12 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
         # самостоятельным планом с need_level по BC/BB/BA — отдельных
         # закупок-черновиков для них НЕ создаём (plan_rows из group_rows_v2
         # используется только тут — group_rows_v2 сама их не кладёт в groups).
-        plan_item_by_key = await _build_plan_items_v2(db, rows, feo_lookup, na_category_id, counters)
+        plan_item_by_key = await _build_plan_items_v2(db, rows, feo_tree, na_category_id, counters)
         await db.flush()
 
         for group in groups:
             if group.is_framework and len(group.distinct_orders) >= 1:
-                await build_framework(db, new_subsidy, group, feo_lookup, na_category_id,
+                await build_framework(db, new_subsidy, group, feo_tree, na_category_id,
                                       employee_lookup, new_subsidy.org_id, current_user, counters,
                                       pending_payments, source_advance_contractors, source_executors,
                                       plan_item_by_key)
@@ -825,7 +799,7 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
 
             main = group.rows[0] if group.rows else None
             employee_id = employee_lookup.find_one(group.contractor)
-            category_id = _resolve_feo_category(main, feo_lookup, na_category_id, counters,
+            category_id = _resolve_feo_category(main, feo_tree, na_category_id, counters,
                                                  label=f"{group.contractor} №{group.purchase_no}") if main else na_category_id
             contractor_id = None if employee_id else (await _resolve_contractor_id(db, main, new_subsidy.org_id, counters) if main else None)
             await build_single(db, new_subsidy, group, category_id, contractor_id, employee_id, current_user, counters,

@@ -74,6 +74,18 @@ def render_report_v2(rows: list[SheetRowV2], subsidy_name: str, counters: BuildC
             lines.append(f"    - {u['label']}: AE={u['ae']!r} AF={u['af']!r}")
         if len(counters.feo_unmatched) > 50:
             lines.append(f"    ... и ещё {len(counters.feo_unmatched) - 50}")
+    if getattr(counters, "feo_resolved_shallow", None):
+        lines.append(f"  Остановились выше AF/AG (путь найден не до конца): {len(counters.feo_resolved_shallow)}")
+        for s in counters.feo_resolved_shallow[:50]:
+            lines.append(f"    - {s['label']}: путь «{s['path']}», AF={s['af']!r} AG={s['ag']!r}")
+        if len(counters.feo_resolved_shallow) > 50:
+            lines.append(f"    ... и ещё {len(counters.feo_resolved_shallow) - 50}")
+    if getattr(counters, "feo_ambiguous", None):
+        lines.append(f"  Неоднозначно (несколько подходящих категорий — не угадываем): {len(counters.feo_ambiguous)}")
+        for a in counters.feo_ambiguous[:50]:
+            lines.append(f"    - {a['label']}: уровень {a['level']}, кандидаты {a['candidates']}")
+        if len(counters.feo_ambiguous) > 50:
+            lines.append(f"    ... и ещё {len(counters.feo_ambiguous) - 50}")
     lines.append("")
 
     lines.append(f"Платежи (поиск по ИНН+сумма P+соглашение+исполнен — владелец, уточнение 05.10.2026): "

@@ -181,6 +181,14 @@
   min-height: 132px;
   height: 100%;
 }
+/* Задача 3 (владелец, 06.10.2026): карточка «Оплачено» — на компьютере вдвое
+   шире остальных (её содержимое — по выписке/по отметке/расхождение/тип —
+   самое плотное из всех карточек сетки), высота не меняется (span по
+   колонкам, не по строкам; grid-auto-rows:1fr уже выравнивает высоту строки).
+   На мобильной ширине сбрасывается ниже — обычная карточка. */
+.subsidies-page .detail-kpis .kpi-paid {
+  grid-column: span 2;
+}
 
 /* ── KPI Cards (copied from DashboardView) ── */
 .subsidies-page .kpi-card {
@@ -311,6 +319,8 @@
   .subsidies-page .kpi-body  { width: 100%; }
   .subsidies-page .kpi-value { font-size: 15px; white-space: normal; overflow-wrap: break-word; word-break: break-word; line-height: 1.25; }
   .subsidies-page .kpi-label { font-size: 10px; line-height: 1.2; white-space: normal; margin-top: 1px; }
+  /* Задача 3: на мобильной ширине «Оплачено» — обычная карточка, не шире. */
+  .subsidies-page .detail-kpis .kpi-paid { grid-column: span 1; }
 }
 
 /* FEO section */

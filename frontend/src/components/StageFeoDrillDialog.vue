@@ -165,6 +165,10 @@ import { apiFetch } from '@/api'
 import { describeApiError } from '@/utils/apiErrorMessage'
 import type { ItemTypeKind } from '@/utils/itemTypeKind'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+// Задача 4 (владелец, 06.10.2026): суммы в списках по клику — до копейки, тем
+// же форматтером, что и карточки (Правило №6) — formatCurrency, не локальная
+// сокращённая fmtMoney (прежняя «19 тыс ₽» пряталась за округлением).
+import { formatCurrency } from '@/composables/subsidies/format'
 
 const { mobile } = useDisplay()
 
@@ -529,11 +533,10 @@ function goBack() {
 }
 
 // ── Excel ────────────────────────────────────────────────────────────────────
+// fmtMoney (округление до тыс/млн) убран 06.10.2026 — все суммы списков и
+// итог теперь formatCurrency (до копейки), см. импорт выше.
 function fmtMoney(n: number): string {
-  if (!n) return '0 ₽'
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} млн ₽`
-  if (n >= 1e3) return `${Math.round(n / 1e3)} тыс ₽`
-  return `${Math.round(n)} ₽`
+  return formatCurrency(n || 0)
 }
 
 async function exportXlsx() {

@@ -139,6 +139,15 @@ export interface SubsidyRow {
   // считаются как обычно. copied_from_id — исходная субсидия (если это копия).
   is_sandbox?: boolean
   copied_from_id?: number | null
+  // Квик-план 06.10.2026 (sleepy-fluttering-walrus.md, п.2 — «Можно
+  // перераспределить»/«Заключено договоров»): monthly_future_to_redistribute —
+  // ежемесячные по уже заключённым договорам до конца года (та же величина,
+  // что monthly_future_to_year_end — см. app.services.dashboard_monthly_accrual,
+  // Правило №6, одно и то же поле читают обе карточки); over_plan_categories —
+  // категории ФЭО, законтрактованные сверх плана, с готовой суммой превышения.
+  // Источник — backend/app/services/subsidy_money_summary.py.
+  monthly_future_to_redistribute?: number | null
+  over_plan_categories?: { category_id: number; name: string | null; excess_amount: number }[]
 }
 
 // C4: участник (соредактор) черновой субсидии — калька wish_member без

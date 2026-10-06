@@ -68,6 +68,14 @@
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_work) }}</div>
             <div class="kpi-label">Ведётся работа</div>
+            <!-- Задача (владелец, 06.10.2026) — расшифровка состава «Ведётся
+                 работа»: «Заказано» (эта же карточка в этом компоненте) +
+                 ежемесячные по уже заключённым договорам до конца года
+                 (monthlyFutureToYearEnd, готовое поле ниже) — оба числа уже
+                 есть, здесь ничего не складывается заново (Правило №6). -->
+            <div v-if="monthlyFutureToYearEnd > 0" class="kpi-sub-note text-caption text-medium-emphasis">
+              заказано {{ formatCurrency(kpiSubTarget_ordered) }} + договоры без заказа (будущие месяцы) {{ formatCurrency(monthlyFutureToYearEnd) }}
+            </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('work')">
                 <div v-for="row in splitRowsFor('work')" :key="row.kind" class="kpi-split-row"
@@ -106,10 +114,12 @@
         </div>
       </template>
     </v-tooltip>
-    <!-- 5. Заключено договоров -->
-    <v-tooltip location="bottom" text="суммарная стоимость заключённых договоров">
+    <!-- 5. Заключено договоров — клик открывает список договоров (квик-план
+         06.10.2026, sleepy-fluttering-walrus.md, п.2), не подсветку дерева
+         ФЭО, как у остальных карточек (openContractsDrill ниже). -->
+    <v-tooltip location="bottom" text="суммарная стоимость заключённых договоров — клик открывает список">
       <template #activator="{ props: tip }">
-        <div v-bind="tip" class="kpi-card kpi-contracts" :class="kpi.kpiCardClass('contracts')" @click="kpi.onKpiCardClick('contracts')">
+        <div v-bind="tip" class="kpi-card kpi-contracts" @click="openContractsDrill">
           <div class="kpi-icon-box"><v-icon icon="mdi-file-sign" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_contracts) }}</div>
@@ -198,12 +208,20 @@
                  оранжевым, только если они не совпадают. Было наоборот
                  (05.10.2026) — перерешено владельцем 06.10.2026. -->
             <div class="kpi-paid-dual">
-              <div class="kpi-paid-dual-sub">тов. {{ formatCurrency(paidConfirmedByKind.goods) }} / усл. {{ formatCurrency(paidConfirmedByKind.services) }}</div>
+              <!-- Задача 3 (владелец, 06.10.2026): кружки-маркеры товары/услуги —
+                   тот же приём, что у остальных карточек (kpi-split-dot-*). -->
+              <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
+                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidConfirmedByKind.goods) }}</span>
+                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidConfirmedByKind.services) }}</span>
+              </div>
               <div class="kpi-paid-dual-row">
                 <span class="kpi-paid-dual-label">по отметке сотрудников:</span>
                 <span class="kpi-paid-dual-amount">{{ formatCurrency(paidDeclaredTotal) }}</span>
               </div>
-              <div class="kpi-paid-dual-sub">тов. {{ formatCurrency(paidDeclaredByKind.goods) }} / усл. {{ formatCurrency(paidDeclaredByKind.services) }}</div>
+              <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
+                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidDeclaredByKind.goods) }}</span>
+                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidDeclaredByKind.services) }}</span>
+              </div>
               <div v-if="paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
                 <span class="kpi-paid-dual-label">расхождение:</span>
                 <span class="kpi-paid-dual-amount">{{ paidDiff >= 0 ? '+' : '−' }}{{ formatCurrency(Math.abs(paidDiff)) }}</span>
@@ -361,6 +379,16 @@
     @close="stageDrillVisible = false"
     @row-click="(id) => { stageDrillVisible = false; ctx.router.push(`/orders/${id}/edit`) }"
   />
+
+  <!-- Квик-план 06.10.2026 (sleepy-fluttering-walrus.md, п.2): карточка
+       «Заключено договоров» — отдельный диалог со списком ДОГОВОРОВ (не
+       позиций закупок), см. ContractsDrillDialog.vue. -->
+  <ContractsDrillDialog
+    :visible="contractsDrillVisible"
+    :subsidy-id="ctx.selectedId.value"
+    scope="managed"
+    @close="contractsDrillVisible = false"
+  />
 </template>
 
 <script setup lang="ts">
@@ -384,6 +412,7 @@ import { STATUS_LABELS, STATUS_COLORS } from '@/composables/dashboard/dashboardS
 import { purchaseEffectivePrice } from '@/composables/dashboard/dashboardFormat'
 import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
 import SubsidyMoneyCards from '@/components/subsidies/SubsidyMoneyCards.vue'
+import ContractsDrillDialog from '@/components/subsidies/ContractsDrillDialog.vue'
 import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
 import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
 import type { SubsidyTypeTotals } from '@/composables/subsidies/types'
@@ -542,6 +571,13 @@ watch(() => ctx.selectedId.value, () => {
   stageDrillStageKey.value = null
 })
 
+// ── «Заключено договоров» — список договоров (квик-план 06.10.2026) ─────────
+const contractsDrillVisible = ref(false)
+function openContractsDrill() {
+  if (!ctx.selectedId.value) return
+  contractsDrillVisible.value = true
+}
+
 function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
   if (!hasStageDrill(stage)) return  // budget/free — нет списка закупок; шаблон уже не вешает click (см. hasStageDrill выше)
   const active = kpiPrefs.toggleTypeFilter(stage, kind)
@@ -649,6 +685,19 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
   font-size: 10.5px;
   opacity: 0.6;
   margin-bottom: 3px;
+}
+/* Задача 3 (06.10.2026): кружки-маркеры перед «товары»/«услуги» — в одну
+   строку (card шире, высота карточки расти не должна). */
+.kpi-paid-dual-sub-dots {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.kpi-paid-dual-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .kpi-type-excess-block {
   display: flex;

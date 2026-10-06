@@ -1,15 +1,20 @@
-<!-- Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.5): две новые карточки
-     для вкладки «Субсидии» — «Можно перераспределить» и «Экономия по
-     закупкам». Вынесены в отдельный компонент (Правило №5 — SubsidyKpiCards.vue
-     уже > 500 строк, новые карточки туда не дописываются, только один вызов).
-     Поля ВСЕ приходят готовыми с бэкенда (redistributable/redistributable_by_kind/
-     redistributable_unplanned/planned_not_committed/committed_missing_fact_items/
-     economy_total/economy_no_planned_price_items — см. SubsidyRow в composables/subsidies/types.ts) —
-     фронт ничего не считает (Правило №6). Рендерится внутри того же
-     `.detail-kpis` контейнера родителя, чтобы глобальные стили
-     `.subsidies-page .detail-kpis .kpi-card` (styles/subsidies.css) применились
-     без копирования CSS (scoped-стили родителя дочерний компонент не достают —
-     урок feedback_split_view_css_before_after_screenshots.md). -->
+<!-- Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.5), дополнено 06.10.2026
+     (sleepy-fluttering-walrus.md, п.1): карточки для вкладки «Субсидии» —
+     «Можно перераспределить» (теперь 4 строки: не запланировано / хотелось бы
+     можно отказаться / скорее всего понадобится / ежемесячные по договорам до
+     конца года + красные строки превышения плана по направлениям ФЭО) и
+     «Экономия по закупкам». Вынесены в отдельный компонент (Правило №5 —
+     SubsidyKpiCards.vue уже > 500 строк, новые карточки туда не дописываются,
+     только один вызов). Поля ВСЕ приходят готовыми с бэкенда (redistributable/
+     redistributable_by_kind/redistributable_unplanned/not_committed_nice/
+     not_committed_likely/monthly_future_to_redistribute/over_plan_categories/
+     committed_missing_fact_items/economy_total/economy_no_planned_price_items —
+     см. SubsidyRow в composables/subsidies/types.ts) — фронт ничего не считает
+     (Правило №6). Рендерится внутри того же `.detail-kpis` контейнера родителя,
+     чтобы глобальные стили `.subsidies-page .detail-kpis .kpi-card`
+     (styles/subsidies.css) применились без копирования CSS (scoped-стили
+     родителя дочерний компонент не достают — урок
+     feedback_split_view_css_before_after_screenshots.md). -->
 <template>
   <v-tooltip location="bottom" :disabled="true">
     <template #activator="{ props: tip }">
@@ -20,16 +25,19 @@
         <div class="kpi-body">
           <div class="kpi-value">{{ redistributable != null ? formatCurrency(redistributable) : '—' }}</div>
           <div class="kpi-label">Можно перераспределить</div>
-          <!-- Задача 1 (владелец, 04.10.2026): раньше одна строка «не
-               запланировано X (Свободно) + в плане без договоров Y» —
-               теперь три строки с разбивкой «в плане без договоров» по
+          <!-- Задача 1 (владелец, 04.10.2026 → доп. 06.10.2026): раньше одна
+               строка «не запланировано X (Свободно) + в плане без договоров Y» —
+               теперь четыре строки с разбивкой «в плане без договоров» по
                статусу плановой позиции (not_committed_likely/_nice, см.
-               SubsidyRow в composables/subsidies/types.ts). «хотелось бы»
-               показываем даже при 0 ₽, чтобы категория была видна. -->
+               SubsidyRow в composables/subsidies/types.ts) + ежемесячные по
+               уже заключённым договорам до конца года (monthly_future_to_redistribute,
+               готовое поле бэкенда, см. app.services.dashboard_monthly_accrual).
+               «хотелось бы» показываем даже при 0 ₽, чтобы категория была видна. -->
           <div v-if="redistributable != null" class="kpi-sub-note kpi-redistributable-notes text-caption text-medium-emphasis">
             <div class="kpi-redistributable-note-row">не запланировано: {{ formatCurrency(redistributableUnplanned) }}</div>
             <div class="kpi-redistributable-note-row">хотелось бы, можно отказаться: {{ formatCurrency(notCommittedNice) }}</div>
-            <div class="kpi-redistributable-note-row">скорее всего понадобится, без договоров: {{ formatCurrency(notCommittedLikely) }}</div>
+            <div class="kpi-redistributable-note-row">скорее всего понадобится: {{ formatCurrency(notCommittedLikely) }}</div>
+            <div class="kpi-redistributable-note-row">ежемесячные по договорам до конца года: {{ formatCurrency(monthlyFutureToRedistribute) }}</div>
           </div>
           <div v-if="isSplit" class="kpi-split-rows" @click.stop>
             <template v-if="splitRows.length">
@@ -42,6 +50,15 @@
           </div>
           <div v-if="committedMissingFactItems > 0" class="kpi-sub-note text-caption" style="color:#B45309">
             {{ committedMissingFactItems }} позиций в договоре без суммы договора — учтены по плановой цене
+          </div>
+          <!-- Задача (владелец, 06.10.2026): по каждому направлению ФЭО,
+               законтрактованному сверх плана, — отдельная красная строка (без
+               кнопок, только сигнал), готовое поле бэкенда over_plan_categories
+               (см. SubsidyRow в composables/subsidies/types.ts, Правило №6). -->
+          <div v-if="overPlanCategories.length" class="kpi-sub-note kpi-over-plan-notes text-caption">
+            <div v-for="cat in overPlanCategories" :key="cat.category_id" class="kpi-over-plan-row">
+              по «{{ cat.name || 'направлению ФЭО' }}» законтрактовано сверх плана на {{ formatCurrency(cat.excess_amount) }}
+            </div>
           </div>
           <!-- «Где взять деньги» (план .planning/quick/2026-10-05-funding-sources/
                PLAN.md, п.2г) — отрицательное «Можно перераспределить» =
@@ -137,6 +154,9 @@ const redistributableUnplanned = computed(() => props.subsidy?.redistributable_u
 const notCommittedLikely = computed(() => props.subsidy?.not_committed_likely ?? 0)
 const notCommittedNice = computed(() => props.subsidy?.not_committed_nice ?? 0)
 const committedMissingFactItems = computed(() => props.subsidy?.committed_missing_fact_items ?? 0)
+// Задача (владелец, 06.10.2026) — готовые поля бэкенда, фронт не считает (Правило №6).
+const monthlyFutureToRedistribute = computed(() => props.subsidy?.monthly_future_to_redistribute ?? 0)
+const overPlanCategories = computed(() => props.subsidy?.over_plan_categories ?? [])
 // null-безопасно (02.10.2026, приёмка): нет данных (поле не пришло или
 // бэкенд явно вернул null) — показываем «—», а не 0 ₽ (0 — это РЕАЛЬНОЕ
 // отсутствие экономии, другое сообщение владельцу).
@@ -184,5 +204,17 @@ const splitRows = computed<SplitRow[]>(() => {
    повторяем здесь тот же класс/цвет для минусовых строк разбивки по типам. */
 .kpi-split-row-neg {
   color: #EF4444;
+}
+/* Задача (06.10.2026): красные строки превышения плана по направлениям ФЭО —
+   без кнопок, только сигнал (ПРАВИЛО механика/сигнализация — не глушить). */
+.kpi-over-plan-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kpi-over-plan-row {
+  color: #EF4444;
+  white-space: normal;
+  word-break: break-word;
 }
 </style>

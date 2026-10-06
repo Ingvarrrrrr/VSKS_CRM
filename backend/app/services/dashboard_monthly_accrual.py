@@ -150,26 +150,18 @@ async def compute_monthly_ordered_map(
     return monthly_ordered_map
 
 
-async def compute_monthly_future_map(
+async def compute_monthly_future_rows(
     db: AsyncSession,
     apply_filter: Callable,
-) -> dict:
-    """SUM будущих помесячных платежей ДО КОНЦА ГОДА субсидии, сгруппировано
-    по subsidy_id — Задача 3 (владелец, 04.10.2026, план .planning/quick/
-    2026-10-04-sheet-ideas): «что ещё придётся заплатить по ежемесячным
-    договорам в этом году».
-
-    По КАЖДОЙ помесячной закупке (тот же отбор, что и compute_monthly_ordered_map
-    — is_monthly_payment=true, статус от «Договор заключён», тот же apply_filter) —
-    оставшиеся месяцы от текущего (ПОСЛЕ уже начисленных compute_monthly_ordered_map,
-    _accrued_months_and_amount — ПРАВИЛО №6, тот же порог/клэмп, не вторая
-    формула) до min(service_end_date/service_deadline_date, 31 декабря ГОДА
-    СУБСИДИИ закупки, Subsidy.year), умноженные на monthly_payment_amount, не
-    больше «цена договора/план − уже начислено».
-
-    apply_filter — см. docstring compute_monthly_ordered_map (тот же фильтр
-    видимости org/subsidy).
-    """
+) -> list:
+    """[{"purchase_id","subsidy_id","amount"}] — ОДНА ПОСТРОЧНАЯ точка разбора
+    «что ещё придётся заплатить по ежемесячным договорам до конца года»
+    (Задача 3, владелец 04.10.2026). Извлечено из compute_monthly_future_map
+    (06.10.2026, план sleepy-fluttering-walrus.md п.1 — карточке «Можно
+    перераспределить» нужна раскладка этой же суммы по товары/услуги,
+    app.services.redistributable_raw.monthly_future_by_kind), ПРАВИЛО №6:
+    compute_monthly_future_map ниже теперь только группирует ЭТИ ЖЕ строки по
+    subsidy_id — второй формулы графика платежей нет, см. докстринг там же."""
     from app.models.subsidy import Subsidy
 
     monthly_q = (
@@ -181,7 +173,7 @@ async def compute_monthly_future_map(
     monthly_q = apply_filter(monthly_q)
     monthly_rows = (await db.execute(monthly_q)).all()
 
-    monthly_future_map: dict = {}
+    rows_out: list = []
     _today = date.today()
     for r in monthly_rows:
         basis = _monthly_schedule_basis(r)
@@ -210,6 +202,28 @@ async def compute_monthly_future_map(
             future_amount = min(future_amount, remaining_cap)
 
         if future_amount > 0:
-            monthly_future_map[r.subsidy_id] = monthly_future_map.get(r.subsidy_id, 0.0) + float(future_amount)
+            rows_out.append({
+                "purchase_id": r.id, "subsidy_id": r.subsidy_id, "amount": float(future_amount),
+            })
 
+    return rows_out
+
+
+async def compute_monthly_future_map(
+    db: AsyncSession,
+    apply_filter: Callable,
+) -> dict:
+    """SUM будущих помесячных платежей ДО КОНЦА ГОДА субсидии, сгруппировано
+    по subsidy_id — Задача 3 (владелец, 04.10.2026, план .planning/quick/
+    2026-10-04-sheet-ideas): «что ещё придётся заплатить по ежемесячным
+    договорам в этом году». ПРАВИЛО №6 (06.10.2026) — только группирует
+    построчный разбор compute_monthly_future_rows выше, сама не считает.
+
+    apply_filter — см. docstring compute_monthly_ordered_map (тот же фильтр
+    видимости org/subsidy).
+    """
+    rows = await compute_monthly_future_rows(db, apply_filter)
+    monthly_future_map: dict = {}
+    for r in rows:
+        monthly_future_map[r["subsidy_id"]] = monthly_future_map.get(r["subsidy_id"], 0.0) + r["amount"]
     return monthly_future_map

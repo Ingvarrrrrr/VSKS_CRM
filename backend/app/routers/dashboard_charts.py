@@ -44,9 +44,13 @@ from app.routers.dashboard import _apply_purchase_org_filter
 # здесь: type_drill_router уже несёт prefix="/type-drill" сам по себе, полный
 # путь = "/api/dashboard" (этот router) + "/type-drill". routes.py не трогается.
 from app.routers.dashboard_type_drill import router as type_drill_router
+# Расшифровка карточки «Заключено договоров» по ДОГОВОРАМ (владелец, 06.10.2026,
+# план sleepy-fluttering-walrus.md п.2) — тот же приём подключения под-роутера.
+from app.routers.dashboard_contracts_drill import router as contracts_drill_router
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 router.include_router(type_drill_router)
+router.include_router(contracts_drill_router)
 
 
 @router.get("/charts")
@@ -523,6 +527,11 @@ async def dashboard_charts(
             # «Можно перераспределить»: free, если бюджет задан, иначе 0.0 — ОДНА
             # точка расчёта, см. докстринг subsidy_money_summary.py.
             "redistributable_unplanned": _money.get("redistributable_unplanned", 0.0),
+            # Новые поля карточки «Можно перераспределить» (владелец, 06.10.2026,
+            # план sleepy-fluttering-walrus.md п.1) — см. докстринг
+            # app.services.redistributable_raw/subsidy_money_summary.py.
+            "monthly_future_to_redistribute": _money.get("monthly_future_to_redistribute", 0.0),
+            "over_plan_categories": _money.get("over_plan_categories", []),
             # ИСПРАВЛЕНО 02.10.2026: economy_total=None (ни одна позиция субсидии
             # не измерена) пропускается как null, не форсится в 0.0 — см.
             # purchase_economy.py docstring.

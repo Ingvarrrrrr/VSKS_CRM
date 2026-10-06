@@ -34,6 +34,13 @@ from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.routers.dashboard import _apply_purchase_org_filter
 from app.services.dashboard_type_split import STAGE_KEYS, compute_type_split_detail
+# ПРАВИЛО №6 (06.10.2026, ФАДМ 2026_2) — stage="delivered_unpaid" больше НЕ
+# читает compute_type_split_detail (та отдаёт ВСЕ закупки status='delivered'
+# целиком, игнорируя оплату — старая формула, из-за которой drill показывал
+# «Поставлено» вместо «Поставлено, не оплачено»). Своя функция — тот же
+# источник остатка, что и карточка (delivered_unpaid_residual_by_subsidy),
+# см. докстринг delivered_unpaid_residual.py.
+from app.services.delivered_unpaid_residual import delivered_unpaid_residual_detail
 
 router = APIRouter(prefix="/type-drill", tags=["dashboard"])
 
@@ -90,10 +97,15 @@ async def dashboard_type_drill(
             q, current_user, subsidy_ids=visible_subsidy_ids, explicit_subsidy_ids=narrow_ids,
         )
 
-    detail = await compute_type_split_detail(
-        db, apply_filter=_purchase_filter, use_sids=True,
-        visible_subsidy_ids=visible_subsidy_ids, org_ids=org_ids, stage=stage,
-    )
+    if stage == "delivered_unpaid":
+        detail = await delivered_unpaid_residual_detail(
+            db, apply_filter=_purchase_filter, visible_subsidy_ids=visible_subsidy_ids,
+        )
+    else:
+        detail = await compute_type_split_detail(
+            db, apply_filter=_purchase_filter, use_sids=True,
+            visible_subsidy_ids=visible_subsidy_ids, org_ids=org_ids, stage=stage,
+        )
     matched = [r for r in detail["rows"] if r["kind"] == kind]
 
     purchase_ids = {r["purchase_id"] for r in matched if r["purchase_id"] is not None}

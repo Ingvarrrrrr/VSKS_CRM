@@ -358,6 +358,14 @@ async def dashboard_charts(
     # существующие total_paid/widget.paid (status='paid' only) НЕ трогаются.
     from app.services.subsidy_paid_breakdown import paid_breakdown_by_subsidy as _paid_breakdown_fn
     paid_breakdown_map = await _paid_breakdown_fn(db, sid_list)
+    # Карточка «Поставлено, не оплачено» (владелец, 06.10.2026, ФАДМ 2026_2 —
+    # см. докстринг delivered_unpaid_residual.py): раньше total_delivered_unpaid
+    # вычитал Σ «Оплачено по отметке» субсидии ИЗ Σ «Поставлено» субсидии —
+    # переплата по одной закупке гасила долг за другую. Теперь — Σ остатков
+    # ПО ЗАКУПКЕ (max(0, поставлено_закупки − оплачено_закупки)), ОДНА функция,
+    # которой пользуется и карточка, и drill (dashboard_type_drill.py), и Excel.
+    from app.services.delivered_unpaid_residual import delivered_unpaid_residual_by_subsidy as _residual_fn
+    delivered_unpaid_residual_map = await _residual_fn(db, sid_list)
 
     subsidy_stats = []
     for row in subsidy_rows:
@@ -529,23 +537,22 @@ async def dashboard_charts(
             # Per-subsidy work/delivery baskets (зеркала глобальных widgets)
             "total_work": float(row.total_plan_schedule) + float(row.w_ordered) + float(row.w_delivered) + float(row.w_paid),
             "total_contracts": contracts_map.get(row.id, 0.0),
-            "delivered_unpaid_declared_by_kind": None,  # заполняется ниже при ?type_split=true
-            "total_delivered": float(row.w_delivered) + float(row.w_paid),
-            # ИСПРАВЛЕНО (владелец, 05.10.2026) — карточка «Поставлено, не
-            # оплачено» на вкладке «Субсидии»: раньше = w_delivered (статус
-            # delivered без paid), теперь = «Поставлено» минус «Оплачено по
-            # отметке сотрудников» (paid_declared, тот же источник, что
-            # paid_declared выше, ПРАВИЛО №6 — не вторая формула), не ниже 0.
-            # Как в Google-листе владельца «Дашборд». total_delivered_unpaid —
-            # единственный потребитель SubsidiesView.vue → SubsidyRow.delivered_unpaid
-            # → SubsidyKpiCards.vue (grep подтверждён) — безопасно переопределить
-            # на месте. widget["delivered_unpaid"] (ниже) НЕ трогается: его читает
-            # ещё и useDashboardData.ts (effectiveWidgets/stageTypeSplit) для
-            # дашборда — там сохраняется прежний смысл (status='delivered').
-            "total_delivered_unpaid": max(
-                0.0,
-                (float(row.w_delivered) + float(row.w_paid)) - _paid_breakdown_map_entry.get("declared", 0.0),
+            # ИСПРАВЛЕНО (владелец, 06.10.2026, ФАДМ 2026_2, прод id=89) — раньше
+            # вычиталось Σ «Оплачено по отметке» субсидии из Σ «Поставлено»
+            # субсидии целиком (переплата одной закупки гасила долг другой).
+            # Теперь — Σ остатков ПО ЗАКУПКЕ (delivered_unpaid_residual.py,
+            # ПРАВИЛО №6 — одна функция и для карточки, и для drill/Excel).
+            "delivered_unpaid_declared_by_kind": (delivered_unpaid_residual_map.get(row.id) or {}).get(
+                "by_kind", {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
             ),
+            "total_delivered": float(row.w_delivered) + float(row.w_paid),
+            # total_delivered_unpaid — единственный потребитель SubsidiesView.vue →
+            # SubsidyRow.delivered_unpaid → SubsidyKpiCards.vue (grep подтверждён).
+            # widget["delivered_unpaid"] (ниже) НЕ трогается: его читает ещё и
+            # useDashboardData.ts (effectiveWidgets/stageTypeSplit) для
+            # дашборда — там сохраняется прежний смысл (status='delivered', без
+            # вычета оплаты).
+            "total_delivered_unpaid": (delivered_unpaid_residual_map.get(row.id) or {}).get("total", 0.0),
             # Per-subsidy widget basket (зеркало формул глобального widgets dict)
             "widget": {
                 "plan_schedule": {
@@ -761,20 +768,9 @@ async def dashboard_charts(
                 row["widget"][stage][f"{stage}_goods"] = reconciled["goods"]
                 row["widget"][stage][f"{stage}_services"] = reconciled["services"]
                 row["widget"][stage][f"{stage}_unspecified"] = reconciled["unspecified"]
-            # Разбивка товары/услуги для НОВОЙ карточки «Поставлено, не
-            # оплачено» (delivered − paid_declared, см. total_delivered_unpaid
-            # выше) — из уже точных «Поставлено» (widget.delivered.*_goods, тот
-            # же reconcile_split выше) и «Оплачено по отметке» (paid_declared_by_kind,
-            # row уже содержит это поле, см. блок subsidy_stats.append выше).
-            # НЕ вторая формула (ПРАВИЛО №6): только вычитание уже посчитанных
-            # точных величин, floor 0 по каждому типу отдельно.
-            _d = row["widget"]["delivered"]
-            _pd_kind = row.get("paid_declared_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0}
-            row["delivered_unpaid_declared_by_kind"] = {
-                "goods": max(0.0, _d.get("delivered_goods", 0.0) - _pd_kind.get("goods", 0.0)),
-                "services": max(0.0, _d.get("delivered_services", 0.0) - _pd_kind.get("services", 0.0)),
-                "unspecified": max(0.0, _d.get("delivered_unspecified", 0.0) - _pd_kind.get("unspecified", 0.0)),
-            }
+            # delivered_unpaid_declared_by_kind уже заполнен выше (ПРАВИЛО №6,
+            # delivered_unpaid_residual_by_subsidy — одна точка расчёта
+            # независимо от ?type_split) — второй раз здесь не считается.
             tt = type_totals_map.get(sid, {})
             row["budget_goods"] = tt.get("feo_goods", 0.0)
             row["budget_services"] = tt.get("feo_services", 0.0)

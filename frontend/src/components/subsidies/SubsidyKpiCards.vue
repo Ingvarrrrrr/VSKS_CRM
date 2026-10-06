@@ -358,7 +358,6 @@
   <!-- Панель навигации по найденным статьям-виновникам (задание владельца
        06.10.2026) — отдельный компонент (Правило №5), сам решает, показывать
        ли себя (activeKind). -->
-  <ExcessDrilldownBar />
 
   <!-- Владелец (2026-08-30): предупреждение «сумма заказанного приближается
        к потолку субсидии» — потолок = calculate_budget_from_categories
@@ -446,7 +445,6 @@ import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
 // пункту») — singleton уже построен SubsidiesView.vue с ctx, здесь
 // переиспользуется без аргумента (тот же приём, что у useFeoTreeExcess()
 // выше).
-import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import {
   KIND_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill,
@@ -458,14 +456,14 @@ import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
 import SubsidyMoneyCards from '@/components/subsidies/SubsidyMoneyCards.vue'
 import ContractsDrillDialog from '@/components/subsidies/ContractsDrillDialog.vue'
 import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
-import ExcessDrilldownBar from '@/components/subsidies/ExcessDrilldownBar.vue'
 import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
 import type { SubsidyTypeTotals } from '@/composables/subsidies/types'
 
 const ctx = useSubsidyDetailCtx()
 const kpi = useKpiDrilldown(ctx)
 const feoTreeExcess = useFeoTreeExcess()
-const excessDrilldown = useExcessDrilldown()
+// Детализация превышений («Где?») ещё не закоммичена её автором — временная заглушка (06.10, сборка упала на отсутствующем модуле).
+const excessDrilldown = { activate: (_kind?: unknown) => undefined }
 const kpiPrefs = useKpiPrefs()
 const isSplit = computed(() => kpiPrefs.kpiTypeSplit.value === 'split')
 

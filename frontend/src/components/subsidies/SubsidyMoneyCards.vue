@@ -18,7 +18,7 @@
       >
         <div class="kpi-icon-box"><v-icon icon="mdi-swap-horizontal" size="26" /></div>
         <div class="kpi-body">
-          <div class="kpi-value">{{ redistributable != null ? formatCurrencyRound(redistributable) : '—' }}</div>
+          <div class="kpi-value">{{ redistributable != null ? formatCurrency(redistributable) : '—' }}</div>
           <div class="kpi-label">Можно перераспределить</div>
           <!-- Задача 1 (владелец, 04.10.2026): раньше одна строка «не
                запланировано X (Свободно) + в плане без договоров Y» —
@@ -27,15 +27,15 @@
                SubsidyRow в composables/subsidies/types.ts). «хотелось бы»
                показываем даже при 0 ₽, чтобы категория была видна. -->
           <div v-if="redistributable != null" class="kpi-sub-note kpi-redistributable-notes text-caption text-medium-emphasis">
-            <div class="kpi-redistributable-note-row">не запланировано: {{ formatCurrencyRound(redistributableUnplanned) }}</div>
-            <div class="kpi-redistributable-note-row">хотелось бы, можно отказаться: {{ formatCurrencyRound(notCommittedNice) }}</div>
-            <div class="kpi-redistributable-note-row">скорее всего понадобится, без договоров: {{ formatCurrencyRound(notCommittedLikely) }}</div>
+            <div class="kpi-redistributable-note-row">не запланировано: {{ formatCurrency(redistributableUnplanned) }}</div>
+            <div class="kpi-redistributable-note-row">хотелось бы, можно отказаться: {{ formatCurrency(notCommittedNice) }}</div>
+            <div class="kpi-redistributable-note-row">скорее всего понадобится, без договоров: {{ formatCurrency(notCommittedLikely) }}</div>
           </div>
           <div v-if="isSplit" class="kpi-split-rows" @click.stop>
             <template v-if="splitRows.length">
               <div v-for="row in splitRows" :key="row.kind" class="kpi-split-row" :class="{ 'kpi-split-row-neg': row.amount < -0.5 }">
                 <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
               </div>
             </template>
             <div v-else class="kpi-split-loading text-caption">нет данных по типам</div>
@@ -71,7 +71,7 @@
         <div class="kpi-icon-box"><v-icon icon="mdi-bank-outline" size="26" /></div>
         <div class="kpi-body">
           <div class="kpi-value" :class="balanceByMarks != null && balanceByMarks < 0 ? 'text-error' : ''">
-            {{ balanceByMarks != null ? formatCurrencyRound(balanceByMarks) : 'бюджет не введён' }}
+            {{ balanceByMarks != null ? formatCurrency(balanceByMarks) : 'бюджет не введён' }}
           </div>
           <div class="kpi-label">Остаток субсидии</div>
           <!-- Решение владельца 06.10.2026 (budget_from_plan, см. докстринг
@@ -79,9 +79,9 @@
                остаток временно считается от плана. -->
           <div v-if="props.subsidy?.budget_from_plan" class="text-caption text-medium-emphasis">по плану — суммы ФЭО не введены</div>
           <div v-if="balanceByMarks != null" class="kpi-sub-note kpi-balance-notes text-caption text-medium-emphasis">
-            <div class="kpi-balance-note-row">по отметке: {{ formatCurrencyRound(balanceByMarks) }}</div>
+            <div class="kpi-balance-note-row">по отметке: {{ formatCurrency(balanceByMarks) }}</div>
             <div class="kpi-balance-note-row" :class="{ 'text-error': (balanceByStatement ?? 0) < 0 }">
-              подтверждено выпиской: {{ balanceByStatement != null ? formatCurrencyRound(balanceByStatement) : '—' }}
+              подтверждено выпиской: {{ balanceByStatement != null ? formatCurrency(balanceByStatement) : '—' }}
             </div>
             <div class="kpi-balance-note-row kpi-balance-hint">бюджет ФЭО − оплачено; пока поступление = бюджету ФЭО</div>
           </div>
@@ -97,7 +97,7 @@
       >
         <div class="kpi-icon-box"><v-icon :icon="(economyTotal ?? 0) < 0 ? 'mdi-cash-minus' : 'mdi-cash-plus'" size="26" /></div>
         <div class="kpi-body">
-          <div class="kpi-value" :class="economyTotal == null ? '' : (economyTotal < 0 ? 'text-error' : 'text-success')">{{ economyTotal != null ? formatCurrencyRound(Math.abs(economyTotal)) : '—' }}</div>
+          <div class="kpi-value" :class="economyTotal == null ? '' : (economyTotal < 0 ? 'text-error' : 'text-success')">{{ economyTotal != null ? formatCurrency(Math.abs(economyTotal)) : '—' }}</div>
           <div class="kpi-label">{{ (economyTotal ?? 0) < 0 ? 'Переплата по закупкам' : 'Экономия по закупкам' }}</div>
           <div v-if="economyUnmeasuredText" class="kpi-sub-note text-caption" style="color:#B45309">
             {{ economyUnmeasuredText }}
@@ -110,7 +110,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatCurrencyRound } from '@/composables/subsidies/format'
+import { formatCurrency } from '@/composables/subsidies/format'
 import { KIND_LABELS, type ItemTypeKind } from '@/utils/itemTypeKind'
 import { formatEconomyUnmeasuredText } from '@/utils/economyUnmeasured'
 import type { SubsidyRow } from '@/composables/subsidies/types'
@@ -140,6 +140,10 @@ const committedMissingFactItems = computed(() => props.subsidy?.committed_missin
 // null-безопасно (02.10.2026, приёмка): нет данных (поле не пришло или
 // бэкенд явно вернул null) — показываем «—», а не 0 ₽ (0 — это РЕАЛЬНОЕ
 // отсутствие экономии, другое сообщение владельцу).
+// «Остаток субсидии» — готовые поля бэкенда (dashboard_charts.py: бюджет ФЭО − оплачено).
+// Раньше шаблон ссылался на эти имена, но они не были объявлены → всегда «бюджет не введён».
+const balanceByMarks = computed<number | null>(() => props.subsidy?.balance_by_marks ?? null)
+const balanceByStatement = computed<number | null>(() => props.subsidy?.balance_by_statement ?? null)
 const economyTotal = computed<number | null>(() => props.subsidy?.economy_total ?? null)
 const economyNoPlannedPriceItems = computed(() => props.subsidy?.economy_no_planned_price_items ?? 0)
 const economyUnmeasuredText = computed(() =>

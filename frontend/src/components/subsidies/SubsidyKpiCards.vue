@@ -16,7 +16,7 @@
         <div v-bind="tip" class="kpi-card kpi-budget" :class="kpi.kpiCardClass('budget')" title="Живой расчёт по дереву ФЭО: ручное финансирование категорий, без него — факт, иначе план. Совпадает с ИТОГО дерева ниже" @click="kpi.onKpiCardClick('budget')">
           <div class="kpi-icon-box"><v-icon icon="mdi-wallet" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_budget) }}</div>
+            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_budget) }}</div>
             <div class="kpi-label">Бюджет (ФЭО)</div>
             <!-- Решение владельца 06.10.2026 (budget_from_plan, см. докстринг
                  backend subsidy_money_summary.py): бюджета по ФЭО/вручную нет —
@@ -28,7 +28,7 @@
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('budget'), 'kpi-split-row-active': hasStageDrill('budget') && isActiveTypeRow('budget', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
                   @click="hasStageDrill('budget') && onTypeRowClick('budget', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -43,7 +43,7 @@
         <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="kpi.kpiCardClass('plan_schedule')" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в плане закупок" @click="kpi.onKpiCardClick('plan_schedule')">
           <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_plan_schedule) }}</div>
+            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_plan_schedule) }}</div>
             <div class="kpi-label">Запланировано</div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('plan_schedule')">
@@ -51,7 +51,7 @@
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('plan_schedule'), 'kpi-split-row-active': hasStageDrill('plan_schedule') && isActiveTypeRow('plan_schedule', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
                   @click="hasStageDrill('plan_schedule') && onTypeRowClick('plan_schedule', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -66,7 +66,7 @@
         <div v-bind="tip" class="kpi-card kpi-work" :class="kpi.kpiCardClass('work')" @click="kpi.onKpiCardClick('work')">
           <div class="kpi-icon-box"><v-icon icon="mdi-progress-wrench" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_work) }}</div>
+            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_work) }}</div>
             <div class="kpi-label">Ведётся работа</div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('work')">
@@ -74,7 +74,7 @@
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('work'), 'kpi-split-row-active': hasStageDrill('work') && isActiveTypeRow('work', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
                   @click="hasStageDrill('work') && onTypeRowClick('work', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -89,7 +89,7 @@
         <div v-bind="tip" class="kpi-card kpi-ordered" :class="kpi.kpiCardClass('ordered')" @click="kpi.onKpiCardClick('ordered')">
           <div class="kpi-icon-box"><v-icon icon="mdi-cart-check" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_ordered) }}</div>
+            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_ordered) }}</div>
             <div class="kpi-label">Заказано</div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('ordered')">
@@ -97,7 +97,7 @@
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('ordered'), 'kpi-split-row-active': hasStageDrill('ordered') && isActiveTypeRow('ordered', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
                   @click="hasStageDrill('ordered') && onTypeRowClick('ordered', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -112,14 +112,14 @@
         <div v-bind="tip" class="kpi-card kpi-contracts" :class="kpi.kpiCardClass('contracts')" @click="kpi.onKpiCardClick('contracts')">
           <div class="kpi-icon-box"><v-icon icon="mdi-file-sign" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_contracts) }}</div>
+            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_contracts) }}</div>
             <div class="kpi-label">Заключено договоров</div>
             <!-- Задача 3 (владелец, 04.10.2026): остаток помесячных платежей
                  по уже заключённым помесячным договорам до конца года —
                  готовое поле бэкенда (monthly_future_to_year_end), см.
                  SubsidyRow в composables/subsidies/types.ts. -->
             <div v-if="monthlyFutureToYearEnd > 0" class="kpi-sub-note text-caption text-medium-emphasis">
-              из них ещё уйдёт помесячно до конца года: {{ formatCurrencyRound(monthlyFutureToYearEnd) }}
+              из них ещё уйдёт помесячно до конца года: {{ formatCurrency(monthlyFutureToYearEnd) }}
             </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('contracts')">
@@ -127,7 +127,7 @@
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('contracts'), 'kpi-split-row-active': hasStageDrill('contracts') && isActiveTypeRow('contracts', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
                   @click="hasStageDrill('contracts') && onTypeRowClick('contracts', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -142,7 +142,7 @@
         <div v-bind="tip" class="kpi-card kpi-delivered" :class="kpi.kpiCardClass('delivered')" @click="kpi.onKpiCardClick('delivered')">
           <div class="kpi-icon-box"><v-icon icon="mdi-truck-check" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_delivered) }}</div>
+            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_delivered) }}</div>
             <div class="kpi-label">Поставлено</div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('delivered')">
@@ -150,7 +150,7 @@
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('delivered'), 'kpi-split-row-active': hasStageDrill('delivered') && isActiveTypeRow('delivered', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
                   @click="hasStageDrill('delivered') && onTypeRowClick('delivered', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -165,7 +165,7 @@
         <div v-bind="tip" class="kpi-card kpi-delivered_unpaid" :class="kpi.kpiCardClass('delivered_unpaid')" @click="kpi.onKpiCardClick('delivered_unpaid')">
           <div class="kpi-icon-box"><v-icon icon="mdi-truck-alert" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_delivered_unpaid) }}</div>
+            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_delivered_unpaid) }}</div>
             <div class="kpi-label">Поставлено, не оплачено</div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('delivered_unpaid')">
@@ -173,7 +173,7 @@
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('delivered_unpaid'), 'kpi-split-row-active': hasStageDrill('delivered_unpaid') && isActiveTypeRow('delivered_unpaid', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
                   @click="hasStageDrill('delivered_unpaid') && onTypeRowClick('delivered_unpaid', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -188,7 +188,7 @@
         <div v-bind="tip" class="kpi-card kpi-paid" :class="kpi.kpiCardClass('paid')" @click="kpi.onKpiCardClick('paid')">
           <div class="kpi-icon-box"><v-icon icon="mdi-cash-check" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_paid) }}</div>
+            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_paid) }}</div>
             <div class="kpi-label">Оплачено (по выписке)</div>
             <!-- Квик-план 06.10 (statement-control, «выписка главная»): основное
                  число карточки теперь «по выписке» (paid_confirmed — эталон,
@@ -198,15 +198,15 @@
                  оранжевым, только если они не совпадают. Было наоборот
                  (05.10.2026) — перерешено владельцем 06.10.2026. -->
             <div class="kpi-paid-dual">
-              <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidConfirmedByKind.goods) }} / усл. {{ formatCurrencyRound(paidConfirmedByKind.services) }}</div>
+              <div class="kpi-paid-dual-sub">тов. {{ formatCurrency(paidConfirmedByKind.goods) }} / усл. {{ formatCurrency(paidConfirmedByKind.services) }}</div>
               <div class="kpi-paid-dual-row">
                 <span class="kpi-paid-dual-label">по отметке сотрудников:</span>
-                <span class="kpi-paid-dual-amount">{{ formatCurrencyRound(paidDeclaredTotal) }}</span>
+                <span class="kpi-paid-dual-amount">{{ formatCurrency(paidDeclaredTotal) }}</span>
               </div>
-              <div class="kpi-paid-dual-sub">тов. {{ formatCurrencyRound(paidDeclaredByKind.goods) }} / усл. {{ formatCurrencyRound(paidDeclaredByKind.services) }}</div>
+              <div class="kpi-paid-dual-sub">тов. {{ formatCurrency(paidDeclaredByKind.goods) }} / усл. {{ formatCurrency(paidDeclaredByKind.services) }}</div>
               <div v-if="paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
                 <span class="kpi-paid-dual-label">расхождение:</span>
-                <span class="kpi-paid-dual-amount">{{ paidDiff >= 0 ? '+' : '−' }}{{ formatCurrencyRound(Math.abs(paidDiff)) }}</span>
+                <span class="kpi-paid-dual-amount">{{ paidDiff >= 0 ? '+' : '−' }}{{ formatCurrency(Math.abs(paidDiff)) }}</span>
               </div>
             </div>
             <!-- Старые строки «товары 0 ₽ / услуги 0 ₽» (splitRowsFor('paid'),
@@ -227,7 +227,7 @@
         >
           <div class="kpi-icon-box"><v-icon icon="mdi-cash-lock-open" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyRound(Math.abs(kpiSubAnim_free)) }}</div>
+            <div class="kpi-value">{{ formatCurrency(Math.abs(kpiSubAnim_free)) }}</div>
             <div class="kpi-label">{{ freeDiffRounded < 0 ? 'Превышение' : 'Свободно' }}</div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('free')">
@@ -235,7 +235,7 @@
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('free'), 'kpi-split-row-active': hasStageDrill('free') && isActiveTypeRow('free', row.kind), 'kpi-split-row-neg': row.amount < 0 }"
                   @click="hasStageDrill('free') && onTypeRowClick('free', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }}: {{ row.amount < 0 ? 'превышение' : 'свободно' }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                  <span class="kpi-split-text">{{ row.label }}: {{ row.amount < 0 ? 'превышение' : 'свободно' }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -328,7 +328,7 @@
        способу закупки для ТЕКУЩЕЙ субсидии — тот же компонент/composable,
        что и на дашборде (Правило №6), с subsidy_id вместо «без фильтра». -->
   <EconomyByMethodTable v-if="ctx.selectedId.value" class="mb-4"
-    :rows="economyByMethod.rows.value" :loading="economyByMethod.loading.value" :format-currency="formatCurrencyRound" />
+    :rows="economyByMethod.rows.value" :loading="economyByMethod.loading.value" :format-currency="formatCurrency" />
   <!-- Подсказка активной KPI-метрики -->
   <div v-if="kpi.activeKpi.value" class="feo-kpi-banner">
     <v-icon icon="mdi-filter-variant" size="16" color="#fb923c" />
@@ -367,7 +367,7 @@
 import { computed, ref, watch } from 'vue'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { KPI_LABELS, KPI_EMPTY_REASONS } from '@/constants/kpiMetrics'
-import { formatCurrency, formatCurrencyRound, roundMoney } from '@/composables/subsidies/format'
+import { formatCurrency, roundMoney } from '@/composables/subsidies/format'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 // useFeoTreeExcess() без аргумента — переиспользует singleton, построенный

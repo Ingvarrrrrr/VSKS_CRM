@@ -22,6 +22,10 @@
       @click:close="filters.stageCumulative = null">
       Этап: {{ activeStageKpi === 'contracts' ? 'Заключён договор' : activeStageKpi === 'ordered' ? 'Заказано' : activeStageKpi === 'delivered' ? 'Поставлено' : 'Оплачено' }} и далее
     </v-chip>
+    <v-chip v-if="filters.ids && filters.ids.length" color="deep-orange" variant="tonal" size="small" closable class="mb-3"
+      @click:close="filters.ids = null">
+      Показаны закупки без категории ФЭО ({{ filters.ids.length }}) — сбросить
+    </v-chip>
 
     <OrdersFilterBar
       :filters="filters"

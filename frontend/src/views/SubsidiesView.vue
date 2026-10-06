@@ -1102,7 +1102,16 @@ const subsidyDetailCtx = {
   unassignedFeo: feoTreeState.unassignedFeo,
   goToUnassignedFeoPurchases: () => {
     if (!selectedId.value) return
-    router.push(`/orders?subsidy_id=${selectedId.value}`)
+    // 06.10.2026: раньше вело на ВСЕ закупки субсидии — владелец жаловался,
+    // что по клику на «22 закупки не привязаны» открывается весь реестр.
+    // purchase_ids приходит уже отфильтрованным тем же aggregate_scope_expr,
+    // что и счётчик (см. feo_plan_reads_tree.py) — передаём список как есть.
+    const ids = feoTreeState.unassignedFeo.value.purchase_ids || []
+    if (!ids.length) {
+      router.push(`/orders?subsidy_id=${selectedId.value}`)
+      return
+    }
+    router.push(`/orders?subsidy_id=${selectedId.value}&ids=${ids.join(',')}`)
   },
 
   expandedStageRows: feoTreePrefs.expandedStageRows,

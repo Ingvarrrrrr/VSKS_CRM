@@ -68,6 +68,10 @@ export function useOrdersData(options: {
       r = r.filter(o => filters.stageCumulative!.includes(o.status))
     }
     if (filters.subsidyId) r = r.filter(o => o.subsidy_id === filters.subsidyId)
+    if (filters.ids && filters.ids.length) {
+      const idSet = new Set(filters.ids)
+      r = r.filter(o => idSet.has(o.id))
+    }
     if (filters.wishId) r = r.filter(o => (o as any).wish_id === filters.wishId)
     if (filters.feoCategoryId) {
       // Владелец 2026-08-17: клик по сумме категории ФЭО (SubsidiesView) должен

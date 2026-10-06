@@ -31,6 +31,11 @@ export interface OrdersFiltersState {
   // не ломать комма-протокол `status` (см. его докстринг выше) и backend
   // ?status=, который ожидает ровно один код.
   stageCumulative: string[] | null
+  // 06.10.2026: переход «Где?» из дерева ФЭО (строка «Без категории ФЭО»,
+  // SubsidiesView.vue::goToUnassignedFeoPurchases) — ?ids=1,2,3 в query.
+  // Отдельное поле (не subsidyId/status): нужен точечный список конкретных
+  // закупок, а не ещё один код фильтрации. null = фильтр не активен.
+  ids: number[] | null
 }
 
 const FILTER_PRESETS_KEY = 'orders_filter_presets'
@@ -61,6 +66,7 @@ export function useOrdersFilters(options: {
     periodFrom: '',
     periodTo: '',
     stageCumulative: null,
+    ids: null,
   })
 
   // ── Link task mode (from ?link_task=ID) ──
@@ -143,6 +149,11 @@ export function useOrdersFilters(options: {
     const qStatus = route.query.status
     if (qStatus && typeof qStatus === 'string') filters.status = qStatus
     if (route.query.wish_id) filters.wishId = Number(route.query.wish_id)
+    const qIds = route.query.ids
+    if (qIds && typeof qIds === 'string') {
+      const parsed = qIds.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0)
+      if (parsed.length) filters.ids = parsed
+    }
     if (route.query.method)   filters.method  = route.query.method as string
     if (route.query.overdue)  filters.overdue  = true
     if (route.query.due_soon) filters.dueSoon  = true

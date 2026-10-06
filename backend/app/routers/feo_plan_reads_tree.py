@@ -234,12 +234,20 @@ async def get_feo_plan_tree(
     # effective_amount_expr(), что и get_purchase_totals() в feo_plan_reads.py
     # (SQL-агрегат, без доп. запросов на Σ contract_items/purchase_items —
     # см. её докстринг про этот компромисс).
-    from app.services.purchase_amounts import effective_amount_expr
+    # 06.10.2026 (жалоба владельца, субсидия «ФАДМ 2026_2»): без доп. фильтра
+    # сюда попадали «шапки» рамочных договоров с реальными заказами —
+    # parent_purchase_id IS NULL, своих позиций (и потому своей категории ФЭО)
+    # у шапки нет, а дочерние заказы уже разложены по категориям. Шапка — не
+    # «закупка без категории», это контейнер; её деньги несут дети (см.
+    # aggregate_scope_expr докстринг). Тот же предикат, что у карточек/дерева
+    # (ПРАВИЛО №6, aggregate_scope_expr — второй счётчик НЕ заводить).
+    from app.services.purchase_amounts import effective_amount_expr, aggregate_scope_expr
     unassigned_stmt = (
         select(Purchase.id, effective_amount_expr().label("effective_amount"))
         .where(Purchase.subsidy_id == subsidy_id)
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
         .where(Purchase.feo_category_id.is_(None))
+        .where(aggregate_scope_expr())
         .where(~exists().where(and_(
             PurchaseItem.purchase_id == Purchase.id,
             PurchaseItem.feo_category_id.isnot(None),
@@ -249,7 +257,11 @@ async def get_feo_plan_tree(
     result["unassigned"] = {
         "amount": sum(float(r.effective_amount or 0) for r in unassigned_rows),
         "purchase_count": len(unassigned_rows),
-        "purchase_ids": [r.id for r in unassigned_rows[:50]],
+        # Счётчик/сумма — по ВСЕМ найденным закупкам; id-список обрезан разумным
+        # пределом (ссылка «Где?» и так открывает /orders?ids=... — сотни id в
+        # URL не нужны ни одному реальному сценарию, но и прежних 50 мало:
+        # владелец жаловался именно на несовпадение счётчика со списком).
+        "purchase_ids": [r.id for r in unassigned_rows[:500]],
     }
 
     if not can_view_amounts:

@@ -491,7 +491,9 @@ async def leaf_items_not_committed_by_need_level(
     return result
 
 
-async def subsidy_committed_totals(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
+async def subsidy_committed_totals(
+    db: AsyncSession, subsidy_ids: list[int], *, tree: Optional[dict] = None,
+) -> dict[int, dict]:
     """{subsidy_id: {committed, committed_goods, committed_services,
     committed_unspecified, committed_missing_fact_items}} — Σ по КОРНЕВЫМ
     узлам compute_feo_plan_tree (тот же приём, что subsidy_type_totals,
@@ -503,7 +505,15 @@ async def subsidy_committed_totals(db: AsyncSession, subsidy_ids: list[int]) -> 
     вместе с effective_subsidy_budget/planned_tree (УЖЕ посчитанными там) для
     planned_not_committed = planned_tree − committed и redistributable =
     budget − committed — САМИ эти два поля здесь не считаются (budget
-    субсидии — отдельная точка, app.services.subsidy_budget, не дублируем)."""
+    субсидии — отдельная точка, app.services.subsidy_budget, не дублируем).
+
+    `tree` — опционально уже посчитанный compute_feo_plan_tree(db, subsidy_ids)
+    (ускорение 06.10.2026, координатор: GET /dashboard/charts без флага тоже
+    грузил subsidy_money_summary.subsidy_money_summary, которая строила
+    дерево ПЯТЬ раз за один HTTP-запрос — здесь, в _plan_floor_added_by_subsidy,
+    subsidy_type_totals, _calculate_feo_planned_tree_bulk и
+    not_committed_raw_by_subsidy; 699 узлов × ~0,8с = больше половины 7,3с
+    ответа). Без аргумента — поведение прежнее."""
     result: dict[int, dict] = {
         sid: {
             "committed": 0.0, "committed_goods": 0.0, "committed_services": 0.0,
@@ -520,8 +530,9 @@ async def subsidy_committed_totals(db: AsyncSession, subsidy_ids: list[int]) -> 
     if not subsidy_ids:
         return result
 
-    from app.services.feo_plan_tree import compute_feo_plan_tree
-    tree = await compute_feo_plan_tree(db, subsidy_ids)
+    if tree is None:
+        from app.services.feo_plan_tree import compute_feo_plan_tree
+        tree = await compute_feo_plan_tree(db, subsidy_ids)
     # committed_missing_fact_items не возвращается узлом дерева (поле
     # committed_consumption_by_category, не прокинутое в node — дерево
     # считает только суммы, а не счётчик предупреждения) — собираем его

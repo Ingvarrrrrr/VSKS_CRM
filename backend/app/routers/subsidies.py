@@ -177,7 +177,7 @@ async def _calculate_spent_bulk(
 
 
 async def _calculate_feo_planned_tree_bulk(
-    db: AsyncSession, subsidy_ids: list[int], *, type_split: bool = False,
+    db: AsyncSession, subsidy_ids: list[int], *, type_split: bool = False, tree: Optional[dict] = None,
 ):
     """Плановая сумма дерева ФЭО для набора субсидий (единый источник для «Запланировано»).
 
@@ -208,15 +208,25 @@ async def _calculate_feo_planned_tree_bulk(
     источник «плана/ФЭО по типам», не вторая копия — см. её докстринг).
     Начиная с исправления 2026-09-21 plan_goods+plan_services+plan_unspecified
     == planned_tree (±0.01) — обе величины читаются из ОДНОГО дерева
-    (compute_feo_plan_tree), это больше не «разные формулы, разное число»."""
+    (compute_feo_plan_tree), это больше не «разные формулы, разное число».
+
+    `tree` — опционально уже посчитанный compute_feo_plan_tree(db, subsidy_ids)
+    (ускорение 06.10.2026, координатор: GET /dashboard/charts?type_split=true
+    строил дерево ТРИЖДЫ за один HTTP-запрос — см. докстринги
+    feo_plan_subsidy_totals/subsidy_type_totals). Без аргумента — поведение
+    прежнее, дерево строится сама (type_split=True без переданного tree
+    строит его ОДИН раз здесь и передаёт в обе суммы ниже, а не дважды)."""
     if not subsidy_ids:
         return {}
     from app.services.feo_plan import feo_plan_subsidy_totals
-    totals = await feo_plan_subsidy_totals(db, subsidy_ids)
+    if tree is None and type_split:
+        from app.services.feo_plan_tree import compute_feo_plan_tree
+        tree = await compute_feo_plan_tree(db, subsidy_ids)
+    totals = await feo_plan_subsidy_totals(db, subsidy_ids, tree=tree)
     if not type_split:
         return totals
     from app.services.type_totals import subsidy_type_totals
-    type_map = await subsidy_type_totals(db, subsidy_ids)
+    type_map = await subsidy_type_totals(db, subsidy_ids, tree=tree)
     return {
         sid: {"planned_tree": totals.get(sid, 0.0), **type_map.get(sid, {})}
         for sid in subsidy_ids

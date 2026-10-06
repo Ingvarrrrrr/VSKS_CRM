@@ -397,7 +397,10 @@ async def compute_feo_plan_tree(
     from app.models.feo_planned_item import FeoPlannedItem
     # Локальный импорт — см. предупреждение у импортов наверху файла (цикл
     # item_type_split → ... → feo_plan_fact).
-    from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, kind_of
+    from app.services.item_type_split import (
+        KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, kind_of,
+        TypeShares, split_amount_by_shares,
+    )
 
     cat_q = select(
         FeoCategory.id, FeoCategory.subsidy_id, FeoCategory.parent_id,
@@ -493,6 +496,31 @@ async def compute_feo_plan_tree(
                     _row.feo_category_id, {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
                 )
                 _fd[_bucket if _row.is_feo_breakdown else KIND_UNSPECIFIED] += float(_row.feo_amount)
+
+    # Решение владельца (06.10.2026, координатор — прод, субсидия ХО id 75):
+    # фолбэк «бюджет по типу = план по типу» (см. _feo_by_kind ниже) обязан
+    # сработать ТОЛЬКО когда у СУБСИДИИ ЦЕЛИКОМ нет ни одной суммы ФЭО —
+    # НЕ per-узел, иначе ломается инвариант Σ(feo_goods+feo_services+
+    # feo_unspecified)==calculate_budgets_bulk на субсидиях со СМЕШАННЫМ
+    # заполнением (часть категорий с бюджетом/ФЭО-строками, часть — без):
+    # боевой замер на локальной копии «ФАДМ 2026_2» (id 7320) — per-узел
+    # фолбэк поднял Σ типов с 15 880 100 (== calculate_budgets_bulk) до
+    # 26 367 063,13, потому что категории БЕЗ своих ФЭО-строк (у которых
+    # соседние категории той же субсидии реальные суммы ФЭО уже ввели)
+    # получили план поверх явно заданного бюджета субсидии — задвоение.
+    # subsidy_has_feo[sid] = True, если хоть у ОДНОЙ категории субсидии задан
+    # явный budget ИЛИ хоть у одной позиции — feo_amount; флаг читается
+    # ТОЛЬКО в _feo_by_kind ниже (единственное место), не второй расчёт.
+    subsidy_has_feo: dict[int, bool] = {sid: False for sid in subsidy_ids}
+    for r in cat_rows:
+        if normalize_feo_category_budget(r.budget) is not None:
+            subsidy_has_feo[r.subsidy_id] = True
+    if by_id:
+        for _row in _type_split_rows:
+            if _row.feo_amount is not None:
+                _cat = by_id.get(_row.feo_category_id)
+                if _cat is not None:
+                    subsidy_has_feo[_cat.subsidy_id] = True
 
     over_consumption = await plan_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
     ordered_consumption = await ordered_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
@@ -837,6 +865,32 @@ async def compute_feo_plan_tree(
     # ── Раздел E1: рекурсивные накопители «по типу» узла+поддерева ──────────
     _feo_by_kind_memo: dict[int, dict] = {}
 
+    # Решение владельца (06.10.2026, субсидия ХО id 75 — бюджет ФЭО задан
+    # суммами НА КАТЕГОРИЯХ, тип стоит у плановых позиций внутри них, строк
+    # с is_feo_breakdown=true у категории нет → own_feo_by_kind пуст, старая
+    # формула ниже бросала весь явный budget в unspecified, «Бюджет (ФЭО)»
+    # по товарам/услугам показывал 0/0 «нет данных по типу»). Правило «по
+    # долям плана» (см. полный текст в задаче): у категории нет собственной
+    # typed-разбивки ФЭО (own_feo_by_kind) — её явный budget распределяется
+    # по типам ЕЁ плановых позиций, включая позиции подкатегорий БЕЗ своего
+    # явного budget (у подкатегории свой budget — она получит свой split
+    # сама, когда _feo_by_kind вызовется для неё; не тащить её позиции в
+    # пул родителя — иначе будет посчитано дважды).
+    _plan_pool_memo: dict[int, dict] = {}
+
+    def _plan_items_pool_by_kind(cat_id: int) -> dict:
+        if cat_id in _plan_pool_memo:
+            return _plan_pool_memo[cat_id]
+        val = dict(own_plan_by_kind.get(cat_id) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0})
+        for _kid in children_map.get(cat_id, []):
+            if normalize_feo_category_budget(by_id[_kid].budget) is not None:
+                continue  # у подкатегории свой явный budget — её позиции не входят в пул родителя
+            _kv = _plan_items_pool_by_kind(_kid)
+            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+                val[k] += _kv[k]
+        _plan_pool_memo[cat_id] = val
+        return val
+
     def _feo_by_kind(cat_id: int) -> dict:
         """Рекурсивная Σ «по ФЭО», по типу, узла+поддерева — тот же принцип
         override'а явным FeoCategory.budget, что и
@@ -844,20 +898,56 @@ async def compute_feo_plan_tree(
         функция возвращает СКАЛЯР по всему дереву, а не разбивку по типу на
         каждом узле — разбивка нужна именно здесь; переиспользовать её
         напрямую невозможно без второго прохода по дереву и без уже
-        построенных by_id/children_map этой функции, поэтому 3-строчная
-        рекурсивная формула воспроизведена здесь, а не в БД-запросе — второй
-        запрос НЕ заводится, own_feo_by_kind уже посчитан одним запросом
-        выше). Явный (ненулевой, см. нормализацию budget в _visit ниже)
-        FeoCategory.budget узла — «нетипизированный бюджет категории» —
-        идёт ЦЕЛИКОМ в unspecified, СОБСТВЕННЫЕ typed-строки узла при этом
-        НЕ прибавляются поверх (как и в compute_budget_map — иначе
-        задвоение суммы «Катер = подраздел + позиция с той же суммой»)."""
+        построенных by_id/children_map этой функции, поэтому рекурсивная
+        формула воспроизведена здесь, а не в БД-запросе — второй запрос НЕ
+        заводится, own_feo_by_kind/own_plan_by_kind уже посчитаны одним
+        запросом выше). Явный (ненулевой, см. нормализацию budget в _visit
+        ниже) FeoCategory.budget узла — «нетипизированный бюджет категории»,
+        как и раньше, ГЛАВНЕЕ собственных typed ФЭО-строк узла (own_feo_by_kind
+        при явном budget НЕ читается вообще — иначе на боевых данных budget
+        узла и Σ его is_feo_breakdown-строк может расходиться (кат. 4853 «ДНР»:
+        budget 863 979,59 vs Σ строк 441 579,59 — старые неполные строки при
+        живом ручном budget), и узел получил бы чужую сумму, сломав инвариант
+        Σ(goods+services+unspecified)==budget; «своя typed-разбивка главнее»
+        работает только когда budget НЕ задан — см. ветку else ниже, тот самый
+        случай ФАДМ 2026_2, где budget на категории нет вообще). budget узла:
+          1) есть плановые позиции узла+подкатегорий без своего budget
+             (_plan_items_pool_by_kind) типа «товар»/«услуга» — budget делится
+             по их доле (одного типа целиком в этот тип, смешанные
+             пропорционально плановым суммам, см. split_amount_by_shares,
+             ПРАВИЛО №6 — тот же единственный источник деления суммы по
+             долям, что и у закупок); решение владельца 06.10.2026 (субсидия
+             ХО id 75 — budget на категориях, тип только у позиций);
+          2) позиций нет или все без типа (пул пуст по товарам/услугам) —
+             «без разбивки», budget целиком в unspecified (как раньше)."""
         if cat_id in _feo_by_kind_memo:
             return _feo_by_kind_memo[cat_id]
         r = by_id[cat_id]
         _raw_b = normalize_feo_category_budget(r.budget)
         if _raw_b is not None:
-            val = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: _raw_b}
+            # Явная сумма узла ГЛАВНЕЕ (та же семантика, что и всегда — см.
+            # compute_budget_map/_calc: budget узла НЕ смешивается с суммой
+            # его собственных ФЭО-строк, иначе на боевых данных типа «ДНР»
+            # (id 61), где budget категории и Σ её is_feo_breakdown-строк
+            # ЗАМЕТНО расходятся (напр. кат. 4853 «Ремонт ТС»: budget
+            # 863 979,59 vs Σ строк 441 579,59 — старые/неполные breakdown-
+            # строки при живом ручном budget), узел получил бы чужую сумму и
+            # сломал бы инвариант Σ(goods+services+unspecified)==budget.
+            # own_feo_by_kind НЕ читается в этой ветке вообще (как и раньше) —
+            # budget всегда делится НА СЕБЯ, по ДОЛЯМ плановых позиций
+            # (бюджет без своей typed-разбивки, явной суммой НЕ размеченной
+            # по типу, — решение владельца 06.10.2026, субсидия ХО id 75).
+            _pool = _plan_items_pool_by_kind(cat_id)
+            _typed_total = _pool[KIND_GOODS] + _pool[KIND_SERVICES]
+            if _typed_total > 0.005:
+                _goods_share = Decimal(str(_pool[KIND_GOODS])) / Decimal(str(_typed_total))
+                _shares = TypeShares(
+                    goods=_goods_share, services=Decimal(1) - _goods_share, unspecified=Decimal(0),
+                )
+                _g, _s, _u = split_amount_by_shares(_raw_b, _shares)
+                val = {KIND_GOODS: float(_g), KIND_SERVICES: float(_s), KIND_UNSPECIFIED: float(_u)}
+            else:
+                val = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: _raw_b}
         else:
             own = own_feo_by_kind.get(cat_id) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
             val = dict(own)
@@ -865,6 +955,39 @@ async def compute_feo_plan_tree(
                 _kv = _feo_by_kind(_kid)
                 for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
                     val[k] += _kv[k]
+            # Решение владельца (06.10.2026, координатор — прод, субсидия ХО
+            # id 75: 21 категория, budget=None ВЕЗДЕ, feo_amount ни у одной
+            # позиции — «Бюджет (ФЭО)» по товарам/услугам = 0/0, хотя план по
+            # типу есть). Та же семантика фолбэка, что уже применена к СКАЛЯРУ
+            # субсидии (app.services.subsidy_budget.effective_subsidy_budget /
+            # subsidy_money_summary.py budget_basis: «budget <= 0 → берём
+            # planned»), только ПО ТИПУ.
+            #
+            # Гейт subsidy_has_feo[sid] — ОБЯЗАТЕЛЬНО субсидия ЦЕЛИКОМ без ФЭО,
+            # не просто «этот узел пуст»: на боевом замере «ФАДМ 2026_2»
+            # (id 7320, явная ФЭО-разбивка на части категорий) per-узел фолбэк
+            # БЕЗ этого гейта поднял Σ типов с 15 880 100 (== calculate_budgets_
+            # bulk) до 26 367 063,13 — категории БЕЗ своих ФЭО-строк получили
+            # план ПОВЕРХ уже заданного бюджета субсидии (задвоение, инвариант
+            # Σ(goods+services+unspecified)==budget сломан). У субсидии с ФЭО
+            # хоть где-то — узлы без своих данных остаются 0/unspecified, как
+            # было (владелец подтвердил: ФАДМ 2026_2 и «ДНР» не меняются).
+            if (
+                not subsidy_has_feo.get(r.subsidy_id, False)
+                and val[KIND_GOODS] + val[KIND_SERVICES] + val[KIND_UNSPECIFIED] <= 0.005
+            ):
+                # План узла по типу БЕЗ клэмпа «превышение не согласовано» —
+                # тот же _plan_by_kind/_over_by_kind, из которых _visit ниже
+                # собирает display_kind; клэмп (_plan_manual_by_kind) у таких
+                # узлов сработать не может (budget is None здесь по условию
+                # ветки) — val неотличим от display_kind.
+                _plan_kind = _plan_by_kind(cat_id)
+                _over_kind = _over_by_kind(cat_id)
+                _plan_fallback = {
+                    k: _plan_kind[k] + _over_kind[k] for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+                }
+                if sum(_plan_fallback.values()) > 0.005:
+                    val = _plan_fallback
         _feo_by_kind_memo[cat_id] = val
         return val
 

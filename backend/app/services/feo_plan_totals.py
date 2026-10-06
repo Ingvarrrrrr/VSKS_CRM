@@ -18,18 +18,25 @@ from app.services.feo_plan_tree import compute_feo_plan_tree
 
 
 async def feo_plan_subsidy_totals(
-    db: AsyncSession, subsidy_ids: list[int]
+    db: AsyncSession, subsidy_ids: list[int], *, tree: Optional[dict] = None,
 ) -> dict[int, float]:
     """Σ display корневых узлов (parent_id IS NULL) дерева ФЭО per субсидия —
     единственное число KPI «Запланировано» (used by _calculate_feo_planned_tree_bulk
     в subsidies.py и total_plan_combined в _create_plan_graph_version в
     purchases.py). Тонкая обёртка над compute_feo_plan_tree — см. её docstring
     за формулой.
-    """
+
+    `tree` — опционально уже посчитанный compute_feo_plan_tree(db, subsidy_ids)
+    ЭТОГО ЖЕ вызова (ускорение 06.10.2026, координатор — GET /dashboard/charts?
+    type_split=true строил дерево ТРИЖДЫ на один запрос: здесь + дважды внутри
+    subsidy_type_totals/себя самой из _calculate_feo_planned_tree_bulk(type_split=
+    True); см. её докстринг). Без аргумента — поведение прежнее (строит сама),
+    существующие вызовы не меняются."""
     result = {sid: 0.0 for sid in subsidy_ids}
     if not subsidy_ids:
         return result
-    tree = await compute_feo_plan_tree(db, subsidy_ids)
+    if tree is None:
+        tree = await compute_feo_plan_tree(db, subsidy_ids)
     for node in tree.values():
         if node["parent_id"] is None:
             result[node["subsidy_id"]] = result.get(node["subsidy_id"], 0.0) + node["display"]

@@ -244,7 +244,20 @@ async def dashboard_charts(
     planned_amounts_map = await _calculate_planned_amounts_bulk(db, sid_list)
     # Единый источник «Запланировано»: план дерева ФЭО = ручные позиции + позиции из заявок плана закупок.
     # Совпадает с KPI «Запланировано» на вкладке «Субсидии» (selectedPlannedTotal).
-    planned_tree_map = await _calculate_feo_planned_tree_bulk(db, sid_list)
+    # Ускорение 06.10.2026 (координатор, боевой замер: ?type_split=true отвечал
+    # 7,3 с) — дерево ФЭО (compute_feo_plan_tree) самое дорогое место запроса
+    # (десятки under-the-hood запросов на субсидию), а строилось ТРИЖДЫ за
+    # один HTTP-запрос: здесь (planned_tree_map) + дважды ниже в
+    # type_totals_map (type_split=True). Строим ОДИН раз (только когда
+    # ?type_split=true — иначе дерево ВТОРОЙ раз никому не нужно, тот же
+    # результат без него) и передаём готовое tree обоим вызовам
+    # _calculate_feo_planned_tree_bulk (см. её докстринг и docstring
+    # feo_plan_subsidy_totals/subsidy_type_totals — опциональный `tree`).
+    _shared_feo_tree = None
+    if type_split and sid_list:
+        from app.services.feo_plan_tree import compute_feo_plan_tree as _compute_feo_plan_tree
+        _shared_feo_tree = await _compute_feo_plan_tree(db, sid_list)
+    planned_tree_map = await _calculate_feo_planned_tree_bulk(db, sid_list, tree=_shared_feo_tree)
     # Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
     # потолку субсидии» — батчем на весь список (см. app/services/feo_plan.py
     # calculate_ceiling_forecasts_bulk).
@@ -354,7 +367,7 @@ async def dashboard_charts(
     # денег субсидии (разные экраны/формулы).
     from app.services.subsidy_money_summary import subsidy_money_summary as _money_summary_fn
     from app.services.purchase_economy import purchase_economy_by_subsidy as _economy_by_subsidy_fn
-    money_summary_map = await _money_summary_fn(db, sid_list)
+    money_summary_map = await _money_summary_fn(db, sid_list, tree=_shared_feo_tree)
     economy_by_subsidy_map = await _economy_by_subsidy_fn(db, sid_list)
     # Карточка «Оплачено» (владелец, 05.10.2026) — ДВЕ величины: «по отметке
     # сотрудников» и «подтверждено выпиской» (+ товары/услуги). ПРАВИЛО №6 —
@@ -804,8 +817,12 @@ async def dashboard_charts(
         # же единственный вход, что читает app.services.type_totals. ДРУГАЯ
         # величина, чем widgets.plan_schedule выше (тот — сумма закупок по
         # статусу; budget_*/planned_* — дерево ФЭО/плановые позиции).
-        # budget_* = feo_* оттуда, planned_* = plan_*.
-        type_totals_map = await _calculate_feo_planned_tree_bulk(db, sid_list, type_split=True)
+        # budget_* = feo_* оттуда, planned_* = plan_*. tree=_shared_feo_tree —
+        # ТО ЖЕ дерево, что уже построено для planned_tree_map выше (не второй
+        # раз, см. комментарий там).
+        type_totals_map = await _calculate_feo_planned_tree_bulk(
+            db, sid_list, type_split=True, tree=_shared_feo_tree,
+        )
         _agg = {k: 0.0 for k in (
             "budget_goods", "budget_services", "budget_unspecified",
             "planned_goods", "planned_services", "planned_unspecified",
@@ -826,19 +843,34 @@ async def dashboard_charts(
             row["budget_services"] = tt.get("feo_services", 0.0)
             row["budget_unspecified"] = tt.get("feo_unspecified", 0.0)
             # Исправление 2026-09-21 (боевой замер, субсидия «Тестовая» id 59:
-            # feo_budget_total=100 000, split=0): субсидия БЕЗ дерева ФЭО
-            # (ни одной FeoCategory) — compute_feo_plan_tree не возвращает ни
-            # одного корневого узла, split (feo_goods/services/unspecified)
-            # у неё математически 0 по построению. Но effective_budget (строка
-            # 365) в этом случае берёт НЕ дерево, а fallback
-            # (subsidies.budget/потолок, см. effective_subsidy_budget) — тот
-            # же самый источник, что и row["feo_filled"] здесь (feo_filled =
-            # calc > 0, calc = calculate_budgets_bulk, ТОТ ЖЕ calc, что решает
-            # эту ветку в effective_subsidy_budget). Зеркалим ровно это
-            # условие — второго расчёта источника нет: fallback типа не имеет,
-            # целиком в unspecified, иначе budget_goods+services+unspecified
-            # (0) расходится с feo_budget_total (fallback > 0).
-            if not row["feo_filled"] and row["feo_budget_total"] > 0:
+            # feo_budget_total=100 000, split=0) — субсидия БЕЗ дерева ФЭО, но
+            # с РУЧНЫМ subsidy.budget (100 000), НЕ равным плану (20 000):
+            # ручная сумма типа не несёт, Σ goods+services+unspecified должна
+            # остаться = feo_budget_total, второго источника не заводим — всё
+            # в unspecified.
+            #
+            # ИСПРАВЛЕНО 06.10.2026 (координатор, боевой замер ХО id 75,
+            # /api/dashboard/charts?type_split=true): это УЖЕ НЕ единственный
+            # случай not feo_filled — с тех пор как _feo_by_kind
+            # (app.services.feo_plan_tree, Правило №6) научился фолбэку «budget
+            # по типу = план по типу» для узлов СУБСИДИИ БЕЗ единой суммы ФЭО
+            # (см. её докстринг), tt ВЫШЕ уже возвращает ПРАВИЛЬНУЮ типовую
+            # разбивку САМ, когда budget_basis = planned_tree (row["budget_
+            # from_plan"] — тот же флаг, что и subsidy_money_summary.py). Старое
+            # «всё в unspecified» здесь слепо перезаписывало уже-верный tt,
+            # получалось Σ > budget_basis (12 096 152,67 + 3 628 012,18 +
+            # 35 817 440,43 для ХО — тройной счёт товаров/услуг). Триггерим
+            # override ТОЛЬКО когда budget_basis взят НЕ из плана (ручной
+            # budget без дерева, как у «Тестовой») — budget_from_plan=False —
+            # ручное число типа не несёт и tt в этом случае честно 0/0/0.
+            if not row["feo_filled"] and not row["budget_from_plan"] and row["feo_budget_total"] > 0:
+                # ОБЯЗАТЕЛЬНО обнулить goods/services тоже — tt здесь уже НЕ
+                # всегда 0/0/0 (plan-фолбэк _feo_by_kind может дать typed-план,
+                # напр. «Тестовая» id 59: tt.feo_goods=20 000); без обнуления
+                # Σ превышала budget (20 000 + 100 000 unspecified = 120 000 >
+                # 100 000). Ручной budget тип не несёт — целиком в unspecified.
+                row["budget_goods"] = 0.0
+                row["budget_services"] = 0.0
                 row["budget_unspecified"] = row["feo_budget_total"]
             row["planned_goods"] = tt.get("plan_goods", 0.0)
             row["planned_services"] = tt.get("plan_services", 0.0)

@@ -103,7 +103,9 @@ async def effective_item_types(db: AsyncSession, planned_item_ids: List[int]) ->
     }
 
 
-async def subsidy_type_totals(db: AsyncSession, subsidy_ids: List[int]) -> Dict[int, dict]:
+async def subsidy_type_totals(
+    db: AsyncSession, subsidy_ids: List[int], *, tree: Optional[dict] = None,
+) -> Dict[int, dict]:
     """{sid: {"plan_goods","plan_services","plan_unspecified",
               "feo_goods","feo_services","feo_unspecified"}} для набора субсидий.
 
@@ -111,13 +113,21 @@ async def subsidy_type_totals(db: AsyncSession, subsidy_ids: List[int]) -> Dict[
     planned_tree, и, транзитивно, для feo_budget_total, см. докстринг модуля
     выше) + Σ по корневым узлам готовых typed-полей. Второй формулы здесь
     больше нет — если она понадобится, значит разошлось само дерево, чинить
-    там (app.services.feo_plan_tree), а не заводить копию тут."""
+    там (app.services.feo_plan_tree), а не заводить копию тут.
+
+    `tree` — опционально уже посчитанный compute_feo_plan_tree(db, subsidy_ids)
+    ЭТОГО ЖЕ вызова (ускорение 06.10.2026, координатор, боевой замер: GET
+    /dashboard/charts?type_split=true строил дерево ТРИЖДЫ за один HTTP-запрос
+    — здесь, в feo_plan_subsidy_totals и ещё раз в этой же функции — 7,3 с
+    вместо ожидаемых <2 с). Без аргумента — поведение прежнее (строит сама),
+    существующие вызовы (subsidy_money_summary.py, subsidies.py) не меняются."""
     if not subsidy_ids:
         return {}
     result: Dict[int, dict] = {sid: dict(_EMPTY_TOTALS) for sid in subsidy_ids}
 
-    from app.services.feo_plan_tree import compute_feo_plan_tree
-    tree = await compute_feo_plan_tree(db, subsidy_ids)
+    if tree is None:
+        from app.services.feo_plan_tree import compute_feo_plan_tree
+        tree = await compute_feo_plan_tree(db, subsidy_ids)
     for node in tree.values():
         if node.get("parent_id") is not None:
             continue  # только корневые узлы — та же выборка, что planned_tree/feo_budget_total

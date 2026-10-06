@@ -120,20 +120,26 @@ class TestSubsidyTypeTotals:
         assert t["feo_goods"] + t["feo_services"] + t["feo_unspecified"] == pytest.approx(existing_budget)
         assert existing_budget == pytest.approx(90.0)
 
-    async def test_category_explicit_budget_goes_to_unspecified(self, db_session):
+    async def test_category_explicit_budget_splits_by_plan_item_type(self, db_session):
+        """Решение владельца (06.10.2026, субсидия ХО id 75): категория имеет
+        собственную явную budget (главнее compute_budget_map), а тип стоит
+        только у ЕЁ плановой позиции (не у отдельной typed-ФЭО-строки) — budget
+        распределяется по доле плановых позиций, а не падает целиком в
+        feo_unspecified. Единственная позиция типа «товар» -> весь budget
+        в feo_goods."""
         subsidy = await _make_subsidy(db_session)
         cat = await _make_category(db_session, subsidy.id, budget=500)
-        # Позиция с типом ЕСТЬ, но она НЕ участвует в «по ФЭО» — категория имеет
-        # собственную явную budget, которая главнее (compute_budget_map) и не
-        # помечена типом — идёт целиком в feo_unspecified.
         await _make_planned_item(db_session, cat.id, "товар", 100, feo_amount=90)
 
         totals = await subsidy_type_totals(db_session, [subsidy.id])
         t = totals[subsidy.id]
-        assert t["feo_goods"] == pytest.approx(0.0)
-        assert t["feo_unspecified"] == pytest.approx(500.0)
+        assert t["feo_goods"] == pytest.approx(500.0)
+        assert t["feo_unspecified"] == pytest.approx(0.0)
         existing_budget = (await calculate_budgets_bulk(db_session, [subsidy.id]))[subsidy.id]
         assert existing_budget == pytest.approx(500.0)
+        assert t["feo_goods"] + t["feo_services"] + t["feo_unspecified"] == pytest.approx(existing_budget), (
+            "Правило №6: Σ частей по типу == feo_budget_total"
+        )
 
     async def test_inherited_type_from_linked_purchase_item(self, db_session):
         subsidy = await _make_subsidy(db_session)
@@ -179,15 +185,20 @@ class TestSubsidyTypeTotals:
         """Правило №6 + решение владельца 15.09: FeoCategory.budget=0 значит
         «не задано» — категория с budget=0 и без собственных ФЭО-строк не
         должна закидывать ноль в feo_unspecified (тот же контракт, что и
-        normalize_feo_category_budget в feo_plan_tree.py)."""
+        normalize_feo_category_budget в feo_plan_tree.py). Решение владельца
+        06.10.2026 (прод, субсидия ХО id 75): когда у СУБСИДИИ ЦЕЛИКОМ нет ни
+        одной суммы ФЭО (ни budget, ни feo_amount), «по ФЭО» = «по плану» —
+        не 0/0/0 (см. test_feo_plan_tree_type_split.py::
+        test_subsidy_without_any_feo_falls_back_to_plan_by_type)."""
         subsidy = await _make_subsidy(db_session)
         cat = await _make_category(db_session, subsidy.id, budget=0)
-        # план есть, но ни одна позиция не несёт feo_amount — «по ФЭО» пусто.
+        # план есть, но ни одна позиция не несёт feo_amount — «по ФЭО» пусто
+        # у субсидии целиком -> фолбэк на план.
         await _make_planned_item(db_session, cat.id, "товар", 100)
 
         totals = await subsidy_type_totals(db_session, [subsidy.id])
         t = totals[subsidy.id]
-        assert t["feo_goods"] == pytest.approx(0.0)
+        assert t["feo_goods"] == pytest.approx(100.0)
         assert t["feo_services"] == pytest.approx(0.0)
         assert t["feo_unspecified"] == pytest.approx(0.0)
 

@@ -160,7 +160,9 @@ from app.services.stage_cumulative import (
 from app.services.subsidy_budget import calculate_budgets_bulk, effective_subsidy_budget
 
 
-async def _plan_floor_added_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
+async def _plan_floor_added_by_subsidy(
+    db: AsyncSession, subsidy_ids: list[int], *, tree: Optional[dict] = None,
+) -> dict[int, dict]:
     """{subsidy_id: {"plan_floor_added", "not_committed_likely", "not_committed_nice",
     "paid_marked", "paid_confirmed"}} — Σ по КОРНЕВЫМ узлам compute_feo_plan_tree,
     на субсидию — та же техника root-узлов, что subsidy_committed_totals
@@ -192,8 +194,9 @@ async def _plan_floor_added_by_subsidy(db: AsyncSession, subsidy_ids: list[int])
     }
     if not subsidy_ids:
         return result
-    from app.services.feo_plan_tree import compute_feo_plan_tree
-    tree = await compute_feo_plan_tree(db, subsidy_ids)
+    if tree is None:
+        from app.services.feo_plan_tree import compute_feo_plan_tree
+        tree = await compute_feo_plan_tree(db, subsidy_ids)
     for node in tree.values():
         if node.get("parent_id") is not None:
             continue
@@ -207,8 +210,16 @@ async def _plan_floor_added_by_subsidy(db: AsyncSession, subsidy_ids: list[int])
     return result
 
 
-async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
-    """{subsidy_id: {
+async def subsidy_money_summary(
+    db: AsyncSession, subsidy_ids: list[int], *, tree: Optional[dict] = None,
+) -> dict[int, dict]:
+    """`tree` — опционально уже посчитанный compute_feo_plan_tree(db,
+    subsidy_ids) ЭТОГО ЖЕ вызова (ускорение 06.10.2026 — см. комментарий у
+    _tree ниже; dashboard_charts.py передаёт сюда свой _shared_feo_tree, когда
+    он уже построен для ?type_split=true, вместо второй сборки). Без
+    аргумента — строит сама, поведение прежнее.
+
+    {subsidy_id: {
         "budget": float,                      # эффективный бюджет субсидии (дерево ФЭО, фолбэк — ручное значение)
         "planned": float,                     # «Запланировано» = план дерева ФЭО (ручные позиции + заявки)
         "committed": float,                   # «Законтрактовано» (шаг 1 плана — committed_amounts.py)
@@ -242,9 +253,22 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
     )).all()
     manual_budget_by_sid = {r.id: r.budget for r in subsidy_rows}
 
+    # Ускорение 06.10.2026 (координатор, боевой замер GET /dashboard/charts:
+    # 7,3с, из которых ~4,6с — эта функция): дерево ФЭО (compute_feo_plan_tree,
+    # 699 узлов на локальной БД, ~0,8с на сборку) строилось здесь ПЯТЬ раз —
+    # в subsidy_committed_totals, _plan_floor_added_by_subsidy,
+    # subsidy_type_totals, _calculate_feo_planned_tree_bulk и
+    # over_plan_categories_by_subsidy. Строим ОДИН раз и передаём готовое tree
+    # во все пять (каждая функция опционально принимает `tree=`, см. их
+    # докстринги; без аргумента — поведение прежнее, ничего не меняется).
+    _tree = tree
+    if _tree is None:
+        from app.services.feo_plan_tree import compute_feo_plan_tree as _compute_feo_plan_tree
+        _tree = await _compute_feo_plan_tree(db, subsidy_ids)
+
     calc_budget_map = await calculate_budgets_bulk(db, subsidy_ids)
-    committed_map = await subsidy_committed_totals(db, subsidy_ids)
-    plan_floor_map = await _plan_floor_added_by_subsidy(db, subsidy_ids)
+    committed_map = await subsidy_committed_totals(db, subsidy_ids, tree=_tree)
+    plan_floor_map = await _plan_floor_added_by_subsidy(db, subsidy_ids, tree=_tree)
 
     # redistributable_by_kind — только если у субсидии есть разбивка бюджета ФЭО
     # по типу (дерево заполнено); иначе «бюджет по типу» не определён (см.
@@ -254,11 +278,11 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
     type_totals_map: dict = {}
     if filled_sids:
         from app.services.type_totals import subsidy_type_totals
-        type_totals_map = await subsidy_type_totals(db, filled_sids)
+        type_totals_map = await subsidy_type_totals(db, filled_sids, tree=_tree)
 
     # planned_tree одним batch-вызовом на весь список.
     from app.routers.subsidies import _calculate_feo_planned_tree_bulk
-    planned_tree_map = await _calculate_feo_planned_tree_bulk(db, subsidy_ids)
+    planned_tree_map = await _calculate_feo_planned_tree_bulk(db, subsidy_ids, tree=_tree)
 
     # Карточка «Можно перераспределить» БЕЗ обрезки по направлениям (владелец,
     # 06.10.2026, план sleepy-fluttering-walrus.md п.1) — см. докстринг
@@ -266,12 +290,14 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
     # ниже теперь читаются ОТСЮДА (raw, без клэмпа компute_feo_plan_tree), а не
     # из _plan_floor_added_by_subsidy (та клэмпнутая версия остаётся только для
     # дерева/узлов — ничего в ней не меняем, см. docstring модуля там).
+    # not_committed_raw_by_subsidy НЕ строит дерево сама (прямые запросы по
+    # FeoPlannedItem) — tree ей не передаём, передавать нечего.
     raw_not_committed_map = await _not_committed_raw_fn(db, subsidy_ids)
     # «Договоры без заказа» (дочерние заказы рамочных договоров 'contracted',
     # ещё не оформленные как отдельная закупка) — ИСПРАВЛЕНО 06.10.2026, см.
-    # докстринг модуля и app.services.stage_cumulative.
+    # докстринг модуля и app.services.stage_cumulative. Тоже без дерева.
     contracted_not_ordered_split_map = await _contracted_not_ordered_split_fn(db, subsidy_ids=subsidy_ids)
-    over_plan_categories_map = await _over_plan_categories_fn(db, subsidy_ids)
+    over_plan_categories_map = await _over_plan_categories_fn(db, subsidy_ids, tree=_tree)
 
     for sid in subsidy_ids:
         calc = calc_budget_map.get(sid, 0.0)

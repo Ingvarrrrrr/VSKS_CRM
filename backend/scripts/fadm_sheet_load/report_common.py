@@ -10,11 +10,14 @@ from __future__ import annotations
 from decimal import Decimal
 
 from .parse import SheetRow, totals_by_kind, totals_by_status
+from .fadm_control import SHEET_CONTROL
 
+# ПРАВИЛО №6 — тот же план (товары/услуги/итого), что и в sheet_v2_report.py/
+# sheet_v2_dashboard_check.py, читается из fadm_control.py::SHEET_CONTROL.
 EXPECTED_TOTALS = {
-    "goods": Decimal("3348602.80"),
-    "services": Decimal("12531497.20"),
-    "total": Decimal("15880100.00"),
+    "goods": SHEET_CONTROL["planned"][1],
+    "services": SHEET_CONTROL["planned"][2],
+    "total": SHEET_CONTROL["planned"][0],
 }
 
 

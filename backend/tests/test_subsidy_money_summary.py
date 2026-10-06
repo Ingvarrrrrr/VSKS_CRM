@@ -90,6 +90,22 @@ async def test_subsidy_money_summary_balance_by_marks_and_statement(
     assert row["balance_by_marks"] == pytest.approx(50_000.0)
     assert row["balance_by_statement"] == pytest.approx(80_000.0)
 
+    # ИСПРАВЛЕНИЕ (2026-10-06, ФАДМ 2026_2, прод id=88): GET /api/dashboard/
+    # charts раньше читало balance_by_marks/balance_by_statement НАПРЯМУЮ из
+    # money_summary_map.get(sid) без фолбэка — «Остаток субсидии» мог
+    # показать None («бюджет не введён»), пока «Бюджет (ФЭО)»
+    # (calculated_budget/feo_budget_total, свой фолбэк budget_basis) в ТОЙ ЖЕ
+    # строке честно показывал число. Теперь оба поля читают budget_basis —
+    # проверяем, что они совпадают в живом ответе эндпойнта (ПРАВИЛО №6: один
+    # источник budget_basis для «Бюджет (ФЭО)» и «Остаток субсидии»).
+    resp = await client.get("/api/dashboard/charts", params={"scope": "managed"}, headers=superadmin_headers)
+    assert resp.status_code == 200
+    chart_row = {s["id"]: s for s in resp.json()["subsidy_stats"]}[subsidy.id]
+    assert chart_row["feo_budget_total"] == pytest.approx(chart_row["calculated_budget"])
+    assert chart_row["balance_by_marks"] == pytest.approx(row["balance_by_marks"])
+    assert chart_row["balance_by_statement"] == pytest.approx(row["balance_by_statement"])
+    assert chart_row["calculated_budget"] - chart_row["balance_paid_marked"] == pytest.approx(chart_row["balance_by_marks"])
+
 
 @pytest.mark.asyncio
 async def test_subsidy_money_summary_balance_none_without_budget(
@@ -143,6 +159,54 @@ async def test_subsidy_money_summary_budget_from_plan_balance(
     # Инвариант сохраняется и при budget_from_plan.
     assert row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"] \
         == pytest.approx(row["redistributable"])
+
+
+@pytest.mark.asyncio
+async def test_subsidy_money_summary_budget_from_feo_breakdown_items(
+    client, superadmin_headers, db_session, test_org,
+):
+    """Воспроизводит живую субсидию «ФАДМ 2026_2» (прод id=88, найдено
+    2026-10-06): ни у одной FeoCategory нет собственного budget, «бюджет по
+    ФЭО» целиком лежит в ДВУХ служебных FeoPlannedItem с is_feo_breakdown=True
+    на корневой категории (feo_amount=товары/услуги, amount=NULL — это не
+    план, см. докстринг subsidy_budget.py) — ТОТ ЖЕ способ ввода бюджета, что
+    даёт «Бюджет (ФЭО)» карточке 15 880 100 ₽ на проде. «Остаток субсидии»
+    обязан взять budget_basis ИЗ ТОГО ЖЕ расчёта (calculate_budgets_bulk), а
+    не остаться None («бюджет не введён») — баг, из-за которого
+    balance_by_marks/balance_by_statement читались напрямую из
+    money_summary_map без фолбэка (см. правку в dashboard_charts.py)."""
+    from app.models.feo_planned_item import FeoPlannedItem
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
+    root = await _make_category(db_session, subsidy.id, name="Не определена")  # budget не задан
+    db_session.add_all([
+        FeoPlannedItem(
+            feo_category_id=root.id, name="План ФЭО — товары", quantity=Decimal("1"), unit="шт",
+            amount=None, feo_amount=Decimal("4380000"), is_feo_breakdown=True, is_active=True,
+        ),
+        FeoPlannedItem(
+            feo_category_id=root.id, name="План ФЭО — услуги", quantity=Decimal("1"), unit="шт",
+            amount=None, feo_amount=Decimal("11500100"), is_feo_breakdown=True, is_active=True,
+        ),
+    ])
+    await db_session.commit()
+
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+
+    assert row["budget"] == pytest.approx(15_880_100.0)
+    assert row["budget_basis"] == pytest.approx(15_880_100.0)
+    assert row["budget_from_plan"] is False
+    assert row["balance_by_marks"] == pytest.approx(15_880_100.0)  # ничего не оплачено
+    assert row["balance_by_statement"] == pytest.approx(15_880_100.0)
+
+    resp = await client.get("/api/dashboard/charts", params={"scope": "managed"}, headers=superadmin_headers)
+    assert resp.status_code == 200
+    chart_row = {s["id"]: s for s in resp.json()["subsidy_stats"]}[subsidy.id]
+    assert chart_row["calculated_budget"] == pytest.approx(15_880_100.0)
+    # Регресс: раньше это было None («бюджет не введён»), хотя calculated_budget
+    # (та же строка, «Бюджет (ФЭО)») уже показывал верное число.
+    assert chart_row["balance_by_marks"] == pytest.approx(15_880_100.0)
+    assert chart_row["balance_by_statement"] == pytest.approx(15_880_100.0)
 
 
 @pytest.mark.asyncio

@@ -5,14 +5,17 @@ from decimal import Decimal
 
 from .sheet_v2_parse import SheetRowV2, group_rows_v2, totals_report
 from .sheet_v2_build import BuildCountersV2
+from .fadm_control import SHEET_CONTROL
 
+# ПРАВИЛО №6 — те же числа, что в sheet_v2_dashboard_check.py::CONTROL,
+# читаются из fadm_control.py::SHEET_CONTROL, не прописаны второй раз.
 CONTROL_TOTALS = {
-    "contracted": Decimal("13652744.21"),
-    "delivered": Decimal("12464098.81"),
-    "paid": Decimal("10236833.92"),
-    "goods": Decimal("3348602.80"),
-    "services": Decimal("12531497.20"),
-    "plan_total": Decimal("15880100.00"),
+    "contracted": SHEET_CONTROL["contracted"][0],
+    "delivered": SHEET_CONTROL["delivered"][0],
+    "paid": SHEET_CONTROL["paid_statement"][0],
+    "goods": SHEET_CONTROL["planned"][1],
+    "services": SHEET_CONTROL["planned"][2],
+    "plan_total": SHEET_CONTROL["planned"][0],
 }
 
 

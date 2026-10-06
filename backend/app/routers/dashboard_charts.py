@@ -10,7 +10,7 @@ app/services/dashboard_monthly_accrual.py (чистый агрегат без с
 from decimal import Decimal
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, case, and_, or_, literal
+from sqlalchemy import select, func, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
@@ -29,7 +29,6 @@ from app.services.subsidy_budget import effective_subsidy_budget
 # ИСПРАВЛЕНИЕ пункта E (ревью 02.10.2026, PLAN.md шаг 1): рамочный договор
 # занимает деньги только с РАЗМЕЩЁННОГО заказа (ordered/delivered/paid), не с
 # самого факта заключения (contracted) — единая точка committed_amounts.py.
-from app.services.committed_amounts import FRAMEWORK_COMMITTED_STATUSES, SINGLE_COMMITTED_STATUSES
 # ПРАВИЛО №6 (2026-09-05): единый расчёт «суммы закупки» по стадии — см. dashboard.py
 # для полного пояснения; effective_amount_expr/aggregate_scope_expr уже применены
 # во всех местах ниже, где раньше были точечные COALESCE(...).
@@ -270,137 +269,17 @@ async def dashboard_charts(
             )).scalars().all()
         }
 
-    # Виджет «Заключено договоров»: active-договоры, сумма по типу.
-    # Правило РАЗНОЕ для двух типов (правка 2026-08-04 — рамочные с суммой не требуют закупок):
-    #   single → max_amount договора, ТОЛЬКО если EXISTS хотя бы одна привязанная закупка
-    #     (purchases.contract_id) с нужным статусом. Разовый договор подписывается ПОД
-    #     конкретную закупку — без неё запись осиротевшая и не должна раздувать виджет
-    #     (было замечено на ЦентрПоиск_2026: 53 млн вместо фактических 402 тыс., см. баг-репорт 2026-08).
-    #   framework_with_amount → max(лимит договора, Σ заказов ordered+), просто при status='active'.
-    #     Рамочный договор с суммой подписывается заранее — он уже «заключён», даже если ни
-    #     одной закупки по нему ещё не заведено (тогда Σ заказов=0, побеждает лимит). Решение
-    #     владельца 05.10.2026: если заказы (дети, parent_purchase_id→голова) УЖЕ превысили
-    #     лимит головы — «Заключено» обязано показать фактическую Σ заказов, не застрявший
-    #     лимит (та же величина использована для «законтрактовано»/контроля плана — ПРАВИЛО №6,
-    #     не вторая формула). ЕДИНАЯ точка с aggregate_scope_expr()/in_aggregate_scope()
-    #     (app/services/purchase_amounts.py) — там же решается, что сами заказы (не голова)
-    #     несут Заказано/Ведётся работа/Поставлено/Оплачено.
-    #   framework_cumulative → SUM(COALESCE(p.contract_price, p.planned_total_price))
-    #     по закупкам с contract_id=договор и status in (contracted,ordered,delivered,paid)
-    _contracted_purchase_exists = (
-        select(literal(1))
-        .where(Purchase.contract_id == Contract.id)
-        .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
-    )
-    # Σ заказов (детей, parent_purchase_id IS NOT NULL — реальная связь, не догадка по типу)
-    # framework_with_amount головы с её Contract.id, статус ordered/delivered/paid — та же
-    # величина, что «Заказано»/«Ведётся работа» теперь считают по детям (aggregate_scope_expr).
-    _fwa_children_sum = (
-        select(func.coalesce(func.sum(effective_amount_expr()), 0))
-        .where(Purchase.contract_id == Contract.id)
-        .where(Purchase.parent_purchase_id.isnot(None))
-        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
-        .correlate(Contract)
-        .scalar_subquery()
-    )
-    contract_single_q = (
-        select(
-            Contract.subsidy_id,
-            func.coalesce(func.sum(
-                case(
-                    (
-                        Contract.contract_type == "framework_with_amount",
-                        func.greatest(func.coalesce(Contract.max_amount, 0), _fwa_children_sum),
-                    ),
-                    else_=Contract.max_amount,
-                )
-            ), 0).label("amt"),
-            func.count(Contract.id).label("cnt"),
-        )
-        .where(Contract.status == "active")
-        .where(
-            or_(
-                and_(Contract.contract_type == "single", _contracted_purchase_exists.exists()),
-                Contract.contract_type == "framework_with_amount",
-            )
-        )
-        .group_by(Contract.subsidy_id)
-    )
-    if use_sids:
-        if visible_subsidy_ids is not None:
-            contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
-    elif org_ids is not None:
-        contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-        ))
-    if dashboard:
-        # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
-        # единый предикат — app.services.sandbox_guard.not_sandbox_subsidy_ids().
-        contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(_not_sandbox_ids))
-    cs_rows = (await db.execute(contract_single_q)).all()
-
-    # framework_cumulative: aggr по закупкам привязанным к таким договорам
-    contract_fc_q = (
-        select(
-            Purchase.subsidy_id,
-            func.coalesce(func.sum(
-                effective_amount_expr()
-            ), 0).label("amt"),
-            # count distinct contracts (not purchases)
-            func.count(func.distinct(Purchase.contract_id)).label("cnt"),
-        )
-        .join(Contract, Purchase.contract_id == Contract.id)
-        .where(Contract.status == "active")
-        .where(Contract.contract_type == "framework_cumulative")
-        # ИСПРАВЛЕНИЕ пункта E (ревью 02.10.2026): рамочный — деньги заняты
-        # только с «Заказано» (committed_amounts.FRAMEWORK_COMMITTED_STATUSES),
-        # не с 'contracted' (сама рамочная ГОЛОВА денег не отнимает, см.
-        # committed_amounts.py docstring).
-        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
-        .group_by(Purchase.subsidy_id)
-    )
-    if use_sids:
-        if visible_subsidy_ids is not None:
-            contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(visible_subsidy_ids))
-    elif org_ids is not None:
-        contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-        ))
-    if dashboard:
-        contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(_not_sandbox_ids))
-    cfc_rows = (await db.execute(contract_fc_q)).all()
-
-    # Собрать contracts_map: subsidy_id → float (сумма по обеим частям)
-    contracts_map: dict[int, float] = {}
-    contracts_cnt_map: dict[int, int] = {}
-    for r in cs_rows:
-        sid = r.subsidy_id
-        contracts_map[sid] = contracts_map.get(sid, 0.0) + float(r.amt)
-        contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + int(r.cnt)
-    for r in cfc_rows:
-        sid = r.subsidy_id
-        contracts_map[sid] = contracts_map.get(sid, 0.0) + float(r.amt)
-        contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + int(r.cnt)
-    # Решение владельца 05.10.2026 («любая оплата = был договор, хоть
-    # упрощённый по чеку/счёту» + находка «Заключён 19,05М < Заказано 22,2М»
-    # на стенде, субсидия «ХО»): «Заключено договоров» обязано по построению
-    # покрывать ВСЕ committed-закупки — ДВА добавочных слагаемых, ЕДИНЫЙ
-    # хелпер (app/services/stage_cumulative.py, Правило №6, см. его докстринг
-    # за разбором обеих причин разрыва). sid_list уже прошёл видимость/org/
-    # sandbox через subsidy_q выше.
-    from app.services.stage_cumulative import committed_uncounted_by_subsidy, single_contract_topup_by_subsidy
-    _uncounted_map = await committed_uncounted_by_subsidy(db, subsidy_ids=sid_list)
-    for sid, d in _uncounted_map.items():
-        contracts_map[sid] = contracts_map.get(sid, 0.0) + d["amount"]
-        contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + d["count"]
-    # single-договоры с max_amount IS NULL (или заниженным) — настоящая
-    # причина разрыва на «ХО»: cs_rows выше буквально суммирует Contract.
-    # max_amount, SQL SUM молча теряет NULL-строки. Топ-ап = разница (та же
-    # идея, что greatest(max_amount, Σ заказов) для framework_with_amount).
-    _single_topup_map = await single_contract_topup_by_subsidy(db, subsidy_ids=sid_list)
-    for sid, d in _single_topup_map.items():
-        contracts_map[sid] = contracts_map.get(sid, 0.0) + d["amount"]
-        contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + d["count"]
+    # Виджет «Заключено договоров» — ЕДИНЫЙ источник
+    # app.services.stage_cumulative.contracted_total_by_subsidy() (Правило №6,
+    # 2026-10-06): та же функция считает итог вкладки «Договоры»
+    # (routers/contracts.py::get_contracted_total), раньше вкладка суммировала
+    # голый Contract.max_amount без greatest()/топ-апов/framework_cumulative —
+    # расхождение 9 315 271 (вкладка) vs 12 983 362 (эта карточка) на
+    # ФАДМ 2026_2 (прод id=88). Подробности формулы — докстринг функции.
+    from app.services.stage_cumulative import contracted_total_by_subsidy
+    _contracted_map = await contracted_total_by_subsidy(db, subsidy_ids=sid_list)
+    contracts_map: dict[int, float] = {sid: d["amount"] for sid, d in _contracted_map.items()}
+    contracts_cnt_map: dict[int, int] = {sid: d["count"] for sid, d in _contracted_map.items()}
 
     # Глобальные итоги — сумма по регруппированным строкам, КРОМЕ копий для
     # экспериментов (sandbox_ids_in_scope — см. выше; на scope=dashboard эта
@@ -557,16 +436,27 @@ async def dashboard_charts(
             "paid_declared_by_kind": _paid_breakdown_map_entry.get("declared_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
             "paid_confirmed_by_kind": _paid_breakdown_map_entry.get("confirmed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
             # «Остаток субсидии» (владелец, 06.10.2026) — budget − оплачено,
-            # ДВЕ версии (по отметке/по выписке). Источник — subsidy_money_summary
-            # (balance_by_marks/balance_by_statement, Σ paid_marked/paid_confirmed
-            # КОРНЕЙ дерева ФЭО, см. докстринг subsidy_money_summary.py про
-            # расхождение этой техники с paid_declared/paid_confirmed выше —
-            # задача явно требует источник дерева для остатка). None, если
-            # бюджет не введён (budget <= 0).
+            # ДВЕ версии (по отметке/по выписке). Σ paid_marked/paid_confirmed
+            # КОРНЕЙ дерева ФЭО — источник subsidy_money_summary (см. докстринг
+            # subsidy_money_summary.py про расхождение этой техники с
+            # paid_declared/paid_confirmed выше — задача явно требует источник
+            # дерева для остатка).
+            # ИСПРАВЛЕНИЕ (найдено 2026-10-06, ФАДМ 2026_2, прод id=88):
+            # раньше balance_by_marks/balance_by_statement читались ТОЛЬКО как
+            # _money.get(...) без фолбэка — если sid отсутствует в
+            # money_summary_map (пустой _money = {}), получали None → карточка
+            # «бюджет не введён», хотя «Бюджет (ФЭО)» в ЭТОЙ ЖЕ строке
+            # (calculated_budget/feo_budget_total, см. budget_basis выше)
+            # ПОКАЗЫВАЛА 15 880 100 ₽ — budget_basis уже прошёл фолбэк
+            # (effective_budget/planned_tree), а balance_by_marks — нет. ТЕПЕРЬ
+            # оба поля читают budget_basis (ПРАВИЛО №6, один и тот же источник
+            # для «Бюджет (ФЭО)» и «Остаток субсидии») — None только когда
+            # budget_basis <= 0 (бюджет действительно не введён и не выведен
+            # из плана), а не из-за отсутствия ключа в _money.
             "balance_paid_marked": _money.get("balance_paid_marked", 0.0),
             "balance_paid_confirmed": _money.get("balance_paid_confirmed", 0.0),
-            "balance_by_marks": _money.get("balance_by_marks"),
-            "balance_by_statement": _money.get("balance_by_statement"),
+            "balance_by_marks": (budget_basis - _money.get("balance_paid_marked", 0.0)) if budget_basis > 0 else None,
+            "balance_by_statement": (budget_basis - _money.get("balance_paid_confirmed", 0.0)) if budget_basis > 0 else None,
             "total_plan_schedule": float(row.total_plan_schedule),  # SUM work_in_progress planned_total_price
             # total_ordered = SQL-агрегат по НЕежемесячным (row.total_ordered) + начисление по
             # ежемесячным (monthly_ordered_map) — обязаны складываться в одно число: карточка

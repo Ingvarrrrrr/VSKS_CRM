@@ -307,6 +307,30 @@ async def list_contracts(
 
     return out
 
+
+@router.get("/contracted-total")
+async def get_contracted_total(
+    subsidy_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Итог «Заключено договоров» для ОДНОЙ субсидии — вкладка «Договоры»
+    (frontend/src/composables/contracts/useContractsFilters.ts::filteredSum)
+    зовёт этот эндпойнт, когда фильтр сужен до одной субсидии, вместо наивной
+    Σ Contract.max_amount (та сумма не знала про greatest()/топ-апы/
+    framework_cumulative и расходилась с карточкой «Заключено договоров» на
+    субсидии, см. SubsidyKpiCards.vue). Единый расчёт —
+    app.services.stage_cumulative.contracted_total_by_subsidy() (Правило №6),
+    ТА ЖЕ функция, что dashboard_charts.py вызывает для карточки."""
+    vis = await get_visible_subsidy_ids(current_user, db, "contracts")
+    if vis is not None and subsidy_id not in vis:
+        return {"subsidy_id": subsidy_id, "amount": 0.0, "count": 0}
+    from app.services.stage_cumulative import contracted_total_by_subsidy
+    totals = await contracted_total_by_subsidy(db, subsidy_ids=[subsidy_id])
+    d = totals.get(subsidy_id, {"amount": 0.0, "count": 0})
+    return {"subsidy_id": subsidy_id, "amount": d["amount"], "count": d["count"]}
+
+
 @router.post("/", response_model=ContractOut)
 async def create_contract(
     data: ContractCreate,

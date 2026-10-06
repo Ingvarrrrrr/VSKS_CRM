@@ -209,17 +209,11 @@
                 <span class="kpi-paid-dual-amount">{{ paidDiff >= 0 ? '+' : '−' }}{{ formatCurrencyRound(Math.abs(paidDiff)) }}</span>
               </div>
             </div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
-              <template v-if="splitRowsFor('paid')">
-                <div v-for="row in splitRowsFor('paid')" :key="row.kind" class="kpi-split-row"
-                  :class="{ 'kpi-split-row-clickable': hasStageDrill('paid'), 'kpi-split-row-active': hasStageDrill('paid') && isActiveTypeRow('paid', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
-                  @click="hasStageDrill('paid') && onTypeRowClick('paid', row.kind)">
-                  <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
-                </div>
-              </template>
-              <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
-            </div>
+            <!-- Старые строки «товары 0 ₽ / услуги 0 ₽» (splitRowsFor('paid'),
+                 статус-based widget.paid_goods/services) убраны 2026-10-06 —
+                 дублировали и противоречили разбивке по выписке/отметке выше
+                 (kpi-paid-dual-sub), которая теперь единственный источник
+                 товары/услуги для «Оплачено» (ПРАВИЛО №6). -->
           </div>
         </div>
       </template>
@@ -228,20 +222,20 @@
     <v-tooltip location="bottom" :disabled="true">
       <template #activator="{ props: tip }">
         <div v-bind="tip" class="kpi-card kpi-free"
-          :class="[ctx.selectedBudget.value - ctx.selectedPlannedTotal.value < 0 ? 'kpi-over' : '', kpi.kpiCardClass('free')]"
+          :class="[freeDiffRounded < 0 ? 'kpi-over' : '', kpi.kpiCardClass('free')]"
           @click="kpi.onKpiCardClick('free')"
         >
           <div class="kpi-icon-box"><v-icon icon="mdi-cash-lock-open" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrencyRound(Math.abs(kpiSubAnim_free)) }}</div>
-            <div class="kpi-label">{{ ctx.selectedBudget.value - ctx.selectedPlannedTotal.value < 0 ? 'Превышение' : 'Свободно' }}</div>
+            <div class="kpi-label">{{ freeDiffRounded < 0 ? 'Превышение' : 'Свободно' }}</div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('free')">
                 <div v-for="row in splitRowsFor('free')" :key="row.kind" class="kpi-split-row"
-                  :class="{ 'kpi-split-row-clickable': hasStageDrill('free'), 'kpi-split-row-active': hasStageDrill('free') && isActiveTypeRow('free', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
+                  :class="{ 'kpi-split-row-clickable': hasStageDrill('free'), 'kpi-split-row-active': hasStageDrill('free') && isActiveTypeRow('free', row.kind), 'kpi-split-row-neg': row.amount < 0 }"
                   @click="hasStageDrill('free') && onTypeRowClick('free', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
+                  <span class="kpi-split-text">{{ row.label }}: {{ row.amount < 0 ? 'превышение' : 'свободно' }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
                 </div>
               </template>
               <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
@@ -373,7 +367,7 @@
 import { computed, ref, watch } from 'vue'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { KPI_LABELS, KPI_EMPTY_REASONS } from '@/constants/kpiMetrics'
-import { formatCurrency, formatCurrencyRound } from '@/composables/subsidies/format'
+import { formatCurrency, formatCurrencyRound, roundMoney } from '@/composables/subsidies/format'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 // useFeoTreeExcess() без аргумента — переиспользует singleton, построенный
@@ -436,7 +430,14 @@ const paidDiff = computed(() => {
   return paidDeclaredTotal.value - paidConfirmedTotal.value
 })
 const paidHasDiscrepancy = computed(() => Math.abs(paidDiff.value) > 0.5)
-const kpiSubTarget_free              = computed(() => ctx.selectedBudget.value - ctx.selectedPlannedTotal.value)
+// roundMoney — защита от шума плавающей точки: бюджет ФЭО и план суммируются
+// из десятков строк, «равно нулю» на деле выходит 0.000000002 ₽, что
+// переворачивало подпись карточки на «Превышение 0 ₽» (владелец, 2026-10-06,
+// ФАДМ 2026_2). freeDiffRounded — НЕ анимированная версия, используется для
+// знака/подписи/класса (анимация kpiSubAnim_free меняла бы подпись раньше
+// времени посреди анимации числа).
+const freeDiffRounded = computed(() => roundMoney(ctx.selectedBudget.value - ctx.selectedPlannedTotal.value))
+const kpiSubTarget_free              = computed(() => freeDiffRounded.value)
 // Задача 3 (владелец, 04.10.2026) — готовое поле бэкенда, не считаем здесь (Правило №6).
 const monthlyFutureToYearEnd = computed(() => ctx.selectedSubsidy.value?.monthly_future_to_year_end ?? 0)
 
@@ -479,10 +480,13 @@ function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; u
       return { goods: totals.plan_goods || 0, services: totals.plan_services || 0, unspecified: totals.plan_unspecified || 0 }
     }
     // free = ФЭО по типу − план по типу (тот же смысл, что и общая карточка).
+    // roundMoney — та же защита от шума плавающей точки, что и у общей суммы
+    // карточки (см. freeDiffRounded) — иначе знак строки «товары»/«услуги»
+    // может случайно перевернуться на значениях, близких к нулю.
     return {
-      goods: (totals.feo_goods || 0) - (totals.plan_goods || 0),
-      services: (totals.feo_services || 0) - (totals.plan_services || 0),
-      unspecified: (totals.feo_unspecified || 0) - (totals.plan_unspecified || 0),
+      goods: roundMoney((totals.feo_goods || 0) - (totals.plan_goods || 0)),
+      services: roundMoney((totals.feo_services || 0) - (totals.plan_services || 0)),
+      unspecified: roundMoney((totals.feo_unspecified || 0) - (totals.plan_unspecified || 0)),
     }
   }
   // «Поставлено, не оплачено» (владелец, 05.10.2026) — по типам источник НЕ

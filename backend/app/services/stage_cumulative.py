@@ -59,12 +59,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import and_ as sqland, func, not_ as sqlnot, or_ as sqlor, select
+from sqlalchemy import and_ as sqland, case, func, literal, not_ as sqlnot, or_ as sqlor, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract import Contract
 from app.models.purchase import Purchase
-from app.services.committed_amounts import committed_status_predicate
+from app.services.committed_amounts import (
+    FRAMEWORK_COMMITTED_STATUSES,
+    SINGLE_COMMITTED_STATUSES,
+    committed_status_predicate,
+)
 from app.services.purchase_amounts import effective_amount_expr
 
 # Контракты этих трёх типов (и ТОЛЬКО этих, СО status='active') уже учтены
@@ -163,4 +167,113 @@ async def single_contract_topup_by_subsidy(
             d = result.setdefault(r.subsidy_id, {"amount": 0.0, "count": 0})
             d["amount"] += topup
             d["count"] += 1
+    return result
+
+
+async def contracted_total_by_subsidy(
+    db: AsyncSession,
+    *,
+    subsidy_ids: Optional[list[int]] = None,
+) -> dict[int, dict]:
+    """{subsidy_id: {"amount": float, "count": int}} — ЕДИНЫЙ источник
+    «Заключено договоров» (ПРАВИЛО №6). Склеивает ВСЕ четыре слагаемых,
+    которые раньше жили только inline в dashboard_charts.py::dashboard_charts
+    (карточка «Заключено договоров») и были недоступны вкладке «Договоры»
+    (frontend/src/composables/contracts/useContractsFilters.ts::filteredSum
+    суммировала голый Contract.max_amount — без greatest()/топ-апов/
+    framework_cumulative, отсюда расхождение 9 315 271 vs 12 983 362 на
+    ФАДМ 2026_2, прод id=88, найдено 2026-10-06):
+      1. cs_rows — single (только если есть привязанная committed-закупка) +
+         framework_with_amount (greatest(лимит, Σ заказов-детей)).
+      2. cfc_rows — framework_cumulative: Σ committed-закупок, привязанных к
+         договору.
+      3. committed_uncounted_by_subsidy() — committed-закупки без активного
+         контракта известного типа (причина 1, см. докстринг модуля).
+      4. single_contract_topup_by_subsidy() — топ-ап single-договоров с
+         заниженным/NULL max_amount (причина 2).
+
+    `subsidy_ids` — список субсидий, уже отфильтрованных по видимости/org/
+    sandbox вызывающим кодом (эта функция сама не фильтрует видимость).
+    Вызывается И из dashboard_charts.py (карточка «Заключено договоров»), И
+    из routers/contracts.py (итог вкладки «Договоры» при фильтре по одной
+    субсидии) — один расчёт, не два (Правило №6)."""
+    result: dict[int, dict] = {}
+    if not subsidy_ids:
+        return result
+
+    _contracted_purchase_exists = (
+        select(literal(1))
+        .where(Purchase.contract_id == Contract.id)
+        .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
+    )
+    _fwa_children_sum = (
+        select(func.coalesce(func.sum(effective_amount_expr()), 0))
+        .where(Purchase.contract_id == Contract.id)
+        .where(Purchase.parent_purchase_id.isnot(None))
+        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
+        .correlate(Contract)
+        .scalar_subquery()
+    )
+    cs_q = (
+        select(
+            Contract.subsidy_id,
+            func.coalesce(func.sum(
+                case(
+                    (
+                        Contract.contract_type == "framework_with_amount",
+                        func.greatest(func.coalesce(Contract.max_amount, 0), _fwa_children_sum),
+                    ),
+                    else_=Contract.max_amount,
+                )
+            ), 0).label("amt"),
+            func.count(Contract.id).label("cnt"),
+        )
+        .where(Contract.status == "active")
+        .where(Contract.subsidy_id.in_(subsidy_ids))
+        .where(
+            sqlor(
+                sqland(Contract.contract_type == "single", _contracted_purchase_exists.exists()),
+                Contract.contract_type == "framework_with_amount",
+            )
+        )
+        .group_by(Contract.subsidy_id)
+    )
+    cs_rows = (await db.execute(cs_q)).all()
+
+    cfc_q = (
+        select(
+            Purchase.subsidy_id,
+            func.coalesce(func.sum(effective_amount_expr()), 0).label("amt"),
+            func.count(func.distinct(Purchase.contract_id)).label("cnt"),
+        )
+        .join(Contract, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_cumulative")
+        .where(Purchase.subsidy_id.in_(subsidy_ids))
+        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
+        .group_by(Purchase.subsidy_id)
+    )
+    cfc_rows = (await db.execute(cfc_q)).all()
+
+    for r in cs_rows:
+        d = result.setdefault(r.subsidy_id, {"amount": 0.0, "count": 0})
+        d["amount"] += float(r.amt)
+        d["count"] += int(r.cnt)
+    for r in cfc_rows:
+        d = result.setdefault(r.subsidy_id, {"amount": 0.0, "count": 0})
+        d["amount"] += float(r.amt)
+        d["count"] += int(r.cnt)
+
+    uncounted_map = await committed_uncounted_by_subsidy(db, subsidy_ids=subsidy_ids)
+    for sid, d0 in uncounted_map.items():
+        d = result.setdefault(sid, {"amount": 0.0, "count": 0})
+        d["amount"] += d0["amount"]
+        d["count"] += d0["count"]
+
+    topup_map = await single_contract_topup_by_subsidy(db, subsidy_ids=subsidy_ids)
+    for sid, d0 in topup_map.items():
+        d = result.setdefault(sid, {"amount": 0.0, "count": 0})
+        d["amount"] += d0["amount"]
+        d["count"] += d0["count"]
+
     return result

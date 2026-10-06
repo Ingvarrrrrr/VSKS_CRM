@@ -18,21 +18,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-CONTROL = {
-    "budget": (Decimal("15880100.00"), Decimal("4380000.00"), Decimal("11500100.00")),
-    "planned": (Decimal("15880100.00"), Decimal("3348602.80"), Decimal("12531497.20")),
-    "ordered": (Decimal("12649132.81"), Decimal("2779247.01"), Decimal("9869885.80")),
-    "delivered": (Decimal("12464098.81"), Decimal("2599247.01"), Decimal("9864851.80")),
-    "paid_statement": (Decimal("10236833.92"), Decimal("2468425.72"), Decimal("7768408.20")),
-    # Владелец, дополнение 05.10.2026 (п.3) — «Подтверждено выпиской»
-    # (Payment.confirmed_by_statement=True, 115 платежей выписки); без
-    # разбивки товары/услуги — владелец дал только общую сумму.
-    "paid_confirmed": (Decimal("8848230.38"), None, None),
-    "delivered_unpaid": (Decimal("2227264.89"), Decimal("130821.29"), Decimal("2096443.60")),
-    "future_monthly": (Decimal("373611.40"), Decimal("0"), Decimal("373611.40")),
-    "future_likely": (Decimal("1838000.00"), Decimal("100000.00"), Decimal("1738000.00")),
-    "future_nice": (Decimal("1019355.79"), Decimal("469355.79"), Decimal("550000.00")),
-}
+from .fadm_control import SHEET_CONTROL as CONTROL
 
 
 def _f(v) -> Decimal:

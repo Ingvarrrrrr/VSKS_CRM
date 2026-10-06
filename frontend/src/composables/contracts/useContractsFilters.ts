@@ -2,6 +2,7 @@
 // товару внутри позиций закупок, итоговая отфильтрованная/отсортированная
 // выдача с нумерацией строк. Дословный перенос из ContractsView.vue.
 import { computed, ref, watch } from 'vue'
+import { apiFetch } from '@/api'
 import { contractTypeItems, purchaseMethodItems } from './contractsLabels'
 import type { Contract, Contractor, Purchase, Subsidy } from './contractsTypes'
 
@@ -172,8 +173,51 @@ export function useContractsFilters(options: {
     return list.map(c => ({ ...c, _rownum: map.get(String(c.id)) ?? '' }))
   })
 
-  const filteredSum = computed(() =>
+  // Наивная сумма строк реестра (голый Contract.max_amount) — используется
+  // при произвольной комбинации фильтров, где единого бэкенд-правила нет
+  // (тип/метод/контрагент/даты режут список договоров так, как карточка
+  // субсидии не умеет). Когда фильтр сужен РОВНО до одной субсидии (без
+  // прочих фильтров), это уже не «сумма строк реестра», а «итог вкладки
+  // Договоры для субсидии X» — та же сущность, что карточка «Заключено
+  // договоров» на странице субсидии, поэтому дальше подменяется официальным
+  // итогом с бэкенда (ПРАВИЛО №6 — один источник, см. ниже).
+  const rawFilteredSum = computed(() =>
     filtered.value.reduce((acc, c) => acc + (c.max_amount ? Number(c.max_amount) : 0), 0)
+  )
+
+  // Официальный итог «Заключено договоров» по одной субсидии — тот же расчёт,
+  // что backend/app/services/stage_cumulative.py::contracted_total_by_subsidy()
+  // отдаёт карточке «Заключено договоров» на странице субсидии
+  // (SubsidyKpiCards.vue). Подменяет rawFilteredSum, только когда фильтр
+  // сужен РОВНО до одной субсидии и больше ничего не фильтрует — иначе
+  // «итог вкладки» перестаёт быть равен «итогу субсидии» по определению.
+  const isSingleSubsidyOnlyFilter = computed(() =>
+    fSubsidy.value.length === 1 &&
+    fType.value.length === 0 && fMethod.value.length === 0 && fStatus.value.length === 0 &&
+    fContractor.value.length === 0 && !fProduct.value && !fDateFrom.value && !fDateTo.value && !search.value.trim()
+  )
+  const officialSubsidyTotal = ref<number | null>(null)
+  let officialTotalReqId = 0
+  watch(
+    [isSingleSubsidyOnlyFilter, fSubsidy],
+    async ([single]) => {
+      if (!single) { officialSubsidyTotal.value = null; return }
+      const sid = fSubsidy.value[0]
+      const reqId = ++officialTotalReqId
+      try {
+        const r = await apiFetch<{ amount: number }>(`/contracts/contracted-total?subsidy_id=${sid}`)
+        if (reqId === officialTotalReqId) officialSubsidyTotal.value = Number(r.amount) || 0
+      } catch {
+        if (reqId === officialTotalReqId) officialSubsidyTotal.value = null
+      }
+    },
+    { immediate: true }
+  )
+
+  const filteredSum = computed(() =>
+    isSingleSubsidyOnlyFilter.value && officialSubsidyTotal.value !== null
+      ? officialSubsidyTotal.value
+      : rawFilteredSum.value
   )
 
   return {

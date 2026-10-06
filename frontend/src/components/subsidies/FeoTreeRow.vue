@@ -32,6 +32,8 @@
       kpi.kpiNodeClass(node),
       isCategoryFullyPurchased ? 'feo-fully-purchased-row' : '',
       isCategoryPartiallyPurchased ? 'feo-partially-purchased-row' : '',
+      excessDrilldown.isExcessTarget(node.id) ? 'feo-excess-target-row' : '',
+      excessDrilldown.isCurrentExcessTarget(node.id) ? 'feo-excess-target-row--current' : '',
     ]"
     :draggable="ctx.canEditFeo.value"
     @dragstart="ctx.canEditFeo.value && ctx.onDragStart($event, node)"
@@ -114,6 +116,20 @@
             :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
           />
         </span>
+        <!-- «Где превышение» — стрелка у НАЗВАНИЯ статьи ВСЕГДА, когда узел
+             входит в цели активного drilldown, в ОБОИХ режимах (приёмка
+             06.10.2026, уточнение): чип превышения (ниже, в теле строки)
+             часто оказывается далеко внизу высокой строки, под плавающей
+             панелью — стрелка у названия видна сразу, независимо от того,
+             докрутил ли пользователь строку до самого чипа. У чипа
+             (NODE_EXCESS_FIELD > 0, обычный режим) — своя стрелка ниже,
+             дополнительно, не взамен. -->
+        <PointerArrow
+          v-if="excessDrilldown.activeKind.value && excessDrilldown.isExcessTarget(node.id)"
+          direction="left"
+          :current="excessDrilldown.isCurrentExcessTarget(node.id)"
+          title="Статья, из которой складывается превышение"
+        />
         <span class="feo-name" :class="[`feo-name--l${node.level}`, revIsDeleted ? 'rev-name--deleted' : '', revIsNew ? 'rev-name--new' : '']">{{ node.name }}</span>
         <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
         <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
@@ -624,6 +640,16 @@
            массив 4 видов с SubsidyKpiCards.vue (Правило №6, не дублируем). -->
       <template v-for="tk in feoTreeExcess.typeExcessKindDefs" :key="tk.kind">
         <div v-if="feoTreeExcess.typeExcessFor(node, tk.kind)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
+          <!-- «Где превышение» (задание владельца 06.10.2026) — стрелка слева
+               от чипа ИМЕННО этого вида, только у статей-целей текущего
+               drilldown (excessDrilldown.activeKind — другой вид не подсвечен,
+               чип всё равно виден). -->
+          <PointerArrow
+            v-if="excessDrilldown.activeKind.value === tk.kind && excessDrilldown.isExcessTarget(node.id)"
+            direction="left"
+            :current="excessDrilldown.isCurrentExcessTarget(node.id)"
+            title="Статья, из-за которой превышение"
+          />
           <template v-if="feoTreeExcess.typeExcessFor(node, tk.kind)!.approval?.status === 'pending'">
             <v-chip size="x-small" color="orange" variant="flat">
               согласование: {{ tk.label }} на {{ formatCurrency(feoTreeExcess.typeExcessFor(node, tk.kind)!.amount) }} · на согласовании у: {{ feoTreeExcess.typeExcessPendingNames(node.id, tk.kind) || '—' }}
@@ -899,6 +925,12 @@ import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
 // пути, npx vue-tsc --noEmit перепроверить, когда файл появится.
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
+// «Где превышение» (задание владельца 06.10.2026) — singleton уже построен
+// SubsidiesView.vue с ctx (как feoTreeExcess/kpi выше), здесь переиспользуется
+// без аргумента. PointerArrow.vue — общий компонент-стрелка (Правило №5/№6,
+// тот же CSS-приём, что .hv-pointer в HierarchyGraphCanvas.vue).
+import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
+import PointerArrow from '@/components/common/PointerArrow.vue'
 import { useFeoTreeAmounts } from '@/composables/subsidies/useFeoTreeAmounts'
 import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
@@ -953,6 +985,7 @@ const kpi = useKpiDrilldown(ctx)
 // строки) — вызов без аргумента возвращает тот же объект.
 const kpiPrefs = useKpiPrefs()
 const feoTreeExcess = useFeoTreeExcess()
+const excessDrilldown = useExcessDrilldown()
 const feoTreeAmounts2 = useFeoTreeAmounts()
 
 // Выбор категории/поддерева целиком (задача 1) — состояние чекбокса перед

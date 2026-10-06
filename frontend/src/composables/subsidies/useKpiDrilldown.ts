@@ -22,6 +22,8 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { type KpiKey, KPI_MODE, kpiItemMatches } from '@/constants/kpiMetrics'
 import { makeCtxSingleton } from './ctxSingleton'
+import { buildFeoAncestors } from './feoTreeAncestors'
+import { activeHighlightMode } from './useHighlightMode'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoNode, PlannedBase } from './types'
 
@@ -67,26 +69,9 @@ export const useKpiDrilldown = makeCtxSingleton(
 )
 
 function buildKpiDrilldown(ctx: KpiCtx) {
-  function feoHasChildren(id: number): boolean {
-    return ctx.feoCategories.value.some(c => c.parent_id === id)
-  }
-
-  const feoParentMap = computed<Record<number, number | null>>(() => {
-    const map: Record<number, number | null> = {}
-    for (const c of ctx.feoCategories.value) map[c.id] = c.parent_id
-    return map
-  })
-
-  // Строгие предки узла (без самого узла), до корня
-  function feoAncestorIds(id: number): number[] {
-    const result: number[] = []
-    let pid = feoParentMap.value[id] ?? null
-    while (pid != null) {
-      result.push(pid)
-      pid = feoParentMap.value[pid] ?? null
-    }
-    return result
-  }
+  // feoHasChildren/feoAncestorIds — общий хелпер с useExcessDrilldown.ts,
+  // см. feoTreeAncestors.ts (Правило №6, раньше жили только тут).
+  const { feoHasChildren, feoAncestorIds } = buildFeoAncestors(ctx.feoCategories)
 
   // Все id позиций (FeoReqItem.id), из которых складывается активная метрика
   // ('items' и 'mixed' считают позиции заявок; чистый 'nodes' — нет)
@@ -254,6 +239,7 @@ function buildKpiDrilldown(ctx: KpiCtx) {
       }
     }
     activeKpi.value = key
+    activeHighlightMode.value = 'kpi' // гасит активный режим «где превышение» (useExcessDrilldown.ts), см. useHighlightMode.ts
     ctx.feoSearch.value = '' // поиск ломает isNodeVisible (при поиске видно всё без учёта expandedIds)
     if ((KPI_MODE[key] === 'items' || KPI_MODE[key] === 'mixed') && ctx.plannedBase.value !== 'all') {
       ctx.plannedBase.value = 'all' // единственный режим, показывающий все позиции без утраты части
@@ -276,7 +262,14 @@ function buildKpiDrilldown(ctx: KpiCtx) {
     }
     activeKpi.value = null
     kpiSnapshot.value = null
+    if (activeHighlightMode.value === 'kpi') activeHighlightMode.value = null
   }
+
+  // Другой режим подсветки (useExcessDrilldown.ts) стал активным — гасим свой,
+  // без восстановления снапшота (симметрично watch(selectedId) ниже).
+  watch(activeHighlightMode, (mode) => {
+    if (mode !== 'kpi' && activeKpi.value) { activeKpi.value = null; kpiSnapshot.value = null }
+  })
 
   // watch(plannedBase, ...) остаётся в SubsidiesView.vue (там же, где сам ref объявлен и
   // сохраняется в localStorage) — этот watch не про KPI.

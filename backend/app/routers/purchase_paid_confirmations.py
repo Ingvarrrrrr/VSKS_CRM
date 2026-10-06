@@ -22,6 +22,21 @@ GET  /api/subsidies/{id}/paid-confirmations?status=pending
 GET  /api/purchases/{pid}/paid-confirmation
 POST /api/paid-confirmations/{id}/confirm
 POST /api/paid-confirmations/{id}/reject
+
+Перф-доработка 2026-10-06 (лог прода: список pending по субсидии с ~120
+строками шёл 40-60+ с — таймаут фронта REQUEST_TIMEOUT_MS=60000 в api.ts):
+список (list_subsidy_paid_confirmations) раньше гонял _simulate_confirm_chain
+(savepoint + штатный переход) ДЛЯ КАЖДОЙ строки — ~0.4 с/строка — и добирал
+Purchase/Contractor/Payment по одному (N+1). Теперь список грузит эти три
+таблицы батчем (один select с IN по списку id) и НЕ симулирует — отдаёт
+checked=false для pending (blocked_reason=None, plan_excess_warning из
+персистентной колонки c.plan_excess_warning). Фронт дозапрашивает проверку
+отдельно, порциями — см. POST /api/subsidies/{id}/paid-confirmations/check
+в app/routers/purchase_paid_confirmations_check.py (вынесено отдельным
+роутером — этот файл уже на границе ПРАВИЛА №5 про модульность).
+Единственное место, где реально гоняется цепочка перехода — тот же
+_simulate_confirm_chain (ПРАВИЛО №6), что и раньше: ни список, ни /check,
+ни одноразовый GET по закупке не заводят вторую копию проверки.
 """
 import re
 from typing import Optional
@@ -211,7 +226,53 @@ def _confirmation_payments_dict(payments: list[Payment]) -> list[dict]:
     ]
 
 
+def _build_purchase_dict(p: Purchase, contractor_name: Optional[str]) -> dict:
+    """Единственное место, где закупка приводится к виду карточки
+    подтверждения — переиспользуется и одиночным GET/confirm/reject
+    (_confirmation_to_dict), и батч-списком (_list_confirmation_dicts),
+    и /check (purchase_paid_confirmations_check.py) — ПРАВИЛО №6."""
+    from app.routers.purchase_transitions import STATUS_LABELS
+    return {
+        "id": p.id,
+        "registry_number": p.registry_number,
+        "subject": p.subject,
+        "contractor_name": contractor_name,
+        "contract_price": float(p.contract_price) if p.contract_price is not None else None,
+        "payment_amount": float(p.payment_amount) if p.payment_amount is not None else None,
+        "status": p.status,
+        "status_label": STATUS_LABELS.get(p.status, p.status),
+    }
+
+
+def _base_confirmation_dict(
+    c: PurchasePaidConfirmation, purchase_dict: Optional[dict], payments_dict: list[dict],
+    *, blocked_reason: Optional[str], plan_excess_warning: Optional[str], checked: bool,
+) -> dict:
+    """Общая форма ответа для списка/одиночного GET/confirm/reject —
+    отличаются только тем, откуда взялись blocked_reason/plan_excess_warning/
+    checked (симуляция или персистентная колонка)."""
+    return {
+        "id": c.id,
+        "purchase_id": c.purchase_id,
+        "subsidy_id": c.subsidy_id,
+        "status": c.status,
+        "requested_at": c.requested_at.isoformat() if c.requested_at else None,
+        "amount_confirmed": float(c.amount_confirmed) if c.amount_confirmed is not None else None,
+        "decided_by": c.decided_by,
+        "decided_at": c.decided_at.isoformat() if c.decided_at else None,
+        "comment": c.comment,
+        "blocked_reason": blocked_reason,
+        "plan_excess_warning": plan_excess_warning,
+        "checked": checked,
+        "purchase": purchase_dict,
+        "payments": payments_dict,
+    }
+
+
 async def _confirmation_to_dict(db: AsyncSession, c: PurchasePaidConfirmation, current_user) -> dict:
+    """Одна строка (GET по закупке, ответ confirm/reject) — симулирует
+    цепочку для pending, как и раньше. НЕ использовать в списке по субсидии
+    (там N строк — батч без симуляции, см. _list_confirmation_dicts)."""
     p = await db.get(Purchase, c.purchase_id)
     contractor_name = None
     if p and p.contractor_id:
@@ -227,54 +288,79 @@ async def _confirmation_to_dict(db: AsyncSession, c: PurchasePaidConfirmation, c
         )).scalars().all()
     payments_dict = _confirmation_payments_dict(payments)
 
-    # Доработка приёмки (04.10): фронт показывает «сейчас: Договор заключён» и
-    # т.п. — STATUS_LABELS уже единственный источник подписи статуса
-    # (app/routers/purchase_transitions.py), переиспользуем, не дублируем строки.
     # ВАЖНО: все нужные поля `p` читаются в purchase_dict ЗДЕСЬ, ДО вызова
     # _simulate_confirm_chain ниже — тот гоняет штатный переход внутри
     # SAVEPOINT прямо на этом же объекте `p` и откатывает его, из-за чего `p`
     # становится expired (см. докстринг _simulate_confirm_chain); обращаться
     # к p.* ПОСЛЕ него нельзя.
-    purchase_dict = None
-    if p is not None:
-        from app.routers.purchase_transitions import STATUS_LABELS
-        purchase_dict = {
-            "id": p.id,
-            "registry_number": p.registry_number,
-            "subject": p.subject,
-            "contractor_name": contractor_name,
-            "contract_price": float(p.contract_price) if p.contract_price is not None else None,
-            "payment_amount": float(p.payment_amount) if p.payment_amount is not None else None,
-            "status": p.status,
-            "status_label": STATUS_LABELS.get(p.status, p.status),
-        }
+    purchase_dict = _build_purchase_dict(p, contractor_name) if p is not None else None
 
-    # Доработка (та же приёмка): согласующий видит ЗАРАНЕЕ, что confirm упрётся
-    # в гейт (например, нет закрывающих документов) — «сухой» прогон той же
-    # цепочки, без записи. Только для pending — решённым это уже не актуально,
-    # для них plan_excess_warning читается из персистентной колонки (записана
+    # Согласующий видит ЗАРАНЕЕ, что confirm упрётся в гейт (например, нет
+    # закрывающих документов) — «сухой» прогон той же цепочки, без записи.
+    # Только для pending — решённым это уже не актуально, для них
+    # plan_excess_warning читается из персистентной колонки (записана
     # РЕАЛЬНЫМ confirm в момент решения, если было обойдено превышение).
     # ВЫЗЫВАТЬ ПОСЛЕДНИМ (см. предупреждение выше) — после этого `p` expired.
     blocked_reason = None
     plan_excess_warning = c.plan_excess_warning
+    checked = c.status != "pending"
     if p is not None and c.status == "pending":
         blocked_reason, plan_excess_warning = await _simulate_confirm_chain(db, p, current_user)
+        checked = True
 
-    return {
-        "id": c.id,
-        "purchase_id": c.purchase_id,
-        "subsidy_id": c.subsidy_id,
-        "status": c.status,
-        "requested_at": c.requested_at.isoformat() if c.requested_at else None,
-        "amount_confirmed": float(c.amount_confirmed) if c.amount_confirmed is not None else None,
-        "decided_by": c.decided_by,
-        "decided_at": c.decided_at.isoformat() if c.decided_at else None,
-        "comment": c.comment,
-        "blocked_reason": blocked_reason,
-        "plan_excess_warning": plan_excess_warning,
-        "purchase": purchase_dict,
-        "payments": payments_dict,
-    }
+    return _base_confirmation_dict(
+        c, purchase_dict, payments_dict,
+        blocked_reason=blocked_reason, plan_excess_warning=plan_excess_warning, checked=checked,
+    )
+
+
+async def _list_confirmation_dicts(db: AsyncSession, rows: list[PurchasePaidConfirmation]) -> list[dict]:
+    """Батч-версия для GET /api/subsidies/{id}/paid-confirmations — НИКОГДА
+    не вызывает _simulate_confirm_chain (это и было причиной 40-60+ с на
+    ~120 строках, см. докстринг модуля). Purchase/Contractor/Payment грузятся
+    по ОДНОМУ select с IN на каждую таблицу, а не по строке (N+1). pending-
+    строки отдаются с checked=false — фронт дозапрашивает проверку порциями
+    через POST .../paid-confirmations/check."""
+    purchase_ids = {c.purchase_id for c in rows}
+    purchases: dict[int, Purchase] = {}
+    if purchase_ids:
+        purchases = {
+            p.id: p for p in (await db.execute(
+                select(Purchase).where(Purchase.id.in_(purchase_ids))
+            )).scalars().all()
+        }
+
+    contractor_ids = {p.contractor_id for p in purchases.values() if p.contractor_id}
+    contractor_names: dict[int, str] = {}
+    if contractor_ids:
+        contractor_names = {
+            co.id: co.name for co in (await db.execute(
+                select(Contractor).where(Contractor.id.in_(contractor_ids))
+            )).scalars().all()
+        }
+
+    payments_by_purchase: dict[int, list[Payment]] = {pid: [] for pid in purchase_ids}
+    if purchase_ids:
+        all_payments = (await db.execute(
+            select(Payment).where(
+                Payment.purchase_id.in_(purchase_ids),
+                Payment.confirmed_by_statement == True,  # noqa: E712
+            ).order_by(Payment.payment_date)
+        )).scalars().all()
+        for pay in all_payments:
+            payments_by_purchase.setdefault(pay.purchase_id, []).append(pay)
+
+    items = []
+    for c in rows:
+        p = purchases.get(c.purchase_id)
+        purchase_dict = _build_purchase_dict(p, contractor_names.get(p.contractor_id)) if p is not None else None
+        payments_dict = _confirmation_payments_dict(payments_by_purchase.get(c.purchase_id, []))
+        items.append(_base_confirmation_dict(
+            c, purchase_dict, payments_dict,
+            blocked_reason=None, plan_excess_warning=c.plan_excess_warning,
+            checked=c.status != "pending",
+        ))
+    return items
 
 
 @router.get("/api/subsidies/{subsidy_id}/paid-confirmations")
@@ -292,7 +378,7 @@ async def list_subsidy_paid_confirmations(
         q = q.where(PurchasePaidConfirmation.status == status)
     q = q.order_by(PurchasePaidConfirmation.requested_at.desc())
     rows = (await db.execute(q)).scalars().all()
-    return {"items": [await _confirmation_to_dict(db, c, current_user) for c in rows]}
+    return {"items": await _list_confirmation_dicts(db, rows)}
 
 
 @router.get("/api/purchases/{pid}/paid-confirmation")

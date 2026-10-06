@@ -176,6 +176,11 @@ from app.routers import subsidy_revisions as subsidy_revisions_router
 # (/{sid}, 1 сегмент) или purchases.router (/{pid}, 1 сегмент) — у всех минимум
 # на сегмент больше, порядок регистрации не важен.
 from app.routers import purchase_paid_confirmations as purchase_paid_confirmations_router
+# Перф-доработка 2026-10-06: /check вынесен из purchase_paid_confirmations.py
+# отдельным роутером (ПРАВИЛО №5, файл был на границе ~500 строк) — тот же
+# префикс /api/subsidies/{id}/paid-confirmations/check, на сегмент глубже
+# catch-all'ов, порядок регистрации не важен по той же причине, что и выше.
+from app.routers import purchase_paid_confirmations_check as purchase_paid_confirmations_check_router
 # Контрольные суммы «выписка ↔ закупки» по субсидии (план
 # .planning/quick/2026-10-05-payment-control/PLAN.md) — префикс
 # /api/subsidies/{sid}/payment-control/... (минимум на сегмент глубже catch-all
@@ -367,6 +372,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(plan_excess_router.router)
     app.include_router(subsidy_revisions_router.router)
     app.include_router(purchase_paid_confirmations_router.router)
+    app.include_router(purchase_paid_confirmations_check_router.router)
     app.include_router(subsidy_payment_control_router.router)
     app.include_router(settings_router.router)
     app.include_router(dashboard.router)

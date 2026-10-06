@@ -975,6 +975,39 @@
   background-size: 160px 100px !important;
 }
 
+/* ── «Где превышение» (useExcessDrilldown.ts, владелец 06.10.2026) — мягкая
+   оранжевая подсветка строк-«виновников» активного вида превышения; текущая
+   (currentIndex) ярче. Тот же приём изоляции background на строке и
+   прозрачности детей, что у .feo-fully-purchased-row выше (Правило №6, не
+   копируем тайл, только меняем цвет/силу). Не мешает .feo-kpi-hl — активны
+   не одновременно (useHighlightMode.ts гасит один при активации другого). */
+.subsidies-page .feo-excess-target-row > .feo-td,
+.subsidies-page .feo-excess-target-row > td {
+  background: rgba(251, 146, 60, 0.12) !important;
+}
+.subsidies-page .feo-excess-target-row > .feo-td:first-child,
+.subsidies-page .feo-excess-target-row > td:first-child {
+  border-left: 3px solid rgba(251, 146, 60, 0.55);
+}
+.subsidies-page .feo-excess-target-row--current > .feo-td,
+.subsidies-page .feo-excess-target-row--current > td {
+  background: rgba(251, 146, 60, 0.24) !important;
+  animation: feo-kpi-glow 1.4s ease-in-out infinite;
+}
+.subsidies-page .feo-excess-target-row--current > .feo-td:first-child,
+.subsidies-page .feo-excess-target-row--current > td:first-child {
+  border-left: 3px solid #fb923c;
+}
+.v-theme--dark .subsidies-page .feo-excess-target-row > .feo-td,
+.v-theme--dark .subsidies-page .feo-excess-target-row > td {
+  background: rgba(251, 146, 60, 0.20) !important;
+}
+.v-theme--dark .subsidies-page .feo-excess-target-row--current > .feo-td,
+.v-theme--dark .subsidies-page .feo-excess-target-row--current > td {
+  background: rgba(251, 146, 60, 0.36) !important;
+  animation-name: feo-kpi-glow-dark;
+}
+
 /* Легенда над деревом/панелью (владелец, п.5) — одна строка, единый источник
    текста легенды (см. FeoTreeToolbar.vue). */
 .subsidies-page .feo-fully-purchased-legend {

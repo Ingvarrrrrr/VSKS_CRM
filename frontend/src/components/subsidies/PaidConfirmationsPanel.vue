@@ -18,7 +18,7 @@
     </div>
 
     <v-card
-      v-for="row in confirmations.items.value"
+      v-for="row in visibleRows"
       :key="row.id"
       variant="outlined"
       class="mb-2 pa-3 bg-surface"
@@ -61,6 +61,11 @@
         Подтвердить пока нельзя: {{ row.blocked_reason }}
       </v-alert>
 
+      <v-alert v-if="checkErrors[row.id]" type="error" variant="tonal" density="compact" class="mb-2 text-caption">
+        Не удалось проверить: {{ checkErrors[row.id] }}
+        <v-btn size="x-small" variant="text" class="ml-2" @click="retryCheck(row.id)">Повторить проверку</v-btn>
+      </v-alert>
+
       <div v-if="row.plan_excess_warning" class="text-caption text-error mb-2 d-flex align-center flex-wrap ga-2">
         <span><v-icon icon="mdi-alert-circle-outline" size="14" class="mr-1" />Превышение плана не согласовано: {{ row.plan_excess_warning }}</span>
         <!-- «Где взять деньги» (план .planning/quick/2026-10-05-funding-sources/
@@ -80,11 +85,14 @@
           class="confirm-btn"
           style="white-space: normal; height: auto"
           :loading="confirmations.actingId.value === row.id"
-          :disabled="!!row.blocked_reason || (confirmations.actingId.value !== null && confirmations.actingId.value !== row.id)"
+          :disabled="!row.checked || !!row.blocked_reason || (confirmations.actingId.value !== null && confirmations.actingId.value !== row.id)"
           @click="onConfirm(row)"
         >
           Подтвердить → Оплачено
         </v-btn>
+        <span v-if="!row.checked && !checkErrors[row.id]" class="d-flex align-center text-caption text-medium-emphasis">
+          <v-progress-circular indeterminate size="14" width="2" class="mr-1" />проверяю…
+        </span>
         <v-btn
           size="small"
           color="error"
@@ -102,6 +110,12 @@
         Подтверждение отметит поставку и переведёт в «Оплачено»
       </div>
     </v-card>
+
+    <div v-if="visibleCount < confirmations.items.value.length" class="d-flex justify-center mt-2">
+      <v-btn size="small" variant="tonal" @click="showMore">
+        Показать ещё {{ Math.min(PAGE_SIZE, confirmations.items.value.length - visibleCount) }}
+      </v-btn>
+    </div>
   </v-alert>
 
   <!-- Диалог отклонения — комментарий обязателен (контракт бэкенда) -->
@@ -144,7 +158,7 @@
 // платежам и подтверждают/отклоняют их. Логика запросов — в
 // usePaidConfirmations.ts (ПРАВИЛО №6, тот же composable использует плашка в
 // карточке закупки, components/PaymentsBlock.vue).
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { usePaidConfirmations, type PaidConfirmation } from '@/composables/subsidies/usePaidConfirmations'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { useToast } from '@/composables/useToast'
@@ -157,6 +171,45 @@ const props = defineProps<{ subsidyId: number | null | undefined }>()
 const toast = useToast()
 const confirmations = usePaidConfirmations()
 const funding = useFundingSources()
+
+// Перф-доработка 2026-10-06: список может прийти с десятками/сотней строк,
+// каждая без реальной проверки (checked=false, см. usePaidConfirmations.ts).
+// Показываем порциями по PAGE_SIZE и проверяем показанные порциями того же
+// размера, ПОСЛЕДОВАТЕЛЬНО (не параллельно — не грузить сервер одним залпом
+// запросов). Ошибка проверки одной порции — показываем причину у затронутых
+// строк, не глотаем generic-ом.
+const PAGE_SIZE = 10
+const visibleCount = ref(PAGE_SIZE)
+const checkErrors = ref<Record<number, string>>({})
+const visibleRows = computed(() => confirmations.items.value.slice(0, visibleCount.value))
+
+async function checkUncheckedVisible() {
+  const pending = visibleRows.value.filter(r => !r.checked && !checkErrors.value[r.id])
+  for (let i = 0; i < pending.length; i += PAGE_SIZE) {
+    const chunk = pending.slice(i, i + PAGE_SIZE).map(r => r.id)
+    if (!chunk.length) continue
+    try {
+      await confirmations.checkRows(props.subsidyId, chunk)
+    } catch (e: any) {
+      const msg = describeApiError(e, { fallback: 'не удалось проверить' })
+      const next = { ...checkErrors.value }
+      for (const id of chunk) next[id] = msg
+      checkErrors.value = next
+    }
+  }
+}
+
+function showMore() {
+  visibleCount.value += PAGE_SIZE
+  checkUncheckedVisible()
+}
+
+function retryCheck(id: number) {
+  const next = { ...checkErrors.value }
+  delete next[id]
+  checkErrors.value = next
+  checkUncheckedVisible()
+}
 
 function fmtDate(d: string | null): string {
   if (!d) return '—'
@@ -197,7 +250,12 @@ async function submitReject() {
   }
 }
 
-watch(() => props.subsidyId, (id) => confirmations.loadPending(id), { immediate: true })
+watch(() => props.subsidyId, async (id) => {
+  visibleCount.value = PAGE_SIZE
+  checkErrors.value = {}
+  await confirmations.loadPending(id)
+  await checkUncheckedVisible()
+}, { immediate: true })
 </script>
 
 <style scoped>

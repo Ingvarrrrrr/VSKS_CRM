@@ -44,7 +44,11 @@ export function typeExcessKey(categoryId: number | null, kind: TypeExcessKind): 
   return `${categoryId ?? 'subsidy'}:${kind}`
 }
 
-const NODE_EXCESS_FIELD: Record<TypeExcessKind, string> = {
+// Экспортирован (задание владельца 06.10.2026, «где превышение» —
+// useExcessDrilldown.ts) — та же карта поле-по-виду, которую читает
+// typeExcessFor ниже; excessTargetIds там читает ТЕ ЖЕ готовые числа из
+// planTreeByCat, не считает превышение заново (Правило №6).
+export const NODE_EXCESS_FIELD: Record<TypeExcessKind, string> = {
   plan_over_feo_goods: 'excess_plan_over_feo_goods',
   plan_over_feo_services: 'excess_plan_over_feo_services',
   fact_over_plan_goods: 'excess_fact_over_plan_goods',

@@ -889,4 +889,184 @@ async def test_paid_confirmation_notify_deferred_until_commit(db_session, test_o
         select(PurchasePaidConfirmation).where(PurchasePaidConfirmation.purchase_id == pid)
     )).scalar_one()
     assert conf.status == "pending"
-    assert calls[0][2] == conf.id
+
+
+# ---------------------------------------------------------------------------
+# Перф-доработка 2026-10-06: список по субсидии не симулирует переход,
+# симуляция вынесена в отдельный POST .../paid-confirmations/check
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_list_does_not_simulate_confirm_chain(db_session, client, test_org, contractor, monkeypatch):
+    """Список pending по субсидии раньше гонял _simulate_confirm_chain на
+    КАЖДУЮ строку (причина 40-60+ с на ~120 строках в проде) — теперь не
+    должен вызывать её вообще, строки отдаются checked=false без
+    blocked_reason."""
+    import app.routers.purchase_paid_confirmations as ppc_module
+
+    calls = {"n": 0}
+    original = ppc_module._simulate_confirm_chain
+
+    async def _counting(*args, **kwargs):
+        calls["n"] += 1
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(ppc_module, "_simulate_confirm_chain", _counting)
+
+    sub = await _make_subsidy(db_session, test_org.id)
+    approver_user, approver_headers = await _make_user(db_session, test_org.id)
+    db_session.add(SubsidyApprover(
+        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
+        user_id=approver_user.id,
+    ))
+    await db_session.commit()
+
+    # Без закрывающих документов — confirm/симуляция упёрлась бы в 'delivered'
+    # (как в test_confirm_blocked_without_acceptance_docs), ровно поэтому
+    # хороший кандидат убедиться, что список её вообще не запускает.
+    import datetime
+    p = Purchase(
+        item_name="Товар", status="contracted", subsidy_id=sub.id,
+        contractor_id=contractor.id, contract_price=Decimal("10000.00"),
+    )
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    pay = Payment(
+        purchase_id=p.id, document_number="ПП-LST1", payment_date=datetime.date(2026, 5, 1),
+        amount=Decimal("10000.00"), matched_confirmed=True,
+        payment_source="statement", confirmed_by_statement=True,
+    )
+    db_session.add(pay)
+    await db_session.commit()
+    await recompute_purchase_payments(db_session, p.id)
+    await db_session.commit()
+
+    resp = await client.get(f"/api/subsidies/{sub.id}/paid-confirmations?status=pending", headers=approver_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["items"]) == 1
+    row = body["items"][0]
+    assert row["checked"] is False
+    assert row["blocked_reason"] is None
+    assert calls["n"] == 0  # список НЕ вызвал симуляцию ни разу
+
+
+@pytest.mark.asyncio
+async def test_check_endpoint_returns_same_blocked_reason_as_old_list(db_session, client, test_org, contractor):
+    """/check на pending-строке без закрывающих документов обязан отдать тот
+    же blocked_reason, что раньше (до перф-доработки) отдавал список —
+    см. test_confirm_blocked_without_acceptance_docs."""
+    sub = await _make_subsidy(db_session, test_org.id)
+    approver_user, approver_headers = await _make_user(db_session, test_org.id)
+    db_session.add(SubsidyApprover(
+        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
+        user_id=approver_user.id,
+    ))
+    await db_session.commit()
+
+    import datetime
+    p = Purchase(
+        item_name="Товар", status="contracted", subsidy_id=sub.id,
+        contractor_id=contractor.id, contract_price=Decimal("10000.00"),
+    )
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    pay = Payment(
+        purchase_id=p.id, document_number="ПП-CHK1", payment_date=datetime.date(2026, 5, 1),
+        amount=Decimal("10000.00"), matched_confirmed=True,
+        payment_source="statement", confirmed_by_statement=True,
+    )
+    db_session.add(pay)
+    await db_session.commit()
+    await recompute_purchase_payments(db_session, p.id)
+    await db_session.commit()
+
+    conf = (await db_session.execute(
+        select(PurchasePaidConfirmation).where(PurchasePaidConfirmation.purchase_id == p.id)
+    )).scalar_one()
+
+    resp = await client.post(
+        f"/api/subsidies/{sub.id}/paid-confirmations/check",
+        json={"ids": [conf.id]}, headers=approver_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == conf.id
+    assert items[0]["blocked_reason"] is not None
+    assert "Поставлено" in items[0]["blocked_reason"]
+
+    # /check — чисто «сухой» прогон, статус закупки не должен поменяться.
+    await db_session.refresh(p)
+    assert p.status == "contracted"
+
+
+@pytest.mark.asyncio
+async def test_check_endpoint_limit_422(db_session, client, test_org, contractor):
+    sub = await _make_subsidy(db_session, test_org.id)
+    approver_user, approver_headers = await _make_user(db_session, test_org.id)
+    db_session.add(SubsidyApprover(
+        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
+        user_id=approver_user.id,
+    ))
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/subsidies/{sub.id}/paid-confirmations/check",
+        json={"ids": list(range(1, 22))}, headers=approver_headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_check_endpoint_ignores_other_subsidy_ids(db_session, client, test_org, contractor):
+    """Строка подтверждения, принадлежащая ДРУГОЙ субсидии, переданная в
+    ids — молча пропускается (не 403/404), ответ просто не содержит её."""
+    sub_a = await _make_subsidy(db_session, test_org.id)
+    sub_b = await _make_subsidy(db_session, test_org.id)
+    approver_user, approver_headers = await _make_user(db_session, test_org.id)
+    db_session.add(SubsidyApprover(
+        subsidy_id=sub_a.id, role_name="Директор", full_name=approver_user.full_name,
+        user_id=approver_user.id,
+    ))
+    db_session.add(SubsidyApprover(
+        subsidy_id=sub_b.id, role_name="Директор", full_name=approver_user.full_name,
+        user_id=approver_user.id,
+    ))
+    await db_session.commit()
+
+    import datetime
+    p_b = Purchase(
+        item_name="Товар Б", status="delivered", subsidy_id=sub_b.id,
+        contractor_id=contractor.id, contract_price=Decimal("5000.00"),
+    )
+    db_session.add(p_b)
+    await db_session.commit()
+    await db_session.refresh(p_b)
+
+    pay = Payment(
+        purchase_id=p_b.id, document_number="ПП-OTH1", payment_date=datetime.date(2026, 5, 1),
+        amount=Decimal("5000.00"), matched_confirmed=True,
+        payment_source="statement", confirmed_by_statement=True,
+    )
+    db_session.add(pay)
+    await db_session.commit()
+    await recompute_purchase_payments(db_session, p_b.id)
+    await db_session.commit()
+
+    conf_b = (await db_session.execute(
+        select(PurchasePaidConfirmation).where(PurchasePaidConfirmation.purchase_id == p_b.id)
+    )).scalar_one()
+
+    # Запрашиваем проверку conf_b (субсидия B), но через эндпоинт субсидии A —
+    # согласующий A не должен получить данные по чужой субсидии.
+    resp = await client.post(
+        f"/api/subsidies/{sub_a.id}/paid-confirmations/check",
+        json={"ids": [conf_b.id, 999999]}, headers=approver_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == []

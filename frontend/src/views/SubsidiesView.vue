@@ -198,6 +198,10 @@ import { useFeoTreePrefs } from '@/composables/subsidies/useFeoTreePrefs'
 import { useFeoTreeState } from '@/composables/subsidies/useFeoTreeState'
 import { useFeoTreeAmounts } from '@/composables/subsidies/useFeoTreeAmounts'
 import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
+// «Где превышение» (владелец, 06.10.2026) — построен здесь с ctx, как и
+// useFeoTreeExcess выше; FeoTreeRow.vue/SubsidyKpiCards.vue/ExcessDrilldownBar.vue
+// переиспользуют singleton вызовом без аргумента.
+import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
 import { useFeoTreeDnd } from '@/composables/subsidies/useFeoTreeDnd'
 import { useFeoLevel5 } from '@/composables/subsidies/useFeoLevel5'
 import { useSubsidyRevision } from '@/composables/subsidies/useSubsidyRevision'
@@ -350,6 +354,18 @@ const feoTreeExcess = useFeoTreeExcess({
   planExcessApprovals: feoTreeState.planExcessApprovals,
   selectedId,
   refreshReqData,
+})
+// «Где превышение» (владелец, 06.10.2026) — построен здесь с ctx (singleton,
+// как feoTreeExcess выше); дочерние компоненты (FeoTreeRow.vue/
+// SubsidyKpiCards.vue/ExcessDrilldownBar.vue) переиспользуют вызовом без
+// аргумента, SubsidiesView.vue сам этот API не читает — поэтому не
+// присваивается переменной (noUnusedLocals).
+useExcessDrilldown({
+  feoCategories: feoTreeState.feoCategories,
+  planTreeByCat: feoTreeState.planTreeByCat,
+  expandedIds: feoTreePrefs.expandedIds,
+  feoTableArea,
+  selectedId,
 })
 const feoLevel5 = useFeoLevel5({
   selectedId,

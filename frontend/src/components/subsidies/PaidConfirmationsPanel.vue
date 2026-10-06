@@ -174,23 +174,56 @@ const funding = useFundingSources()
 
 // Перф-доработка 2026-10-06: список может прийти с десятками/сотней строк,
 // каждая без реальной проверки (checked=false, см. usePaidConfirmations.ts).
-// Показываем порциями по PAGE_SIZE и проверяем показанные порциями того же
-// размера, ПОСЛЕДОВАТЕЛЬНО (не параллельно — не грузить сервер одним залпом
-// запросов). Ошибка проверки одной порции — показываем причину у затронутых
-// строк, не глотаем generic-ом.
+// Показываем порциями по PAGE_SIZE.
 const PAGE_SIZE = 10
 const visibleCount = ref(PAGE_SIZE)
 const checkErrors = ref<Record<number, string>>({})
 const visibleRows = computed(() => confirmations.items.value.slice(0, visibleCount.value))
 
+// Инцидент прода 06.10 16:38 (ФАДМ 2026_2, id 89): порция /check из 10 строк
+// давала 502 «upstream prematurely closed connection» у части запросов.
+// Промерено локально (docker exec backend, прямой вызов _simulate_confirm_
+// chain + повтор тем же способом через реальный HTTP): ОДНА строка —
+// 0.6-1.2 с (идёт по контракту несколько шагов apply_purchase_status_
+// transition, каждый с запросами к гейтам закрывающих документов/превышения
+// плана — та же цена, что и раньше была причиной 40-60 с на весь список, см.
+// докстринг purchase_paid_confirmations.py). Порция из 10 → 7-12 с РЕАЛЬНОГО
+// времени бэкенда даже без конкурентной нагрузки — то есть просто дольше
+// обычных таймаутов инфраструктуры/прокси, не гонка keepalive (проверено:
+// upstream backend_pool в деплое НЕ держит connection pooling, "keepalive" в
+// upstream-блоке не задан — каждый запрос идёт по новому соединению).
+// Порция ДЛЯ /check теперь меньше порции показа (PAGE_SIZE) — показываем по
+// 10 строк разом, но проверяем их у бэкенда по CHECK_CHUNK_SIZE штук. 5 строк
+// (замер после фикса, тот же стенд) — всё ещё ~5 с, слишком близко к границе;
+// 3 строки — стабильно 3-4 с, запас перед тем же порогом.
+const CHECK_CHUNK_SIZE = 3
+
+// /check — чистое чтение (SAVEPOINT + безусловный rollback, см. docstring
+// _simulate_confirm_chain в purchase_paid_confirmations.py — ничего не
+// коммитит), поэтому на 502/503/504 и на сетевую ошибку безопасно сделать
+// ОДИН автоматический повтор, прежде чем показывать строку как
+// «не удалось проверить» — не на 4xx (эти не исчезнут сами по себе).
+function isRetryableCheckError(e: any): boolean {
+  const status = e?.status
+  return status === 502 || status === 503 || status === 504 || !status
+}
+
 async function checkUncheckedVisible() {
   const pending = visibleRows.value.filter(r => !r.checked && !checkErrors.value[r.id])
-  for (let i = 0; i < pending.length; i += PAGE_SIZE) {
-    const chunk = pending.slice(i, i + PAGE_SIZE).map(r => r.id)
+  for (let i = 0; i < pending.length; i += CHECK_CHUNK_SIZE) {
+    const chunk = pending.slice(i, i + CHECK_CHUNK_SIZE).map(r => r.id)
     if (!chunk.length) continue
     try {
       await confirmations.checkRows(props.subsidyId, chunk)
     } catch (e: any) {
+      if (isRetryableCheckError(e)) {
+        try {
+          await confirmations.checkRows(props.subsidyId, chunk)
+          continue
+        } catch (e2: any) {
+          e = e2
+        }
+      }
       const msg = describeApiError(e, { fallback: 'не удалось проверить' })
       const next = { ...checkErrors.value }
       for (const id of chunk) next[id] = msg

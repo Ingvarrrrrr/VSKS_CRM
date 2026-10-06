@@ -189,6 +189,16 @@
 .subsidies-page .detail-kpis .kpi-paid {
   grid-column: span 2;
 }
+/* Задача (владелец, 06.10.2026, доп. к п.1 sleepy-fluttering-walrus.md):
+   «Можно перераспределить» — 4 строки расшифровки + товары/услуги + возможная
+   красная строка перерасхода растягивали карточку в 4 строки высоты и
+   толкали весь ряд. Тот же приём, что .kpi-paid выше — span 2 по колонкам
+   сетки (не по строкам; grid-auto-rows:1fr уже выравнивает высоту строки),
+   содержимое раскладывается в 2 колонки ВНУТРИ карточки (SubsidyMoneyCards.vue
+   .kpi-redistributable-grid). На мобильной ширине сбрасывается ниже. */
+.subsidies-page .detail-kpis .kpi-redistributable {
+  grid-column: span 2;
+}
 
 /* ── KPI Cards (copied from DashboardView) ── */
 .subsidies-page .kpi-card {
@@ -321,6 +331,10 @@
   .subsidies-page .kpi-label { font-size: 10px; line-height: 1.2; white-space: normal; margin-top: 1px; }
   /* Задача 3: на мобильной ширине «Оплачено» — обычная карточка, не шире. */
   .subsidies-page .detail-kpis .kpi-paid { grid-column: span 1; }
+  /* Задача (06.10.2026, доп.): на мобильной ширине «Можно перераспределить» —
+     обычная карточка (1 колонка), как было — её внутренний грид тоже
+     сбрасывается в 1 колонку отдельным media-правилом в SubsidyMoneyCards.vue. */
+  .subsidies-page .detail-kpis .kpi-redistributable { grid-column: span 1; }
 }
 
 /* FEO section */

@@ -47,10 +47,15 @@ from app.routers.dashboard_type_drill import router as type_drill_router
 # Расшифровка карточки «Заключено договоров» по ДОГОВОРАМ (владелец, 06.10.2026,
 # план sleepy-fluttering-walrus.md п.2) — тот же приём подключения под-роутера.
 from app.routers.dashboard_contracts_drill import router as contracts_drill_router
+# Расшифровка строк «Товары»/«Услуги» карточки «Можно перераспределить» по
+# клику (владелец, 06.10.2026, доп. задача) — тот же приём подключения
+# под-роутера.
+from app.routers.dashboard_redistributable_drill import router as redistributable_drill_router
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 router.include_router(type_drill_router)
 router.include_router(contracts_drill_router)
+router.include_router(redistributable_drill_router)
 
 
 @router.get("/charts")

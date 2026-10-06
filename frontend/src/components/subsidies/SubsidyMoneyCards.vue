@@ -22,58 +22,80 @@
         title="Бюджет минус законтрактовано: деньги, ещё не связанные договором. Разовый договор занимает деньги с момента заключения, рамочный — только суммой заказов"
       >
         <div class="kpi-icon-box"><v-icon icon="mdi-swap-horizontal" size="26" /></div>
-        <div class="kpi-body">
-          <div class="kpi-value">{{ redistributable != null ? formatCurrency(redistributable) : '—' }}</div>
-          <div class="kpi-label">Можно перераспределить</div>
-          <!-- Задача 1 (владелец, 04.10.2026 → доп. 06.10.2026, исправлено
-               координатором): раньше одна строка «не запланировано X
-               (Свободно) + в плане без договоров Y» — теперь четыре строки с
-               разбивкой «в плане без договоров» по статусу плановой позиции
-               (not_committed_likely/_nice, см. SubsidyRow в composables/
-               subsidies/types.ts) + «договоры без заказа» (contracted_not_ordered,
-               готовое поле бэкенда — дочерние заказы рамочных договоров в
-               статусе 'contracted', см. app.services.stage_cumulative).
-               «хотелось бы» показываем даже при 0 ₽, чтобы категория была видна. -->
-          <div v-if="redistributable != null" class="kpi-sub-note kpi-redistributable-notes text-caption text-medium-emphasis">
-            <div class="kpi-redistributable-note-row">не запланировано: {{ formatCurrency(redistributableUnplanned) }}</div>
-            <div class="kpi-redistributable-note-row">хотелось бы, можно отказаться: {{ formatCurrency(notCommittedNice) }}</div>
-            <div class="kpi-redistributable-note-row">скорее всего понадобится: {{ formatCurrency(notCommittedLikely) }}</div>
-            <div class="kpi-redistributable-note-row">договоры без заказа (будущие месяцы): {{ formatCurrency(contractedNotOrdered) }}</div>
-          </div>
-          <div v-if="isSplit" class="kpi-split-rows" @click.stop>
-            <template v-if="splitRows.length">
-              <div v-for="row in splitRows" :key="row.kind" class="kpi-split-row" :class="{ 'kpi-split-row-neg': row.amount < -0.5 }">
-                <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
-              </div>
-            </template>
-            <div v-else class="kpi-split-loading text-caption">нет данных по типам</div>
-          </div>
-          <div v-if="committedMissingFactItems > 0" class="kpi-sub-note text-caption" style="color:#B45309">
-            {{ committedMissingFactItems }} позиций в договоре без суммы договора — учтены по плановой цене
-          </div>
-          <!-- Задача (владелец, 06.10.2026): по каждому направлению ФЭО,
-               законтрактованному сверх плана, — отдельная красная строка (без
-               кнопок, только сигнал), готовое поле бэкенда over_plan_categories
-               (см. SubsidyRow в composables/subsidies/types.ts, Правило №6). -->
-          <div v-if="overPlanCategories.length" class="kpi-sub-note kpi-over-plan-notes text-caption">
-            <div v-for="cat in overPlanCategories" :key="cat.category_id" class="kpi-over-plan-row">
-              по «{{ cat.name || 'направлению ФЭО' }}» законтрактовано сверх плана на {{ formatCurrency(cat.excess_amount) }}
+        <!-- Задача (владелец, 06.10.2026, доп.): карточка растягивала ряд (4
+             строки расшифровки + товары/услуги + возможная красная строка
+             перерасхода). На компьютере — 2 колонки внутри kpi-body (левая:
+             сумма+подпись+4 строки, правая: товары/услуги+перерасход+кнопка),
+             см. .kpi-redistributable-grid в subsidies.css рядом с .kpi-paid
+             (span 2 по сетке карточек). На мобильном сбрасывается в 1 колонку. -->
+        <div class="kpi-body kpi-redistributable-grid">
+          <div class="kpi-redistributable-col-main">
+            <div class="kpi-value">{{ redistributable != null ? formatCurrency(redistributable) : '—' }}</div>
+            <div class="kpi-label">Можно перераспределить</div>
+            <!-- Задача 1 (владелец, 04.10.2026 → доп. 06.10.2026, исправлено
+                 координатором): раньше одна строка «не запланировано X
+                 (Свободно) + в плане без договоров Y» — теперь четыре строки с
+                 разбивкой «в плане без договоров» по статусу плановой позиции
+                 (not_committed_likely/_nice, см. SubsidyRow в composables/
+                 subsidies/types.ts) + «договоры без заказа» (contracted_not_ordered,
+                 готовое поле бэкенда — дочерние заказы рамочных договоров в
+                 статусе 'contracted', см. app.services.stage_cumulative).
+                 «хотелось бы» показываем даже при 0 ₽, чтобы категория была видна. -->
+            <div v-if="redistributable != null" class="kpi-sub-note kpi-redistributable-notes text-caption text-medium-emphasis">
+              <div class="kpi-redistributable-note-row">не запланировано: {{ formatCurrency(redistributableUnplanned) }}</div>
+              <div class="kpi-redistributable-note-row">хотелось бы, можно отказаться: {{ formatCurrency(notCommittedNice) }}</div>
+              <div class="kpi-redistributable-note-row">скорее всего понадобится: {{ formatCurrency(notCommittedLikely) }}</div>
+              <div class="kpi-redistributable-note-row">договоры без заказа (будущие месяцы): {{ formatCurrency(contractedNotOrdered) }}</div>
             </div>
           </div>
-          <!-- «Где взять деньги» (план .planning/quick/2026-10-05-funding-sources/
-               PLAN.md, п.2г) — отрицательное «Можно перераспределить» =
-               превышение бюджета субсидии целиком (нет единой корневой
-               ФЭО-категории, поэтому category_id не передаём — бэкенд
-               трактует запрос без category_id/planned_item_id как уровень
-               субсидии, target.kind='subsidy'). -->
-          <v-btn v-if="(redistributable ?? 0) < 0 && props.subsidy?.id" size="x-small" variant="text" color="deep-purple"
-            prepend-icon="mdi-cash-sync" class="mt-1" @click.stop="funding.openFundingSources({ subsidyId: props.subsidy!.id, amount: -(redistributable ?? 0) })"
-          >Где взять деньги</v-btn>
+          <div class="kpi-redistributable-col-side">
+            <!-- Клик по «Товары»/«Услуги» открывает RedistributableDrillDialog
+                 (доп. задача 06.10.2026) — тот же приём, что type-drill строк
+                 в SubsidyKpiCards.vue (kpi-split-row-clickable, см. CSS ниже —
+                 scoped-стили родителя сюда не доходят, дублируем класс). -->
+            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+              <template v-if="splitRows.length">
+                <div v-for="row in splitRows" :key="row.kind" class="kpi-split-row"
+                  :class="{ 'kpi-split-row-neg': row.amount < -0.5, 'kpi-split-row-clickable': row.kind === 'goods' || row.kind === 'services' }"
+                  @click="(row.kind === 'goods' || row.kind === 'services') && openDrill(row.kind)"
+                >
+                  <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
+                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
+                </div>
+              </template>
+              <div v-else class="kpi-split-loading text-caption">нет данных по типам</div>
+            </div>
+            <div v-if="committedMissingFactItems > 0" class="kpi-sub-note text-caption" style="color:#B45309">
+              {{ committedMissingFactItems }} позиций в договоре без суммы договора — учтены по плановой цене
+            </div>
+            <!-- Задача (владелец, 06.10.2026): по каждому направлению ФЭО,
+                 законтрактованному сверх плана, — отдельная красная строка (без
+                 кнопок, только сигнал), готовое поле бэкенда over_plan_categories
+                 (см. SubsidyRow в composables/subsidies/types.ts, Правило №6). -->
+            <div v-if="overPlanCategories.length" class="kpi-sub-note kpi-over-plan-notes text-caption">
+              <div v-for="cat in overPlanCategories" :key="cat.category_id" class="kpi-over-plan-row">
+                по «{{ cat.name || 'направлению ФЭО' }}» законтрактовано сверх плана на {{ formatCurrency(cat.excess_amount) }}
+              </div>
+            </div>
+            <!-- «Где взять деньги» (план .planning/quick/2026-10-05-funding-sources/
+                 PLAN.md, п.2г) — отрицательное «Можно перераспределить» =
+                 превышение бюджета субсидии целиком (нет единой корневой
+                 ФЭО-категории, поэтому category_id не передаём — бэкенд
+                 трактует запрос без category_id/planned_item_id как уровень
+                 субсидии, target.kind='subsidy'). -->
+            <v-btn v-if="(redistributable ?? 0) < 0 && props.subsidy?.id" size="x-small" variant="text" color="deep-purple"
+              prepend-icon="mdi-cash-sync" class="mt-1" @click.stop="funding.openFundingSources({ subsidyId: props.subsidy!.id, amount: -(redistributable ?? 0) })"
+            >Где взять деньги</v-btn>
+          </div>
         </div>
       </div>
     </template>
   </v-tooltip>
+
+  <RedistributableDrillDialog
+    :visible="drillVisible" :subsidy-id="props.subsidy?.id ?? null" :kind="drillKind"
+    @close="drillVisible = false"
+  />
 
   <!-- «Остаток субсидии» (владелец, 06.10.2026) = бюджет ФЭО − оплачено. Пока
        поступление на счёт = бюджету ФЭО (ввода поступлений нет), поэтому это
@@ -127,12 +149,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { KIND_LABELS, type ItemTypeKind } from '@/utils/itemTypeKind'
 import { formatEconomyUnmeasuredText } from '@/utils/economyUnmeasured'
 import type { SubsidyRow } from '@/composables/subsidies/types'
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
+import RedistributableDrillDialog from '@/components/subsidies/RedistributableDrillDialog.vue'
 
 const props = defineProps<{
   subsidy: SubsidyRow | null
@@ -140,6 +163,16 @@ const props = defineProps<{
 }>()
 
 const funding = useFundingSources()
+
+// Расшифровка «Товары»/«Услуги» по клику (доп. задача 06.10.2026) —
+// RedistributableDrillDialog сам зовёт GET /dashboard/redistributable-drill
+// (Правило №6 — этот компонент ничего не считает, только открывает диалог).
+const drillVisible = ref(false)
+const drillKind = ref<'goods' | 'services'>('goods')
+function openDrill(kind: 'goods' | 'services') {
+  drillKind.value = kind
+  drillVisible.value = true
+}
 
 interface SplitRow { kind: ItemTypeKind; label: string; amount: number }
 
@@ -217,5 +250,83 @@ const splitRows = computed<SplitRow[]>(() => {
   color: #EF4444;
   white-space: normal;
   word-break: break-word;
+}
+/* Задача (06.10.2026, доп.): 2 колонки внутри карточки на компьютере — левая
+   сумма+подпись+4 строки, правая товары/услуги+перерасход+кнопка. Высота
+   карточки перестаёт расти с ростом числа строк расшифровки (растягивала ряд
+   карточек, см. .kpi-redistributable в styles/subsidies.css — span 2 по
+   колонкам сетки, тот же приём, что .kpi-paid). На мобильном (≤600px) —
+   обратно в одну колонку (правило в styles/subsidies.css). */
+.kpi-redistributable-grid {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.kpi-redistributable-col-main {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+.kpi-redistributable-col-side {
+  flex: 1 1 50%;
+  min-width: 0;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  padding-left: 16px;
+}
+@media (max-width: 600px) {
+  .kpi-redistributable-grid {
+    flex-direction: column;
+    gap: 0;
+  }
+  .kpi-redistributable-col-side {
+    border-left: none;
+    padding-left: 0;
+    margin-top: 6px;
+  }
+}
+/* scoped-стиль родителя SubsidyKpiCards.vue (.kpi-split-row-clickable, и ВСЯ
+   разметка строк товары/услуги — kpi-split-rows/kpi-split-row/kpi-split-dot/
+   kpi-split-text/kpi-split-loading) НЕ доходит до дочернего компонента (урок
+   feedback_split_view_css_before_after_screenshots.md) — координатор поймал
+   это по скриншоту (товары/услуги рисовались крупным шрифтом без кружков,
+   т.к. в этом файле были только .kpi-split-row-neg/-clickable, а базовые
+   правила размера/кружков — только в SubsidyKpiCards.vue). Повторяем ВСЮ
+   группу правил здесь, байт-в-байт как в SubsidyKpiCards.vue (её же классы,
+   нужен визуально идентичный результат на соседних карточках). */
+.kpi-split-rows {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kpi-split-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  padding: 1px 4px;
+  border-radius: 4px;
+  cursor: default;
+  opacity: 0.85;
+  transition: background 0.15s, opacity 0.15s;
+}
+.kpi-split-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.kpi-split-dot-goods { background: #3B82F6; }
+.kpi-split-dot-services { background: #A855F7; }
+.kpi-split-dot-unspecified { background: #94A3B8; }
+.kpi-split-loading {
+  opacity: 0.6;
+}
+.kpi-split-row-clickable {
+  cursor: pointer;
+}
+.kpi-split-row-clickable:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
 }
 </style>

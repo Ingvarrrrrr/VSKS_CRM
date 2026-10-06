@@ -36,6 +36,21 @@ over_plan_categories_by_subsidy — красная строка карточки
 законтрактовано сверх плана»: читает committed/plan КОРНЕВЫХ узлов дерева
 (compute_feo_plan_tree) — та же Σ committed/plan, что уже участвует в
 planned_not_committed узла, вторая формула не вводится.
+
+not_committed_raw_rows — ПОСТРОЧНАЯ версия (владелец, 06.10.2026, доп. задача
+«расшифровка карточки по клику "Товары"/"Услуги"»): ОДНО место, где считается
+`raw` одной плановой позиции (contribution − committed_by_planned_item). Обе
+агрегатные функции модуля (not_committed_raw_by_subsidy) переиспользуют ЭТИ
+строки, не считают raw заново (ПРАВИЛО №6) — not_committed_raw_by_subsidy
+теперь просто суммирует not_committed_raw_rows по need_level/kind, поэтому
+Σ строк диалога ВСЕГДА равна карточке «Можно перераспределить» (товары/
+услуги) побайтово. Строки с |raw| < 0.005 не возвращаются («остаток 0» —
+шум списка, не ошибка расчёта). Для позиций, по которым существует дочерний
+заказ рамочного договора в статусе 'contracted' (тот же предикат, что
+app.services.stage_cumulative.contracted_not_ordered_by_subsidy — договор
+заключён, заказ как отдельная закупка ещё не оформлен), ставится флаг
+`contracted_not_ordered=True` — фронт показывает отдельную подпись «нужности»
+вместо хотелось бы/скорее всего, вторая сумма не считается.
 """
 from typing import Optional
 
@@ -44,37 +59,59 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
+from app.models.purchase import Purchase
+from app.models.purchase_item import PurchaseItem
 from app.services.committed_amounts import committed_by_planned_item, planned_item_contributions
 from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, kind_of
 from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE, normalize_need_level
+
+_ZERO_EPS = 0.005
 
 
 def _empty_kind_bucket() -> dict:
     return {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
 
 
-async def not_committed_raw_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
-    """{subsidy_id: {"nice_raw": float, "likely_raw": float, "by_kind": {goods,
-    services, unspecified}}} — Σ по ВСЕМ активным FeoPlannedItem субсидии
-    (любой категории дерева, без рекурсивного роллапа и БЕЗ клэмпа на
-    отдельной позиции) — см. докстринг модуля за формулой `raw`."""
-    result: dict[int, dict] = {
-        sid: {"nice_raw": 0.0, "likely_raw": 0.0, "by_kind": _empty_kind_bucket()}
-        for sid in subsidy_ids
-    }
+def _category_path(cat_id: Optional[int], cats: dict[int, dict]) -> str:
+    """'Направление › Тип расходов › Позиция' — путь от корня до cat_id
+    включительно, по parent_id (защита от циклов — не более глубины словаря)."""
+    if cat_id is None or cat_id not in cats:
+        return ""
+    names: list[str] = []
+    seen: set = set()
+    cur = cat_id
+    while cur is not None and cur in cats and cur not in seen:
+        seen.add(cur)
+        names.append(cats[cur]["name"] or "")
+        cur = cats[cur]["parent_id"]
+    return " › ".join(reversed(names))
+
+
+async def not_committed_raw_rows(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, list[dict]]:
+    """{subsidy_id: [{"planned_item_id","name","feo_category_id","category_path",
+    "kind","need_level","contribution","committed","raw","contracted_not_ordered"}]}
+    — см. докстринг модуля за формулой `raw` и условием фильтрации нулевых
+    строк. `need_level` — 'nice_to_have'/'likely' (app.services.plan_need_level),
+    нормализовано normalize_need_level."""
+    result: dict[int, list[dict]] = {sid: [] for sid in subsidy_ids}
     if not subsidy_ids:
         return result
 
     cat_rows = (await db.execute(
-        select(FeoCategory.id, FeoCategory.subsidy_id).where(FeoCategory.subsidy_id.in_(subsidy_ids))
+        select(FeoCategory.id, FeoCategory.subsidy_id, FeoCategory.parent_id, FeoCategory.name)
+        .where(FeoCategory.subsidy_id.in_(subsidy_ids))
     )).all()
     if not cat_rows:
         return result
     sid_by_cat = {r.id: r.subsidy_id for r in cat_rows}
+    cats = {r.id: {"parent_id": r.parent_id, "name": r.name} for r in cat_rows}
     cat_ids = list(sid_by_cat.keys())
 
     items_q = (
-        select(FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.need_level)
+        select(
+            FeoPlannedItem.id, FeoPlannedItem.feo_category_id,
+            FeoPlannedItem.need_level, FeoPlannedItem.name,
+        )
         .where(FeoPlannedItem.feo_category_id.in_(cat_ids))
         .where(FeoPlannedItem.is_active.is_(True))
     )
@@ -82,8 +119,27 @@ async def not_committed_raw_by_subsidy(db: AsyncSession, subsidy_ids: list[int])
     if not rows:
         return result
 
+    item_ids = [r.id for r in rows]
     contrib = await planned_item_contributions(db, cat_ids)
-    committed_map = await committed_by_planned_item(db, [r.id for r in rows])
+    committed_map = await committed_by_planned_item(db, item_ids)
+
+    # «Договор заключён, заказ ещё не создан» — ТОТ ЖЕ предикат, что
+    # stage_cumulative.contracted_not_ordered_by_subsidy (status='contracted',
+    # дочерний заказ рамочного договора, не остановлена), здесь — просто
+    # множество planned_item_id, чьи заказы под него попадают (не вторая
+    # сумма, флаг для отображения).
+    flagged_ids: set = set()
+    if item_ids:
+        flag_rows = (await db.execute(
+            select(PurchaseItem.feo_planned_item_id)
+            .join(Purchase, Purchase.id == PurchaseItem.purchase_id)
+            .where(Purchase.status == "contracted")
+            .where(Purchase.parent_purchase_id.isnot(None))
+            .where(Purchase.stopped_at.is_(None))
+            .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
+            .distinct()
+        )).all()
+        flagged_ids = {r.feo_planned_item_id for r in flag_rows}
 
     for r in rows:
         info = contrib.get(r.id)
@@ -94,13 +150,46 @@ async def not_committed_raw_by_subsidy(db: AsyncSession, subsidy_ids: list[int])
             continue
         committed_amt = (committed_map.get(r.id) or {}).get("amount", 0.0)
         raw = info["amount"] - committed_amt
-        level = normalize_need_level(r.need_level)
-        d = result[sid]
-        if level == NEED_LEVEL_NICE_TO_HAVE:
-            d["nice_raw"] += raw
-        else:
-            d["likely_raw"] += raw
-        d["by_kind"][kind_of(info["item_type_effective"])] += raw
+        if abs(raw) < _ZERO_EPS:
+            continue
+        result[sid].append({
+            "planned_item_id": r.id,
+            "name": r.name,
+            "feo_category_id": r.feo_category_id,
+            "category_path": _category_path(r.feo_category_id, cats),
+            "kind": kind_of(info["item_type_effective"]),
+            "need_level": normalize_need_level(r.need_level),
+            "contribution": info["amount"],
+            "committed": committed_amt,
+            "raw": raw,
+            "contracted_not_ordered": r.id in flagged_ids,
+        })
+    return result
+
+
+async def not_committed_raw_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
+    """{subsidy_id: {"nice_raw": float, "likely_raw": float, "by_kind": {goods,
+    services, unspecified}}} — Σ not_committed_raw_rows по need_level/kind
+    (ПРАВИЛО №6 — raw одной позиции считается ТОЛЬКО там, эта функция —
+    чистая агрегация, не вторая формула)."""
+    result: dict[int, dict] = {
+        sid: {"nice_raw": 0.0, "likely_raw": 0.0, "by_kind": _empty_kind_bucket()}
+        for sid in subsidy_ids
+    }
+    if not subsidy_ids:
+        return result
+
+    rows_by_sid = await not_committed_raw_rows(db, subsidy_ids)
+    for sid, rows in rows_by_sid.items():
+        d = result.get(sid)
+        if d is None:
+            continue
+        for row in rows:
+            if row["need_level"] == NEED_LEVEL_NICE_TO_HAVE:
+                d["nice_raw"] += row["raw"]
+            else:
+                d["likely_raw"] += row["raw"]
+            d["by_kind"][row["kind"]] += row["raw"]
     return result
 
 

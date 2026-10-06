@@ -53,6 +53,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.feo_plan_fact import fact_amounts_for_rows
 from app.services.plan_need_level import NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE, normalize_need_level
+from app.services.purchase_amounts import aggregate_scope_expr
 from sqlalchemy import func
 
 # Разовый договор / закупка без типа договора (single, NULL, пусто, авансовый) —
@@ -165,6 +166,16 @@ async def committed_consumption_by_category(
         .where(Purchase.stopped_at.is_(None))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
         .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
+        # Рамочная ГОЛОВА (framework_with_amount/framework_cumulative,
+        # parent_purchase_id IS NULL) с реально существующими дочерними
+        # заказами — та же исключающая точка, что и в карточках субсидии
+        # (aggregate_scope_expr, purchase_amounts.py, решение владельца
+        # 05.10.2026, ПРАВИЛО №6 — НЕ второй предикат): её единственная
+        # позиция «Лимит договора …» организационная, реальные деньги несут
+        # дочерние закупки своей суммой по стадии. Без этого фильтра голова
+        # задваивала «законтрактовано»/«в закупках» своей категории (ложный
+        # перерасход узла «Не определена», найдено 06.10.2026).
+        .where(aggregate_scope_expr())
     )
     if not include_over_plan:
         stmt = stmt.where(PurchaseItem.over_plan.is_(False))

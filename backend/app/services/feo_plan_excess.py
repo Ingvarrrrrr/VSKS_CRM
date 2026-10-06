@@ -26,6 +26,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.feo_plan_common import _leaf_plan_manual, _order_substituted_plan, plan_floor_addition
 from app.services.feo_plan_tree import compute_feo_plan_tree
+from app.services.purchase_amounts import aggregate_scope_expr
 
 
 async def find_excess_culprit(
@@ -422,6 +423,12 @@ async def find_excess_culprit(
             .where(Purchase.stopped_at.is_(None))
             .where(PurchaseItem.over_plan.is_(False))
             .where(Purchase.subsidy_id == cat.subsidy_id)
+            # Та же исключающая точка, что в committed_consumption_by_category
+            # (aggregate_scope_expr, purchase_amounts.py, ПРАВИЛО №6) — рамочная
+            # голова с реальными дочерними заказами не должна сама попадать в
+            # список виновников «из-за» (её «Лимит договора …» — не реальный
+            # расход, см. docstring committed_consumption_by_category).
+            .where(aggregate_scope_expr())
             .where(sqlor(
                 PurchaseItem.feo_planned_item_id.is_(None),
                 _fpi_ord.id.is_(None),
@@ -474,6 +481,10 @@ async def find_excess_culprit(
         .where(Purchase.stopped_at.is_(None))
         .where(Purchase.subsidy_id == cat.subsidy_id)
         .where(PurchaseItem.over_plan.is_(True))
+        # Та же исключающая точка, что и у Источника №1а/committed_consumption_
+        # by_category выше — рамочная голова с реальными дочерними заказами не
+        # должна сама попасть в «сверх плана» (ПРАВИЛО №6, aggregate_scope_expr).
+        .where(aggregate_scope_expr())
         .order_by(Purchase.id.asc(), PurchaseItem.id.asc())
     )).all()
     for j, r in enumerate(over_rows):

@@ -12,8 +12,16 @@ app.services.purchase_amounts.aggregate_scope_expr (решение владел�
 committed_consumption_by_category) и построчный разбор виновника
 (app.services.feo_plan_excess.find_excess_culprit) не применяли этот же
 предикат — заводили фактически ВТОРУЮ точку «кто считается» (ПРАВИЛО №6).
-Эта регрессия проверяет, что обе точки теперь используют ОДИН и тот же
-aggregate_scope_expr(), не вторую копию условия.
+
+06.10.2026, ВТОРОЙ заход (прод-проверка коммита cd858559): committed стал 0,
+но узел ПО-ПРЕЖНЕМУ показывал consumed/fact/fact_services/
+excess_fact_over_plan(_services) — голова (статус 'contracted'/'ordered',
+входит в PLANNED_STATUSES/FACT_ELIGIBLE_STATUSES/ORDERED_STATUSES) считалась
+в app.services.feo_plan_fact.plan_consumption_by_category/
+fact_consumption_by_category/ordered_consumption_by_category — ТРЕТЬЯ и
+ЧЕТВЁРТАЯ точки с тем же пробелом, committed_amounts.py их не затрагивает.
+Эта регрессия проверяет, что ВСЕ эти точки теперь используют ОДИН и тот же
+aggregate_scope_expr(), не вторую-третью-четвёртую копию условия.
 """
 from decimal import Decimal
 
@@ -111,6 +119,15 @@ async def test_framework_head_excluded_from_tree_committed_and_culprit(db_sessio
     assert node_a["committed"] == 0.0
     assert node_a["plan"] == 0.0
     assert node_a["excess_amount"] == 0.0
+    # ── Второй заход (прод-проверка 06.10.2026): consumed/fact/excess_fact_* ──
+    assert node_a["consumed"] == 0.0
+    assert node_a["fact"] == 0.0
+    assert node_a["fact_goods"] == 0.0
+    assert node_a["fact_services"] == 0.0
+    assert node_a["fact_unspecified"] == 0.0
+    assert node_a["excess_fact_over_plan"] == 0.0
+    assert node_a["excess_fact_over_plan_goods"] == 0.0
+    assert node_a["excess_fact_over_plan_services"] == 0.0
     assert node_b["committed"] == 300_000.0
     assert node_b["plan"] == 300_000.0
     assert node_b["excess_amount"] == 0.0

@@ -32,6 +32,7 @@ from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.acceptance_docs import total_amount as _acceptance_total_amount
+from app.services.purchase_amounts import aggregate_scope_expr
 # ⚠️ НЕ импортировать app.services.item_type_split на уровне модуля — она тянет
 # app.routers.feo_planned_items (normalize_item_type), а тот в конце концов
 # импортирует app.services.plan_to_wish → app.services.feo_plan_fact (этот же
@@ -352,6 +353,15 @@ async def plan_consumption_by_category(
         .where(Purchase.stopped_at.is_(None))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
         .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
+        # Та же исключающая точка, что и в карточках субсидии/committed_amounts.
+        # committed_consumption_by_category (aggregate_scope_expr, purchase_amounts.py,
+        # ПРАВИЛО №6, решение владельца 05.10.2026): рамочная ГОЛОВА с реально
+        # существующими дочерними заказами исключена — её «Лимит договора …» не
+        # расходует план категории, расход несут сами заказы. Без этого фильтра
+        # PLANNED_STATUSES (включает 'contracted' — типичный статус головы) считал
+        # голову как «в закупках»/consumed наравне с заказами (найдено 06.10.2026,
+        # после фикса committed_amounts.py — consumed этот предикат не разделял).
+        .where(aggregate_scope_expr())
         .group_by(cat_col, PurchaseItem.over_plan, PurchaseItem.item_type)
     )
     if exclude_planned_item_linked:
@@ -510,6 +520,11 @@ async def ordered_consumption_by_category(
         .where(PurchaseItem.over_plan.is_(False))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
         .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
+        # Та же исключающая точка, что и у plan/fact_consumption_by_category
+        # выше (aggregate_scope_expr, ПРАВИЛО №6) — согласованность с
+        # «Заказано»/«Ведётся работа» карточек субсидии, которые уже исключают
+        # рамочную голову с реальными дочерними заказами.
+        .where(aggregate_scope_expr())
     )
     if exclude_planned_item_linked:
         stmt = stmt.where(
@@ -623,6 +638,14 @@ async def fact_consumption_by_category(
         .where(PurchaseItem.over_plan.is_(False))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
         .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
+        # Та же исключающая точка, что и у plan_consumption_by_category/
+        # committed_consumption_by_category выше (aggregate_scope_expr, ПРАВИЛО
+        # №6) — рамочная голова с реальными дочерними заказами не формирует
+        # «факт» своей категории (её «Лимит договора …» — организационная
+        # запись, не реальная закупка). FACT_ELIGIBLE_STATUSES включает
+        # 'contracted' — типичный статус такой головы, найдено 06.10.2026 (узел
+        # «Не определена» показывал ложный excess_fact_over_plan_services).
+        .where(aggregate_scope_expr())
     )
 
     rows = (await db.execute(stmt)).all()

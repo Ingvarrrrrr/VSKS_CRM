@@ -27,6 +27,10 @@ export interface WidgetsData {
   delivered_unpaid: WidgetMetric
   paid: WidgetMetric
   contracts: WidgetMetric
+  // Плашка «Оплачено больше, чем поставлено» (владелец, 07.10.2026, прод
+  // id=74 «ЛНР») — Σ excess ПО ЗАКУПКАМ видимого scope (backend app/routers/
+  // dashboard_charts.py::widgets["paid_over_delivered"], Правило №6).
+  paid_over_delivered?: { amount: number; prepayment_amount: number; count: number }
 }
 
 export interface TypeSplitByKind { goods: number; services: number; unspecified: number }
@@ -77,6 +81,11 @@ export interface SubsidyRow {
   // ни официального бюджета, ни суммы ФЭО не введено; budget ниже в этом
   // случае равен 0 намеренно (см. мэппинг budget: ниже), не выдуманному плану.
   feo_entered?: boolean
+  // Плашка «Оплачено больше, чем поставлено» (владелец, 07.10.2026, прод
+  // id=74 «ЛНР») — тот же источник, что composables/subsidies/types.ts
+  // (dashboard_charts.py::subsidy_stats, Правило №6, не пересчитываем здесь).
+  paid_over_delivered?: number | null
+  paid_over_delivered_prepayment?: number | null
 }
 
 // Владелец (2026-08-30): «субсидии у потолка» — сумма заказанного (включая
@@ -343,6 +352,25 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
       }
     }
     return acc
+  })
+
+  // Плашка «Оплачено больше, чем поставлено» (владелец, 07.10.2026) — без
+  // фильтра субсидий читает глобальный widgets.paid_over_delivered (готовая
+  // Σ по видимому scope), с фильтром — суммирует готовое per-subsidy поле
+  // filteredSubsidies[].paid_over_delivered (Правило №6, не пересчитываем
+  // формулу excess здесь, только складываем уже посчитанные бэкендом числа).
+  const paidOverDeliveredSummary = computed(() => {
+    if (selectedSubsidyIds.value.length === 0) {
+      const w = widgetsData.value?.paid_over_delivered
+      return { amount: w?.amount ?? 0, prepaymentAmount: w?.prepayment_amount ?? 0 }
+    }
+    let amount = 0
+    let prepaymentAmount = 0
+    for (const row of filteredSubsidies.value) {
+      amount += row.paid_over_delivered ?? 0
+      prepaymentAmount += row.paid_over_delivered_prepayment ?? 0
+    }
+    return { amount, prepaymentAmount }
   })
 
   // ── Animated KPI targets (mirrors kpiCards amount logic) ─────────────
@@ -636,6 +664,9 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         budget_from_plan: s.budget_from_plan ?? false,
         // 07.10.2026 — см. docstring у поля в interface SubsidyRow выше.
         feo_entered: s.feo_entered ?? true,
+        // Плашка «Оплачено больше, чем поставлено» — см. docstring выше.
+        paid_over_delivered: s.paid_over_delivered ?? null,
+        paid_over_delivered_prepayment: s.paid_over_delivered_prepayment ?? null,
       }))
 
       statusCounts.value = chartsData.status_counts
@@ -673,6 +704,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
     totalNotCommittedLikely, totalNotCommittedNice, totalMonthlyFutureToYearEnd,
     totalBalanceByMarks, totalBalanceByStatement, totalBalanceNoBudgetCount, totalBalanceHasAny,
     overrunSubsidies, effectiveWidgets, kpiCards,
+    paidOverDeliveredSummary,
     loadAll,
   }
 }

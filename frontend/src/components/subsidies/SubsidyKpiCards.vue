@@ -375,6 +375,30 @@
        ли себя (activeKind). -->
   <ExcessDrilldownBar />
 
+  <!-- Задача (владелец, 07.10.2026, прод id=74 «ЛНР»): «об этом должно прям
+       кричать… должна быть плашечка» — карточки «Поставлено»/«Оплачено» выше
+       могут давать «оплачено больше, чем поставлено» (напр. закупка
+       work_in_progress с оплатой по отметке, договора ещё нет — см.
+       paid_over_delivered.py). Σ excess ПО ЗАКУПКАМ (paid_over_delivered),
+       НЕ разность карточек «Оплачено» − «Поставлено» целиком (та разность
+       может не совпасть — переплата одной закупки не гасит недоплату
+       другой, см. её docstring) — клик открывает список закупок. -->
+  <v-alert
+    v-if="paidOverDeliveredTotal > 0.5"
+    type="error"
+    density="compact"
+    variant="tonal"
+    class="mb-3 paid-over-delivered-alert"
+    icon="mdi-alert-decagram"
+    @click="paidOverDeliveredDrillVisible = true"
+  >
+    Оплачено больше, чем поставлено: +{{ formatCurrency(paidOverDeliveredTotal) }}
+    <template v-if="paidOverDeliveredPrepayment > 0.5">
+      (из них авансом: {{ formatCurrency(paidOverDeliveredPrepayment) }})
+    </template>
+    <span class="text-caption ml-1">(нажмите для списка закупок)</span>
+  </v-alert>
+
   <!-- Владелец (2026-08-30): предупреждение «сумма заказанного приближается
        к потолку субсидии» — потолок = calculate_budget_from_categories
        (тот же источник, что и жёсткий гейт PLAN_OVER_SUBSIDY_CEILING),
@@ -453,6 +477,16 @@
     :kind="cardDrillKind"
     @close="cardDrillVisible = false"
   />
+
+  <!-- Плашка «Оплачено больше, чем поставлено» (07.10.2026) — список
+       закупок, клик по строке открывает закупку, как у остальных drill. -->
+  <PaidOverDeliveredDrillDialog
+    :visible="paidOverDeliveredDrillVisible"
+    :subsidy-id="ctx.selectedId.value"
+    scope="managed"
+    @close="paidOverDeliveredDrillVisible = false"
+    @row-click="(id) => { paidOverDeliveredDrillVisible = false; ctx.router.push(`/orders/${id}/edit`) }"
+  />
 </template>
 
 <script setup lang="ts">
@@ -485,6 +519,7 @@ import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
 import SubsidyMoneyCards from '@/components/subsidies/SubsidyMoneyCards.vue'
 import ContractsDrillDialog from '@/components/subsidies/ContractsDrillDialog.vue'
 import FeoCardDrillDialog, { type FeoCardDrillCard } from '@/components/subsidies/FeoCardDrillDialog.vue'
+import PaidOverDeliveredDrillDialog from '@/components/subsidies/PaidOverDeliveredDrillDialog.vue'
 import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
 import ExcessDrilldownBar from '@/components/subsidies/ExcessDrilldownBar.vue'
 import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
@@ -542,6 +577,13 @@ const paidDiff = computed(() => {
   return paidDeclaredTotal.value - paidConfirmedTotal.value
 })
 const paidHasDiscrepancy = computed(() => Math.abs(paidDiff.value) > 0.5)
+// Плашка «Оплачено больше, чем поставлено» (владелец, 07.10.2026, прод id=74
+// «ЛНР») — готовые поля бэкенда (dashboard_charts.py::subsidy_stats:
+// paid_over_delivered/paid_over_delivered_prepayment, Правило №6, не считаем
+// здесь заново). Σ excess ПО ЗАКУПКАМ — не разность paid/delivered карточек.
+const paidOverDeliveredTotal = computed(() => Number(ctx.selectedSubsidy.value?.paid_over_delivered ?? 0))
+const paidOverDeliveredPrepayment = computed(() => Number(ctx.selectedSubsidy.value?.paid_over_delivered_prepayment ?? 0))
+const paidOverDeliveredDrillVisible = ref(false)
 // roundMoney — защита от шума плавающей точки: бюджет ФЭО и план суммируются
 // из десятков строк, «равно нулю» на деле выходит 0.000000002 ₽, что
 // переворачивало подпись карточки на «Превышение 0 ₽» (владелец, 2026-10-06,
@@ -825,6 +867,9 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
 }
 .kpi-paid-dual-warn .kpi-paid-dual-amount {
   color: #fb923c;
+}
+.paid-over-delivered-alert {
+  cursor: pointer;
 }
 .kpi-paid-dual-sub {
   font-size: 10.5px;

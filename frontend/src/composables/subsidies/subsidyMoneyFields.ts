@@ -44,5 +44,14 @@ export function pickSubsidyMoneyFields(s: any) {
     // types.ts. ?? true — старый бэк без этого поля продолжает считаться
     // «ФЭО введено» (прежнее поведение), не ломаем карточки задним числом.
     feo_entered: s.feo_entered ?? true,
+    // Плашка «Оплачено больше, чем поставлено» (владелец, 07.10.2026, прод
+    // id=74 «ЛНР») — готовые поля /dashboard/charts (dashboard_charts.py::
+    // subsidy_stats, см. backend app/services/paid_over_delivered.py),
+    // ничего не считаем здесь (Правило №6). Без этой записи поле терялось бы
+    // точно так же, как committed/balance_by_marks до него (см. докстринг
+    // модуля выше) — SubsidyKpiCards.vue читает его напрямую с ctx.selectedSubsidy.
+    paid_over_delivered: s.paid_over_delivered ?? 0,
+    paid_over_delivered_prepayment: s.paid_over_delivered_prepayment ?? 0,
+    paid_over_delivered_by_kind: s.paid_over_delivered_by_kind ?? null,
   }
 }

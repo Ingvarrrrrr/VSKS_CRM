@@ -51,11 +51,15 @@ from app.routers.dashboard_contracts_drill import router as contracts_drill_rout
 # клику (владелец, 06.10.2026, доп. задача) — тот же приём подключения
 # под-роутера.
 from app.routers.dashboard_redistributable_drill import router as redistributable_drill_router
+# Расшифровка плашки «Оплачено больше, чем поставлено» (владелец, 07.10.2026,
+# прод id=74 «ЛНР») — тот же приём подключения под-роутера.
+from app.routers.dashboard_paid_over_delivered_drill import router as paid_over_delivered_drill_router
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 router.include_router(type_drill_router)
 router.include_router(contracts_drill_router)
 router.include_router(redistributable_drill_router)
+router.include_router(paid_over_delivered_drill_router)
 
 
 @router.get("/charts")
@@ -388,6 +392,18 @@ async def dashboard_charts(
     # которой пользуется и карточка, и drill (dashboard_type_drill.py), и Excel.
     from app.services.delivered_unpaid_residual import delivered_unpaid_residual_by_subsidy as _residual_fn
     delivered_unpaid_residual_map = await _residual_fn(db, sid_list)
+    # Плашка «Оплачено больше, чем поставлено» (владелец, 07.10.2026, прод
+    # id=74 «ЛНР»: «Оплачено» 3 385 009,26 > «Поставлено» 3 381 872,26, причина
+    # — РЕЕ-2026-03421, work_in_progress, оплата по отметке 3 137, договора
+    # нет). ПРАВИЛО №6 — зеркало delivered_unpaid_residual_by_subsidy выше, та
+    # же пара функций (сумма + построчный drill, см.
+    # paid_over_delivered_rows/dashboard_type_drill.py) для карточки и списка.
+    # ⚠️ Σ excess по закупкам subsidy_id МОЖЕТ отличаться от
+    # (total_paid − total_delivered) субсидии целиком (переплата одной
+    # закупки не гасит недоплату другой) — фронт обязан показывать Σ excess
+    # списка, не разность карточек (см. docstring paid_over_delivered.py).
+    from app.services.paid_over_delivered import paid_over_delivered_by_subsidy as _paid_over_delivered_fn
+    paid_over_delivered_map = await _paid_over_delivered_fn(db, sid_list)
 
     subsidy_stats = []
     for row in subsidy_rows:
@@ -592,6 +608,13 @@ async def dashboard_charts(
             # дашборда — там сохраняется прежний смысл (status='delivered', без
             # вычета оплаты).
             "total_delivered_unpaid": (delivered_unpaid_residual_map.get(row.id) or {}).get("total", 0.0),
+            # Плашка «Оплачено больше, чем поставлено» (owner 07.10.2026) —
+            # см. комментарий выше про paid_over_delivered_map, ПРАВИЛО №6.
+            "paid_over_delivered": (paid_over_delivered_map.get(row.id) or {}).get("total", 0.0),
+            "paid_over_delivered_prepayment": (paid_over_delivered_map.get(row.id) or {}).get("prepayment_total", 0.0),
+            "paid_over_delivered_by_kind": (paid_over_delivered_map.get(row.id) or {}).get(
+                "by_kind", {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+            ),
             # Per-subsidy widget basket (зеркало формул глобального widgets dict)
             "widget": {
                 "plan_schedule": {
@@ -762,6 +785,22 @@ async def dashboard_charts(
         "contracts": {
             "amount": contracts_amt,
             "count":  contracts_cnt,
+        },
+        # Плашка «Оплачено больше, чем поставлено» (owner 07.10.2026, прод
+        # id=74 «ЛНР») — Σ excess по ВСЕМ закупкам sid_list (тот же scope
+        # видимости, что и остальные widgets[...] выше), paid_over_delivered_map
+        # уже посчитан на уровне функции paid_over_delivered_by_subsidy (ПРАВИЛО
+        # №6, одна функция для карточки субсидии и для этого глобального
+        # виджета — просто сумма per-subsidy значений, не вторая формула).
+        # ⚠️ amount здесь — Σ excess ПО ЗАКУПКАМ (не разность widgets["paid"] и
+        # widgets["delivered"] — те считаются по-другому и могут не совпасть,
+        # см. docstring paid_over_delivered.py).
+        "paid_over_delivered": {
+            "amount": sum((v.get("total", 0.0) for v in paid_over_delivered_map.values()), 0.0),
+            "prepayment_amount": sum((v.get("prepayment_total", 0.0) for v in paid_over_delivered_map.values()), 0.0),
+            "count": sum(
+                1 for sid in paid_over_delivered_map if (paid_over_delivered_map.get(sid) or {}).get("total", 0.0) > 0
+            ),
         },
     }
 

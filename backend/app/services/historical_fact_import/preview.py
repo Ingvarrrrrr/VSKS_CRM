@@ -36,6 +36,18 @@ def _rub(v) -> str:
     return f"{formatted} ₽" if formatted else "0,00 ₽"
 
 
+def paid_not_delivered_predicate(paid, target_status: Optional[str], is_advance: bool) -> bool:
+    """Единственный предикат «оплата есть, а статус строки ниже «Поставлено»/
+    «Оплачено»» (owner, 07.10.2026, прод id=74 «ЛНР»: РЕЕ-2026-03421). Один
+    источник ПРАВИЛО №6 — используется и для текста предупреждения строки
+    (ниже), и для totals.paid_not_delivered (владелец, доп. задача: «при
+    импорте об этом должно идти уведомление» — на шаге итогов мастера, не
+    только у самой строки). Аванс (is_advance) — оплата до поставки сама по
+    себе законна и уже объяснена отдельным предупреждением «аванс», здесь не
+    считается."""
+    return bool(paid and target_status and target_status not in ("delivered", "paid") and not is_advance)
+
+
 async def build_preview(
     db: AsyncSession,
     subsidy_id: int,
@@ -159,6 +171,20 @@ async def build_preview(
             warnings.append(
                 'Статус «Оплачено», но сумма оплаты пуста — платёж не будет создан '
                 '(проверьте, что колонка оплаты сопоставлена)'
+            )
+
+        # Задача (владелец, 07.10.2026, прод id=74 «ЛНР», РЕЕ-2026-03421) —
+        # «Оплачено больше, чем поставлено» должно быть видно уже на импорте,
+        # не только постфактум на дашборде (см. paid_over_delivered.py —
+        # зеркало той же идеи «оплата раньше поставки» на уровне закупки,
+        # не вторая формула: здесь просьба предупредить СТРОКУ импорта, там —
+        # посчитать уже созданные закупки). Аванс (is_advance) уже объяснён
+        # отдельным предупреждением выше — не дублируем.
+        if paid_not_delivered_predicate(row["paid"], status_info["target_status"], is_advance):
+            status_label = STATUS_LABELS.get(status_info["target_status"], status_info["target_status"])
+            warnings.append(
+                f'Оплата {_rub(row["paid"])} при статусе «{status_label}» — '
+                'оплачено, но не поставлено; проверьте статус'
             )
 
         plan_amount = row["plan"]["amount"]
@@ -428,6 +454,28 @@ async def build_preview(
 
     existing_updates_list = await existing_update_mod.build_preview_entries(db, existing_update_buckets)
 
+    # Доп. задача (владелец, 07.10.2026): «при импорте об этом должно идти
+    # уведомление» — предупреждение у строки уже есть (paid_not_delivered_
+    # predicate выше), но на шаге итогов мастера (FactImportStepConfirm.vue)
+    # его не видно среди плиток. Тот же предикат, тот же источник подписи
+    # статуса (STATUS_LABELS) — не вторая формула (ПРАВИЛО №6). НЕ пропущенные
+    # строки (skip=False) — это покрывает и обычные строки, и existing_purchase
+    # (та же проверка read.status/.paid/.is_advance на уровне строки файла,
+    # existing_purchase не меняет её «итоговый статус ниже delivered»).
+    paid_not_delivered_rows: list[dict] = []
+    paid_not_delivered_amount = Decimal(0)
+    for r in out_rows:
+        if r["skip"]:
+            continue
+        if paid_not_delivered_predicate(r["paid"], r["status"], r["is_advance"]):
+            paid_not_delivered_rows.append({
+                "row": r["row"],
+                "name": r["name"],
+                "status_label": STATUS_LABELS.get(r["status"], r["status"]),
+                "paid": r["paid"],
+            })
+            paid_not_delivered_amount += Decimal(str(r["paid"]))
+
     return {
         "format": detected["format"],
         "sheet": sheet,
@@ -444,6 +492,11 @@ async def build_preview(
             "paid_amount": float(totals_paid),
             "skipped": skipped_count,
             "existing_updates": len(existing_updates_list),
+            "paid_not_delivered": {
+                "count": len(paid_not_delivered_rows),
+                "amount": float(paid_not_delivered_amount),
+                "rows": paid_not_delivered_rows,
+            },
         },
         "warnings": top_warnings,
     }

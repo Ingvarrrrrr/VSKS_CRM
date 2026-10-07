@@ -58,6 +58,27 @@
       <GridItem v-bind="effectiveLayout.find(l => l.i === 'kpi')" key="kpi">
         <div ref="kpiWidgetEl" class="kpi-widget-measure">
           <DashboardGridWidget :editing="isEditing" label="KPI">
+            <!-- Задача (владелец, 07.10.2026, прод id=74 «ЛНР»): «об этом
+                 должно прям кричать» — «Оплачено» может превышать «Поставлено»
+                 (напр. закупка work_in_progress с оплатой по отметке, договора
+                 ещё нет, см. backend paid_over_delivered.py). Σ excess ПО
+                 ЗАКУПКАМ видимого scope — НЕ разность карточек целиком (та
+                 может не совпасть, см. её docstring). -->
+            <v-alert
+              v-if="paidOverDeliveredSummary.amount > 0.5"
+              type="error"
+              density="compact"
+              variant="tonal"
+              class="mb-2 paid-over-delivered-alert"
+              icon="mdi-alert-decagram"
+              @click="paidOverDeliveredDrillVisible = true"
+            >
+              Оплачено больше, чем поставлено: +{{ formatCurrency(paidOverDeliveredSummary.amount) }}
+              <template v-if="paidOverDeliveredSummary.prepaymentAmount > 0.5">
+                (из них авансом: {{ formatCurrency(paidOverDeliveredSummary.prepaymentAmount) }})
+              </template>
+              <span class="text-caption ml-1">(нажмите для списка закупок)</span>
+            </v-alert>
             <KpiCardsWidget
               :loading="loading" :mobile="mobile" :kpi-cards="kpiCards"
               :format-currency="formatCurrency" :format-currency-short="formatCurrencyShort"
@@ -234,6 +255,16 @@
       :go-to-order="goToOrder" :patch-is-likely-needed="patchIsLikelyNeeded"
       @export-xlsx="exportFinplanDrilldownXlsx"
     />
+
+    <!-- Плашка «Оплачено больше, чем поставлено» (07.10.2026) — список
+         закупок видимого scope (с текущим фильтром субсидий, если есть). -->
+    <PaidOverDeliveredDrillDialog
+      :visible="paidOverDeliveredDrillVisible"
+      :subsidy-ids="selectedSubsidyIds.length > 0 ? selectedSubsidyIds : null"
+      scope="dashboard"
+      @close="paidOverDeliveredDrillVisible = false"
+      @row-click="(id) => { paidOverDeliveredDrillVisible = false; router.push(`/orders/${id}/edit`) }"
+    />
   </div>
 </template>
 
@@ -245,6 +276,7 @@ import { GridLayout, GridItem } from 'grid-layout-plus'
 
 import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
 import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
+import PaidOverDeliveredDrillDialog from '@/components/subsidies/PaidOverDeliveredDrillDialog.vue'
 
 import DashboardHeader from '@/components/dashboard/DashboardHeader.vue'
 import DashboardSubsidyChips from '@/components/dashboard/DashboardSubsidyChips.vue'
@@ -298,8 +330,16 @@ const {
   totalFeoPlanned, totalRemaining, totalUsagePct,
   totalRedistributable,
   overrunSubsidies, effectiveWidgets, kpiCards,
+  paidOverDeliveredSummary,
   loadAll,
 } = useDashboardData(selectedYear, selectedSubsidyIds)
+
+// Плашка «Оплачено больше, чем поставлено» (владелец, 07.10.2026, прод id=74
+// «ЛНР») — тот же composable-источник (paidOverDeliveredSummary, Правило №6),
+// что и SubsidyKpiCards.vue использует через свой готовый subsidy_stats-ряд;
+// клик открывает тот же диалог (PaidOverDeliveredDrillDialog.vue), scope=
+// dashboard, с текущим фильтром субсидий (или без фильтра — вся видимость).
+const paidOverDeliveredDrillVisible = ref(false)
 
 // ── Тема графиков (dark mode) ────────────────────────
 const chartTheme = useDashboardChartTheme()
@@ -1046,6 +1086,9 @@ onMounted(() => {
 }
 .kpi-widget-measure .grid-widget {
   height: auto;
+}
+.paid-over-delivered-alert {
+  cursor: pointer;
 }
 /* Safety-net на время до первой синхронизации высоты — скролл, а не наезд соседнего виджета */
 .grid-widget:has(.kpi-row) {

@@ -162,6 +162,26 @@ export interface FactImportGroup {
   needs_existing_decision: boolean
 }
 
+// Доп. задача (владелец, 07.10.2026): «при импорте об этом должно идти
+// уведомление» — та же строка файла, у которой уже есть предупреждение
+// «оплачено, но не поставлено» (FactImportRow.warnings), собрана здесь ещё
+// раз для шага итогов (FactImportStepConfirm.vue), чтобы было видно ДО
+// прокрутки по строкам. Источник — backend preview.py::paid_not_delivered_
+// predicate (ПРАВИЛО №6, один предикат для предупреждения строки и для
+// totals, не вторая формула).
+export interface FactImportPaidNotDeliveredRow {
+  row: number
+  name: string
+  status_label: string
+  paid: number
+}
+
+export interface FactImportPaidNotDelivered {
+  count: number
+  amount: number
+  rows: FactImportPaidNotDeliveredRow[]
+}
+
 export interface FactImportTotals {
   rows: number
   purchases: number
@@ -169,6 +189,7 @@ export interface FactImportTotals {
   paid_amount: number
   skipped: number
   existing_updates: number
+  paid_not_delivered: FactImportPaidNotDelivered
 }
 
 // 🟢 Задача B — одна СУЩЕСТВУЮЩАЯ закупка, которую этот прогон обновит по

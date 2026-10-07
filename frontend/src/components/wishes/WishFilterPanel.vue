@@ -44,6 +44,21 @@
     </v-card-text>
     <v-card-text class="py-3">
       <div class="d-flex flex-wrap align-center" style="gap:12px">
+        <!-- Владелец (поиск на десктопе, 2026-10-07): то же поле поиска, тот же
+             searchText — на телефоне (свёрнутый вид выше) оно уже есть, здесь
+             первым элементом развёрнутой панели, видимой на компьютере. -->
+        <v-text-field
+          v-model="searchText"
+          placeholder="Поиск: номер, предмет, автор, субсидия…"
+          prepend-inner-icon="mdi-magnify"
+          variant="outlined"
+          density="compact"
+          clearable
+          hide-details
+          class="wish-search-field"
+          style="min-width:280px;flex:1 1 280px;max-width:420px"
+          @click:clear="searchText = ''"
+        />
         <v-autocomplete
           v-if="ctx.isSaas.value"
           v-model="filters.accountId"
@@ -146,7 +161,7 @@
           hide-details
           style="min-width:150px;max-width:180px"
         />
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-filter-off" @click="resetFilters">
+        <v-btn variant="tonal" size="small" prepend-icon="mdi-filter-off" @click="resetAll">
           Очистить фильтры
         </v-btn>
       </div>
@@ -209,6 +224,15 @@ const activeFilterChips = computed(() => {
 function clearOne(key: keyof WishFiltersState) {
   const isId = key.endsWith('Id')
   ;(props.filters as any)[key] = isId ? null : ''
+}
+
+// Владелец (поиск на десктопе, 2026-10-07): «Очистить фильтры» сбрасывал только
+// props.filters (useWishFilters.ts) — поиск (searchText, отдельный composable
+// useWishColumnMenu.ts, ПРАВИЛО №6: второй механизм не завожу) оставался
+// заполненным. Здесь же, в единственном месте с доступом к обоим, сбрасываю оба.
+function resetAll() {
+  props.resetFilters()
+  searchText.value = ''
 }
 </script>
 

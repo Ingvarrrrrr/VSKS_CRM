@@ -75,8 +75,16 @@ function buildSubsidyList(ctx: Pick<SubsidyDetailContext, 'allSubsidies'>) {
   // не подмешивают её бюджет/суммы — тот же принцип, что backend-предикат
   // not_sandbox_subsidy_ids (ПРАВИЛО №6), только на уже отданных клиенту данных.
   const nonSandboxSubsidies = computed(() => filteredSubsidies.value.filter(s => !s.is_sandbox))
+  // «ФЭО не введено» (владелец 07.10.2026, план .planning/quick/2026-10-07-dnr-
+  // feo-cards/PLAN.md шаг 1, решение №3) — Σ «Бюджет ФЭО (итого)» не
+  // подмешивает выдуманный бюджет субсидий без ФЭО: считает только те, где
+  // feo_entered !== false, остальные просто не входят в сумму (budget_from_plan
+  // больше не подставляет план). budgetMissingCount — для подписи «без N
+  // субсидий без ФЭО» у итоговой строки (SubsidySummaryBar.vue).
+  const budgetEnteredSubsidies = computed(() => nonSandboxSubsidies.value.filter(s => s.feo_entered !== false))
+  const budgetMissingCount = computed(() => nonSandboxSubsidies.value.length - budgetEnteredSubsidies.value.length)
   const totals = computed(() => ({
-    budget:           nonSandboxSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget || 0), 0),
+    budget:           budgetEnteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget || 0), 0),
     planned:          nonSandboxSubsidies.value.reduce((s, x) => s + x.planned,            0),
     ordered:          nonSandboxSubsidies.value.reduce((s, x) => s + x.ordered,            0),
     contracted:       nonSandboxSubsidies.value.reduce((s, x) => s + (x.contracted || 0),  0),
@@ -130,6 +138,11 @@ function buildSubsidyList(ctx: Pick<SubsidyDetailContext, 'allSubsidies'>) {
   }
 
   function cardDelta(s: SubsidyRow): number {
+    // «ФЭО не введено» (владелец 07.10.2026, план .planning/quick/2026-10-07-
+    // dnr-feo-cards/PLAN.md шаг 1) — плашка «ФЭО > план/ФЭО < план» не должна
+    // считаться из нуля бюджета: 0 заставляет условие показа плашки
+    // (Math.abs(cardDelta(s)) > 0.01) в SubsidyCardsGrid.vue молчать.
+    if (isFeoNotEntered(s)) return 0
     // Приоритет ручного бюджета субсидии (решение 14.07)
     return (s.feo_budget_total || s.budget || 0) - (s.planned || 0)
   }
@@ -148,13 +161,23 @@ function buildSubsidyList(ctx: Pick<SubsidyDetailContext, 'allSubsidies'>) {
   function isBudgetUndefined(s: SubsidyRow): boolean {
     return !(s.feo_budget_total && s.feo_budget_total > 0) && (s.budget === null || s.budget === undefined)
   }
+  // «ФЭО не введено» — отдельный от isBudgetUndefined признак (владелец
+  // 07.10.2026): та функция не отличает «бюджет честно 0/не задан» от «ФЭО
+  // вообще не вводили ни у одной статьи» (backend/app/services/
+  // subsidy_money_summary.py::feo_entered). SubsidyCardsGrid.vue показывает
+  // «ФЭО не введено» ВМЕСТО «Бюджет не определён», когда это так — проверяется
+  // первым (см. шаблон карточки).
+  function isFeoNotEntered(s: SubsidyRow): boolean {
+    return s.feo_entered === false
+  }
 
   return {
     selectedYear, availableYears, filteredSubsidies, nonSandboxSubsidies, subsidyTableHeaders, totals,
+    budgetMissingCount,
     mobile, viewMode, effectiveView, subPage, subTotalPages, subPaged,
     cardDragIdx, cardDragOverIdx,
     onCardDragStart, onCardDragOver, onCardDrop,
     getSubsidyExportColumns, getSubsidyExportRows,
-    pct, progressColor, cardDelta, formatCurrencyShort, displayBudget, isBudgetUndefined,
+    pct, progressColor, cardDelta, formatCurrencyShort, displayBudget, isBudgetUndefined, isFeoNotEntered,
   }
 }

@@ -39,5 +39,10 @@ export function pickSubsidyMoneyFields(s: any) {
     // 2026-10-06: «Законтрактовано, не заказано» и перерасход по категориям.
     contracted_not_ordered: s.contracted_not_ordered ?? null,
     over_plan_categories: s.over_plan_categories ?? [],
+    // feo_entered (владелец 07.10.2026, план .planning/quick/2026-10-07-dnr-
+    // feo-cards/PLAN.md шаг 1) — см. docstring у поля в composables/subsidies/
+    // types.ts. ?? true — старый бэк без этого поля продолжает считаться
+    // «ФЭО введено» (прежнее поведение), не ломаем карточки задним числом.
+    feo_entered: s.feo_entered ?? true,
   }
 }

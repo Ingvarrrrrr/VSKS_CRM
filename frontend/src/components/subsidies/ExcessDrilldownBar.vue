@@ -59,7 +59,14 @@
           @click="excessDrilldown.goTo(idx)"
         >
           <span class="excess-bar__list-name">{{ row.name }}</span>
-          <span class="excess-bar__list-amounts" v-if="excessDrilldown.activeMetric.value">
+          <!-- 'total' (план против ФЭО целиком, владелец 07.10.2026) — своих
+               слов в METRIC_FIELDS нет (та карта только для 4 видов по типу,
+               см. useExcessDrilldown.ts), подписи «план»/«ФЭО» прямо тут. -->
+          <span class="excess-bar__list-amounts" v-if="excessDrilldown.activeKind.value === 'total'">
+            план {{ formatCurrency(row.upper) }} · ФЭО {{ formatCurrency(row.lower) }}
+            <template v-if="row.excess > 0.005"> · превышение {{ formatCurrency(row.excess) }}</template>
+          </span>
+          <span class="excess-bar__list-amounts" v-else-if="excessDrilldown.activeMetric.value">
             {{ excessDrilldown.activeMetric.value.upperWord }} по {{ excessDrilldown.activeMetric.value.typeWord }} {{ formatCurrency(row.upper) }}
             · {{ excessDrilldown.activeMetric.value.lowerWord }} по {{ excessDrilldown.activeMetric.value.typeWord }} {{ formatCurrency(row.lower) }}
             <template v-if="row.excess > 0.005"> · превышение {{ formatCurrency(row.excess) }}</template>

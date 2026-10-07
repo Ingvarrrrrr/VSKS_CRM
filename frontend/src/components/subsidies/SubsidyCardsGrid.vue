@@ -51,10 +51,14 @@
         </div>
       </div>
 
-      <div class="sc-budget" :class="{ 'sc-budget--undefined': isBudgetUndefined(s) }">
-        {{ isBudgetUndefined(s) ? 'Бюджет не определён' : formatCurrencyShort(displayBudget(s)) }}
+      <!-- «ФЭО не введено» (владелец 07.10.2026, план .planning/quick/2026-10-
+           07-dnr-feo-cards/PLAN.md шаг 1, решение №3) — проверяется ПЕРВЫМ:
+           не путать с isBudgetUndefined (та же пустая плитка, но другая
+           причина — бюджет честно не задан, а не «ФЭО вообще не вводили»). -->
+      <div class="sc-budget" :class="{ 'sc-budget--undefined': isFeoNotEntered(s) || isBudgetUndefined(s) }">
+        {{ isFeoNotEntered(s) ? 'ФЭО не введено' : (isBudgetUndefined(s) ? 'Бюджет не определён' : formatCurrencyShort(displayBudget(s))) }}
       </div>
-      <div v-if="!isBudgetUndefined(s)" class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО (расчёт)' : 'Бюджет' }}</div>
+      <div v-if="!isFeoNotEntered(s) && !isBudgetUndefined(s)" class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО (расчёт)' : 'Бюджет' }}</div>
 
       <div class="sc-mini-row">
         <div class="sc-mini" title="Запланировано (план ФЭО + заявки) — то же, что «Запланировано» на шкале ниже">
@@ -89,15 +93,24 @@
           paid: s.paid,
         }"
       />
+      <!-- Кликабельна (владелец 07.10.2026, решение №6, план .planning/quick/
+           2026-10-07-dnr-feo-cards/PLAN.md шаг 5): выбирает субсидию и
+           включает «Где превышение» (useExcessDrilldown.ts) по всей субсидии
+           целиком — стрелки ведут к статьям, где план и ФЭО расходятся.
+           @click.stop — иначе клик всплыл бы на @click карточки (toggleSelect,
+           который может СНЯТЬ выбор, если субсидия уже выбрана). Скрыта вместе
+           с cardDelta при feo_entered=false (cardDelta возвращает 0, см.
+           useSubsidyList.ts) — её незачем нажимать, превышения без ФЭО нет. -->
       <v-chip
         v-if="Math.abs(cardDelta(s)) > 0.01"
         :color="cardDelta(s) > 0 ? '#fb923c' : '#ef4444'"
         size="small"
-        class="mt-1 sc-delta-chip"
+        class="mt-1 sc-delta-chip sc-delta-chip--clickable"
         prepend-icon="mdi-alert"
         :title="cardDelta(s) > 0
-          ? `Бюджет ${Math.round(displayBudget(s)).toLocaleString('ru-RU')} ₽ − запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
-          : `Запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(displayBudget(s)).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
+          ? `Бюджет ${Math.round(displayBudget(s)).toLocaleString('ru-RU')} ₽ − запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽ · нажмите, чтобы увидеть где`
+          : `Запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(displayBudget(s)).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽ · нажмите, чтобы увидеть где`"
+        @click.stop="openExcessOnTile(s)"
       >ФЭО {{ cardDelta(s) > 0 ? '>' : '<' }} план: {{ cardDelta(s) > 0 ? 'допланировать' : 'урезать' }} {{ formatCurrencyShort(Math.abs(cardDelta(s))) }}</v-chip>
       <v-chip
         v-else-if="(displayBudget(s)) > 0 && (s.planned || 0) > 0"
@@ -141,6 +154,13 @@ import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
 import { useSubsidyApprovers } from '@/composables/subsidies/useSubsidyApprovers'
 import { useSubsidyTemplates } from '@/composables/subsidies/useSubsidyTemplates'
+// «Где превышение» по всей субсидии (владелец 07.10.2026, план .planning/
+// quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 5) — singleton уже построен
+// SubsidiesView.vue с ctx (см. её докстринг про порядок монтирования), здесь
+// переиспользуется без аргумента, как в FeoTreeRow.vue/SubsidyKpiCards.vue/
+// ExcessDrilldownBar.vue (Правило №6 — второй механизм поиска не заводим).
+import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
+import type { SubsidyRow } from '@/composables/subsidies/types'
 
 const ctx = useSubsidyDetailCtx()
 // useSubsidyList() без ctx — переиспользует singleton SubsidiesView.vue, см.
@@ -149,10 +169,24 @@ const ctx = useSubsidyDetailCtx()
 const {
   subPaged, subTotalPages, subPage, cardDragIdx, cardDragOverIdx,
   onCardDragStart, onCardDragOver, onCardDrop, pct, progressColor, cardDelta,
-  displayBudget, isBudgetUndefined,
+  displayBudget, isBudgetUndefined, isFeoNotEntered,
 } = useSubsidyList()
 const { openApproversDialog } = useSubsidyApprovers()
 const { openTemplateDialog, contractTemplates } = useSubsidyTemplates()
+const excessDrilldown = useExcessDrilldown()
+
+// Плашка «ФЭО > план / ФЭО < план» на плитке (владелец 07.10.2026, решение
+// №6) — выбирает субсидию (если ещё не выбрана — ctx.toggleSelect переключает,
+// поэтому вызываем его только когда карточка ДРУГОЙ субсидии; иначе повторный
+// клик по уже выбранной карточке снял бы выбор) и, после загрузки дерева ФЭО
+// этой субсидии, включает режим «план против ФЭО целиком»
+// (excessDrilldown.activate('total') — расширение существующего activate(),
+// второй механизм поиска виновника не заводится).
+async function openExcessOnTile(s: SubsidyRow) {
+  if (ctx.selectedId.value !== s.id) ctx.toggleSelect(s.id)
+  await ctx.loadFeo(s.id)
+  excessDrilldown.activate('total')
+}
 
 // Название карточки в одну строку: базовый крупный шрифт, ужимается пока не влезет.
 // Используется только здесь (карточки списка субсидий) — перенесено из

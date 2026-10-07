@@ -26,6 +26,14 @@ interface FeoTreeAmountsCtx {
   selectedSubsidy: ComputedRef<SubsidyRow | null>
   allSubsidies: Ref<SubsidyRow[]>
   selectedId: Ref<number | null>
+  // ИСПРАВЛЕНИЕ (ПРАВИЛО №6, расследование «карточка 62 893 629 vs сервер
+  // 63 232 213,82», ДНР копия прода, 07.10.2026): syncFeoFilled больше НЕ
+  // считает бюджет сама (см. её докстринг ниже) — вместо этого дёргает тот же
+  // механизм, которым SubsidyEditDialog.vue/SubsidySandboxDialog.vue уже
+  // обновляют строку субсидии после правок. Передаётся из SubsidiesView.vue —
+  // там же, где объявлена (silentRefreshSubsidies — function-декларация,
+  // хойстится, доступна до своего текстового места).
+  silentRefreshSubsidies: () => Promise<void>
 }
 
 // ctx необязателен НАЧИНАЯ СО ВТОРОГО вызова (раздел C0, план ancient-prancing-
@@ -47,6 +55,7 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     plannedPurchaseTotals, plannedPurchaseQty, plannedPurchaseTotalsLinked, plannedPurchaseQtyLinked,
     plannedPurchaseTotalsOver, plannedPurchaseQtyOver, plannedPurchaseForecast,
     planTreeByCat, plannedItemsByCat, feoTree, plannedBase, selectedSubsidy, allSubsidies, selectedId,
+    silentRefreshSubsidies,
   } = ctx
   const plannedSumBase = plannedBase
   const plannedQtyBase = plannedBase
@@ -518,24 +527,26 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   const totalFeoPurchased = computed(() => feoTree.value.reduce((a, r) => a + feoPurchasedFor(r), 0))
   const totalFeoInPlanSchedule = computed(() => feoTree.value.reduce((a, r) => a + feoInPlanScheduleFor(r), 0))
 
-  // ПРАВКА (координатор, 2026-10-02): «Бюджет (ФЭО)» субсидии (карточки
-  // «Бюджет»/«Свободно»/расшифровка «Можно перераспределить») — читаем ГОТОВОЕ
-  // calculated_budget строки субсидии (приходит из /dashboard/charts, та же
-  // compute_budget_map/calculate_budgets_bulk, см. докстринг feoEffectiveFromTree
-  // выше), а не Σ feoEffectiveFor(корни) — feoEffectiveFor на листьях БЕЗ
-  // собственного ФЭО-финансирования намеренно показывает расчётную оценку
-  // (факт/план), а не официальный бюджет, и для строки дерева это правильно,
-  // но Σ по дереву тогда расходится с calculated_budget субсидии на величину
-  // этих оценок. У субсидии один источник этой величины — calculated_budget;
-  // totalFeoEffective (Σ дерева) остаётся для случаев, когда его ещё нет
-  // (черновик без расчёта) или дерево вообще не загружено.
+  // ПРАВКА (координатор, 2026-10-02; усилено 07.10.2026 — расследование «карточка
+  // 62 893 629 vs сервер 63 232 213,82», ДНР копия прода): «Бюджет (ФЭО)» субсидии
+  // (карточки «Бюджет»/«Свободно»/расшифровка «Можно перераспределить») — читаем
+  // ТОЛЬКО ГОТОВОЕ calculated_budget/feo_budget_total строки субсидии (приходит из
+  // /dashboard/charts, compute_budget_map/calculate_budgets_bulk, см. докстринг
+  // feoEffectiveFromTree выше) — у субсидии ровно ОДИН источник этой величины.
+  // Раньше здесь был фолбэк на totalFeoEffective (Σ дерева) «пока расчёт ещё не
+  // пришёл» — но feoEffectiveFor на листьях БЕЗ собственного ФЭО-финансирования
+  // намеренно показывает РАСЧЁТНУЮ оценку (факт/план, см. её докстринг), а не
+  // официальный бюджет; этот фолбэк и был вторым источником показателя (Правило
+  // №6) — карточка после правки дерева на миг показывала клиентскую оценку, расходящуюся
+  // с серверным числом на величину этих оценок, вместо честного «ФЭО не введено».
+  // feo_entered===false (или вовсе отсутствующая субсидия) — 0, без догадок.
   const selectedBudget = computed(() => {
     if (!selectedSubsidy.value) return 0
-    if (selectedSubsidy.value.calculated_budget != null && selectedSubsidy.value.calculated_budget > 0) {
-      return selectedSubsidy.value.calculated_budget
-    }
-    if (feoTree.value.length) return totalFeoEffective.value
-    return selectedSubsidy.value.feo_budget_total || selectedSubsidy.value.budget || 0
+    if (selectedSubsidy.value.feo_entered === false) return 0
+    const cb = selectedSubsidy.value.calculated_budget
+    if (cb != null && Number(cb) > 0) return Number(cb)
+    const fbt = selectedSubsidy.value.feo_budget_total
+    return (fbt != null && Number(fbt) > 0) ? Number(fbt) : 0
   })
   // ИСПРАВЛЕНИЕ (то же расследование, что и у feoPlannedTotalFor выше, 2026-09-21):
   // КПИ-карточка «Запланировано» (SubsidyKpiCards.vue::kpiSubTarget_plan_schedule)
@@ -573,31 +584,35 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   const selectedPaidMarkedTotal = computed(() => feoTree.value.reduce((a, r) => a + paidMarkedFor(r), 0))
   const selectedPaidConfirmedTotal = computed(() => feoTree.value.reduce((a, r) => a + paidConfirmedFor(r), 0))
 
-  // Обновляет справочный расчёт (feo_filled/feo_budget_total/calculated_budget) карточки
-  // субсидии в списке после любой правки дерева ФЭО.
+  // Обновляет справочные признаки карточки субсидии в списке после любой
+  // правки дерева ФЭО.
   //
-  // budget_from_plan (решение владельца 06.10.2026, см. докстринг backend
-  // subsidy_money_summary.py) — calculated_budget/feo_budget_total у такой
-  // субсидии = planned_tree с СЕРВЕРА (budget_basis), а не Σ feoEffectiveFor
-  // листьев дерева: это разные числа (totalFeoEffective может включать
-  // расчётные оценки по факту/плану листьев без собственного ФЭО-финансирования,
-  // см. комментарий selectedBudget выше), и перезапись здесь затёрла бы
-  // серверное значение фронтовой оценкой до следующей перезагрузки с бэка —
-  // ровно разрыв, который чинит эта задача. Поэтому для budget_from_plan
-  // calculated_budget/feo_budget_total НЕ трогаем, оставляем как пришло с
-  // сервера; обновляем только feo_filled (признак заполненности дерева, он не
-  // завязан на budget_from_plan).
+  // ИСПРАВЛЕНИЕ (ПРАВИЛО №6, расследование «карточка 62 893 629 vs сервер
+  // 63 232 213,82», ДНР копия прода, 07.10.2026): раньше эта функция САМА
+  // считала Σ feoEffectiveFor(root) и писала её в feo_budget_total/
+  // calculated_budget строки субсидии — ВТОРОЙ источник того же показателя,
+  // параллельный серверному compute_budget_map (см. докстринг selectedBudget
+  // выше). feoEffectiveFor на листьях БЕЗ собственного ФЭО-финансирования —
+  // намеренно РАСЧЁТНАЯ оценка (факт/план), а не официальный бюджет; её запись
+  // в calculated_budget — ровно тот выдуманный бюджет, который правка владельца
+  // 06.10 уже один раз пыталась не пускать на карточку через budget_from_plan/
+  // feo_entered, но для КОРНЯ локальный расчёт всё равно расходился с сервером
+  // (сервер у узла с детьми считает budget = собственный FeoCategory.budget ИЛИ
+  // Σ feo_amount + Σ budget прямых детей — другая рекурсия, см. докстринг
+  // feoEffectiveFromTree). Теперь budget/calculated_budget НЕ считаем и НЕ
+  // пишем здесь вовсе — перезапрашиваем строку субсидии с сервера тем же
+  // механизмом, которым SubsidyEditDialog.vue/SubsidySandboxDialog.vue уже
+  // обновляют карточку после своих правок (silentRefreshSubsidies —
+  // Object.assign поля существующего объекта allSubsidies по ссылке, без
+  // перемонтирования сетки/таблицы). feo_filled — локально и сразу (признак
+  // «дерево не пустое», видимый мгновенно, не зависит от того, что посчитает
+  // сервер) — он не читает/пишет бюджет и не ломает Правило №6.
   function syncFeoFilled() {
     if (!selectedId.value) return
     const total = feoTree.value.reduce((sum, root) => sum + feoEffectiveFor(root), 0)
     const s = allSubsidies.value.find(x => x.id === selectedId.value)
-    if (s) {
-      s.feo_filled = total > 0
-      if (!s.budget_from_plan) {
-        s.feo_budget_total = total
-        s.calculated_budget = total
-      }
-    }
+    if (s) s.feo_filled = total > 0
+    void silentRefreshSubsidies()
   }
 
   function getFeoPlanManual(categoryId: number): number {

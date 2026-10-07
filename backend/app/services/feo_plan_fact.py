@@ -260,6 +260,7 @@ async def plan_consumption_by_category(
     exclude_planned_item_linked: bool = False,
     exclude_purchase_id: Optional[int] = None,
     exclude_wish_id: Optional[int] = None,
+    payroll_category_ids: Optional[set] = None,
 ) -> dict[int, dict]:
     """{feo_category_id: {consumed, consumed_quantity, over, over_quantity,
     over_goods, over_services, over_unspecified}}
@@ -324,8 +325,9 @@ async def plan_consumption_by_category(
 
     from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
     from app.models.feo_planned_item import FeoPlannedItem
-    from app.services.item_type_split import kind_of  # локальный импорт — см. докстринг наверху файла
+    from app.services.item_type_split import kind_of_by_category_id  # локальный импорт — см. докстринг наверху файла
     from sqlalchemy.orm import aliased
+    _payroll_ids = payroll_category_ids or set()
 
     # Задача владельца «план ≠ факт» (шаг B, сессия 2026-08-06): суммируем СНИМОК
     # плана (planned_total/planned_quantity), а не мутирующую total_price/quantity —
@@ -387,12 +389,13 @@ async def plan_consumption_by_category(
         d = result.setdefault(r.cat_id, {
             "consumed": 0.0, "consumed_quantity": 0.0,
             "over": 0.0, "over_quantity": 0.0,
-            "over_goods": 0.0, "over_services": 0.0, "over_unspecified": 0.0,
+            "over_goods": 0.0, "over_services": 0.0,
+            "over_payroll": 0.0, "over_unspecified": 0.0,
         })
         if r.over_plan:
             d["over"] += float(r.amount)
             d["over_quantity"] += float(r.qty)
-            d[f"over_{kind_of(r.item_type)}"] += float(r.amount)
+            d[f"over_{kind_of_by_category_id(r.item_type, r.cat_id, _payroll_ids)}"] += float(r.amount)
         else:
             d["consumed"] += float(r.amount)
             d["consumed_quantity"] += float(r.qty)
@@ -467,6 +470,7 @@ async def ordered_consumption_by_category(
     db: AsyncSession,
     subsidy_ids: list[int],
     exclude_planned_item_linked: bool = False,
+    payroll_category_ids: Optional[set] = None,
 ) -> dict[int, dict]:
     """{feo_category_id: {ordered, ordered_quantity, ordered_goods,
     ordered_services, ordered_unspecified}} — ФАКТИЧЕСКАЯ сумма и
@@ -549,7 +553,8 @@ async def ordered_consumption_by_category(
     # по source_item_id, предзапрошено одним батчем на все позиции выборки.
     contract_totals = await _contract_item_totals(db, (r.PurchaseItem.id for r in rows))
 
-    from app.services.item_type_split import kind_of  # локальный импорт — см. докстринг наверху файла
+    from app.services.item_type_split import kind_of_by_category_id  # локальный импорт — см. докстринг наверху файла
+    _payroll_ids = payroll_category_ids or set()
 
     for r in rows:
         pi = r.PurchaseItem
@@ -569,23 +574,25 @@ async def ordered_consumption_by_category(
             continue
         d = result.setdefault(r.cat_id, {
             "ordered": 0.0, "ordered_quantity": 0.0,
-            "ordered_goods": 0.0, "ordered_services": 0.0, "ordered_unspecified": 0.0,
+            "ordered_goods": 0.0, "ordered_services": 0.0,
+            "ordered_payroll": 0.0, "ordered_unspecified": 0.0,
         })
         d["ordered"] += float(fact_amount)
         d["ordered_quantity"] += float(pi.quantity or 0)
         # Раздел E2 продолжение (2026-09-21) — тот же приём, что и fact_goods/
         # services/unspecified в fact_consumption_by_category ниже: ordered
         # split нужен compute_feo_plan_tree._own_qty_and_ordered, чтобы типовой
-        # план узла (plan_goods/services/unspecified) при полностью набранном
-        # заказе (order-substitution) замещался ТЕМИ ЖЕ типизированными
-        # суммами, а не терял разбивку по типу.
-        d[f"ordered_{kind_of(pi.item_type)}"] += float(fact_amount)
+        # план узла (plan_goods/services/payroll/unspecified) при полностью
+        # набранном заказе (order-substitution) замещался ТЕМИ ЖЕ
+        # типизированными суммами, а не терял разбивку по типу.
+        d[f"ordered_{kind_of_by_category_id(pi.item_type, r.cat_id, _payroll_ids)}"] += float(fact_amount)
     return result
 
 
 async def fact_consumption_by_category(
     db: AsyncSession,
     subsidy_ids: list[int],
+    payroll_category_ids: Optional[set] = None,
 ) -> dict[int, dict]:
     """{feo_category_id: {fact, fact_quantity}} — задача владельца «план ≠ факт»
     (шаг A.2, сессия 2026-08-06): ФАКТ узла дерева ФЭО = Σ фактической суммы/
@@ -622,7 +629,8 @@ async def fact_consumption_by_category(
     было бы второй, при этом менее точной формулой: у КАЖДОЙ строки тип уже
     известен напрямую, а не только по общей пропорции закупки.
     """
-    from app.services.item_type_split import kind_of  # локальный импорт — см. докстринг наверху файла
+    from app.services.item_type_split import kind_of_by_category_id  # локальный импорт — см. докстринг наверху файла
+    _payroll_ids = payroll_category_ids or set()
 
     result: dict[int, dict] = {}
     if not subsidy_ids:
@@ -674,11 +682,12 @@ async def fact_consumption_by_category(
             continue
         d = result.setdefault(r.cat_id, {
             "fact": 0.0, "fact_quantity": 0.0,
-            "fact_goods": 0.0, "fact_services": 0.0, "fact_unspecified": 0.0,
+            "fact_goods": 0.0, "fact_services": 0.0,
+            "fact_payroll": 0.0, "fact_unspecified": 0.0,
         })
         d["fact"] += float(fact_amount)
         d["fact_quantity"] += float(pi.quantity or 0)
-        d[f"fact_{kind_of(pi.item_type)}"] += float(fact_amount)
+        d[f"fact_{kind_of_by_category_id(pi.item_type, r.cat_id, _payroll_ids)}"] += float(fact_amount)
     return result
 
 

@@ -30,6 +30,15 @@ from app.services import feo_tree_write
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
+# Второй роутер в этом же файле (не второй модуль — Правило №5 про разрезание
+# относится к РАЗНЫМ ответственностям, а не к одному эндпоинту «приравнять»,
+# который просто живёт под другим префиксом пути, /api/subsidies вместо
+# /api/feo-categories): align-budget-to-plan-all — субсидийная версия
+# align-budget-to-plan выше (та же логика, ОДИН вызов на всю субсидию, см.
+# app.services.feo_tree_write.align_budget_to_plan_all), решение владельца
+# 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 3.
+router_subsidy_feo = APIRouter(prefix="/api/subsidies", tags=["subsidies"])
+
 
 @router.patch("/{cat_id}/move")
 async def move_category(
@@ -152,6 +161,38 @@ async def align_budget_to_plan(
         "subsidy_over_before": result["subsidy_over_before"],
         "subsidy_over_after": result["subsidy_over_after"],
     }
+
+
+@router_subsidy_feo.post("/{subsidy_id}/feo/align-budget-to-plan-all")
+async def align_budget_to_plan_all(
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(*ADMIN_ROLES)),
+):
+    """«Приравнять ФЭО к плану по всем статьям» одним действием (решение
+    владельца 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/
+    PLAN.md шаг 3, решение владельца №4 — кнопка в шапке дерева ФЭО). Права —
+    ТЕ ЖЕ, что у одиночного POST /api/feo-categories/{cat_id}/align-budget-
+    to-plan (require_role(*ADMIN_ROLES) — org_admin и выше).
+
+    budget := plan+over у КАЖДОЙ категории субсидии сразу (см. docstring
+    app.services.feo_tree_write.align_budget_to_plan_all — внутри вызывается
+    ТО ЖЕ целевое значение, что и одиночное действие, не вторая формула;
+    потолочная проверка здесь не нужна — после действия budget==plan везде,
+    превышение субсидии равно нулю по построению).
+
+    Response (200): {subsidy_id, count (сколько статей изменено), total
+    (Σ ФЭО по всей субсидии после действия)}."""
+    from app.models.subsidy import Subsidy
+    subsidy = await db.get(Subsidy, subsidy_id)
+    if subsidy is None:
+        raise HTTPException(404, "Субсидия не найдена")
+    from app.services.subsidy_revision_guard import assert_direct_edit
+    await assert_direct_edit(db, current_user, subsidy_id)
+
+    result = await feo_tree_write.align_budget_to_plan_all(db, current_user, subsidy_id)
+    await db.commit()
+    return {"subsidy_id": subsidy_id, "count": result["count"], "total": result["total"]}
 
 
 # Алиас на прежнее имя — feo_categories.py лениво ре-экспортирует

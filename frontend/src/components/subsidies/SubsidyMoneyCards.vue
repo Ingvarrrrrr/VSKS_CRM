@@ -30,7 +30,11 @@
              (span 2 по сетке карточек). На мобильном сбрасывается в 1 колонку. -->
         <div class="kpi-body kpi-redistributable-grid">
           <div class="kpi-redistributable-col-main">
-            <div class="kpi-value">{{ redistributable != null ? formatCurrency(redistributable) : '—' }}</div>
+            <!-- redistributable == null → feo_entered=false на бэке (budget<=0,
+                 см. backend/app/services/subsidy_money_summary.py) — решение
+                 владельца 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-
+                 cards/PLAN.md шаг 1: «ФЭО не введено», не обезличенное «—». -->
+            <div class="kpi-value" :class="{ 'text-medium-emphasis': redistributable == null }">{{ redistributable != null ? formatCurrency(redistributable) : 'ФЭО не введено' }}</div>
             <div class="kpi-label">Можно перераспределить</div>
             <!-- Задача 1 (владелец, 04.10.2026 → доп. 06.10.2026, исправлено
                  координатором): раньше одна строка «не запланировано X

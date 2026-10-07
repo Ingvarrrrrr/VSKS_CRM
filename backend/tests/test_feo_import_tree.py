@@ -172,7 +172,15 @@ async def test_feo_sum_goes_to_deepest_filled_level(db_session):
 @pytest.mark.asyncio
 async def test_plan_without_item_column_names_item_after_category(db_session):
     """Строка с плановыми числами и БЕЗ «Плановая позиция» → FeoPlannedItem с
-    именем самой (листовой) категории — прежнее поведение."""
+    именем самой (листовой) категории — прежнее поведение.
+
+    Владелец, 07.10 (после правки шага 0.5 плана 2026-10-07-dnr-feo-cards):
+    правило «строка без „Плановой позиции“ — статья, не позиция» применяется
+    только когда эта колонка вообще используется в файле (хоть в одной
+    строке импорта) — иначе (как здесь: `_IDX["item_name"]` замаплен, но ни
+    одна строка импорта не задаёт его) поведение старое, без изменений (урок
+    feedback_no_logic_keyed_to_optional_level.md — охват правила по файлу в
+    целом). См. `_lvl5_column_in_use` в feo_import_apply.py."""
     subsidy = await _make_subsidy(db_session)
     try:
         rows = [mk_row(

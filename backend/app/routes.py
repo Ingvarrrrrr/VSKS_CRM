@@ -82,6 +82,13 @@ from app.routers import feo_plan_reads
 # (пути не пересекаются), но ВСЕ обязаны идти до feo_categories.router.
 from app.routers import feo_plan_reads_tree
 from app.routers import feo_plan_reads_budget
+# feo_card_drill — GET /api/subsidies/{subsidy_id}/card-drill (владелец,
+# 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 4).
+# Префикс /api/subsidies, НЕ /api/feo-categories — порядок относительно
+# feo_categories.router/subsidies.router не важен (другой путь: "/{subsidy_id}/
+# card-drill" не пересекается ни с "/{subsidy_id}" (subsidies.router), ни с
+# catch-all "/{cat_id}" (feo_categories.router, другой префикс)).
+from app.routers import feo_card_drill
 from app.routers import feo_import
 # Разрезание feo_import.py (Правило №5, сессия 2026-09-08): файл разросся до
 # 1088 строк — feo_import_template (/import/template), feo_import_preview
@@ -363,6 +370,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(feo_import_preview.router)
     app.include_router(feo_import_export.router)
     app.include_router(feo_tree_ops.router)
+    app.include_router(feo_tree_ops.router_subsidy_feo)
     app.include_router(feo_categories.router)
     app.include_router(feo_planned_items_matching.router)
     app.include_router(feo_planned_items_reports.router)
@@ -390,6 +398,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(subsidy_plan_graph_export.router)
     app.include_router(subsidy_finance.router)
     app.include_router(subsidies.router)
+    app.include_router(feo_card_drill.router)
     app.include_router(subsidy_members_router.router)
     # Разрезание products.py (Правило №5, 2026-09-08) — см. комментарий у
     # импортов выше про порядок: products_summary ДО products.router (catch-all

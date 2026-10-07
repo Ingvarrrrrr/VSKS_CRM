@@ -13,26 +13,32 @@
     <!-- 1. Бюджет (ФЭО) -->
     <v-tooltip location="bottom" :disabled="true">
       <template #activator="{ props: tip }">
-        <div v-bind="tip" class="kpi-card kpi-budget" :class="kpi.kpiCardClass('budget')" title="Живой расчёт по дереву ФЭО: ручное финансирование категорий, без него — факт, иначе план. Совпадает с ИТОГО дерева ниже" @click="kpi.onKpiCardClick('budget')">
+        <div v-bind="tip" class="kpi-card kpi-budget" :class="kpi.kpiCardClass('budget')" title="Живой расчёт по дереву ФЭО: ручное финансирование категорий, без него — факт, иначе план. Совпадает с ИТОГО дерева ниже" @click="openCardDrill('budget', 'all')">
           <div class="kpi-icon-box"><v-icon icon="mdi-wallet" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_budget) }}</div>
-            <div class="kpi-label">Бюджет (ФЭО)</div>
-            <!-- Решение владельца 06.10.2026 (budget_from_plan, см. докстринг
-                 backend subsidy_money_summary.py): бюджета по ФЭО/вручную нет —
-                 показанное число временно взято из плана. -->
-            <div v-if="ctx.selectedSubsidy.value?.budget_from_plan" class="text-caption text-medium-emphasis">по плану — суммы ФЭО не введены</div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
-              <template v-if="splitRowsFor('budget')">
-                <div v-for="row in splitRowsFor('budget')" :key="row.kind" class="kpi-split-row"
-                  :class="{ 'kpi-split-row-clickable': hasStageDrill('budget'), 'kpi-split-row-active': hasStageDrill('budget') && isActiveTypeRow('budget', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
-                  @click="hasStageDrill('budget') && onTypeRowClick('budget', row.kind)">
-                  <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
-                </div>
-              </template>
-              <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
-            </div>
+            <!-- Решение владельца 07.10.2026 (план .planning/quick/2026-10-07-
+                 dnr-feo-cards/PLAN.md шаг 1, решение №3): пока ФЭО не введено
+                 ни у одной статьи субсидии (feo_entered=false) — текст «ФЭО не
+                 введено», БЕЗ суммы и БЕЗ разбивки по товарам/услугам (старая
+                 подмена «бюджет = план», budget_from_plan, отменена). -->
+            <template v-if="feoEntered">
+              <div class="kpi-value">{{ formatCurrency(kpiSubAnim_budget) }}</div>
+              <div class="kpi-label">Бюджет (ФЭО)</div>
+              <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+                <template v-if="splitRowsFor('budget')">
+                  <div v-for="row in splitRowsFor('budget')" :key="row.kind" class="kpi-split-row kpi-split-row-clickable"
+                    @click="openCardDrill('budget', row.kind)">
+                    <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
+                    <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
+                  </div>
+                </template>
+                <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="kpi-value text-medium-emphasis">ФЭО не введено</div>
+              <div class="kpi-label">Бюджет (ФЭО)</div>
+            </template>
           </div>
         </div>
       </template>
@@ -40,16 +46,15 @@
     <!-- 2. Запланировано -->
     <v-tooltip location="bottom" :disabled="true">
       <template #activator="{ props: tip }">
-        <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="kpi.kpiCardClass('plan_schedule')" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в плане закупок" @click="kpi.onKpiCardClick('plan_schedule')">
+        <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="kpi.kpiCardClass('plan_schedule')" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в плане закупок" @click="openCardDrill('plan_schedule', 'all')">
           <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_plan_schedule) }}</div>
             <div class="kpi-label">Запланировано</div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('plan_schedule')">
-                <div v-for="row in splitRowsFor('plan_schedule')" :key="row.kind" class="kpi-split-row"
-                  :class="{ 'kpi-split-row-clickable': hasStageDrill('plan_schedule'), 'kpi-split-row-active': hasStageDrill('plan_schedule') && isActiveTypeRow('plan_schedule', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
-                  @click="hasStageDrill('plan_schedule') && onTypeRowClick('plan_schedule', row.kind)">
+                <div v-for="row in splitRowsFor('plan_schedule')" :key="row.kind" class="kpi-split-row kpi-split-row-clickable"
+                  @click="openCardDrill('plan_schedule', row.kind)">
                   <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
                   <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
                 </div>
@@ -243,26 +248,36 @@
     <v-tooltip location="bottom" :disabled="true">
       <template #activator="{ props: tip }">
         <div v-bind="tip" class="kpi-card kpi-free"
-          :class="[freeDiffRounded < 0 ? 'kpi-over' : '', kpi.kpiCardClass('free')]"
-          @click="kpi.onKpiCardClick('free')"
+          :class="[(feoEntered && freeDiffRounded < 0) ? 'kpi-over' : '', kpi.kpiCardClass('free')]"
+          @click="openCardDrill('free', 'all')"
         >
           <div class="kpi-icon-box"><v-icon icon="mdi-cash-lock-open" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(Math.abs(kpiSubAnim_free)) }}</div>
-            <div class="kpi-label">{{ freeDiffRounded < 0 ? 'Превышение' : 'Свободно' }}</div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
-              <template v-if="splitRowsFor('free')">
-                <div v-for="row in splitRowsFor('free')" :key="row.kind" class="kpi-split-row"
-                  :class="{ 'kpi-split-row-neg': row.amount !== null && row.amount < 0 }">
-                  <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
-                  <!-- row.amount === null — бюджет ФЭО по этому типу не введён
-                       (решение владельца 06.10.2026): показываем «нет данных»,
-                       НЕ считаем превышение из нуля бюджета (см. splitRowsFor). -->
-                  <span class="kpi-split-text">{{ row.label }}: {{ row.amount === null ? 'нет данных по типу (бюджет ФЭО не разбит)' : ((row.amount < 0 ? 'превышение' : 'свободно') + ' ' + formatCurrency(Math.abs(row.amount))) }}</span>
-                </div>
-              </template>
-              <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
-            </div>
+            <!-- Решение владельца 07.10.2026 — та же причина, что у «Бюджет
+                 (ФЭО)» выше: без введённого ФЭО «Свободно»/«Превышение» не
+                 посчитать (budget − planned с budget=0 — ложное превышение). -->
+            <template v-if="feoEntered">
+              <div class="kpi-value">{{ formatCurrency(Math.abs(kpiSubAnim_free)) }}</div>
+              <div class="kpi-label">{{ freeDiffRounded < 0 ? 'Превышение' : 'Свободно' }}</div>
+              <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+                <template v-if="splitRowsFor('free')">
+                  <div v-for="row in splitRowsFor('free')" :key="row.kind" class="kpi-split-row kpi-split-row-clickable"
+                    :class="{ 'kpi-split-row-neg': row.amount !== null && row.amount < 0 }"
+                    @click="openCardDrill('free', row.kind)">
+                    <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
+                    <!-- row.amount === null — бюджет ФЭО по этому типу не введён
+                         (решение владельца 06.10.2026): показываем «нет данных»,
+                         НЕ считаем превышение из нуля бюджета (см. splitRowsFor). -->
+                    <span class="kpi-split-text">{{ row.label }}: {{ row.amount === null ? 'нет данных по типу (бюджет ФЭО не разбит)' : ((row.amount < 0 ? 'превышение' : 'свободно') + ' ' + formatCurrency(Math.abs(row.amount))) }}</span>
+                  </div>
+                </template>
+                <div v-else class="kpi-split-loading text-caption">загрузка по типам…</div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="kpi-value text-medium-emphasis">ФЭО не введено</div>
+              <div class="kpi-label">Свободно</div>
+            </template>
           </div>
         </div>
       </template>
@@ -426,6 +441,18 @@
     scope="managed"
     @close="contractsDrillVisible = false"
   />
+
+  <!-- Задача 2-3 (владелец, 07.10.2026, план .planning/quick/2026-10-07-dnr-
+       feo-cards/PLAN.md): «из чего сложено» число карточек «Бюджет (ФЭО)» /
+       «Запланировано» / «Свободно» — GET /subsidies/{id}/card-drill, см. её
+       докстринг (Правило №6, одна формула и у карточки, и у окна). -->
+  <FeoCardDrillDialog
+    :visible="cardDrillVisible"
+    :subsidy-id="ctx.selectedId.value"
+    :card="cardDrillCard"
+    :kind="cardDrillKind"
+    @close="cardDrillVisible = false"
+  />
 </template>
 
 <script setup lang="ts">
@@ -449,7 +476,7 @@ import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
 import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import {
-  KIND_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill,
+  KIND_LABELS, KIND_SHORT_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill,
   freeByKindFromTypeTotals, type ItemTypeKind,
 } from '@/utils/itemTypeKind'
 import { STATUS_LABELS, STATUS_COLORS } from '@/composables/dashboard/dashboardStatusMaps'
@@ -457,6 +484,7 @@ import { purchaseEffectivePrice } from '@/composables/dashboard/dashboardFormat'
 import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
 import SubsidyMoneyCards from '@/components/subsidies/SubsidyMoneyCards.vue'
 import ContractsDrillDialog from '@/components/subsidies/ContractsDrillDialog.vue'
+import FeoCardDrillDialog, { type FeoCardDrillCard } from '@/components/subsidies/FeoCardDrillDialog.vue'
 import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
 import ExcessDrilldownBar from '@/components/subsidies/ExcessDrilldownBar.vue'
 import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
@@ -468,6 +496,14 @@ const feoTreeExcess = useFeoTreeExcess()
 const excessDrilldown = useExcessDrilldown()
 const kpiPrefs = useKpiPrefs()
 const isSplit = computed(() => kpiPrefs.kpiTypeSplit.value === 'split')
+// «ФЭО не введено» (владелец 07.10.2026, план .planning/quick/2026-10-07-dnr-
+// feo-cards/PLAN.md шаг 1, решение №3 — budget_from_plan отменено) — единственный
+// флаг, на который теперь опираются карточки «Бюджет (ФЭО)»/«Свободно»
+// (SubsidyMoneyCards.vue читает тот же признак у «Можно перераспределить» через
+// props.subsidy.redistributable == null с бэка, см. её докстринг — тот же
+// источник, другая проверка, Правило №6). !== false — старые строки без этого
+// поля (кэш/старый бэк) продолжают считаться «ФЭО введено».
+const feoEntered = computed(() => ctx.selectedSubsidy.value?.feo_entered !== false)
 
 // Квик-план 2026-10-02: «Экономия по способу закупки» для текущей субсидии —
 // тот же composable, что и дашборд (Правило №6), с её id.
@@ -549,7 +585,7 @@ function subsidyTypeTotals(): SubsidyTypeTotals | null {
   return (ctx.planTreeByCat.value as any)?.subsidy_type_totals ?? null
 }
 
-function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; unspecified: number } | null {
+function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; payroll?: number; unspecified: number } | null {
   // 'free' обрабатывается отдельно в splitRowsFor() ниже (решение владельца
   // 06.10.2026: без разбивки бюджета ФЭО по типу превышение по типу — ложная
   // тревога, см. её докстринг) — здесь больше НЕ обрабатывается.
@@ -557,10 +593,10 @@ function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; u
     const totals = subsidyTypeTotals()
     if (!totals) return null
     if (stage === 'budget') {
-      return { goods: totals.feo_goods || 0, services: totals.feo_services || 0, unspecified: totals.feo_unspecified || 0 }
+      return { goods: totals.feo_goods || 0, services: totals.feo_services || 0, payroll: totals.feo_payroll || 0, unspecified: totals.feo_unspecified || 0 }
     }
     // plan_schedule
-    return { goods: totals.plan_goods || 0, services: totals.plan_services || 0, unspecified: totals.plan_unspecified || 0 }
+    return { goods: totals.plan_goods || 0, services: totals.plan_services || 0, payroll: totals.plan_payroll || 0, unspecified: totals.plan_unspecified || 0 }
   }
   // «Поставлено, не оплачено» (владелец, 05.10.2026) — по типам источник НЕ
   // widget.delivered_unpaid (тот означает status='delivered' без paid, его же
@@ -598,10 +634,17 @@ function splitRowsFor(stage: SplitStageKey): SplitRow[] | null {
     const totals = subsidyTypeTotals()
     if (!totals) return null
     const free = freeByKindFromTypeTotals(totals, roundMoney)
-    return [
+    const freeRows: SplitRow[] = [
       { kind: 'goods', label: KIND_LABELS.goods, amount: free.goods },
       { kind: 'services', label: KIND_LABELS.services, amount: free.services },
     ]
+    // ФОТ (задача 1, 07.10.2026) — показываем строку, только если сумма
+    // payroll ≠ 0 (то же правило, что у «без типа» ниже), null — «нет данных
+    // по типу» (см. docstring freeByKindFromTypeTotals выше).
+    if (free.payroll !== null && Math.abs(free.payroll) > 0.5) {
+      freeRows.push({ kind: 'payroll', label: KIND_SHORT_LABELS.payroll ?? KIND_LABELS.payroll, amount: free.payroll })
+    }
+    return freeRows
   }
   const raw = rawSplitFor(stage)
   if (!raw) return null
@@ -609,14 +652,19 @@ function splitRowsFor(stage: SplitStageKey): SplitRow[] | null {
     { kind: 'goods', label: KIND_LABELS.goods, amount: raw.goods },
     { kind: 'services', label: KIND_LABELS.services, amount: raw.services },
   ]
+  // ФОТ и выплаты персоналу (задача 1, 07.10.2026) — только budget/plan_schedule
+  // присылают raw.payroll (rawSplitFor выше); показываем строку, только если
+  // сумма ≠ 0 (то же правило видимости, что у «без типа» ниже).
+  if (raw.payroll !== undefined && Math.abs(raw.payroll) > 0.5) {
+    rows.push({ kind: 'payroll', label: KIND_SHORT_LABELS.payroll ?? KIND_LABELS.payroll, amount: raw.payroll })
+  }
   if (Math.abs(raw.unspecified) > 0.5) {
-    // «Запланировано»: «без типа» — нейтральная подпись (решение владельца
-    // 06.10.2026), не алармирующее «без типа» — сюда попадают и статьи без
-    // плановых позиций, и позиции без указанного типа, это не ошибка.
-    const label = stage === 'plan_schedule'
-      ? 'без разбивки (статьи без плановых позиций или позиции без типа)'
-      : KIND_LABELS.unspecified
-    rows.push({ kind: 'unspecified', label, amount: raw.unspecified })
+    // Подпись «без типа» — единая для ВСЕХ карточек (решение владельца
+    // 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md п.4):
+    // раньше «Запланировано» получало отдельную длинную подпись «без разбивки
+    // (статьи без плановых позиций или позиции без типа)» — второй текст для
+    // той же корзины unspecified, не несущий дополнительного смысла.
+    rows.push({ kind: 'unspecified', label: KIND_LABELS.unspecified, amount: raw.unspecified })
   }
   return rows
 }
@@ -651,6 +699,21 @@ const contractsDrillVisible = ref(false)
 function openContractsDrill() {
   if (!ctx.selectedId.value) return
   contractsDrillVisible.value = true
+}
+
+// ── «Бюджет (ФЭО)» / «Запланировано» / «Свободно» — FeoCardDrillDialog ──────
+// (задача 2-3, 07.10.2026) — ИТОГ карточки (kind='all') и каждая строка типа
+// (включая payroll/unspecified) открывают это окно, а НЕ StageFeoDrillDialog
+// со списком закупок (hasTreeDrill() в itemTypeKind.ts — отдельный признак от
+// hasStageDrill(), см. её докстринг; дашборд KpiCardsWidget.vue не трогается).
+const cardDrillVisible = ref(false)
+const cardDrillCard = ref<FeoCardDrillCard>('budget')
+const cardDrillKind = ref<ItemTypeKind | 'all'>('all')
+function openCardDrill(stage: 'budget' | 'plan_schedule' | 'free', kind: ItemTypeKind | 'all') {
+  if (!ctx.selectedId.value) return
+  cardDrillCard.value = stage === 'plan_schedule' ? 'planned' : stage
+  cardDrillKind.value = kind
+  cardDrillVisible.value = true
 }
 
 function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
@@ -728,6 +791,9 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
 }
 .kpi-split-dot-goods { background: #3B82F6; }
 .kpi-split-dot-services { background: #A855F7; }
+/* ФОТ и выплаты персоналу (задача 1, 07.10.2026) — отдельный цвет, не
+   пересекается с товарами/услугами/без типа. */
+.kpi-split-dot-payroll { background: #F59E0B; }
 .kpi-split-dot-unspecified { background: #94A3B8; }
 .kpi-split-loading {
   opacity: 0.6;

@@ -111,11 +111,11 @@ async def test_subsidy_money_summary_balance_by_marks_and_statement(
 async def test_subsidy_money_summary_balance_none_without_budget(
     client, superadmin_headers, db_session, test_org,
 ):
-    """Ни бюджета (budget <= 0), ни плана (planned <= 0) — budget_basis тоже
-    <= 0, balance_by_marks/balance_by_statement = None («бюджет не введён»),
-    не отрицательное число. (С планом > 0 — см. budget_from_plan ниже, решение
-    владельца 06.10.2026: тогда budget_basis берётся из плана и остаток
-    считается.)"""
+    """Ни бюджета (budget <= 0), ни плана (planned <= 0) — feo_entered False,
+    budget_basis None, balance_by_marks/balance_by_statement = None («ФЭО не
+    введено», решение владельца 07.10.2026 — см. test_feo_not_entered.py для
+    случая «план есть, ФЭО нет»: budget_basis остаётся None и там же, подмена
+    планом отменена целиком)."""
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
     await _make_category(db_session, subsidy.id, name="Без бюджета и без плана")
 
@@ -123,21 +123,24 @@ async def test_subsidy_money_summary_balance_none_without_budget(
     row = summary[subsidy.id]
 
     assert row["budget"] == pytest.approx(0.0)
-    assert row["budget_basis"] == pytest.approx(0.0)
+    assert row["feo_entered"] is False
+    assert row["budget_basis"] is None
     assert row["budget_from_plan"] is False
     assert row["balance_by_marks"] is None
     assert row["balance_by_statement"] is None
 
 
 @pytest.mark.asyncio
-async def test_subsidy_money_summary_budget_from_plan_balance(
+async def test_subsidy_money_summary_no_feo_entered_balance(
     client, superadmin_headers, db_session, test_org,
 ):
-    """Решение владельца 06.10.2026 («бюджет = план, когда ФЭО не введён»,
-    см. докстринг subsidy_money_summary.py): субсидия без бюджета (ни ручного,
-    ни «по ФЭО») с планом 100k, оплачено 30k по отметке — budget_basis
-    должен подставиться из плана (100k), а "budget" (effective_subsidy_budget)
-    остаться 0.0 (его читает корректировка, не трогаем)."""
+    """ОТМЕНЕНО решение владельца 06.10.2026 («бюджет = план, когда ФЭО не
+    введён») — владелец 07.10.2026 (план .planning/quick/2026-10-07-dnr-feo-
+    cards/PLAN.md шаг 1, решение №3, найдено на субсидии «ДНР»): субсидия без
+    бюджета (ни ручного, ни «по ФЭО») с планом 100k — budget_basis/free_basis/
+    redistributable*/balance_* теперь ВСЕ None («ФЭО не введено»), а не план.
+    "budget" (effective_subsidy_budget) остаётся 0.0 (его читает
+    корректировка, не трогаем)."""
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
     leaf = await _make_category(db_session, subsidy.id, name="По плану")
     fpi = await _make_planned_item(db_session, leaf.id, "Станок", 1, 100_000)
@@ -151,14 +154,16 @@ async def test_subsidy_money_summary_budget_from_plan_balance(
 
     assert row["budget"] == pytest.approx(0.0)  # не трогаем — читает корректировка
     assert row["planned"] == pytest.approx(100_000.0)
-    assert row["budget_basis"] == pytest.approx(100_000.0)
-    assert row["budget_from_plan"] is True
-    assert row["free_basis"] == pytest.approx(0.0)
+    assert row["feo_entered"] is False
+    assert row["budget_basis"] is None
+    assert row["budget_from_plan"] is False
+    assert row["free_basis"] is None
+    assert row["redistributable"] is None
+    assert row["redistributable_unplanned"] is None
+    assert row["redistributable_by_kind"] is None
     assert row["balance_paid_marked"] == pytest.approx(30_000.0)
-    assert row["balance_by_marks"] == pytest.approx(70_000.0)
-    # Инвариант сохраняется и при budget_from_plan.
-    assert row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"] \
-        == pytest.approx(row["redistributable"])
+    assert row["balance_by_marks"] is None
+    assert row["balance_by_statement"] is None
 
 
 @pytest.mark.asyncio
@@ -235,15 +240,16 @@ async def test_subsidy_money_summary_no_purchases_redistributable_eq_budget(
 
 
 @pytest.mark.asyncio
-async def test_subsidy_money_summary_no_budget_redistributable_eq_planned(
+async def test_subsidy_money_summary_no_budget_redistributable_is_none(
     client, superadmin_headers, db_session, test_org,
 ):
-    """Баг владельца (субсидия id 75 «ХО», 04.10.2026): официального бюджета
-    нет вовсе (ни ручной Subsidy.budget, ни сумма «по ФЭО» дерева) — budget
-    после effective_subsidy_budget == 0. «Можно перераспределить» не смеет
-    быть budget − committed (= −committed, отрицательное число без смысла):
-    фолбэк на planned_not_committed, та же логика, что у узлов дерева без
-    бюджета (feo_plan_tree.py) и у фронта (useFeoTreeAmounts.ts)."""
+    """ОТМЕНЕНО решение владельца 04.10.2026 (субсидия id 75 «ХО»: без
+    бюджета «Можно перераспределить» фолбэчило на planned_not_committed) —
+    владелец 07.10.2026 (план .planning/quick/2026-10-07-dnr-feo-cards/
+    PLAN.md шаг 1, решение №3, найдено на субсидии «ДНР»): «Можно
+    перераспределить» теперь ПУСТО («ФЭО не введено»), не подставляет план,
+    пока feo_entered=False (ни ручного Subsidy.budget, ни суммы «по ФЭО»
+    дерева — calc=0, budget после effective_subsidy_budget == 0)."""
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
     # leaf без budget= — calculate_budgets_bulk не находит сумм «по ФЭО», calc=0.
     leaf = await _make_category(db_session, subsidy.id, name="Без бюджета")
@@ -255,26 +261,21 @@ async def test_subsidy_money_summary_no_budget_redistributable_eq_planned(
     assert row["budget"] == pytest.approx(0.0)
     assert row["planned"] == pytest.approx(200_000.0)
     assert row["committed"] == pytest.approx(0.0)
-    # Без договоров: перераспределить можно весь план.
-    assert row["redistributable"] == pytest.approx(row["planned"])
-    assert row["redistributable_by_kind"] is not None
-    assert row["redistributable_by_kind"] == row["planned_not_committed_by_kind"]
-    # Без бюджета «не запланировано от бюджета» не определено — 0.0, не free
-    # (budget дефект владельца: три строки карточки не сходились в сумму
-    # именно на субсидии без бюджета).
-    assert row["redistributable_unplanned"] == pytest.approx(0.0)
-    assert row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"] \
-        == pytest.approx(row["redistributable"])
+    assert row["feo_entered"] is False
+    assert row["redistributable"] is None
+    assert row["redistributable_by_kind"] is None
+    assert row["redistributable_unplanned"] is None
+    # planned_not_committed (другая карточка — «В плане без договоров»)
+    # decision №3 НЕ касается — считается как обычно.
+    assert row["planned_not_committed"] == pytest.approx(200_000.0)
 
-    # Частично законтрактовано — redistributable = planned − committed, не budget − committed.
+    # Частично законтрактовано — та же пустая карточка, planned_not_committed продолжает считаться.
     await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, 1, 150_000)
     summary2 = await subsidy_money_summary(db_session, [subsidy.id])
     row2 = summary2[subsidy.id]
 
     assert row2["committed"] == pytest.approx(150_000.0)
-    assert row2["redistributable"] == pytest.approx(row2["planned"] - row2["committed"])
-    assert row2["redistributable"] == pytest.approx(row2["planned_not_committed"])
-    assert row2["redistributable_by_kind"] == row2["planned_not_committed_by_kind"]
-    assert row2["redistributable_unplanned"] == pytest.approx(0.0)
-    assert row2["redistributable_unplanned"] + row2["not_committed_nice"] + row2["not_committed_likely"] \
-        == pytest.approx(row2["redistributable"])
+    assert row2["redistributable"] is None
+    assert row2["redistributable_by_kind"] is None
+    assert row2["redistributable_unplanned"] is None
+    assert row2["planned_not_committed"] == pytest.approx(row2["planned"] - row2["committed"])

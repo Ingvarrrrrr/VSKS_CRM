@@ -134,13 +134,13 @@ async def compute_subsidy_type_summary(db: AsyncSession, subsidy_id: int, tree: 
     from app.models.plan_excess_approval import PlanExcessApproval
     from app.services import plan_excess_kinds as _pek
     # Локальный импорт — см. предупреждение у импортов наверху файла.
-    from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED
+    from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, ALL_KINDS
 
     roots = [n for n in tree.values() if n.get("parent_id") is None]
     totals = {
         f"{metric}_{kind}": sum(float(n.get(f"{metric}_{kind}", 0.0) or 0.0) for n in roots)
         for metric in ("plan", "feo", "fact")
-        for kind in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+        for kind in ALL_KINDS  # теперь включает payroll (план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2)
     }
 
     _specs = (
@@ -398,9 +398,16 @@ async def compute_feo_plan_tree(
     # Локальный импорт — см. предупреждение у импортов наверху файла (цикл
     # item_type_split → ... → feo_plan_fact).
     from app.services.item_type_split import (
-        KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, kind_of,
-        TypeShares, split_amount_by_shares,
+        KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, KIND_PAYROLL, ALL_KINDS,
+        kind_of, kind_of_by_category_id, empty_kind_dict,
+        collapse_kind_dict_to_payroll, split_amount_by_kind_pool,
     )
+    # Четвёртая корзина «payroll» (владелец, 07.10.2026, план .planning/
+    # quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2) — единственный резолвер
+    # «какие категории субсидии payroll (себя или предка)»,
+    # app.services.feo_payroll.payroll_category_ids (ПРАВИЛО №6).
+    from app.services.feo_payroll import payroll_category_ids
+    _payroll_ids = await payroll_category_ids(db, subsidy_ids)
 
     cat_q = select(
         FeoCategory.id, FeoCategory.subsidy_id, FeoCategory.parent_id,
@@ -486,45 +493,37 @@ async def compute_feo_plan_tree(
         _type_split_rows = (await db.execute(_type_split_q)).all()
         _eff_types = await resolve_effective_item_types(db, _type_split_rows)
         for _row in _type_split_rows:
-            _bucket = kind_of(_eff_types.get(_row.id))
-            _pd = own_plan_by_kind.setdefault(
-                _row.feo_category_id, {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
-            )
+            # payroll статьи (своей или ЛЮБОГО предка) перебивает item_type —
+            # kind_of_by_category_id (ПРАВИЛО №6, см. импорт выше).
+            _bucket = kind_of_by_category_id(_eff_types.get(_row.id), _row.feo_category_id, _payroll_ids)
+            _pd = own_plan_by_kind.setdefault(_row.feo_category_id, empty_kind_dict())
             _pd[_bucket] += float(_row.amount or 0)
             if _row.feo_amount is not None:
-                _fd = own_feo_by_kind.setdefault(
-                    _row.feo_category_id, {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
-                )
-                _fd[_bucket if _row.is_feo_breakdown else KIND_UNSPECIFIED] += float(_row.feo_amount)
+                _fd = own_feo_by_kind.setdefault(_row.feo_category_id, empty_kind_dict())
+                # Строка без is_feo_breakdown (сумма ФЭО есть, типа владелец
+                # не разметил) — целиком в unspecified, КРОМЕ payroll-категории:
+                # там тип позиции не играет роли вообще, бюджет payroll статьи
+                # остаётся payroll независимо от is_feo_breakdown.
+                _fd_bucket = _bucket if (_row.is_feo_breakdown or _bucket == KIND_PAYROLL) else KIND_UNSPECIFIED
+                _fd[_fd_bucket] += float(_row.feo_amount)
 
-    # Решение владельца (06.10.2026, координатор — прод, субсидия ХО id 75):
-    # фолбэк «бюджет по типу = план по типу» (см. _feo_by_kind ниже) обязан
-    # сработать ТОЛЬКО когда у СУБСИДИИ ЦЕЛИКОМ нет ни одной суммы ФЭО —
-    # НЕ per-узел, иначе ломается инвариант Σ(feo_goods+feo_services+
-    # feo_unspecified)==calculate_budgets_bulk на субсидиях со СМЕШАННЫМ
-    # заполнением (часть категорий с бюджетом/ФЭО-строками, часть — без):
-    # боевой замер на локальной копии «ФАДМ 2026_2» (id 7320) — per-узел
-    # фолбэк поднял Σ типов с 15 880 100 (== calculate_budgets_bulk) до
-    # 26 367 063,13, потому что категории БЕЗ своих ФЭО-строк (у которых
-    # соседние категории той же субсидии реальные суммы ФЭО уже ввели)
-    # получили план поверх явно заданного бюджета субсидии — задвоение.
-    # subsidy_has_feo[sid] = True, если хоть у ОДНОЙ категории субсидии задан
-    # явный budget ИЛИ хоть у одной позиции — feo_amount; флаг читается
-    # ТОЛЬКО в _feo_by_kind ниже (единственное место), не второй расчёт.
-    subsidy_has_feo: dict[int, bool] = {sid: False for sid in subsidy_ids}
-    for r in cat_rows:
-        if normalize_feo_category_budget(r.budget) is not None:
-            subsidy_has_feo[r.subsidy_id] = True
-    if by_id:
-        for _row in _type_split_rows:
-            if _row.feo_amount is not None:
-                _cat = by_id.get(_row.feo_category_id)
-                if _cat is not None:
-                    subsidy_has_feo[_cat.subsidy_id] = True
+    # ОТМЕНЕНО (владелец, 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-
+    # cards/PLAN.md шаг 1): здесь раньше считался subsidy_has_feo для фолбэка
+    # «бюджет по типу = план по типу» в _feo_by_kind ниже (06.10.2026,
+    # субсидия ХО id 75) — фолбэк убран целиком (см. её docstring, решение
+    # владельца №3: без ФЭО у субсидии «Бюджет (ФЭО)» не считается вообще,
+    # а не подменяется планом). «ФЭО введено у субсидии?» теперь читается из
+    # calculate_budgets_bulk (calc_budget_map[sid] > 0 — тот же признак, что
+    # уже назывался feo_filled в dashboard_charts.py/subsidies.py, ПРАВИЛО
+    # №6 — вторая формула не заводится), см. subsidy_money_summary.py.
 
-    over_consumption = await plan_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
-    ordered_consumption = await ordered_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
-    fact_consumption = await fact_consumption_by_category(db, subsidy_ids)
+    over_consumption = await plan_consumption_by_category(
+        db, subsidy_ids, exclude_planned_item_linked=True, payroll_category_ids=_payroll_ids
+    )
+    ordered_consumption = await ordered_consumption_by_category(
+        db, subsidy_ids, exclude_planned_item_linked=True, payroll_category_ids=_payroll_ids
+    )
+    fact_consumption = await fact_consumption_by_category(db, subsidy_ids, payroll_category_ids=_payroll_ids)
     # Решение владельца (02.10.2026) — «Оплачено (по отметке)»/«Подтверждено
     # выпиской» узла: ТА ЖЕ изоляция exclude_planned_item_linked=True, что и у
     # own_consumed/own_over выше (своя часть узла+рекурсия по детям ниже).
@@ -547,7 +546,7 @@ async def compute_feo_plan_tree(
     # ТА ЖЕ изоляция, что и у ordered_consumption выше (own_ordered/own_committed
     # читаются по ОДНОЙ и той же выборке строк, см. _visit/_own_qty_and_ordered).
     committed_consumption_unlinked = await committed_consumption_by_category(
-        db, subsidy_ids, exclude_planned_item_linked=True
+        db, subsidy_ids, exclude_planned_item_linked=True, payroll_category_ids=_payroll_ids
     )
     # Итоговое поле узла «законтрактовано» (committed/committed_goods/...,
     # «Можно перераспределить»/«В плане без договоров», PLAN.md шаг 1-2) — ВСЕ
@@ -560,7 +559,7 @@ async def compute_feo_plan_tree(
     # over_plan по-прежнему исключён, committed_consumption_by_category
     # умолчание include_over_plan=False).
     committed_consumption_all = await committed_consumption_by_category(
-        db, subsidy_ids, include_over_plan=True
+        db, subsidy_ids, include_over_plan=True, payroll_category_ids=_payroll_ids
     )
     # Шаг 3 плана «Деньги субсидии» (02.10.2026, решение владельца «договор
     # входит в план») — БАЗА «пола» (_own_plan_floor ниже): committed ТОЛЬКО
@@ -577,7 +576,7 @@ async def compute_feo_plan_tree(
     # total_and_economy в test_money_committed.py — над-плановая ПРИВЯЗАННАЯ
     # позиция НЕ должна расширять plan узла, см. plan_floor_addition докстринг).
     committed_unlinked_all_for_floor = await committed_consumption_by_category(
-        db, subsidy_ids, exclude_planned_item_linked=True, include_over_plan=True
+        db, subsidy_ids, exclude_planned_item_linked=True, include_over_plan=True, payroll_category_ids=_payroll_ids
     )
     # Σ «вклада в план» активных плановых позиций С УЧЁТОМ замещения savings
     # (шаг 2 плана) — ЕДИНАЯ точка (ПРАВИЛО №6, см. её докстринг), также
@@ -586,7 +585,7 @@ async def compute_feo_plan_tree(
     # 'manual_sum' продолжает читать СЫРУЮ Σ amount (leaf_item_amt), владелец
     # явно просил его не трогать.
     leaf_item_committed_amt, committed_plan_by_kind = await leaf_items_committed_contribution(
-        db, list(by_id.keys())
+        db, list(by_id.keys()), payroll_category_ids=_payroll_ids
     )
     # Задача 2 (владелец, 04.10.2026) — own-часть «незаконтрактованного остатка
     # плана», разбитая по need_level (nice_to_have — см. её докстринг,
@@ -838,7 +837,7 @@ async def compute_feo_plan_tree(
         → own_plan_by_kind[cid], синхронно со скалярным plan_manual=items_total.
         """
         items_total = leaf_item_amt.get(cid, 0.0)
-        _own_kind = own_plan_by_kind.get(cid) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
+        _own_kind = own_plan_by_kind.get(cid) or empty_kind_dict()
         if (r.plan_source or "planned_items") != "manual_sum":
             # Шаг 2 плана «Деньги субсидии» (02.10.2026): режим 'planned_items' —
             # план узла теперь Σ КОНТРИБЬЮЦИЙ позиций (committed_amounts.
@@ -855,7 +854,7 @@ async def compute_feo_plan_tree(
         excess = own_manual_excess.get(cid, 0.0)
         items = own_excess_items.get(cid, [])
         plan_manual = manual_amt
-        plan_manual_by_kind = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: manual_amt}
+        plan_manual_by_kind = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: manual_amt}
         appr = _latest_approval(cid, _pek.PLAN_OVER_MANUAL)
         if excess > 0.005 and appr is not None and appr.status == "approved":
             plan_manual = items_total
@@ -881,12 +880,12 @@ async def compute_feo_plan_tree(
     def _plan_items_pool_by_kind(cat_id: int) -> dict:
         if cat_id in _plan_pool_memo:
             return _plan_pool_memo[cat_id]
-        val = dict(own_plan_by_kind.get(cat_id) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0})
+        val = dict(own_plan_by_kind.get(cat_id) or empty_kind_dict())
         for _kid in children_map.get(cat_id, []):
             if normalize_feo_category_budget(by_id[_kid].budget) is not None:
                 continue  # у подкатегории свой явный budget — её позиции не входят в пул родителя
             _kv = _plan_items_pool_by_kind(_kid)
-            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+            for k in ALL_KINDS:
                 val[k] += _kv[k]
         _plan_pool_memo[cat_id] = val
         return val
@@ -924,7 +923,14 @@ async def compute_feo_plan_tree(
             return _feo_by_kind_memo[cat_id]
         r = by_id[cat_id]
         _raw_b = normalize_feo_category_budget(r.budget)
-        if _raw_b is not None:
+        if _raw_b is not None and cat_id in _payroll_ids:
+            # Узел — payroll-категория (своя или по предку) со СВОИМ явным
+            # budget (напр. статья «ФОТ ДНР» с введённой суммой ФЭО) — вся
+            # сумма целиком payroll, типы позиций (goods/services) здесь не
+            # участвуют вообще (решение владельца 07.10.2026, план .planning/
+            # quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2).
+            val = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: _raw_b, KIND_UNSPECIFIED: 0.0}
+        elif _raw_b is not None:
             # Явная сумма узла ГЛАВНЕЕ (та же семантика, что и всегда — см.
             # compute_budget_map/_calc: budget узла НЕ смешивается с суммой
             # его собственных ФЭО-строк, иначе на боевых данных типа «ДНР»
@@ -937,57 +943,37 @@ async def compute_feo_plan_tree(
             # budget всегда делится НА СЕБЯ, по ДОЛЯМ плановых позиций
             # (бюджет без своей typed-разбивки, явной суммой НЕ размеченной
             # по типу, — решение владельца 06.10.2026, субсидия ХО id 75).
+            # split_amount_by_kind_pool (ПРАВИЛО №6, item_type_split.py) —
+            # обобщение той же доли на 4 корзины, включая payroll (узел САМ
+            # не payroll в этой ветке, но может иметь payroll-подкатегорию
+            # БЕЗ своего budget, чьи позиции попали в пул — см. docstring
+            # split_amount_by_kind_pool).
             _pool = _plan_items_pool_by_kind(cat_id)
-            _typed_total = _pool[KIND_GOODS] + _pool[KIND_SERVICES]
-            if _typed_total > 0.005:
-                _goods_share = Decimal(str(_pool[KIND_GOODS])) / Decimal(str(_typed_total))
-                _shares = TypeShares(
-                    goods=_goods_share, services=Decimal(1) - _goods_share, unspecified=Decimal(0),
-                )
-                _g, _s, _u = split_amount_by_shares(_raw_b, _shares)
-                val = {KIND_GOODS: float(_g), KIND_SERVICES: float(_s), KIND_UNSPECIFIED: float(_u)}
-            else:
-                val = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: _raw_b}
+            _split = split_amount_by_kind_pool(_raw_b, _pool)
+            val = {k: float(v) for k, v in _split.items()}
         else:
-            own = own_feo_by_kind.get(cat_id) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
+            # ОТМЕНЕНО (владелец, 07.10.2026, план .planning/quick/2026-10-07-
+            # dnr-feo-cards/PLAN.md шаг 1 — решение №3: «пока ФЭО не введено ни
+            # у одной статьи субсидии, карточка „Бюджет (ФЭО)" пишет „ФЭО не
+            # введено", без суммы и разбивки»): здесь раньше был фолбэк «budget
+            # по типу = план по типу» (06.10.2026, субсидия ХО id 75), который
+            # срабатывал на любом узле без собственных typed-ФЭО-строк, даже
+            # если у узла есть ПОДкатегории и собственные плановые позиции
+            # (ДНР: «Чайник электрический» 1 904,45 + «Термопот» 6 287,04
+            # висят прямо на категории с подкатегориями — узел «пуст» по
+            # typed-ФЭО, фолбэк подставлял план БЕЗ этих двух позиций, потому
+            # что _plan_by_kind считал их иначе, чем здесь ожидалось; итог —
+            # «Бюджет (ФЭО)» на 8 191,49 меньше «Запланировано»). Без бюджета
+            # ФЭО у субсидии «Бюджет (ФЭО)» теперь не считается ВООБЩЕ
+            # (feo_entered=False, см. subsidy_money_summary.py) — узел просто
+            # возвращает Σ
+            # собственных typed-ФЭО-строк (own) + детей, без подмены планом.
+            own = own_feo_by_kind.get(cat_id) or empty_kind_dict()
             val = dict(own)
             for _kid in children_map.get(cat_id, []):
                 _kv = _feo_by_kind(_kid)
-                for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+                for k in ALL_KINDS:
                     val[k] += _kv[k]
-            # Решение владельца (06.10.2026, координатор — прод, субсидия ХО
-            # id 75: 21 категория, budget=None ВЕЗДЕ, feo_amount ни у одной
-            # позиции — «Бюджет (ФЭО)» по товарам/услугам = 0/0, хотя план по
-            # типу есть). Та же семантика фолбэка, что уже применена к СКАЛЯРУ
-            # субсидии (app.services.subsidy_budget.effective_subsidy_budget /
-            # subsidy_money_summary.py budget_basis: «budget <= 0 → берём
-            # planned»), только ПО ТИПУ.
-            #
-            # Гейт subsidy_has_feo[sid] — ОБЯЗАТЕЛЬНО субсидия ЦЕЛИКОМ без ФЭО,
-            # не просто «этот узел пуст»: на боевом замере «ФАДМ 2026_2»
-            # (id 7320, явная ФЭО-разбивка на части категорий) per-узел фолбэк
-            # БЕЗ этого гейта поднял Σ типов с 15 880 100 (== calculate_budgets_
-            # bulk) до 26 367 063,13 — категории БЕЗ своих ФЭО-строк получили
-            # план ПОВЕРХ уже заданного бюджета субсидии (задвоение, инвариант
-            # Σ(goods+services+unspecified)==budget сломан). У субсидии с ФЭО
-            # хоть где-то — узлы без своих данных остаются 0/unspecified, как
-            # было (владелец подтвердил: ФАДМ 2026_2 и «ДНР» не меняются).
-            if (
-                not subsidy_has_feo.get(r.subsidy_id, False)
-                and val[KIND_GOODS] + val[KIND_SERVICES] + val[KIND_UNSPECIFIED] <= 0.005
-            ):
-                # План узла по типу БЕЗ клэмпа «превышение не согласовано» —
-                # тот же _plan_by_kind/_over_by_kind, из которых _visit ниже
-                # собирает display_kind; клэмп (_plan_manual_by_kind) у таких
-                # узлов сработать не может (budget is None здесь по условию
-                # ветки) — val неотличим от display_kind.
-                _plan_kind = _plan_by_kind(cat_id)
-                _over_kind = _over_by_kind(cat_id)
-                _plan_fallback = {
-                    k: _plan_kind[k] + _over_kind[k] for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
-                }
-                if sum(_plan_fallback.values()) > 0.005:
-                    val = _plan_fallback
         _feo_by_kind_memo[cat_id] = val
         return val
 
@@ -1034,13 +1020,13 @@ async def compute_feo_plan_tree(
         ordered = _ord.get("ordered", 0.0)
         ordered_qty = _ord.get("ordered_quantity", 0.0)
         ordered_by_kind = {
-            k: _ord.get(f"ordered_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+            k: _ord.get(f"ordered_{k}", 0.0) for k in ALL_KINDS
         }
         _committed = committed_consumption_unlinked.get(cid) or {}
         committed = _committed.get("committed", 0.0)
         committed_qty = _committed.get("committed_quantity", 0.0)
         committed_by_kind = {
-            k: _committed.get(f"committed_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+            k: _committed.get(f"committed_{k}", 0.0) for k in ALL_KINDS
         }
         return qty, ordered, ordered_qty, ordered_by_kind, committed, committed_qty, committed_by_kind
 
@@ -1083,18 +1069,18 @@ async def compute_feo_plan_tree(
         _c_all = committed_unlinked_all_for_floor.get(cid) or {}
         committed_all_total = _c_all.get("committed", 0.0)
         committed_all_kind = {
-            k: _c_all.get(f"committed_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+            k: _c_all.get(f"committed_{k}", 0.0) for k in ALL_KINDS
         }
         _own_over_cons = over_consumption.get(cid) or {}
         own_over_total = _own_over_cons.get("over", 0.0)
         own_over_kind = {
-            k: _own_over_cons.get(f"over_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+            k: _own_over_cons.get(f"over_{k}", 0.0) for k in ALL_KINDS
         }
 
         floor_total = plan_floor_addition(own_before_total, own_over_total, committed_all_total)
         floor_kind = {
             k: plan_floor_addition(own_before_kind.get(k, 0.0), own_over_kind.get(k, 0.0), committed_all_kind.get(k, 0.0))
-            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+            for k in ALL_KINDS
         }
         # По типу клэмп на КАЖДЫЙ тип независимо может дать Σ, не совпадающую
         # со скалярной добавкой (один тип уже "с избытком" компенсирует
@@ -1106,11 +1092,11 @@ async def compute_feo_plan_tree(
             _scale = floor_total / _sum_kind
             floor_kind = {k: v * _scale for k, v in floor_kind.items()}
         elif _sum_kind <= 0.005 and floor_total > 0.005:
-            floor_kind = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: floor_total}
+            floor_kind = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: floor_total}
 
         own_after_total = own_before_total + floor_total
         own_after_kind = {
-            k: own_before_kind.get(k, 0.0) + floor_kind.get(k, 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+            k: own_before_kind.get(k, 0.0) + floor_kind.get(k, 0.0) for k in ALL_KINDS
         }
         _result = (own_after_total, own_after_kind, floor_total, floor_kind)
         _own_plan_floor_memo[cid] = _result
@@ -1132,7 +1118,7 @@ async def compute_feo_plan_tree(
         val = dict(_own_kind)
         for _kid in children_map.get(cat_id, []):
             _kv = _plan_manual_by_kind(_kid)
-            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+            for k in ALL_KINDS:
                 val[k] += _kv[k]
         _plan_manual_by_kind_memo[cat_id] = val
         return val
@@ -1159,7 +1145,7 @@ async def compute_feo_plan_tree(
         val = dict(own_kind)
         for _kid in children_map.get(cat_id, []):
             _kv = _plan_by_kind(_kid)
-            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+            for k in ALL_KINDS:
                 val[k] += _kv[k]
         _plan_by_kind_memo[cat_id] = val
         return val
@@ -1176,10 +1162,10 @@ async def compute_feo_plan_tree(
         if cat_id in _over_by_kind_memo:
             return _over_by_kind_memo[cat_id]
         _over_cons = over_consumption.get(cat_id) or {}
-        val = {k: _over_cons.get(f"over_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)}
+        val = {k: _over_cons.get(f"over_{k}", 0.0) for k in ALL_KINDS}
         for _kid in children_map.get(cat_id, []):
             _kv = _over_by_kind(_kid)
-            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+            for k in ALL_KINDS:
                 val[k] += _kv[k]
         _over_by_kind_memo[cat_id] = val
         return val
@@ -1197,10 +1183,10 @@ async def compute_feo_plan_tree(
         if cat_id in _committed_total_by_kind_memo:
             return _committed_total_by_kind_memo[cat_id]
         _own = committed_consumption_all.get(cat_id) or {}
-        val = {k: _own.get(f"committed_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)}
+        val = {k: _own.get(f"committed_{k}", 0.0) for k in ALL_KINDS}
         for _kid in children_map.get(cat_id, []):
             _kv = _committed_total_by_kind(_kid)
-            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+            for k in ALL_KINDS:
                 val[k] += _kv[k]
         _committed_total_by_kind_memo[cat_id] = val
         return val
@@ -1251,6 +1237,7 @@ async def compute_feo_plan_tree(
         # по kind_of(PurchaseItem.item_type) той же строкой запроса, что и fact.
         own_fact_goods = fact_cons.get("fact_goods", 0.0)
         own_fact_services = fact_cons.get("fact_services", 0.0)
+        own_fact_payroll = fact_cons.get("fact_payroll", 0.0)
         own_fact_unspecified = fact_cons.get("fact_unspecified", 0.0)
         # Решение владельца (02.10.2026): own-часть «Оплачено (по отметке)»/
         # «Подтверждено выпиской» узла (без рекурсии по детям — рекурсия ниже,
@@ -1285,6 +1272,7 @@ async def compute_feo_plan_tree(
             fact_qty = own_fact_qty
             fact_goods = own_fact_goods
             fact_services = own_fact_services
+            fact_payroll = own_fact_payroll
             fact_unspecified = own_fact_unspecified
             paid_marked = own_paid_marked
             paid_confirmed = own_paid_confirmed
@@ -1326,6 +1314,7 @@ async def compute_feo_plan_tree(
             children_fact_qty = sum(c["fact_quantity"] for c in child_nodes)
             children_fact_goods = sum(c["fact_goods"] for c in child_nodes)
             children_fact_services = sum(c["fact_services"] for c in child_nodes)
+            children_fact_payroll = sum(c["fact_payroll"] for c in child_nodes)
             children_fact_unspecified = sum(c["fact_unspecified"] for c in child_nodes)
             children_paid_marked = sum(c["paid_marked"] for c in child_nodes)
             children_paid_confirmed = sum(c["paid_confirmed"] for c in child_nodes)
@@ -1379,6 +1368,7 @@ async def compute_feo_plan_tree(
             fact_qty = own_fact_qty + children_fact_qty
             fact_goods = own_fact_goods + children_fact_goods
             fact_services = own_fact_services + children_fact_services
+            fact_payroll = own_fact_payroll + children_fact_payroll
             fact_unspecified = own_fact_unspecified + children_fact_unspecified
             paid_marked = own_paid_marked + children_paid_marked
             paid_confirmed = own_paid_confirmed + children_paid_confirmed
@@ -1529,8 +1519,9 @@ async def compute_feo_plan_tree(
         _committed_kind_total = _committed_total_by_kind(cat_id)
         committed_goods = _committed_kind_total[KIND_GOODS]
         committed_services = _committed_kind_total[KIND_SERVICES]
+        committed_payroll = _committed_kind_total[KIND_PAYROLL]
         committed_unspecified = _committed_kind_total[KIND_UNSPECIFIED]
-        committed_total = committed_goods + committed_services + committed_unspecified
+        committed_total = committed_goods + committed_services + committed_payroll + committed_unspecified
 
         # Задача 2 (владелец, 04.10.2026) — not_committed_nice клэмпится в
         # [0, planned_not_committed] (см. комментарий у node['not_committed_nice']
@@ -1546,15 +1537,17 @@ async def compute_feo_plan_tree(
         _plan_kind = _plan_by_kind(cat_id)
         _over_kind = _over_by_kind(cat_id)
         _full_display_kind = {
-            k: _plan_kind[k] + _over_kind[k] for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+            k: _plan_kind[k] + _over_kind[k] for k in ALL_KINDS
         }
         _display_kind = _plan_manual_by_kind(cat_id) if _clamped else _full_display_kind
         _feo_kind = _feo_by_kind(cat_id)
-        plan_goods, plan_services, plan_unspecified = (
-            _display_kind[KIND_GOODS], _display_kind[KIND_SERVICES], _display_kind[KIND_UNSPECIFIED],
+        plan_goods, plan_services, plan_payroll, plan_unspecified = (
+            _display_kind[KIND_GOODS], _display_kind[KIND_SERVICES],
+            _display_kind[KIND_PAYROLL], _display_kind[KIND_UNSPECIFIED],
         )
-        feo_goods, feo_services, feo_unspecified = (
-            _feo_kind[KIND_GOODS], _feo_kind[KIND_SERVICES], _feo_kind[KIND_UNSPECIFIED],
+        feo_goods, feo_services, feo_payroll, feo_unspecified = (
+            _feo_kind[KIND_GOODS], _feo_kind[KIND_SERVICES],
+            _feo_kind[KIND_PAYROLL], _feo_kind[KIND_UNSPECIFIED],
         )
 
         # excess_plan_over_feo_{goods,services} — только если типизированное
@@ -1630,12 +1623,15 @@ async def compute_feo_plan_tree(
             # НЕ node['budget'] — см. докстринг _feo_by_kind).
             "plan_goods": plan_goods,
             "plan_services": plan_services,
+            "plan_payroll": plan_payroll,
             "plan_unspecified": plan_unspecified,
             "feo_goods": feo_goods,
             "feo_services": feo_services,
+            "feo_payroll": feo_payroll,
             "feo_unspecified": feo_unspecified,
             "fact_goods": fact_goods,
             "fact_services": fact_services,
+            "fact_payroll": fact_payroll,
             "fact_unspecified": fact_unspecified,
             # Решение владельца (02.10.2026): «Оплачено (по отметке)» —
             # Σ(payment_amount + payment_amount_declared), «Подтверждено
@@ -1647,6 +1643,7 @@ async def compute_feo_plan_tree(
             "committed": committed_total,
             "committed_goods": committed_goods,
             "committed_services": committed_services,
+            "committed_payroll": committed_payroll,
             "committed_unspecified": committed_unspecified,
             # Контракт API (02.10.2026, PLAN.md шаг 1-2, п. B): «В плане без
             # договоров» узла = plan − committed (узел+поддерево). Бюджет узла

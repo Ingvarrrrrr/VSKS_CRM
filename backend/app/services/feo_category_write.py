@@ -43,6 +43,10 @@ TRACKED_FIELDS = (
     "name", "code", "appendix", "is_active", "description", "budget",
     "feo_quantity", "feo_unit", "feo_amount", "planned_quantity",
     "planned_amount", "unit", "plan_source", "manual_plan_amount",
+    # ФОТ и иные выплаты персоналу (решение владельца 07.10.2026, план
+    # .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2) — ручной
+    # переключатель, через тот же PUT, без отдельной ручки.
+    "is_payroll",
 )
 
 
@@ -125,6 +129,7 @@ async def create_category(
         unit=category_data.unit,
         plan_source=category_data.plan_source or "planned_items",
         manual_plan_amount=category_data.manual_plan_amount,
+        is_payroll=bool(category_data.is_payroll),
     )
     db.add(new_category)
     await db.flush()

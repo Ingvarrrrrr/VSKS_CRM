@@ -74,6 +74,17 @@ export const METRIC_FIELDS: Record<TypeExcessKind, {
   fact_over_plan_services: { upperField: 'fact_services', lowerField: 'plan_services', upperWord: 'закупки', lowerWord: 'план', lowerWordGen: 'плана', typeWord: 'услугам' },
 }
 
+// Режим «план против ФЭО целиком» (владелец 07.10.2026, план .planning/quick/
+// 2026-10-07-dnr-feo-cards/PLAN.md шаг 5) — плашка «ФЭО > план/ФЭО < план» на
+// плитке субсидии (SubsidyCardsGrid.vue) сравнивает УЗЕЛ целиком (поля
+// excess_over_feo/plan/over/budget узла, см. backend/app/services/
+// feo_plan_tree.py — plan+over = полная плановая сумма, budget = её ФЭО), а
+// не ПО ТИПУ (товары/услуги), как 4 вида TypeExcessKind выше. 'total' — не
+// значение TypeExcessKind (другая метрика на узле), activate() ниже принимает
+// его отдельным литералом.
+export const TOTAL_EXCESS_KIND = 'total' as const
+export type DrilldownKind = TypeExcessKind | typeof TOTAL_EXCESS_KIND
+
 function buildTreeIndex(categories: Pick<FeoCategory, 'id' | 'parent_id'>[]) {
   const knownIds = new Set(categories.map(c => c.id))
   const childrenOf: Record<number, number[]> = {}
@@ -95,12 +106,16 @@ function buildTreeIndex(categories: Pick<FeoCategory, 'id' | 'parent_id'>[]) {
 // переносчик суммы. Порядок результата — сверху вниз (pre-order от корней, в
 // порядке исходного массива categories на каждом уровне — тот же порядок,
 // что строит feoTree в useFeoTreeState.ts).
-export function excessTargetIds(
+// Общее ядро для excessTargetIds(kind) и totalPlanOverFeoTargetIds() ниже —
+// обе ищут самые глубокие узлы, у которых СВОЁ значение поля > 0, но ни у
+// одного потомка то же поле не > 0 (узлы дерева хранят АГРЕГАТ поддерева).
+// Вынесено одной функцией (Правило №6 — второй механизм поиска виновника не
+// заводим для режима «план против ФЭО целиком», только другое поле).
+function deepestFieldExceedingIds(
   categories: Pick<FeoCategory, 'id' | 'parent_id'>[],
   planTreeByCat: Record<number, PlanTreeEntry>,
-  kind: TypeExcessKind,
+  field: string,
 ): number[] {
-  const field = NODE_EXCESS_FIELD[kind]
   const amountOf = (id: number) => amountOfField(planTreeByCat[id], field)
   const { roots, childrenOf } = buildTreeIndex(categories)
 
@@ -119,6 +134,26 @@ export function excessTargetIds(
   }
   roots.forEach(visit)
   return ids
+}
+
+export function excessTargetIds(
+  categories: Pick<FeoCategory, 'id' | 'parent_id'>[],
+  planTreeByCat: Record<number, PlanTreeEntry>,
+  kind: TypeExcessKind,
+): number[] {
+  return deepestFieldExceedingIds(categories, planTreeByCat, NODE_EXCESS_FIELD[kind])
+}
+
+// «План против ФЭО целиком» (см. docstring TOTAL_EXCESS_KIND выше) — поле
+// узла excess_over_feo уже готово с бэкенда (= (plan+over) − budget, когда
+// budget задан и превышен, см. backend/app/services/feo_plan_tree.py), тот
+// же приём, что NODE_EXCESS_FIELD для видов по типу, просто без карты (одно
+// готовое поле, не четыре).
+export function totalPlanOverFeoTargetIds(
+  categories: Pick<FeoCategory, 'id' | 'parent_id'>[],
+  planTreeByCat: Record<number, PlanTreeEntry>,
+): number[] {
+  return deepestFieldExceedingIds(categories, planTreeByCat, 'excess_over_feo')
 }
 
 // РЕЗЕРВНЫЙ режим (приёмка 06.10.2026, субсидия «ФАДМ 2026_2», id 7320):
@@ -154,6 +189,27 @@ export function excessTargetsTotal(ids: number[], planTreeByCat: Record<number, 
   return ids.reduce((sum, id) => sum + amountOfField(planTreeByCat[id], field), 0)
 }
 
+// РЕЗЕРВНЫЙ режим для 'total' — тот же приём, что compositionTargetIds выше,
+// но верхняя/нижняя величина узла — plan+over (полная плановая сумма) и
+// budget (ФЭО узла), не METRIC_FIELDS (та карта — только для 4 видов по
+// типу). Только корни, порядок — как в массиве categories.
+export function totalPlanOverFeoCompositionIds(
+  categories: Pick<FeoCategory, 'id' | 'parent_id'>[],
+  planTreeByCat: Record<number, PlanTreeEntry>,
+): number[] {
+  const { roots } = buildTreeIndex(categories)
+  return roots.filter(id => {
+    const entry = planTreeByCat[id]
+    const upper = amountOfField(entry, 'plan') + amountOfField(entry, 'over')
+    const lower = amountOfField(entry, 'budget')
+    return upper > 0.005 || lower > 0.005
+  })
+}
+
+export function totalPlanOverFeoTargetsTotal(ids: number[], planTreeByCat: Record<number, PlanTreeEntry>): number {
+  return ids.reduce((sum, id) => sum + amountOfField(planTreeByCat[id], 'excess_over_feo'), 0)
+}
+
 // Дефект 3 приёмки 06.10.2026: сумма превышения НАЙДЕННЫХ статей-виновников
 // не обязана совпадать с итоговой суммой чипа субсидии целиком — у чипа своя
 // формула (вся субсидия), а в остальных, не попавших в targets статьях
@@ -183,7 +239,7 @@ export const useExcessDrilldown = makeCtxSingleton(
 function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
   const { feoAncestorIds } = buildFeoAncestors(ctx.feoCategories)
 
-  const activeKind = ref<TypeExcessKind | null>(null)
+  const activeKind = ref<DrilldownKind | null>(null)
   const targets = ref<number[]>([])
   const currentIndex = ref(0)
   // true — targets построены резервным режимом compositionTargetIds (см. её
@@ -198,9 +254,18 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
   // не на «виновнике», а на статьях, из которых просто складывается итог.
   const compositionMessage = ref<string | null>(null)
 
-  const kindLabel = computed(() => TYPE_EXCESS_KIND_DEFS.find(d => d.kind === activeKind.value)?.label ?? '')
-  const activeMetric = computed(() => activeKind.value ? METRIC_FIELDS[activeKind.value] : null)
-  const targetsTotal = computed(() => activeKind.value ? excessTargetsTotal(targets.value, ctx.planTreeByCat.value, activeKind.value) : 0)
+  // 'total' (режим «план против ФЭО целиком», см. docstring TOTAL_EXCESS_KIND)
+  // — не значение TYPE_EXCESS_KIND_DEFS, подпись задана прямо здесь.
+  const kindLabel = computed(() => {
+    if (activeKind.value === TOTAL_EXCESS_KIND) return 'план выше ФЭО (по статье целиком)'
+    return TYPE_EXCESS_KIND_DEFS.find(d => d.kind === activeKind.value)?.label ?? ''
+  })
+  const activeMetric = computed(() => (activeKind.value && activeKind.value !== TOTAL_EXCESS_KIND) ? METRIC_FIELDS[activeKind.value] : null)
+  const targetsTotal = computed(() => {
+    if (!activeKind.value) return 0
+    if (activeKind.value === TOTAL_EXCESS_KIND) return totalPlanOverFeoTargetsTotal(targets.value, ctx.planTreeByCat.value)
+    return excessTargetsTotal(targets.value, ctx.planTreeByCat.value, activeKind.value)
+  })
   const currentTargetId = computed<number | null>(() => targets.value[currentIndex.value] ?? null)
   const hasTargets = computed(() => targets.value.length > 0)
 
@@ -213,9 +278,11 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
   }
 
   // Строка-разница для НОРМАЛЬНОГО режима (excessTargetIds, не composition) —
-  // Дефект 3 приёмки.
+  // Дефект 3 приёмки. 'total' — своей diffLine нет (чип субсидии для неё не
+  // читает ту же subsidy_type_excess карту, что и 4 вида по типу — другая
+  // метрика, см. docstring TOTAL_EXCESS_KIND), просто не показываем строку.
   const diffLine = computed<string | null>(() => {
-    if (!activeKind.value || isComposition.value || !targets.value.length) return null
+    if (!activeKind.value || activeKind.value === TOTAL_EXCESS_KIND || isComposition.value || !targets.value.length) return null
     return excessDiffLine(targets.value, ctx.planTreeByCat.value, activeKind.value, subsidyChipAmount(activeKind.value))
   })
 
@@ -224,6 +291,12 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
   function buildEmptyMessage(kind: TypeExcessKind): string {
     const amount = subsidyChipAmount(kind)
     return `по отдельным статьям превышения нет — превышение только в итоге субсидии целиком, на ${formatCurrency(amount)}`
+  }
+  // 'total' — тот же смысл, без привязки к subsidy_type_excess (другая
+  // метрика узла, не по типу) — только нейтральный текст, без суммы чипа
+  // (её у 'total' в этом composable не читаем, см. docstring выше).
+  function buildEmptyMessageTotal(): string {
+    return 'по отдельным статьям расхождение план/ФЭО не найдено'
   }
 
   // Дефект 1 приёмки 06.10.2026 — заголовок панели для composition-режима.
@@ -244,6 +317,16 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
       ? `${capitalize(lowerWord)} по ${typeWord} по направлениям не разнесено — стрелками показаны статьи, где лежит ${upperWord} и где лежит ${lowerWord}.`
       : 'Стрелками показаны статьи, из которых складывается итог.'
     return `Превышение только в итоге субсидии: ${upperWord} по ${typeWord} ${formatCurrency(upperTotal)} при ${lowerWord} по ${typeWord} ${formatCurrency(lowerTotal)}. ${tail}`
+  }
+
+  // Тот же composition-заголовок для 'total' — верхняя/нижняя величина корня
+  // = plan+over/budget (не METRIC_FIELDS, та карта только для 4 видов по
+  // типу, см. docstring totalPlanOverFeoCompositionIds).
+  function buildCompositionMessageTotal(): string {
+    const { roots } = buildTreeIndex(ctx.feoCategories.value)
+    const upperTotal = roots.reduce((s, id) => s + amountOfField(ctx.planTreeByCat.value[id], 'plan') + amountOfField(ctx.planTreeByCat.value[id], 'over'), 0)
+    const lowerTotal = roots.reduce((s, id) => s + amountOfField(ctx.planTreeByCat.value[id], 'budget'), 0)
+    return `Превышение только в итоге субсидии: план ${formatCurrency(upperTotal)} при ФЭО ${formatCurrency(lowerTotal)}. Стрелками показаны статьи, из которых складывается итог.`
   }
 
   async function scrollToTarget(id: number | null) {
@@ -268,30 +351,46 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  function activate(kind: TypeExcessKind) {
+  // kind='total' — режим «план против ФЭО целиком» (см. docstring
+  // TOTAL_EXCESS_KIND выше), расширение ЭТОГО ЖЕ activate() (владелец
+  // 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 5),
+  // не второй механизм — та же find-deepest/composition-схема, что и 4 вида
+  // по типу, просто с другим полем узла.
+  function activate(kind: DrilldownKind) {
     if (activeKind.value === kind) { clear(); return }
     activeKind.value = kind
     activeHighlightMode.value = 'excess' // гасит активную KPI-подсветку, см. useHighlightMode.ts
 
-    let ids = excessTargetIds(ctx.feoCategories.value, ctx.planTreeByCat.value, kind)
+    let ids: number[]
     let composition = false
-    if (ids.length === 0) {
-      // Главный случай владельца (Дефект 1): узловой контроль 0 везде —
-      // переключаемся на composition-режим, вместо молчаливой пустой панели.
-      ids = compositionTargetIds(ctx.feoCategories.value, ctx.planTreeByCat.value, kind)
-      composition = true
+    if (kind === TOTAL_EXCESS_KIND) {
+      ids = totalPlanOverFeoTargetIds(ctx.feoCategories.value, ctx.planTreeByCat.value)
+      if (ids.length === 0) {
+        ids = totalPlanOverFeoCompositionIds(ctx.feoCategories.value, ctx.planTreeByCat.value)
+        composition = true
+      }
+    } else {
+      ids = excessTargetIds(ctx.feoCategories.value, ctx.planTreeByCat.value, kind)
+      if (ids.length === 0) {
+        // Главный случай владельца (Дефект 1): узловой контроль 0 везде —
+        // переключаемся на composition-режим, вместо молчаливой пустой панели.
+        ids = compositionTargetIds(ctx.feoCategories.value, ctx.planTreeByCat.value, kind)
+        composition = true
+      }
     }
     isComposition.value = composition
     targets.value = ids
     currentIndex.value = 0
 
     if (ids.length === 0) {
-      emptyMessage.value = buildEmptyMessage(kind)
+      emptyMessage.value = kind === TOTAL_EXCESS_KIND ? buildEmptyMessageTotal() : buildEmptyMessage(kind)
       compositionMessage.value = null
       return
     }
     emptyMessage.value = null
-    compositionMessage.value = composition ? buildCompositionMessage(kind) : null
+    compositionMessage.value = composition
+      ? (kind === TOTAL_EXCESS_KIND ? buildCompositionMessageTotal() : buildCompositionMessage(kind))
+      : null
 
     // Раскрываем предков ВСЕХ целей разом — иначе next()/prev() упёрлись бы
     // в свёрнутую ветку соседней статьи.
@@ -353,13 +452,28 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
   // из feoCategories, тот же массив, что строит дерево (Правило №6).
   function targetRows(): { id: number; name: string; upper: number; lower: number; excess: number }[] {
     if (!activeKind.value) return []
+    const nameOf = (id: number) => ctx.feoCategories.value.find(c => c.id === id)?.name || `#${id}`
+    if (activeKind.value === TOTAL_EXCESS_KIND) {
+      // 'total' — узел целиком: upper = plan+over (полная плановая сумма),
+      // lower = budget (ФЭО узла), excess = excess_over_feo (готово с бэка).
+      return targets.value.map(id => {
+        const entry = ctx.planTreeByCat.value[id]
+        return {
+          id,
+          name: nameOf(id),
+          upper: amountOfField(entry, 'plan') + amountOfField(entry, 'over'),
+          lower: amountOfField(entry, 'budget'),
+          excess: amountOfField(entry, 'excess_over_feo'),
+        }
+      })
+    }
     const { upperField, lowerField } = METRIC_FIELDS[activeKind.value]
     const excessField = NODE_EXCESS_FIELD[activeKind.value]
     return targets.value.map(id => {
       const entry = ctx.planTreeByCat.value[id]
       return {
         id,
-        name: ctx.feoCategories.value.find(c => c.id === id)?.name || `#${id}`,
+        name: nameOf(id),
         upper: amountOfField(entry, upperField),
         lower: amountOfField(entry, lowerField),
         excess: amountOfField(entry, excessField),

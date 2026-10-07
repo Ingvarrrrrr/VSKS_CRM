@@ -144,12 +144,16 @@ async def test_contracted_not_ordered_is_carved_out_of_likely_not_added_on_top(d
     трогается (товары/услуги уже включают эту сумму — по заданию
     координатора).
 
-    Бюджет субсидии/категории не задаём (budget_from_plan=True) — тогда
-    budget_basis == planned и redistributable_unplanned == 0 РОВНО."""
+    Бюджет субсидии = плану (250 000), задан явно (ОТМЕНЕНО решение владельца
+    06.10.2026 «бюджет = план без ФЭО» — владелец 07.10.2026, план
+    .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 1: budget_basis
+    больше НЕ подставляется из плана без ФЭО, поэтому тест задаёт бюджет
+    РЕАЛЬНО, тем же числом, чтобы сохранить проверяемый инвариант
+    redistributable_unplanned == 0 РОВНО, budget_basis == planned)."""
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
 
-    subsidy = await _make_subsidy(db_session, test_org.id, budget=0)
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=250_000)
     cat = await _make_category(db_session, subsidy.id, name="Рамочный договор")
     item = await _make_planned_item(db_session, cat.id, "Услуга связи", 1, 250_000)
     item.item_type = "услуга"

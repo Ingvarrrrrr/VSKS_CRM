@@ -137,7 +137,14 @@ async def align_budget_to_plan(
     "subsidy_over_after"}.
     """
     from app.services.feo_plan import compute_feo_plan_tree
-    from app.routers.subsidies import calculate_budget_from_categories
+    # ОДНА функция для (ceiling, total_plan), общая с feo_plan_excess.py
+    # жёстким потолком — см. её докстринг (Правило №6, решение владельца
+    # 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 3):
+    # статьи без ФЭО во всём поддереве не участвуют ни в plan, ни в ceiling.
+    from app.services.subsidy_budget import feo_entered_ceiling_and_plan
+    # Суммы в тексте 409 — по-русски (пробел тысяч, запятая дробная), ТОТ ЖЕ
+    # хелпер, что и документы (Правило №6, не вторая копия форматирования).
+    from app.services.documents.formatting import _fmt_money as _fmt_rub_num
 
     if not cat.subsidy_id:
         raise HTTPException(422, "У категории не задана субсидия")
@@ -150,8 +157,7 @@ async def align_budget_to_plan(
     old_budget = float(cat.budget) if cat.budget is not None else None
     new_budget = Decimal(str(node["plan"] + node["over"])).quantize(Decimal("0.01"))
 
-    total_plan_before = sum(n["display"] for n in tree.values() if n["parent_id"] is None)
-    ceiling_before = await calculate_budget_from_categories(db, cat.subsidy_id)
+    ceiling_before, total_plan_before, _ = await feo_entered_ceiling_and_plan(db, cat.subsidy_id, tree)
     total_plan_before_d = Decimal(str(total_plan_before))
     ceiling_before_d = Decimal(str(ceiling_before)) if ceiling_before else Decimal("0")
     over_before_d = (
@@ -163,8 +169,7 @@ async def align_budget_to_plan(
     await db.flush()
 
     tree_after = await compute_feo_plan_tree(db, [cat.subsidy_id])
-    total_plan_after = sum(n["display"] for n in tree_after.values() if n["parent_id"] is None)
-    ceiling_after = await calculate_budget_from_categories(db, cat.subsidy_id)
+    ceiling_after, total_plan_after, _ = await feo_entered_ceiling_and_plan(db, cat.subsidy_id, tree_after)
     total_plan_after_d = Decimal(str(total_plan_after))
     ceiling_after_d = Decimal(str(ceiling_after)) if ceiling_after else Decimal("0")
     over_after_d = (
@@ -186,11 +191,11 @@ async def align_budget_to_plan(
             rname = name_by_id.get(rid, str(rid))
             if rb is None:
                 if disp_d > Decimal("0.005"):
-                    over_root_lines.append(f"{rname}: план {disp_d:,.2f} ₽ / ФЭО не задано")
+                    over_root_lines.append(f"{rname}: план {_fmt_rub_num(disp_d)} ₽ / ФЭО не задано")
             else:
                 rb_d = Decimal(str(rb))
                 if disp_d - rb_d > Decimal("0.005"):
-                    over_root_lines.append(f"{rname}: план {disp_d:,.2f} ₽ / ФЭО {rb_d:,.2f} ₽")
+                    over_root_lines.append(f"{rname}: план {_fmt_rub_num(disp_d)} ₽ / ФЭО {_fmt_rub_num(rb_d)} ₽")
 
         # Читаем subsidy_id ДО rollback — после db.rollback() объект `cat`
         # expired (см. прежний докстринг до разрезания про MissingGreenlet).
@@ -204,9 +209,9 @@ async def align_budget_to_plan(
                 "code": "PLAN_OVER_SUBSIDY_CEILING",
                 "message": (
                     f"Приравнять ФЭО к плану нельзя: после этого превышение плана над потолком "
-                    f"финансирования по субсидии вырастет с {over_before_d:,.2f} ₽ до "
-                    f"{over_after_d:,.2f} ₽ (суммарный план составит {total_plan_after_d:,.2f} ₽, "
-                    f"потолок ФЭО — {ceiling_after_d:,.2f} ₽). Уменьшите финансирование или план "
+                    f"финансирования по субсидии вырастет с {_fmt_rub_num(over_before_d)} ₽ до "
+                    f"{_fmt_rub_num(over_after_d)} ₽ (суммарный план составит {_fmt_rub_num(total_plan_after_d)} ₽, "
+                    f"потолок ФЭО — {_fmt_rub_num(ceiling_after_d)} ₽). Уменьшите финансирование или план "
                     f"по другим категориям субсидии{_lines_suffix}."
                 ),
                 "subsidy_id": subsidy_id_for_error,
@@ -231,3 +236,60 @@ async def align_budget_to_plan(
         "subsidy_over_before": float(over_before_d),
         "subsidy_over_after": float(over_after_d),
     }
+
+
+async def align_budget_to_plan_all(
+    db: AsyncSession, user, subsidy_id: int,
+    *, source: str = feo_history.SOURCE_MANUAL, source_ref: Optional[int] = None,
+) -> dict:
+    """Тело POST /api/subsidies/{subsidy_id}/feo/align-budget-to-plan-all —
+    «Приравнять ФЭО к плану по всем статьям одним действием» (решение
+    владельца 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/
+    PLAN.md шаг 3, решение владельца №4): budget := node["plan"] + node["over"]
+    (ТА ЖЕ формула цели, что и align_budget_to_plan выше — не вторая формула)
+    у КАЖДОЙ категории субсидии сразу.
+
+    БЕЗ потолочной проверки align_budget_to_plan по очереди на каждой
+    категории: та проверка сравнивает «превышение субсидии ДО/ПОСЛЕ ОДНОЙ
+    категории», пока остальные статьи ещё не выровнены — вызывать её по
+    кругу на промежуточных состояниях бессмысленно (остальные статьи либо
+    уже без ФЭО — не участвуют в потолке вовсе, см.
+    app.services.subsidy_budget.feo_entered_ceiling_and_plan, — либо сами
+    будут выровнены следующей итерацией этого же цикла). После ЭТОГО
+    массового действия budget == plan У ВСЕХ категорий сразу — глобальное
+    превышение равно нулю по построению, второй проверки не требуется.
+
+    Возвращает {"count": сколько статей изменено, "total": сумма ФЭО по
+    ВСЕЙ субсидии после действия (Σ по всем категориям, не только
+    изменённым — именно это число показывает подтверждение на фронте: «ФЭО
+    станет равным плану у N статей на сумму X ₽»)}."""
+    from app.services.feo_plan import compute_feo_plan_tree
+
+    cat_rows = (await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+    )).scalars().all()
+    if not cat_rows:
+        return {"count": 0, "total": 0.0}
+
+    tree = await compute_feo_plan_tree(db, [subsidy_id])
+    count = 0
+    total = Decimal("0")
+    for cat in cat_rows:
+        node = tree.get(cat.id)
+        if node is None:
+            continue
+        new_budget = Decimal(str(node["plan"] + node["over"])).quantize(Decimal("0.01"))
+        total += new_budget
+        old_budget = float(cat.budget) if cat.budget is not None else None
+        if old_budget is not None and abs(old_budget - float(new_budget)) < 0.005:
+            continue  # уже равно плану — не плодить запись истории без изменения
+        cat.budget = new_budget
+        await feo_history.record_updated(
+            db, feo_history.ENTITY_FEO_CATEGORY, cat.id, user,
+            {"budget": old_budget}, {"budget": float(new_budget)},
+            source=source, source_ref=source_ref, commit=False,
+        )
+        count += 1
+
+    await db.flush()
+    return {"count": count, "total": float(total)}

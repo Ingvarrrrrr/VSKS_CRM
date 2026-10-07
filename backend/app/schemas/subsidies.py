@@ -270,6 +270,11 @@ class FeoCategoryCreate(BaseModel):
     # старым клиентом, что уронило бы INSERT/UPDATE constraint-нарушением.
     plan_source: str = "planned_items"
     manual_plan_amount: Optional[float] = None
+    # ФОТ и иные выплаты персоналу (решение владельца 07.10.2026, план
+    # .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2) — ручной
+    # переключатель; None = не трогать текущее значение при PATCH/PUT
+    # (update_category применяет его только если передано явно).
+    is_payroll: Optional[bool] = None
 
 class FeoCategoryOut(BaseModel):
     id: int
@@ -290,6 +295,8 @@ class FeoCategoryOut(BaseModel):
     unit: Optional[str] = None
     plan_source: str = "planned_items"
     manual_plan_amount: Optional[float] = None
+    # ФОТ и иные выплаты персоналу — см. FeoCategoryCreate.is_payroll выше.
+    is_payroll: bool = False
     # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): непустое — только
     # когда PUT /feo-categories/{id} заподозрил, что в planned_amount (цена ЗА
     # ЕДИНИЦУ) записана СУММА (защита от повторения К1, см. update_category).

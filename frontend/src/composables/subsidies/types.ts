@@ -139,6 +139,14 @@ export interface SubsidyRow {
   // взяты из planned_tree, а не из бюджета. Карточки «Бюджет (ФЭО)»/«Остаток
   // субсидии» показывают подпись «по плану — суммы ФЭО не введены».
   budget_from_plan?: boolean
+  // feo_entered (решение владельца 07.10.2026, план .planning/quick/
+  // 2026-10-07-dnr-feo-cards/PLAN.md шаг 1) — false, когда у субсидии ни
+  // официального бюджета, ни хоть одной суммы ФЭО не введено (budget_basis
+  // backend/app/services/subsidy_money_summary.py <= 0). Карточки «Бюджет
+  // (ФЭО)»/«Свободно»/«Можно перераспределить»/«Остаток субсидии» показывают
+  // «ФЭО не введено» вместо числа — budget_from_plan выше больше НЕ подставляет
+  // план (отменено владельцем), единственный флаг для фронта теперь этот.
+  feo_entered?: boolean
   // «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
   // is_sandbox=true — копия, не входит в итоги дашборда/аккаунта, свои цифры
   // считаются как обычно. copied_from_id — исходная субсидия (если это копия).
@@ -593,6 +601,10 @@ export interface SubsidyTypeTotals {
   plan_goods: number; plan_services: number; plan_unspecified: number
   feo_goods: number; feo_services: number; feo_unspecified: number
   fact_goods: number; fact_services: number; fact_unspecified: number
+  // ФОТ и выплаты персоналу (07.10.2026, план dnr-feo-cards, задача 1) — тот
+  // же backend/app/services/type_totals.py (_EMPTY_TOTALS уже включает эти
+  // поля всегда, не опционально).
+  plan_payroll: number; feo_payroll: number
 }
 export type SubsidyTypeExcess = Record<TypeExcessKind, { amount: number; pending: boolean; approved: boolean }>
 

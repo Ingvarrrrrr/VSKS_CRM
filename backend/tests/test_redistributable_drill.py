@@ -26,7 +26,12 @@ async def test_redistributable_drill_rows_match_card_by_kind(db_session, test_or
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
 
-    subsidy = await _make_subsidy(db_session, test_org.id, budget=0)
+    # budget=1 (не 0) — ОТМЕНЕНО решение владельца 06.10.2026 «бюджет=план
+    # без ФЭО»: budget<=0 теперь делает card_by_kind (redistributable_by_kind)
+    # None целиком (владелец 07.10.2026, план .planning/quick/2026-10-07-dnr-
+    # feo-cards/PLAN.md шаг 1, решение №3). goods/services ниже сравниваются
+    # с RAW Σ позиций — не зависят от самого значения budget, пока оно > 0.
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1)
     cat = await _make_category(db_session, subsidy.id, name="Товары и услуги")
 
     # 1) «Хотелось бы» — товар, без закупок, остаток = план целиком.

@@ -142,7 +142,24 @@ is_monthly_payment-график платежей — на проде id=89 ре�
 contracted_not_ordered_by_subsidy/contracted_not_ordered_need_level_split;
 поле переименовано в contracted_not_ordered и ВЫЧИТАЕТСЯ из
 not_committed_nice/not_committed_likely (по need_level), а не прибавляется
-поверх — см. комментарий у места сборки ниже."""
+поверх — см. комментарий у места сборки ниже.
+
+ОТМЕНЕНО (владелец, 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/
+PLAN.md шаг 1, решение №3): РЕШЕНИЕ 06.10.2026 выше («бюджет = план, когда ФЭО
+не введён») — ОТМЕНЕНО целиком. Повод — субсидия «ДНР» (409 плановых позиций,
+63 232 213,82 ₽, ФЭО не введено ни у одной из 41 статьи): подмена плана
+бюджетом не только маскировала «ФЭО не введено» как настоящий бюджет, но и
+из-за отдельного бага в feo_plan_tree.py (_feo_by_kind — убран там же, см. её
+докстринг) расходилась с «Запланировано» на 8 191,49 ₽ (позиции прямо на
+статье с подкатегориями). Теперь budget<=0 → budget_basis/free_basis/
+redistributable/redistributable_unplanned/redistributable_by_kind/
+balance_by_marks/balance_by_statement — ВСЕ None; новое поле feo_entered
+(= budget > 0, тот же effective_subsidy_budget, что и budget выше — не вторая
+формула) говорит фронту, что показывать «ФЭО не введено» вместо чисел.
+budget_from_plan остаётся полем выдачи, но теперь ВСЕГДА False — подмена
+больше не происходит; поле не удалено ТОЛЬКО ради старых потребителей (grep
+подтвердил чтение в dashboard_charts.py и нескольких местах фронта — правит
+фронт другой исполнитель, см. отчёт сессии)."""
 from typing import Optional
 
 from sqlalchemy import select
@@ -227,20 +244,21 @@ async def subsidy_money_summary(
         "free": float,                        # budget − planned («Свободно»)
         "planned_not_committed": float,       # planned − committed («В плане без договоров»)
         "planned_not_committed_by_kind": {"goods","services","unspecified"},
-        "redistributable": float,             # budget − committed («Можно перераспределить»)
-        "redistributable_by_kind": {"goods","services","unspecified"},  # RAW (06.10.2026) — см. app.services.redistributable_raw
-        "redistributable_unplanned": float,   # free, если budget > 0, иначе 0.0 («не запланировано» в карточке «Можно перераспределить»)
+        "redistributable": float | None,      # budget_basis − committed («Можно перераспределить»); None, если не feo_entered
+        "redistributable_by_kind": {"goods","services","unspecified"} | None,  # RAW (06.10.2026) — см. app.services.redistributable_raw; None, если не feo_entered
+        "redistributable_unplanned": float | None,  # free_basis, если feo_entered, иначе None («не запланировано» в карточке «Можно перераспределить»)
         "contracted_not_ordered": float,  # «договоры без заказа» (06.10.2026, переименовано из monthly_future_to_redistribute)
         "over_plan_categories": [{"category_id","name","excess_amount"}],  # направления с committed > plan (06.10.2026)
         "committed_missing_fact_items": int,  # позиций в договоре без суммы договора (fallback по плановой цене)
         "plan_floor_added": float,            # сумма «пола плана» (закрытые позиции без собственного плана) узлов субсидии
         "balance_paid_marked": float,         # оплачено по отметке (включает подтверждённое выпиской) — Σ paid_marked корней дерева
         "balance_paid_confirmed": float,      # подтверждено выпиской — Σ paid_confirmed корней дерева
-        "balance_by_marks": float | None,     # «Остаток субсидии» по отметке = budget_basis − balance_paid_marked; None, если budget_basis <= 0
-        "balance_by_statement": float | None, # «Остаток субсидии» по выписке = budget_basis − balance_paid_confirmed; None, если budget_basis <= 0
-        "budget_basis": float,                # budget, если budget > 0, иначе planned («бюджет для показа», решение владельца 06.10.2026)
-        "budget_from_plan": bool,             # True, когда budget <= 0 и planned > 0 (budget_basis взят из плана)
-        "free_basis": float,                  # budget_basis − planned (для показа; "free" не трогается)
+        "balance_by_marks": float | None,     # «Остаток субсидии» по отметке = budget_basis − balance_paid_marked; None, если не feo_entered
+        "balance_by_statement": float | None, # «Остаток субсидии» по выписке = budget_basis − balance_paid_confirmed; None, если не feo_entered
+        "budget_basis": float | None,          # = budget, если feo_entered, иначе None («ФЭО не введено» — решение владельца 07.10.2026, подмена планом ОТМЕНЕНА)
+        "budget_from_plan": bool,             # ВСЕГДА False теперь (поле выдачи сохранено только для совместимости старых потребителей — см. докстринг модуля)
+        "free_basis": float | None,            # budget_basis − planned, если feo_entered, иначе None (для показа; "free" не трогается)
+        "feo_entered": bool,                  # budget > 0 (официальный бюджет ИЛИ хоть одна сумма ФЭО) — решение владельца 07.10.2026
     }} — см. докстринг модуля для источника каждого поля (ПРАВИЛО №6: ни одно
     поле здесь не пересчитывается заново, только собирается воедино и
     комбинируется в three производных free/planned_not_committed/redistributable)."""
@@ -308,11 +326,13 @@ async def subsidy_money_summary(
         committed_by_kind = {
             "goods": _committed.get("committed_goods", 0.0),
             "services": _committed.get("committed_services", 0.0),
+            "payroll": _committed.get("committed_payroll", 0.0),
             "unspecified": _committed.get("committed_unspecified", 0.0),
         }
         planned_not_committed_by_kind = {
             "goods": _committed.get("plan_goods", 0.0) - committed_by_kind["goods"],
             "services": _committed.get("plan_services", 0.0) - committed_by_kind["services"],
+            "payroll": _committed.get("plan_payroll", 0.0) - committed_by_kind["payroll"],
             "unspecified": _committed.get("plan_unspecified", 0.0) - committed_by_kind["unspecified"],
         }
         redistributable_by_kind: Optional[dict] = None
@@ -321,45 +341,43 @@ async def subsidy_money_summary(
             redistributable_by_kind = {
                 "goods": tt.get("feo_goods", 0.0) - committed_by_kind["goods"],
                 "services": tt.get("feo_services", 0.0) - committed_by_kind["services"],
+                "payroll": tt.get("feo_payroll", 0.0) - committed_by_kind["payroll"],
                 "unspecified": tt.get("feo_unspecified", 0.0) - committed_by_kind["unspecified"],
             }
 
-        # budget_basis — «бюджет для показа» (решение владельца 06.10.2026,
-        # см. докстринг модуля): budget, если задан официальный бюджет,
-        # иначе planned (пока владелец не введёт суммы по ФЭО). budget САМ
+        # ОТМЕНЕНО (владелец, 07.10.2026, план .planning/quick/2026-10-07-dnr-
+        # feo-cards/PLAN.md шаг 1, решение №3): раньше при budget<=0 (ни
+        # официального бюджета, ни суммы ФЭО) budget_basis подставлял planned
+        # («бюджет = план») — на субсидии «ДНР» (409 плановых позиций,
+        # 63 232 213,82 ₽, ФЭО не введено ни у одной из 41 статьи) карточка
+        # «Бюджет (ФЭО)» показывала ПОДМЕНУ плана вместо честного «ФЭО не
+        # введено», и из-за отдельного бага в feo_plan_tree.py (см. её
+        # докстринг _feo_by_kind) эта подмена даже расходилась с «Запланировано»
+        # на 8 191,49 ₽ (чайник+термопот). Теперь: budget<=0 → budget_basis/
+        # free_basis/redistributable/redistributable_unplanned/
+        # redistributable_by_kind/balance_by_marks/balance_by_statement — ВСЕ
+        # None («ФЭО не введено», карточки «Бюджет (ФЭО)»/«Свободно»/«Можно
+        # перераспределить» пустые), feo_entered=False. budget_from_plan
+        # остаётся полем выдачи (всегда False теперь — подмена плана больше не
+        # происходит ни при каких условиях) ТОЛЬКО для совместимости старых
+        # потребителей (см. отчёт сессии — grep читателей). budget САМ (выше)
         # не меняется — его продолжают читать subsidy_revision_preview.py/
         # subsidy_revision_floor.py байт-в-байт как раньше.
-        budget_from_plan = budget <= 0 and planned > 0
-        budget_basis = budget if budget > 0 else planned
-        free_basis = budget_basis - planned  # = 0.0 при budget_from_plan (budget_basis == planned)
-
-        # Без budget_basis budget_basis − committed не несёт смысла
-        # («перераспределить от бюджета», которого нет) — та же логика фолбэка,
-        # что в feo_plan_tree.py (redistributable=None без бюджета, фронт
-        # подставляет planned_not_committed). Здесь всегда отдаём число (не
-        # None — это НЕ узел дерева, а готовая карточка), поэтому фолбэк сразу
-        # на planned_not_committed/planned_not_committed_by_kind (см. докстринг
-        # модуля). Ветка теперь по budget_basis (а не budget напрямую) — это
-        # ТА ЖЕ формула budget_basis − committed, которая при budget>0 даёт
-        # budget − committed байт-в-байт как раньше (budget_basis == budget),
-        # а при budget_from_plan — planned − committed (то же число, что и
-        # раньше давала ветка budget<=0, см. докстринг модуля, проверено
-        # test_subsidy_money_summary.py).
-        if budget_basis > 0:
+        feo_entered = budget > 0
+        budget_from_plan = False
+        if feo_entered:
+            budget_basis = budget
+            free_basis = budget_basis - planned
             redistributable = budget_basis - committed
-            redistributable_unplanned = free_basis  # = budget_basis − planned, 0.0 при budget_from_plan
-            if budget_from_plan and redistributable_by_kind is None:
-                # budget_basis взят из плана (нет официального бюджета и нет
-                # заполненного дерева по типам) — та же точка фолбэка, что и
-                # раньше применялась в ветке "budget <= 0" (см. ниже), просто
-                # budget_from_plan уже отдельно отличает её от «ни бюджета, ни
-                # плана» случая.
-                redistributable_by_kind = dict(planned_not_committed_by_kind)
-        else:
-            redistributable = planned - committed
-            redistributable_unplanned = 0.0  # нет бюджета и плана — «не запланировано от бюджета» не определено
+            redistributable_unplanned = free_basis
             if redistributable_by_kind is None:
                 redistributable_by_kind = dict(planned_not_committed_by_kind)
+        else:
+            budget_basis = None
+            free_basis = None
+            redistributable = None
+            redistributable_unplanned = None
+            redistributable_by_kind = None
 
         # Карточка «Можно перераспределить» (план sleepy-fluttering-walrus.md
         # п.1) — подстроки и разбивка по типу БЕЗ клэмпа дерева по направлениям,
@@ -394,13 +412,20 @@ async def subsidy_money_summary(
         # конкретной категории/типу — кладём в «без типа», чтобы Σ by_kind всё
         # равно сходилась с redistributable (видно на карточке отдельной
         # строкой "не запланировано", не задваивается с товары/услуги).
-        if abs(redistributable_unplanned) > 0.005:
+        # redistributable_unplanned теперь может быть None (not feo_entered,
+        # решение владельца 07.10.2026) — проверка ДО abs(), иначе TypeError.
+        if redistributable_unplanned is not None and abs(redistributable_unplanned) > 0.005:
             _raw_by_kind["unspecified"] = _raw_by_kind.get("unspecified", 0.0) + redistributable_unplanned
+        # Карточка «Можно перераспределить» целиком пуста без feo_entered (см.
+        # редистрибутируемую гейт-ветку выше, решение владельца №3) — raw
+        # построение Σ по позициям выше не знает о budget_basis вообще, поэтому
+        # гасим ЗДЕСЬ, единственной точке сборки этого поля (ПРАВИЛО №6).
         redistributable_by_kind_raw = {
             "goods": _raw_by_kind.get("goods", 0.0),
             "services": _raw_by_kind.get("services", 0.0),
+            "payroll": _raw_by_kind.get("payroll", 0.0),
             "unspecified": _raw_by_kind.get("unspecified", 0.0),
-        }
+        } if feo_entered else None
 
         result[sid] = {
             "budget": budget,
@@ -446,20 +471,26 @@ async def subsidy_money_summary(
             "budget_basis": budget_basis,
             "budget_from_plan": budget_from_plan,
             "free_basis": free_basis,
+            # feo_entered (решение владельца 07.10.2026, план .planning/quick/
+            # 2026-10-07-dnr-feo-cards/PLAN.md шаг 1) — True, если у субсидии
+            # задан официальный бюджет ИЛИ хоть у одной статьи ФЭО (budget>0,
+            # effective_subsidy_budget уже объединил оба источника выше).
+            # False → budget_basis/free_basis/redistributable*/balance_* = None,
+            # фронт пишет «ФЭО не введено» на карточках «Бюджет (ФЭО)»/
+            # «Свободно»/«Можно перераспределить»/«Остаток субсидии».
+            "feo_entered": feo_entered,
         }
         # «Остаток субсидии» (владелец, 06.10.2026) = бюджет для показа − уже
         # проведённые оплаты. Поступление на счёт пока = бюджету ФЭО (ввода
         # поступлений нет), поэтому это же число — «остаток на счёте».
-        # budget_basis <= 0 (ни бюджета, ни плана) — оба поля None («бюджет не
-        # введён», та же ветка budget_basis>0/else, что у redistributable
-        # выше). При budget_from_plan budget_basis = planned > 0, поэтому
-        # остаток теперь считается (раньше был None из-за budget <= 0 — тот
-        # самый разрыв, который решает эта задача).
+        # budget_basis is None (ФЭО не введено, см. feo_entered выше) — оба
+        # поля None («бюджет не введён»), та же ветка feo_entered/else, что у
+        # redistributable выше.
         balance_paid_marked = plan_floor_map.get(sid, {}).get("paid_marked", 0.0)
         balance_paid_confirmed = plan_floor_map.get(sid, {}).get("paid_confirmed", 0.0)
         result[sid]["balance_paid_marked"] = balance_paid_marked
         result[sid]["balance_paid_confirmed"] = balance_paid_confirmed
-        if budget_basis > 0:
+        if feo_entered:
             result[sid]["balance_by_marks"] = budget_basis - balance_paid_marked
             result[sid]["balance_by_statement"] = budget_basis - balance_paid_confirmed
         else:

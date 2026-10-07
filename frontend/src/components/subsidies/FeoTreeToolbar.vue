@@ -200,6 +200,22 @@
       <v-btn size="small" variant="text" color="blue-grey" prepend-icon="mdi-history" @click="openVersionHistory">
         История
       </v-btn>
+      <!-- «Приравнять ФЭО к плану по всем статьям» (владелец 07.10.2026,
+           решение №4, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md
+           шаг 3-5) — тот же гейт canSaveVersion, что у одиночного «Приравнять»
+           в FeoTreeRow.vue (org_admin и выше). Подтверждение — отдельный
+           диалог AlignBudgetAllDialog.vue (Правило №5, новая логика). -->
+      <v-btn
+        v-if="canSaveVersion"
+        size="small"
+        variant="outlined"
+        color="blue-grey"
+        prepend-icon="mdi-equal-box"
+        title="ФЭО каждой статьи субсидии станет равным её полной плановой сумме"
+        @click="ctx.selectedId.value && alignAllDialog?.open(ctx.selectedId.value)"
+      >
+        Приравнять ФЭО к плану по всем статьям
+      </v-btn>
       <!-- 12-05: Save version -->
       <v-btn
         v-if="canSaveVersion"
@@ -278,10 +294,11 @@
   <FeoCollapseConfirmDialog />
   <FactImportWizard />
   <FactImportRunsPanel />
+  <AlignBudgetAllDialog ref="alignAllDialog" />
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useRegistryExport } from '@/composables/useRegistryExport'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
@@ -306,8 +323,12 @@ import FactImportRunsPanel from '@/components/subsidies/fact-import/FactImportRu
 // выше и usePlanToOrderDialog.ts.
 import { usePlanToOrderDialog } from '@/composables/subsidies/usePlanToOrderDialog'
 import PlanToOrderDialog from '@/components/subsidies/PlanToOrderDialog.vue'
+// «Приравнять ФЭО к плану по всем статьям» (владелец 07.10.2026) — см.
+// докстринг кнопки/компонента выше.
+import AlignBudgetAllDialog from '@/components/subsidies/AlignBudgetAllDialog.vue'
 
 const ctx = useSubsidyDetailCtx()
+const alignAllDialog = ref<InstanceType<typeof AlignBudgetAllDialog> | null>(null)
 const planToRequest = usePlanToRequest()
 const feoCollapse = useFeoCategoryCollapse()
 const kpiPrefs = useKpiPrefs()

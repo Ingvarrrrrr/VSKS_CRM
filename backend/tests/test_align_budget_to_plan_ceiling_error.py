@@ -177,7 +177,10 @@ async def test_align_over_ceiling_error_lists_offending_root_category(db_session
     assert detail.get("code") == "PLAN_OVER_SUBSIDY_CEILING", detail
     over_lines = detail.get("over_root_categories") or []
     assert any("Ветка A (перебор)" in line for line in over_lines), over_lines
-    assert any("150,000.00" in line and "100,000.00" in line for line in over_lines), over_lines
+    # Суммы в тексте 409 — по-русски (решение владельца 07.10.2026, план
+    # .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 3): пробел тысяч,
+    # запятая дробная (не английские запятая/точка).
+    assert any("150 000,00" in line and "100 000,00" in line for line in over_lines), over_lines
     assert "Ветка A (перебор)" in detail.get("message", ""), detail.get("message")
 
 
@@ -186,14 +189,22 @@ async def test_align_reduces_subsidy_ceiling_excess_succeeds(db_session, test_or
     """Прямой репродюсер боевого тупика ДНР_2026 (22.09): у субсидии УЖЕ
     накоплено превышение (Ветка X: ФЭО 280 000 < план 300 000, не
     согласовано, не трогается этим align) ДО нажатия кнопки. Ветка Y — БЕЗ
-    ФЭО вовсе (budget=None), план 330 000. «Приравнять ФЭО к плану» на
-    Ветке Y ДОБАВЛЯЕТ недостающее финансирование (budget становится = 330 000)
-    — суммарный план субсидии не меняется (630к до/после: 300к+330к), а
-    потолок РАСТЁТ с 280к до 610к (280к+330к): превышение ПАДАЕТ с 350 000
-    (630к−280к) до 20 000 (630к−610к). Действие УЛУЧШАЕТ субсидию — обязано
-    пройти 200, а не быть заблокированным (это и есть боевой тупик: на
-    субсидии с накопленным превышением ни одну категорию без ФЭО было не
-    приравнять, хотя это единственный способ превышение снизить)."""
+    ФЭО вовсе (budget=None), план 330 000.
+
+    ПЕРЕСЧИТАНО (владелец, 07.10.2026, план .planning/quick/2026-10-07-dnr-
+    feo-cards/PLAN.md шаг 3, решение №4 — найдено на субсидии «ДНР»): статьи
+    без ФЭО не участвуют в проверке потолка вообще (ни их план, ни их
+    бюджет), см. app.services.subsidy_budget.feo_entered_ceiling_and_plan. До
+    align Ветка Y (без ФЭО) целиком ИСКЛЮЧЕНА из сравнения — превышение ДО
+    это только собственный перекос Ветки X (план 300 000 / ФЭО 280 000 =
+    20 000), а НЕ «весь план минус потолок Ветки X» (350 000, как считалось
+    раньше, когда план Ветки Y без ФЭО тоже входил в сравнение — именно это
+    и было структурной причиной тупика: статью без ФЭО невозможно приравнять,
+    пока план ВСЕХ остальных статей без ФЭО не посчитан против чужого
+    потолка). После align Ветка Y становится entered (budget=330 000=план) —
+    превышение ПОСЛЕ = план(300к+330к) − потолок(280к+330к) = 20 000, то же
+    самое, что и ДО (свой перекос Ветки X никуда не делся, но и не вырос) —
+    действие НЕ увеличивает превышение, проходит 200."""
     subsidy = await _make_subsidy(db_session, test_org.id)
     cat_x = await _make_category(db_session, subsidy.id, name="Ветка X (свой перекос)", budget=Decimal("280000"))
     cat_y = await _make_category(db_session, subsidy.id, name="Ветка Y (без ФЭО)", budget=None)
@@ -209,9 +220,9 @@ async def test_align_reduces_subsidy_ceiling_excess_succeeds(db_session, test_or
     assert result["subsidy_id"] == subsidy.id
     assert result["old_budget"] is None
     assert result["new_budget"] == pytest.approx(330_000.0)
-    assert result["subsidy_over_before"] == pytest.approx(350_000.0), result
+    assert result["subsidy_over_before"] == pytest.approx(20_000.0), result
     assert result["subsidy_over_after"] == pytest.approx(20_000.0), result
-    assert result["subsidy_over_after"] < result["subsidy_over_before"], "превышение обязано СНИЗИТЬСЯ — иначе это тот же тупик ДНР_2026"
+    assert result["subsidy_over_after"] <= result["subsidy_over_before"], "превышение не смеет РАСТИ — свой перекос Ветки X сохраняется, но align Ветки Y не ухудшает субсидию"
 
     cat_y_after = await db_session.get(type(cat_x), cat_y_id)
     await db_session.refresh(cat_y_after)

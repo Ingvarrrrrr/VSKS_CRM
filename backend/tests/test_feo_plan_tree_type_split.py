@@ -405,13 +405,16 @@ async def test_explicit_budget_split_excludes_subcategory_with_own_budget(db_ses
 
 
 @pytest.mark.asyncio
-async def test_subsidy_without_any_feo_falls_back_to_plan_by_type(db_session, test_org):
-    """Решение владельца (06.10.2026, прод — субсидия ХО id 75): СУБСИДИЯ
-    ЦЕЛИКОМ без сумм ФЭО (ни одной категории с budget, ни одной позиции с
-    feo_amount) -> «Бюджет (ФЭО)» по типу = «План» по типу (не 0/0), а не
-    «без разбивки». Инвариант: Σ частей == Σ плана (бюджет_scalar тоже 0 в
-    этом случае — фолбэк уровня субсидии живёт отдельно в
-    subsidy_money_summary.py, здесь проверяется только разбивка по типу)."""
+async def test_subsidy_without_any_feo_stays_zero_by_type(db_session, test_org):
+    """ОТМЕНЕНО решение владельца 06.10.2026 (прод — субсидия ХО id 75,
+    «Бюджет (ФЭО) по типу = План по типу» для субсидии без сумм ФЭО) —
+    владелец 07.10.2026 (план .planning/quick/2026-10-07-dnr-feo-cards/
+    PLAN.md шаг 1, решение №3, найдено на субсидии «ДНР»): подмена плана
+    бюджетом теряла позиции, привязанные прямо к статье с подкатегориями
+    (см. докстринг _feo_by_kind) и маскировала «ФЭО не введено» как настоящий
+    бюджет. СУБСИДИЯ ЦЕЛИКОМ без сумм ФЭО теперь честно 0/0 по каждому типу —
+    «Бюджет (ФЭО)» не считается вовсе (feo_entered=False на карточке, см.
+    subsidy_money_summary.py), план по типу — отдельное, непустое число."""
     subsidy = await _make_subsidy(db_session, test_org.id, budget=0)
     cat_a = await _make_category(db_session, subsidy.id, name="Статья А (без ФЭО)")
     await _make_planned_item(db_session, cat_a.id, "Товар", 70_000, item_type="товар")
@@ -420,17 +423,18 @@ async def test_subsidy_without_any_feo_falls_back_to_plan_by_type(db_session, te
 
     tree = await compute_feo_plan_tree(db_session, [subsidy.id])
 
-    assert tree[cat_a.id]["feo_goods"] == pytest.approx(70_000.0)
+    assert tree[cat_a.id]["feo_goods"] == pytest.approx(0.0)
     assert tree[cat_a.id]["feo_services"] == pytest.approx(0.0)
     assert tree[cat_b.id]["feo_goods"] == pytest.approx(0.0)
-    assert tree[cat_b.id]["feo_services"] == pytest.approx(30_000.0)
+    assert tree[cat_b.id]["feo_services"] == pytest.approx(0.0)
 
     summary = await compute_subsidy_type_summary(db_session, subsidy.id, tree)
-    assert summary["totals"]["feo_goods"] == pytest.approx(70_000.0)
-    assert summary["totals"]["feo_services"] == pytest.approx(30_000.0)
-    # «Свободно» по типу = feo − plan = 0 (без ложного превышения).
-    assert summary["totals"]["feo_goods"] == pytest.approx(summary["totals"]["plan_goods"])
-    assert summary["totals"]["feo_services"] == pytest.approx(summary["totals"]["plan_services"])
+    assert summary["totals"]["feo_goods"] == pytest.approx(0.0)
+    assert summary["totals"]["feo_services"] == pytest.approx(0.0)
+    # План по типу считается независимо и НЕ пуст — «Бюджет (ФЭО)» просто не
+    # подставляется вместо него.
+    assert summary["totals"]["plan_goods"] == pytest.approx(70_000.0)
+    assert summary["totals"]["plan_services"] == pytest.approx(30_000.0)
 
 
 @pytest.mark.asyncio

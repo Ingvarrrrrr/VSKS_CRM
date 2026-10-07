@@ -36,5 +36,12 @@ class FeoCategory(Base):
     # миграции q5r6s7t8u9v0: у листьев со старым форматом (planned_quantity×planned_amount
     # оба > 0) = их произведение.
     manual_plan_amount = Column(Numeric(15, 2), nullable=True)
+    # ФОТ и иные выплаты персоналу (решение владельца 07.10.2026, план
+    # .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2) — ручной
+    # переключатель ИЛИ проставлен автоматически по правилу имени
+    # (app.services.feo_payroll.is_payroll_name) импортом/миграцией
+    # e3f5g7h9i1j3. Наследуется подкатегориями (у себя или у любого предка) —
+    # см. app.services.item_type_split.KIND_PAYROLL.
+    is_payroll = Column(Boolean, nullable=False, server_default="false")
     parent = relationship("FeoCategory", remote_side=[id], backref="children")
     subsidy = relationship("Subsidy", back_populates="feo_categories")

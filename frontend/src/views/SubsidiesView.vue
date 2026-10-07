@@ -349,6 +349,12 @@ const feoTreeAmounts = useFeoTreeAmounts({
   feoTree: feoTreeState.feoTree,
   plannedBase: feoTreePrefs.plannedBase,
   selectedSubsidy, allSubsidies, selectedId,
+  // silentRefreshSubsidies — function-декларация ниже в этом же <script setup>
+  // (hoisting): к моменту, когда syncFeoFilled реально её вызовет, объявление
+  // уже исполнено. Единственный канал, которым карточка субсидии после правки
+  // дерева ФЭО узнаёт серверный calculated_budget (Правило №6, см. докстринг
+  // syncFeoFilled в useFeoTreeAmounts.ts).
+  silentRefreshSubsidies,
 })
 const feoTreeExcess = useFeoTreeExcess({
   planTreeByCat: feoTreeState.planTreeByCat,

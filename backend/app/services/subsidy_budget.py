@@ -208,6 +208,54 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
     return subsidy_budget_from_categories(cats, items)
 
 
+async def feo_entered_ceiling_and_plan(
+    db: AsyncSession, subsidy_id: int, tree: dict,
+) -> tuple[float, float, set]:
+    """(ceiling, total_plan, entered_root_ids) — ТОЛЬКО по корневым
+    («направление») категориям,
+    у которых ФЭО введено хоть где-то в их поддереве (compute_budget_map
+    узла-корня > 0 — ТА ЖЕ рекурсия, что и calculate_budget_from_categories/
+    subsidy_budget_from_categories, Правило №6, вторая формула бюджета не
+    заводится). `tree` — уже построенный compute_feo_plan_tree(db,
+    [subsidy_id]) этого же вызова (план плана ДНР — 2026-10-07, план
+    .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 3).
+
+    РЕШЕНИЕ ВЛАДЕЛЬЦА (07.10.2026): «статьи без ФЭО в проверке потолка не
+    участвуют» — направление без единой суммы ФЭО во всём своём поддереве
+    (budget_map[root]==0) исключается ЦЕЛИКОМ из обеих сторон сравнения: его
+    план не прибавляется к total_plan, его (нулевой) бюджет — не к ceiling.
+    БЕЗ этого фильтра на субсидии «ДНР» (41 статья, ФЭО введено только у
+    одной после align-budget-to-plan на ней) total_plan включал план ВСЕХ 41
+    статей (63 047 213,82 ₽) против потолка 185 000 ₽ одной статьи —
+    «Приравнять» отклонялось 409 на любой статье, пока ФЭО не введено у всех
+    остальных (структурно невозможно без этой же кнопки).
+
+    ОДНА функция для жёсткого потолка субсидии (app.services.feo_plan_excess.
+    assert_no_unapproved_excess) и приравнивания
+    (app.services.feo_tree_write.align_budget_to_plan) — раньше каждое место
+    держало свою копию total_plan_before/after + ceiling_before/after."""
+    cat_rows = (await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+    )).scalars().all()
+    if not cat_rows:
+        return 0.0, 0.0, set()
+    items = await _active_feo_items_with_amount(db, [c.id for c in cat_rows])
+    budget_map = compute_budget_map(cat_rows, items)
+    roots = [c for c in cat_rows if c.level == 1]
+    ceiling = 0.0
+    total_plan = 0.0
+    entered_root_ids: set = set()
+    for r in roots:
+        b = float(budget_map.get(r.id, 0.0) or 0.0)
+        if b > 0.005:
+            ceiling += b
+            entered_root_ids.add(r.id)
+            node = tree.get(r.id)
+            if node is not None:
+                total_plan += float(node.get("display", 0.0) or 0.0)
+    return ceiling, total_plan, entered_root_ids
+
+
 async def calculate_budgets_bulk(db: AsyncSession, subsidy_ids: list) -> dict:
     """Бюджеты для набора субсидий одним запросом (вместо N запросов в списках)."""
     if not subsidy_ids:

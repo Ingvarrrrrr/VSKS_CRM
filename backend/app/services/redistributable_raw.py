@@ -62,14 +62,14 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.committed_amounts import committed_by_planned_item, planned_item_contributions
-from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, kind_of
+from app.services.item_type_split import empty_kind_dict, kind_of_by_category_id
 from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE, normalize_need_level
 
 _ZERO_EPS = 0.005
 
 
 def _empty_kind_bucket() -> dict:
-    return {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
+    return empty_kind_dict()
 
 
 def _category_path(cat_id: Optional[int], cats: dict[int, dict]) -> str:
@@ -122,6 +122,10 @@ async def not_committed_raw_rows(db: AsyncSession, subsidy_ids: list[int]) -> di
     item_ids = [r.id for r in rows]
     contrib = await planned_item_contributions(db, cat_ids)
     committed_map = await committed_by_planned_item(db, item_ids)
+    # payroll-категории (своя или по предку, план .planning/quick/2026-10-07-
+    # dnr-feo-cards/PLAN.md шаг 2) — ОДИН резолвер, ПРАВИЛО №6.
+    from app.services.feo_payroll import payroll_category_ids
+    _payroll_ids = await payroll_category_ids(db, subsidy_ids)
 
     # «Договор заключён, заказ ещё не создан» — ТОТ ЖЕ предикат, что
     # stage_cumulative.contracted_not_ordered_by_subsidy (status='contracted',
@@ -157,7 +161,7 @@ async def not_committed_raw_rows(db: AsyncSession, subsidy_ids: list[int]) -> di
             "name": r.name,
             "feo_category_id": r.feo_category_id,
             "category_path": _category_path(r.feo_category_id, cats),
-            "kind": kind_of(info["item_type_effective"]),
+            "kind": kind_of_by_category_id(info["item_type_effective"], r.feo_category_id, _payroll_ids),
             "need_level": normalize_need_level(r.need_level),
             "contribution": info["amount"],
             "committed": committed_amt,

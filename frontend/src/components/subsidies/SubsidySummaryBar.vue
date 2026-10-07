@@ -8,6 +8,11 @@
     <div class="summary-item summary-item--link" @click="ctx.router.push('/dashboard')">
       <span class="summary-label">Бюджет ФЭО (итого)</span>
       <span class="summary-value">{{ formatCurrency(totals.budget) }}</span>
+      <!-- Задача 4 (владелец, 07.10.2026, план .planning/quick/2026-10-07-dnr-
+           feo-cards/PLAN.md) — та же подпись-приём, что у «Оплачено» выше
+           («из них подтверждено выпиской»): budgetMissingCount — готовое поле
+           useSubsidyList.ts (ПРАВИЛО №6, второй счётчик здесь не считается). -->
+      <span v-if="budgetMissingCount > 0" class="summary-sub">без {{ budgetMissingCount }} {{ subsidiesWord(budgetMissingCount) }} без ФЭО</span>
     </div>
     <div class="summary-sep" />
     <div class="summary-item summary-item--link" @click="ctx.router.push('/orders')">
@@ -67,5 +72,14 @@ const ctx = useSubsidyDetailCtx()
 // Счётчик «Субсидий» — без копий для экспериментов (is_sandbox), как и
 // денежные итоги (totals уже исключает их, ПРАВИЛО №6: один источник —
 // nonSandboxSubsidies из useSubsidyList.ts, не второй .filter() здесь).
-const { nonSandboxSubsidies, totals } = useSubsidyList()
+const { nonSandboxSubsidies, totals, budgetMissingCount } = useSubsidyList()
+
+function subsidiesWord(n: number): string {
+  const mod100 = Math.abs(n) % 100
+  const mod10 = mod100 % 10
+  if (mod100 >= 11 && mod100 <= 14) return 'субсидий'
+  if (mod10 === 1) return 'субсидии'
+  if (mod10 >= 2 && mod10 <= 4) return 'субсидий'
+  return 'субсидий'
+}
 </script>

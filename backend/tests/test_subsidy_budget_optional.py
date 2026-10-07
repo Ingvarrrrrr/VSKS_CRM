@@ -113,4 +113,9 @@ async def test_dashboard_charts_serializes_subsidy_without_budget(client, supera
     stats = charts_resp.json()["subsidy_stats"]
     row_out = next(s for s in stats if s["id"] == sid)
     assert row_out["budget"] is None
-    assert row_out["feo_budget_total"] == 0
+    # ОТМЕНЕНО решение владельца 06.10.2026 («бюджет = план/0 без ФЭО») —
+    # владелец 07.10.2026 (план .planning/quick/2026-10-07-dnr-feo-cards/
+    # PLAN.md шаг 1, решение №3): без ФЭО и без плана feo_budget_total теперь
+    # None («ФЭО не введено»), не 0 — см. docstring subsidy_money_summary.py.
+    assert row_out["feo_budget_total"] is None
+    assert row_out["feo_entered"] is False

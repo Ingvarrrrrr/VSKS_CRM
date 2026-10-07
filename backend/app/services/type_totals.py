@@ -60,8 +60,8 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 
 _EMPTY_TOTALS = {
-    "plan_goods": 0.0, "plan_services": 0.0, "plan_unspecified": 0.0,
-    "feo_goods": 0.0, "feo_services": 0.0, "feo_unspecified": 0.0,
+    "plan_goods": 0.0, "plan_services": 0.0, "plan_payroll": 0.0, "plan_unspecified": 0.0,
+    "feo_goods": 0.0, "feo_services": 0.0, "feo_payroll": 0.0, "feo_unspecified": 0.0,
 }
 
 
@@ -137,9 +137,11 @@ async def subsidy_type_totals(
         d = result[sid]
         d["plan_goods"] += node["plan_goods"]
         d["plan_services"] += node["plan_services"]
+        d["plan_payroll"] += node["plan_payroll"]
         d["plan_unspecified"] += node["plan_unspecified"]
         d["feo_goods"] += node["feo_goods"]
         d["feo_services"] += node["feo_services"]
+        d["feo_payroll"] += node["feo_payroll"]
         d["feo_unspecified"] += node["feo_unspecified"]
 
     return result

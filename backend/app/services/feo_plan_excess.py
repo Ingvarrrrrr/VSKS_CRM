@@ -634,15 +634,30 @@ async def assert_no_unapproved_excess(
     if not tree or feo_category_id not in tree:
         return warnings
 
-    # ── Жёсткий потолок субсидии (задача владельца п.3) — см. docstring выше. ──
-    from app.routers.subsidies import calculate_budget_from_categories  # local: avoid router import cycle
-    ceiling = await calculate_budget_from_categories(db, cat.subsidy_id)
+    # ── Жёсткий потолок субсидии (задача владельца п.3) — см. docstring выше.
+    # ОДНА функция (ceiling, total_plan, entered_root_ids), общая с
+    # app.services.feo_tree_write.align_budget_to_plan (Правило №6, решение
+    # владельца 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/
+    # PLAN.md шаг 3): направления без ФЭО во всём поддереве не участвуют ни в
+    # total_plan, ни в ceiling — иначе на субсидии «ДНР» (ФЭО введено только
+    # на одной статье) potолок этой одной статьи сравнивался с планом ВСЕХ
+    # 41 статей. ──
+    from app.services.subsidy_budget import feo_entered_ceiling_and_plan
+    ceiling, total_plan_now, entered_root_ids = await feo_entered_ceiling_and_plan(db, cat.subsidy_id, tree)
     if ceiling and ceiling > 0:
-        total_plan_now = sum(n["display"] for n in tree.values() if n["parent_id"] is None)
-        total_plan_after_d = Decimal(str(total_plan_now)) + Decimal(str(adding_amount))
+        # adding_amount прибавляется к total_plan_now ТОЛЬКО если категория,
+        # на которую совершается действие, сама принадлежит направлению, где
+        # ФЭО введено — иначе это направление и так не участвует ни в одной
+        # из сторон сравнения (см. докстринг feo_entered_ceiling_and_plan).
+        _root_id = feo_category_id
+        while tree.get(_root_id, {}).get("parent_id") is not None:
+            _root_id = tree[_root_id]["parent_id"]
+        _adding = adding_amount if _root_id in entered_root_ids else 0.0
+        total_plan_after_d = Decimal(str(total_plan_now)) + Decimal(str(_adding))
         ceiling_d = Decimal(str(ceiling))
         if total_plan_after_d - ceiling_d > Decimal("0.005"):
             from app.models.subsidy import Subsidy
+            from app.services.documents.formatting import _fmt_money as _fmt_rub_num
             subsidy_row = await db.get(Subsidy, cat.subsidy_id)
             subsidy_name = subsidy_row.name if subsidy_row else f"#{cat.subsidy_id}"
             over_d = total_plan_after_d - ceiling_d
@@ -652,10 +667,10 @@ async def assert_no_unapproved_excess(
                     "code": "PLAN_OVER_SUBSIDY_CEILING",
                     "message": (
                         f"Жёсткий потолок ФЭО по субсидии «{subsidy_name}»: всего запланировано "
-                        f"{total_plan_after_d:,.2f} ₽, финансирование по ФЭО (потолок) "
-                        f"{ceiling_d:,.2f} ₽, превышение {over_d:,.2f} ₽. Это ограничение НЕ "
-                        f"согласуется ни при каких обстоятельствах — уменьшите план по какой-либо "
-                        f"подкатегории минимум на {over_d:,.2f} ₽."
+                        f"{_fmt_rub_num(total_plan_after_d)} ₽, финансирование по ФЭО (потолок) "
+                        f"{_fmt_rub_num(ceiling_d)} ₽, превышение {_fmt_rub_num(over_d)} ₽. Это "
+                        f"ограничение НЕ согласуется ни при каких обстоятельствах — уменьшите план "
+                        f"по какой-либо подкатегории минимум на {_fmt_rub_num(over_d)} ₽."
                     ),
                     "subsidy_id": cat.subsidy_id,
                     "total_plan": float(total_plan_after_d),

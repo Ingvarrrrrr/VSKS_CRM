@@ -68,8 +68,15 @@ export interface SubsidyRow {
   monthly_future_to_year_end?: number | null
   // Решение владельца 06.10.2026 (budget_from_plan, см. докстринг backend
   // app/services/subsidy_money_summary.py) — budget выше временно взят из
-  // плана (бюджета по ФЭО/вручную нет).
+  // плана (бюджета по ФЭО/вручную нет). ОТМЕНЕНО 07.10.2026 — всегда false,
+  // см. feo_entered ниже (единственный источник теперь).
   budget_from_plan?: boolean
+  // feo_entered (владелец 07.10.2026, план .planning/quick/2026-10-07-dnr-
+  // feo-cards/PLAN.md шаг 1) — см. docstring у того же поля в
+  // composables/subsidies/types.ts (один источник смысла, Правило №6). false —
+  // ни официального бюджета, ни суммы ФЭО не введено; budget ниже в этом
+  // случае равен 0 намеренно (см. мэппинг budget: ниже), не выдуманному плану.
+  feo_entered?: boolean
 }
 
 // Владелец (2026-08-30): «субсидии у потолка» — сумма заказанного (включая
@@ -578,7 +585,14 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         shortName: truncate(s.name, 20),
         description: '',
         year: s.year,
-        budget: s.calculated_budget || s.feo_budget_total || s.budget,
+        // feo_entered=false → calculated_budget/feo_budget_total уже null с
+        // бэка (budget_basis, см. docstring выше) — явный 0, а не случайное
+        // падение на s.budget (ручной Subsidy.budget может быть стар/не
+        // синхронизирован с «ФЭО не введено»). Числом эта карточка дашборда
+        // не отличает «0 ₽ бюджет» от «ФЭО не введено» (та разница — в
+        // SubsidyKpiCards.vue/SubsidyCardsGrid.vue, где текст «ФЭО не
+        // введено» теперь читает feo_entered, а не этот budget).
+        budget: s.feo_entered === false ? 0 : (s.calculated_budget || s.feo_budget_total || s.budget),
         contracted: s.total_confirmed,
         paid: s.total_paid,
         planned: s.total_planned,
@@ -620,6 +634,8 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         over_plan_categories: s.over_plan_categories ?? [],
         // Решение владельца 06.10.2026 — см. composables/subsidies/types.ts.
         budget_from_plan: s.budget_from_plan ?? false,
+        // 07.10.2026 — см. docstring у поля в interface SubsidyRow выше.
+        feo_entered: s.feo_entered ?? true,
       }))
 
       statusCounts.value = chartsData.status_counts

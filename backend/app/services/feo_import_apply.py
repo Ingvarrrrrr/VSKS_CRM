@@ -293,6 +293,28 @@ async def apply_rows(state) -> None:
     # защита от разрыва: смотрит только на ЭТУ строку).
     uniformly_empty_levels = find_uniformly_empty_levels(rows, c_lvl2, c_lvl3, c_lvl4)
 
+    # Коррекция владельца (07.10, после первого отчёта по шагу 0.5): охват
+    # правила «строка без „Плановой позиции“ — статья, не позиция» (ниже,
+    # флаг `_row_had_own_position_name`) определяется ПО ФАЙЛУ В ЦЕЛОМ, не
+    # по наличию колонки в ОДНОЙ строке (урок проекта
+    # feedback_no_logic_keyed_to_optional_level.md — то же правило: «охват
+    # определять по файлу в целом»). Если в МАППИНГЕ этого импорта колонка
+    # «Плановая позиция» вообще не задействована — т.е. ни в одной строке
+    # файла в ней нет значения — это файл-смета СО СТАРЫМ устройством (план
+    # лежит прямо на строке статьи, позиций нет вовсе, см. test_feo_import_
+    # row_numbers_belong_to_item.py::test_category_row_without_item_still_
+    # uses_feo_fallback и соседние тесты zero/nonzero_plan_sum): для него
+    # поведение НЕ меняется — план строки статьи как раньше становится
+    # плановой позицией с её именем. Правило 0.5 применяется ТОЛЬКО когда
+    # колонка в файле хоть где-то заполнена (ДНР: «Плановая позиция»
+    # заполнена у большинства строк) — тогда пустая строка однозначно
+    # читается как «автор этой строки намеренно не завёл позицию», а не как
+    # «в этом шаблоне такой колонки вообще нет».
+    _lvl5_column_in_use = c_lvl5 is not None and any(
+        bool(_v) and not str(_v).startswith("←")
+        for _v in (get_cell(_r, c_lvl5) for _r in rows)
+    )
+
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)
 
@@ -363,6 +385,32 @@ async def apply_rows(state) -> None:
             (c_amt_lvl4, f"Плановая стоимость за ед. ({level_label(4)})"),
             (c_plan_sum_lvl4, f"Сумма плана ({level_label(4)})"),
         ]) or lvl5_name
+
+        # Шаг 0.5 (план 2026-10-07-dnr-feo-cards): «строка без наименования
+        # позиции — это статья, она никогда не создаёт плановую позицию»
+        # (владелец). Запоминаем здесь, ДО любых веток продвижения/само-
+        # объявления/зануления lvl5_name ниже — ровно: была ли в «Плановой
+        # позиции» (O) этой строки хоть какая-то надпись. Это не то же самое,
+        # что lvl5_name в момент сборки collected_plan ниже (там он почти
+        # всегда уже обнулён — и для настоящей позиции, которая ушла в
+        # item_plan_*/item_feo_*, и для статьи без названия, и для сам-
+        # объявленной «категория=позиция»): нам нужен именно факт «строка
+        # сама что-то написала в O», чтобы не путать два разных случая
+        # зануления — через item_name_equals_category (строка 149 из плана:
+        # «Расходы закупка товаров…», O пусто, F='Расходы закупка товаров,
+        # услуг…') и настоящую позицию, у которой O совпало с её категорией
+        # (случай «Логистика и проживание», сохранить как раньше — владелец:
+        # «позиции, у которых O заполнена именем статьи — настоящие позиции,
+        # их не трогать»).
+        _row_had_own_position_name = bool(lvl5_name) and not lvl5_name.startswith("←")
+        # Коррекция владельца 07.10 (см. _lvl5_column_in_use выше, объявлена
+        # ДО цикла по строкам): если колонка «Плановая позиция» НЕ
+        # используется ни в одной строке этого импорта — правило 0.5 не
+        # применяется вообще, строка без неё ведёт себя как раньше (план
+        # статьи становится позицией с её именем). Если колонка используется
+        # хоть где-то в файле — решает факт ЭТОЙ строки (_row_had_own_
+        # position_name).
+        _row_treat_as_real_position = _row_had_own_position_name or not _lvl5_column_in_use
 
         # --- Продвижение «Плановой позиции» в уровень (задача владельца
         # 2026-09-09, план dreamy-booping-piglet.md, задача A, п.2) --------------
@@ -1245,7 +1293,15 @@ async def apply_rows(state) -> None:
                         "amount": plan_sum,
                         "row": row_num,
                         "name": cat.name,
-                        "item_type": await resolve_item_type_for_row(state, row_num, cat.name, item_type),
+                        # Статья без своей «Плановой позиции» (O) типа не имеет
+                        # вообще (владелец, шаг 0.5 плана 2026-10-07) — тип из
+                        # каталога по имени СТАТЬИ не подбираем (resolve_item_
+                        # type_for_row не вызываем), иначе мы бы молча писали
+                        # Product.item_kind по совпадению с названием раздела.
+                        "item_type": (
+                            await resolve_item_type_for_row(state, row_num, cat.name, item_type)
+                            if _row_treat_as_real_position else None
+                        ),
                         "from_feo_fallback": False,
                         # Происхождение (Правило №6) — посчитано один раз выше по
                         # РЕАЛЬНЫМ деньгам этой строки, feo_import_plan.py читает
@@ -1253,6 +1309,13 @@ async def apply_rows(state) -> None:
                         "is_feo_breakdown": _row_is_feo_breakdown,
                         "is_internal_plan": _row_is_internal_plan,
                         "need_level": need_level,
+                        # Правило владельца (шаг 0.5, уточнено 07.10): без своего
+                        # имени позиции (O) строка — статья ТОЛЬКО если колонка
+                        # «Плановая позиция» вообще используется в файле
+                        # (_lvl5_column_in_use); иначе — старое поведение (план
+                        # статьи = позиция с её именем). Само-объявление (O ==
+                        # имя статьи) остаётся настоящей позицией в любом случае.
+                        "has_own_position_name": _row_treat_as_real_position,
                     }
                     plan_writes.setdefault(cat.id, []).append(row_num)
                 else:
@@ -1265,6 +1328,17 @@ async def apply_rows(state) -> None:
                     _pq = plan_qty if plan_qty is not None else feo_qty
                     _pa = plan_amt if plan_amt is not None else feo_amt
                     if _pq is not None and _pa is not None:
+                        # Это ветка СТАРОГО фолбэка «план категории = ФЭО кол-во ×
+                        # цена» (файл ЦЕНТРПОИСК и т.п., см. test_feo_import_
+                        # row_numbers_belong_to_item.py::
+                        # test_category_row_without_item_still_uses_feo_fallback) —
+                        # у строки никогда не было «Сумма плана» (S), только
+                        # числа по ФЭО. Правило шага 0.5 (строка без «Плановой
+                        # позиции» никогда не создаёт позицию) касается ИМЕННО
+                        # строки с явной «Суммой плана» без имени (ветка выше,
+                        # elif plan_sum is not None) — эта ветка не трогается,
+                        # has_own_position_name всегда True (поведение прежнее,
+                        # не второй механизм, а отдельный уже существующий).
                         collected_plan[cat.id] = {
                             "qty": _pq,
                             "unit": _pu,
@@ -1276,6 +1350,7 @@ async def apply_rows(state) -> None:
                             "is_feo_breakdown": _row_is_feo_breakdown,
                             "is_internal_plan": _row_is_internal_plan,
                             "need_level": need_level,
+                            "has_own_position_name": True,
                         }
                         plan_writes.setdefault(cat.id, []).append(row_num)
 

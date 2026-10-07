@@ -5,16 +5,36 @@
 // заводить второй словарь нормализации типа ни на фронте, ни по компонентам:
 // KpiCardsWidget.vue/SubsidyKpiCards.vue/StageFeoDrillDialog.vue читают только
 // отсюда.
-export type ItemTypeKind = 'goods' | 'services' | 'unspecified'
+// 'payroll' добавлен 07.10.2026 (план .planning/quick/2026-10-07-dnr-feo-cards/
+// PLAN.md задача 1) — корзина «ФОТ и выплаты персоналу», отдельная от
+// goods/services/unspecified. Считается ТОЛЬКО бэкендом (app.services.
+// feo_payroll.payroll_category_ids — принадлежность категории к ФОТ, не тип
+// позиции), сюда просто доведена как 4-й вариант значения для карточек
+// «Бюджет (ФЭО)»/«Запланировано»/«Свободно» (budget/plan_schedule/free) —
+// kindOf()/purchaseTypeShares() ниже её НЕ возвращают (этапы закупок
+// work/ordered/contracts/delivered/delivered_unpaid/paid payroll не имеют,
+// см. задание владельца).
+export type ItemTypeKind = 'goods' | 'services' | 'payroll' | 'unspecified'
 
 export const KIND_GOODS: ItemTypeKind = 'goods'
 export const KIND_SERVICES: ItemTypeKind = 'services'
+export const KIND_PAYROLL: ItemTypeKind = 'payroll'
 export const KIND_UNSPECIFIED: ItemTypeKind = 'unspecified'
 
 export const KIND_LABELS: Record<ItemTypeKind, string> = {
   goods: 'товары',
   services: 'услуги',
+  payroll: 'ФОТ и выплаты персоналу',
   unspecified: 'без типа',
+}
+
+// Короткая подпись для строк в карточках субсидии (SubsidyKpiCards.vue,
+// splitRowsFor) — полная «ФОТ и выплаты персоналу» переносилась в 3 строки в
+// узкой карточке (07.10.2026, задача 2 .planning/quick/2026-10-07-dnr-feo-cards/
+// PLAN.md). FeoCardDrillDialog.vue и KIND_LABELS не трогаем — там полная
+// подпись уместна (заголовок диалога, а не ограниченная ширина строки).
+export const KIND_SHORT_LABELS: Partial<Record<ItemTypeKind, string>> = {
+  payroll: 'ФОТ',
 }
 
 // Владелец (21.09, AskUserQuestion): работы считаются услугами; пустой/непонятный
@@ -58,18 +78,20 @@ export interface TypeShares { goods: number; services: number; unspecified: numb
 // сравнивать с планом нечего (feo_unspecified — остаток дерева, не отдельно
 // введённая величина, см. backend app/services/type_totals.py).
 export interface FeoPlanTypeTotals {
-  feo_goods?: number | null; feo_services?: number | null
-  plan_goods?: number | null; plan_services?: number | null
+  feo_goods?: number | null; feo_services?: number | null; feo_payroll?: number | null
+  plan_goods?: number | null; plan_services?: number | null; plan_payroll?: number | null
 }
 
 export function freeByKindFromTypeTotals(
   totals: FeoPlanTypeTotals, round: (v: number) => number = (v) => v,
-): { goods: number | null; services: number | null } {
+): { goods: number | null; services: number | null; payroll: number | null } {
   const feoGoods = totals.feo_goods || 0
   const feoServices = totals.feo_services || 0
+  const feoPayroll = totals.feo_payroll || 0
   return {
     goods: feoGoods > 0 ? round(feoGoods - (totals.plan_goods || 0)) : null,
     services: feoServices > 0 ? round(feoServices - (totals.plan_services || 0)) : null,
+    payroll: feoPayroll > 0 ? round(feoPayroll - (totals.plan_payroll || 0)) : null,
   }
 }
 
@@ -141,6 +163,21 @@ export const KPI_STAGE_CUMULATIVE_STATUSES: Record<string, string[]> = {
 // не свой список ключей (Правило №6).
 export function hasStageDrill(stage: string): boolean {
   return stage in KPI_STAGE_CUMULATIVE_STATUSES
+}
+
+// Карточки, расшифровка которых — дерево ФЭО (GET /subsidies/{id}/card-drill,
+// backend/app/services/feo_card_drill.py), а НЕ список закупок одного статуса
+// (07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md задача 3).
+// Раньше «Запланировано» (plan_schedule) делила эту же роль с hasStageDrill()
+// (тот же набор KPI_STAGE_CUMULATIVE_STATUSES, что и дашборд) — открывала
+// StageFeoDrillDialog со списком ЗАКУПОК, который оставался пустым, когда план
+// состоит из плановых позиций без закупок (368 позиций ДНР, 0 закупок). Теперь
+// отдельная функция: SubsidyKpiCards.vue использует её для budget/plan_schedule/
+// free → FeoCardDrillDialog.vue, а hasStageDrill()/KPI_STAGE_CUMULATIVE_STATUSES
+// НЕ трогаются (дашборд — KpiCardsWidget.vue — продолжает пользоваться старым
+// списком закупок для plan_schedule, это другой экран, другой сценарий).
+export function hasTreeDrill(stage: string): boolean {
+  return stage === 'budget' || stage === 'plan_schedule' || stage === 'free'
 }
 
 // Три допустимых значения поля «Тип» плановой позиции ФЭО/товара каталога

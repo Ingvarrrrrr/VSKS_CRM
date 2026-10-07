@@ -185,20 +185,23 @@ class TestSubsidyTypeTotals:
         """Правило №6 + решение владельца 15.09: FeoCategory.budget=0 значит
         «не задано» — категория с budget=0 и без собственных ФЭО-строк не
         должна закидывать ноль в feo_unspecified (тот же контракт, что и
-        normalize_feo_category_budget в feo_plan_tree.py). Решение владельца
-        06.10.2026 (прод, субсидия ХО id 75): когда у СУБСИДИИ ЦЕЛИКОМ нет ни
-        одной суммы ФЭО (ни budget, ни feo_amount), «по ФЭО» = «по плану» —
-        не 0/0/0 (см. test_feo_plan_tree_type_split.py::
-        test_subsidy_without_any_feo_falls_back_to_plan_by_type)."""
+        normalize_feo_category_budget в feo_plan_tree.py). ОТМЕНЕНО решение
+        владельца 06.10.2026 (прод, субсидия ХО id 75, «по ФЭО = по плану»
+        для субсидии без сумм ФЭО) — владелец 07.10.2026 (план .planning/
+        quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 1, решение №3, найдено на
+        субсидии «ДНР»): подмена убрана целиком, когда у СУБСИДИИ ЦЕЛИКОМ нет
+        ни одной суммы ФЭО (ни budget, ни feo_amount) — «по ФЭО» честно
+        0/0/0, см. test_feo_plan_tree_type_split.py::
+        test_subsidy_without_any_feo_stays_zero_by_type."""
         subsidy = await _make_subsidy(db_session)
         cat = await _make_category(db_session, subsidy.id, budget=0)
         # план есть, но ни одна позиция не несёт feo_amount — «по ФЭО» пусто
-        # у субсидии целиком -> фолбэк на план.
+        # у субсидии целиком, и подмены планом больше нет — 0/0/0 честно.
         await _make_planned_item(db_session, cat.id, "товар", 100)
 
         totals = await subsidy_type_totals(db_session, [subsidy.id])
         t = totals[subsidy.id]
-        assert t["feo_goods"] == pytest.approx(100.0)
+        assert t["feo_goods"] == pytest.approx(0.0)
         assert t["feo_services"] == pytest.approx(0.0)
         assert t["feo_unspecified"] == pytest.approx(0.0)
 

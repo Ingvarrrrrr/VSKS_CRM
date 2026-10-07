@@ -63,6 +63,10 @@ async function confirm() {
     state.show = false
     showSnack('Финансирование по ФЭО приравнено к плану', 'success')
     if (ctx.selectedId.value) await ctx.loadFeo(ctx.selectedId.value)
+    // Та же причина, что в AlignBudgetAllDialog.vue (её докстринг рядом с этим
+    // же вызовом) — карточка субсидии читает calculated_budget с сервера,
+    // loadFeo её не обновляет.
+    await ctx.silentRefreshSubsidies()
   } catch (e: any) {
     // Ошибку показываем распакованной (в т.ч. отказ по общему потолку субсидии,
     // код PLAN_OVER_SUBSIDY_CEILING) — showSnack по умолчанию без автозакрытия.

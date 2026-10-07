@@ -404,19 +404,26 @@ async def dashboard_charts(
         planned_amt = planned_amounts_map.get(row.id, 0.0)
         # planned_tree = правильное «Запланировано» = план дерева ФЭО (= «Свободно» = budget − planned_tree)
         planned_tree = planned_tree_map.get(row.id, 0.0)
-        # budget_basis/budget_from_plan — решение владельца 06.10.2026 (см.
-        # докстринг subsidy_money_summary.py): «бюджет для показа» — budget,
-        # если задан, иначе planned_tree. ПОКАЗ (calculated_budget/
-        # feo_budget_total/remaining/budget_discrepancy ниже) читает
-        # budget_basis; "budget"/effective_budget САМИ не меняются — их
-        # продолжают читать subsidy_revision_preview.py/subsidy_revision_floor.py.
-        budget_basis = _money.get("budget_basis", effective_budget if effective_budget > 0 else planned_tree)
-        budget_from_plan = bool(_money.get("budget_from_plan", effective_budget <= 0 and planned_tree > 0))
-        # «Свободно» для показа = budget_basis − planned_tree (= free_basis; при
-        # budget_from_plan это 0.0, т.к. budget_basis == planned_tree)
-        remaining = _money.get("free_basis", budget_basis - planned_tree)
-        # discrepancy-чип показывается только при превышении (planned_tree > budget_basis)
-        discrepancy = (budget_basis - planned_tree) if planned_tree > budget_basis else None
+        # ОТМЕНЕНО (владелец, 07.10.2026, план .planning/quick/2026-10-07-dnr-
+        # feo-cards/PLAN.md шаг 1, решение №3): budget_basis больше НЕ
+        # подставляет planned_tree, когда ФЭО не введено — читаем budget_basis/
+        # free_basis/feo_entered из subsidy_money_summary КАК ЕСТЬ (None,
+        # если feo_entered=False), без локального фолбэка на planned_tree
+        # (ПРАВИЛО №6 — вторая формула «бюджет = план» не заводится и здесь).
+        # "budget"/effective_budget САМИ не меняются — их продолжают читать
+        # subsidy_revision_preview.py/subsidy_revision_floor.py.
+        feo_entered = bool(_money.get("feo_entered", effective_budget > 0))
+        budget_basis = _money.get("budget_basis")  # None, если not feo_entered
+        budget_from_plan = bool(_money.get("budget_from_plan", False))
+        # «Свободно» для показа = free_basis; None, если not feo_entered
+        # («ФЭО не введено» на карточке, а не 0/отрицательное число).
+        remaining = _money.get("free_basis")
+        # discrepancy-чип показывается только при превышении (planned_tree > budget_basis),
+        # и только когда budget_basis вообще определён (feo_entered).
+        discrepancy = (
+            (budget_basis - planned_tree)
+            if (budget_basis is not None and planned_tree > budget_basis) else None
+        )
         _economy = economy_by_subsidy_map.get(row.id) or {}
         sub_obj = sub_objs.get(row.id)
         contractor_name = None
@@ -471,22 +478,17 @@ async def dashboard_charts(
             # subsidy_money_summary.py про расхождение этой техники с
             # paid_declared/paid_confirmed выше — задача явно требует источник
             # дерева для остатка).
-            # ИСПРАВЛЕНИЕ (найдено 2026-10-06, ФАДМ 2026_2, прод id=88):
-            # раньше balance_by_marks/balance_by_statement читались ТОЛЬКО как
-            # _money.get(...) без фолбэка — если sid отсутствует в
-            # money_summary_map (пустой _money = {}), получали None → карточка
-            # «бюджет не введён», хотя «Бюджет (ФЭО)» в ЭТОЙ ЖЕ строке
-            # (calculated_budget/feo_budget_total, см. budget_basis выше)
-            # ПОКАЗЫВАЛА 15 880 100 ₽ — budget_basis уже прошёл фолбэк
-            # (effective_budget/planned_tree), а balance_by_marks — нет. ТЕПЕРЬ
-            # оба поля читают budget_basis (ПРАВИЛО №6, один и тот же источник
-            # для «Бюджет (ФЭО)» и «Остаток субсидии») — None только когда
-            # budget_basis <= 0 (бюджет действительно не введён и не выведен
-            # из плана), а не из-за отсутствия ключа в _money.
+            # ПРАВИЛО №6 — balance_by_marks/balance_by_statement читаются
+            # ПРЯМО из subsidy_money_summary (ОДНА точка расчёта — та же, что
+            # считает feo_entered/budget_basis выше, см. её докстринг): None,
+            # когда feo_entered=False (ФЭО не введено — решение владельца
+            # 07.10.2026), иначе budget_basis − paid_marked/paid_confirmed.
+            # Второй расчёт здесь больше НЕ дублируется (раньше был — найден
+            # и исправлен координатором 06.10.2026, ФАДМ 2026_2, прод id=88).
             "balance_paid_marked": _money.get("balance_paid_marked", 0.0),
             "balance_paid_confirmed": _money.get("balance_paid_confirmed", 0.0),
-            "balance_by_marks": (budget_basis - _money.get("balance_paid_marked", 0.0)) if budget_basis > 0 else None,
-            "balance_by_statement": (budget_basis - _money.get("balance_paid_confirmed", 0.0)) if budget_basis > 0 else None,
+            "balance_by_marks": _money.get("balance_by_marks"),
+            "balance_by_statement": _money.get("balance_by_statement"),
             "total_plan_schedule": float(row.total_plan_schedule),  # SUM work_in_progress planned_total_price
             # total_ordered = SQL-агрегат по НЕежемесячным (row.total_ordered) + начисление по
             # ежемесячным (monthly_ordered_map) — обязаны складываться в одно число: карточка
@@ -504,11 +506,17 @@ async def dashboard_charts(
             "planned_tree": planned_tree,  # единый источник: план дерева ФЭО (ручные + заявки)
             "feo_budget_total": budget_basis,
             "feo_filled": calc > 0,
-            # Решение владельца 06.10.2026 (см. докстринг subsidy_money_summary.py):
-            # True, когда официального бюджета нет, а calculated_budget/
-            # feo_budget_total выше временно = план. Подпись «по плану — суммы
-            # ФЭО не введены» на карточках «Бюджет (ФЭО)»/«Остаток субсидии».
+            # ОТМЕНЕНО (владелец, 07.10.2026): budget_from_plan теперь ВСЕГДА
+            # False — подмена «бюджет = план» убрана, см. докстринг
+            # subsidy_money_summary.py. Поле оставлено для совместимости
+            # старых потребителей фронта (grep подтвердил чтение — правит
+            # фронт другой исполнитель).
             "budget_from_plan": budget_from_plan,
+            # feo_entered (решение владельца 07.10.2026, план .planning/quick/
+            # 2026-10-07-dnr-feo-cards/PLAN.md шаг 1) — False → фронт пишет
+            # «ФЭО не введено» на карточках «Бюджет (ФЭО)»/«Свободно»/«Можно
+            # перераспределить»/«Остаток субсидии» вместо чисел/подмены планом.
+            "feo_entered": feo_entered,
             "contractor_id": sub_obj.contractor_id if sub_obj else None,
             "contractor_name": contractor_name,
             "contractor_inn": contractor_inn,
@@ -523,9 +531,9 @@ async def dashboard_charts(
             # Инвариант: remaining + planned_not_committed == redistributable
             # (покрыт test_dashboard_analytics.py / test_money_committed.py).
             "committed": _money.get("committed", 0.0),
-            "committed_by_kind": _money.get("committed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+            "committed_by_kind": _money.get("committed_by_kind") or {"goods": 0.0, "services": 0.0, "payroll": 0.0, "unspecified": 0.0},
             "planned_not_committed": _money.get("planned_not_committed", planned_tree - _money.get("committed", 0.0)),
-            "planned_not_committed_by_kind": _money.get("planned_not_committed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+            "planned_not_committed_by_kind": _money.get("planned_not_committed_by_kind") or {"goods": 0.0, "services": 0.0, "payroll": 0.0, "unspecified": 0.0},
             # Задача 2 (владелец, 04.10.2026) — разбивка «В плане без договоров»
             # по статусу плановой позиции (need_level: likely/nice_to_have),
             # ОДНА точка расчёта — subsidy_money_summary (см. импорт выше).
@@ -829,8 +837,8 @@ async def dashboard_charts(
             db, sid_list, type_split=True, tree=_shared_feo_tree,
         )
         _agg = {k: 0.0 for k in (
-            "budget_goods", "budget_services", "budget_unspecified",
-            "planned_goods", "planned_services", "planned_unspecified",
+            "budget_goods", "budget_services", "budget_payroll", "budget_unspecified",
+            "planned_goods", "planned_services", "planned_payroll", "planned_unspecified",
         )}
         for row in subsidy_stats:
             sid = row["id"]
@@ -846,6 +854,7 @@ async def dashboard_charts(
             tt = type_totals_map.get(sid, {})
             row["budget_goods"] = tt.get("feo_goods", 0.0)
             row["budget_services"] = tt.get("feo_services", 0.0)
+            row["budget_payroll"] = tt.get("feo_payroll", 0.0)
             row["budget_unspecified"] = tt.get("feo_unspecified", 0.0)
             # Исправление 2026-09-21 (боевой замер, субсидия «Тестовая» id 59:
             # feo_budget_total=100 000, split=0) — субсидия БЕЗ дерева ФЭО, но
@@ -854,31 +863,29 @@ async def dashboard_charts(
             # остаться = feo_budget_total, второго источника не заводим — всё
             # в unspecified.
             #
-            # ИСПРАВЛЕНО 06.10.2026 (координатор, боевой замер ХО id 75,
-            # /api/dashboard/charts?type_split=true): это УЖЕ НЕ единственный
-            # случай not feo_filled — с тех пор как _feo_by_kind
-            # (app.services.feo_plan_tree, Правило №6) научился фолбэку «budget
-            # по типу = план по типу» для узлов СУБСИДИИ БЕЗ единой суммы ФЭО
-            # (см. её докстринг), tt ВЫШЕ уже возвращает ПРАВИЛЬНУЮ типовую
-            # разбивку САМ, когда budget_basis = planned_tree (row["budget_
-            # from_plan"] — тот же флаг, что и subsidy_money_summary.py). Старое
-            # «всё в unspecified» здесь слепо перезаписывало уже-верный tt,
-            # получалось Σ > budget_basis (12 096 152,67 + 3 628 012,18 +
-            # 35 817 440,43 для ХО — тройной счёт товаров/услуг). Триггерим
-            # override ТОЛЬКО когда budget_basis взят НЕ из плана (ручной
-            # budget без дерева, как у «Тестовой») — budget_from_plan=False —
-            # ручное число типа не несёт и tt в этом случае честно 0/0/0.
-            if not row["feo_filled"] and not row["budget_from_plan"] and row["feo_budget_total"] > 0:
-                # ОБЯЗАТЕЛЬНО обнулить goods/services тоже — tt здесь уже НЕ
-                # всегда 0/0/0 (plan-фолбэк _feo_by_kind может дать typed-план,
-                # напр. «Тестовая» id 59: tt.feo_goods=20 000); без обнуления
-                # Σ превышала budget (20 000 + 100 000 unspecified = 120 000 >
-                # 100 000). Ручной budget тип не несёт — целиком в unspecified.
+            # ОТМЕНЕНО (владелец, 07.10.2026, план .planning/quick/2026-10-07-
+            # dnr-feo-cards/PLAN.md шаг 1): фолбэк «budget по типу = план по
+            # типу» в _feo_by_kind (app.services.feo_plan_tree, 06.10.2026,
+            # упомянутый тут раньше) убран целиком — tt ВЫШЕ больше НИКОГДА не
+            # подставляет typed-план вместо бюджета, снова честно 0/0/0 без
+            # своих ФЭО-строк (как и до 06.10.2026). Условие override —
+            # прежнее: субсидия БЕЗ дерева ФЭО (not feo_filled), но с РУЧНЫМ
+            # subsidy.budget (feo_budget_total>0, например «Тестовая» id 59) —
+            # ручное число типа не несёт, целиком в unspecified. feo_budget_total
+            # может быть None (feo_entered=False, см. subsidy_money_summary.py) —
+            # проверка на истинность ДО сравнения с нулём, без неё None > 0
+            # кидает TypeError.
+            if not row["feo_filled"] and row.get("feo_budget_total") and row["feo_budget_total"] > 0:
+                # ОБЯЗАТЕЛЬНО обнулить goods/services тоже (см. прежний
+                # комментарий — на случай, если tt когда-нибудь снова начнёт
+                # отдавать typed-число без своих ФЭО-строк).
                 row["budget_goods"] = 0.0
                 row["budget_services"] = 0.0
+                row["budget_payroll"] = 0.0
                 row["budget_unspecified"] = row["feo_budget_total"]
             row["planned_goods"] = tt.get("plan_goods", 0.0)
             row["planned_services"] = tt.get("plan_services", 0.0)
+            row["planned_payroll"] = tt.get("plan_payroll", 0.0)
             row["planned_unspecified"] = tt.get("plan_unspecified", 0.0)
             for k in _agg:
                 _agg[k] += row[k]

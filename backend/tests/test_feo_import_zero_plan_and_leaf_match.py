@@ -53,7 +53,14 @@ async def test_zero_plan_sum_without_qty_creates_planned_item_with_zero_amount(d
     """plan_sum=0, plan_qty пуст → категория есть, FeoPlannedItem создаётся с
     amount=0 и quantity=None (количество не выдумывается), БЕЗ warning
     zero_plan_skipped (владелец, 29.09: «0 надо ставить», см. докстринг
-    модуля)."""
+    модуля).
+
+    Владелец, 07.10: правило шага 0.5 плана 2026-10-07-dnr-feo-cards
+    («строка без „Плановой позиции“ — статья») здесь НЕ применяется —
+    `_IDX["item_name"]` замаплен, но ни одна строка этого импорта не
+    использует его (колонка не задействована в файле), значит это файл
+    старого устройства (план прямо на строке статьи) — см.
+    `_lvl5_column_in_use` в feo_import_apply.py."""
     subsidy = await _make_subsidy(db_session)
     try:
         rows = [mk_row(
@@ -92,7 +99,9 @@ async def test_zero_plan_sum_without_qty_creates_planned_item_with_zero_amount(d
 @pytest.mark.asyncio
 async def test_nonzero_plan_sum_without_qty_leaves_quantity_none(db_session):
     """plan_sum=600000, plan_qty пуст → плановая позиция создаётся с
-    quantity=None (не выдуманная 1), предупреждение sum_without_qty сохранено."""
+    quantity=None (не выдуманная 1), предупреждение sum_without_qty сохранено.
+    (07.10: колонка «Плановая позиция» не задействована в этом импорте —
+    правило шага 0.5 не применяется, см. тест 1 выше.)"""
     subsidy = await _make_subsidy(db_session)
     try:
         rows = [mk_row(

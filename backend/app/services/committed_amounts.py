@@ -103,6 +103,7 @@ async def committed_consumption_by_category(
     subsidy_ids: list[int],
     exclude_planned_item_linked: bool = False,
     include_over_plan: bool = False,
+    payroll_category_ids: set | None = None,
 ) -> dict[int, dict]:
     """{feo_category_id: {committed, committed_quantity, committed_goods,
     committed_services, committed_unspecified, committed_missing_fact_items}}
@@ -143,7 +144,9 @@ async def committed_consumption_by_category(
     if not subsidy_ids:
         return result
 
-    from app.services.item_type_split import kind_of  # локальный импорт — см. предупреждение в feo_plan_fact.py
+    # локальный импорт — см. предупреждение в feo_plan_fact.py
+    from app.services.item_type_split import kind_of_by_category_id
+    _payroll_ids = payroll_category_ids or set()
 
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
     _fpi = aliased(FeoPlannedItem)
@@ -199,7 +202,8 @@ async def committed_consumption_by_category(
         fact_amount = fact_by_item.get(pi.id)
         d = result.setdefault(r.cat_id, {
             "committed": 0.0, "committed_quantity": 0.0,
-            "committed_goods": 0.0, "committed_services": 0.0, "committed_unspecified": 0.0,
+            "committed_goods": 0.0, "committed_services": 0.0,
+            "committed_payroll": 0.0, "committed_unspecified": 0.0,
             "committed_missing_fact_items": 0,
             "committed_likely": 0.0, "committed_nice_to_have": 0.0,
         })
@@ -224,13 +228,13 @@ async def committed_consumption_by_category(
             fallback = pi.planned_total if pi.planned_total is not None else pi.total_price
             amt = float(fallback or 0)
             d["committed"] += amt
-            d[f"committed_{kind_of(pi.item_type)}"] += amt
+            d[f"committed_{kind_of_by_category_id(pi.item_type, r.cat_id, _payroll_ids)}"] += amt
             d[f"committed_{_level}"] += amt
             d["committed_missing_fact_items"] += 1
             continue
         d["committed"] += float(fact_amount)
         d["committed_quantity"] += float(pi.quantity or 0)
-        d[f"committed_{kind_of(pi.item_type)}"] += float(fact_amount)
+        d[f"committed_{kind_of_by_category_id(pi.item_type, r.cat_id, _payroll_ids)}"] += float(fact_amount)
         d[f"committed_{_level}"] += float(fact_amount)
     return result
 
@@ -408,7 +412,7 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
 
 
 async def leaf_items_committed_contribution(
-    db: AsyncSession, category_ids: list[int]
+    db: AsyncSession, category_ids: list[int], payroll_category_ids: set | None = None
 ) -> tuple[dict[int, float], dict[int, dict]]:
     """Агрегат по категории поверх planned_item_contributions (см. её докстринг
     — ОДНА точка правила, эта функция только суммирует) — используется
@@ -417,11 +421,14 @@ async def leaf_items_committed_contribution(
     amount, владелец явно просил его не трогать.
 
     Возвращает (contribution_by_category, contribution_by_category_and_kind):
-    второе — ТА ЖЕ contribution, разложенная по kind_of(item_type_effective),
-    нужна, чтобы инвариант «plan_goods+services+unspecified == display узла»
-    (test_feo_plan_tree_type_split.py) остался в силе и после замещения
-    savings по типу."""
-    from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, kind_of
+    второе — ТА ЖЕ contribution, разложенная по kind_of_by_category_id(
+    item_type_effective, cat_id, payroll_category_ids) — payroll-категория
+    (своя или по предку, план .planning/quick/2026-10-07-dnr-feo-cards/
+    PLAN.md шаг 2) перебивает item_type — нужна, чтобы инвариант «plan_goods+
+    services+payroll+unspecified == display узла» (test_feo_plan_tree_type_split.py)
+    остался в силе и после замещения savings по типу."""
+    from app.services.item_type_split import empty_kind_dict, kind_of_by_category_id
+    _payroll_ids = payroll_category_ids or set()
 
     contribution_by_category: dict[int, float] = {}
     contribution_by_kind: dict[int, dict] = {}
@@ -429,10 +436,8 @@ async def leaf_items_committed_contribution(
     for _item_id, info in per_item.items():
         cat_id = info["feo_category_id"]
         contribution_by_category[cat_id] = contribution_by_category.get(cat_id, 0.0) + info["amount"]
-        _bucket = kind_of(info["item_type_effective"])
-        _kd = contribution_by_kind.setdefault(
-            cat_id, {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
-        )
+        _bucket = kind_of_by_category_id(info["item_type_effective"], cat_id, _payroll_ids)
+        _kd = contribution_by_kind.setdefault(cat_id, empty_kind_dict())
         _kd[_bucket] += info["amount"]
     return contribution_by_category, contribution_by_kind
 
@@ -517,13 +522,13 @@ async def subsidy_committed_totals(
     result: dict[int, dict] = {
         sid: {
             "committed": 0.0, "committed_goods": 0.0, "committed_services": 0.0,
-            "committed_unspecified": 0.0, "committed_missing_fact_items": 0,
+            "committed_payroll": 0.0, "committed_unspecified": 0.0, "committed_missing_fact_items": 0,
             # plan_* — Σ по корневым узлам (та же величина, что subsidy_type_totals
             # отдаёт отдельным вызовом, app.services.type_totals) — ПЕРЕИСПОЛЬЗУЕМ
             # ОДИН проход по дереву, построенный этой функцией, вместо второго
             # вызова compute_feo_plan_tree ради planned_not_committed_by_kind
             # (dashboard_charts.py, контракт API п. A).
-            "plan_goods": 0.0, "plan_services": 0.0, "plan_unspecified": 0.0,
+            "plan_goods": 0.0, "plan_services": 0.0, "plan_payroll": 0.0, "plan_unspecified": 0.0,
         }
         for sid in subsidy_ids
     }
@@ -549,9 +554,11 @@ async def subsidy_committed_totals(
         d["committed"] += node["committed"]
         d["committed_goods"] += node["committed_goods"]
         d["committed_services"] += node["committed_services"]
+        d["committed_payroll"] += node["committed_payroll"]
         d["committed_unspecified"] += node["committed_unspecified"]
         d["plan_goods"] += node["plan_goods"]
         d["plan_services"] += node["plan_services"]
+        d["plan_payroll"] += node["plan_payroll"]
         d["plan_unspecified"] += node["plan_unspecified"]
     # missing_fact_items — Σ по ВСЕМ категориям субсидии (не только корневым,
     # т.к. committed_consumption_by_category индексирована по cat_id листа/

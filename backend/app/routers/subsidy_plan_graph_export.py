@@ -10,7 +10,10 @@ xlsx/docx и форматирование вынесены в app/services/plan_
   - plan_graph_export_data.gather_live_plan_graph_data — запросы к БД для
     живого экспорта;
   - plan_graph_export_xlsx.build_live_plan_graph_xlsx — рендер книги живого
-    экспорта (каскад статусов, факт по позициям, лист «Сводная»);
+    экспорта (каскад статусов, факт по позициям);
+  - plan_graph_export_summary_sheet.write_summary_sheet — лист «Сводная»
+    (Задача А, 07.10.2026 — читает subsidy_summary_by_kind, не считает сама);
+  - plan_graph_export_columns — выбор столбцов листа «План закупок» (Задача D);
   - plan_graph_export_render.render_plan_graph_workbook — общий рендерер
     книги по снапшоту версии (v1/v2-дерево);
   - plan_graph_export_docx — сохранение .docx-шаблона и его заполнение
@@ -21,8 +24,9 @@ app/routes.py рядом с subsidies.router.
 """
 import io
 import os
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from app.utils.http import content_disposition as _content_disposition
 
@@ -38,6 +42,7 @@ from app.database import get_db
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES
 from app.models.user import User
 from app.models.subsidy import Subsidy
+from app.services.plan_graph_export_columns import columns_catalog, resolve_selected_keys
 from app.services.plan_graph_export_data import gather_live_plan_graph_data
 from app.services.plan_graph_export_xlsx import build_live_plan_graph_xlsx
 from app.services.plan_graph_export_render import render_plan_graph_workbook
@@ -48,14 +53,27 @@ from app.services.plan_graph_export_docx import (
     save_plan_graph_template,
     render_plan_graph_docx,
 )
+from app.services.subsidy_summary_by_kind import subsidy_summary_by_kind
 
 router = APIRouter(prefix="/api/subsidies", tags=["subsidies"])
+
+
+@router.get("/plan-graph/export/columns")
+async def get_plan_graph_export_columns(_: User = Depends(get_current_user)):
+    """Столбцы листа «План закупок» для выбора перед экспортом (Задача D,
+    07.10.2026) — тот же приём, что GET /api/purchases/export/columns.
+    Литеральный первый сегмент пути ("plan-graph") не конфликтует с
+    GET /{subsidy_id:int}/plan-graph/export ниже — subsidy_id там типизирован
+    int, "plan-graph" под int-конвертер не подходит."""
+    return columns_catalog()
 
 
 @router.get("/{subsidy_id}/plan-graph/export")
 async def export_plan_graph_excel(
     subsidy_id: int,
     request: Request,
+    columns: Optional[str] = Query(None, description="Ключи столбцов через запятую (Задача D); пусто — все"),
+    summary: bool = Query(True, description="Включать лист «Сводная» (Задача А)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -72,9 +90,13 @@ async def export_plan_graph_excel(
         raise HTTPException(403, "Нет доступа")
 
     data = await gather_live_plan_graph_data(db, subsidy_id)
+    selected_keys = resolve_selected_keys(columns)
+    summary_by_kind = await subsidy_summary_by_kind(db, subsidy_id) if summary else None
 
     base_url = str(request.base_url).rstrip("/")
-    wb = build_live_plan_graph_xlsx(sub, base_url, data)
+    wb = build_live_plan_graph_xlsx(
+        sub, base_url, data, selected_columns=selected_keys, summary_by_kind=summary_by_kind,
+    )
 
     buf = io.BytesIO()
     wb.save(buf)

@@ -7,13 +7,35 @@
 ПРАВИЛО №6: эффективная сумма закупки без позиций (секция «без категории ФЭО»/
 «itemless») читается ТОЛЬКО через app.services.purchase_amounts.load_purchase_amounts
 — единая цепочка-по-стадии, используемая везде в проекте.
-"""
+
+ИЗМЕНЕНО (Задача А, владелец 07.10.2026, план .planning/quick/2026-10-07-
+plan-graph-export/PLAN.md): лист «Сводная» больше НЕ считает собственные
+корзины здесь (старое поле `summary`/`_empty_summary_buckets` и блок сборки
+по Товары/Услуги — удалены, это был второй расчёт мимо экрана субсидии,
+ПРАВИЛО №6). Числа для «Сводной» теперь читает
+app.services.subsidy_summary_by_kind.subsidy_summary_by_kind — отдельными
+вызовами уже существующих функций экрана субсидии, роутер вызывает её сам.
+
+ИЗМЕНЕНО (Задача B, владелец 07.10.2026): used_map (Σ PurchaseItem.total_price
+плановой позиции — «Фактически (итого)» строки позиции) теперь ИСКЛЮЧАЕТ
+отменённые закупки (status='cancelled') — раньше запрос не join'ился с
+Purchase и не фильтровал статус вовсе, отменённая закупка молча входила в
+факт/остаток/% исполнения.
+
+ДОБАВЛЕНО (владелец 07.10.2026, группа «Договор и оплата»): к каждому
+purchase_id, встреченному в под-строках фактических позиций (purchased_by_item/
+purchased_by_cat/unlinked_purchases), подгружается сама Purchase ОДНИМ
+запросом (purchase_rows_by_id) + общий ctx (purchase_export_ctx) из
+app.services.purchase_export_cells — те же справочники, что у экспорта
+закупок (ПРАВИЛО №6: не второй механизм чтения полей закупки, а
+переиспользование get_cell_value)."""
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
 from app.services.purchase_amounts import load_purchase_amounts
+from app.services.purchase_export_cells import build_purchase_export_ctx
 
 # статусы: plan_schedule, work_in_progress → «Запланировано»;
 #          contracted → «Договор»; ordered → «Заказано»;
@@ -24,7 +46,6 @@ _STATUS_HUMAN = {
     "contracted": "Договор", "ordered": "Заказано",
     "delivered": "Поставлено", "paid": "Оплачено",
 }
-_PLANNED_STATUSES = ("wishes", "plan_schedule", "work_in_progress", "contracted", "ordered")
 
 
 def _act_number(acc_number, acc_docs) -> str:
@@ -37,18 +58,13 @@ def _act_number(acc_number, acc_docs) -> str:
     return ""
 
 
-def _empty_summary_buckets() -> dict:
-    return {"paid": 0.0, "delivered": 0.0, "accepted_unpaid": 0.0,
-            "planned": 0.0, "monthly": 0.0, "likely": 0.0, "total": 0.0}
-
-
 async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict:
     """Собирает все данные, нужные для построения живой книги плана-графика.
 
     Возвращает dict:
       cats, item_ids, cat_ids, items_by_cat, used_map, contractor_map,
       purchased_by_item, cat_status_map, cat_monthly_map, cat_contractor_map,
-      purchased_by_cat, unlinked_purchases, summary.
+      purchased_by_cat, unlinked_purchases.
     """
     from app.models.feo_planned_item import FeoPlannedItem as _FPI
     from app.models.purchase_item import PurchaseItem as _PI
@@ -71,12 +87,16 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
     item_ids = [i.id for i in feo_items]
     used_map: dict[int, float] = {}
     if item_ids:
+        # Задача B (07.10.2026): join на Purchase + исключение 'cancelled' —
+        # отменённая закупка не входит в факт/остаток/% исполнения позиции.
         used_rows = (await db.execute(
             select(
                 _PI.feo_planned_item_id,
                 func.coalesce(func.sum(_PI.total_price), 0).label("used"),
             )
+            .join(_P, _PI.purchase_id == _P.id)
             .where(_PI.feo_planned_item_id.in_(item_ids))
+            .where(_P.status != "cancelled")
             .group_by(_PI.feo_planned_item_id)
         )).all()
         used_map = {r.feo_planned_item_id: float(r.used) for r in used_rows}
@@ -235,7 +255,6 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
 
     # ── Закупки БЕЗ позиций: факт живёт на самой закупке (item_name/суммы) ──
     # Иначе такие закупки полностью выпадают из выгрузки.
-    itemless_extra: list[dict] = []      # для «Сводной»
     unlinked_purchases: list[dict] = []  # секция «без категории ФЭО»
     pl_rows = (await db.execute(
         select(
@@ -287,7 +306,6 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
             "item_type": (r.item_type or "").strip().lower(),
             "is_likely_needed": bool(r.is_likely_needed),
         }
-        itemless_extra.append(d)
         if r.feo_category_id in _cat_id_set:
             purchased_by_cat.setdefault(r.feo_category_id, []).append(d)
             if amount:
@@ -340,65 +358,25 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
     for item in feo_items:
         items_by_cat.setdefault(item.feo_category_id, []).append(item)
 
-    # ── Лист «Сводная»: деньги по Товары/Услуги × корзины обязательств ────────
-    summary = {"услуга": _empty_summary_buckets(), "товар": _empty_summary_buckets()}
-    sum_rows = (await db.execute(
-        select(
-            func.coalesce(_PI.item_type, _P.item_type).label("item_type"),
-            _PI.total_price,
-            _P.status,
-            _P.acceptance_doc_number,
-            _P.acceptance_docs,
-            _P.is_monthly_payment,
-            _P.is_likely_needed,
-        )
-        .join(_P, _PI.purchase_id == _P.id)
-        .where(or_(
-            func.coalesce(_PI.feo_category_id, _P.feo_category_id).in_(cat_ids or [-1]),
-            _PI.feo_planned_item_id.in_(item_ids or [-1]),
-            _P.subsidy_id == subsidy_id,
-        ))
-    )).all()
-    for r in sum_rows:
-        key = "услуга" if (r.item_type or "").strip().lower() == "услуга" else "товар"
-        b = summary[key]
-        amt = float(r.total_price or 0)
-        st = r.status or ""
-        b["total"] += amt
-        if st == "paid":
-            b["paid"] += amt
-        if st == "delivered":
-            b["delivered"] += amt
-        has_act = bool(r.acceptance_doc_number) or bool(
-            isinstance(r.acceptance_docs, list) and r.acceptance_docs)
-        if has_act and st != "paid":
-            b["accepted_unpaid"] += amt
-        if st in _PLANNED_STATUSES:
-            b["planned"] += amt
-        if r.is_monthly_payment:
-            b["monthly"] += amt
-        if r.is_likely_needed:
-            b["likely"] += amt
+    # ── Группа «Договор и оплата» (владелец 07.10.2026) ──────────────────────
+    # Все purchase_id, встреченные в под-строках фактических позиций — ОДИН
+    # запрос Purchase по всем сразу (без N+1), + общий ctx экспорта закупок
+    # (purchase_export_ctx), чтобы значения новых столбцов читались через
+    # get_cell_value (ПРАВИЛО №6), а не вторым механизмом.
+    _sub_row_purchase_ids: set = set()
+    for _lst in purchased_by_item.values():
+        _sub_row_purchase_ids.update(d["purchase_id"] for d in _lst if d.get("purchase_id"))
+    for _lst in purchased_by_cat.values():
+        _sub_row_purchase_ids.update(d["purchase_id"] for d in _lst if d.get("purchase_id"))
+    _sub_row_purchase_ids.update(d["purchase_id"] for d in unlinked_purchases if d.get("purchase_id"))
 
-    # Закупки без позиций — их суммы живут на самой закупке
-    for d in itemless_extra:
-        key = "услуга" if d["item_type"] == "услуга" else "товар"
-        b = summary[key]
-        amt = d["total"]
-        st = d["raw_status"]
-        b["total"] += amt
-        if st == "paid":
-            b["paid"] += amt
-        if st == "delivered":
-            b["delivered"] += amt
-        if d["has_act"] and st != "paid":
-            b["accepted_unpaid"] += amt
-        if st in _PLANNED_STATUSES:
-            b["planned"] += amt
-        if d["is_monthly"]:
-            b["monthly"] += amt
-        if d["is_likely_needed"]:
-            b["likely"] += amt
+    purchase_rows_by_id: dict[int, Purchase] = {}
+    if _sub_row_purchase_ids:
+        _p_rows = (await db.execute(
+            select(Purchase).where(Purchase.id.in_(_sub_row_purchase_ids))
+        )).scalars().all()
+        purchase_rows_by_id = {p.id: p for p in _p_rows}
+    purchase_export_ctx = await build_purchase_export_ctx(db, list(purchase_rows_by_id.values()))
 
     return {
         "cats": list(cats),
@@ -414,5 +392,6 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
         "cat_contractor_map": cat_contractor_map,
         "purchased_by_cat": purchased_by_cat,
         "unlinked_purchases": unlinked_purchases,
-        "summary": summary,
+        "purchase_rows_by_id": purchase_rows_by_id,
+        "purchase_export_ctx": purchase_export_ctx,
     }

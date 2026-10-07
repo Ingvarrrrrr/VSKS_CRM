@@ -295,6 +295,12 @@
   <FactImportWizard />
   <FactImportRunsPanel />
   <AlignBudgetAllDialog ref="alignAllDialog" />
+  <SubsidyExportDialog
+    ref="subsidyExportDialog"
+    :subsidy-id="ctx.selectedId.value ?? null"
+    :subsidy-name="ctx.selectedSubsidy.value?.name"
+    :show-snack="showSnack"
+  />
 </template>
 
 <script setup lang="ts">
@@ -326,6 +332,8 @@ import PlanToOrderDialog from '@/components/subsidies/PlanToOrderDialog.vue'
 // «Приравнять ФЭО к плану по всем статьям» (владелец 07.10.2026) — см.
 // докстринг кнопки/компонента выше.
 import AlignBudgetAllDialog from '@/components/subsidies/AlignBudgetAllDialog.vue'
+import SubsidyExportDialog from '@/components/subsidies/SubsidyExportDialog.vue'
+import { filenameFromContentDisposition } from '@/utils/contentDisposition'
 
 const ctx = useSubsidyDetailCtx()
 const alignAllDialog = ref<InstanceType<typeof AlignBudgetAllDialog> | null>(null)
@@ -397,18 +405,11 @@ function openFactImportRuns() {
 
 const { exportScreenshotPdf: _exportFeoScreenshotPdf } = useRegistryExport()
 
+const subsidyExportDialog = ref<InstanceType<typeof SubsidyExportDialog> | null>(null)
+
 function exportPlanGraphExcel() {
-  const token = localStorage.getItem('auth_token') || ''
-  const url = `/api/subsidies/${ctx.selectedId.value}/plan-graph/export`
-  fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-    .then(r => r.blob())
-    .then(blob => {
-      const bUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = bUrl
-      a.click()
-      URL.revokeObjectURL(bUrl)
-    })
+  if (!ctx.selectedId.value) return
+  subsidyExportDialog.value?.open()
 }
 
 async function exportPlanGraphDocx() {
@@ -424,6 +425,8 @@ async function exportPlanGraphDocx() {
   const bUrl = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = bUrl
+  const fallback = `План_график_${ctx.selectedSubsidy.value?.name ?? ''}.docx`.trim()
+  a.download = filenameFromContentDisposition(r.headers.get('Content-Disposition'), fallback)
   a.click()
   URL.revokeObjectURL(bUrl)
 }

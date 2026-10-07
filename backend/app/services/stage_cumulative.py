@@ -610,3 +610,76 @@ async def contracted_not_ordered_need_level_split(
         nice = max(0.0, min(float(r.amt or 0), total))
         result[r.subsidy_id] = {"nice": nice, "likely": total - nice}
     return result
+
+
+async def contracted_not_ordered_split_by_kind(
+    db: AsyncSession, subsidy_id: int,
+) -> dict[str, dict]:
+    """{kind: {"nice": float, "likely": float}} — ТА ЖЕ сумма
+    contracted_not_ordered_by_subsidy (см. её докстринг: reserved_child_predicate()
+    + stopped_at IS NULL, effective_amount_expr()), разрезанная по виду позиции
+    (app.services.item_type_split.ALL_KINDS — goods/services/payroll/unspecified)
+    вместо схлопывания в один total — для листа «Сводная» живого экспорта
+    плана-графика (app.services.subsidy_summary_by_kind, Задача А плана
+    .planning/quick/2026-10-07-plan-graph-export/PLAN.md). ПРАВИЛО №6 — не
+    вторая формула: тот же предикат и та же сумма, просто разрезанная по виду
+    вместо subsidy_id.
+
+    "nice" — ТЕМ ЖЕ приёмом, что contracted_not_ordered_need_level_split (Σ
+    PurchaseItem.total_price позиций, чья плановая позиция need_level==
+    NEED_LEVEL_NICE_TO_HAVE, клэмп в [0, итог вида]); "likely" = итог вида
+    − nice. Инвариант (test_subsidy_summary_by_kind.py): Σ по видам nice/likely
+    == contracted_not_ordered_need_level_split(db, subsidy_ids=[subsidy_id])
+    [subsidy_id]."""
+    from app.services.feo_payroll import payroll_category_ids
+    from app.services.item_type_split import ALL_KINDS, kind_of_by_category_id
+
+    result: dict[str, dict] = {k: {"nice": 0.0, "likely": 0.0} for k in ALL_KINDS}
+    payroll_ids = await payroll_category_ids(db, [subsidy_id])
+
+    rows_stmt = (
+        select(
+            Purchase.id, Purchase.item_type, Purchase.feo_category_id,
+            effective_amount_expr().label("amt"),
+        )
+        .where(reserved_child_predicate())
+        .where(Purchase.stopped_at.is_(None))
+        .where(Purchase.subsidy_id == subsidy_id)
+    )
+    rows = (await db.execute(rows_stmt)).all()
+    if not rows:
+        return result
+
+    totals_by_kind: dict[str, float] = {k: 0.0 for k in ALL_KINDS}
+    purchase_kind: dict[int, str] = {}
+    for r in rows:
+        kind = kind_of_by_category_id(r.item_type, r.feo_category_id, payroll_ids)
+        amt = float(r.amt or 0)
+        totals_by_kind[kind] += amt
+        purchase_kind[r.id] = kind
+
+    # «nice» — та же техника, что contracted_not_ordered_need_level_split, но
+    # сгруппированная по закупке (не по subsidy_id), чтобы потом разложить по
+    # виду каждой закупки.
+    nice_stmt = (
+        select(Purchase.id, func.coalesce(func.sum(PurchaseItem.total_price), 0).label("amt"))
+        .join(Purchase, Purchase.id == PurchaseItem.purchase_id)
+        .join(FeoPlannedItem, FeoPlannedItem.id == PurchaseItem.feo_planned_item_id)
+        .where(Purchase.id.in_(list(purchase_kind.keys())))
+        .where(Purchase.status == "contracted")
+        .where(Purchase.parent_purchase_id.isnot(None))
+        .where(Purchase.stopped_at.is_(None))
+        .where(FeoPlannedItem.need_level == NEED_LEVEL_NICE_TO_HAVE)
+        .group_by(Purchase.id)
+    )
+    nice_by_purchase: dict[int, float] = {r.id: float(r.amt or 0) for r in (await db.execute(nice_stmt)).all()}
+
+    nice_by_kind: dict[str, float] = {k: 0.0 for k in ALL_KINDS}
+    for pid, kind in purchase_kind.items():
+        nice_by_kind[kind] += nice_by_purchase.get(pid, 0.0)
+
+    for k in ALL_KINDS:
+        total = totals_by_kind[k]
+        nice = max(0.0, min(nice_by_kind[k], total))
+        result[k] = {"nice": nice, "likely": total - nice}
+    return result

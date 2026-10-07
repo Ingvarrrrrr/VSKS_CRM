@@ -92,3 +92,18 @@ def to_decimal_ambiguous(v) -> tuple[Optional[Decimal], bool]:
 def to_decimal(v) -> Optional[Decimal]:
     value, _ambiguous = to_decimal_ambiguous(v)
     return value
+
+
+def format_ru_money(amount) -> str:
+    """"126419.3" → "126 419,30" — разделитель тысяч пробелом, дробная часть
+    запятой, 2 знака после запятой (экспорт плана-графика, Задача B,
+    07.10.2026: подпись «... — 126 419,30 ₽/ед.» должна быть по-русски, не
+    "126,419.30"). Единственное место такого форматирования строкой — где
+    число строится ЧАСТЬЮ ТЕКСТА, а не отдельной ячейкой (там — Excel
+    number_format, Правило №6 не плодит второй форматтер для ячеек)."""
+    try:
+        val = float(amount or 0)
+    except (TypeError, ValueError):
+        val = 0.0
+    s = f"{val:,.2f}"  # "126,419.30"
+    return s.replace(",", " ").replace(".", ",")

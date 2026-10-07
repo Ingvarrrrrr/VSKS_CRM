@@ -182,10 +182,23 @@ const excessDrilldown = useExcessDrilldown()
 // этой субсидии, включает режим «план против ФЭО целиком»
 // (excessDrilldown.activate('total') — расширение существующего activate(),
 // второй механизм поиска виновника не заводится).
+//
+// ИСПРАВЛЕНИЕ (Дефект ДН6, 07.10.2026): ДВЕ плашки открывали ОДИН и тот же
+// режим без направления — панель всегда искала «план дороже ФЭО», даже когда
+// нажата плашка «ФЭО > план: допланировать» (cardDelta(s) > 0, нужно искать
+// ПРОТИВОПОЛОЖНОЕ — где ФЭО дороже плана). direction теперь берётся из знака
+// cardDelta(s) — ТОЙ ЖЕ величины, что рисует саму плашку и её цвет/текст
+// (Правило №6, не второй расчёт направления). chipAmount — сумма самой
+// плашки, передаётся в панель для totalDiffLine (объяснение несовпадения
+// сумм, если Σ по статьям расходится со значением плашки).
 async function openExcessOnTile(s: SubsidyRow) {
   if (ctx.selectedId.value !== s.id) ctx.toggleSelect(s.id)
   await ctx.loadFeo(s.id)
-  excessDrilldown.activate('total')
+  const delta = cardDelta(s)
+  excessDrilldown.activate('total', {
+    direction: delta > 0 ? 'under' : 'over',
+    chipAmount: Math.abs(delta),
+  })
 }
 
 // Название карточки в одну строку: базовый крупный шрифт, ужимается пока не влезет.

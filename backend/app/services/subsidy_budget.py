@@ -211,24 +211,42 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
 async def feo_entered_ceiling_and_plan(
     db: AsyncSession, subsidy_id: int, tree: dict,
 ) -> tuple[float, float, set]:
-    """(ceiling, total_plan, entered_root_ids) — ТОЛЬКО по корневым
-    («направление») категориям,
-    у которых ФЭО введено хоть где-то в их поддереве (compute_budget_map
-    узла-корня > 0 — ТА ЖЕ рекурсия, что и calculate_budget_from_categories/
-    subsidy_budget_from_categories, Правило №6, вторая формула бюджета не
-    заводится). `tree` — уже построенный compute_feo_plan_tree(db,
-    [subsidy_id]) этого же вызова (план плана ДНР — 2026-10-07, план
-    .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 3).
+    """(ceiling, total_plan, entered_node_ids) — по «верхним узлам с
+    введённым ФЭО», НА ЛЮБОМ УРОВНЕ дерева, а не только по корням
+    («направлениям»).
 
-    РЕШЕНИЕ ВЛАДЕЛЬЦА (07.10.2026): «статьи без ФЭО в проверке потолка не
-    участвуют» — направление без единой суммы ФЭО во всём своём поддереве
-    (budget_map[root]==0) исключается ЦЕЛИКОМ из обеих сторон сравнения: его
-    план не прибавляется к total_plan, его (нулевой) бюджет — не к ceiling.
-    БЕЗ этого фильтра на субсидии «ДНР» (41 статья, ФЭО введено только у
-    одной после align-budget-to-plan на ней) total_plan включал план ВСЕХ 41
-    статей (63 047 213,82 ₽) против потолка 185 000 ₽ одной статьи —
-    «Приравнять» отклонялось 409 на любой статье, пока ФЭО не введено у всех
-    остальных (структурно невозможно без этой же кнопки).
+    РЕШЕНИЕ ВЛАДЕЛЬЦА (07.10.2026, п.1): «статьи, где ФЭО не введено, в
+    проверке потолка НЕ участвуют на ЛЮБОМ уровне». Узел считается «верхним
+    введённым», если у него самого есть введённая сумма (явный
+    FeoCategory.budget ИЛИ сумма feo_amount его СОБСТВЕННЫХ плановых
+    позиций — «введено» в том же смысле, что и compute_budget_map._calc) И
+    ни один его предок таким узлом не является (иначе предок уже накрывает
+    всё поддерево целиком своей суммой — см. compute_budget_map: явный
+    budget предка «главнее» и дети в его собственную сумму не прибавляются,
+    поэтому у такого предка отдельно считать потомка было бы задвоением).
+    Узлы без собственного ФЭО во всём своём поддереве (нет ни одного такого
+    верхнего узла внутри) в сравнение не попадают вовсе — ни их план, ни их
+    (нулевой) бюджет.
+
+    Ceiling = Σ compute_budget_map(…) по верхним введённым узлам (их
+    собственная сумма ПЛЮС, если явного budget нет, — сумма детей,
+    рекурсивно, та же формула, что и у calculate_budget_from_categories/
+    subsidy_budget_from_categories, Правило №6, вторая формула бюджета не
+    заводится). total_plan = Σ tree[node]["display"] (вся плановая сумма
+    ПОДДЕРЕВА этого узла) по тем же верхним введённым узлам. `tree` — уже
+    построенный compute_feo_plan_tree(db, [subsidy_id]) этого же вызова
+    (план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 3).
+
+    ПОВОД (07.10.2026, живой пример — субсидия «ДНР», категория 18090 «День
+    спасателя», глубокий лист внутри корня «Прочие расходы»): при
+    ГРАНУЛЯРНОСТИ ТОЛЬКО ПО КОРНЯМ установка ФЭО на 18090 делает
+    budget_map[корня] > 0 (поднимается рекурсией), весь корень считается
+    «введённым» целиком — и total_plan включает план ВСЕХ статей внутри
+    «Прочих расходов» (29 351 201,02 ₽), а не только 18090 (185 000 ₽),
+    хотя введена сумма только у 18090. «Приравнять» на 18090 отклонялось
+    409. Теперь верхним введённым узлом в этом случае является САМА 18090
+    (ни один её предок не введён), ceiling/total_plan считаются только по
+    её поддереву.
 
     ОДНА функция для жёсткого потолка субсидии (app.services.feo_plan_excess.
     assert_no_unapproved_excess) и приравнивания
@@ -241,19 +259,42 @@ async def feo_entered_ceiling_and_plan(
         return 0.0, 0.0, set()
     items = await _active_feo_items_with_amount(db, [c.id for c in cat_rows])
     budget_map = compute_budget_map(cat_rows, items)
-    roots = [c for c in cat_rows if c.level == 1]
+    by_id = {c.id: c for c in cat_rows}
+
+    own_items_sum: dict = {}
+    for it in items:
+        cid = getattr(it, "feo_category_id", None)
+        if cid in by_id:
+            own_items_sum[cid] = own_items_sum.get(cid, 0.0) + float(getattr(it, "feo_amount", None) or 0.0)
+
+    def _own_entered(cid) -> bool:
+        c = by_id[cid]
+        if normalize_feo_category_budget(c.budget) is not None:
+            return True
+        return own_items_sum.get(cid, 0.0) > 0.005
+
+    entered_ids = {c.id for c in cat_rows if _own_entered(c.id)}
+
+    def _has_entered_ancestor(cid) -> bool:
+        pid = by_id[cid].parent_id
+        while pid is not None and pid in by_id:
+            if pid in entered_ids:
+                return True
+            pid = by_id[pid].parent_id
+        return False
+
+    top_entered_ids = {cid for cid in entered_ids if not _has_entered_ancestor(cid)}
+
     ceiling = 0.0
     total_plan = 0.0
-    entered_root_ids: set = set()
-    for r in roots:
-        b = float(budget_map.get(r.id, 0.0) or 0.0)
+    for cid in top_entered_ids:
+        b = float(budget_map.get(cid, 0.0) or 0.0)
         if b > 0.005:
             ceiling += b
-            entered_root_ids.add(r.id)
-            node = tree.get(r.id)
+            node = tree.get(cid)
             if node is not None:
                 total_plan += float(node.get("display", 0.0) or 0.0)
-    return ceiling, total_plan, entered_root_ids
+    return ceiling, total_plan, top_entered_ids
 
 
 async def calculate_budgets_bulk(db: AsyncSession, subsidy_ids: list) -> dict:

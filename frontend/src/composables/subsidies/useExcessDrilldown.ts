@@ -111,17 +111,20 @@ function buildTreeIndex(categories: Pick<FeoCategory, 'id' | 'parent_id'>[]) {
 // одного потомка то же поле не > 0 (узлы дерева хранят АГРЕГАТ поддерева).
 // Вынесено одной функцией (Правило №6 — второй механизм поиска виновника не
 // заводим для режима «план против ФЭО целиком», только другое поле).
-function deepestFieldExceedingIds(
+// Общее ядро — ищет самые глубокие узлы, у которых СВОЁ значение diff(id) >
+// 0, но ни у одного потомка diff не > 0 (узлы дерева хранят АГРЕГАТ
+// поддерева). `diff` — произвольная функция узла (Правило №6: один обход
+// дерева для ЛЮБОГО вида превышения — по типу, 'total' план>ФЭО, 'total'
+// ФЭО>план — второй механизм поиска не заводим, меняется только diff).
+function deepestDiffExceedingIds(
   categories: Pick<FeoCategory, 'id' | 'parent_id'>[],
-  planTreeByCat: Record<number, PlanTreeEntry>,
-  field: string,
+  diff: (id: number) => number,
 ): number[] {
-  const amountOf = (id: number) => amountOfField(planTreeByCat[id], field)
   const { roots, childrenOf } = buildTreeIndex(categories)
 
   function hasExcessDescendant(id: number): boolean {
     for (const childId of childrenOf[id] || []) {
-      if (amountOf(childId) > 0.005) return true
+      if (diff(childId) > 0.005) return true
       if (hasExcessDescendant(childId)) return true
     }
     return false
@@ -129,11 +132,19 @@ function deepestFieldExceedingIds(
 
   const ids: number[] = []
   function visit(id: number) {
-    if (amountOf(id) > 0.005 && !hasExcessDescendant(id)) ids.push(id)
+    if (diff(id) > 0.005 && !hasExcessDescendant(id)) ids.push(id)
     for (const childId of childrenOf[id] || []) visit(childId)
   }
   roots.forEach(visit)
   return ids
+}
+
+function deepestFieldExceedingIds(
+  categories: Pick<FeoCategory, 'id' | 'parent_id'>[],
+  planTreeByCat: Record<number, PlanTreeEntry>,
+  field: string,
+): number[] {
+  return deepestDiffExceedingIds(categories, id => amountOfField(planTreeByCat[id], field))
 }
 
 export function excessTargetIds(
@@ -148,12 +159,38 @@ export function excessTargetIds(
 // узла excess_over_feo уже готово с бэкенда (= (plan+over) − budget, когда
 // budget задан и превышен, см. backend/app/services/feo_plan_tree.py), тот
 // же приём, что NODE_EXCESS_FIELD для видов по типу, просто без карты (одно
-// готовое поле, не четыре).
+// готовое поле, не четыре). Направление «план дороже ФЭО» — плашка «ФЭО <
+// план: урезать».
 export function totalPlanOverFeoTargetIds(
   categories: Pick<FeoCategory, 'id' | 'parent_id'>[],
   planTreeByCat: Record<number, PlanTreeEntry>,
 ): number[] {
   return deepestFieldExceedingIds(categories, planTreeByCat, 'excess_over_feo')
+}
+
+// ПРОТИВОПОЛОЖНОЕ направление — «ФЭО дороже плана» (плашка «ФЭО > план:
+// допланировать»). Дефект приёмки ДН6 (07.10.2026): панель «Где превышение»
+// всегда искала ТОЛЬКО план>ФЭО (totalPlanOverFeoTargetIds выше), независимо
+// от того, какую из двух плашек нажали — на плашке «допланировать» (ФЭО >
+// план) стрелки указывали на статью с ПРОТИВОПОЛОЖНЫМ знаком и чужой суммой.
+// У бэкенда нет готового поля под это направление (excess_over_feo — только
+// «план дороже ФЭО», см. feo_plan_tree.py) — считаем budget − (plan+over)
+// прямо по готовым полям узла (ТЕ ЖЕ plan/over/budget, что уже используют
+// totalPlanOverFeoCompositionIds/targetRows ниже, вторая формула не
+// заводится, только разница в другую сторону).
+function feoOverPlanDiff(entry: PlanTreeEntry | undefined): number {
+  return amountOfField(entry, 'budget') - (amountOfField(entry, 'plan') + amountOfField(entry, 'over'))
+}
+
+export function totalFeoOverPlanTargetIds(
+  categories: Pick<FeoCategory, 'id' | 'parent_id'>[],
+  planTreeByCat: Record<number, PlanTreeEntry>,
+): number[] {
+  return deepestDiffExceedingIds(categories, id => feoOverPlanDiff(planTreeByCat[id]))
+}
+
+export function totalFeoOverPlanTargetsTotal(ids: number[], planTreeByCat: Record<number, PlanTreeEntry>): number {
+  return ids.reduce((sum, id) => sum + Math.max(0, feoOverPlanDiff(planTreeByCat[id])), 0)
 }
 
 // РЕЗЕРВНЫЙ режим (приёмка 06.10.2026, субсидия «ФАДМ 2026_2», id 7320):
@@ -253,17 +290,40 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
   // Непусто в режиме compositionTargetIds — объясняет, почему стрелки стоят
   // не на «виновнике», а на статьях, из которых просто складывается итог.
   const compositionMessage = ref<string | null>(null)
+  // Направление режима 'total' (Дефект ДН6, 07.10.2026) — ДВЕ плашки на
+  // плитке субсидии («ФЭО > план: допланировать» и «ФЭО < план: урезать»,
+  // SubsidyCardsGrid.vue cardDelta) открывают ОДИН и тот же kind='total', но
+  // ищут статьи в ПРОТИВОПОЛОЖНЫХ направлениях — 'over' (план дороже ФЭО,
+  // старое единственное поведение) или 'under' (ФЭО дороже плана, новое).
+  // Без этого состояния activate('total') не может знать, какую из двух
+  // find-функций звать (totalPlanOverFeoTargetIds/totalFeoOverPlanTargetIds).
+  const totalDirection = ref<'over' | 'under'>('over')
+  // Сумма чипа-плашки (SubsidyCardsGrid.vue cardDelta), переданная в
+  // activate('total', {chipAmount}) — для totalDiffLine ниже: Σ по найденным
+  // самым глубоким статьям МОЖЕТ не совпасть с плашкой (взаимозачёт
+  // превышений/недобора между статьями, задание ДН6, п.3) — панель обязана
+  // явно показать обе суммы и разницу, а не молчать о несовпадении.
+  const totalChipAmount = ref<number | null>(null)
 
   // 'total' (режим «план против ФЭО целиком», см. docstring TOTAL_EXCESS_KIND)
-  // — не значение TYPE_EXCESS_KIND_DEFS, подпись задана прямо здесь.
+  // — не значение TYPE_EXCESS_KIND_DEFS, подпись задана прямо здесь, с учётом
+  // направления (totalDirection).
   const kindLabel = computed(() => {
-    if (activeKind.value === TOTAL_EXCESS_KIND) return 'план выше ФЭО (по статье целиком)'
+    if (activeKind.value === TOTAL_EXCESS_KIND) {
+      return totalDirection.value === 'under'
+        ? 'ФЭО выше плана (по статье целиком)'
+        : 'план выше ФЭО (по статье целиком)'
+    }
     return TYPE_EXCESS_KIND_DEFS.find(d => d.kind === activeKind.value)?.label ?? ''
   })
   const activeMetric = computed(() => (activeKind.value && activeKind.value !== TOTAL_EXCESS_KIND) ? METRIC_FIELDS[activeKind.value] : null)
   const targetsTotal = computed(() => {
     if (!activeKind.value) return 0
-    if (activeKind.value === TOTAL_EXCESS_KIND) return totalPlanOverFeoTargetsTotal(targets.value, ctx.planTreeByCat.value)
+    if (activeKind.value === TOTAL_EXCESS_KIND) {
+      return totalDirection.value === 'under'
+        ? totalFeoOverPlanTargetsTotal(targets.value, ctx.planTreeByCat.value)
+        : totalPlanOverFeoTargetsTotal(targets.value, ctx.planTreeByCat.value)
+    }
     return excessTargetsTotal(targets.value, ctx.planTreeByCat.value, activeKind.value)
   })
   const currentTargetId = computed<number | null>(() => targets.value[currentIndex.value] ?? null)
@@ -282,9 +342,28 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
   // читает ту же subsidy_type_excess карту, что и 4 вида по типу — другая
   // метрика, см. docstring TOTAL_EXCESS_KIND), просто не показываем строку.
   const diffLine = computed<string | null>(() => {
-    if (!activeKind.value || activeKind.value === TOTAL_EXCESS_KIND || isComposition.value || !targets.value.length) return null
+    if (!activeKind.value || isComposition.value || !targets.value.length) return null
+    if (activeKind.value === TOTAL_EXCESS_KIND) return totalDiffLine()
     return excessDiffLine(targets.value, ctx.planTreeByCat.value, activeKind.value, subsidyChipAmount(activeKind.value))
   })
+
+  // Дефект ДН6 п.3: для режима 'total' своей готовой «суммы по субсидии»
+  // (как subsidy_type_excess у 4 видов по типу) в этом composable нет —
+  // сравниваем Σ по найденным статьям с суммой САМОЙ плашки (totalChipAmount,
+  // см. activate()), которую нажал владелец. null — суммы совпали (с
+  // точностью до копейки) ИЛИ плашку не передали (actively вызван без
+  // chipAmount, напр. из теста) — строку не показываем.
+  function totalDiffLine(): string | null {
+    if (totalChipAmount.value == null) return null
+    const sumTargets = targetsTotal.value
+    const delta = sumTargets - totalChipAmount.value
+    if (Math.abs(delta) <= 0.5) return null
+    const verb = totalDirection.value === 'under' ? 'допланировать' : 'урезать'
+    const otherDirection = delta > 0
+      ? 'в остальных статьях расхождение частично гасится встречным — там план и ФЭО расходятся в другую сторону'
+      : 'в остальных статьях есть ещё необнаруженное расхождение той же стороны, не попавшее в самые глубокие статьи'
+    return `по этим статьям нужно ${verb} ${formatCurrency(sumTargets)}; по субсидии в целом — ${formatCurrency(totalChipAmount.value)} (${otherDirection})`
+  }
 
   // Совсем пусто — нет ни виновника, ни статей для composition-режима (нет
   // данных по типу вообще).
@@ -356,15 +435,27 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
   // 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 5),
   // не второй механизм — та же find-deepest/composition-схема, что и 4 вида
   // по типу, просто с другим полем узла.
-  function activate(kind: DrilldownKind) {
-    if (activeKind.value === kind) { clear(); return }
+  function activate(kind: DrilldownKind, opts?: { direction?: 'over' | 'under'; chipAmount?: number }) {
+    const direction = opts?.direction ?? 'over'
+    // Повторный клик по ТОЙ же плашке (тот же kind И то же direction для
+    // 'total') — закрыть панель. Клик по ДРУГОЙ плашке той же субсидии
+    // (тот же kind='total', но противоположное direction — «допланировать»
+    // ↔ «урезать») обязан ПЕРЕСТРОИТЬ панель на новое направление, а не
+    // закрыть её тем же кодом, что и повторный клик (Дефект ДН6).
+    const samekind = activeKind.value === kind
+    const samedirection = kind !== TOTAL_EXCESS_KIND || totalDirection.value === direction
+    if (samekind && samedirection) { clear(); return }
     activeKind.value = kind
+    totalDirection.value = direction
+    totalChipAmount.value = kind === TOTAL_EXCESS_KIND ? (opts?.chipAmount ?? null) : null
     activeHighlightMode.value = 'excess' // гасит активную KPI-подсветку, см. useHighlightMode.ts
 
     let ids: number[]
     let composition = false
     if (kind === TOTAL_EXCESS_KIND) {
-      ids = totalPlanOverFeoTargetIds(ctx.feoCategories.value, ctx.planTreeByCat.value)
+      ids = direction === 'under'
+        ? totalFeoOverPlanTargetIds(ctx.feoCategories.value, ctx.planTreeByCat.value)
+        : totalPlanOverFeoTargetIds(ctx.feoCategories.value, ctx.planTreeByCat.value)
       if (ids.length === 0) {
         ids = totalPlanOverFeoCompositionIds(ctx.feoCategories.value, ctx.planTreeByCat.value)
         composition = true
@@ -425,6 +516,8 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
     isComposition.value = false
     emptyMessage.value = null
     compositionMessage.value = null
+    totalDirection.value = 'over'
+    totalChipAmount.value = null
     if (activeHighlightMode.value === 'excess') activeHighlightMode.value = null
   }
 
@@ -455,7 +548,11 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
     const nameOf = (id: number) => ctx.feoCategories.value.find(c => c.id === id)?.name || `#${id}`
     if (activeKind.value === TOTAL_EXCESS_KIND) {
       // 'total' — узел целиком: upper = plan+over (полная плановая сумма),
-      // lower = budget (ФЭО узла), excess = excess_over_feo (готово с бэка).
+      // lower = budget (ФЭО узла). excess — направленная разница
+      // (totalDirection): 'over' — готовое поле бэкенда excess_over_feo
+      // (план дороже ФЭО); 'under' — budget − (plan+over), когда ФЭО дороже
+      // плана (нет готового поля бэкенда под это направление, см.
+      // feoOverPlanDiff выше, Правило №6 — та же формула, не вторая копия).
       return targets.value.map(id => {
         const entry = ctx.planTreeByCat.value[id]
         return {
@@ -463,7 +560,9 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
           name: nameOf(id),
           upper: amountOfField(entry, 'plan') + amountOfField(entry, 'over'),
           lower: amountOfField(entry, 'budget'),
-          excess: amountOfField(entry, 'excess_over_feo'),
+          excess: totalDirection.value === 'under'
+            ? Math.max(0, feoOverPlanDiff(entry))
+            : amountOfField(entry, 'excess_over_feo'),
         }
       })
     }
@@ -483,7 +582,7 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
 
   return {
     activeKind, targets, currentIndex, emptyMessage, compositionMessage, isComposition, diffLine,
-    kindLabel, activeMetric, targetsTotal, hasTargets, currentTargetId,
+    kindLabel, activeMetric, targetsTotal, hasTargets, currentTargetId, totalDirection,
     activate, next, prev, goTo, clear, targetRows,
     isExcessTarget, isCurrentExcessTarget,
   }

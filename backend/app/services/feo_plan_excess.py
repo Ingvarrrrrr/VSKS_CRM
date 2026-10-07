@@ -635,24 +635,30 @@ async def assert_no_unapproved_excess(
         return warnings
 
     # ── Жёсткий потолок субсидии (задача владельца п.3) — см. docstring выше.
-    # ОДНА функция (ceiling, total_plan, entered_root_ids), общая с
+    # ОДНА функция (ceiling, total_plan, entered_node_ids), общая с
     # app.services.feo_tree_write.align_budget_to_plan (Правило №6, решение
     # владельца 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/
-    # PLAN.md шаг 3): направления без ФЭО во всём поддереве не участвуют ни в
-    # total_plan, ни в ceiling — иначе на субсидии «ДНР» (ФЭО введено только
-    # на одной статье) potолок этой одной статьи сравнивался с планом ВСЕХ
-    # 41 статей. ──
+    # PLAN.md шаг 3): статьи без ФЭО во всём поддереве не участвуют ни в
+    # total_plan, ни в ceiling — НА ЛЮБОМ уровне, не только у корня (иначе на
+    # субсидии «ДНР» ФЭО, введённое на одном глубоком листе внутри корня
+    # «Прочие расходы», тащило в сравнение план ВСЕХ статей корня). ──
     from app.services.subsidy_budget import feo_entered_ceiling_and_plan
-    ceiling, total_plan_now, entered_root_ids = await feo_entered_ceiling_and_plan(db, cat.subsidy_id, tree)
+    ceiling, total_plan_now, entered_node_ids = await feo_entered_ceiling_and_plan(db, cat.subsidy_id, tree)
     if ceiling and ceiling > 0:
         # adding_amount прибавляется к total_plan_now ТОЛЬКО если категория,
-        # на которую совершается действие, сама принадлежит направлению, где
-        # ФЭО введено — иначе это направление и так не участвует ни в одной
-        # из сторон сравнения (см. докстринг feo_entered_ceiling_and_plan).
-        _root_id = feo_category_id
-        while tree.get(_root_id, {}).get("parent_id") is not None:
-            _root_id = tree[_root_id]["parent_id"]
-        _adding = adding_amount if _root_id in entered_root_ids else 0.0
+        # на которую совершается действие, сама лежит в поддереве одного из
+        # «верхних введённых» узлов (себя или предка) — иначе её поддерево и
+        # так не участвует ни в одной из сторон сравнения (см. докстринг
+        # feo_entered_ceiling_and_plan).
+        _node_id = feo_category_id
+        _in_counted_subtree = _node_id in entered_node_ids
+        while not _in_counted_subtree:
+            _parent_id = tree.get(_node_id, {}).get("parent_id")
+            if _parent_id is None:
+                break
+            _node_id = _parent_id
+            _in_counted_subtree = _node_id in entered_node_ids
+        _adding = adding_amount if _in_counted_subtree else 0.0
         total_plan_after_d = Decimal(str(total_plan_now)) + Decimal(str(_adding))
         ceiling_d = Decimal(str(ceiling))
         if total_plan_after_d - ceiling_d > Decimal("0.005"):

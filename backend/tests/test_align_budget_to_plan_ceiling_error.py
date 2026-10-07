@@ -229,6 +229,87 @@ async def test_align_reduces_subsidy_ceiling_excess_succeeds(db_session, test_or
     assert cat_y_after.budget == Decimal("330000")
 
 
+async def _make_child_category(db_session, parent, **kwargs):
+    """Дочерняя категория (level = parent.level + 1) — для сценариев
+    «ФЭО введено на глубоком листе внутри корня без собственного ФЭО»
+    (решение владельца 07.10.2026, п.2 — «на ЛЮБОМ уровне»)."""
+    from app.models.feo_category import FeoCategory
+    cat = FeoCategory(
+        subsidy_id=parent.subsidy_id,
+        parent_id=parent.id,
+        level=parent.level + 1,
+        name=kwargs.pop("name", f"Cat-{uuid.uuid4().hex[:8]}"),
+        **kwargs,
+    )
+    db_session.add(cat)
+    await db_session.commit()
+    await db_session.refresh(cat)
+    return cat
+
+
+@pytest.mark.asyncio
+async def test_align_deep_leaf_succeeds_ignoring_root_siblings_without_feo(db_session, test_org):
+    """Живой случай субсидии «ДНР» (07.10.2026): лист «День спасателя»
+    (185 000) лежит глубоко внутри корня «Прочие расходы» (сам корень без
+    собственного ФЭО), у корня есть и другие статьи БЕЗ ФЭО с огромным
+    планом (29 млн+33 млн). Решение владельца п.2: правило «статьи без ФЭО
+    не участвуют в потолке» работает на ЛЮБОМ уровне — «День спасателя»
+    обязан приравниваться 200, а не падать 409 из-за того, что его
+    собственный ФЭО поднимает budget_map ВСЕГО корня и тащит в сравнение
+    план соседних (без ФЭО) статей. ДО фикса (гранулярность только по
+    корням level==1) это падало 409."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=0)
+    root = await _make_category(db_session, subsidy.id, name="Прочие расходы", budget=None)
+    middle = await _make_child_category(db_session, root, name="Мероприятия", budget=None)
+    leaf_target = await _make_child_category(db_session, middle, name="День спасателя", budget=None)
+    sibling_1 = await _make_child_category(db_session, root, name="Статья без ФЭО 1", budget=None)
+    sibling_2 = await _make_child_category(db_session, root, name="Статья без ФЭО 2", budget=None)
+    await _make_planned_item(db_session, leaf_target.id, amount=185_000)
+    await _make_planned_item(db_session, sibling_1.id, amount=29_000_000)
+    await _make_planned_item(db_session, sibling_2.id, amount=33_000_000)
+
+    user = _mk_admin_user(test_org.id)
+    result = await align_budget_to_plan(leaf_target.id, db=db_session, current_user=user)
+
+    assert result["new_budget"] == pytest.approx(185_000.0)
+    assert result["subsidy_over_before"] == pytest.approx(0.0)
+    assert result["subsidy_over_after"] == pytest.approx(0.0)
+
+    await db_session.refresh(leaf_target)
+    assert leaf_target.budget == Decimal("185000.00")
+
+
+@pytest.mark.asyncio
+async def test_align_deep_node_excess_among_entered_still_blocked(db_session, test_org):
+    """Контроль: правило «статьи без ФЭО не участвуют» не отключает проверку
+    там, где ФЭО ДЕЙСТВИТЕЛЬНО введено — ДАЖЕ когда введённые узлы лежат НЕ
+    на корне (level 1), а глубже (level 2, под общим корнем без собственного
+    ФЭО). «Ветка A»/«Ветка Б» из test_align_over_ceiling_returns_409_not_500
+    — та же механика, но обе статьи теперь дети одного корня «Прочие
+    расходы» без собственного ФЭО. СТАРЫЙ код (фильтр по c.level==1) эти
+    узлы entered-корнями не признал бы вовсе (ceiling=0 → проверка
+    пропускается, align прошёл бы ВСЕГДА) — теперь, когда «верхний введённый
+    узел» ищется на любом уровне, это по-прежнему обязано блокироваться
+    409."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=0)
+    root = await _make_category(db_session, subsidy.id, name="Прочие расходы", budget=None)
+    middle_a = await _make_child_category(db_session, root, name="Ветка A (перебор)", budget=Decimal("100000"))
+    middle_b = await _make_child_category(db_session, root, name="Ветка Б (запас снимается)", budget=Decimal("200000"))
+    middle_b_id = middle_b.id
+    await _make_planned_item(db_session, middle_a.id, amount=150_000)
+    await _make_planned_item(db_session, middle_b.id, amount=100_000)
+
+    user = _mk_admin_user(test_org.id)
+    with pytest.raises(HTTPException) as exc_info:
+        await align_budget_to_plan(middle_b_id, db=db_session, current_user=user)
+
+    assert exc_info.value.status_code == 409
+    detail = exc_info.value.detail
+    assert detail.get("code") == "PLAN_OVER_SUBSIDY_CEILING", detail
+    assert detail.get("over_before") == pytest.approx(0.0), detail
+    assert detail.get("over_after") == pytest.approx(50_000.0), detail
+
+
 @pytest.mark.asyncio
 async def test_align_within_ceiling_succeeds(db_session, test_org):
     """Контроль: когда потолок НЕ превышен, «Приравнять ФЭО к плану» проходит

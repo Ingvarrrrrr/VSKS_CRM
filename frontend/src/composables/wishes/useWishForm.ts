@@ -735,6 +735,9 @@ export function useWishForm(deps: {
             purchase_id: fresh?.purchase_id,
             purchases: fresh?.purchases,
             approval_mode: fresh?.approval_mode,
+            // заявка №115, 06.10: баннер превышения плана ФЭО не появлялся при
+            // открытии карточки — поле не копировалось из свежего ответа.
+            tz_over_plan_warnings: fresh?.tz_over_plan_warnings ?? [],
           }
           if (fresh?.status) wishForm.value.status = fresh.status
         }
@@ -907,6 +910,12 @@ export function useWishForm(deps: {
         const putResp = await apiFetch<any>(`/wishes/${editingWishId.value}`, { method: 'PUT', body: JSON.stringify(payload) })
         const newStatus = putResp?.status || currentStatus
         wishFormSavedSnapshot.value = JSON.stringify(payload)
+        // заявка №115, 06.10: без переоткрытия карточки баннер превышения плана
+        // не обновлялся после правки цены и сохранения — editingWish не брал
+        // tz_over_plan_warnings из ответа PUT.
+        if (editingWish.value && editingWish.value.id === editingWishId.value) {
+          editingWish.value = { ...editingWish.value, tz_over_plan_warnings: putResp?.tz_over_plan_warnings ?? [] }
+        }
         if (andSubmit && ['draft', 'rejected'].includes(currentStatus)) {
           const approversOutcome = await ensureApprovers(editingWishId.value)
           if (!approversOutcome.ok) {

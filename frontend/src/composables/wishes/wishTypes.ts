@@ -128,6 +128,19 @@ export interface Wish {
   unseen_changes_count?: number | null
   // Показывается в карточках (cards view), приходит с бэка на некоторых выборках.
   registry_number?: string | null
+  // Владелец (06.10.2026, заявка №115): ТЗ позиции дороже её плановой позиции
+  // ФЭО — НЕблокирующее предупреждение прямо на карточке заявки (GET/PUT),
+  // заполняется backend app.services.wish_tz_warnings.wish_tz_over_plan_warnings.
+  // Пустой массив/undefined — превышений нет.
+  tz_over_plan_warnings?: WishTzOverPlanWarning[]
+}
+
+export interface WishTzOverPlanWarning {
+  item_name: string
+  feo_category_id: number | null
+  category_name: string
+  excess_amount: number
+  message: string
 }
 
 export interface Subsidy {

@@ -15,7 +15,6 @@ from app.models.wish_member import WishMember
 from app.schemas.wishes import WishCreate, WishUpdate, WishOut
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
-from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.item_contractor import set_item_contractor
 from app.services.item_amounts import line_total, apply_item_amounts, effective_vat_on_top, effective_vat_rate
 from app.services.item_forms import item_form_for_wish_item
@@ -140,6 +139,10 @@ async def get_wish(
     await ensure_wish_read_access(wish, current_user, db)
 
     enriched = _enrich(wish)
+    # Владелец (06.10.2026, заявка №115): предупреждение «ТЗ дороже плановой
+    # позиции» видно сразу на карточке, не только после согласования/конвертации.
+    from app.services.wish_tz_warnings import wish_tz_over_plan_warnings
+    enriched.tz_over_plan_warnings = await wish_tz_over_plan_warnings(db, wish)
     mnames = (await db.execute(
         select(User.full_name, User.username)
         .join(WishMember, WishMember.user_id == User.id)
@@ -731,21 +734,17 @@ async def update_wish(
                 if 'vat_rate' in item_data:
                     wi.vat_rate = item_data['vat_rate']
 
-                # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): правка
-                # заявки — тот же обход, что и _sync_wish_items_to_purchases выше,
-                # проверяем ЗДЕСЬ (на WishItem), т.к. именно отсюда цена/кол-во
-                # затем копируются в PurchaseItem. over_plan=true пропускаем —
-                # сознательно сверх плана.
-                if ('unit_price' in item_data or 'quantity' in item_data) and not getattr(wi, 'over_plan', False):
-                    await assert_tz_not_over_plan(
-                        db,
-                        feo_planned_item_id=wi.feo_planned_item_id,
-                        feo_category_id=wi.feo_category_id,
-                        quantity=wi.quantity,
-                        unit_price=wi.unit_price,
-                        total_price=wi.total_price,
-                        item_name=wi.item_name,
-                    )
+                # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07) — здесь
+                # раньше стоял жёсткий assert_tz_not_over_plan, блокировавший
+                # сохранение PUT заявки 409'ом. Владелец, 06.10.2026 (заявка №115,
+                # исполнитель Цокало): «На этапе Заявки превышение НЕ блокируется.
+                # Исполнитель должен мочь сохранить и отправить заявку. Согласующий
+                # решает — согласует или перераспределит». Жёсткий гейт снят —
+                # превышение теперь только НЕблокирующее предупреждение
+                # (tz_over_plan_warnings в ответе, см. app.services.wish_tz_warnings),
+                # согласование продолжает идти через collect_tz_over_plan_violations/
+                # register_tz_excess_approvals (wish_distribution.py/wish_convert.py),
+                # как и раньше — второй механизм НЕ заводится (ПРАВИЛО №6).
 
             # Позиции, которых больше нет в payload, — удаляем физически.
             ids_to_delete = set(existing_items.keys()) - payload_ids
@@ -872,6 +871,10 @@ async def update_wish(
     wish = await _load_wish(wish_id, db)
     out = _enrich(wish)
     out.plan_transfer_warnings = _plan_transfer_warnings
+    # Владелец (06.10.2026, заявка №115): пересчитываем предупреждение после
+    # сохранения — состав/цены позиций только что могли измениться.
+    from app.services.wish_tz_warnings import wish_tz_over_plan_warnings
+    out.tz_over_plan_warnings = await wish_tz_over_plan_warnings(db, wish)
     return out
 
 

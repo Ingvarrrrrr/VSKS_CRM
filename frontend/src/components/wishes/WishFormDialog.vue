@@ -220,6 +220,35 @@
             </v-btn>
           </v-alert>
 
+          <!-- Баннер: ТЗ позиции дороже плановой позиции ФЭО (владелец,
+               06.10.2026, заявка №115) — НЕблокирующее предупреждение, видно
+               и автору, и согласующему; сохранить/отправить заявку можно всё
+               равно, решение о превышении — за согласующим. -->
+          <v-alert
+            v-if="editingWish && editingWish.tz_over_plan_warnings && editingWish.tz_over_plan_warnings.length"
+            type="warning"
+            variant="tonal"
+            density="compact"
+            class="mb-4"
+            icon="mdi-alert-outline"
+          >
+            <div
+              v-for="(w, wi) in editingWish.tz_over_plan_warnings"
+              :key="`${w.feo_category_id}-${wi}`"
+              :class="{ 'mt-1': wi > 0 }"
+            >
+              Сумма выше плана ФЭО: «{{ w.category_name }}» — превышение {{ ctx.formatPrice(w.excess_amount ?? 0) }} ({{ w.item_name }})
+            </div>
+            <div class="mt-2 text-medium-emphasis">
+              <template v-if="canDecideWish">
+                Превышение плана: согласуйте с превышением (уйдёт запрос финансисту) или перераспределите средства.
+              </template>
+              <template v-else>
+                Заявку можно сохранить и отправить — решение о превышении примет согласующий.
+              </template>
+            </div>
+          </v-alert>
+
           <!-- Section 1: Основная информация -->
           <v-card variant="outlined" class="mb-4">
             <v-card-title

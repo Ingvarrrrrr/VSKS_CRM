@@ -65,9 +65,12 @@
       </v-card-text></v-card>
     </v-col>
   </v-row>
-  <v-alert v-if="totals && totals.skipped > 0" type="info" variant="tonal" density="compact" class="mt-3">
-    Пропущено строк: {{ totals.skipped }}
-  </v-alert>
+  <!-- Задание 07.10.2026 (п.4/п.6, чек-лист владельца): «из чего сложились
+       итоги» — по статусам, Σ == плиткам выше (totals.breakdown считается
+       бэкендом В ОДНОМ цикле с totals, ПРАВИЛО №6 — здесь только показ).
+       Старая плашка «Пропущено строк: N» заменена разделом «Пропущено»
+       ниже, с раскрытием по причине и номерами строк. -->
+  <FactImportBreakdownTable v-if="totals" :totals="totals" @go-to-row="goToRow" />
 
   <!-- 🟢 Задача B («Оплачено, но уже в закупке», 07.10.2026) — закупки,
        которые НЕ создаются заново, а обновляются по статусу/оплате из
@@ -90,13 +93,26 @@
 </template>
 
 <script setup lang="ts">
+import { nextTick } from 'vue'
 import { useFactImport } from '@/composables/subsidies/useFactImport'
+import { useRowJump } from '@/composables/subsidies/useRowJump'
+import FactImportBreakdownTable from './FactImportBreakdownTable.vue'
 // ПРАВИЛО №6: формат суммы — общий хелпер, не своя копия Intl.NumberFormat.
 import { formatMoney } from '@/utils/formatMoney'
-const { totals, existingUpdates, statusLabel } = useFactImport()
+const { factImport, totals, existingUpdates, statusLabel } = useFactImport()
+const { jumpToRow } = useRowJump()
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
   return formatMoney(v)
+}
+
+// Задание 07.10.2026 (п.10): клик по номеру строки в разбивке «Пропущено» —
+// назад на шаг 3 (строки) и переход к строке (useRowJump, ЕДИНЫЙ механизм
+// мастера). nextTick — шаг 3 должен успеть смонтироваться и повесить свой
+// watch(pendingRow) ПЕРЕД тем, как jumpToRow положит туда номер строки.
+function goToRow(row: number) {
+  factImport.step = 3
+  nextTick(() => jumpToRow(row))
 }
 // Склонение «строка/строки/строк» для плашки paid_not_delivered выше.
 function rowsWord(n: number): string {

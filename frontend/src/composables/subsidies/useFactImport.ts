@@ -61,6 +61,12 @@ export interface FactImportMatch {
   planned_item_name?: string | null
   planned_item_path?: string | null
   planned_item_amount?: number | null
+  // Задание 07.10.2026 (п.1/п.2): для state='ambiguous' — какая строка файла
+  // уже заняла эту плановую позицию и как она называется (matching.py:
+  // used_by/competing_rows) — без этого предупреждение «несколько строк
+  // претендуют» не говорит, на какую строку смотреть.
+  competing_rows?: number[]
+  competing_item_name?: string | null
 }
 
 // 🟢 Задача B («Оплачено, но уже в закупке», 07.10.2026) — строка файла,
@@ -95,6 +101,12 @@ export interface FactImportRow {
   needs_status: boolean
   is_payroll: boolean
   skip: boolean
+  // Задание 07.10.2026 (чек-лист п.2-3): причина пропуска — ОДНО место на
+  // бэкенде (preview.py), код+текст словами владельца; skip_forced=true —
+  // причина не устранена (статус/ФОТ/позиция), галочку снять нельзя
+  // (FactImportRowSkipCell.vue делает её disabled).
+  skip_reason: { code: string; text: string } | null
+  skip_forced: boolean
   warnings: string[]
 }
 
@@ -155,6 +167,11 @@ export interface FactImportGroup {
   category_path: string
   status: string
   rows: number[]
+  // Задание 07.10.2026 (п.5): НЕ пропущенные строки группы — статус карточки
+  // и «смешаны статусы» считаются по ним (rows — все строки, включая
+  // пропущенные, для «Строки группы»/переноса между группами).
+  active_rows: number[]
+  all_skipped: boolean
   contract_amount: number
   paid_amount: number
   warnings: string[]
@@ -182,6 +199,40 @@ export interface FactImportPaidNotDelivered {
   rows: FactImportPaidNotDeliveredRow[]
 }
 
+// Задание 07.10.2026 (чек-лист, п.4): «Из чего сложились итоги» — разбивка
+// по статусу GALA × {включены в итог / пропущены}, посчитанная бэкендом В
+// ТОМ ЖЕ цикле, что totals (ПРАВИЛО №6, не вторая формула). Σ by_status[*]
+// .included == totals.contract_amount/paid_amount (с учётом
+// included_existing — строки, обновляющие существующую закупку, paid
+// считается, contract нет).
+export interface FactImportBreakdownBucket {
+  rows: number
+  contract_amount: number
+  contract_amount_raw: number
+  paid: number
+}
+
+export interface FactImportBreakdownStatus {
+  code: string
+  label: string
+  included: FactImportBreakdownBucket
+  skipped: FactImportBreakdownBucket
+}
+
+export interface FactImportBreakdownSkipReason {
+  code: string
+  label: string
+  rows: number[]
+  contract_amount_raw: number
+  paid: number
+}
+
+export interface FactImportBreakdown {
+  by_status: FactImportBreakdownStatus[]
+  included_existing: { rows: number; paid: number }
+  skipped_by_reason: FactImportBreakdownSkipReason[]
+}
+
 export interface FactImportTotals {
   rows: number
   purchases: number
@@ -189,6 +240,7 @@ export interface FactImportTotals {
   paid_amount: number
   skipped: number
   existing_updates: number
+  breakdown: FactImportBreakdown
   paid_not_delivered: FactImportPaidNotDelivered
 }
 
@@ -512,13 +564,16 @@ export function useFactImport() {
     }
   }
 
-  // Debounce ~500мс (🔵 правка 3, владелец: «серия галочек не должна слать
-  // файл на каждый клик») — ЕДИНСТВЕННОЕ место, которое планирует повторный
-  // предпросмотр после решения по строке/группе; таймер module-level (не
-  // per-component ref), чтобы клики из разных шагов/компонентов схлопывались
-  // в один и тот же отложенный вызов, а не плодили параллельные запросы.
+  // Debounce ~300мс (🔵 правка 3, владелец: «серия галочек не должна слать
+  // файл на каждый клик»; чек-лист 07.10.2026 п.8 — сокращено с 500мс, пока
+  // галочка «Пропустить» уже меняется оптимистично на экране, см.
+  // FactImportRowSkipCell.vue) — ЕДИНСТВЕННОЕ место, которое планирует
+  // повторный предпросмотр после решения по строке/группе; таймер
+  // module-level (не per-component ref), чтобы клики из разных шагов/
+  // компонентов схлопывались в один и тот же отложенный вызов, а не плодили
+  // параллельные запросы.
   let previewDebounceTimer: ReturnType<typeof setTimeout> | null = null
-  function queuePreviewRefresh(delayMs = 500) {
+  function queuePreviewRefresh(delayMs = 300) {
     if (previewDebounceTimer) clearTimeout(previewDebounceTimer)
     previewDebounceTimer = setTimeout(() => {
       previewDebounceTimer = null
@@ -775,7 +830,9 @@ export function useFactImport() {
     if (targetGroupKey === 'new') {
       groups.push({
         key: `manual:${row}`, supplier: null, purchase_no: null,
-        category_path: '', status: '', rows: [row], contract_amount: 0, paid_amount: 0, warnings: [],
+        category_path: '', status: '', rows: [row], active_rows: [row], all_skipped: false,
+        contract_amount: 0, paid_amount: 0, warnings: [],
+        existing_matches: [], needs_existing_decision: false,
       })
     } else {
       const g = groups.find(g => g.key === targetGroupKey)

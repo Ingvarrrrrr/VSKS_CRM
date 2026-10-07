@@ -127,6 +127,30 @@ async def test_duplicate_name_rows_consume_distinct_planned_items(db_session, te
 
 
 @pytest.mark.asyncio
+async def test_ambiguous_match_reports_competing_row(db_session, test_org):
+    """Задание 07.10.2026 (чек-лист, п.2): вторая строка файла на ту же
+    плановую позицию получает ambiguous С номером строки, которая заняла
+    позицию раньше, и её именем — иначе предупреждение не говорит, на какую
+    строку смотреть (owner: «Стр. 16 — какие?»)."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_leaf_category(db_session, subsidy.id, "Запчасти")
+    item = await _make_planned_item(db_session, cat.id, "Деталь 50 шт.", 50000, quantity=50)
+
+    ctx = await matching_mod.build_matching_context(db_session, subsidy.id)
+    row1 = {"row": 10, "name": "Деталь 50 шт.", "path": [], "plan": {"amount": 50000}}
+    row2 = {"row": 16, "name": "Деталь 50 шт.", "path": [], "plan": {"amount": 50000}}
+
+    m1 = matching_mod.match_row(ctx, row1)
+    m2 = matching_mod.match_row(ctx, row2)
+
+    assert m1["state"] == "found"
+    assert m1["planned_item_id"] == item.id
+    assert m2["state"] == "ambiguous"
+    assert m2["competing_rows"] == [10]
+    assert m2["competing_item_name"] == "Деталь 50 шт."
+
+
+@pytest.mark.asyncio
 async def test_already_purchased_planned_item_flagged(db_session, test_org):
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem

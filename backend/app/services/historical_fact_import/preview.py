@@ -36,6 +36,23 @@ def _rub(v) -> str:
     return f"{formatted} ₽" if formatted else "0,00 ₽"
 
 
+# Задание 07.10.2026 (чек-лист п.4): короткие подписи причин пропуска для
+# totals.breakdown.skipped_by_reason — ЕДИНСТВЕННОЕ место, где заводится
+# подпись кода skip_reason (сам текст предупреждения строки длиннее и
+# формулируется там, где решается skip, см. цикл build_preview ниже;
+# ПРАВИЛО №6 — коды те же, вторых не заводим).
+SKIP_REASON_LABELS: dict[str, str] = {
+    "manual": "Пропущена вручную",
+    "no_status": "Нет статуса / план закупок",
+    "needs_status": "Статус не распознан",
+    "payroll": "ФОТ",
+    "ambiguous": "Несколько строк на одну плановую позицию",
+    "already_purchased_multi": "Позиция уже в нескольких закупках",
+    "already_purchased_unknown": "Позиция уже в закупке",
+    "over_plan_skip": "Пропущено по решению о превышении",
+}
+
+
 def paid_not_delivered_predicate(paid, target_status: Optional[str], is_advance: bool) -> bool:
     """Единственный предикат «оплата есть, а статус строки ниже «Поставлено»/
     «Оплачено»» (owner, 07.10.2026, прод id=74 «ЛНР»: РЕЕ-2026-03421). Один
@@ -120,6 +137,14 @@ async def build_preview(
     totals_paid = Decimal(0)
     skipped_count = 0
     top_warnings: list[str] = []
+    # Задание 07.10.2026 (п.4): разбивка итогов — считается В ЭТОМ ЖЕ цикле
+    # (ПРАВИЛО №6, не второй расчёт totals): по статусу GALA × {включены в
+    # итог / пропущены}, плюс отдельно строки, обновляющие существующую
+    # закупку (included_existing — paid считается, contract нет, см. ниже),
+    # плюс пропущенные — ещё и по коду причины.
+    breakdown_by_status: dict[str, dict] = {}
+    breakdown_existing = {"rows": 0, "paid": Decimal(0)}
+    breakdown_skip_by_reason: dict[str, dict] = {}
 
     for row in parsed_rows:
         match = row_to_match[row["row"]]
@@ -249,8 +274,21 @@ async def build_preview(
         _cat_id = planned_item_category.get(match.get("planned_item_id"))
         is_payroll = bool(_cat_id) and _cat_id in payroll_cat_ids
 
-        skip = bool(override.get("skip", False))
+        # Задание 07.10.2026 (чек-лист п.2-3): skip и его причина решаются
+        # ЗДЕСЬ и только здесь (ПРАВИЛО №6) — skip_reason.text идёт и в
+        # warnings строки, и в контракт row.skip_reason (FactImportRowSkipCell.
+        # vue / FactImportStepConfirm.vue читают оттуда, не формулируют текст
+        # заново). skip_forced=True — причина не устранена, галочку снять
+        # нельзя (no_status/needs_status/payroll/ambiguous); иначе — manual/
+        # over_plan_skip/already_purchased_*, где override.skip уже работает.
+        manual_skip = bool(override.get("skip", False)) and "skip" in override
+        skip = manual_skip
+        skip_forced = False
+        skip_reason: Optional[dict] = (
+            {"code": "manual", "text": "пропущена вами"} if manual_skip else None
+        )
         existing_purchase: Optional[dict] = None
+
         if match["state"] == "already_purchased" and "skip" not in override:
             # Задача B (владелец, 07.10.2026): «он должен статусы смотреть» —
             # не пропускать строку молча, а обновить закупку, которой уже
@@ -268,49 +306,122 @@ async def build_preview(
                     'оплата по отметке)'
                 )
             elif len(bound) > 1:
-                skip = True
                 regs = ", ".join(str(b["registry_number"] or b["id"]) for b in bound)
+                text = f"у плановой позиции уже есть закупки: {regs} — строка пропущена по умолчанию"
+                skip = True
+                skip_reason = {"code": "already_purchased_multi", "text": text}
                 warnings.append(f"У плановой позиции уже есть закупки: {regs} — строка пропущена по умолчанию")
             else:
                 skip = True
+                skip_reason = {
+                    "code": "already_purchased_unknown",
+                    "text": "у плановой позиции уже есть закупка — строка пропущена по умолчанию",
+                }
                 warnings.append("У плановой позиции уже есть закупка — строка пропущена по умолчанию")
+
         if match["state"] == "ambiguous" and "skip" not in override:
             skip = True
-            warnings.append(
-                "Несколько строк файла претендуют на одну плановую позицию — "
-                "выберите плановую позицию в колонке «Сопоставление»"
+            skip_forced = True
+            # Задание 07.10.2026 (п.1/п.2): какая строка заняла позицию раньше
+            # (matching.py:competing_rows/competing_item_name) — без этого
+            # предупреждение «несколько строк претендуют» не говорит, куда
+            # смотреть (owner: «Стр. 16 — какие?»).
+            competing_rows = match.get("competing_rows") or []
+            competing_name = match.get("competing_item_name") or row["name"]
+            if competing_rows:
+                rows_text = ", ".join(str(n) for n in competing_rows)
+                plural = "строке" if len(competing_rows) == 1 else "строкам"
+                detail = (
+                    f'уже сопоставлена {plural} {rows_text} '
+                    '(позиций с таким названием в плане меньше, чем строк в файле)'
+                )
+            else:
+                detail = "уже сопоставлена другой строке файла"
+            reason_text = (
+                f'Плановая позиция «{competing_name}» {detail} — выберите для этой строки другую '
+                'позицию в колонке «Сопоставление» или пропустите'
             )
-        if status_info["target_status"] is None:
+            skip_reason = {"code": "ambiguous", "text": reason_text}
+            warnings.append(reason_text)
+
+        if status_info["target_status"] is None and not needs_status:
             skip = True
+            skip_forced = True
+            skip_reason = {
+                "code": "no_status",
+                "text": 'статус «План закупок» / пуст — закупки нет, выберите статус',
+            }
         if needs_status:
             # 🔵 Статус не распознан и пользователь ещё не выбрал его явно —
             # строка не создаётся молча (владелец, правка 3).
             skip = True
+            skip_forced = True
+            skip_reason = {"code": "needs_status", "text": "статус не распознан — выберите статус из списка"}
         if is_payroll and not include_payroll:
             skip = True
+            skip_forced = True
+            skip_reason = {"code": "payroll", "text": 'ФОТ — включите «Включить ФОТ», чтобы учесть строку'}
+
+        if over_plan_choice == "skip" and not skip_forced:
+            # Пункт 3 (чек-лист): решение «Пропустить» в колонке «Превышение»
+            # становится пропуском УЖЕ в предпросмотре, не только при коммите
+            # (раньше — только commit.py:271, итог предпросмотра не совпадал
+            # с тем, что реально запишется).
+            skip = True
+            skip_reason = {"code": "over_plan_skip", "text": 'решение «Пропустить» в колонке «Превышение»'}
+
         if skip:
             # Строка полностью пропущена — не одновременно «обновит
             # существующую» (иначе она бы вошла и в skipped_count, и в
             # existing_updates — состояния взаимоисключающие).
             existing_purchase = None
 
+        status_key = status_info["target_status"] or "none"
+        status_bucket = breakdown_by_status.setdefault(status_key, {
+            "included": {"rows": 0, "contract_amount": Decimal(0), "contract_amount_raw": Decimal(0), "paid": Decimal(0)},
+            "skipped": {"rows": 0, "contract_amount": Decimal(0), "contract_amount_raw": Decimal(0), "paid": Decimal(0)},
+        })
+        raw_amt = Decimal(str(contract_amount_for_row)) if contract_amount_for_row is not None else Decimal(0)
+        paid_amt = Decimal(str(row["paid"])) if row["paid"] else Decimal(0)
+
         if skip:
             skipped_count += 1
+            sb = status_bucket["skipped"]
+            sb["rows"] += 1
+            sb["contract_amount_raw"] += raw_amt
+            sb["paid"] += paid_amt
+            reason_code = skip_reason["code"] if skip_reason else "manual"
+            reason_bucket = breakdown_skip_by_reason.setdefault(reason_code, {
+                "label": SKIP_REASON_LABELS.get(reason_code, reason_code),
+                "rows": [], "contract_amount_raw": Decimal(0), "paid": Decimal(0),
+            })
+            reason_bucket["rows"].append(row["row"])
+            reason_bucket["contract_amount_raw"] += raw_amt
+            reason_bucket["paid"] += paid_amt
         elif existing_purchase:
             # Задача B: эта строка НЕ создаёт новую закупку (см. grouping.py/
             # commit.py — существующая закупка обновляется отдельно, не через
             # обычную группировку) — в totals.contract_amount/«Договоров на
             # сумму» не попадает, но её «Оплачено» всё равно реальная оплата
-            # по субсидии.
+            # по субсидии. Отдельная корзина included_existing (п.4) — иначе
+            # разбивка по статусам «не сходилась» бы с плитками ровно.
+            breakdown_existing["rows"] += 1
+            breakdown_existing["paid"] += paid_amt
             if row["paid"]:
                 totals_paid += Decimal(str(row["paid"]))
         else:
             amt = contract_amount_for_row or Decimal(0)
             if over_plan_choice == "trim" and plan_amount is not None:
                 amt = min(amt, plan_amount)
-            totals_contract += Decimal(str(amt))
+            amt = Decimal(str(amt))
+            totals_contract += amt
             if row["paid"]:
                 totals_paid += Decimal(str(row["paid"]))
+            ib = status_bucket["included"]
+            ib["rows"] += 1
+            ib["contract_amount"] += amt
+            ib["contract_amount_raw"] += raw_amt
+            ib["paid"] += paid_amt
 
         out_rows.append({
             "row": row["row"],
@@ -341,6 +452,8 @@ async def build_preview(
             "needs_status": needs_status,
             "is_payroll": is_payroll,
             "skip": skip,
+            "skip_reason": skip_reason,
+            "skip_forced": skip_forced,
             "existing_purchase": existing_purchase,
             "warnings": warnings,
             "_status_info": status_info,
@@ -476,6 +589,56 @@ async def build_preview(
             })
             paid_not_delivered_amount += Decimal(str(r["paid"]))
 
+    # Задание 07.10.2026 (п.4): собрать breakdown в контракт — коды статуса
+    # в порядке GALA-стадий ("none" = «Без статуса / план закупок» первым,
+    # дальше — statuses_mod.STATUS_CODES), подписи те же STATUS_LABELS, что и
+    # у строк (ПРАВИЛО №6). Decimal → float только тут, на выходе.
+    def _money(d: Decimal) -> float:
+        return float(d)
+
+    breakdown_statuses: list[dict] = []
+    for code in ["none", *statuses_mod.STATUS_CODES]:
+        bucket = breakdown_by_status.get(code)
+        if bucket is None:
+            continue
+        label = "Без статуса / план закупок" if code == "none" else STATUS_LABELS.get(code, code)
+        breakdown_statuses.append({
+            "code": code,
+            "label": label,
+            "included": {
+                "rows": bucket["included"]["rows"],
+                "contract_amount": _money(bucket["included"]["contract_amount"]),
+                "contract_amount_raw": _money(bucket["included"]["contract_amount_raw"]),
+                "paid": _money(bucket["included"]["paid"]),
+            },
+            "skipped": {
+                "rows": bucket["skipped"]["rows"],
+                "contract_amount": _money(bucket["skipped"]["contract_amount"]),
+                "contract_amount_raw": _money(bucket["skipped"]["contract_amount_raw"]),
+                "paid": _money(bucket["skipped"]["paid"]),
+            },
+        })
+
+    breakdown_skipped_by_reason = [
+        {
+            "code": code,
+            "label": data["label"],
+            "rows": sorted(data["rows"]),
+            "contract_amount_raw": _money(data["contract_amount_raw"]),
+            "paid": _money(data["paid"]),
+        }
+        for code, data in breakdown_skip_by_reason.items()
+    ]
+
+    breakdown = {
+        "by_status": breakdown_statuses,
+        "included_existing": {
+            "rows": breakdown_existing["rows"],
+            "paid": _money(breakdown_existing["paid"]),
+        },
+        "skipped_by_reason": breakdown_skipped_by_reason,
+    }
+
     return {
         "format": detected["format"],
         "sheet": sheet,
@@ -492,6 +655,7 @@ async def build_preview(
             "paid_amount": float(totals_paid),
             "skipped": skipped_count,
             "existing_updates": len(existing_updates_list),
+            "breakdown": breakdown,
             "paid_not_delivered": {
                 "count": len(paid_not_delivered_rows),
                 "amount": float(paid_not_delivered_amount),

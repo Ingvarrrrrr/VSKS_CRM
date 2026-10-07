@@ -90,6 +90,12 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
     return {
         "catalog": catalog, "by_name": by_name, "already_bound": already_bound,
         "bound_purchases": bound_purchases, "used_ids": set(),
+        # Задание 07.10.2026 (чек-лист, п.2): used_ids сам по себе хранит
+        # только id позиции — чтобы предупреждение ambiguous у строки N
+        # называло ПО НОМЕРУ строку, которая заняла позицию раньше,
+        # used_by[planned_item_id] = row["row"] того прогона, что её забрал
+        # (ПРАВИЛО №6 — одно место, где used_ids.add(...), там же и used_by[...] = ...).
+        "used_by": {},
     }
 
 
@@ -102,7 +108,11 @@ def match_row(ctx: dict, row: dict) -> dict:
     имя→сумма→путь→порядок. ambiguous — каскад не смог сузить пул до одной
     свободной позиции (либо осталось несколько после сужения, либо все
     одноимённые уже разобраны более ранними строками файла — РЕЕ-2026-08630);
-    planned_item_id=None, candidates показывает, из чего выбирать вручную.
+    planned_item_id=None, candidates показывает, из чего выбирать вручную, а
+    competing_rows/competing_item_name (задание 07.10.2026, п.2) называют,
+    какая строка файла уже заняла эту позицию и как она называется — иначе
+    предупреждение «несколько строк претендуют» не говорит, на какую строку
+    смотреть.
     """
     key = normalize_item_name(row["name"])
     candidates = ctx["by_name"].get(key, [])
@@ -128,7 +138,15 @@ def match_row(ctx: dict, row: dict) -> dict:
         # исчерпан, лишняя строка не должна молча задвоить привязку).
         unbound_but_used = [c for c in candidates if c["id"] in used_ids]
         if unbound_but_used and not any(c["id"] in already_bound for c in candidates):
-            return {"state": "ambiguous", "planned_item_id": None, "candidates": cand_out}
+            used_by: dict = ctx["used_by"]
+            competing_rows = sorted({
+                used_by[c["id"]] for c in unbound_but_used if c["id"] in used_by
+            })
+            competing_item_name = unbound_but_used[0]["name"]
+            return {
+                "state": "ambiguous", "planned_item_id": None, "candidates": cand_out,
+                "competing_rows": competing_rows, "competing_item_name": competing_item_name,
+            }
         chosen = sorted(candidates, key=lambda c: c["id"])[0]
         return {"state": "already_purchased", "planned_item_id": chosen["id"], "candidates": cand_out}
 
@@ -166,4 +184,7 @@ def match_row(ctx: dict, row: dict) -> dict:
     pool = sorted(pool, key=lambda c: c["id"])
     chosen = pool[0]
     used_ids.add(chosen["id"])
+    # .get("row") — не KeyError на старых вызовах/тестах без номера строки
+    # (row всегда несёт "row" из rows.py в реальном предпросмотре).
+    ctx["used_by"][chosen["id"]] = row.get("row")
     return {"state": "found", "planned_item_id": chosen["id"], "candidates": cand_out}

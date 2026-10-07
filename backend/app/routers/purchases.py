@@ -949,50 +949,17 @@ async def create_purchase(
     # сотрудник сам жмёт «Отправить на согласование» (см. AdvanceReimbursementCard.vue
     # → POST /api/wishes/{id}/submit, тот же эндпоинт, что и у обычных заявок).
     if is_advance and not data.wish_id:
-        from app.models.wish import Wish
-        from app.models.wish_item import WishItem as WishItemModel
-        from app.services.advance_wish_sync import (
-            sync_wish_contract_and_contractor,
-            wish_item_kwargs_from_purchase_item,
-        )
-        wish_title = f"Возмещение по авансовому отчёту {p.registry_number or f'#{p.id}'}"
-        auto_wish = Wish(
-            source='advance_report',
-            status='draft',
-            title=wish_title[:499],
+        from app.services.advance_companion_wish import create_advance_companion_wish
+        # total_nmck здесь уже записан в p.total_nmck (insert_purchase_with_items
+        # выше), функция сама берёт estimated_price из purchase.total_nmck —
+        # не передаём отдельным параметром (ПРАВИЛО №6, один источник).
+        await create_advance_companion_wish(
+            db, p, _created_items,
             created_by=current_user.id,
             org_id=get_single_org_id(current_user) or current_user.org_id,
-            subsidy_id=p.subsidy_id,
-            feo_category_id=p.feo_category_id,
-            event_id=p.event_id,
-            justification=p.service_note_text,
-            estimated_price=total_nmck,
+            status='draft',
+            creator=current_user,
         )
-        # Владелец (жалоба по заявке №88, РЕЕ-2026-00962, 2026-09-30): «Форма
-        # договора» и контрагент пустые на авто-заявке компаньоне — копируем с
-        # закупки (см. app/services/advance_wish_sync.py, ПРАВИЛО №6 — общий
-        # хелпер, переиспользуется и при последующей правке авансового ниже).
-        sync_wish_contract_and_contractor(auto_wish, p, current_user)
-        db.add(auto_wish)
-        await db.flush()  # get auto_wish.id
-        p.wish_id = auto_wish.id
-        # Копируем позиции закупки → WishItem
-        _new_wish_items: list[WishItemModel] = []
-        for item_d in items_data:
-            d = item_d.model_dump()
-            wi = WishItemModel(
-                wish_id=auto_wish.id,
-                **wish_item_kwargs_from_purchase_item(d),
-            )
-            db.add(wi)
-            _new_wish_items.append(wi)
-        # W1: проставить hard link purchase_item → wish_item (см. комментарий у
-        # _created_items выше и app/services/advance_wish_sync.py) — без него
-        # построчная правка ФЭО согласующим в заявке-компаньоне не находит
-        # строку закупки (прод, заявка №88, 2026-09-30).
-        await db.flush()  # получить WishItem.id
-        for _pi, _wi in zip(_created_items, _new_wish_items):
-            _pi.wish_item_id = _wi.id
 
     # Save subsidy allocations / пересчёт денег / BudgetHistory — внутри
     # insert_purchase_with_items (см. вызов выше), не дублируем.

@@ -69,7 +69,14 @@
     <div v-if="factImport.previewRefreshing" class="fisr-overlay">
       <v-progress-circular indeterminate size="28" color="teal" />
     </div>
-    <v-table density="compact" class="fisr-table">
+    <!-- Жалоба владельца 07.10.2026 (п.4): шапка «уезжала» при прокрутке —
+         прокручивался ВНЕШНИЙ div (.fisr-table-wrap), а не внутренний
+         .v-table__wrapper самого v-table. fixed-header+height здесь (образец
+         PaymentsTable.vue:12-13) — Vuetify сам держит прокрутку и шапку
+         внутри .v-table__wrapper; внешний div больше не скроллится сам
+         (см. стили ниже), useRowJump.scrollToRowEl ниже целится именно в
+         .v-table__wrapper. -->
+    <v-table density="compact" class="fisr-table" fixed-header height="55vh">
       <thead>
         <tr>
           <th>Стр.</th><th class="fisr-col-plan">Плановая позиция</th><th>Статус</th>
@@ -139,8 +146,7 @@
           <td>{{ fmt(r.paid) }}</td>
           <td>{{ r.supplier || '—' }}</td>
           <td>
-            <v-checkbox :model-value="r.skip" density="compact" hide-details
-              @update:model-value="v => onRowSkip(r.row, !!v)" />
+            <FactImportRowSkipCell :row="r" @update:skip="onRowSkip" />
           </td>
         </tr>
       </tbody>
@@ -156,6 +162,7 @@ import { useFactImport, type FactImportRow, type FactImportOverPlanChoice } from
 import { useRowJump } from '@/composables/subsidies/useRowJump'
 import FactImportRowPlanPicker from './FactImportRowPlanPicker.vue'
 import FactImportRowMatchCell from './FactImportRowMatchCell.vue'
+import FactImportRowSkipCell from './FactImportRowSkipCell.vue'
 import RowWarningChips from './RowWarningChips.vue'
 import { formatMoney } from '@/utils/formatMoney'
 import { rowsInPhrase } from '@/utils/pluralize'
@@ -302,14 +309,22 @@ watch(() => rowJumpState.pendingRow, (row) => {
   showSkipped.value = true
   if (isolatedRows.value && !isolatedRows.value.includes(row)) isolatedRows.value = null
   nextTick(() => {
-    scrollToRowEl(tableWrapRef.value, row)
+    // Задание 07.10.2026 (п.7): .v-table__wrapper — тот элемент, который
+    // Vuetify реально прокручивает при fixed-header+height (внешний
+    // .fisr-table-wrap больше не скроллится сам, см. стили ниже).
+    const scrollEl = tableWrapRef.value?.querySelector<HTMLElement>('.v-table__wrapper') ?? tableWrapRef.value
+    scrollToRowEl(scrollEl, row)
     clearPendingRow()
   })
 })
 </script>
 
 <style scoped>
-.fisr-table-wrap { position: relative; max-height: 50vh; overflow: auto; border: 1px solid #eee; border-radius: 6px; }
+/* Задание 07.10.2026 (п.7): внешний div больше НЕ скроллится сам — v-table
+   с fixed-header+height держит прокрутку внутри своего .v-table__wrapper
+   (образец PaymentsTable.vue:12-13); position:relative остаётся только для
+   оверлея .fisr-overlay поверх таблицы. */
+.fisr-table-wrap { position: relative; border: 1px solid #eee; border-radius: 6px; }
 .fisr-overlay {
   position: absolute;
   inset: 0;
@@ -323,17 +338,11 @@ watch(() => rowJumpState.pendingRow, (row) => {
 
 /* Жалоба владельца 07.10.2026: колонка «Плановая позиция» раздувалась
    длинными предупреждениями и уводила «Превышение»/«Пропустить» за правый
-   край без видимой прокрутки — ширины колонок ограничены, шапка прилипает
-   при скролле внутри .fisr-table-wrap, предупреждения зажаты в 2 строки
-   (полный текст — в tooltip, см. template). */
+   край без видимой прокрутки — ширины колонок ограничены, предупреждения
+   зажаты в 2 строки (полный текст — в tooltip, см. template). Шапка теперь
+   держится fixed-header самого v-table, свой sticky не нужен. */
 .fisr-table :deep(th), .fisr-table :deep(td) {
   padding: 4px 6px !important;
-}
-.fisr-table :deep(thead th) {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: rgb(var(--v-theme-surface));
 }
 /* 2-я приёмка 07.10.2026 (браузер, 1280×800): сумма прежних min-width
    (статус 160 + плановая 200 + сопоставление 190 + превышение 170 + остальные

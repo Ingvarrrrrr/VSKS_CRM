@@ -12,6 +12,11 @@ from decimal import Decimal
 from typing import Optional
 
 from app.services.vehicle_org_matching import normalize_org_name
+# ПРАВИЛО №6: подписи статуса — тот же STATUS_LABELS, что и preview.py/
+# statuses.py используют для STATUS_CHOICES/warnings строки, не вторая копия
+# русских слов (задание 07.10.2026, п.5 — «смешаны статусы (delivered,
+# ordered)» должно звучать по-русски).
+from app.routers.purchase_transitions import STATUS_LABELS
 
 
 def _supplier_key(supplier: Optional[str]) -> str:
@@ -72,17 +77,28 @@ def build_groups(rows_with_match: list, decisions: Optional[dict] = None) -> lis
     groups = []
     for idx, items in enumerate(group_lists):
         first_row = items[0]["row"]
-        statuses_present = {it["status_info"]["target_status"] for it in items if it["status_info"]["target_status"]}
+        # Задание 07.10.2026 (п.5): статус группы и «смешаны статусы» —
+        # только по НЕ пропущенным строкам (active_rows), иначе пропущенная
+        # строка с другим статусом молча красила бы весь статус группы.
+        # Карточка, где пропущены ВСЕ строки, не имеет «активного» статуса —
+        # all_skipped=True, фронт прячет такие карточки (StepGroups.vue).
+        active_items = [it for it in items if not it["row"].get("skip", False)]
+        all_skipped = not active_items
+        status_items = active_items or items  # нет активных — показываем что есть, но помечаем all_skipped
+        statuses_present = {
+            it["status_info"]["target_status"] for it in status_items if it["status_info"]["target_status"]
+        }
         warnings = []
         if len(statuses_present) > 1:
+            labels = sorted(STATUS_LABELS.get(s, s) for s in statuses_present if s)
             warnings.append(
-                f"В группе смешаны статусы ({', '.join(sorted(s for s in statuses_present if s))}) — "
+                f"В группе смешаны статусы ({', '.join(labels)}) — "
                 "итоговый статус закупки возьмётся по наивысшей стадии."
             )
         # Наивысшая стадия: paid > contracted > work_in_progress.
         _rank = {"work_in_progress": 1, "contracted": 2, "ordered": 3, "delivered": 4, "paid": 5}
         target_status = None
-        for it in items:
+        for it in status_items:
             ts = it["status_info"]["target_status"]
             if ts and (target_status is None or _rank.get(ts, 0) > _rank.get(target_status, 0)):
                 target_status = ts
@@ -118,6 +134,8 @@ def build_groups(rows_with_match: list, decisions: Optional[dict] = None) -> lis
             "category_path": " › ".join(first_row.get("path") or []) or None,
             "status": target_status,
             "rows": [it["row"]["row"] for it in items],
+            "active_rows": [it["row"]["row"] for it in active_items],
+            "all_skipped": all_skipped,
             "contract_amount": float(contract_amount),
             "paid_amount": float(paid_amount),
             "warnings": warnings,

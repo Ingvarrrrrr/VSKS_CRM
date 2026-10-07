@@ -6,6 +6,16 @@
   <v-checkbox v-if="hasAnyExistingDecisionNeeded" v-model="onlyNeedsDecision"
               label="Нужно решение" density="compact" hide-details class="mb-2" />
 
+  <!-- Задание 07.10.2026 (п.5): карточки, где пропущены ВСЕ строки, не
+       становятся закупкой — по умолчанию скрыты, не занимают место среди
+       реальных закупок; владелец разворачивает их по кнопке, если нужно
+       посмотреть, что туда попало и почему. -->
+  <v-btn v-if="allSkippedGroups.length && !showAllSkipped" size="small" variant="text" color="primary"
+    class="mb-2" @click="showAllSkipped = true">
+    Ещё {{ allSkippedGroups.length }} {{ allSkippedGroups.length === 1 ? 'группа' : 'групп' }} только из
+    пропущенных строк — показать
+  </v-btn>
+
   <!-- Сводное предупреждение «нужно решение» для групп (тот же механизм, что
        на шаге «Строки» — useRowJump.ts, ПРАВИЛО №5/№6): чипы — номера строк
        файла, попавших в такие группы; клик скроллит к карточке группы,
@@ -31,12 +41,20 @@
                 {{ g.purchase_no ? `№ ${g.purchase_no}` : g.category_path }}
               </div>
             </div>
-            <v-chip size="small" variant="tonal">{{ statusLabel(g.status) }}</v-chip>
+            <v-chip size="small" variant="tonal" class="fisg-status-chip">{{ statusLabel(g.status) }}</v-chip>
           </div>
           <div class="d-flex ga-4 mt-2 text-body-2">
             <span>Договор: <strong>{{ fmt(g.contract_amount) }}</strong></span>
             <span>Оплачено: <strong>{{ fmt(g.paid_amount) }}</strong></span>
-            <span>Строк: {{ g.rows.length }}</span>
+            <!-- Задание 07.10.2026 (п.5): «Строк: N» — только АКТИВНЫЕ
+                 (не пропущенные), пропущенные — отдельной припиской, иначе
+                 число не совпадает с тем, что реально станет закупкой. -->
+            <span>
+              Строк: {{ g.active_rows.length }}
+              <template v-if="g.rows.length > g.active_rows.length">
+                (+{{ g.rows.length - g.active_rows.length }} пропущено)
+              </template>
+            </span>
           </div>
           <v-alert v-if="g.warnings?.length" type="warning" variant="tonal" density="compact" class="mt-2">
             <div v-for="(w, i) in g.warnings" :key="i">{{ w }}</div>
@@ -61,17 +79,7 @@
             @update:model-value="v => openGroupPanels[g.key] = (v as number | null)">
             <v-expansion-panel title="Строки группы">
               <template #text>
-                <div v-for="rn in g.rows" :key="rn" :data-row-anchor="rn"
-                  class="d-flex align-center ga-2 mb-1"
-                  :class="{ 'row-jump-flash': rowJumpState.highlightedRow === rn }">
-                  <span class="text-caption">Стр. {{ rn }}</span>
-                  <v-select
-                    density="compact" variant="outlined" hide-details style="max-width:220px"
-                    :items="otherGroupOptions(g.key)"
-                    label="Перенести в…"
-                    @update:model-value="v => v && moveRow(rn, v)"
-                  />
-                </div>
+                <FactImportGroupRowsList :rows="g.rows" :group-key="g.key" :highlighted-row="rowJumpState.highlightedRow" />
               </template>
             </v-expansion-panel>
           </v-expansion-panels>
@@ -88,13 +96,14 @@ import { useFactImport } from '@/composables/subsidies/useFactImport'
 import { useRowJump } from '@/composables/subsidies/useRowJump'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import FactImportExistingMatch from './FactImportExistingMatch.vue'
+import FactImportGroupRowsList from './FactImportGroupRowsList.vue'
 import RowWarningChips from './RowWarningChips.vue'
 // ПРАВИЛО №6: подпись статуса закупки и формат суммы — общие источники.
 import { purchaseStatusLabel } from '@/constants/purchaseStatus'
 import { formatMoney } from '@/utils/formatMoney'
 import { rowsInPhrase } from '@/utils/pluralize'
 
-const { factImport, visibleGroups, setSupplierOverride, moveRowToGroup, queuePreviewRefresh } = useFactImport()
+const { factImport, visibleGroups, setSupplierOverride, queuePreviewRefresh } = useFactImport()
 
 function statusLabel(s?: string | null): string {
   return purchaseStatusLabel(s) || 'План закупок'
@@ -104,10 +113,17 @@ function statusLabel(s?: string | null): string {
 // с «возможно» (same_supplier, сумма другая) без явного решения владельца;
 // commit отклоняется, пока такие есть (см. backend commit.py, 400).
 const onlyNeedsDecision = ref(false)
+// Задание 07.10.2026 (п.5): карточки, где пропущены ВСЕ строки (all_skipped),
+// не станут закупкой — по умолчанию скрыты отдельно от «Нужно решение».
+const showAllSkipped = ref(false)
+const allSkippedGroups = computed(() => visibleGroups.value.filter(g => g.all_skipped))
 const hasAnyExistingDecisionNeeded = computed(() => visibleGroups.value.some(g => g.needs_existing_decision))
-const filteredGroups = computed(() =>
-  onlyNeedsDecision.value ? visibleGroups.value.filter(g => g.needs_existing_decision) : visibleGroups.value,
-)
+const filteredGroups = computed(() => {
+  let groups = visibleGroups.value
+  if (!showAllSkipped.value) groups = groups.filter(g => !g.all_skipped)
+  if (onlyNeedsDecision.value) groups = groups.filter(g => g.needs_existing_decision)
+  return groups
+})
 // Строки файла внутри групп, которым нужно решение — источник для чипов
 // сводного предупреждения (тот же needs_existing_decision, которым уже
 // помечена карточка группы, ПРАВИЛО №6).
@@ -121,21 +137,6 @@ const openGroupPanels = reactive<Record<string, number | null>>({})
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
   return formatMoney(v)
-}
-
-function otherGroupOptions(exceptKey: string) {
-  const items = visibleGroups.value
-    .filter(g => g.key !== exceptKey)
-    .map(g => ({ title: g.supplier || g.category_path || g.key, value: g.key }))
-  items.push({ title: '— выделить в отдельную закупку —', value: 'new' })
-  return items
-}
-
-// 🔵 правка 3: тот же debounce, что и в StepRows.vue (queuePreviewRefresh) —
-// перенос нескольких строк подряд не шлёт файл на каждый клик.
-function moveRow(row: number, targetKey: string) {
-  moveRowToGroup(row, targetKey)
-  queuePreviewRefresh()
 }
 
 function onSupplierOverride(groupKey: string, contractorId: number | null) {
@@ -155,6 +156,7 @@ watch(() => rowJumpState.pendingRow, (row) => {
   const group = visibleGroups.value.find(g => g.rows.includes(row))
   if (group) {
     if (onlyNeedsDecision.value && !group.needs_existing_decision) onlyNeedsDecision.value = false
+    if (group.all_skipped) showAllSkipped.value = true
     openGroupPanels[group.key] = 0
   }
   // Доп. пауза сверх nextTick — раскрытие v-expansion-panel анимируется и
@@ -172,4 +174,8 @@ watch(() => rowJumpState.pendingRow, (row) => {
 <style scoped>
 .fisg-card { height: 100%; }
 .fisg-card--needs-decision { border-color: rgb(var(--v-theme-warning)); }
+/* Задание 07.10.2026 (п.5): чип статуса не сжимается, заголовок переносится
+   вместо обрезки — жалоба владельца: чип «План закупок» обрезался. */
+.fisg-status-chip { flex-shrink: 0; margin-left: 8px; }
+.fisg-card .d-flex.justify-space-between > div:first-child { min-width: 0; overflow-wrap: anywhere; }
 </style>

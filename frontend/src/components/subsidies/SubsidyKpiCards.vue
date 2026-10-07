@@ -8,6 +8,36 @@
     </v-btn-toggle>
   </div>
 
+  <!-- Задача (владелец, 07.10.2026, прод id=74 «ЛНР», второй заход — скриншот
+       показал плашку КАК ЯЧЕЙКУ грид-сетки карточек, сдвигавшую порядок):
+       плашка — СНАРУЖИ .detail-kpis (не внутри грид-контейнера), одна строка
+       текста, без лишних отступов. Карточки «Поставлено»/«Оплачено» ниже
+       могут давать «оплачено больше, чем поставлено» (напр. закупка
+       work_in_progress с оплатой по отметке, договора ещё нет — см.
+       paid_over_delivered.py). Σ excess ПО ЗАКУПКАМ (paid_over_delivered),
+       НЕ разность карточек «Оплачено» − «Поставлено» целиком (та разность
+       может не совпасть — переплата одной закупки не гасит недоплату
+       другой, см. её docstring) — клик открывает список закупок.
+       purchasesCount — лёгкий GET того же /dashboard/paid-over-delivered-drill,
+       что и сам диалог ниже (тот же источник числа, Правило №6 — здесь просто
+       вызывается ещё раз ради счётчика в тексте плашки, не пересчитывается
+       локально). -->
+  <v-alert
+    v-if="paidOverDeliveredTotal > 0.5"
+    type="error"
+    density="compact"
+    variant="tonal"
+    class="mb-3 paid-over-delivered-alert paid-over-delivered-alert-top"
+    icon="mdi-alert-decagram"
+    @click="paidOverDeliveredDrillVisible = true"
+  >
+    <span class="paid-over-delivered-alert-line">
+      Оплачено больше, чем поставлено: +{{ formatCurrency(paidOverDeliveredTotal) }}
+      <template v-if="paidOverDeliveredCount > 0"> — {{ paidOverDeliveredCount }} {{ paidOverDeliveredCountWord(paidOverDeliveredCount) }}</template>
+      <span class="text-caption ml-1">(нажмите для списка)</span>
+    </span>
+  </v-alert>
+
   <!-- KPI mini-cards for selected subsidy -->
   <div class="detail-kpis">
     <!-- 1. Бюджет (ФЭО) -->
@@ -203,7 +233,9 @@
     <!-- 8. Оплачено -->
     <v-tooltip location="bottom" :disabled="true">
       <template #activator="{ props: tip }">
-        <div v-bind="tip" class="kpi-card kpi-paid" :class="kpi.kpiCardClass('paid')" @click="kpi.onKpiCardClick('paid')">
+        <div v-bind="tip" class="kpi-card kpi-paid"
+          :class="[kpi.kpiCardClass('paid'), paidOverDeliveredTotal > 0.5 ? 'kpi-over' : (paidHasDiscrepancy ? 'kpi-paid-discrepancy' : '')]"
+          @click="kpi.onKpiCardClick('paid')">
           <div class="kpi-icon-box"><v-icon icon="mdi-cash-check" size="26" /></div>
           <div class="kpi-body">
             <!-- Решение владельца (06.10.2026, переигран порядок карточки):
@@ -233,6 +265,15 @@
               <div v-if="paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
                 <span class="kpi-paid-dual-label">расхождение:</span>
                 <span class="kpi-paid-dual-amount">{{ paidDiff >= 0 ? '+' : '−' }}{{ formatCurrency(Math.abs(paidDiff)) }}</span>
+              </div>
+              <!-- Задача (владелец, 07.10.2026, прод id=74 «ЛНР»): «должно прям
+                   кричать» — последней строкой карточки, рядом с плашкой выше
+                   (та же величина paidOverDeliveredTotal, Правило №6 — не
+                   считаем здесь заново). @click.stop — не триггерит клик всей
+                   карточки (kpi.onKpiCardClick('paid')). -->
+              <div v-if="paidOverDeliveredTotal > 0.5" class="kpi-paid-dual-row kpi-paid-over-row" @click.stop="paidOverDeliveredDrillVisible = true">
+                <span class="kpi-paid-dual-label">сверх поставленного:</span>
+                <span class="kpi-paid-dual-amount">+{{ formatCurrency(paidOverDeliveredTotal) }}</span>
               </div>
             </div>
             <!-- Старые строки «товары 0 ₽ / услуги 0 ₽» (splitRowsFor('paid'),
@@ -375,30 +416,6 @@
        ли себя (activeKind). -->
   <ExcessDrilldownBar />
 
-  <!-- Задача (владелец, 07.10.2026, прод id=74 «ЛНР»): «об этом должно прям
-       кричать… должна быть плашечка» — карточки «Поставлено»/«Оплачено» выше
-       могут давать «оплачено больше, чем поставлено» (напр. закупка
-       work_in_progress с оплатой по отметке, договора ещё нет — см.
-       paid_over_delivered.py). Σ excess ПО ЗАКУПКАМ (paid_over_delivered),
-       НЕ разность карточек «Оплачено» − «Поставлено» целиком (та разность
-       может не совпасть — переплата одной закупки не гасит недоплату
-       другой, см. её docstring) — клик открывает список закупок. -->
-  <v-alert
-    v-if="paidOverDeliveredTotal > 0.5"
-    type="error"
-    density="compact"
-    variant="tonal"
-    class="mb-3 paid-over-delivered-alert"
-    icon="mdi-alert-decagram"
-    @click="paidOverDeliveredDrillVisible = true"
-  >
-    Оплачено больше, чем поставлено: +{{ formatCurrency(paidOverDeliveredTotal) }}
-    <template v-if="paidOverDeliveredPrepayment > 0.5">
-      (из них авансом: {{ formatCurrency(paidOverDeliveredPrepayment) }})
-    </template>
-    <span class="text-caption ml-1">(нажмите для списка закупок)</span>
-  </v-alert>
-
   <!-- Владелец (2026-08-30): предупреждение «сумма заказанного приближается
        к потолку субсидии» — потолок = calculate_budget_from_categories
        (тот же источник, что и жёсткий гейт PLAN_OVER_SUBSIDY_CEILING),
@@ -493,6 +510,7 @@
 import { computed, ref, watch } from 'vue'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { KPI_LABELS, KPI_EMPTY_REASONS } from '@/constants/kpiMetrics'
+import { apiFetch } from '@/api'
 import { formatCurrency, roundMoney } from '@/composables/subsidies/format'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
@@ -584,6 +602,29 @@ const paidHasDiscrepancy = computed(() => Math.abs(paidDiff.value) > 0.5)
 const paidOverDeliveredTotal = computed(() => Number(ctx.selectedSubsidy.value?.paid_over_delivered ?? 0))
 const paidOverDeliveredPrepayment = computed(() => Number(ctx.selectedSubsidy.value?.paid_over_delivered_prepayment ?? 0))
 const paidOverDeliveredDrillVisible = ref(false)
+// Счётчик закупок в тексте плашки (07.10.2026, второй заход) — тот же
+// /dashboard/paid-over-delivered-drill, что и PaidOverDeliveredDrillDialog.vue
+// ниже (Правило №6, purchases_count не пересчитывается локально, только
+// читается из того же ответа API ещё раз). Лёгкий запрос — грузится только
+// когда плашка видна (есть excess по субсидии).
+const paidOverDeliveredCount = ref(0)
+function paidOverDeliveredCountWord(n: number): string {
+  const mod100 = Math.abs(n) % 100
+  const mod10 = mod100 % 10
+  if (mod100 >= 11 && mod100 <= 14) return 'закупок'
+  if (mod10 === 1) return 'закупка'
+  if (mod10 >= 2 && mod10 <= 4) return 'закупки'
+  return 'закупок'
+}
+watch([() => ctx.selectedId.value, paidOverDeliveredTotal], async ([sid, total]) => {
+  if (!sid || !(total > 0.5)) { paidOverDeliveredCount.value = 0; return }
+  try {
+    const res = await apiFetch<{ purchases_count: number }>(`/dashboard/paid-over-delivered-drill?scope=managed&subsidy_ids=${sid}`)
+    paidOverDeliveredCount.value = res.purchases_count || 0
+  } catch {
+    paidOverDeliveredCount.value = 0
+  }
+}, { immediate: true })
 // roundMoney — защита от шума плавающей точки: бюджет ФЭО и план суммируются
 // из десятков строк, «равно нулю» на деле выходит 0.000000002 ₽, что
 // переворачивало подпись карточки на «Превышение 0 ₽» (владелец, 2026-10-06,
@@ -870,6 +911,46 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
 }
 .paid-over-delivered-alert {
   cursor: pointer;
+}
+/* Перенесена над сеткой карточек, СНАРУЖИ .detail-kpis (07.10.2026, второй
+   заход — на первом скриншоте плашка встала ЯЧЕЙКОЙ грид-сетки карточек и
+   сдвинула их порядок). Полоса на всю ширину, текст в одну строку, без
+   лишних отступов. */
+.paid-over-delivered-alert-top {
+  margin-top: 0;
+}
+.paid-over-delivered-alert-top :deep(.v-alert__content) {
+  overflow: visible;
+}
+.paid-over-delivered-alert-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+/* Расхождение «подтверждено выпиской» vs «по отметке» без переплаты сверх
+   поставленного — рамка оранжевая (как сам текст расхождения выше,
+   kpi-paid-dual-warn). При paidOverDeliveredTotal > 0.5 класс kpi-over
+   (красный, #EF4444, та же рамка, что у «Превышение»/«Свободно») ставится
+   ВМЕСТО этого класса в шаблоне — красный приоритетнее оранжевого. */
+.kpi-card.kpi-paid-discrepancy {
+  border-top-color: #fb923c;
+}
+/* Строка «сверх поставленного: +N ₽» (07.10.2026) — красная, жирная,
+   кликабельная, последняя в карточке «Оплачено» (та же величина, что в
+   плашке выше карточек, Правило №6). */
+.kpi-paid-over-row {
+  cursor: pointer;
+  margin-top: 2px;
+}
+.kpi-paid-over-row .kpi-paid-dual-label,
+.kpi-paid-over-row .kpi-paid-dual-amount {
+  color: #EF4444;
+  font-weight: 700;
+}
+.kpi-paid-over-row:hover .kpi-paid-dual-label,
+.kpi-paid-over-row:hover .kpi-paid-dual-amount {
+  text-decoration: underline;
 }
 .kpi-paid-dual-sub {
   font-size: 10.5px;

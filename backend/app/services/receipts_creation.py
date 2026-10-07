@@ -25,6 +25,7 @@ from app.product_matcher import find_matching_product
 from app.services import acceptance_docs as _acc_docs
 from app.services.item_amounts import line_total
 from app.services.item_contractor import set_item_contractor
+from app.services.receipt_identity import receipt_fiscal_key, find_duplicate_receipt
 from app.services.receipts_parsing import _items_match_score, _merge_duplicate_receipt_items
 from app.services.receipts_render import _render_receipt_png
 
@@ -78,17 +79,15 @@ async def _create_receipt_with_items(
     Idempotent on the (fn, fd, fp) triple — re-importing the same receipt
     returns the already-existing row without duplicating items.
     """
-    fn = data.get('fiscal_drive_number')
-    fd = data.get('fiscal_document_number')
-    fp = data.get('fiscal_sign')
-    if fn and fd and fp:
-        existing = (await db.execute(
-            select(PurchaseReceipt).where(
-                PurchaseReceipt.fiscal_drive_number == fn,
-                PurchaseReceipt.fiscal_document_number == fd,
-                PurchaseReceipt.fiscal_sign == fp,
-            )
-        )).scalar_one_or_none()
+    key = receipt_fiscal_key(data)
+    if key:
+        fn, fd, fp = key
+        # receipt_identity.find_duplicate_receipt — единственный поиск дублей
+        # по фискальной тройке (ПРАВИЛО №6): ищет и по колонкам, и по
+        # raw_json['qr'] у копий субсидии (где колонки обнулены, см. docstring
+        # app/services/receipt_identity.py) — иначе чек-копия невидим для
+        # этой проверки (прод: 11 чеков легли в оригинал + 2 копии закупки).
+        existing = await find_duplicate_receipt(db, fn, fd, fp)
         if existing:
             if existing.purchase_id == purchase_id:
                 return existing

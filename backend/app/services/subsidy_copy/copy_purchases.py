@@ -25,6 +25,7 @@ from app.models.contract import Contract
 from app.models.contract_item import ContractItem
 from app.models.payment import Payment
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
+from app.services.receipt_identity import receipt_fiscal_key, find_duplicate_receipt
 
 from ._clone import clone_row
 
@@ -119,6 +120,36 @@ async def copy_purchases(
     old_parent_by_new: dict[int, int] = {}  # new_purchase_id -> old parent_purchase_id (2-й проход)
 
     for p in purchases:
+        # Чеки читаются ДО клонирования закупки — задание 08.10.2026, п.3:
+        # если хоть один чек этой закупки уже лежит в ДРУГОЙ закупке (не в
+        # p — источнике), закупка целиком не копируется (вероятный дубль,
+        # см. docstring app/services/receipt_identity.py — прод-инцидент с
+        # 11 чеками в 3 закупках). receipt_identity.find_duplicate_receipt —
+        # тот же единственный поиск дублей, что в receipts_creation.py и
+        # purchase_receipts_import.py (ПРАВИЛО №6), с exclude_purchase_id=p.id
+        # (исходная закупка — не дубль самой себя).
+        receipts = (await db.execute(
+            select(PurchaseReceipt).where(PurchaseReceipt.purchase_id == p.id)
+        )).scalars().all()
+
+        duplicate_ref: Optional[str] = None
+        for rcpt in receipts:
+            key = receipt_fiscal_key(rcpt)
+            if not key:
+                continue
+            fn, fd, fp = key
+            dup = await find_duplicate_receipt(db, fn, fd, fp, exclude_purchase_id=p.id)
+            if dup:
+                other = await db.get(Purchase, dup.purchase_id)
+                duplicate_ref = (other and (other.registry_number or other.purchase_number)) or f"#{dup.purchase_id}"
+                break
+        if duplicate_ref is not None:
+            result.warnings.append(
+                f"Закупка id={p.id} не скопирована: чек(и) уже лежат в закупке "
+                f"№ {duplicate_ref} — вероятно, дубль"
+            )
+            continue
+
         new_p = clone_row(
             p, Purchase,
             subsidy_id=new_sid,
@@ -139,10 +170,8 @@ async def copy_purchases(
         if p.parent_purchase_id:
             old_parent_by_new[new_p.id] = p.parent_purchase_id
 
-        # Чеки — ДО позиций (PurchaseItem.receipt_id ссылается на них).
-        receipts = (await db.execute(
-            select(PurchaseReceipt).where(PurchaseReceipt.purchase_id == p.id)
-        )).scalars().all()
+        # Чеки (уже прочитаны выше) — ДО позиций (PurchaseItem.receipt_id
+        # ссылается на них).
         receipt_id_map: dict[int, int] = {}
         for rcpt in receipts:
             # uq_receipt_fiscal (fiscal_drive_number, fiscal_document_number,

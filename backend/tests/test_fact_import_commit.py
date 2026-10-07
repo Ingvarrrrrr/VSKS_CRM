@@ -531,3 +531,223 @@ async def test_commit_no_advance_keeps_paid_status(
     p = purchases[0]
     assert p.status == "paid"
     assert not p.is_prepayment
+
+
+# ---------------------------------------------------------------------------
+# Задание 07.10.2026 (чек-лист, план 1-snug-twilight.md): skip_reason —
+# ОДНО место, где решается причина пропуска строки (preview.py), и она же
+# идёт в контракт row.skip_reason/skip_forced.
+# ---------------------------------------------------------------------------
+
+async def test_preview_skip_reason_no_status(client, auth_headers, test_user, db_session, subsidy_with_plan):
+    """Статус пуст («План закупок») — пропуск с кодом no_status, снять
+    галочку нельзя (skip_forced=True)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, None, None, status_raw=None),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    row = resp.json()["rows"][0]
+    assert row["skip"] is True
+    assert row["skip_forced"] is True
+    assert row["skip_reason"]["code"] == "no_status"
+
+
+async def test_preview_skip_reason_needs_status(client, auth_headers, test_user, db_session, subsidy_with_plan):
+    """Нераспознанный текст статуса — код needs_status, forced."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 80000, 80000, status_raw="Непонятный статус"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    row = resp.json()["rows"][0]
+    assert row["needs_status"] is True
+    assert row["skip"] is True
+    assert row["skip_forced"] is True
+    assert row["skip_reason"]["code"] == "needs_status"
+
+
+async def test_preview_skip_reason_payroll(client, auth_headers, test_user, db_session, subsidy_with_plan):
+    """Категория ФЭО — ФОТ (FeoCategory.is_payroll), переключатель «Включить
+    ФОТ» не включён — код payroll, forced."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    cat.is_payroll = True
+    await db_session.commit()
+
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 80000, 80000, status_raw="В работе"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    row = resp.json()["rows"][0]
+    assert row["is_payroll"] is True
+    assert row["skip"] is True
+    assert row["skip_forced"] is True
+    assert row["skip_reason"]["code"] == "payroll"
+
+
+async def test_preview_skip_reason_ambiguous(client, auth_headers, test_user, db_session, subsidy_with_plan):
+    """Две строки файла на одну плановую позицию — вторая строка получает
+    ambiguous с указанием номера первой строки (чек-лист, п.2: «Стр. 16 —
+    какие?»)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 80000, 80000, status_raw="В работе"),
+        _row("Аренда оборудования", 80000, 80000, 80000, status_raw="В работе"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    assert rows[0]["match"]["state"] == "found"
+    second = rows[1]
+    assert second["match"]["state"] == "ambiguous"
+    assert second["skip"] is True
+    assert second["skip_forced"] is True
+    assert second["skip_reason"]["code"] == "ambiguous"
+    assert str(rows[0]["row"]) in second["skip_reason"]["text"]
+    assert "Аренда оборудования" in second["skip_reason"]["text"]
+    assert "в колонке «Сопоставление»" in second["skip_reason"]["text"]
+
+
+async def test_preview_skip_reason_manual(client, auth_headers, test_user, db_session, subsidy_with_plan):
+    """Пользователь явно поставил «Пропустить» без форсированной причины —
+    код manual, skip_forced=False (галочку можно снять обратно)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 80000, 80000, status_raw="В работе"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    row0 = resp.json()["rows"][0]
+    assert row0["skip"] is False
+
+    decisions = {"row_overrides": {str(row0["row"]): {"skip": True}}}
+    resp2 = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"decisions": json.dumps(decisions)},
+        headers=auth_headers,
+    )
+    assert resp2.status_code == 200, resp2.text
+    row = resp2.json()["rows"][0]
+    assert row["skip"] is True
+    assert row["skip_forced"] is False
+    assert row["skip_reason"]["code"] == "manual"
+
+
+async def test_preview_over_plan_skip_reduces_contract_amount(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Чек-лист, п.3: решение «Пропустить» в колонке «Превышение» —
+    пропуск уже в ПРЕДПРОСМОТРЕ (не только в commit), сумма итогов
+    предпросмотра уменьшается на эту строку."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    # item_paid: план 80 000 ₽, факт/договор 186 900 ₽ — превышение.
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 186900, 186900, contracted=186900, status_raw="В работе"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    row0 = resp.json()["rows"][0]
+    assert row0["skip"] is False
+    assert resp.json()["totals"]["contract_amount"] == 186900
+
+    decisions = {"over_plan": {str(row0["row"]): "skip"}}
+    resp2 = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"decisions": json.dumps(decisions)},
+        headers=auth_headers,
+    )
+    assert resp2.status_code == 200, resp2.text
+    data2 = resp2.json()
+    row = data2["rows"][0]
+    assert row["skip"] is True
+    assert row["skip_forced"] is False
+    assert row["skip_reason"]["code"] == "over_plan_skip"
+    assert data2["totals"]["contract_amount"] == 0
+    assert data2["totals"]["skipped"] == 1
+
+
+async def test_preview_breakdown_sums_match_totals(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Σ totals.breakdown.by_status[*].included == totals.contract_amount/
+    paid_amount (с учётом included_existing — paid считается, contract нет);
+    пропущенная строка видна и в skipped по статусу, и в skipped_by_reason."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 80000, 80000, paid=80000, status_raw="Оплачено", purchase_no="42", supplier="ООО Ромашка"),
+        _row("Ремонт оборудования", 50000, 50000, 50000, contracted=50000, status_raw="В работе", purchase_no="43", supplier="ООО Лютик"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    totals = data["totals"]
+    breakdown = totals["breakdown"]
+
+    included_contract = sum(b["included"]["contract_amount"] for b in breakdown["by_status"])
+    included_paid = sum(b["included"]["paid"] for b in breakdown["by_status"])
+    assert included_contract == totals["contract_amount"]
+    assert included_paid + breakdown["included_existing"]["paid"] == totals["paid_amount"]
+
+    skipped_total_rows = sum(b["skipped"]["rows"] for b in breakdown["by_status"])
+    assert skipped_total_rows == totals["skipped"]
+    reason_rows = sum(len(r["rows"]) for r in breakdown["skipped_by_reason"])
+    assert reason_rows == totals["skipped"]

@@ -17,6 +17,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_receipt import PurchaseReceipt
 from app.models.user import User
 from app.schemas.schemas import ReceiptOut
+from app.services.receipt_identity import find_duplicate_receipt
 from app.services.receipts_creation import _create_receipt_with_items, _raise_receipt_duplicate_detail
 from app.services.receipts_parsing import (
     _parse_fns_json_receipt,
@@ -176,15 +177,12 @@ async def _fetch_and_create_receipt_from_qr(
     async def _find_existing_by_qr():
         """Найти существующий чек по любым доступным полям из QR.
         Чем больше совпало — тем выше уверенность."""
-        # 1) Точная фискальная тройка
+        # 1) Точная фискальная тройка — receipt_identity.find_duplicate_receipt,
+        # единственный поиск дублей (ПРАВИЛО №6): ищет и по колонкам, и по
+        # raw_json['qr'] у копий субсидии, где колонки обнулены (см. docstring
+        # app/services/receipt_identity.py).
         if fn and fd and fp:
-            row = (await db.execute(
-                select(PurchaseReceipt).where(
-                    PurchaseReceipt.fiscal_drive_number == fn,
-                    PurchaseReceipt.fiscal_document_number == fd,
-                    PurchaseReceipt.fiscal_sign == fp,
-                )
-            )).scalar_one_or_none()
+            row = await find_duplicate_receipt(db, fn, fd, fp)
             if row:
                 return row
         # 2) Пара fn+fd (старые записи могли сохраниться без fp)

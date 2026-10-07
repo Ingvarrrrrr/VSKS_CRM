@@ -223,6 +223,55 @@ async def test_free_card_equals_feo_minus_plan_per_kind(db_session, test_org):
 
 
 @pytest.mark.asyncio
+async def test_free_card_by_kind_is_per_direction_with_items(db_session, test_org):
+    """Задача 3 (владелец, 07.10.2026): card="free" с конкретной корзиной
+    (goods/services) — строки по НАПРАВЛЕНИЮ (корню), не по статьям:
+    budget_amount/planned_amount — raw кумулятивные поля корня, amount —
+    их разность, == той же сумме, что даёт general-формула (kind="all"
+    декомпозиция). При превышении (amount<0) — items: позиции поддерева
+    этого kind, созданные позже — первыми (created_at DESC)."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
+    direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("50000"))
+    article = await _make_category(db_session, subsidy.id, name="Статья", parent_id=direction.id)
+
+    import datetime as _dt
+
+    old_item = await _make_planned_item(db_session, article.id, "Старая позиция", 1, 30_000)
+    old_item.item_type = "товар"
+    new_item = await _make_planned_item(db_session, article.id, "Новая позиция (перевела в превышение)", 1, 40_000)
+    new_item.item_type = "товар"
+    # created_at ОБЕИХ позиций в тесте может совпасть до секунды (та же
+    # транзакция/func.now()) — задаём явно, чтобы сортировка DESC была
+    # детерминированной (в бою created_at различаются реальным временем).
+    old_item.created_at = _dt.datetime(2026, 1, 1, 10, 0, 0)
+    new_item.created_at = _dt.datetime(2026, 1, 2, 10, 0, 0)
+    await db_session.commit()
+    await db_session.refresh(old_item)
+    await db_session.refresh(new_item)
+    assert new_item.created_at > old_item.created_at
+
+    result = await card_drill_rows(db_session, subsidy.id, "free", "goods")
+    assert result["reason"] is None
+    assert len(result["rows"]) == 1
+    row = result["rows"][0]
+    assert row["feo_category_id"] == direction.id
+    assert row["budget_amount"] == pytest.approx(50_000.0)
+    assert row["planned_amount"] == pytest.approx(70_000.0)
+    assert row["amount"] == pytest.approx(-20_000.0)
+    assert row["amount"] == pytest.approx(row["budget_amount"] - row["planned_amount"])
+    assert result["total"] == pytest.approx(row["amount"])
+
+    item_names = [it["name"] for it in row["items"]]
+    assert item_names == ["Новая позиция (перевела в превышение)", "Старая позиция"]
+
+    # Σ по направлениям (эта функция) == декомпозиции по статьям (kind="all"
+    # own-ветка, не меняется этой задачей) — тот же общий инвариант.
+    all_kind_result = await card_drill_rows(db_session, subsidy.id, "free", "all")
+    goods_rows_sum = sum(r["amount"] for r in all_kind_result["rows"] if r["kind"] == "goods")
+    assert goods_rows_sum == pytest.approx(result["total"])
+
+
+@pytest.mark.asyncio
 async def test_all_three_cards_rows_sum_to_total_random_mix(db_session, test_org):
     """Смешанный сценарий (товар/услуга/payroll/без типа, статья с подкатегорией
     и собственными позициями, явный budget на одной статье) — прогоняется по

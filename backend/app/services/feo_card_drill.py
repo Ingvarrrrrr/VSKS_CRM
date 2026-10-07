@@ -39,14 +39,26 @@ compute_feo_plan_tree (order-substitution/floor/manual_sum/клэмп по budge
             own-доля статьи ВСЕГДА равна Σ amount её позиций — пропорция
             тривиальна (просто сами позиции), это и даёт ожидаемые 368 строк
             на 63 232 213,82 ₽.
-  free    — «Свободно» (ФЭО − план): строки — СТАТЬИ, own-доля разности
-            node['feo_{kind}'] − node['plan_{kind}'] (та же декомпозиция).
+  free    — «Свободно» (ФЭО − план): kind="all" — строки по СТАТЬЯМ, own-доля
+            разности node['feo_{kind}'] − node['plan_{kind}'] (та же
+            декомпозиция, как раньше). kind — одна конкретная корзина
+            (goods/services/payroll/unspecified, владелец 07.10.2026, план
+            .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md п.3) — строки
+            по НАПРАВЛЕНИЯМ (корневым узлам): budget_amount=корень['feo_{kind}'],
+            planned_amount=корень['plan_{kind}'] (оба поля УЖЕ кумулятивны по
+            поддереву — те же числа, что видит own-декомпозиция, просто без
+            вычитания детей, ПРАВИЛО №6 — формула та же), amount=разность
+            (Σ по корням == total, тождественно, без декомпозиции нужды нет).
+            При amount<0 (превышение) строка несёт "items" — активные плановые
+            позиции этой корзины во ВСЁМ поддереве направления, created_at DESC
+            (последние добавленные первыми — видно, из-за чего превышение).
             Пусто (с reason), если ФЭО не введено.
 
 kind — all|goods|services|payroll|unspecified: фильтр по одной корзине (all —
 строки по всем четырём, каждая строка несёт свой kind)."""
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
@@ -150,6 +162,52 @@ async def _load_categories(db: AsyncSession, subsidy_id: int) -> tuple[dict, dic
         if r.parent_id is not None and r.parent_id in cats:
             children_map.setdefault(r.parent_id, []).append(r.id)
     return cats, children_map
+
+
+def _descendant_ids(cid: int, children_map: dict) -> set:
+    """cid и ВСЕ его потомки (DFS по children_map, уже ограниченному узлами
+    этой субсидии) — нужно направлению (корню) card="free" по конкретной
+    корзине, чтобы собрать позиции плана ВСЕГО поддерева, не только своего
+    уровня."""
+    out = {cid}
+    stack = list(children_map.get(cid, []))
+    while stack:
+        c = stack.pop()
+        if c in out:
+            continue
+        out.add(c)
+        stack.extend(children_map.get(c, []))
+    return out
+
+
+async def _classify_items(db: AsyncSession, subsidy_id: int, cat_ids) -> tuple[list, dict]:
+    """Активные плановые позиции категорий cat_ids этой субсидии + их
+    эффективный kind (resolve_effective_item_types/kind_of_by_category_id —
+    ТА ЖЕ классификация, что type_totals.py/dashboard_charts.py, ПРАВИЛО №6,
+    вторая классификация не вводится). Используется и card="planned"
+    (разбивка по позициям статьи), и card="free" по конкретной корзине
+    (список позиций направления для "из-за чего превышение").
+    Возвращает (item_rows, items_by_cat_kind: {(feo_category_id, kind): [...]})."""
+    from app.services.feo_plan_tree import resolve_effective_item_types
+    from app.services.feo_payroll import payroll_category_ids
+    from app.services.item_type_split import kind_of_by_category_id
+
+    item_rows = (await db.execute(
+        select(
+            FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.name,
+            FeoPlannedItem.item_type, FeoPlannedItem.quantity, FeoPlannedItem.amount,
+            FeoPlannedItem.created_at,
+        )
+        .where(FeoPlannedItem.feo_category_id.in_(list(cat_ids)))
+        .where(FeoPlannedItem.is_active.is_(True))
+    )).all()
+    eff_types = await resolve_effective_item_types(db, item_rows)
+    payroll_ids = await payroll_category_ids(db, [subsidy_id])
+    items_by_cat_kind: dict = {}
+    for r in item_rows:
+        k = kind_of_by_category_id(eff_types.get(r.id), r.feo_category_id, payroll_ids)
+        items_by_cat_kind.setdefault((r.feo_category_id, k), []).append(r)
+    return item_rows, items_by_cat_kind
 
 
 async def _budget_basis(db: AsyncSession, subsidy_id: int) -> tuple:
@@ -271,6 +329,46 @@ async def card_drill_rows(
         for r in roots
     )
 
+    if card == CARD_FREE and kind != "all":
+        # По НАПРАВЛЕНИЮ (корню), не по статьям (владелец 07.10.2026, план
+        # .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md п.3) — см. докстринг
+        # модуля. budget_amount/planned_amount — raw кумулятивные поля корня
+        # (та же формула, что и везде, просто без own-вычитания).
+        cat_ids = list(nodes.keys())
+        _, items_by_cat_kind = await _classify_items(db, subsidy_id, cat_ids)
+        rows = []
+        for cid in roots:
+            budget_amt = nodes[cid].get(f"feo_{kind}", 0.0) or 0.0
+            planned_amt = nodes[cid].get(f"plan_{kind}", 0.0) or 0.0
+            free_amt = budget_amt - planned_amt
+            if abs(budget_amt) < _EPS and abs(planned_amt) < _EPS:
+                continue
+            desc_ids = _descendant_ids(cid, children_map)
+            items = []
+            for dcid in desc_ids:
+                items.extend(items_by_cat_kind.get((dcid, kind), []))
+            items.sort(key=lambda it: it.created_at or datetime.min, reverse=True)
+            rows.append({
+                "feo_category_id": cid,
+                "category_path": _category_path(cid, cats),
+                "kind": kind,
+                "kind_label": _KIND_LABELS.get(kind, kind),
+                "budget_amount": budget_amt,
+                "planned_amount": planned_amt,
+                "amount": free_amt,
+                "items": [
+                    {
+                        "planned_item_id": it.id,
+                        "name": it.name,
+                        "amount": float(it.amount or 0.0),
+                        "created_at": it.created_at.isoformat() if it.created_at else None,
+                    }
+                    for it in items
+                ],
+            })
+        reason = None if rows else "ФЭО равно плану по направлениям — свободных средств по типу нет"
+        return {"card": card, "kind": kind, "total": total, "rows": rows, "reason": reason}
+
     if card in (CARD_BUDGET, CARD_FREE):
         rows: list = []
         for cid in nodes:
@@ -294,26 +392,7 @@ async def card_drill_rows(
         return {"card": card, "kind": kind, "total": total, "rows": rows, "reason": reason}
 
     # card == "planned" — построчно по ПЛАНОВЫМ ПОЗИЦИЯМ.
-    item_rows = (await db.execute(
-        select(
-            FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.name,
-            FeoPlannedItem.item_type, FeoPlannedItem.quantity, FeoPlannedItem.amount,
-        )
-        .where(FeoPlannedItem.feo_category_id.in_(list(nodes.keys())))
-        .where(FeoPlannedItem.is_active.is_(True))
-    )).all()
-
-    from app.services.feo_plan_tree import resolve_effective_item_types
-    from app.services.feo_payroll import payroll_category_ids
-    from app.services.item_type_split import kind_of_by_category_id
-
-    eff_types = await resolve_effective_item_types(db, item_rows)
-    payroll_ids = await payroll_category_ids(db, [subsidy_id])
-
-    items_by_cat_kind: dict = {}
-    for r in item_rows:
-        k = kind_of_by_category_id(eff_types.get(r.id), r.feo_category_id, payroll_ids)
-        items_by_cat_kind.setdefault((r.feo_category_id, k), []).append(r)
+    _, items_by_cat_kind = await _classify_items(db, subsidy_id, list(nodes.keys()))
 
     rows: list = []
     for cid in nodes:

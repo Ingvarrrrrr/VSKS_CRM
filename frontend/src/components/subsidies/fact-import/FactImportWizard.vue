@@ -1,5 +1,8 @@
 <template>
-  <v-dialog v-model="factImport.show" max-width="1100" persistent :fullscreen="mobile">
+  <!-- Жалоба владельца 07.10.2026: при max-width:1100 колонки «Превышение»/
+       «Сопоставление» уезжали за правый край таблицы шага 3 без видимой
+       горизонтальной прокрутки — диалог расширен. -->
+  <v-dialog v-model="factImport.show" max-width="1400" persistent :fullscreen="mobile">
     <v-card>
       <v-card-title class="text-h6 pt-4 px-6">
         Импорт факта

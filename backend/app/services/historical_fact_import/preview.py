@@ -25,6 +25,15 @@ from app.routers.purchase_transitions import STATUS_LABELS
 # ЕДИНСТВЕННЫЙ резолвер «категория ФЭО — ФОТ» (себя или предка) — задача A
 # (владелец, 07.10.2026): «ФОТ определяется по категории, а не по названиям».
 from app.services.feo_payroll import payroll_category_ids
+# ПРАВИЛО №6: формат суммы в ₽ для текста предупреждений строки — тот же
+# _fmt_money, что уже используется в commit.py (_format_rub) и шаблонах
+# документов, не второй форматтер.
+from app.services.documents.formatting import _fmt_money
+
+
+def _rub(v) -> str:
+    formatted = _fmt_money(v)
+    return f"{formatted} ₽" if formatted else "0,00 ₽"
 
 
 async def build_preview(
@@ -55,9 +64,16 @@ async def build_preview(
     # уже лежит в каталоге плановых позиций (matching_mod.build_matching_
     # context → ctx['catalog']), повторного похода в БД не делаем.
     payroll_cat_ids = await payroll_category_ids(db, [subsidy_id])
-    planned_item_category: dict[int, Optional[int]] = {
-        entry["id"]: entry.get("category_id")
+    # ПРАВИЛО №6: один словарь id→каталожная запись — источник и для
+    # категории (ФОТ), и для имени/пути/суммы найденной плановой позиции в
+    # match (показывается владельцу в колонке «Сопоставление», задание
+    # 07.10.2026), второй поход в БД/второй словарь не заводим.
+    catalog_by_id: dict[int, dict] = {
+        entry["id"]: entry
         for entry in ctx["catalog"] if entry.get("kind") == "planned_item"
+    }
+    planned_item_category: dict[int, Optional[int]] = {
+        pid: entry.get("category_id") for pid, entry in catalog_by_id.items()
     }
 
     # Превышение плана (owner: «договор больше плана» — предупреждение с
@@ -148,12 +164,27 @@ async def build_preview(
         plan_amount = row["plan"]["amount"]
         contract_amount_for_row = fact_amount if fact_amount is not None else row["contracted"]
         over_plan_choice = over_plan_decisions.get(str(row["row"]))
-        if plan_amount is not None and contract_amount_for_row is not None and contract_amount_for_row > plan_amount:
+        # Жалоба владельца (чек-лист 07.10.2026, п.4): суммы — с разрядами и
+        # копейками, словами владельца («выберите решение в колонке
+        # «Превышение»», не внутреннее «оставить с пометкой / урезать /
+        # пропустить» вперемешку с координатами UI).
+        is_over_plan = bool(
+            plan_amount is not None and contract_amount_for_row is not None
+            and contract_amount_for_row > plan_amount
+        )
+        if is_over_plan:
             warnings.append(
-                f"Договор больше плана ({contract_amount_for_row} > {plan_amount}) — "
-                "выберите: оставить с пометкой / урезать / пропустить"
+                f"Договор больше плана ({_rub(contract_amount_for_row)} > {_rub(plan_amount)}) — "
+                "выберите решение в колонке «Превышение»"
             )
-        if match["planned_item_id"] in violations_by_fpi and not over_plan_choice:
+        # Если превышение уже показано строкой выше — текст нарушения ТЗ
+        # (collect_tz_over_plan_violations) про то же самое превышение не
+        # дублируется: это тот же сигнал второй раз, да ещё с советом
+        # «измените плановую позицию в Плане закупок или уменьшите ТЗ»,
+        # который в импорте факта неприменим (решение здесь — колонка
+        # «Превышение», не правка ТЗ/плана). Сам факт превышения (is_over_plan)
+        # остаётся сигналом независимо от этого дедупа.
+        if match["planned_item_id"] in violations_by_fpi and not over_plan_choice and not is_over_plan:
             for v in violations_by_fpi[match["planned_item_id"]]:
                 warnings.append(v["message"])
 
@@ -172,6 +203,20 @@ async def build_preview(
             # «до override» (already_purchased/ambiguous) продолжало бы
             # пропускать строку даже после явного выбора.
             match = {**match, "planned_item_id": override["planned_item_id"], "state": "found"}
+
+        # Задание 07.10.2026 (чек-лист, п.3): для found/already_purchased
+        # показать владельцу, С КАКОЙ плановой позицией сопоставлено —
+        # имя/путь/сумма из ТОГО ЖЕ catalog_by_id, что уже строит категорию
+        # ФОТ выше (ПРАВИЛО №6, второй запрос/словарь не заводим). После
+        # override (если пользователь выбрал другую позицию) — имя уже новой.
+        if match.get("planned_item_id") is not None:
+            _entry = catalog_by_id.get(match["planned_item_id"])
+            match = {
+                **match,
+                "planned_item_name": _entry.get("name") if _entry else None,
+                "planned_item_path": _entry.get("path") if _entry else None,
+                "planned_item_amount": _entry.get("amount") if _entry else None,
+            }
 
         # Задача A — ФОТ по категории плановой позиции (после override, т.к.
         # override.planned_item_id может сменить, какая категория у строки).
@@ -207,7 +252,7 @@ async def build_preview(
             skip = True
             warnings.append(
                 "Несколько строк файла претендуют на одну плановую позицию — "
-                "выберите привязку вручную (row_overrides.planned_item_id)"
+                "выберите плановую позицию в колонке «Сопоставление»"
             )
         if status_info["target_status"] is None:
             skip = True

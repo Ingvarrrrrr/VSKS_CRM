@@ -2,7 +2,7 @@
   <div class="d-flex flex-wrap ga-2 mb-3 align-center">
     <v-select
       v-model="statusFilter" :items="statusFilterOptions" label="Статус" variant="outlined" density="compact"
-      clearable style="max-width:200px" hide-details />
+      clearable style="min-width:200px" hide-details />
     <v-checkbox v-model="onlyNeedsDecision" label="Нужно решение" density="compact" hide-details />
     <v-checkbox v-model="onlyWarnings" label="Предупреждения" density="compact" hide-details />
     <v-checkbox v-model="showSkipped" label="Показывать пропущенные" density="compact" hide-details />
@@ -69,24 +69,29 @@
     <div v-if="factImport.previewRefreshing" class="fisr-overlay">
       <v-progress-circular indeterminate size="28" color="teal" />
     </div>
-    <v-table density="compact">
+    <v-table density="compact" class="fisr-table">
       <thead>
         <tr>
-          <th>Стр.</th><th>Плановая позиция</th><th>Статус</th>
-          <th>План</th><th>Договор</th><th>Оплачено</th><th>Поставщик</th>
-          <th>Сопоставление</th><th>Превышение</th><th></th>
+          <th>Стр.</th><th class="fisr-col-plan">Плановая позиция</th><th>Статус</th>
+          <th class="fisr-col-match">Сопоставление</th><th>План</th><th>Договор</th>
+          <th class="fisr-col-over">Превышение</th><th>Оплачено</th><th>Поставщик</th><th>Пропустить</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="r in filteredRows" :key="r.row" :data-row-anchor="r.row"
           :class="{ 'fisr-row--decision': r.needs_contract_decision, 'fisr-row--needs-status': r.needs_status, 'fisr-row--skip': r.skip, 'row-jump-flash': rowJumpState.highlightedRow === r.row }">
           <td>{{ r.row }}</td>
-          <td>
+          <td class="fisr-col-plan">
             <div class="text-caption text-medium-emphasis">{{ r.path.join(' › ') }}</div>
             <div>{{ r.name }}</div>
-            <div v-if="r.warnings?.length" class="text-caption text-warning">
-              <v-icon icon="mdi-alert-outline" size="12" /> {{ r.warnings.join('; ') }}
-            </div>
+            <v-tooltip v-if="r.warnings?.length" location="bottom" max-width="420">
+              <template #activator="{ props: warnProps }">
+                <div v-bind="warnProps" class="text-caption text-warning fisr-warnings">
+                  <v-icon icon="mdi-alert-outline" size="12" /> {{ r.warnings.join('; ') }}
+                </div>
+              </template>
+              <span>{{ r.warnings.join('; ') }}</span>
+            </v-tooltip>
           </td>
           <td>
             <!-- Ровно 6 статусов GALA — список ТОЛЬКО с бэкенда
@@ -94,7 +99,8 @@
             <v-select
               :model-value="rowStatusCode(r)"
               :items="statusSelectOptions"
-              density="compact" variant="outlined" hide-details style="min-width:170px"
+              density="compact" variant="outlined" hide-details style="min-width:128px"
+              class="fisr-wrap-select"
               :color="r.needs_status ? 'error' : undefined"
               @update:model-value="v => onSetRowStatus(r.row, v)"
             />
@@ -106,42 +112,34 @@
               </template>
               <span>{{ statusNormalizedHint(r) }}</span>
             </v-tooltip>
-          </td>
-          <td>{{ fmt(r.plan.amount) }}</td>
-          <td>{{ fmt(r.fact.amount ?? r.contracted) }}</td>
-          <td>{{ fmt(r.paid) }}</td>
-          <td>{{ r.supplier || '—' }}</td>
-          <td>
-            <v-chip v-if="r.match.state === 'found'" size="x-small" color="success" variant="tonal">
-              <v-icon icon="mdi-check" size="12" /> найдено
-            </v-chip>
-            <template v-else-if="r.match.state === 'already_purchased'">
-              <v-chip size="x-small" color="grey" variant="tonal">уже закуплено</v-chip>
-            </template>
-            <template v-else>
-              <v-chip size="x-small" :color="r.match.state === 'ambiguous' ? 'warning' : 'error'" variant="tonal" class="mb-1">
-                {{ r.match.state === 'ambiguous' ? 'неоднозначно' : 'не найдено' }}
-              </v-chip>
-              <div class="d-flex flex-column ga-1">
-                <v-btn v-for="c in r.match.candidates.slice(0, 3)" :key="c.id" size="x-small" variant="outlined"
-                  @click="onSetPlannedItem(r.row, c.id)">
-                  {{ c.name }} ({{ fmt(c.amount) }})
-                </v-btn>
-                <v-btn size="x-small" variant="text" color="primary" @click="openPicker(r)">Выбрать/создать…</v-btn>
-              </div>
-            </template>
-          </td>
-          <td>
+            <!-- «Договор заключён» — про статус «В работе» + законтрактовано,
+                 логически относится к статусу строки, перенесена сюда из
+                 колонки «Превышение» (чек-лист 07.10.2026, п.2). -->
             <v-checkbox v-if="r.needs_contract_decision"
               :model-value="isContractConfirmed(r.row)" label="Договор заключён" density="compact" hide-details
               @update:model-value="v => onContractConfirmed(r.row, !!v)" />
-            <v-select v-if="isOverPlan(r)"
-              :model-value="overPlanChoice(r.row)" :items="overPlanOptions" density="compact" hide-details
-              variant="outlined" style="max-width:180px"
-              @update:model-value="v => onOverPlanChoice(r.row, v)" />
           </td>
+          <td class="fisr-col-match">
+            <FactImportRowMatchCell :row="r" @open-picker="openPicker" @set-planned-item="onSetPlannedItem" />
+          </td>
+          <td>{{ fmt(r.plan.amount) }}</td>
+          <td>{{ fmt(r.fact.amount ?? r.contracted) }}</td>
+          <td class="fisr-col-over">
+            <template v-if="isOverPlan(r)">
+              <div class="text-caption text-medium-emphasis">
+                больше плана на {{ fmt(overPlanDiff(r)) }}
+              </div>
+              <v-select
+                :model-value="overPlanChoice(r.row)" :items="overPlanOptions" density="compact" hide-details
+                variant="outlined" style="max-width:140px" class="fisr-wrap-select"
+                @update:model-value="v => onOverPlanChoice(r.row, v)" />
+            </template>
+            <template v-else>—</template>
+          </td>
+          <td>{{ fmt(r.paid) }}</td>
+          <td>{{ r.supplier || '—' }}</td>
           <td>
-            <v-checkbox :model-value="r.skip" density="compact" hide-details label="Пропустить"
+            <v-checkbox :model-value="r.skip" density="compact" hide-details
               @update:model-value="v => onRowSkip(r.row, !!v)" />
           </td>
         </tr>
@@ -157,6 +155,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useFactImport, type FactImportRow, type FactImportOverPlanChoice } from '@/composables/subsidies/useFactImport'
 import { useRowJump } from '@/composables/subsidies/useRowJump'
 import FactImportRowPlanPicker from './FactImportRowPlanPicker.vue'
+import FactImportRowMatchCell from './FactImportRowMatchCell.vue'
 import RowWarningChips from './RowWarningChips.vue'
 import { formatMoney } from '@/utils/formatMoney'
 import { rowsInPhrase } from '@/utils/pluralize'
@@ -250,13 +249,23 @@ function isOverPlan(r: FactImportRow): boolean {
   const fact = r.fact.amount ?? r.contracted ?? 0
   return !!(r.plan.amount != null && fact > r.plan.amount)
 }
+// Короткие подписи (2-я приёмка 07.10.2026: «Заключён д…»/«Урезать д…» —
+// обрезались в узкой колонке «Превышение») — полный смысл решения не
+// меняется, только текст короче + выбранное значение теперь переносится
+// (см. .fisr-wrap-select ниже), а не режется многоточием.
 const overPlanOptions: { title: string; value: FactImportOverPlanChoice }[] = [
-  { title: 'Оставить с пометкой', value: 'keep_over' },
+  { title: 'С пометкой', value: 'keep_over' },
   { title: 'Урезать до плана', value: 'trim' },
   { title: 'Пропустить', value: 'skip' },
 ]
 function overPlanChoice(row: number): FactImportOverPlanChoice {
   return factImport.decisions.over_plan[String(row)] || 'keep_over'
+}
+// Подпись над селектом решения (чек-лист 07.10.2026, п.2) — «на сколько
+// больше плана», тот же источник чисел, что и isOverPlan выше (ПРАВИЛО №6).
+function overPlanDiff(r: FactImportRow): number {
+  const fact = r.fact.amount ?? r.contracted ?? 0
+  return fact - (r.plan.amount ?? 0)
 }
 
 // ПРАВИЛО №6: формат суммы — общий хелпер, не своя копия Intl.NumberFormat.
@@ -311,4 +320,49 @@ watch(() => rowJumpState.pendingRow, (row) => {
 .fisr-row--decision { background: #fff8e1; }
 .fisr-row--needs-status { background: #ffebee; }
 .fisr-row--skip { opacity: 0.5; }
+
+/* Жалоба владельца 07.10.2026: колонка «Плановая позиция» раздувалась
+   длинными предупреждениями и уводила «Превышение»/«Пропустить» за правый
+   край без видимой прокрутки — ширины колонок ограничены, шапка прилипает
+   при скролле внутри .fisr-table-wrap, предупреждения зажаты в 2 строки
+   (полный текст — в tooltip, см. template). */
+.fisr-table :deep(th), .fisr-table :deep(td) {
+  padding: 4px 6px !important;
+}
+.fisr-table :deep(thead th) {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgb(var(--v-theme-surface));
+}
+/* 2-я приёмка 07.10.2026 (браузер, 1280×800): сумма прежних min-width
+   (статус 160 + плановая 200 + сопоставление 190 + превышение 170 + остальные
+   колонки) уводила «Пропустить» за правый край контейнера (1304px при
+   1232px доступных) — таблица скроллилась по горизонтали внутри самой себя.
+   Ширины урезаны так, чтобы 10 колонок умещались на 1280px без внутренней
+   прокрутки (см. .fisr-wrap-select ниже — выбранное значение селектов
+   переносится, а не обрезается многоточием при таких узких колонках). */
+.fisr-col-plan { max-width: 190px; min-width: 150px; }
+.fisr-col-match { min-width: 140px; max-width: 170px; }
+.fisr-col-over { min-width: 130px; }
+.fisr-warnings {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: help;
+}
+/* Подписи решений («Урезать до плана» и т.п.) переносятся вместо обрезки
+   многоточием в узких колонках «Статус»/«Превышение». */
+.fisr-wrap-select :deep(.v-select__selection-text) {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  line-height: 1.2;
+}
+.fisr-wrap-select :deep(.v-field__input) {
+  min-height: 36px;
+  height: auto;
+  flex-wrap: wrap;
+}
 </style>

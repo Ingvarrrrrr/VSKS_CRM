@@ -55,6 +55,12 @@ export interface FactImportMatch {
   state: FactImportMatchState
   planned_item_id: number | null
   candidates: FactImportMatchCandidate[]
+  // Чек-лист 07.10.2026, п.3: для found/already_purchased — с какой плановой
+  // позицией сопоставлено (после override — уже новой), показывается в
+  // колонке «Сопоставление» вместо голого значка «найдено».
+  planned_item_name?: string | null
+  planned_item_path?: string | null
+  planned_item_amount?: number | null
 }
 
 // 🟢 Задача B («Оплачено, но уже в закупке», 07.10.2026) — строка файла,

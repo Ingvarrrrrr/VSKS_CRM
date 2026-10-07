@@ -4,6 +4,7 @@
 Собирает синтетический xlsx формата 'columns' (как ХО) прямо в памяти —
 тот же порядок колонок, что в образце владельца (см. test_fact_import_rows.py
 для буква-в-букву соответствия)."""
+import json
 import uuid
 from io import BytesIO
 
@@ -412,6 +413,92 @@ async def test_commit_advance_sets_ordered_status_and_is_prepayment(
     p = purchases[0]
     assert p.status == "ordered"
     assert p.is_prepayment is True
+
+
+async def test_preview_over_plan_warning_formats_money_and_dedupes_tz_text(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Чек-лист владельца 07.10.2026, п.4: сумма в тексте «Договор больше
+    плана» — с разрядами и копейками («186 900,00 ₽», не голое число),
+    текст заканчивается «выберите решение в колонке «Превышение»», и текст
+    нарушения ТЗ (collect_tz_over_plan_violations, про ТО ЖЕ самое
+    превышение) при этом НЕ дублируется — иначе владельцу показывают один
+    и тот же сигнал дважды, второй раз ещё с неприменимым в импорте
+    советом «измените плановую позицию в Плане закупок»."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    # item_paid: план 80 000 ₽ — строка файла задаёт факт/законтрактовано
+    # 186 900 ₽ (владелец, пример из чек-листа).
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 186900, 186900, contracted=186900, status_raw="В работе"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    row = resp.json()["rows"][0]
+    warnings = row["warnings"]
+
+    over_plan_warnings = [w for w in warnings if w.startswith("Договор больше плана")]
+    assert len(over_plan_warnings) == 1, warnings
+    assert over_plan_warnings[0] == (
+        "Договор больше плана (186 900,00 ₽ > 80 000,00 ₽) — "
+        "выберите решение в колонке «Превышение»"
+    ), over_plan_warnings[0]
+
+    # Нет второго предупреждения про то же превышение от tz_excess_approval
+    # (текст «измените плановую позицию»/«согласовать» и т.п.).
+    assert not any("измените плановую позицию" in w for w in warnings), warnings
+    assert not any(w != over_plan_warnings[0] and "превышает" in w for w in warnings), warnings
+
+
+async def test_preview_match_includes_planned_item_name_and_updates_after_override(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Чек-лист владельца 07.10.2026, п.3: found-строка несёт имя
+    сопоставленной плановой позиции (match.planned_item_name) — колонка
+    «Сопоставление» показывает его вместо голого значка «найдено». После
+    override (пользователь выбрал ДРУГУЮ позицию) — имя уже новой."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 80000, 80000, status_raw="В работе"),
+    ])
+
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    row = resp.json()["rows"][0]
+    assert row["match"]["state"] == "found"
+    assert row["match"]["planned_item_id"] == item_paid.id
+    assert row["match"]["planned_item_name"] == "Аренда оборудования"
+    assert row["match"]["planned_item_amount"] == 80000
+
+    # Пользователь вручную выбрал ДРУГУЮ плановую позицию (row_overrides) —
+    # имя в match обязано смениться на новую, не остаться старым.
+    decisions = {"row_overrides": {str(row["row"]): {"planned_item_id": item_wip.id}}}
+    resp2 = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"decisions": json.dumps(decisions)},
+        headers=auth_headers,
+    )
+    assert resp2.status_code == 200, resp2.text
+    row2 = resp2.json()["rows"][0]
+    assert row2["match"]["planned_item_id"] == item_wip.id
+    assert row2["match"]["planned_item_name"] == "Ремонт оборудования"
+    assert row2["match"]["planned_item_amount"] == 50000
 
 
 async def test_commit_no_advance_keeps_paid_status(

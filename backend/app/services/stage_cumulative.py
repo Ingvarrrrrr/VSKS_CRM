@@ -173,6 +173,236 @@ async def single_contract_topup_by_subsidy(
     return result
 
 
+async def contracted_rows_by_category(
+    db: AsyncSession,
+    *,
+    subsidy_ids: Optional[list[int]] = None,
+) -> dict[tuple[int, Optional[int]], float]:
+    """{(subsidy_id, feo_category_id|None): amount} — ТЕ ЖЕ четыре слагаемых,
+    что contracted_total_by_subsidy() (см. её докстринг), но разрезанные по
+    категории ФЭО вместо схлопывания в один subsidy_id. ЕДИНЫЙ источник
+    (ПРАВИЛО №6, план .planning/quick/2026-10-06-feo-row-sums/PLAN.md, шаг 2):
+    contracted_total_by_subsidy() ниже строит СВОЮ "amount" как Σ ЭТОГО же
+    словаря по subsidy_id — не вторая копия SQL, категория — просто более
+    мелкий разрез тех же строк.
+
+    Категория закупки — Purchase.feo_category_id (та же гранулярность, что и
+    у contracted_total_by_subsidy/dashboard_contracts_drill, которые не делают
+    item-level разрез — «законтрактовано» по определению относится к закупке/
+    заказу целиком, не к отдельным позициям внутри неё):
+      1. single — Σ effective_amount_expr() комитированных закупок, привязанных
+         к активному Contract(type='single'), ПО КАТЕГОРИИ ПОКУПКИ; на контракт
+         накладывается тот же "greatest(recorded, actual)" приём, что и в
+         cs_q + single_contract_topup_by_subsidy (см. их докстринги) — recorded
+         (Contract.max_amount) распределяется по категориям ПРОПОРЦИОНАЛЬНО
+         их доле в actual (если actual > 0), иначе — поровну между категориями,
+         в которых вообще нашлась связанная закупка (на практике всегда одна).
+      2. framework_with_amount — ЗАКАЗЫ (ordered+reserved, т.е. объединение
+         FRAMEWORK_COMMITTED_STATUSES и reserved_child_predicate) идут в
+         СВОИ категории; остаток max(0, лимит − Σзаказов) — в категорию
+         ГОЛОВЫ (parent_purchase_id IS NULL), либо, если у головы нет
+         категории, в категорию заказов (если она одна), иначе «без
+         категории» — пересмотр В3 владельцем (PLAN.md, правка 🔵
+         07.10.2026): прод-находка — голова часто в «Не определена», заказы
+         в реальной статье; старое правило прятало деньги субсидии в «Не
+         определена».
+      3. framework_cumulative — Σ effective_amount_expr() заказов-детей
+         (ordered+reserved, та же формула sqlor(FRAMEWORK_COMMITTED_STATUSES,
+         reserved_child_predicate()), что у framework_with_amount выше —
+         владелец, правка 🟣 07.10.2026, закрытие «экзотики»: будущий заказ
+         накопительного, договор на партию уже заключён, статус 'contracted'
+         — тоже законтрактованные деньги), each ПО СВОЕЙ категории (не головы).
+      4. committed-закупки без активного контракта известного типа
+         (committed_uncounted_expr()) — по категории самой закупки.
+
+    `subsidy_ids` — уже отфильтрован по видимости вызывающим кодом (тот же
+    контракт, что у contracted_total_by_subsidy)."""
+    result: dict[tuple[int, Optional[int]], float] = {}
+    if not subsidy_ids:
+        return result
+
+    def _add(sid: Optional[int], cat_id: Optional[int], amt: float) -> None:
+        if sid is None or not amt:
+            return
+        key = (sid, cat_id)
+        result[key] = result.get(key, 0.0) + amt
+
+    # ── 1. single — per (contract, category) actual, затем greatest() по контракту ──
+    # (exists-проверка _contracted_purchase_exists из contracted_total_by_subsidy
+    # здесь НЕ нужна — JOIN на Purchase с тем же committed-статусным условием
+    # уже гарантирует: контракт без ни одной committed-закупки просто не даёт
+    # строк. Отдельный EXISTS-подзапрос по тому же Purchase без alias вызывал
+    # бы неоднозначную ссылку на таблицу, уже участвующую в FROM через JOIN.)
+    single_cat_stmt = (
+        select(
+            Contract.id.label("contract_id"),
+            Contract.subsidy_id,
+            Contract.max_amount,
+            Purchase.feo_category_id.label("cat_id"),
+            func.coalesce(func.sum(effective_amount_expr()), 0).label("actual"),
+        )
+        .join(Purchase, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "single")
+        .where(Contract.subsidy_id.in_(subsidy_ids))
+        .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
+        .group_by(Contract.id, Contract.subsidy_id, Contract.max_amount, Purchase.feo_category_id)
+    )
+    single_rows = (await db.execute(single_cat_stmt)).all()
+    by_contract: dict[int, list] = {}
+    for r in single_rows:
+        by_contract.setdefault(r.contract_id, []).append(r)
+    for contract_id, rows in by_contract.items():
+        sid = rows[0].subsidy_id
+        recorded = float(rows[0].max_amount) if rows[0].max_amount is not None else 0.0
+        total_actual = sum(float(r.actual or 0) for r in rows)
+        final_total = max(recorded, total_actual)
+        if final_total <= 0:
+            continue
+        if total_actual > 0:
+            for r in rows:
+                share = final_total * (float(r.actual or 0) / total_actual)
+                _add(sid, r.cat_id, share)
+        else:
+            # Ни одна связанная закупка не дала ненулевую сумму, но лимит
+            # договора задан (recorded > 0) — распределяем поровну между
+            # найденными категориями (на практике их одна).
+            n = len(rows)
+            for r in rows:
+                _add(sid, r.cat_id, final_total / n)
+
+    # ── 2. framework_with_amount (владелец, правка 🔵 07.10.2026 — см. PLAN.md,
+    # пересмотр В3) ──────────────────────────────────────────────────────────
+    # Прод-находка, приведшая к пересмотру: у 3 из 4 framework_with_amount
+    # договоров голова лежит в «Не определена», а её заказы — в реальной
+    # статье («Техническое оснащение»); у 21 framework_cumulative голова
+    # вовсе без категории. Старое правило «вся сумма в категорию ГОЛОВЫ»
+    # прятало реальные деньги субсидии в «Не определена» вместо статьи, где
+    # они физически потрачены — владелец это отменил.
+    #
+    # Новое правило: заказы (И «из них заказано» FRAMEWORK_COMMITTED_STATUSES,
+    # И «зарезервировано» reserved_child_predicate — ОБЕ группы, иначе
+    # категория заказа показывала бы contracted МЕНЬШЕ ordered+reserved, что
+    # и было найденной владельцем ошибкой) несут «законтрактовано» СВОЕЙ
+    # категории целиком; остаток лимита max(0, лимит − Σ(ordered+reserved))
+    # идёт в категорию ГОЛОВЫ — а если у головы нет категории (или головы нет
+    # вовсе), остаток падает в категорию заказов, ЕСЛИ она у всех заказов этого
+    # контракта одна, иначе — в «без категории» (None).
+    fwa_contracts_stmt = (
+        select(Contract.id.label("contract_id"), Contract.subsidy_id, Contract.max_amount)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_with_amount")
+        .where(Contract.subsidy_id.in_(subsidy_ids))
+    )
+    fwa_contracts = (await db.execute(fwa_contracts_stmt)).all()
+
+    fwa_head_cat_stmt = (
+        select(Contract.id.label("contract_id"), Purchase.feo_category_id.label("head_cat_id"))
+        .join(Purchase, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_with_amount")
+        .where(Contract.subsidy_id.in_(subsidy_ids))
+        # Голова — parent_purchase_id IS NULL (тот же критерий, что у cs_q/
+        # _fwa_children_sum в contracted_total_by_subsidy), БЕЗ проверки
+        # Purchase.purchase_contract_type (см. test_dashboard_contracts_drill.py,
+        # где этот столбец у фикстур вовсе не заполнен).
+        .where(Purchase.parent_purchase_id.is_(None))
+    )
+    head_cat_by_contract: dict[int, Optional[int]] = {
+        r.contract_id: r.head_cat_id for r in (await db.execute(fwa_head_cat_stmt)).all()
+    }
+
+    fwa_children_cat_stmt = (
+        select(
+            Contract.id.label("contract_id"),
+            Purchase.feo_category_id.label("cat_id"),
+            func.coalesce(func.sum(effective_amount_expr()), 0).label("amt"),
+        )
+        .join(Purchase, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_with_amount")
+        .where(Contract.subsidy_id.in_(subsidy_ids))
+        .where(Purchase.parent_purchase_id.isnot(None))
+        .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
+        .group_by(Contract.id, Purchase.feo_category_id)
+    )
+    fwa_children_by_contract: dict[int, list] = {}
+    for r in (await db.execute(fwa_children_cat_stmt)).all():
+        fwa_children_by_contract.setdefault(r.contract_id, []).append(r)
+
+    for c in fwa_contracts:
+        kids = fwa_children_by_contract.get(c.contract_id, [])
+        total_children = 0.0
+        for k in kids:
+            amt = float(k.amt or 0)
+            total_children += amt
+            _add(c.subsidy_id, k.cat_id, amt)
+        recorded = float(c.max_amount) if c.max_amount is not None else 0.0
+        remainder = max(0.0, recorded - total_children)
+        if remainder <= 0:
+            continue
+        head_cat = head_cat_by_contract.get(c.contract_id)
+        if head_cat is None:
+            kid_cats = {k.cat_id for k in kids}
+            head_cat = next(iter(kid_cats)) if len(kid_cats) == 1 else None
+        _add(c.subsidy_id, head_cat, remainder)
+
+    # ── 3. framework_cumulative — Σ заказов-детей (ordered+reserved), каждый в
+    # СВОЮ категорию (владелец, правка 🟣 07.10.2026 — закрытие «экзотики»,
+    # найденной предыдущим тестом: заказ накопительного в статусе 'contracted'
+    # — договор на партию уже заключён, заказ как отдельная закупка ещё не
+    # оформлен — это ТОЖЕ законтрактованные деньги, не только
+    # FRAMEWORK_COMMITTED_STATUSES. ТА ЖЕ формула, что у framework_with_amount
+    # выше — sqlor(FRAMEWORK_COMMITTED_STATUSES, reserved_child_predicate()),
+    # импорт предиката, не копия). Теперь contracted ≥ ordered+reserved в
+    # КАЖДОЙ категории без исключений (кроме экзотики заказа вне committed-
+    # статусов, которой на проде не найдено).
+    cfc_cat_stmt = (
+        select(
+            Purchase.subsidy_id,
+            Purchase.feo_category_id.label("cat_id"),
+            func.coalesce(func.sum(effective_amount_expr()), 0).label("amt"),
+        )
+        .join(Contract, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_cumulative")
+        .where(Purchase.subsidy_id.in_(subsidy_ids))
+        .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
+        .group_by(Purchase.subsidy_id, Purchase.feo_category_id)
+    )
+    for r in (await db.execute(cfc_cat_stmt)).all():
+        _add(r.subsidy_id, r.cat_id, float(r.amt or 0))
+
+    # ── 4. committed-закупки без активного контракта известного типа ──────────
+    uncounted_cat_stmt = (
+        select(
+            Purchase.subsidy_id,
+            Purchase.feo_category_id.label("cat_id"),
+            func.coalesce(func.sum(effective_amount_expr()), 0).label("amt"),
+        )
+        .outerjoin(Contract, Purchase.contract_id == Contract.id)
+        .where(Purchase.subsidy_id.in_(subsidy_ids))
+        .where(Purchase.stopped_at.is_(None))
+        .where(committed_uncounted_expr())
+        .group_by(Purchase.subsidy_id, Purchase.feo_category_id)
+    )
+    for r in (await db.execute(uncounted_cat_stmt)).all():
+        _add(r.subsidy_id, r.cat_id, float(r.amt or 0))
+
+    return result
+
+
+def reserved_child_predicate():
+    """«Зарезервировано на ежемесячные платежи» (PLAN.md 2026-10-06, В1🟢):
+    заказ рамочного договора (parent_purchase_id IS NOT NULL — ЛЮБОГО из двух
+    типов, не только framework_cumulative) в статусе 'contracted' — договор на
+    эту партию уже заключён, сам заказ как отдельная закупка ещё не оформлен.
+    SQL-эквивалент условия contracted_not_ordered_by_subsidy() ниже, вынесен
+    отдельно (ПРАВИЛО №6), чтобы feo_row_contracted.py не копировал тот же
+    предикат построчно для разреза по категории ФЭО."""
+    return sqland(Purchase.status == "contracted", Purchase.parent_purchase_id.isnot(None))
+
+
 async def contracted_total_by_subsidy(
     db: AsyncSession,
     *,
@@ -279,6 +509,24 @@ async def contracted_total_by_subsidy(
         d["amount"] += d0["amount"]
         d["count"] += d0["count"]
 
+    # ПРАВИЛО №6 (план 2026-10-06-feo-row-sums, шаг 2): "amount" — ТЕПЕРЬ Σ по
+    # категориям ФЭО того же единого разреза contracted_rows_by_category() (не
+    # пересчитывается второй формулой — выше это ровно те же 4 слагаемых, но
+    # схлопнутые по subsidy_id; здесь берём их же построчный источник и просто
+    # суммируем по субсидии). "count" остаётся посчитан как раньше (выше) —
+    # разрез по категориям не обязан сохранять точную семантику "число
+    # договоров", она тут не используется ни одним инвариантом.
+    cat_rows = await contracted_rows_by_category(db, subsidy_ids=subsidy_ids)
+    amount_by_subsidy: dict[int, float] = {}
+    for (sid, _cat_id), amt in cat_rows.items():
+        amount_by_subsidy[sid] = amount_by_subsidy.get(sid, 0.0) + amt
+    for sid, amt in amount_by_subsidy.items():
+        d = result.setdefault(sid, {"amount": 0.0, "count": 0})
+        d["amount"] = amt
+    for sid in list(result.keys()):
+        if sid not in amount_by_subsidy:
+            result[sid]["amount"] = 0.0
+
     return result
 
 
@@ -311,8 +559,7 @@ async def contracted_not_ordered_by_subsidy(
 
     stmt = (
         select(Purchase.subsidy_id, func.coalesce(func.sum(effective_amount_expr()), 0).label("amt"))
-        .where(Purchase.status == "contracted")
-        .where(Purchase.parent_purchase_id.isnot(None))
+        .where(reserved_child_predicate())
         .where(Purchase.stopped_at.is_(None))
     )
     if subsidy_ids is not None:

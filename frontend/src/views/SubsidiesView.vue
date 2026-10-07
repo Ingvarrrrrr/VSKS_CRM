@@ -203,6 +203,11 @@ import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
 // useFeoTreeExcess выше; FeoTreeRow.vue/SubsidyKpiCards.vue/ExcessDrilldownBar.vue
 // переиспользуют singleton вызовом без аргумента.
 import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
+// «Законтрактовано/заказано/резерв» по статье ФЭО (владелец, 06.10.2026,
+// PLAN.md .planning/quick/2026-10-06-feo-row-sums) — тот же приём singleton,
+// грузится ТАМ ЖЕ и ТОГДА ЖЕ, что и plannedPurchaseTotals (loadFeoTree/
+// refreshReqData ниже), FeoTreeRow.vue переиспользует без аргумента.
+import { useFeoRowContractTotals } from '@/composables/subsidies/useFeoRowContractTotals'
 import { useFeoTreeDnd } from '@/composables/subsidies/useFeoTreeDnd'
 import { useFeoLevel5 } from '@/composables/subsidies/useFeoLevel5'
 import { useSubsidyRevision } from '@/composables/subsidies/useSubsidyRevision'
@@ -372,6 +377,12 @@ useExcessDrilldown({
   planTreeByCat: feoTreeState.planTreeByCat,
   expandedIds: feoTreePrefs.expandedIds,
   feoTableArea,
+  selectedId,
+})
+// «Законтрактовано/заказано/резерв» (см. докстринг импорта выше) — тот же
+// singleton-приём, FeoTreeRow.vue переиспользует вызовом без аргумента.
+const feoRowContractTotals = useFeoRowContractTotals({
+  feoTree: feoTreeState.feoTree,
   selectedId,
 })
 const feoLevel5 = useFeoLevel5({
@@ -778,6 +789,11 @@ async function loadFeo(subsidyId: number) {
     feoTreeExcess.loadPlanExcessApprovals(subsidyId)
     feoTreeState.plannedItemsByCat.value = plannedItemsRes
     feoTreeState.plannedItemsLoaded.value = true
+    // Не в Promise.all выше намеренно — параллельный исполнитель бэка мог ещё
+    // не доделать эндпоинт (см. PLAN.md); loadRowContractTotals сама глотает
+    // ошибку, и падение этого запроса не должно задерживать/ронять отрисовку
+    // дерева.
+    feoRowContractTotals.loadRowContractTotals(subsidyId)
     const sums: Record<number, number> = {}
     const qtys: Record<number, number> = {}
     const sumsLinked: Record<number, number> = {}
@@ -841,6 +857,9 @@ const refreshReqGuard = useLatestRequest()
 async function refreshReqData(catId?: number) {
   if (!selectedId.value) return
   const token = refreshReqGuard.next()
+  // Тот же триггер обновления, что у plannedPurchaseTotals ниже (Правило №6) —
+  // не в Promise.all намеренно, см. докстринг рядом с первой загрузкой выше.
+  feoRowContractTotals.loadRowContractTotals(selectedId.value)
   const [totals, items, planTree] = await Promise.all([
     apiFetch<Record<number, { total: number; qty: number; total_linked?: number; qty_linked?: number; total_over?: number; qty_over?: number; forecast?: number; forecast_over?: number; plan_manual?: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${selectedId.value}`),
     apiFetch<Record<number, FeoReqItem[]>>(`/feo-categories/planned-purchase-items?subsidy_id=${selectedId.value}`),

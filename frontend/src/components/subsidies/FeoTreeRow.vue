@@ -711,12 +711,17 @@
       </div>
     </td>
 
-    <!-- «В плане-графике» -->
+    <!-- «В закупках» (была «В плане-графике», 06.10.2026, PLAN.md) — клик по
+         основному числу открывает FeoRowDrillDialog.vue (kind=in_purchases),
+         переход в реестр закупок — кнопкой внутри окна. Подстроки
+         законтрактовано/заказано/резерв/не распределено — своя сумма
+         категории (useFeoRowContractTotals.ts, Правило №6 — поддерево тем же
+         способом own+Σдетей, что соседние колонки), каждая тоже кликабельна. -->
     <td class="feo-td feo-td-num" style="vertical-align:top">
       <span :class="ctx.feoInPlanScheduleFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
         :style="(ctx.feoDisplayedFor(node) > 0 && ctx.feoInPlanScheduleFor(node) > ctx.feoDisplayedFor(node)) || (ctx.feoPlannedDisplayFor(node) > 0 && ctx.feoInPlanScheduleFor(node) > ctx.feoPlannedDisplayFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
-        :title="ctx.feoInPlanScheduleFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
-        @click="ctx.feoInPlanScheduleFor(node) > 0 && ctx.router.push(`/orders?feo_category_id=${node.id}`)"
+        :title="ctx.feoInPlanScheduleFor(node) > 0 ? 'Открыть список закупок этой категории' : ''"
+        @click="ctx.feoInPlanScheduleFor(node) > 0 && openRowDrill('in_purchases')"
       >
         {{ ctx.feoInPlanScheduleFor(node) > 0 ? formatCurrency(ctx.feoInPlanScheduleFor(node)) : '—' }}
       </span>
@@ -726,11 +731,34 @@
            колонок»), см. revPair() ниже: без записи в preview.after.nodes
            falls back на то же живое значение. -->
       <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPair('in_plan_schedule', ctx.feoInPlanScheduleFor(node))" />
-      <div v-if="ctx.feoFactFor(node) > 0 && Math.abs(ctx.feoInPlanScheduleFor(node) - ctx.feoFactFor(node)) > 0.005"
-        class="feo-plan-note text-medium-emphasis"
-        :title="`Из них уже есть договорная цена (договор/акт). Остальное — закупки, которые ещё в статусе «План закупок»`"
+
+      <div v-if="feoRowContractTotals.contractedFor(node) > 0.005 || feoRowContractTotals.orderedFor(node) > 0.005"
+        class="feo-plan-note feo-plan-note--link text-medium-emphasis"
+        title="Договорная цена (разовые/авансовые — по сумме; рамочные — заказы/предельная сумма) по этой категории и подкатегориям"
+        @click.stop="openRowDrill('contracted')"
       >
-        по договору {{ formatCurrency(ctx.feoFactFor(node)) }}
+        законтрактовано {{ formatCurrency(feoRowContractTotals.contractedFor(node)) }}
+      </div>
+      <div v-if="feoRowContractTotals.orderedFor(node) > 0.005"
+        class="feo-plan-note feo-plan-note--link text-medium-emphasis"
+        title="Из законтрактованного — уже оформлено отдельными заказами"
+        @click.stop="openRowDrill('ordered')"
+      >
+        из них заказано {{ formatCurrency(feoRowContractTotals.orderedFor(node)) }}
+      </div>
+      <div v-if="feoRowContractTotals.reservedFor(node) > 0.005"
+        class="feo-plan-note feo-plan-note--link text-medium-emphasis"
+        title="Будущие заказы рамочных договоров (ежемесячная оплата), ещё не оформленные отдельной закупкой"
+        @click.stop="openRowDrill('reserved')"
+      >
+        зарезервировано на ежемесячные {{ formatCurrency(feoRowContractTotals.reservedFor(node)) }}
+      </div>
+      <div v-if="Math.abs(feoRowContractTotals.unallocatedFor(node)) > 0.005"
+        class="feo-plan-note feo-plan-note--link text-medium-emphasis"
+        title="Законтрактовано минус заказано минус зарезервировано — остаток лимита рамочных договоров с суммой, ещё не расписанный по заказам"
+        @click.stop="openRowDrill('unallocated')"
+      >
+        не распределено по договорам {{ formatCurrency(feoRowContractTotals.unallocatedFor(node)) }}
       </div>
     </td>
 
@@ -739,7 +767,7 @@
       <span v-if="ctx.feoResidualBaseFor(node) > 0 || ctx.feoInPlanScheduleFor(node) > 0"
         class="feo-amount"
         :style="ctx.feoResidualFor(node) < -0.005 ? 'color:#EF4444;font-weight:700' : 'color:#16A34A'"
-        :title="`${ctx.residualBase.value === 'feo' ? 'ФЭО' : 'План'} ${formatCurrency(ctx.feoResidualBaseFor(node))} − В плане-графике ${formatCurrency(ctx.feoInPlanScheduleFor(node))}`"
+        :title="`${ctx.residualBase.value === 'feo' ? 'ФЭО' : 'План'} ${formatCurrency(ctx.feoResidualBaseFor(node))} − В закупках ${formatCurrency(ctx.feoInPlanScheduleFor(node))}`"
       >
         {{ ctx.feoResidualFor(node) < 0 ? '−' : '' }}{{ formatCurrency(Math.abs(ctx.feoResidualFor(node))) }}
       </span>
@@ -934,6 +962,8 @@ import PointerArrow from '@/components/common/PointerArrow.vue'
 import { useFeoTreeAmounts } from '@/composables/subsidies/useFeoTreeAmounts'
 import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
+import { useFeoRowContractTotals } from '@/composables/subsidies/useFeoRowContractTotals'
+import { useFeoRowDrill, FEO_ROW_DRILL_LABELS, type FeoRowDrillKind } from '@/composables/subsidies/useFeoRowDrill'
 
 const funding = useFundingSources()
 
@@ -987,6 +1017,17 @@ const kpiPrefs = useKpiPrefs()
 const feoTreeExcess = useFeoTreeExcess()
 const excessDrilldown = useExcessDrilldown()
 const feoTreeAmounts2 = useFeoTreeAmounts()
+const feoRowContractTotals = useFeoRowContractTotals()
+const feoRowDrill = useFeoRowDrill()
+
+// Клик по любой сумме столбика «В закупках/законтрактовано/заказано/резерв/не
+// распределено» — открывает FeoRowDrillDialog.vue (singleton, см. её
+// докстринг) со списком закупок ПОДДЕРЕВА этой категории. subsidyId — тот же
+// computed, что строку комментариев выше (ctx.selectedId).
+function openRowDrill(kind: FeoRowDrillKind) {
+  if (!subsidyId.value) return
+  feoRowDrill.open(node.value.id, node.value.name, subsidyId.value, kind)
+}
 
 // Выбор категории/поддерева целиком (задача 1) — состояние чекбокса перед
 // шевроном читает usePlanToRequest.ts::subtreeSelectionState (единственный

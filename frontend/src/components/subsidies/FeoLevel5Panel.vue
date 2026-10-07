@@ -81,7 +81,7 @@
               <!-- data-feo-planned-item-id — цель прокрутки+подсветки поиска по субсидии
                    (useFeoTreeSearch.ts::scrollAndHighlight), тот же приём, что и
                    data-feo-node-id у строки категории (FeoTreeRow.vue). -->
-              <tr v-if="!(hideFullyPurchased.hideFullyPurchased.value && isRowFullyPurchased(planned))"
+              <tr v-if="!isPlannedRowHidden(planned)"
                 style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id"
                 :class="{ 'feo-fully-purchased-row': isRowFullyPurchased(planned), 'feo-partially-purchased-row': isRowPartiallyPurchased(planned) }"
               >
@@ -508,14 +508,14 @@
                    раскрывающийся блок под строкой, не колонка (см. докстринг задачи
                    про плотную таблицу). Тот же переиспользуемый FeoCommentThread.vue,
                    что и у категории в FeoTreeRow.vue (Правило №6 — второй копии нет). -->
-              <tr v-if="!planned.isManual && commentsExpandedIds.has(planned.id)">
+              <tr v-if="!planned.isManual && commentsExpandedIds.has(planned.id) && !isPlannedRowHidden(planned)">
                 <td colspan="8" style="padding:0">
                   <div style="margin:6px 8px 10px 32px;padding:8px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px">
                     <FeoCommentThread :feo-planned-item-id="planned.id" :subsidy-id="subsidyId" />
                   </div>
                 </td>
               </tr>
-              <tr v-if="ctx.expandedPlannedItems.value.has(planned.id)">
+              <tr v-if="ctx.expandedPlannedItems.value.has(planned.id) && !isPlannedRowHidden(planned)">
                 <td colspan="8" style="padding:0">
                   <div style="margin:10px 8px 12px 32px;padding:8px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px">
                   <table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px">
@@ -653,6 +653,18 @@
                 </td>
               </tr>
             </template>
+
+            <!-- Баг владельца 06.10.2026, п.2: когда переключатель скрыл все
+                 закупленные полностью позиции, панель не должна выглядеть
+                 пустой/сломанной — подпись со счётчиком и ссылкой "показать"
+                 (снимает тот же флаг hideFullyPurchased, единый источник,
+                 Правило №6). Строки нет, если скрывать нечего. -->
+            <tr v-if="hiddenFullyPurchasedCount > 0">
+              <td colspan="8" class="feo-plan-note text-medium-emphasis" style="padding:4px 8px;font-size:11px">
+                Скрыто закупленных полностью: {{ hiddenFullyPurchasedCount }} —
+                <a href="#" style="color:inherit;text-decoration:underline" @click.prevent="hideFullyPurchased.hideFullyPurchased.value = false">показать</a>
+              </td>
+            </tr>
 
             <tr v-if="!ctx.displayPlannedRowsFor(node).length && !ctx.comparisonData.value[node.id]!.actual.length">
               <td colspan="8" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
@@ -858,6 +870,21 @@ function isRowPartiallyPurchased(planned: FeoPlannedItem & { isManual?: boolean 
   return planned.isManual ? false : planToRequest.isPlannedItemPartiallyTaken(planned.id)
 }
 const hideFullyPurchased = useFeoHideFullyPurchased()
+// Баг владельца 06.10.2026: переключатель «Скрыть закупленные полностью»
+// прятал только основную строку плановой позиции, а соседние <tr> той же
+// позиции (ветка комментариев и развёрнутый блок «План vs факт») оставались
+// видимыми — на полностью закупленной субсидии были видны «висящие» блоки
+// без названия/цены/значка комментариев. ОДНА функция на все три v-if строки
+// (Правило №6, второй расчёт видимости не заводим).
+function isPlannedRowHidden(planned: FeoPlannedItem & { isManual?: boolean }): boolean {
+  return hideFullyPurchased.hideFullyPurchased.value && isRowFullyPurchased(planned)
+}
+// Счётчик скрытых переключателем позиций — для подписи-ссылки под списком
+// (п.2 того же бага), чтобы панель не выглядела пустой/сломанной.
+const hiddenFullyPurchasedCount = computed(() => {
+  if (!hideFullyPurchased.hideFullyPurchased.value) return 0
+  return ctx.displayPlannedRowsFor(node).filter((p) => isRowFullyPurchased(p)).length
+})
 
 // Комментарии к плановым позициям (владелец, Волна 4, п.16) — переиспользуем
 // ОДИН FeoCommentThread.vue (та же копия, что и у категории в FeoTreeRow.vue,

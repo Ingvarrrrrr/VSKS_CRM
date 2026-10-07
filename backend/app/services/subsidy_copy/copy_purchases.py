@@ -12,6 +12,8 @@ item_id копии) → платежи → аллокации по субсид�
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,12 +30,21 @@ from ._clone import clone_row
 
 
 class PurchaseCopyResult:
-    __slots__ = ("purchase_count", "contract_count", "payment_count")
+    __slots__ = ("purchase_count", "contract_count", "payment_count",
+                 "purchase_id_map", "contract_id_map", "item_id_map", "warnings")
 
     def __init__(self) -> None:
         self.purchase_count = 0
         self.contract_count = 0
         self.payment_count = 0
+        # Карты старый id -> новый id (нужны copy_into_existing.py для отчёта
+        # скрипта — какой № реестра/категория легла у конкретной закупки — и
+        # для relink_wish_and_purchase_copies, которая перепривязывает
+        # PurchaseItem.wish_item_id между КОПИЯМИ после copy_wishes).
+        self.purchase_id_map: dict[int, int] = {}
+        self.contract_id_map: dict[int, int] = {}
+        self.item_id_map: dict[int, int] = {}
+        self.warnings: list[str] = []
 
 
 async def copy_purchases(
@@ -42,29 +53,50 @@ async def copy_purchases(
     new_sid: int,
     category_id_map: dict[int, int],
     planned_item_id_map: dict[int, int],
+    purchase_ids: Optional[set[int]] = None,
 ) -> PurchaseCopyResult:
+    """purchase_ids=None (умолчание) — копирует ВСЕ закупки субсидии, поведение
+    не меняется (используется create_sandbox_copy). purchase_ids={...} —
+    копирует только перечисленные закупки (используется copy_into_existing.py
+    для «продублировать отдельные закупки в другую субсидию», задача
+    06.10.2026); в этом режиме копируются ТОЛЬКО договоры, на которые
+    ссылаются выбранные закупки (не все договоры субсидии)."""
     result = PurchaseCopyResult()
 
-    purchases = (await db.execute(
-        select(Purchase).where(Purchase.subsidy_id == source_sid)
-    )).scalars().all()
+    purchases_query = select(Purchase).where(Purchase.subsidy_id == source_sid)
+    if purchase_ids is not None:
+        purchases_query = purchases_query.where(Purchase.id.in_(purchase_ids))
+    purchases = (await db.execute(purchases_query)).scalars().all()
+
+    if purchase_ids is not None:
+        missing = purchase_ids - {p.id for p in purchases}
+        for mid in sorted(missing):
+            result.warnings.append(
+                f"Закупка id={mid} не найдена в субсидии {source_sid} — пропущена"
+            )
+
     if not purchases:
         return result
 
-    # 1. Договоры — ВСЕ договоры субсидии (Contract.subsidy_id == source_sid),
-    # не только те, что напрямую referenced покупками через purchase.contract_id:
-    # на живых данных (ФАДМ_2026) нашлись договоры без единой закупки/позиции
-    # договора, ссылающейся на них (framework-головы без заказов, авансовые
-    # контракты AVANS-* и т.п.) — если копировать только referenced-договоры,
-    # число договоров копии расходится с оригиналом (46 vs 36 на живых данных).
-    # Объединяем с contract_id'ами purchases (на случай расхождения данных —
-    # purchase.contract_id почти никогда не указывает на ЧУЖУЮ субсидию, см.
-    # services/contracts_linking.py, но дублей тут не повредит set).
+    # 1. Договоры. Без фильтра — ВСЕ договоры субсидии (Contract.subsidy_id ==
+    # source_sid), не только те, что напрямую referenced покупками через
+    # purchase.contract_id: на живых данных (ФАДМ_2026) нашлись договоры без
+    # единой закупки/позиции договора, ссылающейся на них (framework-головы
+    # без заказов, авансовые контракты AVANS-* и т.п.) — если копировать
+    # только referenced-договоры, число договоров копии расходится с
+    # оригиналом (46 vs 36 на живых данных). Объединяем с contract_id'ами
+    # purchases (на случай расхождения данных — purchase.contract_id почти
+    # никогда не указывает на ЧУЖУЮ субсидию, см. services/contracts_linking.py,
+    # но дублей тут не повредит set).
+    # С фильтром purchase_ids — ТОЛЬКО договоры выбранных закупок (задание
+    # 06.10.2026, п.1): полный набор договоров субсидии тут не нужен и даже
+    # вреден — продублировал бы договоры закупок, которые не копируются.
     source_contract_ids = {p.contract_id for p in purchases if p.contract_id}
-    own_contracts_result = await db.execute(
-        select(Contract.id).where(Contract.subsidy_id == source_sid)
-    )
-    source_contract_ids |= set(own_contracts_result.scalars().all())
+    if purchase_ids is None:
+        own_contracts_result = await db.execute(
+            select(Contract.id).where(Contract.subsidy_id == source_sid)
+        )
+        source_contract_ids |= set(own_contracts_result.scalars().all())
     contract_id_map: dict[int, int] = {}
     if source_contract_ids:
         contracts = (await db.execute(
@@ -157,12 +189,23 @@ async def copy_purchases(
 
     # 2-й проход: перепривязка parent_purchase_id (родитель создаётся раньше
     # или позже ребёнка в этом же цикле — проще один финальный проход).
+    # С фильтром purchase_ids родитель может оказаться НЕ выбранным для
+    # копирования — тогда parent_purchase_id=None (уже так из clone_row выше)
+    # и предупреждение в отчёт (задание 06.10.2026, п.1), а не падение/потеря
+    # связи молча.
     if old_parent_by_new:
+        new_id_to_old_id = {v: k for k, v in purchase_id_map.items()}
         for new_id, old_parent_id in old_parent_by_new.items():
             new_parent_id = purchase_id_map.get(old_parent_id)
             if new_parent_id:
                 new_p = await db.get(Purchase, new_id)
                 new_p.parent_purchase_id = new_parent_id
+            elif purchase_ids is not None:
+                old_child_id = new_id_to_old_id.get(new_id)
+                result.warnings.append(
+                    f"Закупка id={old_child_id}: родитель id={old_parent_id} не выбран "
+                    f"для копирования — parent_purchase_id очищен"
+                )
         await db.flush()
 
     # Позиции договора — после того, как purchase_id_map/item_id_map полны.
@@ -217,4 +260,7 @@ async def copy_purchases(
         ))
 
     await db.flush()
+    result.purchase_id_map = purchase_id_map
+    result.contract_id_map = contract_id_map
+    result.item_id_map = item_id_map
     return result

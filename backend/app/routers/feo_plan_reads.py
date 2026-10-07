@@ -117,6 +117,7 @@ async def get_planned_purchase_totals(
     from app.models.purchase_item import PurchaseItem
     from app.routers.purchase_budget import PLANNED_STATUSES
     from app.services.feo_plan import compute_feo_plan_tree, apply_wish_item_exclusion
+    from app.services.purchase_amounts import aggregate_scope_expr
     from sqlalchemy import case, and_, not_
 
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
@@ -139,6 +140,14 @@ async def get_planned_purchase_totals(
         # (решение владельца 2026-08-13).
         .where(Purchase.stopped_at.is_(None))
         .where(cat_col.isnot(None))
+        # ШАГ 1 плана 2026-10-06-feo-row-sums (владелец, «В закупках»): та же
+        # граница, что у /purchase-totals строкой выше (ПРАВИЛО №6) — рамочная
+        # ГОЛОВА с реально существующими заказами не должна задваивать свои
+        # заказы (её «Лимит договора …» позиция организационная, деньги несут
+        # заказы). До этой правки «В плане-графике» не знал про aggregate_scope_expr()
+        # — рамочный договор РЕЕ-2026-03134 (207 900) считался ПОВЕРХ своих 7
+        # заказов (прод, статья 7481: 6 419 556,54 вместо верных 6 211 656,54).
+        .where(aggregate_scope_expr())
     )
     if exclude_purchase_id is not None:
         stmt = stmt.where(PurchaseItem.purchase_id != exclude_purchase_id)

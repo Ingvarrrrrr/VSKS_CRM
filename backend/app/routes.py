@@ -82,6 +82,12 @@ from app.routers import feo_plan_reads
 # (пути не пересекаются), но ВСЕ обязаны идти до feo_categories.router.
 from app.routers import feo_plan_reads_tree
 from app.routers import feo_plan_reads_budget
+# feo_row_contracted_reads — GET /api/feo-categories/row-contract-totals
+# (статичный путь, ДО feo_categories.router) и GET /api/feo-categories/{cat_id}/row-drill
+# (на сегмент длиннее catch-all, порядок относительно feo_categories.router не
+# важен — тот же принцип, что у feo_tree_ops.router) — план
+# .planning/quick/2026-10-06-feo-row-sums/PLAN.md, шаги 2-3.
+from app.routers import feo_row_contracted_reads
 # feo_card_drill — GET /api/subsidies/{subsidy_id}/card-drill (владелец,
 # 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 4).
 # Префикс /api/subsidies, НЕ /api/feo-categories — порядок относительно
@@ -365,6 +371,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(feo_plan_reads.router)
     app.include_router(feo_plan_reads_tree.router)
     app.include_router(feo_plan_reads_budget.router)
+    app.include_router(feo_row_contracted_reads.router)
     app.include_router(feo_import.router)
     app.include_router(feo_import_template.router)
     app.include_router(feo_import_preview.router)

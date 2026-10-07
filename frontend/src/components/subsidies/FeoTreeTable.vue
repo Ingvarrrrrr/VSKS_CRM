@@ -61,7 +61,7 @@
             <span class="col-resize-handle" @mousedown="ctx.feoResize.onResizeStart($event, 'qty')"></span>
           </th>
           <th class="feo-th feo-th-num" :style="ctx.feoResize.resizeStyle('planned')">
-            <div>ПЛАНОВАЯ<br>СУММА</div>
+            <div>ЗАПЛАНИРОВАНО</div>
             <div class="feo-residual-toggle">
               <span
                 :class="ctx.plannedSumBase.value === 'all' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
@@ -87,9 +87,9 @@
             <span class="col-resize-handle" @mousedown="ctx.feoResize.onResizeStart($event, 'planned')"></span>
           </th>
           <th class="feo-th feo-th-num" :style="ctx.feoResize.resizeStyle('spent')"
-            title="Сумма всех позиций закупок этой категории во всех статусах плана закупок (включая «План закупок»), в отличие от договорного факта"
+            title="Сумма всех закупок этой категории (рамочная шапка с заказами — не поверх заказов), в отличие от договорного факта"
           >
-            В плане-графике
+            В закупках
             <span class="col-resize-handle" @mousedown="ctx.feoResize.onResizeStart($event, 'spent')"></span>
           </th>
           <th class="feo-th feo-th-num" :style="ctx.feoResize.resizeStyle('residual')">
@@ -97,12 +97,12 @@
             <div class="feo-residual-toggle">
               <span
                 :class="ctx.residualBase.value === 'plan' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
-                title="Остаток = Плановая сумма − В плане-графике"
+                title="Остаток = Запланировано − В закупках"
                 @click.stop="ctx.residualBase.value = 'plan'"
               >от плановой</span>
               <span
                 :class="ctx.residualBase.value === 'feo' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
-                title="Остаток = Финансирование по ФЭО − В плане-графике"
+                title="Остаток = Финансирование по ФЭО − В закупках"
                 @click.stop="ctx.residualBase.value = 'feo'"
               >от ФЭО</span>
             </div>
@@ -196,7 +196,7 @@
           <td class="feo-td feo-td-num font-weight-bold">
             {{ ctx.feoTree.value.reduce((acc, r) => acc + ctx.feoPlannedDisplayFor(r), 0) > 0 ? formatCurrency(ctx.feoTree.value.reduce((acc, r) => acc + ctx.feoPlannedDisplayFor(r), 0)) : '—' }}
           </td>
-          <!-- Футер обязан считаться по той же шкале, что и колонка «В плане-графике» в строках. -->
+          <!-- Футер обязан считаться по той же шкале, что и колонка «В закупках» в строках. -->
           <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(ctx.totalFeoInPlanSchedule.value) }}</td>
           <td class="feo-td feo-td-num font-weight-bold">
             {{ formatCurrency(ctx.feoTree.value.reduce((acc, r) => acc + ctx.feoResidualBaseFor(r), 0) - ctx.totalFeoInPlanSchedule.value) }}
@@ -213,6 +213,11 @@
       </tbody>
     </table>
   </div>
+
+  <!-- Окно расшифровки клика по сумме «В закупках»/«законтрактовано»/«заказано»/
+       «резерв»/«не распределено» — один экземпляр на дерево, см. docstring
+       FeoRowDrillDialog.vue/useFeoRowDrill.ts. -->
+  <FeoRowDrillDialog />
 </template>
 
 <script setup lang="ts">
@@ -233,6 +238,7 @@ import FeoLevel5Panel from './FeoLevel5Panel.vue'
 import FeoReqItemsRows from './FeoReqItemsRows.vue'
 import FeoByPurchasesRows from './FeoByPurchasesRows.vue'
 import RevisionTotalsHeader from './RevisionTotalsHeader.vue'
+import FeoRowDrillDialog from './FeoRowDrillDialog.vue'
 import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
 import { useRevisionChangedFilter } from '@/composables/subsidies/useRevisionChangedFilter'
 

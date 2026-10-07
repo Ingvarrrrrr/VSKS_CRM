@@ -11,6 +11,7 @@
 (ПРАВИЛО №6, тот же приём, что test_fact_import_existing_match.py)."""
 import json
 import uuid
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -115,6 +116,13 @@ async def test_already_purchased_paid_updates_existing_purchase(
     await _grant_edit(db_session)
     subsidy, cat, plan_item, contractor, purchase, item1, item2 = already_purchased_setup
 
+    # Прод: у существующей закупки уже был contract_price (Decimal) ДО импорта —
+    # именно это падало в JSON-колонку backup (created_refs) с TypeError.
+    purchase.contract_price = Decimal("473413.18")
+    db_session.add(purchase)
+    await db_session.commit()
+    await db_session.refresh(purchase)
+
     content = _build_ho_workbook([
         _row("Мебель и инвентарь", 240000, 240000, 240000, paid=240000, status_raw="Оплачено",
              supplier="ООО ОФИСМАГ", item_name="Стол офисный"),
@@ -177,6 +185,7 @@ async def test_already_purchased_paid_updates_existing_purchase(
     await db_session.refresh(purchase)
     assert purchase.status == "work_in_progress"
     assert purchase.contract_number is None
+    assert purchase.contract_price == Decimal("473413.18")
 
     pays_after = (await db_session.execute(select(Payment).where(Payment.purchase_id == purchase.id))).scalars().all()
     assert pays_after == []

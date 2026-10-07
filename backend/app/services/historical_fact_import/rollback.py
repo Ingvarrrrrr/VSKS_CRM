@@ -14,6 +14,8 @@ created_refs (контрагент/плановая позиция, заведё
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import select
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -202,7 +204,9 @@ async def execute_rollback(db: AsyncSession, run) -> dict:
         eu_p.contract_number = backup["contract_number"]
         eu_p.contract_number_is_temporary = backup["contract_number_is_temporary"]
         eu_p.is_prepayment = backup["is_prepayment"]
-        eu_p.contract_price = backup["contract_price"]
+        eu_p.contract_price = (
+            Decimal(backup["contract_price"]) if backup.get("contract_price") is not None else None
+        )
         eu_p.contract_id = backup.get("contract_id")
         restored_eu_purchase_ids.add(eu_p.id)
     if eu_contract_items_purchase_ids:

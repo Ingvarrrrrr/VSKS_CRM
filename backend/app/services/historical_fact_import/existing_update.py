@@ -136,7 +136,9 @@ async def apply_existing_updates(
             "contract_number": p.contract_number,
             "contract_number_is_temporary": p.contract_number_is_temporary,
             "is_prepayment": p.is_prepayment,
-            "contract_price": p.contract_price,
+            # Decimal не JSON-сериализуется (created_refs/run.created_refs — JSON-
+            # колонка) — храним строкой, rollback.py восстанавливает через Decimal().
+            "contract_price": str(p.contract_price) if p.contract_price is not None else None,
             "contract_id": p.contract_id,
         }
 

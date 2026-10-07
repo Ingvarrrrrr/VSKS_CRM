@@ -25,6 +25,17 @@ def _fmt_money(d: Decimal) -> str:
     return f"{d:,.2f} ₽"
 
 
+def tz_excess_amount(total_d: Decimal, planned_total: Optional[Decimal]) -> Decimal:
+    """Превышение ТЗ над планом = max(total_d − planned_total, 0) — ОДНА формула
+    (ПРАВИЛО №6), используемая и в X-Funding-Hint (_funding_hint_header ниже),
+    и в app.services.tz_excess_approval.collect_tz_over_plan_violations
+    (excess_amount предупреждений/запросов на согласование) — раньше второе
+    место парсило ту же величину ОБРАТНО из X-Funding-Hint заголовка, что
+    работало, но считало значение не там, где оно рождается."""
+    excess = total_d - (planned_total if planned_total is not None else Decimal("0"))
+    return excess if excess > 0 else Decimal("0")
+
+
 def _funding_hint_header(feo_planned_item_id, feo_category_id, total_d: Decimal, planned_total):
     """Заголовок X-Funding-Hint для 409 ниже (владелец, доп. контракт
     05.10.2026) — amount = превышение ТЗ над планом (НЕ сама сумма ТЗ), та же
@@ -35,13 +46,11 @@ def _funding_hint_header(feo_planned_item_id, feo_category_id, total_d: Decimal,
     «лениво внутри функции» по всему проекту)."""
     from app.services.plan_funding_sources import build_funding_hint_header
 
-    excess = total_d - (planned_total if planned_total is not None else Decimal("0"))
-    if excess < 0:
-        excess = Decimal("0")
+    excess = tz_excess_amount(total_d, planned_total)
     return build_funding_hint_header(feo_planned_item_id, feo_category_id, excess)
 
 
-async def assert_tz_not_over_plan(
+async def tz_over_plan_violations(
     db: AsyncSession,
     *,
     feo_planned_item_id: Optional[int],
@@ -52,11 +61,22 @@ async def assert_tz_not_over_plan(
     item_name: str = "",
     sibling_quantity=0,
     sibling_total=0,
-) -> None:
-    """Бросает HTTPException 409, если ТЗ позиции (кол-во / цена за единицу / сумма)
-    превышает привязанную плановую позицию — владелец (2026-08-07, план
-    zany-fluttering-mountain.md, шаг 5): «ТЗ может быть НИЖЕ плана, но НЕ ВЫШЕ —
-    ни по количеству, ни по цене за единицу, ни по сумме».
+) -> dict:
+    """Считает нарушения «ТЗ не выше плана» для ОДНОЙ позиции/группы, НЕ бросая
+    исключение — чистая функция сравнения. Единственный источник вычисления
+    (ПРАВИЛО №6): вызывается И assert_tz_not_over_plan ниже (бросает 409 на
+    непустом результате), И app.services.tz_excess_approval.
+    collect_tz_over_plan_violations (считает те же нарушения для
+    НЕблокирующих предупреждений/регистрации согласования) — вторая формула
+    сравнения не заводится.
+
+    Возвращает {"violations": list[str], "planned_total": Decimal|None,
+    "total_d": Decimal, "name": str}. violations пуст — либо плановых данных
+    нет вовсе (planned_total тоже None), либо ТЗ в рамках плана.
+
+    Владелец (2026-08-07, план zany-fluttering-mountain.md, шаг 5): «ТЗ может
+    быть НИЖЕ плана, но НЕ ВЫШЕ — ни по количеству, ни по цене за единицу, ни
+    по сумме».
 
     Источник плана — РОВНО один из двух (не смешиваются между собой):
       1. feo_planned_item_id задан → FeoPlannedItem.quantity / .amount / .unit_price.
@@ -102,10 +122,10 @@ async def assert_tz_not_over_plan(
     Нет плановых данных (ни по FeoPlannedItem, ни по FeoCategory) → no-op —
     позиции без плана этим правилом не ограничиваются.
 
-    Сообщение 409 перечисляет ВСЕ нарушенные величины разом (позиция может
+    violations перечисляет ВСЕ нарушенные величины разом (позиция может
     одновременно превышать и количество, и сумму — напр. «3 шт × 4 000 000»
-    при плане «2 шт × 4 000 000»), с планом/фактом/разницей по каждой и общей
-    подсказкой «что делать».
+    при плане «2 шт × 4 000 000»), с планом/фактом/разницей по каждой —
+    собирается в текст 409 вызывающей assert_tz_not_over_plan.
 
     sibling_quantity/sibling_total (владелец, задача от 2026-08-17, прод-инцидент
     закупка РЕЕ-2026-00887, +5 761 ₽): эта функция изначально проверяла КАЖДУЮ
@@ -121,7 +141,6 @@ async def assert_tz_not_over_plan(
     Дефолт 0 — поведение без siblings не меняется. См. также обёртку
     assert_tz_batch_not_over_plan ниже, которая считает siblings по списку строк.
     """
-    from fastapi import HTTPException
     from app.models.feo_planned_item import FeoPlannedItem
 
     planned_qty: Optional[Decimal] = None
@@ -234,31 +253,47 @@ async def assert_tz_not_over_plan(
                 # остаются None, ниже срабатывает no-op, и позиция закупки,
                 # привязанная к КАТЕГОРИИ напрямую (без конкретной плановой
                 # позиции), перестаёт ограничиваться вообще — 409 не сработает
-                # никогда. Один запрос с агрегатами, без загрузки всех строк —
+                # никогда. Один запрос с агрегатом, без загрузки всех строк —
                 # см. образец в compute_feo_plan_tree (feo_plan.py).
+                #
+                # Дефект (прод, заявка №124, владелец 07.10.2026): здесь РАНЬШЕ
+                # ещё считали planned_qty = Σ quantity ВСЕХ активных
+                # FeoPlannedItem категории и planned_unit_price = planned_total
+                # / planned_qty. Позиции внутри категории — РАЗНЫЕ товары
+                # (бумага, вода, фоторамки), складывать их количество в одно
+                # число и выводить из него «среднюю цену за единицу» —
+                # выдумка: категория «Расходные материалы…» дала «план 152,49
+                # ₽/шт», и «Фоторамка» по 640 ₽ ловилась как ложное нарушение
+                # цены при нулевом превышении по сумме. Единственное, что
+                # можно честно просуммировать по категории, — ИТОГОВАЯ сумма
+                # (planned_total); количество и цену за единицу здесь
+                # сознательно НЕ считаем — остаются None (не ограничиваются).
                 fpi_agg_q = (
                     select(
                         func.coalesce(
                             func.sum(case((FeoPlannedItem.amount > 0, FeoPlannedItem.amount), else_=0)),
                             0,
                         ).label("amt"),
-                        func.coalesce(func.sum(FeoPlannedItem.quantity), 0).label("qty"),
                     )
                     .where(FeoPlannedItem.feo_category_id == feo_category_id)
                     .where(FeoPlannedItem.is_active.is_(True))
                 )
                 agg_row = (await db.execute(fpi_agg_q)).one()
                 fb_amt = Decimal(str(agg_row.amt or 0))
-                fb_qty = Decimal(str(agg_row.qty or 0))
                 if fb_amt > 0:
                     planned_total = fb_amt
-                if fb_qty > 0:
-                    planned_qty = fb_qty
-                if planned_qty is not None and planned_qty > 0 and planned_total is not None:
-                    planned_unit_price = planned_total / planned_qty
+
+    name = item_name.strip() if item_name else "позиция"
+
+    def _empty() -> dict:
+        return {
+            "violations": [], "planned_total": None, "total_d": Decimal("0"), "name": name,
+            "reason": "", "message": "", "has_siblings": False,
+        }
 
     if planned_qty is None and planned_unit_price is None and planned_total is None:
-        return  # плановые данные не заданы — правило не применяется
+        # плановые данные не заданы — правило не применяется
+        return _empty()
 
     own_qty_d = Decimal(str(quantity)) if quantity is not None else Decimal("0")
     price_d = Decimal(str(unit_price)) if unit_price is not None else Decimal("0")
@@ -275,36 +310,94 @@ async def assert_tz_not_over_plan(
     if planned_qty is not None and qty_d > planned_qty:
         diff = qty_d - planned_qty
         violations.append(
-            f"количество: план {_fmt_qty(planned_qty)}, в ТЗ {_fmt_qty(qty_d)} "
+            f"количество: план {_fmt_qty(planned_qty)}, указано {_fmt_qty(qty_d)} "
             f"(больше на {_fmt_qty(diff)})"
         )
     if planned_unit_price is not None and price_d > planned_unit_price:
         diff = price_d - planned_unit_price
         violations.append(
-            f"цена за единицу: план {_fmt_money(planned_unit_price)}, в ТЗ {_fmt_money(price_d)} "
+            f"цена за единицу: план {_fmt_money(planned_unit_price)}, указано {_fmt_money(price_d)} "
             f"(больше на {_fmt_money(diff)})"
         )
     if planned_total is not None and total_d > planned_total:
         diff = total_d - planned_total
         violations.append(
-            f"сумма: план {_fmt_money(planned_total)}, в ТЗ {_fmt_money(total_d)} "
+            f"сумма: план {_fmt_money(planned_total)}, указано {_fmt_money(total_d)} "
             f"(больше на {_fmt_money(diff)})"
         )
 
     if not violations:
-        return
+        return _empty()
 
-    name = item_name.strip() if item_name else "позиция"
+    # reason/message — ЕДИНСТВЕННОЕ место, где собирается этот текст (ПРАВИЛО
+    # №6): assert_tz_not_over_plan (409) и app.services.tz_excess_approval.
+    # collect_tz_over_plan_violations (НЕблокирующие предупреждения) раньше
+    # собирали ту же f-string в двух местах — теперь оба берут готовые строки
+    # отсюда. reason — без хвоста «Измените плановую позицию…» (для карточки
+    # заявки/закупки), message — полный текст 409.
+    reason = "; ".join(violations)
     siblings_note = (
         " (учтены все строки этой операции, привязанные к той же плановой позиции)"
         if has_siblings else ""
     )
+    message = (
+        f"ТЗ позиции «{name}»{siblings_note} превышает план: {reason}. "
+        "Измените плановую позицию в Плане закупок (потребует согласования, если "
+        "выходит за ФЭО) или уменьшите ТЗ."
+    )
+
+    return {
+        "violations": violations, "planned_total": planned_total, "total_d": total_d, "name": name,
+        "reason": reason, "message": message, "has_siblings": has_siblings,
+    }
+
+
+async def assert_tz_not_over_plan(
+    db: AsyncSession,
+    *,
+    feo_planned_item_id: Optional[int],
+    feo_category_id: Optional[int],
+    quantity,
+    unit_price,
+    total_price,
+    item_name: str = "",
+    sibling_quantity=0,
+    sibling_total=0,
+) -> None:
+    """Бросает HTTPException 409, если ТЗ позиции (кол-во / цена за единицу / сумма)
+    превышает привязанную плановую позицию — тонкая обёртка над
+    tz_over_plan_violations (см. её докстринг для правил поиска плана и
+    сравнения); сама не вычисляет ничего, кроме текста отказа и заголовка.
+    Нет плановых данных/ТЗ в рамках плана → no-op (violations пуст).
+
+    sibling_quantity/sibling_total (владелец, задача от 2026-08-17, прод-инцидент
+    закупка РЕЕ-2026-00887, +5 761 ₽): проверяет не только свою строку, но и
+    остальные строки ТОЙ ЖЕ операции, уже привязанные к той же плановой
+    позиции — накопление в пределах ОДНОЙ операции. См. assert_tz_batch_not_over_plan
+    ниже, которая считает siblings по списку строк.
+    """
+    from fastapi import HTTPException
+
+    result = await tz_over_plan_violations(
+        db,
+        feo_planned_item_id=feo_planned_item_id,
+        feo_category_id=feo_category_id,
+        quantity=quantity,
+        unit_price=unit_price,
+        total_price=total_price,
+        item_name=item_name,
+        sibling_quantity=sibling_quantity,
+        sibling_total=sibling_total,
+    )
+    if not result["violations"]:
+        return
+
     raise HTTPException(
         409,
-        f"ТЗ позиции «{name}»{siblings_note} превышает план: " + "; ".join(violations) + ". "
-        "Измените плановую позицию в Плане закупок (потребует согласования, если "
-        "выходит за ФЭО) или уменьшите ТЗ.",
-        headers=_funding_hint_header(feo_planned_item_id, feo_category_id, total_d, planned_total),
+        result["message"],
+        headers=_funding_hint_header(
+            feo_planned_item_id, feo_category_id, result["total_d"], result["planned_total"],
+        ),
     )
 
 

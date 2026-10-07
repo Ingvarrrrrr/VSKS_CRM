@@ -292,3 +292,81 @@ async def test_d_tz_not_over_plan_matches_compute_feo_plan_tree_for_manual_sum(d
         total_price=Decimal("150000"),
         item_name="ТЗ между старым и новым планом — раньше блокировало, теперь нет",
     )
+
+
+@pytest.mark.asyncio
+async def test_e_fallback_plan_total_only_no_fake_unit_price(db_session, test_org):
+    """Дефект 1 (прод, заявка №124, владелец 07.10.2026): категория
+    plan_source='planned_items' (умолчание) БЕЗ planned_quantity/planned_amount
+    — план лежит в активных FeoPlannedItem РАЗНЫХ товаров (100 шт бумаги по
+    1 ₽ = 100 ₽; 1 термопот по 1000 ₽). ДО фикса фолбэк в
+    feo_plan_tz_checks.assert_tz_not_over_plan складывал Σquantity=101 и делил
+    Σamount=1100 на неё, выводя выдуманную «среднюю цену за единицу» ≈10,89 ₽ —
+    позиция 2 шт × 400 ₽ (ниже итоговой суммы плана 1100, но выше выдуманной
+    цены) ложно ловилась как нарушение цены за единицу. После фикса
+    planned_qty/planned_unit_price не выставляются вовсе — ограничена только
+    ИТОГОВАЯ сумма (planned_total = Σamount = 1100)."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_category(
+        db_session, subsidy.id, name="Расходные материалы (фолбэк на Σ FeoPlannedItem)",
+        budget=Decimal("1000000"),
+    )
+    await _make_planned_item(db_session, cat.id, amount=100, quantity=100, name="Бумага")
+    await _make_planned_item(db_session, cat.id, amount=1000, quantity=1, name="Термопот")
+
+    # 2 шт × 400 ₽ = 800 — НИЖЕ Σamount (1100). ДО фикса выдуманная цена за
+    # единицу (1100/101 ≈ 10,89 ₽) ловила бы эту позицию как нарушение цены —
+    # теперь нарушений НЕТ (количество/цена за единицу не ограничиваются).
+    await assert_tz_not_over_plan(
+        db_session,
+        feo_planned_item_id=None,
+        feo_category_id=cat.id,
+        quantity=Decimal("2"),
+        unit_price=Decimal("400"),
+        total_price=Decimal("800"),
+        item_name="Фоторамка (в рамках Σ плана, выше выдуманной цены/шт)",
+    )
+
+    # 1 шт × 1200 ₽ — ВЫШЕ Σamount (1100) → нарушение ПО СУММЕ (разница 100).
+    with pytest.raises(HTTPException) as exc_info:
+        await assert_tz_not_over_plan(
+            db_session,
+            feo_planned_item_id=None,
+            feo_category_id=cat.id,
+            quantity=Decimal("1"),
+            unit_price=Decimal("1200"),
+            total_price=Decimal("1200"),
+            item_name="Позиция выше суммы плана",
+        )
+    assert exc_info.value.status_code == 409
+    detail = exc_info.value.detail
+    text = detail if isinstance(detail, str) else str(detail)
+    assert "сумма" in text.lower(), detail
+    assert "количество" not in text.lower(), (
+        f"Количество не должно ограничиваться фолбэком — нарушение обязано быть только по сумме: {detail}"
+    )
+    assert "цена за единицу" not in text.lower(), (
+        f"Цена за единицу не должна ограничиваться фолбэком (выдуманная величина): {detail}"
+    )
+
+    # ТА ЖЕ проверка через collect_tz_over_plan_violations (ПРАВИЛО №6 — один
+    # источник): excess_amount=100 (превышение по сумме), reason упоминает «сумма».
+    from types import SimpleNamespace
+    from app.services.tz_excess_approval import collect_tz_over_plan_violations
+
+    row_ok = SimpleNamespace(
+        feo_category_id=cat.id, feo_planned_item_id=None,
+        quantity=Decimal("2"), unit_price=Decimal("400"), total_price=Decimal("800"),
+        item_name="Фоторамка", over_plan=False,
+    )
+    assert await collect_tz_over_plan_violations(db_session, [row_ok], fallback_category_id=cat.id) == []
+
+    row_over = SimpleNamespace(
+        feo_category_id=cat.id, feo_planned_item_id=None,
+        quantity=Decimal("1"), unit_price=Decimal("1200"), total_price=Decimal("1200"),
+        item_name="Позиция выше суммы плана", over_plan=False,
+    )
+    violations = await collect_tz_over_plan_violations(db_session, [row_over], fallback_category_id=cat.id)
+    assert len(violations) == 1
+    assert violations[0]["excess_amount"] == pytest.approx(100.0)
+    assert "сумма" in violations[0]["reason"].lower()

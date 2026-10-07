@@ -67,6 +67,12 @@ async def wish_tz_over_plan_warnings(db: AsyncSession, wish: Wish) -> list[dict]
             "category_name": cat_names.get(v.get("feo_category_id"), ""),
             "excess_amount": v["excess_amount"],
             "message": v["message"],
+            # reason (задача «превышение 0 ₽», владелец 07.10.2026) — текст
+            # нарушенных величин («цена за единицу: план X, указано Y...»)
+            # БЕЗ хвоста «Измените плановую позицию…» — карточка заявки
+            # показывает его, когда excess_amount по сумме равен 0 (нарушено
+            # количество или цена за единицу, а не сумма).
+            "reason": v.get("reason", ""),
         }
         for v in violations
     ]

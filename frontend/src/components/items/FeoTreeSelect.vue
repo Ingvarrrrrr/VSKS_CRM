@@ -218,27 +218,39 @@
         </v-card>
       </v-menu>
 
-      <!-- Подпись бюджета выбранного листа — как в каскаде.
-           Задача владельца (доработка 2026-09-30): показывать ОБА остатка —
-           «без этой закупки» (X, как приходит с сервера — exclude_purchase_id
+      <!-- Подпись под полем — ПЕРВЫЙ приоритет: те же числа, что строка дерева
+           того же узла (selectedNodeAmountForNote/nodeAmountDisplayFor, ниже) —
+           дефект (владелец, 07.10.2026): подпись брала ДРУГОЙ источник
+           (leaves), и те же цифры у одной статьи расходились с деревом.
+           Фолбэк — leaves/planPositions (ниже, selectedLeafForNote), как в
+           каскаде: ОБА остатка — «без этой закупки» (X, exclude_purchase_id
            уже вычтен на бэке, см. GET /feo-categories/leaves) и «с этой
-           закупкой» (Y = X − сумма позиций ТЕКУЩЕЙ закупки в этой категории,
-           currentPurchaseAmount — пропс, посчитанный в месте использования из
-           позиций НА ЭКРАНЕ, без лишнего запроса). Y может уйти в минус —
-           тот же formatPlanResidual (серый минус), что и у X.
-
-           Владелец не понял, что означает число рядом с подписью «План:»
-           (видел 7 103 ₽ — это план КАТЕГОРИИ, т.е. Σ её плановых позиций,
-           а не сумма самой закупки/позиции — их легко перепутать, если
-           категория называется похоже на предмет закупки). Подпись сделана
-           явной («План категории:»/«Остаток категории…») + title-тултип с
-           полным путём категории и пояснением, что именно считается. -->
+           закупкой» (Y = X − сумма позиций ТЕКУЩЕЙ закупки, currentPurchaseAmount
+           — пропс, посчитанный из позиций НА ЭКРАНЕ). Y может уйти в минус —
+           тот же formatPlanResidual (серый минус), что и у X. -->
       <div
-        v-if="selectedLeafForNote"
+        v-if="selectedNodeAmountForNote"
+        class="feo-tree-note text-caption text-medium-emphasis mt-1 px-1"
+        :title="`«${selectedPath}» — те же числа, что в строке дерева выше (/feo-categories/plan-tree): по ФЭО, запланировано, свободно.`"
+      >
+        По ФЭО: {{ fmt(selectedNodeAmountForNote.budget) }} •
+        запланировано: {{ fmt(selectedNodeAmountForNote.budget - selectedNodeAmountForNote.free) }} •
+        <span :class="freeDisplay(selectedNodeAmountForNote.free).cssClass">{{ freeDisplay(selectedNodeAmountForNote.free).text }}</span>
+        <template v-if="currentPurchaseAmount != null">
+          • в этой закупке: {{ fmt(currentPurchaseAmount) }}
+        </template>
+      </div>
+      <!-- Фолбэк (нет nodeAmounts — например, нет права feo_budget.view_tree_amounts,
+           или место использования не подключило useFeoNodeAmounts): старый источник
+           leaves/planPositions (budget минус суммы в ЗАКУПКАХ, не план) — подпись
+           «По ФЭО:» (leaf.budget — это и есть план ФЭО узла, не план категории
+           в смысле «Запланировано»), во избежание путаницы с nodeAmounts выше. -->
+      <div
+        v-else-if="selectedLeafForNote"
         class="feo-tree-note text-caption text-medium-emphasis mt-1 px-1"
         :title="`«${selectedPath}» — считается только по плановым позициям этой категории ФЭО. Закупки на стадии заявки в остатке не учитываются.`"
       >
-        План категории: {{ fmt(selectedLeafForNote.budget) }} •
+        По ФЭО: {{ fmt(selectedLeafForNote.budget) }} •
         <span :class="residualDisplay(selectedLeafForNote.residual, 'Остаток категории без этой закупки:').cssClass">{{ residualDisplay(selectedLeafForNote.residual, 'Остаток категории без этой закупки:').text }}</span>
         <template v-if="currentPurchaseAmount != null">
           •
@@ -498,6 +510,20 @@ function nodeAmountDisplayFor(nodeId: number): { budget: number; free: number } 
   if (!showNodeAmounts.value || !props.nodeAmounts) return null
   return props.nodeAmounts[nodeId] ?? null
 }
+
+// Дефект (владелец, 07.10.2026): подпись под полем брала ДРУГОЙ источник
+// (leaves/planPositions — budget минус суммы в ЗАКУПКАХ), чем строка дерева
+// того же узла (nodeAmountDisplayFor — budget минус ПЛАН, из /plan-tree) — те
+// же цифры у одной статьи расходились на экране («План категории 3 029 000 •
+// Остаток 3 029 000» под полем, а «по ФЭО 3 029 000 · своб. 2 483 279» в
+// дереве). Если для выбранного узла есть nodeAmountDisplayFor — подпись
+// обязана брать ЕГО (ПРАВИЛО №6, один источник): leaves остаётся только
+// фолбэком (showNodeAmounts=false — нет права feo_budget.view_tree_amounts,
+// или nodeAmounts не передан местом использования).
+const selectedNodeAmountForNote = computed((): { budget: number; free: number } | null => {
+  if (props.modelValue == null) return null
+  return nodeAmountDisplayFor(props.modelValue)
+})
 
 // Поле остатка на листе — то же, что берёт FeoCascadeSelect (budget/residual из FeoLeaf),
 // с фолбэком на планPositions (см. planNoteFor).

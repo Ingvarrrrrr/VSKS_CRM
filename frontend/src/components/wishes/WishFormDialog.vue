@@ -237,7 +237,12 @@
               :key="`${w.feo_category_id}-${wi}`"
               :class="{ 'mt-1': wi > 0 }"
             >
-              Сумма выше плана ФЭО: «{{ w.category_name }}» — превышение {{ ctx.formatPrice(w.excess_amount ?? 0) }} ({{ w.item_name }})
+              <template v-if="(w.excess_amount ?? 0) > 0.005">
+                Сумма выше плана ФЭО: «{{ w.category_name }}» — превышение {{ ctx.formatPrice(w.excess_amount ?? 0) }} ({{ w.item_name }})
+              </template>
+              <template v-else>
+                «{{ w.item_name }}»: выше плановой позиции — {{ w.reason || w.message }}
+              </template>
             </div>
             <div class="mt-2 text-medium-emphasis">
               <template v-if="canDecideWish">

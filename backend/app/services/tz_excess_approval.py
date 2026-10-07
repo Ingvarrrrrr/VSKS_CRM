@@ -65,7 +65,6 @@ assert_no_unapproved_excess САМ ПО СЕБЕ НЕ блокирует сам�
 затронутым категориям — та же семантика «approved снимает блок», что и у
 assert_no_unapproved_excess, но не дублирует её код и не трогает feo_plan.py).
 """
-import json
 from decimal import Decimal
 from typing import Optional
 
@@ -73,17 +72,17 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.feo_plan import assert_tz_not_over_plan
+from app.services.feo_plan_tz_checks import tz_over_plan_violations, tz_excess_amount
 from app.services import plan_excess_kinds as PEK
 
 
 def _funding_hint_header(cat_violations: list[dict]) -> dict:
     """Заголовок X-Funding-Hint (владелец, доп. контракт 05.10.2026) — первое
-    нарушение категории уже несёт feo_planned_item_id/excess_amount (см.
-    _tz_check_units/collect_tz_over_plan_violations выше — excess_amount там
-    ПРЕВЫШЕНИЕ над планом, НЕ сама сумма ТЗ, которую несёт поле "amount",
-    используемое для другой величины — PlanExcessApproval.excess_amount,
-    ПРАВИЛО №6: это поведение не трогаем, читаем excess_amount отдельно).
+    нарушение категории уже несёт feo_planned_item_id/excess_amount, считанный
+    tz_excess_amount (app.services.feo_plan_tz_checks, ПРАВИЛО №6 — одна
+    формула «превышение = max(сумма − план, 0)», не вторая). excess_amount
+    отдельно от поля "amount" (сама сумма ТЗ, используется для другой
+    величины — PlanExcessApproval.excess_amount, это поведение не трогаем).
     Local import — см. аналогичный приём в
     app.services.feo_plan_tz_checks._funding_hint_header."""
     from app.services.plan_funding_sources import build_funding_hint_header
@@ -174,55 +173,57 @@ async def collect_tz_over_plan_violations(
 ) -> list[dict]:
     """Считает ТЕ ЖЕ нарушения, что бросил бы
     feo_plan.assert_tz_batch_not_over_plan(db, items, fallback_category_id=...),
-    но НЕ бросает — ловит HTTPException каждой единицы (см. _tz_check_units) по
-    отдельности и возвращает список {feo_category_id, item_name, amount, message}.
+    но НЕ бросает — вызывает ПРЯМО tz_over_plan_violations (см. _tz_check_units
+    выше для группировки) для каждой единицы и возвращает список
+    {feo_category_id, item_name, amount, excess_amount, reason, message}.
 
     Пустой список — превышений нет (обычный путь для подавляющего большинства
     заявок — вызывающему коду ничего дальше делать не нужно).
+
+    reason (новое поле, задача «превышение 0 ₽», владелец 07.10.2026) — ТОЛЬКО
+    перечисление нарушенных величин ("; ".join(violations)), БЕЗ хвоста
+    «Измените плановую позицию…» из текста 409 — карточка заявки/закупки
+    показывает reason рядом со своим собственным текстом предупреждения, не
+    текстом отказа. message — полный текст (как раньше, для мест, которые уже
+    читают его как есть, например purchase_transition_core.py).
     """
     violations: list[dict] = []
     for unit in _tz_check_units(items, fallback_category_id):
-        try:
-            await assert_tz_not_over_plan(
-                db,
-                feo_planned_item_id=unit["feo_planned_item_id"],
-                feo_category_id=unit["feo_category_id"],
-                quantity=unit["quantity"],
-                unit_price=unit["unit_price"],
-                total_price=unit["total_price"],
-                item_name=unit["item_name"],
-                sibling_quantity=unit["sibling_quantity"],
-                sibling_total=unit["sibling_total"],
-            )
-        except HTTPException as e:
-            msg = e.detail if isinstance(e.detail, str) else str(e.detail)
-            total = Decimal(str(unit["total_price"] or 0)) + Decimal(str(unit["sibling_total"] or 0))
-            # excess_amount (владелец, доп. контракт 05.10.2026, X-Funding-Hint) —
-            # ПРЕВЫШЕНИЕ ТЗ над планом (НЕ сама сумма ТЗ, см. "amount" ниже,
-            # который остаётся как раньше для register_tz_excess_approvals —
-            # ПРАВИЛО №6, существующее поведение не трогаем), читается из
-            # заголовка X-Funding-Hint, который assert_tz_not_over_plan уже
-            # проставляет на КАЖДОМ своём 409 (app.services.feo_plan_tz_checks.
-            # _funding_hint_header) — одна и та же величина, не вторая формула.
-            # Фолбэк на "amount" (total), если заголовок почему-то не пришёл —
-            # не должно случаться, но не теряем данные молча.
-            excess_amount = float(total)
-            hint_header = (e.headers or {}).get("X-Funding-Hint") if hasattr(e, "headers") else None
-            if hint_header:
-                try:
-                    hint_amount = json.loads(hint_header).get("amount")
-                    if hint_amount is not None:
-                        excess_amount = float(hint_amount)
-                except (ValueError, TypeError):
-                    pass
-            violations.append({
-                "feo_category_id": unit["feo_category_id"],
-                "feo_planned_item_id": unit["feo_planned_item_id"],
-                "item_name": unit["item_name"],
-                "amount": float(total),
-                "excess_amount": excess_amount,
-                "message": msg,
-            })
+        result = await tz_over_plan_violations(
+            db,
+            feo_planned_item_id=unit["feo_planned_item_id"],
+            feo_category_id=unit["feo_category_id"],
+            quantity=unit["quantity"],
+            unit_price=unit["unit_price"],
+            total_price=unit["total_price"],
+            item_name=unit["item_name"],
+            sibling_quantity=unit["sibling_quantity"],
+            sibling_total=unit["sibling_total"],
+        )
+        if not result["violations"]:
+            continue
+
+        # reason/message готовы в tz_over_plan_violations — ЕДИНСТВЕННОЕ место,
+        # где собирается этот текст (ПРАВИЛО №6, доработка 07.10.2026: раньше
+        # собирались ВТОРОЙ копией той же f-string здесь).
+        reason = result["reason"]
+        total = Decimal(str(unit["total_price"] or 0)) + Decimal(str(unit["sibling_total"] or 0))
+        # excess_amount (владелец, доп. контракт 05.10.2026, X-Funding-Hint) —
+        # ПРЕВЫШЕНИЕ ТЗ над планом (НЕ сама сумма ТЗ, см. "amount" ниже,
+        # который остаётся как раньше для register_tz_excess_approvals —
+        # ПРАВИЛО №6, существующее поведение не трогаем) — та же формула
+        # tz_excess_amount, что ставит X-Funding-Hint в assert_tz_not_over_plan
+        # (app.services.feo_plan_tz_checks), не вторая.
+        excess_amount = float(tz_excess_amount(result["total_d"], result["planned_total"]))
+        violations.append({
+            "feo_category_id": unit["feo_category_id"],
+            "feo_planned_item_id": unit["feo_planned_item_id"],
+            "item_name": unit["item_name"],
+            "amount": float(total),
+            "excess_amount": excess_amount,
+            "reason": reason,
+            "message": result["message"],
+        })
     return violations
 
 

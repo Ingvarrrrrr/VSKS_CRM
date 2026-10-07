@@ -141,6 +141,12 @@ export interface WishTzOverPlanWarning {
   category_name: string
   excess_amount: number
   message: string
+  // «превышение 0 ₽» (владелец, 07.10.2026): excess_amount — ПРЕВЫШЕНИЕ ПО
+  // СУММЕ (может быть 0, если нарушены количество/цена за единицу, а не
+  // сумма). reason — человеческий текст именно нарушенных величин («цена за
+  // единицу: план X, указано Y...»), без хвоста «Измените плановую позицию…» —
+  // карточка показывает его вместо «превышение 0 ₽», когда excess_amount≈0.
+  reason?: string
 }
 
 export interface Subsidy {

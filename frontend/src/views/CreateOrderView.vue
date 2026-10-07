@@ -476,6 +476,7 @@
                 :root-label="selectedSubsidyName"
                 :readonly="isFeoHeaderLocked"
                 :current-purchase-amount="feoCurrentCategoryOwnAmount"
+                :node-amounts="feoHeaderNodeAmounts"
                 @pick-unallocated="onFeoPickUnallocated"
               />
               <!-- Замок категории (владелец, 2026-09-20): «категория закупки из
@@ -2073,6 +2074,7 @@ import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { useFeoTreeNodes } from '@/composables/useFeoTreeNodes'
+import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { numOrNull } from '@/utils/numberFormat'
 // item-forms-accommodation-transport.md: contractFormOptions — единственный
@@ -3488,6 +3490,11 @@ const contractDocTypeMap: Record<string, string> = {
   services_accommodation:     'contract_services_accommodation',
   services_accommodation_food: 'contract_services_accommodation_food',
   services_transport:         'contract_services_transport',
+  // Авиа/ж.д. билеты (владелец, п. С4, 30.09) — тот же принцип фолбэка
+  // (contract_services.docx), что у accommodation/transport выше, см.
+  // doc_types.py::DOC_TYPE_FALLBACK_FILES.
+  services_flight:            'contract_services_flight',
+  services_train:             'contract_services_train',
   goods_single:               'contract_goods_single',
   gph_individual:             'contract_gph_individual',
   gph_individual_rid:         'contract_gph_individual_rid',
@@ -3755,6 +3762,16 @@ const { feoTreeNodes, rawNodes: feoTreeRawNodes } = useFeoTreeNodes(
   computed(() => formMode.value === 'advance_report'),
 )
 const feoNodeById = computed(() => new Map(feoTreeNodes.value.map(n => [n.id, n])))
+
+// Остаток по КАЖДОМУ узлу дерева шапки (владелец, 07.10.2026: подпись под
+// деревом в шапке закупки не совпадала с числами строки дерева — здесь этот
+// проп раньше не подключался вовсе, FeoTreeSelect тихо падал на фолбэк
+// leaves). Та же точка подключения, что у заявки — useWishForm.ts:316
+// (wishNodeAmounts) — здесь второй отдельной загрузки под шапку закупки не
+// было, поэтому заводим именно так, не копируя чужой инстанс.
+const { nodeAmounts: feoHeaderNodeAmounts } = useFeoNodeAmounts({
+  subsidyId: computed(() => form.subsidy_id),
+})
 const feoSelectedIsLeaf = computed(() => (form.feo_category_id != null ? (feoNodeById.value.get(form.feo_category_id)?.is_leaf ?? false) : false))
 const feoSelectedLevel = computed(() => (form.feo_category_id != null ? (feoNodeById.value.get(form.feo_category_id)?.level ?? null) : null))
 

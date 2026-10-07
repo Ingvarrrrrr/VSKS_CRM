@@ -144,6 +144,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
+import { useLatestRequest } from '@/composables/useLatestRequest'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
@@ -826,13 +827,20 @@ async function loadFeo(subsidyId: number) {
 }
 
 // Обновление данных «из заявок» без сброса раскрытых папок.
+// Гонка 06.10 (баннер сверки показал цифры чужой субсидии после переключения) —
+// тот же класс проблемы: субсидию могут переключить, пока эти три запроса ещё
+// летят. Guard (useLatestRequest.ts, ПРАВИЛО №6) не даёт записать ответ по
+// старой субсидии после смены selectedId.
+const refreshReqGuard = useLatestRequest()
 async function refreshReqData(catId?: number) {
   if (!selectedId.value) return
+  const token = refreshReqGuard.next()
   const [totals, items, planTree] = await Promise.all([
     apiFetch<Record<number, { total: number; qty: number; total_linked?: number; qty_linked?: number; total_over?: number; qty_over?: number; forecast?: number; forecast_over?: number; plan_manual?: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${selectedId.value}`),
     apiFetch<Record<number, FeoReqItem[]>>(`/feo-categories/planned-purchase-items?subsidy_id=${selectedId.value}`),
     apiFetch<Record<string, any>>(`/feo-categories/plan-tree?subsidy_id=${selectedId.value}`),
   ])
+  if (!refreshReqGuard.isCurrent(token)) return // субсидию переключили, пока ждали ответ
   feoTreeState.planTreeByCat.value = feoTreeState.splitPlanTree(planTree)
   feoTreeExcess.loadPlanExcessApprovals(selectedId.value)
   const sums: Record<number, number> = {}
@@ -876,20 +884,24 @@ async function refreshReqData(catId?: number) {
 
 // ── Actions ───────────────────────────────────────
 // 12-04: load FEO residuals for selected subsidy
+// Тот же guard, что и refreshReqData — субсидию могли переключить за время запроса.
+const residualsGuard = useLatestRequest()
 async function loadResiduals() {
   if (!selectedId.value) return
+  const token = residualsGuard.next()
   residualsLoading.value = true
   try {
     const data = await apiFetch<any[]>(`/feo-planned-items/residuals?subsidy_id=${selectedId.value}`)
+    if (!residualsGuard.isCurrent(token)) return
     const byItemId: Record<number, any> = {}
     for (const item of data) {
       byItemId[item.feo_item_id] = item
     }
     feoResiduals.value = byItemId
   } catch (e) {
-    console.error('Failed to load residuals', e)
+    if (residualsGuard.isCurrent(token)) console.error('Failed to load residuals', e)
   } finally {
-    residualsLoading.value = false
+    if (residualsGuard.isCurrent(token)) residualsLoading.value = false
   }
 }
 

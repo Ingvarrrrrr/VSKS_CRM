@@ -38,6 +38,18 @@
     Выписка по этой субсидии не загружена или не отнесена к ней (проверьте номер соглашения)
   </div>
 
+  <!-- Общий номер соглашения с другой субсидией (инцидент 06.10, ФАДМ 2026_2 ↔
+       ФАДМ_2026) — строки выписки видны обеим, но закупка уже в другой. Не
+       проблема этой субсидии, просто информируем, серым, без кнопки сверки. -->
+  <div
+    v-if="otherSubsidiesList.length"
+    class="text-caption text-medium-emphasis mb-4"
+  >
+    <div v-for="os in otherSubsidiesList" :key="os.id">
+      {{ os.count }} платёжек на {{ formatCurrency(os.total) }} уже в закупках субсидии «{{ os.name }}»
+    </div>
+  </div>
+
   <SubsidyPaymentControlDialog
     v-model="dialog"
     :subsidy-id="props.subsidyId"
@@ -50,7 +62,7 @@
 // PaidConfirmationsPanel (см. views/SubsidiesView.vue). Источник данных —
 // общий composable useSubsidyPaymentControl.ts (ПРАВИЛО №6): и баннер, и
 // диалог сверки читают один и тот же control.data, не дублируют fetch.
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useSubsidyPaymentControl } from '@/composables/subsidies/useSubsidyPaymentControl'
 import { formatCurrency } from '@/composables/subsidies/format'
 import SubsidyPaymentControlDialog from '@/components/subsidies/SubsidyPaymentControlDialog.vue'
@@ -59,6 +71,8 @@ const props = defineProps<{ subsidyId: number | null | undefined }>()
 
 const control = useSubsidyPaymentControl()
 const dialog = ref(false)
+
+const otherSubsidiesList = computed(() => control.data.value?.other_subsidies || [])
 
 function fmtDate(d: string | null): string {
   if (!d) return '—'

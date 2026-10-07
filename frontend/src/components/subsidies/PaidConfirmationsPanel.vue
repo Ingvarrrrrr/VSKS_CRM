@@ -165,6 +165,7 @@ import { useToast } from '@/composables/useToast'
 import { describeApiError } from '@/utils/apiErrorMessage'
 import PaymentPurposeCell from '@/components/subsidies/PaymentPurposeCell.vue'
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
+import { useLatestRequest } from '@/composables/useLatestRequest'
 
 const props = defineProps<{ subsidyId: number | null | undefined }>()
 
@@ -208,22 +209,34 @@ function isRetryableCheckError(e: any): boolean {
   return status === 502 || status === 503 || status === 504 || !status
 }
 
-async function checkUncheckedVisible() {
+// Инцидент 06.10 (ФАДМ 2026_2 ↔ ФАДМ_2026): владелец переключает субсидию,
+// пока порционная проверка старой ещё идёт — без guard'а ответы по старой
+// субсидии дописывались бы в checkErrors уже на экране новой. requestGuard
+// (ПРАВИЛО №6, тот же хелпер useLatestRequest.ts что и useSubsidyPaymentControl.ts)
+// прерывает цикл порций старой субсидии при смене props.subsidyId.
+const requestGuard = useLatestRequest()
+
+async function checkUncheckedVisible(token?: number) {
+  const myToken = token ?? requestGuard.next()
   const pending = visibleRows.value.filter(r => !r.checked && !checkErrors.value[r.id])
   for (let i = 0; i < pending.length; i += CHECK_CHUNK_SIZE) {
+    if (!requestGuard.isCurrent(myToken)) return // субсидия сменилась — бросить проверку старой
     const chunk = pending.slice(i, i + CHECK_CHUNK_SIZE).map(r => r.id)
     if (!chunk.length) continue
     try {
       await confirmations.checkRows(props.subsidyId, chunk)
     } catch (e: any) {
+      if (!requestGuard.isCurrent(myToken)) return
       if (isRetryableCheckError(e)) {
         try {
           await confirmations.checkRows(props.subsidyId, chunk)
+          if (!requestGuard.isCurrent(myToken)) return
           continue
         } catch (e2: any) {
           e = e2
         }
       }
+      if (!requestGuard.isCurrent(myToken)) return
       const msg = describeApiError(e, { fallback: 'не удалось проверить' })
       const next = { ...checkErrors.value }
       for (const id of chunk) next[id] = msg
@@ -284,10 +297,12 @@ async function submitReject() {
 }
 
 watch(() => props.subsidyId, async (id) => {
+  const token = requestGuard.next()
   visibleCount.value = PAGE_SIZE
   checkErrors.value = {}
   await confirmations.loadPending(id)
-  await checkUncheckedVisible()
+  if (!requestGuard.isCurrent(token)) return // субсидию опять переключили за время loadPending
+  await checkUncheckedVisible(token)
 }, { immediate: true })
 </script>
 

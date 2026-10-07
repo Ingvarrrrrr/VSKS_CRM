@@ -129,6 +129,14 @@
             <template v-else-if="r.status === 'declared_unconfirmed'">
               <span class="text-caption" style="color:#b58900">отмечено вручную, выпиской не подтверждено</span>
             </template>
+
+            <template v-else-if="r.status === 'in_other_subsidy'">
+              <!-- Общий номер соглашения с другой субсидией (06.10) — платёжка
+                   уже в чужой закупке, привязывать здесь нечего и не нужно. -->
+              <span class="text-caption text-medium-emphasis">
+                уже в закупке субсидии «{{ r.other_subsidy?.name || '—' }}»
+              </span>
+            </template>
           </td>
         </tr>
       </tbody>

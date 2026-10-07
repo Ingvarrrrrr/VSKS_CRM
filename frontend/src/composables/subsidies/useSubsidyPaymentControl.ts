@@ -11,6 +11,7 @@
 //   POST /subsidies/{id}/payment-control/bank-payments/{bp_id}/create-purchase  { feo_category_id? }
 import { ref } from 'vue'
 import { apiFetch } from '@/api'
+import { useLatestRequest } from '@/composables/useLatestRequest'
 
 export interface PaymentControlTotals {
   executed_total: number
@@ -30,6 +31,19 @@ export interface PaymentControlTotals {
   unattached_count?: number
   unattached_total?: number
   unattached_numbers?: string[]
+  // Платёжки выписки этой субсидии, у которых закупка уже привязана к ДРУГОЙ
+  // субсидии (общий номер соглашения — subsidy_scope_clause видит строку
+  // обеим) — не «без закупки», просто не её закупка. Инцидент 06.10: ФАДМ 2026_2
+  // (id 89) и ФАДМ_2026 (id 7) с общим номером соглашения.
+  in_other_subsidies_count?: number
+  in_other_subsidies_total?: number
+}
+
+export interface PaymentControlOtherSubsidy {
+  id: number
+  name: string
+  count: number
+  total: number
 }
 
 export interface PaymentControlCounts {
@@ -60,7 +74,12 @@ export interface PaymentControlArticle {
 
 export type PaymentControlRowStatus =
   | 'match' | 'amount_mismatch' | 'registry_only' | 'purchases_only'
-  | 'duplicate' | 'not_reconciled' | 'declared_unconfirmed'
+  | 'duplicate' | 'not_reconciled' | 'declared_unconfirmed' | 'in_other_subsidy'
+
+export interface PaymentControlRowOtherSubsidy {
+  id: number
+  name: string
+}
 
 export interface PaymentControlRowPurchase {
   id: number
@@ -106,6 +125,8 @@ export interface PaymentControlRow {
   duplicate_with: string[]
   // Только для status==='registry_only' — подсказки «почти совпало».
   near_miss?: PaymentControlNearMiss[]
+  // Только для status==='in_other_subsidy' — закупка, в которой уже числится эта платёжка.
+  other_subsidy?: PaymentControlRowOtherSubsidy | null
 }
 
 export interface PaymentControlNotExecuted {
@@ -125,6 +146,11 @@ export interface PaymentControlData {
   articles: PaymentControlArticle[]
   rows: PaymentControlRow[]
   not_executed: PaymentControlNotExecuted[]
+  // Субсидии, в чьих закупках найдены платёжки выписки этой субсидии (общий
+  // номер соглашения) — для серой строки в баннере. Может отсутствовать
+  // (пустой список на бэкенде сериализуется как [], но на старом контракте
+  // поля не было).
+  other_subsidies?: PaymentControlOtherSubsidy[]
 }
 
 export interface PaymentControlDirectoryEntry {
@@ -160,19 +186,28 @@ export function useSubsidyPaymentControl() {
   const codesSaving = ref(false)
 
   let currentSubsidyId: number | null | undefined = null
+  // Инцидент 06.10: владелец переключил субсидию 7 → 89, ответ по 7 (считался
+  // дольше) пришёл ПОСЛЕ ответа по 89 и затёр верные данные — отбрасываем
+  // ответ, если за время await уже стартовал более новый load()/loadCodes().
+  const loadGuard = useLatestRequest()
+  const codesGuard = useLatestRequest()
 
   async function load(subsidyId: number | null | undefined) {
     currentSubsidyId = subsidyId
+    const token = loadGuard.next()
     if (!subsidyId) { data.value = null; return }
     loading.value = true
     loadError.value = null
     try {
-      data.value = await apiFetch<PaymentControlData>(`/subsidies/${subsidyId}/payment-control`)
+      const res = await apiFetch<PaymentControlData>(`/subsidies/${subsidyId}/payment-control`)
+      if (!loadGuard.isCurrent(token)) return
+      data.value = res
     } catch (e: any) {
+      if (!loadGuard.isCurrent(token)) return
       loadError.value = e?.payload?.message || e?.detail || e?.message || 'Не удалось загрузить сверку по выписке'
       data.value = null
     } finally {
-      loading.value = false
+      if (loadGuard.isCurrent(token)) loading.value = false
     }
   }
 
@@ -181,12 +216,15 @@ export function useSubsidyPaymentControl() {
   }
 
   async function loadCodes(subsidyId: number | null | undefined) {
+    const token = codesGuard.next()
     if (!subsidyId) { codesData.value = null; return }
     codesLoading.value = true
     try {
-      codesData.value = await apiFetch<PaymentControlCodesResponse>(`/subsidies/${subsidyId}/payment-control/codes`)
+      const res = await apiFetch<PaymentControlCodesResponse>(`/subsidies/${subsidyId}/payment-control/codes`)
+      if (!codesGuard.isCurrent(token)) return
+      codesData.value = res
     } finally {
-      codesLoading.value = false
+      if (codesGuard.isCurrent(token)) codesLoading.value = false
     }
   }
 

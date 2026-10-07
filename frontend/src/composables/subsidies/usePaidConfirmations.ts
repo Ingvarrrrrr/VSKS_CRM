@@ -16,6 +16,7 @@
 // панель дозапрашивает проверку порциями через checkRows().
 import { ref } from 'vue'
 import { apiFetch } from '@/api'
+import { useLatestRequest } from '@/composables/useLatestRequest'
 
 export interface PaidConfirmationPayment {
   id: number
@@ -71,7 +72,14 @@ export function usePaidConfirmations() {
   // id запросов, для которых сейчас идёт подтверждение/отклонение (кнопки-лоадеры)
   const actingId = ref<number | null>(null)
 
+  // Та же гонка, что в useSubsidyPaymentControl.ts (инцидент 06.10, ФАДМ 2026_2
+  // ↔ ФАДМ_2026): список по старой субсидии мог считаться дольше и прийти
+  // ПОСЛЕ списка по новой — guard отбрасывает запись items/loadError/loading,
+  // если за время await уже стартовал более новый loadPending()/checkRows().
+  const guard = useLatestRequest()
+
   async function loadPending(subsidyId: number | null | undefined) {
+    const token = guard.next()
     if (!subsidyId) { items.value = []; return }
     loading.value = true
     loadError.value = null
@@ -79,12 +87,14 @@ export function usePaidConfirmations() {
       const res = await apiFetch<{ items: PaidConfirmation[] }>(
         `/subsidies/${subsidyId}/paid-confirmations?status=pending`,
       )
+      if (!guard.isCurrent(token)) return
       items.value = res.items || []
     } catch (e: any) {
+      if (!guard.isCurrent(token)) return
       loadError.value = e?.payload?.message || e?.detail || e?.message || 'Не удалось загрузить запросы на подтверждение оплаты'
       items.value = []
     } finally {
-      loading.value = false
+      if (guard.isCurrent(token)) loading.value = false
     }
   }
 
@@ -93,10 +103,12 @@ export function usePaidConfirmations() {
   // Ошибку не глотаем — панель показывает причину и даёт повторить.
   async function checkRows(subsidyId: number | null | undefined, ids: number[]): Promise<void> {
     if (!subsidyId || !ids.length) return
+    const token = guard.next()
     const res = await apiFetch<{ items: Array<{ id: number; blocked_reason: string | null; plan_excess_warning: string | null }> }>(
       `/subsidies/${subsidyId}/paid-confirmations/check`,
       { method: 'POST', body: JSON.stringify({ ids }) },
     )
+    if (!guard.isCurrent(token)) return // субсидия сменилась — ответ по старой не пишем
     const byId = new Map(res.items.map(it => [it.id, it]))
     items.value = items.value.map(row => {
       const found = byId.get(row.id)

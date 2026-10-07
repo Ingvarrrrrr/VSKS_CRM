@@ -87,6 +87,7 @@ class _Row:
     unknown_code: bool
     duplicate_with: list
     near_miss: list
+    other_subsidy: Optional[dict] = None
 
 
 def _purchase_brief(p: Purchase, amount: Decimal) -> dict:
@@ -134,6 +135,36 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
     if purchase_ids:
         prows = (await db.execute(select(Purchase).where(Purchase.id.in_(purchase_ids)))).scalars().all()
         purchase_map = {p.id: p for p in prows}
+
+    # ------------------------------------------------------------------
+    # Строки выписки, уже «пойманные» закупкой ДРУГОЙ субсидии (инцидент
+    # 06.10: ФАДМ 2026_2/id 89 и ФАДМ_2026/id 7 — общий номер соглашения,
+    # subsidy_scope_clause() видит одни и те же 122 строки обеим; у 89 есть
+    # закупки с payments.bank_payment_id на эти строки, у 7 — нет, и 7 считала
+    # их «без закупки», хотя они просто принадлежат 89). Один SELECT, тот же
+    # bp_rows-скоуп, без повторного запроса subsidy_scope_clause.
+    other_bp_ids = [bp.id for bp in bp_rows if bp.id not in payments_by_bp]
+    other_subsidy_by_bp: dict[int, dict] = {}
+    other_subsidies_totals: dict[int, dict] = {}
+    if other_bp_ids:
+        other_rows = (await db.execute(
+            select(Payment.bank_payment_id, Payment.amount, Purchase.subsidy_id, Subsidy.name)
+            .join(Purchase, Purchase.id == Payment.purchase_id)
+            .join(Subsidy, Subsidy.id == Purchase.subsidy_id)
+            .where(
+                Payment.confirmed_by_statement.is_(True),
+                Payment.bank_payment_id.in_(other_bp_ids),
+                Purchase.subsidy_id != subsidy.id,
+            )
+        )).all()
+        for bank_payment_id, _pay_amount, other_subsidy_id, other_subsidy_name in other_rows:
+            # Первое найденное совпадение на bank_payment_id — этого достаточно
+            # для подсказки «уже в закупке субсидии X»; несколько совпадений на
+            # одну строку выписки в разных ДРУГИХ субсидиях — редкий край
+            # случай, не наш контроль (у него своя сверка).
+            other_subsidy_by_bp.setdefault(bank_payment_id, {
+                "id": other_subsidy_id, "name": other_subsidy_name,
+            })
 
     rows: list[_Row] = []
     counts: dict[str, int] = defaultdict(int)
@@ -183,8 +214,13 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
         linked = payments_by_bp.get(bp.id, [])
         matched_amount = sum((Decimal(str(pay.amount or 0)) for pay in linked), Decimal(0))
         diff = amount - matched_amount
+        # Только для строк, которые эта субсидия ВООБЩЕ ищет среди закупок
+        # (search_this) и не нашла у себя (not linked) — иначе not_reconciled
+        # (код не отмечен для поиска) неверно попадал бы в other_subsidies и
+        # вычитался из reconciled_total, которого для него и не было.
+        other_subsidy_info = other_subsidy_by_bp.get(bp.id) if (search_this and not linked) else None
 
-        if search_this:
+        if search_this and not other_subsidy_info:
             stmt_search_count += 1
             if linked:
                 attached_count += 1
@@ -193,7 +229,20 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
                 unattached_total += amount
                 unattached_numbers.append(bp.payment_number or f"№{bp.id}")
 
-        if not search_this:
+        if other_subsidy_info and not linked:
+            # Уже найдена в закупке ДРУГОЙ субсидии — не «без закупки» этой
+            # субсидии, в difference/alarm/unattached не попадает (вычитается
+            # из reconciled_total ниже, ПРАВИЛО №6 — тот же difference, не
+            # второй расчёт).
+            status = "in_other_subsidy"
+            diff = Decimal(0)
+            agg = other_subsidies_totals.setdefault(other_subsidy_info["id"], {
+                "id": other_subsidy_info["id"], "name": other_subsidy_info["name"],
+                "count": 0, "total": Decimal(0),
+            })
+            agg["count"] += 1
+            agg["total"] += amount
+        elif not search_this:
             status = "not_reconciled"
         elif linked:
             bucket["matched_total"] += matched_amount
@@ -225,6 +274,7 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             unknown_code=unknown,
             duplicate_with=[],
             near_miss=[],
+            other_subsidy=other_subsidy_info if status == "in_other_subsidy" else None,
         ))
 
     # ------------------------------------------------------------------
@@ -382,7 +432,13 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
     unknown_code_total = sum(
         (b["statement_total"] for b in article_stat.values() if b["unknown"]), Decimal(0),
     )
-    difference = reconciled_total - found_in_purchases
+    # Строки, пойманные закупкой другой субсидии, лежат внутри bucket["statement_total"]
+    # (код статьи общий), но это не «наши» деньги без закупки — вычитаем их из
+    # reconciled_total, чтобы difference/alarm не врали (ПРАВИЛО №6: один difference,
+    # не второй расчёт параллельно с этим).
+    in_other_subsidies_total = sum((a["total"] for a in other_subsidies_totals.values()), Decimal(0))
+    in_other_subsidies_count = sum((a["count"] for a in other_subsidies_totals.values()), 0)
+    difference = (reconciled_total - in_other_subsidies_total) - found_in_purchases
 
     not_executed_total = sum((Decimal(str(bp.amount or 0)) for bp in not_executed), Decimal(0))
 
@@ -429,11 +485,12 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             "unknown_code": r.unknown_code,
             "duplicate_with": r.duplicate_with,
             "near_miss": r.near_miss,
+            "other_subsidy": r.other_subsidy,
         }
 
     status_order = {
         "amount_mismatch": 0, "registry_only": 1, "duplicate": 2, "declared_unconfirmed": 3,
-        "not_reconciled": 4, "purchases_only": 5, "match": 6,
+        "not_reconciled": 4, "purchases_only": 5, "match": 6, "in_other_subsidy": 7,
     }
     rows.sort(key=lambda r: (status_order.get(r.status, 99), r.payment_number or ""))
 
@@ -470,6 +527,10 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             "unattached_count": unattached_count,
             "unattached_total": float(unattached_total),
             "unattached_numbers": unattached_numbers,
+            # Задача 06.10 (ФАДМ 2026_2 ↔ ФАДМ_2026) — платёжки, уже привязанные
+            # к закупке ДРУГОЙ субсидии; не входят ни в unattached, ни в difference.
+            "in_other_subsidies_count": in_other_subsidies_count,
+            "in_other_subsidies_total": float(in_other_subsidies_total),
         },
         "counts": {
             "match": counts.get("match", 0),
@@ -483,4 +544,8 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
         "articles": articles_out,
         "rows": [_row_to_dict(r) for r in rows],
         "not_executed": not_executed_out,
+        "other_subsidies": [
+            {"id": a["id"], "name": a["name"], "count": a["count"], "total": float(a["total"])}
+            for a in sorted(other_subsidies_totals.values(), key=lambda a: a["name"] or "")
+        ],
     }

@@ -18,7 +18,7 @@ import { useFeoCategoryPlanDialog } from './useFeoCategoryPlanDialog'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 
 type PlannedItemsCtx = Pick<SubsidyDetailContext,
-  'selectedId' | 'feoCategories' | 'loadFeo' | 'comparisonData' | 'refreshComparison' | 'ensureComparison' | 'refreshReqData' | 'factForPlanned'>
+  'selectedId' | 'feoCategories' | 'loadFeo' | 'comparisonData' | 'refreshComparison' | 'ensureComparison' | 'refreshReqData' | 'factForPlanned' | 'feoTableArea'>
 
 export function usePlannedItems(ctx?: PlannedItemsCtx) {
   return {

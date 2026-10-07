@@ -1668,6 +1668,7 @@
         v-if="isEdit && purchaseId"
         :purchase-id="purchaseId"
         :linked-tasks="linkedTasks"
+        :linked-tasks-error="linkedTasksError"
         :open-create-linked-task="openCreateLinkedTask"
         :task-status-color="taskStatusColor"
         :task-priority-color="taskPriorityColor"
@@ -3430,7 +3431,7 @@ async function loadAllUsers() {
   } catch {}
 }
 const {
-  linkedTasks, linkedTaskDialog, linkedTaskSaving, linkedTaskForm,
+  linkedTasks, linkedTaskDialog, linkedTaskSaving, linkedTaskForm, linkedTasksError,
   loadLinkedTasks, openCreateLinkedTask, saveLinkedTask,
   linkTaskDialog, linkTaskSearch, linkTaskResults, linkTaskSearching,
   searchUnlinkedTasks, linkExistingTask, unlinkTask,

@@ -32,9 +32,10 @@ from __future__ import annotations
 
 # code → {label, fields: [{key, label, type, options?, default?, hint?,
 #         custom_editor?}], formula}
-# type: text | number | select | datetime | switch | custom (custom — поле не
-# рендерится generic-рендером ItemFormFields.vue, а подключает компонент по
-# custom_editor, см. food.menu ниже)
+# type: text | number | select | date | datetime | switch | custom (custom —
+# поле не рендерится generic-рендером ItemFormFields.vue, а подключает
+# компонент по custom_editor, см. food.menu ниже; date — дата без времени,
+# datetime — дата+время)
 ITEM_FORMS = {
     "accommodation": {
         "label": "Проживание",
@@ -90,6 +91,100 @@ ITEM_FORMS = {
                 "hint": "«По часам» — ставка × (работа + подача); «Стоимость рейса вручную» — вводится готовая сумма",
             },
             {"key": "trip_cost", "label": "Стоимость рейса", "type": "number", "default": 0},
+        ],
+    },
+    # flight/train (задача владельца 30.09, п. С4 — «вариант для перевозки
+    # самолётом и поездом, приобретаются билеты соответственно»): поля
+    # идентичны по смыслу (откуда/куда/даты/пассажиры/класс/цена билета),
+    # различается только набор вариантов класса (fare_class) — два разных
+    # ключа ITEM_FORMS, а не один с условной веткой, чтобы класс не путался
+    # между видами транспорта в UI (экономический для самолёта ≠ плацкарт).
+    # Формула — item_amounts.py::_flight_train_quantity: итог = пассажиров ×
+    # цена билета × (2, если «цена за один конец» и указана дата обратно,
+    # иначе 1). price_basis по умолчанию «туда-обратно» — цена уже введена
+    # как полная (владелец: «по умолчанию туда-обратно = как введено»).
+    "flight": {
+        "label": "Авиабилеты",
+        "formula": (
+            "Итог = пассажиров × цена билета × 2 (если цена за один конец И указана "
+            "дата обратно), иначе × 1"
+        ),
+        "fields": [
+            {"key": "place_from", "label": "Откуда", "type": "text"},
+            {"key": "place_to", "label": "Куда", "type": "text"},
+            {"key": "date_to", "label": "Дата туда", "type": "date"},
+            {
+                "key": "date_back",
+                "label": "Дата обратно",
+                "type": "date",
+                "hint": "необязательно; не раньше даты туда",
+            },
+            {"key": "passengers", "label": "Пассажиров", "type": "number", "default": 1},
+            {
+                "key": "fare_class",
+                "label": "Класс",
+                "type": "select",
+                "options": [
+                    {"value": "economy", "label": "Эконом"},
+                    {"value": "business", "label": "Бизнес"},
+                ],
+                "default": "economy",
+            },
+            {"key": "ticket_price", "label": "Цена билета", "type": "number", "default": 0},
+            {
+                "key": "price_basis",
+                "label": "Цена указана за",
+                "type": "switch",
+                "options": [
+                    {"value": "round_trip", "label": "Туда-обратно"},
+                    {"value": "one_way", "label": "Один конец"},
+                ],
+                "default": "round_trip",
+                "hint": "«Один конец» и указана дата обратно — итог умножается на 2",
+            },
+        ],
+    },
+    "train": {
+        "label": "Железнодорожные билеты",
+        "formula": (
+            "Итог = пассажиров × цена билета × 2 (если цена за один конец И указана "
+            "дата обратно), иначе × 1"
+        ),
+        "fields": [
+            {"key": "place_from", "label": "Откуда", "type": "text"},
+            {"key": "place_to", "label": "Куда", "type": "text"},
+            {"key": "date_to", "label": "Дата туда", "type": "date"},
+            {
+                "key": "date_back",
+                "label": "Дата обратно",
+                "type": "date",
+                "hint": "необязательно; не раньше даты туда",
+            },
+            {"key": "passengers", "label": "Пассажиров", "type": "number", "default": 1},
+            {
+                "key": "fare_class",
+                "label": "Класс",
+                "type": "select",
+                "options": [
+                    {"value": "platskart", "label": "Плацкарт"},
+                    {"value": "kupe", "label": "Купе"},
+                    {"value": "sv", "label": "СВ"},
+                    {"value": "seated", "label": "Сидячий"},
+                ],
+                "default": "kupe",
+            },
+            {"key": "ticket_price", "label": "Цена билета", "type": "number", "default": 0},
+            {
+                "key": "price_basis",
+                "label": "Цена указана за",
+                "type": "switch",
+                "options": [
+                    {"value": "round_trip", "label": "Туда-обратно"},
+                    {"value": "one_way", "label": "Один конец"},
+                ],
+                "default": "round_trip",
+                "hint": "«Один конец» и указана дата обратно — итог умножается на 2",
+            },
         ],
     },
     "food": {
@@ -152,6 +247,11 @@ CONTRACT_FORM_TO_ITEM_FORM = {
     "services_food": "food",
     "services_accommodation": "accommodation",
     "services_transport": "transport",
+    # Заявка/закупка на авиа- и ж/д билеты (владелец, п. С4) — те же правила
+    # переноса, что у остальных CONTRACT_FORM_TO_ITEM_FORM (одна форма на весь
+    # договор, см. item_form_for_row).
+    "services_flight": "flight",
+    "services_train": "train",
 }
 
 

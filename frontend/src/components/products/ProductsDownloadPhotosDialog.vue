@@ -22,9 +22,14 @@
           </v-alert>
           <div v-if="dialog.result.errors?.length" class="mt-2">
             <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ dialog.result.errors.length }}):</div>
+            <div v-if="dialog.result.errors_by_reason?.length" class="mb-2 d-flex flex-wrap ga-1">
+              <v-chip v-for="r in dialog.result.errors_by_reason" :key="r.reason" size="small" color="error" variant="tonal">
+                {{ r.reason_label }}: {{ r.count }}
+              </v-chip>
+            </div>
             <v-list density="compact" class="rounded" style="max-height:160px;overflow-y:auto">
               <v-list-item v-for="e in dialog.result.errors" :key="e.id"
-                :subtitle="`#${e.id} ${e.name}: ${e.error}`" />
+                :subtitle="`#${e.id} ${e.name}: ${e.reason_label || e.error}`" />
             </v-list>
           </div>
         </template>
@@ -43,7 +48,12 @@
 defineProps<{
   dialog: {
     show: boolean; loading: boolean
-    result: { updated: number; skipped: number; errors: { id: number; name: string; error: string }[] } | null
+    result: {
+      updated: number
+      skipped: number
+      errors: { id: number; name: string; error: string; reason?: string; reason_label?: string }[]
+      errors_by_reason?: { reason: string; reason_label: string; count: number }[]
+    } | null
   }
   mobile: boolean
 }>()

@@ -28,8 +28,8 @@
       <tbody>
         <!-- Perf: content-visibility:auto for large lists (> VIRT_THRESHOLD) skips
              layout/paint of offscreen rows. Small lists render identically (no class). -->
-        <tr v-for="(item, idx) in items" :key="item._uid ?? idx"
-          :class="{ 'cv-row': virtualize }">
+        <template v-for="(item, idx) in items" :key="item._uid ?? idx">
+        <tr :class="{ 'cv-row': virtualize }">
           <td style="width:36px;padding:0 4px;text-align:center">
             <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
               @update:model-value="(val: boolean | null) => emit('toggle-item-select', idx, val)" />
@@ -117,20 +117,10 @@
               item-title="title" item-value="value" density="compact" variant="outlined"
               hide-details class="my-1" :disabled="readonly || !!itemForm || !!(rowItemFormChoices && rowItemFormChoices.length)" />
           </td>
-          <td v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="3">
-            <ItemRowFormSwitch
-              :row-item-form-choices="rowItemFormChoices"
-              :item-form="itemForm"
-              :row-form="item.item_form"
-              :fields="itemFormFields"
-              :model-value="item.extra_attrs"
-              :unit-price="item.unit_price"
-              :disabled="readonly"
-              @update:row-form="(v) => { item.item_form = v; emit('calc-item-total', idx) }"
-              @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
-              @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
-            />
-          </td>
+          <!-- Узкая колонка-заглушка (выравнивание Итого/actions) — сама панель
+               формы строки теперь на всю ширину в item-form-row ниже, тот же
+               приём, что в ItemsTableFlat.vue (владелец, п. С4, 07.10). -->
+          <td v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="3"></td>
           <template v-else>
           <td>
             <v-text-field v-model.number="item.quantity" type="number" density="compact"
@@ -161,6 +151,26 @@
               @click="emit('remove-item', idx)" />
           </td>
         </tr>
+        <!-- Панель формы строки на всю ширину таблицы — та же конструкция, что
+             в ItemsTableFlat.vue (item-form-row), под строкой позиции. -->
+        <tr v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" class="item-form-row"
+          :class="{ 'cv-row': virtualize }">
+          <td colspan="9">
+            <ItemRowFormSwitch
+              :row-item-form-choices="rowItemFormChoices"
+              :item-form="itemForm"
+              :row-form="item.item_form"
+              :fields="itemFormFields"
+              :model-value="item.extra_attrs"
+              :unit-price="item.unit_price"
+              :disabled="readonly"
+              @update:row-form="(v) => { item.item_form = v; emit('calc-item-total', idx) }"
+              @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
+              @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
+            />
+          </td>
+        </tr>
+        </template>
         <tr v-if="!items.length">
           <td colspan="9" class="text-center text-medium-emphasis py-4">
             Нет позиций. Нажмите «Добавить позицию».
@@ -249,5 +259,14 @@ const emit = defineEmits<{
 .cv-row {
   content-visibility: auto;
   contain-intrinsic-size: auto 88px;
+}
+
+/* Панель формы строки (Проживание/Питание) — примыкает к родительской строке
+   позиции без своей верхней границы (тот же приём, что feo-attrs-row в
+   ItemsTableFlat.vue). */
+.item-form-row td {
+  border-top: none;
+  padding-top: 0;
+  padding-bottom: 8px;
 }
 </style>

@@ -13,7 +13,12 @@ export function useProductsPhotos(options: {
   const dlPhotoDialog = reactive({
     show: false,
     loading: false,
-    result: null as { updated: number; skipped: number; errors: { id: number; name: string; error: string }[] } | null,
+    result: null as {
+      updated: number
+      skipped: number
+      errors: { id: number; name: string; error: string; reason?: string; reason_label?: string }[]
+      errors_by_reason?: { reason: string; reason_label: string; count: number }[]
+    } | null,
   })
 
   function openDownloadPhotosDialog() {

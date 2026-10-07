@@ -24,6 +24,7 @@
 import { ref } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { buildPlannedItemFullPayload, putPlannedItemFull } from './useFeoLevel5'
+import { withPreservedScroll } from './usePreserveScroll'
 import type { FeoPlannedItem } from './types'
 import type { Ref } from 'vue'
 
@@ -40,6 +41,9 @@ export interface FeoLevel5ItemTypeCtx {
   // direct/revision через feoWriteAdapter.ts. FeoLevel5Panel.vue зовёт
   // useFeoLevel5ItemType(ctx) полным SubsidyDetailContext — selectedId уже есть.
   selectedId: Ref<number | null>
+  // Контейнер прокрутки дерева (usePreserveScroll.ts) — тот же жёсткий прыжок
+  // наверх страницы, что и у удаления/правки/добавления плановой позиции.
+  feoTableArea: Ref<HTMLElement | null>
 }
 
 export function useFeoLevel5ItemType(ctx: FeoLevel5ItemTypeCtx) {
@@ -83,7 +87,8 @@ export function useFeoLevel5ItemType(ctx: FeoLevel5ItemTypeCtx) {
       // useFeoPlannedItemEditDialog.ts): refreshComparison один не обновляет
       // planTreeByCat, от которого зависят числа узла/родителей и контроль по
       // типам (typeExcessFor) — нужны оба вызова.
-      await Promise.all([ctx.refreshComparison(item.feo_category_id), ctx.refreshReqData()])
+      await withPreservedScroll(ctx.feoTableArea.value, () =>
+        Promise.all([ctx.refreshComparison(item.feo_category_id), ctx.refreshReqData()]))
     } finally {
       savingItemTypeId.value = null
     }

@@ -86,6 +86,11 @@ CONTRACT_FORM_LABELS = {
     # «Проживание»/«Питание» (см. CONTRACT_FORM_ROW_CHOICES в item_forms.py).
     "services_accommodation_food": "Проживание и питание",
     "services_transport":     "Перевозки автобусом",
+    # Владелец (п. С4, 30.09): варианты заявки/договора на покупку билетов —
+    # авиа и ж/д, рядом с автобусной перевозкой (item_forms.py::ITEM_FORMS
+    # "flight"/"train").
+    "services_flight":        "Авиабилеты",
+    "services_train":         "Железнодорожные билеты",
     "goods_single":           "Поставка — разовый договор",
     "gph_individual":         "ГПХ с физ.лицом",
     "gph_individual_rid":     "ГПХ с физ.лицом, передача прав на РИД",

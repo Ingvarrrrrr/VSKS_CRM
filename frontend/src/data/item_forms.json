@@ -120,6 +120,158 @@
         }
       ]
     },
+    "flight": {
+      "label": "Авиабилеты",
+      "formula": "Итог = пассажиров × цена билета × 2 (если цена за один конец И указана дата обратно), иначе × 1",
+      "fields": [
+        {
+          "key": "place_from",
+          "label": "Откуда",
+          "type": "text"
+        },
+        {
+          "key": "place_to",
+          "label": "Куда",
+          "type": "text"
+        },
+        {
+          "key": "date_to",
+          "label": "Дата туда",
+          "type": "date"
+        },
+        {
+          "key": "date_back",
+          "label": "Дата обратно",
+          "type": "date",
+          "hint": "необязательно; не раньше даты туда"
+        },
+        {
+          "key": "passengers",
+          "label": "Пассажиров",
+          "type": "number",
+          "default": 1
+        },
+        {
+          "key": "fare_class",
+          "label": "Класс",
+          "type": "select",
+          "options": [
+            {
+              "value": "economy",
+              "label": "Эконом"
+            },
+            {
+              "value": "business",
+              "label": "Бизнес"
+            }
+          ],
+          "default": "economy"
+        },
+        {
+          "key": "ticket_price",
+          "label": "Цена билета",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "key": "price_basis",
+          "label": "Цена указана за",
+          "type": "switch",
+          "options": [
+            {
+              "value": "round_trip",
+              "label": "Туда-обратно"
+            },
+            {
+              "value": "one_way",
+              "label": "Один конец"
+            }
+          ],
+          "default": "round_trip",
+          "hint": "«Один конец» и указана дата обратно — итог умножается на 2"
+        }
+      ]
+    },
+    "train": {
+      "label": "Железнодорожные билеты",
+      "formula": "Итог = пассажиров × цена билета × 2 (если цена за один конец И указана дата обратно), иначе × 1",
+      "fields": [
+        {
+          "key": "place_from",
+          "label": "Откуда",
+          "type": "text"
+        },
+        {
+          "key": "place_to",
+          "label": "Куда",
+          "type": "text"
+        },
+        {
+          "key": "date_to",
+          "label": "Дата туда",
+          "type": "date"
+        },
+        {
+          "key": "date_back",
+          "label": "Дата обратно",
+          "type": "date",
+          "hint": "необязательно; не раньше даты туда"
+        },
+        {
+          "key": "passengers",
+          "label": "Пассажиров",
+          "type": "number",
+          "default": 1
+        },
+        {
+          "key": "fare_class",
+          "label": "Класс",
+          "type": "select",
+          "options": [
+            {
+              "value": "platskart",
+              "label": "Плацкарт"
+            },
+            {
+              "value": "kupe",
+              "label": "Купе"
+            },
+            {
+              "value": "sv",
+              "label": "СВ"
+            },
+            {
+              "value": "seated",
+              "label": "Сидячий"
+            }
+          ],
+          "default": "kupe"
+        },
+        {
+          "key": "ticket_price",
+          "label": "Цена билета",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "key": "price_basis",
+          "label": "Цена указана за",
+          "type": "switch",
+          "options": [
+            {
+              "value": "round_trip",
+              "label": "Туда-обратно"
+            },
+            {
+              "value": "one_way",
+              "label": "Один конец"
+            }
+          ],
+          "default": "round_trip",
+          "hint": "«Один конец» и указана дата обратно — итог умножается на 2"
+        }
+      ]
+    },
     "food": {
       "label": "Питание",
       "formula": "Режим «просто»: итог = цена за приём × человек × приёмов пищи в день × дней. Режим «меню по дням»: итог = человек × сумма цен всех приёмов всех дней (цена — за приём на человека); quantity = человек × приёмов всего, unit_price = итог / quantity — производное значение",
@@ -203,35 +355,47 @@
       "order": 4
     },
     {
+      "key": "services_flight",
+      "label": "Авиабилеты",
+      "order": 5
+    },
+    {
+      "key": "services_train",
+      "label": "Железнодорожные билеты",
+      "order": 6
+    },
+    {
       "key": "goods_single",
       "label": "Поставка — разовый договор",
-      "order": 5
+      "order": 7
     },
     {
       "key": "gph_individual",
       "label": "ГПХ с физ.лицом",
-      "order": 6
+      "order": 8
     },
     {
       "key": "gph_individual_rid",
       "label": "ГПХ с физ.лицом, передача прав на РИД",
-      "order": 7
+      "order": 9
     },
     {
       "key": "repair_vehicle",
       "label": "Договор на ремонт ТС",
-      "order": 8
+      "order": 10
     },
     {
       "key": "repair_framework",
       "label": "Рамочный договор на ремонт ТС",
-      "order": 9
+      "order": 11
     }
   ],
   "contract_form_to_item_form": {
     "services_food": "food",
     "services_accommodation": "accommodation",
-    "services_transport": "transport"
+    "services_transport": "transport",
+    "services_flight": "flight",
+    "services_train": "train"
   },
   "contract_form_row_choices": {
     "services_accommodation_food": [

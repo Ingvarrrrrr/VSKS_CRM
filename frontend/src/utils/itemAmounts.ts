@@ -13,7 +13,7 @@
 // 'custom' — поле не рендерится generic-рендером (ItemFormFields.vue), а
 // подключает отдельный компонент по field.custom_editor (food-menu-editor.md:
 // food.menu → components/items/FoodMenuEditor.vue).
-export type ItemFormFieldType = 'text' | 'number' | 'select' | 'datetime' | 'switch' | 'custom'
+export type ItemFormFieldType = 'text' | 'number' | 'select' | 'date' | 'datetime' | 'switch' | 'custom'
 
 export interface ItemFormFieldOption {
   value: string
@@ -40,7 +40,7 @@ export interface ItemFormDescriptor {
   default_meal_names?: string[]
 }
 
-export type ItemFormCode = 'accommodation' | 'transport' | 'food'
+export type ItemFormCode = 'accommodation' | 'transport' | 'food' | 'flight' | 'train'
 
 export type ExtraAttrs = Record<string, any>
 
@@ -50,6 +50,12 @@ export interface FoodMenuMeal {
   name: string
   description?: string | null
   price: number | null
+  // Своё число человек у ЭТОГО приёма (владелец, 30.09, задача «люди на
+  // каждый приём») — пусто/не задано → общее extra.persons (поле «Человек»
+  // наверху панели). Зеркало backend/app/services/item_amounts.py::
+  // _food_menu_meal_persons — та же логика default в обеих копиях формулы
+  // (Правило №6, сверка тестом test_food_menu_per_meal_persons).
+  persons?: number | null
 }
 
 export interface FoodMenuDay {
@@ -98,6 +104,44 @@ function transportQuantityAndRate(extra: ExtraAttrs): [number, number] {
   return [workHours + supplyHours, toNum(extra.hourly_rate)]
 }
 
+// Авиа/ж.д. билеты (владелец, п. С4): quantity = пассажиров × (2, если цена
+// за один конец И указана дата обратно, иначе 1) — зеркало backend
+// item_amounts.py::_flight_train_quantity. unit_price — ticket_price введённая
+// пользователем, здесь не пересчитывается (как hourly_rate у transport).
+function flightTrainQuantity(extra: ExtraAttrs): number {
+  const passengers = toNum(extra.passengers)
+  const basis = extra.price_basis || 'round_trip'
+  const hasReturn = !!String(extra.date_back || '').trim()
+  const multiplier = (basis === 'one_way' && hasReturn) ? 2 : 1
+  return passengers * multiplier
+}
+
+// Та же дата transport (depart_at/finish_at, datetime-local строки) и
+// flight/train (date_to/date_back, date-строки) — ОДНА проверка на фронте,
+// зеркало backend services/item_form_dates.py::validate_item_form_dates
+// (Правило №6, единственный текст ошибки на обеих стадиях). Возвращает текст
+// ошибки или null (нет обеих дат — нечего сравнивать, либо порядок верный).
+export function validateItemFormDates(extra: ExtraAttrs | null | undefined, itemForm: ItemFormCode | null | undefined): string | null {
+  const ex = extraOf(extra)
+  if (itemForm === 'transport') {
+    const depart = String(ex.depart_at || '').trim()
+    const finish = String(ex.finish_at || '').trim()
+    if (depart && finish && depart > finish) {
+      return 'Дата отправления не может быть позже даты окончания'
+    }
+    return null
+  }
+  if (itemForm === 'flight' || itemForm === 'train') {
+    const dateTo = String(ex.date_to || '').trim()
+    const dateBack = String(ex.date_back || '').trim()
+    if (dateTo && dateBack && dateBack < dateTo) {
+      return 'Дата обратного рейса не может быть раньше даты туда'
+    }
+    return null
+  }
+  return null
+}
+
 // Питание, режим «просто»: quantity = человек × приёмов пищи в день × дней
 // (см. item_amounts.py::_food_quantity). Человек=0 → 0; приёмов пищи и дней
 // пустые/не заданы → 1 (по аналогии с accommodationNights).
@@ -110,35 +154,58 @@ function foodQuantity(extra: ExtraAttrs): number {
   return persons * meals * days
 }
 
-// Питание, режим «меню по дням»: сумма цен ВСЕХ приёмов ВСЕХ дней (цена — за
-// приём на человека) и общее число приёмов — превью-зеркало backend
-// item_amounts.py::_food_menu_meals_total_price, единственный обход
-// структуры menu на фронте (formatExtraAttrsSummary её не трогает, менюшный
-// custom_editor свой рендер строит сам в FoodMenuEditor.vue).
-function foodMenuMealsTotal(menu: unknown): [number, number] {
+// Число человек у ОДНОГО приёма — своё (meal.persons), если задано, иначе
+// общее defaultPersons (поле «Человек» наверху панели). Зеркало backend
+// item_amounts.py::_food_menu_meal_persons — та же логика default с обеих
+// сторон (Правило №6).
+export function foodMenuMealPersons(meal: FoodMenuMeal | null | undefined, defaultPersons: number): number {
+  const raw = meal?.persons
+  return raw === undefined || raw === null || (raw as unknown) === '' ? defaultPersons : toNum(raw)
+}
+
+// Питание, режим «меню по дням»: обходит extra.menu ОДИН раз (единственный
+// обход на фронте, formatExtraAttrsSummary его не трогает, FoodMenuEditor.vue
+// переиспользует эту же функцию вместо собственного расчёта «Итого» —
+// Правило №6) и считает:
+// - total — Σ(price_i × persons_i) по всем приёмам (persons_i — своё число
+//   человек у приёма, задача владельца «люди на каждый приём», 30.09; когда
+//   у приёма persons не задан — используется общее defaultPersons, прежнее
+//   поведение не меняется);
+// - quantity — Σ(persons_i), участвует как quantity позиции;
+// - perPersonTotal — Σ(price_i) без учёта persons_i («на человека» в тексте
+//   предпросмотра — справочная цифра);
+// - mealsCount — сколько приёмов всего.
+// Зеркало backend/app/services/item_amounts.py::_food_menu_meals_totals.
+function foodMenuMealsTotals(menu: unknown, defaultPersons: number): [number, number, number, number] {
   let total = 0
+  let quantity = 0
+  let perPersonTotal = 0
   let count = 0
   if (Array.isArray(menu)) {
     for (const day of menu) {
       const meals = (day as FoodMenuDay | null | undefined)?.meals
       if (!Array.isArray(meals)) continue
       for (const meal of meals) {
-        total += toNum((meal as FoodMenuMeal | null | undefined)?.price)
+        const m = meal as FoodMenuMeal | null | undefined
+        const price = toNum(m?.price)
+        const personsForMeal = foodMenuMealPersons(m, defaultPersons)
+        total += price * personsForMeal
+        quantity += personsForMeal
+        perPersonTotal += price
         count += 1
       }
     }
   }
-  return [total, count]
+  return [total, quantity, perPersonTotal, count]
 }
 
-// Питание, режим «меню по дням»: итог = человек × Σ(price всех приёмов всех
-// дней); quantity/unit_price — производные (зеркало
+// Питание, режим «меню по дням»: итог = Σ(price приёма × человек приёма) по
+// всем приёмам всех дней; quantity/unit_price — производные (зеркало
 // item_amounts.py::_food_menu_amounts, см. докстринг там).
-function foodMenuAmounts(extra: ExtraAttrs): [number, number, number] {
+export function foodMenuAmounts(extra: ExtraAttrs): [number, number, number] {
   const persons = toNum(extra.persons)
-  const [perPersonTotal, mealsCount] = foodMenuMealsTotal(extra.menu)
-  const quantity = persons * mealsCount
-  const total = round2(persons * perPersonTotal)
+  const [weightedTotal, quantity] = foodMenuMealsTotals(extra.menu, persons)
+  const total = round2(weightedTotal)
   const unitPrice = quantity !== 0 ? round2(total / quantity) : 0
   return [quantity, unitPrice, total]
 }
@@ -167,6 +234,10 @@ export function computeItemTotal(
   if (itemForm === 'transport') {
     const [qty, rate] = transportQuantityAndRate(ex)
     return round2(qty * rate)
+  }
+  if (itemForm === 'flight' || itemForm === 'train') {
+    const qty = flightTrainQuantity(ex)
+    return round2(qty * toNum(ex.ticket_price))
   }
   if (itemForm === 'food') {
     const mode = ex.mode || 'simple'
@@ -210,6 +281,12 @@ export function applyItemAmounts(
     const [qty, rate] = transportQuantityAndRate(extra)
     item.quantity = qty
     item.unit_price = rate
+  } else if (itemForm === 'flight' || itemForm === 'train') {
+    // unit_price — производное от введённой цены билета (extra.ticket_price),
+    // тот же приём, что у transport выше (зеркало backend
+    // item_amounts.py::apply_item_amounts).
+    item.quantity = flightTrainQuantity(extra)
+    item.unit_price = toNum(extra.ticket_price)
   } else if (itemForm === 'food') {
     const mode = extra.mode || 'simple'
     if (mode === 'menu') {

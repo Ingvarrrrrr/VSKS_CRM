@@ -33,7 +33,8 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from app.services.documents.formatting import _fmt_date, _fmt_money
-from app.services.item_amounts import _dec, _food_menu_meals_total_price
+from app.services.item_amounts import _dec, _food_menu_meals_totals
+from app.services.item_forms import ITEM_FORMS
 
 
 def _extra(item: Any) -> dict:
@@ -133,17 +134,18 @@ def _food_summary(item: Any, extra: dict) -> str:
 def _food_menu_summary(extra: dict) -> str:
     """Питание, режим «меню по дням»: «10 чел. × 2 дн., 6 приёмов —
     1 700,00 ₽ на человека, итого 17 000,00 ₽». Суммы — через
-    _food_menu_meals_total_price (item_amounts.py), та же функция, что
-    считает total_price/quantity/unit_price (Правило №6 — обход структуры
-    меню не дублируется)."""
+    _food_menu_meals_totals (item_amounts.py), та же функция, что считает
+    total_price/quantity/unit_price (Правило №6 — обход структуры меню не
+    дублируется). «Итого» теперь учитывает своё число человек у приёмов, где
+    оно задано (владелец, 30.09, «люди на каждый приём»), «N ₽ на человека» —
+    справочная цифра без учёта этого (Σ цен приёмов)."""
     persons = _dec(extra.get("persons"))
-    per_person_total, meals_count = _food_menu_meals_total_price(extra.get("menu"))
+    total, _quantity, meals_count, per_person_total = _food_menu_meals_totals(extra.get("menu"), persons)
     days_raw = extra.get("days")
     if days_raw not in (None, ""):
         days = _dec(days_raw)
     else:
         days = Decimal(len(extra.get("menu") or []))
-    total = persons * per_person_total
     meal_word = _plural_ru(Decimal(meals_count), "приём", "приёма", "приёмов")
     return (
         f"{_fmt_count(persons)} чел. × {_fmt_count(days)} дн., "
@@ -154,13 +156,18 @@ def _food_menu_summary(extra: dict) -> str:
 
 def _food_menu_lines(extra: dict) -> list[str]:
     """Полная раскладка меню по дням для ТЗ («День 1 — Завтрак (200,00 ₽):
-    каша, чай; Обед (350,00 ₽): ...; Ужин (300,00 ₽): ...») — item_menu_lines
-    зовёт это ТОЛЬКО для food+mode=menu, для всех остальных случаев (обычная
-    позиция, food/просто, accommodation/transport) — пустой список (см.
-    item_menu_lines ниже)."""
+    каша, чай; Обед (350,00 ₽) (6 чел.): ...; Ужин (300,00 ₽): ...») —
+    item_menu_lines зовёт это ТОЛЬКО для food+mode=menu, для всех остальных
+    случаев (обычная позиция, food/просто, accommodation/transport) — пустой
+    список (см. item_menu_lines ниже). «(N чел.)» печатается только у
+    приёма, где meal['persons'] задан И отличается от общего extra['persons']
+    (владелец, 30.09, «люди на каждый приём») — совпадает с общим или не
+    задан вовсе → не дублируем цифру, которая уже видна в сводке выше
+    (_food_menu_summary)."""
     menu = extra.get("menu")
     if not isinstance(menu, list):
         return []
+    default_persons = extra.get("persons")
     lines: list[str] = []
     for idx, day in enumerate(menu, start=1):
         if not isinstance(day, dict):
@@ -176,10 +183,14 @@ def _food_menu_lines(extra: dict) -> list[str]:
                 name = (meal.get("name") or "").strip() or "Приём"
                 price_str = _fmt_money(meal.get("price"))
                 description = (meal.get("description") or "").strip()
+                meal_persons = meal.get("persons")
+                persons_suffix = ""
+                if meal_persons not in (None, "") and _dec(meal_persons) != _dec(default_persons):
+                    persons_suffix = f" ({_fmt_count(meal_persons)} чел.)"
                 if description:
-                    meal_parts.append(f"{name} ({price_str} ₽): {description}")
+                    meal_parts.append(f"{name} ({price_str} ₽){persons_suffix}: {description}")
                 else:
-                    meal_parts.append(f"{name} ({price_str} ₽)")
+                    meal_parts.append(f"{name} ({price_str} ₽){persons_suffix}")
         lines.append(f"День {day_label} — " + "; ".join(meal_parts))
     return lines
 
@@ -214,18 +225,59 @@ def _transport_summary(item: Any, extra: dict) -> str:
     return ", ".join(p for p in parts if p)
 
 
+def _flight_train_summary(item: Any, extra: dict, label: str) -> str:
+    """Авиа/ж.д. билеты (владелец, п. С4, 30.09.2026): «Москва — Сочи,
+    12.10–15.10, 5 пасс., эконом × 12 000,00 ₽» — то же построение, что у
+    accommodation/transport выше (одна функция на всю систему, Правило №6);
+    даты печатаются как есть (строка "YYYY-MM-DD" из extra, без доп.
+    форматирования — здесь нет полноценной datetime, только дата)."""
+    place_from = (extra.get("place_from") or "").strip()
+    place_to = (extra.get("place_to") or "").strip()
+    date_to = (extra.get("date_to") or "").strip() if isinstance(extra.get("date_to"), str) else extra.get("date_to")
+    date_back = (extra.get("date_back") or "").strip() if isinstance(extra.get("date_back"), str) else extra.get("date_back")
+    passengers = extra.get("passengers")
+    # Подпись класса — из реестра ITEM_FORMS (item_forms.py::fare_class.options),
+    # единственный источник подписей (Правило №6), не дублируем список
+    # «economy»→«Эконом» здесь второй раз.
+    fare_class_raw = (extra.get("fare_class") or "").strip()
+    fare_class = fare_class_raw
+    for f in ITEM_FORMS.get(label, {}).get("fields", []):
+        if f.get("key") == "fare_class":
+            for opt in f.get("options") or []:
+                if opt.get("value") == fare_class_raw:
+                    fare_class = opt.get("label") or fare_class_raw
+            break
+    price_str = _fmt_money(extra.get("ticket_price"))
+
+    parts = []
+    if place_from or place_to:
+        parts.append(f"{place_from} — {place_to}".strip(" —"))
+    if date_to and date_back:
+        parts.append(f"{date_to}–{date_back}")
+    elif date_to:
+        parts.append(str(date_to))
+    if passengers not in (None, ""):
+        parts.append(f"{_fmt_count(passengers)} пасс.")
+    if fare_class:
+        parts.append(fare_class)
+    parts.append(f"× {price_str} ₽")
+    return ", ".join(p for p in parts if p)
+
+
 def item_form_summary(item: Any, item_form: Optional[str]) -> str:
     """Человекочитаемая строка описания позиции по её спец-форме. Работает
     через getattr/extra_attrs — годится и для PurchaseItem/WishItem/
     ContractItem (ORM), и для SimpleNamespace в тестах. item_form=None
     (обычная позиция) — пустая строка."""
-    if item_form not in ("accommodation", "transport", "food"):
+    if item_form not in ("accommodation", "transport", "food", "flight", "train"):
         return ""
     extra = _extra(item)
     if item_form == "accommodation":
         return _accommodation_summary(item, extra)
     if item_form == "food":
         return _food_summary(item, extra)
+    if item_form in ("flight", "train"):
+        return _flight_train_summary(item, extra, item_form)
     return _transport_summary(item, extra)
 
 

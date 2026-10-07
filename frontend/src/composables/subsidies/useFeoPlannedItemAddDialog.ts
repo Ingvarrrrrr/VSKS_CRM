@@ -19,6 +19,7 @@ import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoActualItem, FeoNode, FeoPlannedItem } from './types'
 import { clearCategoryManualPlanRaw } from './useFeoManualPlanMaterialize'
 import { createFeoItem, isRevisionMode, getFakeIdForRef } from './feoWriteAdapter'
+import { withPreservedScroll } from './usePreserveScroll'
 
 // Сырое создание плановой позиции по готовому payload — без диалога/формы/
 // тостов. Используется обычным путём (savePlannedItem/confirmCreateDuplicate
@@ -350,7 +351,7 @@ watch(showAddPlannedDialog, (val) => {
 })
 
 type AddDialogCtx = Pick<SubsidyDetailContext,
-  'selectedId' | 'feoCategories' | 'loadFeo' | 'refreshComparison' | 'refreshReqData' | 'factForPlanned'>
+  'selectedId' | 'feoCategories' | 'loadFeo' | 'refreshComparison' | 'refreshReqData' | 'factForPlanned' | 'feoTableArea'>
 
 export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
   const toast = useToast()
@@ -681,14 +682,16 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       label: `создание позиции «${created.name}»`,
       undo: async () => {
         const res = await deletePlannedItemRaw(currentId)
-        if (res.ok && ctx) await Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()])
+        if (res.ok && ctx) await withPreservedScroll(ctx.feoTableArea.value, () =>
+          Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()]))
         return res
       },
       redo: async () => {
         try {
           const recreated = await createPlannedItemRaw(payload)
           currentId = recreated.id
-          if (ctx) await Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()])
+          if (ctx) await withPreservedScroll(ctx.feoTableArea.value, () =>
+            Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()]))
           return { ok: true }
         } catch (e: any) {
           return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Не удалось повторить создание' }
@@ -754,7 +757,8 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
     // его обновляет refreshReqData (см. разбор жалобы владельца у deletePlannedItem
     // и уже работающий movePlannedItemToCategory). Без него новая плановая позиция
     // не давала вклад в «Плановую сумму» до перезагрузки страницы.
-    await Promise.all([ctx.refreshComparison(addPlannedCategoryId.value), ctx.refreshReqData()])
+    await withPreservedScroll(ctx.feoTableArea.value, () =>
+      Promise.all([ctx.refreshComparison(addPlannedCategoryId.value), ctx.refreshReqData()]))
     if (convertCategoryId) {
       if (revisionWrite) {
         showSnack('Позиция добавлена в корректировку — ручной план категории доделайте после утверждения', 'warning')
@@ -848,7 +852,8 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       duplicateInfo.value = null
       convertFromCategoryPlanId.value = null
       showSnack('Использована существующая плановая позиция')
-      await Promise.all([ctx.refreshComparison(addPlannedCategoryId.value), ctx.refreshReqData()])
+      await withPreservedScroll(ctx.feoTableArea.value, () =>
+        Promise.all([ctx.refreshComparison(addPlannedCategoryId.value), ctx.refreshReqData()]))
       if (convertCategoryId) await clearCategoryManualPlan(convertCategoryId)
     } finally {
       savingPlannedItem.value = false

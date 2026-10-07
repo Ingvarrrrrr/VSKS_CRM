@@ -20,6 +20,12 @@ from app.database import get_db
 from app.models.product import Product
 from app.models.user import User
 from app.schemas.schemas import ProductOut
+from app.services.product_photo_fetch import (
+    REASON_LABELS,
+    PhotoFetchError,
+    fetch_photo_bytes,
+    normalize_url,
+)
 
 PRODUCT_UPLOAD_DIR = "/app/uploads/products"
 ALLOWED_IMAGE_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
@@ -88,37 +94,6 @@ async def delete_product_photo(
     return {"status": "ok", "product_id": product_id}
 
 
-def _fetch_photo_bytes(url: str) -> tuple[bytes, str]:
-    """Download image from URL, return (raw_bytes, mime_type).
-
-    Blocking — meant to be called via asyncio.to_thread. Converts webp to jpeg
-    when possible. Enforces a 10MB size cap.
-    """
-    import urllib.request as _ur, io as _io
-    SUPPORTED = ("image/jpeg", "image/jpg", "image/png", "image/gif", "image/bmp", "image/tiff", "image/webp")
-    req = _ur.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with _ur.urlopen(req, timeout=15) as r:
-        ct = r.headers.get("Content-Type", "").split(";")[0].strip().lower() or "image/jpeg"
-        raw = r.read()
-    is_webp = "webp" in ct or url.lower().endswith(".webp")
-    if is_webp:
-        try:
-            from PIL import Image as _Img
-            img = _Img.open(_io.BytesIO(raw)).convert("RGB")
-            buf = _io.BytesIO()
-            img.save(buf, format="JPEG", quality=85)
-            raw = buf.getvalue()
-            ct = "image/jpeg"
-        except Exception:
-            # Pillow unavailable / broken webp — fall through, keep bytes + mime.
-            ct = "image/webp"
-    elif ct not in SUPPORTED:
-        raise ValueError(f"Неподдерживаемый формат: {ct}")
-    if len(raw) > 10 * 1024 * 1024:
-        raise ValueError("Файл > 10MB")
-    return raw, ct
-
-
 def _pick_external_url(p: Product) -> Optional[str]:
     """Return the best external http(s) URL to download from.
 
@@ -128,36 +103,44 @@ def _pick_external_url(p: Product) -> Optional[str]:
     source of truth, while `photo_url` can get overwritten with legacy local
     `/api/products/photos/...` paths or other non-http values. Local paths and
     any non-http values are treated as invalid sources and skipped.
+
+    Values are normalized first (normalize_url strips stray quotes/whitespace
+    from pasted/exported links — on prod a value like '"https://...​" ' failed
+    this check before trimming и товар считался «без ссылки»).
     """
-    def _is_http(v: Optional[str]) -> bool:
-        return bool(v and (v.startswith("http://") or v.startswith("https://")))
-    if _is_http(p.photo_url):
-        return p.photo_url
-    if _is_http(p.photo_link):
-        return p.photo_link
-    return None
+    def _is_http(v: Optional[str]) -> Optional[str]:
+        nv = normalize_url(v) if v else None
+        return nv if nv and (nv.startswith("http://") or nv.startswith("https://")) else None
+    return _is_http(p.photo_url) or _is_http(p.photo_link)
 
 
-async def _download_and_save_photo(product_id: int, url: str, db: AsyncSession) -> tuple[bool, Optional[str]]:
+async def _download_and_save_photo(
+    product_id: int, url: str, db: AsyncSession
+) -> tuple[bool, Optional[str], Optional[str]]:
     """Download external URL and persist bytes to product.photo_data.
 
-    Returns (success, error_msg). The existing `photo_url` field is NOT cleared —
-    it remains the source of truth for re-downloading the photo later.
+    Returns (success, reason_code, message). reason_code is one of
+    product_photo_fetch.REASON_LABELS (None on success) — used to group
+    failures for the owner in the download-photos response. The existing
+    `photo_url` field is NOT cleared — it remains the source of truth for
+    re-downloading the photo later.
     """
     import asyncio
     try:
-        raw, mime = await asyncio.to_thread(_fetch_photo_bytes, url)
+        raw, mime = await asyncio.to_thread(fetch_photo_bytes, url)
+    except PhotoFetchError as e:
+        return False, e.reason, e.message
     except Exception as e:
-        return False, str(e)
+        return False, "network_error", str(e)
     product = await db.get(Product, product_id)
     if not product:
-        return False, "Товар не найден"
+        return False, "network_error", "Товар не найден"
     product.photo_data = raw
     product.photo_mime = mime
     product.photo_size = len(raw)
     # Do NOT clear photo_url — external URL stays as source of truth.
     await db.commit()
-    return True, None
+    return True, None, None
 
 
 @router.post("/download-photos")
@@ -177,6 +160,7 @@ async def download_all_photos(
     all_products = result.scalars().all()
 
     updated, skipped, errors = 0, 0, []
+    by_reason: dict[str, int] = {}
     for p in all_products:
         # Already cached in DB → skip (idempotent re-runs are cheap).
         if p.photo_data is not None:
@@ -189,13 +173,29 @@ async def download_all_photos(
         if not src:
             skipped += 1
             continue
-        ok, err = await _download_and_save_photo(p.id, src, db)
+        ok, reason, err = await _download_and_save_photo(p.id, src, db)
         if ok:
             updated += 1
         else:
-            errors.append({"id": p.id, "name": p.name, "error": err})
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+            errors.append({
+                "id": p.id,
+                "name": p.name,
+                "error": err,
+                "reason": reason,
+                "reason_label": REASON_LABELS.get(reason, err),
+            })
 
-    return {"updated": updated, "skipped": skipped, "errors": errors}
+    errors_by_reason = [
+        {"reason": r, "reason_label": REASON_LABELS.get(r, r), "count": c}
+        for r, c in sorted(by_reason.items(), key=lambda kv: -kv[1])
+    ]
+    return {
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "errors_by_reason": errors_by_reason,
+    }
 
 
 @router.post("/{product_id}/download-photo", response_model=ProductOut)
@@ -213,9 +213,10 @@ async def download_single_photo(
     src = _pick_external_url(product)
     if not src:
         raise HTTPException(400, "Нет внешней ссылки для скачивания")
-    ok, err = await _download_and_save_photo(product.id, src, db)
+    ok, reason, err = await _download_and_save_photo(product.id, src, db)
     if not ok:
-        raise HTTPException(500, f"Ошибка скачивания: {err}")
+        label = REASON_LABELS.get(reason, err)
+        raise HTTPException(500, f"Ошибка скачивания: {label}")
     await db.refresh(product)
     return product
 

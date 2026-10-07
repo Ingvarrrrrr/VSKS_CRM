@@ -34,12 +34,36 @@ export function usePurchaseTasks(
     title: '', description: '', priority: 'medium',
     due_date: '', assignee_ids: [] as number[],
   })
+  // Ошибка загрузки списка — показывается ВНУТРИ карточки виджета, без
+  // глобального модального окна (см. ниже suppressErrorDialog).
+  const linkedTasksError = ref('')
 
   async function loadLinkedTasks() {
     if (!purchaseId.value) return
     try {
-      linkedTasks.value = await apiFetch<any[]>(`/purchases/${purchaseId.value}/tasks/`)
-    } catch { linkedTasks.value = [] }
+      // Настоящая причина помехи «localhost без порта» (владелец, чек-лист
+      // 0710): путь здесь кончался слэшем, а маршрут в
+      // backend/app/routers/purchase_lists.py (`@router.get("/{pid}/tasks")`)
+      // — без слэша. Starlette на несовпадении делает 307-редирект на путь
+      // БЕЗ слэша, а Location строит из заголовка Host, который nginx
+      // передаёт как `$host` (без порта, см. nginx/nginx.conf) — получался
+      // абсолютный `http://localhost/api/...` без :8079/:443, браузер не мог
+      // до него достучаться (ERR_CONNECTION_REFUSED/NETWORK_ERROR). Слэш в
+      // пути убран, чтобы путь совпадал с маршрутом с первого запроса и
+      // редиректа не было вовсе — работает и локально (:8079), и на проде
+      // (galaa.ru, без порта), независимо от заголовка Host.
+      linkedTasks.value = await apiFetch<any[]>(`/purchases/${purchaseId.value}/tasks`, {
+        suppressErrorDialog: true,
+      })
+      linkedTasksError.value = ''
+    } catch (e: any) {
+      linkedTasks.value = []
+      // Вторичный виджет не должен блокировать основную форму закупки —
+      // ошибка остаётся внутри карточки (PurchaseLinkedTasksCard.vue), без
+      // window.dispatchEvent('api-error') и без перекрывающего v-dialog,
+      // который иначе переоткрывался бы при каждой попытке.
+      linkedTasksError.value = e?.detail || 'Не удалось загрузить связанные задачи'
+    }
   }
 
   function openCreateLinkedTask() {
@@ -92,7 +116,9 @@ export function usePurchaseTasks(
     _linkSearchTimer = setTimeout(async () => {
       linkTaskSearching.value = true
       try {
-        linkTaskResults.value = await apiFetch<any[]>(`/tasks/?search=${encodeURIComponent(q)}`)
+        linkTaskResults.value = await apiFetch<any[]>(`/tasks/?search=${encodeURIComponent(q)}`, {
+          suppressErrorDialog: true,
+        })
       } catch { linkTaskResults.value = [] }
       finally { linkTaskSearching.value = false }
     }, 300)
@@ -124,7 +150,7 @@ export function usePurchaseTasks(
   }
 
   return {
-    linkedTasks, linkedTaskDialog, linkedTaskSaving, linkedTaskForm,
+    linkedTasks, linkedTaskDialog, linkedTaskSaving, linkedTaskForm, linkedTasksError,
     loadLinkedTasks, openCreateLinkedTask, saveLinkedTask,
     linkTaskDialog, linkTaskSearch, linkTaskResults, linkTaskSearching,
     openLinkExistingTask, searchUnlinkedTasks, linkExistingTask, unlinkTask,

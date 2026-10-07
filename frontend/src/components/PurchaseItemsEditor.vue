@@ -1346,6 +1346,13 @@ const isFoodForm = computed(() => itemForm.value === 'food')
 // прописывается — тот же паттерн, что и fillEmptyItemsWithDefaultFeo ниже
 // (трогаем ТОЛЬКО пустые item_name, ручной ввод не перезаписываем).
 const FOOD_DEFAULT_ITEM_NAME = 'Организация питания'
+// Проживание (владелец, п. С4, 30.09): «наименование по умолчанию
+// «Проживание» тем же механизмом, что у питания» — ТОТ ЖЕ guard-паттерн
+// (watch ниже), но поле «Наименование» для accommodation НЕ скрывается
+// (в отличие от питания — панель у accommodation встроена в обычную строку
+// таблицы, колонка остаётся видимой и редактируемой, значение просто
+// подставляется по умолчанию для пустой строки).
+const ACCOMMODATION_DEFAULT_ITEM_NAME = 'Проживание'
 
 // food-menu-editor.md: владелец, 2026-09-15 — у форм со спец-полями (food/
 // accommodation/transport) ТИП позиции всегда «услуга» (это явно услуга, не
@@ -1414,13 +1421,20 @@ function addItem(atStart = false) {
 // от каждого item_form строка watch не перезапускался бы на переключение
 // «Проживание» → «Питание» на уже существующей строке.
 watch(
-  () => [isFoodForm.value, itemFormRowChoices.value, localItems.value.length, localItems.value.map(it => it.item_form).join('|')] as const,
+  () => [isFoodForm.value, itemForm.value, itemFormRowChoices.value, localItems.value.length, localItems.value.map(it => it.item_form).join('|')] as const,
   () => {
     let changed = false
     for (const it of localItems.value) {
       const effectiveForm = isFoodForm.value ? 'food' : resolveRowItemForm(it)
-      if (effectiveForm === 'food' && (!it.item_name || !String(it.item_name).trim())) {
+      const isEmptyName = !it.item_name || !String(it.item_name).trim()
+      if (effectiveForm === 'food' && isEmptyName) {
         it.item_name = FOOD_DEFAULT_ITEM_NAME
+        changed = true
+      }
+      // Проживание (п. С4): тот же автоподстановщик, что у питания выше —
+      // ТОЛЬКО пустое имя, ручной ввод не перезаписываем.
+      if (effectiveForm === 'accommodation' && isEmptyName) {
+        it.item_name = ACCOMMODATION_DEFAULT_ITEM_NAME
         changed = true
       }
     }

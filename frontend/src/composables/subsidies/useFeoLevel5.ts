@@ -18,6 +18,7 @@ import { createPlannedItemRaw } from './useFeoPlannedItemAddDialog'
 import { notifyFeoPlanChanged } from './feoPlanChangeBus'
 import { makeCtxSingleton } from './ctxSingleton'
 import { updateFeoItem, deleteFeoItem, isRevisionMode } from './feoWriteAdapter'
+import { withPreservedScroll } from './usePreserveScroll'
 import type {
   DiffActual, FeoActualItem, FeoCategory, FeoNode, FeoPlannedItem, FeoStage, FeoStageRow,
 } from './types'
@@ -196,6 +197,10 @@ interface FeoLevel5Ctx {
   collapsedPlannedItems: Ref<Set<number>>
   feoResidualNoteFor: (node: FeoNode) => { planned: number; consumed: number; residual: number } | null
   refreshReqData: (catId?: number) => Promise<void>
+  // Контейнер прокрутки дерева (usePreserveScroll.ts) — жалоба владельца
+  // 30.09, п.5: удаление/отмена удаления плановой позиции бросало страницу
+  // наверх, тот же механизм, что уже есть в loadFeo (SubsidiesView.vue).
+  feoTableArea: Ref<HTMLElement | null>
 }
 
 // makeCtxSingleton (ctxSingleton.ts, Правило №6) — пересобирает API при новом
@@ -223,7 +228,7 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
   const {
     selectedId, feoCategories, feoTree, flattenAll,
     expandedItemPanels, expandedPlannedItems, collapsedPlannedItems,
-    feoResidualNoteFor, refreshReqData,
+    feoResidualNoteFor, refreshReqData, feoTableArea,
   } = ctx
 
   const toast = useToast()
@@ -631,7 +636,8 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     try {
       const res = await deletePlannedItemRaw(item.id, selectedId.value ?? undefined)
       if (!res.ok) throw new Error(res.error)
-      await Promise.all([refreshComparison(item.feo_category_id), refreshReqData()])
+      await withPreservedScroll(feoTableArea.value, () =>
+        Promise.all([refreshComparison(item.feo_category_id), refreshReqData()]))
       if (!isRevisionMode(selectedId.value ?? undefined)) registerDeleteUndo(item)
     } catch (e: any) {
       showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось удалить плановую позицию', 'error')
@@ -657,7 +663,8 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
         try {
           const created = await createPlannedItemRaw(snapshot)
           currentId = created.id
-          await Promise.all([refreshComparison(categoryId), refreshReqData()])
+          await withPreservedScroll(feoTableArea.value, () =>
+            Promise.all([refreshComparison(categoryId), refreshReqData()]))
           return { ok: true }
         } catch (e: any) {
           return {
@@ -670,7 +677,8 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
       redo: async () => {
         if (currentId == null) return { ok: false, error: 'Позиция ещё не была восстановлена' }
         const res = await deletePlannedItemRaw(currentId)
-        if (res.ok) await Promise.all([refreshComparison(categoryId), refreshReqData()])
+        if (res.ok) await withPreservedScroll(feoTableArea.value, () =>
+          Promise.all([refreshComparison(categoryId), refreshReqData()]))
         return res
       },
     })

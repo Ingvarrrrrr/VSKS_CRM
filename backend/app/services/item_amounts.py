@@ -166,15 +166,36 @@ def _food_quantity(extra: dict) -> Decimal:
     return persons * meals * days
 
 
-def _food_menu_meals_total_price(menu: Any) -> tuple[Decimal, int]:
-    """Питание, режим «меню по дням»: сумма цен ВСЕХ приёмов ВСЕХ дней (цена
-    — за приём на человека) и общее число приёмов — единственное место,
-    читающее структуру extra['menu'] (список дней [{day, meals: [{name,
-    description, price}]}]); item_form_summary.py импортирует эту же функцию
+def _food_menu_meal_persons(meal: dict, default_persons: Decimal) -> Decimal:
+    """Человек у ОДНОГО приёма (владелец, 30.09, задача «люди на каждый
+    приём») — meal['persons'], если задан, иначе общее default_persons (поле
+    «Человек» формы). Зеркало frontend/src/utils/itemAmounts.ts::
+    foodMenuMealPersons — та же логика default с обеих сторон (Правило №6,
+    сверено test_food_menu_per_meal_persons)."""
+    raw = meal.get("persons")
+    if raw in (None, ""):
+        return default_persons
+    return _dec(raw)
+
+
+def _food_menu_meals_totals(menu: Any, default_persons: Decimal) -> tuple[Decimal, Decimal, int, Decimal]:
+    """Питание, режим «меню по дням» — ЕДИНСТВЕННОЕ место, читающее структуру
+    extra['menu'] (список дней [{day, meals: [{name, description, price,
+    persons}]}]) для денег; item_form_summary.py импортирует эту же функцию
     для текстового описания, второй копии обхода структуры не заводить
     (Правило №6). Мусор в структуре (не список/не dict) молча пропускается —
-    не должен валить расчёт суммы."""
+    не должен валить расчёт суммы. Возвращает:
+    - total — Σ(price_i × persons_i) по всем приёмам (persons_i — своё число
+      человек у приёма, иначе default_persons);
+    - quantity — Σ(persons_i), участвует как quantity позиции (unit_price =
+      total / quantity);
+    - meals_count — сколько приёмов всего (для текстовой сводки);
+    - per_person_total — Σ(price_i) БЕЗ учёта persons_i («N ₽ на человека» в
+      _food_menu_summary — справочная цифра, совпадает со старым расчётом,
+      когда ни у одного приёма нет своего persons)."""
     total = Decimal("0")
+    quantity = Decimal("0")
+    per_person_total = Decimal("0")
     count = 0
     if isinstance(menu, list):
         for day in menu:
@@ -186,24 +207,44 @@ def _food_menu_meals_total_price(menu: Any) -> tuple[Decimal, int]:
             for meal in meals:
                 if not isinstance(meal, dict):
                     continue
-                total += _dec(meal.get("price"))
+                price = _dec(meal.get("price"))
+                persons_for_meal = _food_menu_meal_persons(meal, default_persons)
+                total += price * persons_for_meal
+                quantity += persons_for_meal
+                per_person_total += price
                 count += 1
-    return total, count
+    return total, quantity, count, per_person_total
 
 
 def _food_menu_amounts(extra: dict) -> tuple[Decimal, Decimal, Decimal]:
-    """Питание, режим «меню по дням»: итог = человек × Σ(price всех приёмов
-    всех дней). Для совместимости с обычной позицией (quantity × unit_price)
-    quantity = человек × (приёмов всего), unit_price = итог / quantity —
-    ПРОИЗВОДНОЕ значение (тот же приём, что unit_price у transport в режиме
-    «стоимость рейса вручную» — см. _transport_quantity_and_rate), с фронта
-    не принимается. 0 человек или пустое меню → 0/0/0, без деления на ноль."""
+    """Питание, режим «меню по дням»: итог = Σ(price приёма × человек приёма)
+    по всем приёмам всех дней (persons — свой у приёма или общий «Человек»,
+    см. _food_menu_meal_persons). Для совместимости с обычной позицией
+    (quantity × unit_price) quantity = Σ(persons приёма), unit_price = итог /
+    quantity — ПРОИЗВОДНОЕ значение (тот же приём, что unit_price у transport
+    в режиме «стоимость рейса вручную» — см. _transport_quantity_and_rate), с
+    фронта не принимается. 0 человек или пустое меню → 0/0/0, без деления на
+    ноль."""
     persons = _dec(extra.get("persons"))
-    per_person_total, meals_count = _food_menu_meals_total_price(extra.get("menu"))
-    quantity = persons * Decimal(meals_count)
-    total = _q2(persons * per_person_total)
+    weighted_total, quantity, _meals_count, _per_person_total = _food_menu_meals_totals(extra.get("menu"), persons)
+    total = _q2(weighted_total)
     unit_price = _q2(total / quantity) if quantity != 0 else Decimal("0")
     return quantity, unit_price, total
+
+
+def _flight_train_quantity(extra: dict) -> Decimal:
+    """Авиа/ж.д. билеты (владелец, п. С4): quantity = пассажиров × (2, если
+    цена указана за один конец И задана дата обратно, иначе 1) — unit_price
+    остаётся введённой ценой билета (extra['ticket_price']), как и у
+    accommodation (цена вводится пользователем напрямую, здесь не трогаем).
+    По умолчанию price_basis='round_trip' — цена уже введена как полная за
+    обе стороны (владелец: «по умолчанию туда-обратно = как введено»), итог
+    не умножается."""
+    passengers = _dec(extra.get("passengers"))
+    basis = extra.get("price_basis") or "round_trip"
+    has_return = bool(str(extra.get("date_back") or "").strip())
+    multiplier = Decimal("2") if (basis == "one_way" and has_return) else Decimal("1")
+    return passengers * multiplier
 
 
 def _transport_quantity_and_rate(item: Any, extra: dict) -> tuple[Decimal, Decimal]:
@@ -243,6 +284,10 @@ def compute_item_total(
     if item_form == "transport":
         qty, unit_price = _transport_quantity_and_rate(item, extra)
         return _q2(qty * unit_price)
+    if item_form in ("flight", "train"):
+        qty = _flight_train_quantity(extra)
+        unit_price = _dec(extra.get("ticket_price"))
+        return _q2(qty * unit_price)
     if item_form == "food":
         mode = extra.get("mode") or "simple"
         if mode == "menu":
@@ -272,7 +317,15 @@ def apply_item_amounts(
     работа); единственное место, проставляющее item_type для этих форм — сам
     выбор типа позиции на фронте (PurchaseItemsEditor.vue) forced-дефолтом
     зеркалит эту же проверку `if item_form`, второго списка форм не заводить
-    (Правило №6)."""
+    (Правило №6).
+
+    Даты позиции (п. С4, 30.09.2026) — validate_item_form_dates (services/
+    item_form_dates.py) вызывается ЗДЕСЬ, единственной точке записи total_price
+    на КАЖДОМ сохранении позиции закупки/заявки — raises HTTPException(422) при
+    «отправление позже окончания» (transport) / «обратно раньше туда»
+    (flight/train), вторая проверка по роутерам не заводится (Правило №6)."""
+    from app.services.item_form_dates import validate_item_form_dates
+    validate_item_form_dates(item, item_form)
     if item_form:
         item.item_type = "услуга"
     extra = _extra(item)
@@ -284,6 +337,13 @@ def apply_item_amounts(
         qty, unit_price = _transport_quantity_and_rate(item, extra)
         item.quantity = qty
         item.unit_price = unit_price
+    elif item_form in ("flight", "train"):
+        # unit_price — производное от введённой цены билета (extra['ticket_price']),
+        # тот же приём, что у transport выше (цена вводится в extra_attrs, не в
+        # item.unit_price напрямую — generic-рендер ItemFormFields.vue рисует
+        # ticket_price обычным number-полем формы).
+        item.quantity = _flight_train_quantity(extra)
+        item.unit_price = _dec(extra.get("ticket_price"))
     elif item_form == "food":
         mode = extra.get("mode") or "simple"
         if mode == "menu":

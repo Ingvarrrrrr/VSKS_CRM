@@ -15,7 +15,16 @@
         Создать
       </v-btn>
     </v-card-title>
-    <v-card-text v-if="linkedTasks.length" class="pt-0">
+    <!-- Ошибка загрузки — ТОЛЬКО внутри этой карточки, без глобального
+         модального окна «Ошибка» (которое иначе перекрывало бы всю форму
+         закупки и переоткрывалось при каждом неудачном запросе). См.
+         composables/purchase/usePurchaseTasks.ts::loadLinkedTasks. -->
+    <v-card-text v-if="linkedTasksError" class="pt-0">
+      <v-alert type="warning" variant="tonal" density="compact" class="text-caption">
+        {{ linkedTasksError }}
+      </v-alert>
+    </v-card-text>
+    <v-card-text v-else-if="linkedTasks.length" class="pt-0">
       <v-list density="compact" class="pa-0">
         <v-list-item v-for="lt in linkedTasks" :key="lt.id" class="px-2"
           @click="$router.push(`/my-tasks?task=${lt.id}`)">
@@ -60,6 +69,7 @@
 defineProps<{
   purchaseId: number | null
   linkedTasks: any[]
+  linkedTasksError?: string
   openCreateLinkedTask: () => void
   taskStatusColor: (status: string) => string
   taskPriorityColor: (priority: string) => string

@@ -118,23 +118,13 @@
               hide-details class="my-1" :disabled="readonly || !!itemForm || !!(rowItemFormChoices && rowItemFormChoices.length)"
               @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
           </td>
-          <td v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="3">
-            <!-- «Проживание и питание»: переключатель формы строки + поля
-                 формы — единый компонент (Правило №5/№6, см. его докстринг),
-                 используется одинаково во Flat/Stages/Wish/ItemsCardsView. -->
-            <ItemRowFormSwitch
-              :row-item-form-choices="rowItemFormChoices"
-              :item-form="itemForm"
-              :row-form="item.item_form"
-              :fields="itemFormFields"
-              :model-value="item.extra_attrs"
-              :unit-price="item.unit_price"
-              :disabled="readonly || tzDisabled"
-              @update:row-form="(v) => { item.item_form = v; emit('calc-item-total', idx) }"
-              @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
-              @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
-            />
-          </td>
+          <!-- Узкая колонка Кол-во/Ед/Цена заменяется пустой ячейкой-заглушкой
+               (сохраняет выравнивание столбцов Итого/Страна/... справа) — сама
+               панель формы строки теперь на всю ширину в item-form-row ниже
+               (тот же приём, что у feo-attrs-row, см. её комментарий; раньше
+               панель жила прямо тут и сжималась до ~220px колонками Кол-во/
+               Ед/Цена — владелец, п. С4, 07.10: «странно разбито, непонятно»). -->
+          <td v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="3"></td>
           <template v-else>
           <td>
             <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
@@ -338,6 +328,28 @@
               <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
                 :disabled="readonly" @click="emit('remove-item', idx)" />
             </div>
+          </td>
+        </tr>
+        <!-- Панель формы строки («Проживание»/«Питание» и т.п.) — на всю ширину
+             таблицы, той же конструкцией, что ФЭО-подстрока ниже (colspan на
+             весь totalColCount, под строкой позиции, без узких колонок
+             Кол-во/Ед/Цена). Владелец, п. С4, 07.10: формула должна быть одной
+             ровной строкой с полями одинаковой ширины — в колонке ~220px это
+             невозможно, поля переносились столбиком. -->
+        <tr v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" class="item-form-row" :class="{ 'cv-row': virtualize }">
+          <td :colspan="totalColCount">
+            <ItemRowFormSwitch
+              :row-item-form-choices="rowItemFormChoices"
+              :item-form="itemForm"
+              :row-form="item.item_form"
+              :fields="itemFormFields"
+              :model-value="item.extra_attrs"
+              :unit-price="item.unit_price"
+              :disabled="readonly || tzDisabled"
+              @update:row-form="(v) => { item.item_form = v; emit('calc-item-total', idx) }"
+              @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
+              @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
+            />
           </td>
         </tr>
         <!-- ФЭО-подстрока на всю ширину таблицы: путь категории ФЭО обычно длинный
@@ -765,6 +777,14 @@ tbody td:nth-child(2) { vertical-align: middle; }
 .feo-attrs-row td {
   border-top: none;
   padding-top: 0;
+}
+
+/* Панель формы строки (Проживание/Питание) — тот же приём, что у
+   feo-attrs-row выше: примыкает к родительской строке без своей границы. */
+.item-form-row td {
+  border-top: none;
+  padding-top: 0;
+  padding-bottom: 8px;
 }
 
 /* Группировка позиций по категориям/видам: строки-заголовки групп */

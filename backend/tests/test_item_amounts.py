@@ -165,6 +165,46 @@ def test_food_menu_mode_zero_persons_no_division_by_zero():
     assert it.unit_price == Decimal("0")
 
 
+def test_food_menu_mode_per_meal_persons_override():
+    """Владелец, 30.09, «люди на каждый приём»: общее «Человек»=10, у приёма
+    «Обед» своё число — 5. Завтрак (200 ₽) считается по общим 10 чел. =
+    2000, Обед (200 ₽) — по своим 5 чел. = 1000. Итого 3000,
+    quantity = 10+5 = 15, unit_price = 3000/15 = 200 (ПРОИЗВОДНОЕ).
+    Наивный старый расчёт «человек × Σ цен» дал бы 10×400=4000 — неверно,
+    игнорируя переопределение."""
+    it = _item(
+        extra_attrs={
+            "mode": "menu",
+            "persons": 10,
+            "menu": [
+                {"day": 1, "meals": [
+                    {"name": "Завтрак", "price": 200},
+                    {"name": "Обед", "price": 200, "persons": 5},
+                ]},
+            ],
+        },
+    )
+    total = apply_item_amounts(it, "food")
+    assert total == Decimal("3000.00")
+    assert it.quantity == Decimal("15")
+    assert it.unit_price == Decimal("200.00")
+
+
+def test_food_menu_mode_per_meal_persons_empty_string_falls_back_to_default():
+    """persons='' (пустое поле формы) — то же, что не задан: берём общее
+    число человек, как и у meals_per_day/days в режиме «просто»."""
+    it = _item(
+        extra_attrs={
+            "mode": "menu",
+            "persons": 4,
+            "menu": [{"day": 1, "meals": [{"name": "Завтрак", "price": 100, "persons": ""}]}],
+        },
+    )
+    total = apply_item_amounts(it, "food")
+    assert total == Decimal("400.00")
+    assert it.quantity == Decimal("4")
+
+
 def test_food_menu_mode_unit_price_not_accepted_from_front():
     """unit_price, пришедший с фронта, ИГНОРИРУЕТСЯ в menu-режиме — оно
     производное (как у transport в режиме «стоимость рейса»)."""

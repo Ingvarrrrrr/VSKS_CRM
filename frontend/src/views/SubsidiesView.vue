@@ -140,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
@@ -216,6 +216,7 @@ import RevisionDraftBar from '@/components/subsidies/RevisionDraftBar.vue'
 import { useFeoUndoStack, handleFeoUndoKeydown } from '@/composables/subsidies/useFeoUndoStack'
 import { useFeoReqItems } from '@/composables/subsidies/useFeoReqItems'
 import { useFeoTreeSearch } from '@/composables/subsidies/useFeoTreeSearch'
+import { captureScroll } from '@/composables/subsidies/usePreserveScroll'
 // Раздел C (план ancient-prancing-music.md, 21.09) — общий с дашбордом
 // переключатель «целиком/товары-услуги» (SubsidyKpiCards.vue); используется
 // здесь только чтобы решить, догружать ли ?type_split=true к /dashboard/charts
@@ -395,6 +396,7 @@ const feoLevel5 = useFeoLevel5({
   collapsedPlannedItems: feoTreePrefs.collapsedPlannedItems,
   feoResidualNoteFor: feoTreeAmounts.feoResidualNoteFor,
   refreshReqData,
+  feoTableArea,
 })
 // matchedReqQty/matchedReqTotal нужны feoTreeAmounts (feoQtyDisplayFor/feoPlannedDisplayFor/
 // mergedQtyDiff), но сами живут в useFeoReqItems.ts, которому в свою очередь нужны
@@ -452,6 +454,7 @@ const plannedItems = usePlannedItems({
   ensureComparison: feoLevel5.ensureComparison,
   refreshReqData,
   factForPlanned: feoLevel5.factForPlanned,
+  feoTableArea,
 })
 
 // ── Диалоги дерева ФЭО (волна 5c): рефы + трамполины ────────────────────────
@@ -747,14 +750,16 @@ async function loadFeo(subsidyId: number) {
   // скролла на всякий случай (nextTick ниже), не изобретаем новый механизм.
   const isRefresh = feoLoadedForSubsidyId === subsidyId
   const scrollEl = feoTableArea.value
-  const savedScrollTop = isRefresh ? (scrollEl?.scrollTop ?? null) : null
   // Владелец говорит именно про «бросает к самому верху страницы» — помимо
   // внутренней прокрутки .feo-table-wrap, это ЕЩЁ и window.scrollY: пока
   // дерево было спрятано за спиннером (v-if=loadingFeo), высота документа
   // на миг схлопывалась, и браузер сам подрезал scrollY. Основной фикс выше
   // (не трогать loadingFeo/не обнулять данные на «тихой» перезагрузке) не
-  // даёт высоте схлопнуться вовсе, restoreWindowScrollY — подстраховка.
-  const savedWindowScrollY = isRefresh ? window.scrollY : null
+  // даёт высоте схлопнуться вовсе, restoreScroll (usePreserveScroll.ts,
+  // Правило №6 — один общий механизм, его же используют удаление/правка/
+  // добавление плановой позиции в useFeoLevel5.ts/useFeoPlannedItemEditDialog.ts/
+  // useFeoPlannedItemAddDialog.ts) — подстраховка.
+  const restoreScroll = isRefresh ? captureScroll(scrollEl) : null
   if (!isRefresh) {
     loadingFeo.value = true
     feoTreeState.feoCategories.value = []
@@ -840,11 +845,7 @@ async function loadFeo(subsidyId: number) {
     // оставалось на том месте, где было»). nextTick — та же техника, что и у
     // scrollToFirstKpiHighlight/scrollToNewFeoNode (дождаться перерисовки
     // v-for перед обращением к DOM).
-    if (isRefresh && (savedScrollTop != null || savedWindowScrollY != null)) {
-      await nextTick()
-      if (scrollEl && savedScrollTop != null) scrollEl.scrollTop = savedScrollTop
-      if (savedWindowScrollY != null) window.scrollTo({ top: savedWindowScrollY })
-    }
+    if (restoreScroll) await restoreScroll()
   }
 }
 

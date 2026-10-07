@@ -246,20 +246,11 @@
                       </div>
                       <!-- Phase 27.1.1 fix: per-item contractor только для авансовых (advance_report). Inline contractor для обычных закупок убран — 1 контрагент на закупку. -->
                     </td>
-                    <td v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="3">
-                      <ItemRowFormSwitch
-                        :row-item-form-choices="rowItemFormChoices"
-                        :item-form="itemForm"
-                        :row-form="item.item_form"
-                        :fields="itemFormFields"
-                        :model-value="item.extra_attrs"
-                        :unit-price="item.unit_price"
-                        :disabled="tzDisabled"
-                        @update:row-form="(v) => { item.item_form = v; emit('calc-item-total', idx) }"
-                        @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
-                        @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
-                      />
-                    </td>
+                    <!-- Узкая колонка-заглушка — сама панель формы строки теперь
+                         на всю ширину нижней строкой (item-form-row ниже), тот
+                         же приём, что stage-attrs-row ниже (владелец, п. С4,
+                         07.10: формула в колонке ~220px «странно разбито»). -->
+                    <td v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="3"></td>
                     <template v-else>
                     <td>
                       <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
@@ -366,6 +357,26 @@
                         {{ contractorNameById(item.contractor_id) }}
                       </v-chip>
                       <span v-else class="text-medium-emphasis text-caption">—</span>
+                    </td>
+                  </tr>
+                  <!-- Панель формы строки (Проживание/Питание) — на всю ширину
+                       нижней строки, та же конструкция, что stage-attrs-row
+                       ниже (владелец, п. С4, 07.10). -->
+                  <tr v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" class="stage-tz-row item-form-row">
+                    <td></td>
+                    <td :colspan="(showVatColumnsInExpandRow ? 9 : 7) - 1">
+                      <ItemRowFormSwitch
+                        :row-item-form-choices="rowItemFormChoices"
+                        :item-form="itemForm"
+                        :row-form="item.item_form"
+                        :fields="itemFormFields"
+                        :model-value="item.extra_attrs"
+                        :unit-price="item.unit_price"
+                        :disabled="tzDisabled"
+                        @update:row-form="(v) => { item.item_form = v; emit('calc-item-total', idx) }"
+                        @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
+                        @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
+                      />
                     </td>
                   </tr>
                   <!-- ТЗ attributes row (full width): ФЭО каскад + Тип + Страна.

@@ -59,12 +59,26 @@
                 class="mb-1" :disabled="disabled"
                 @update:model-value="(v: string) => setCell(dayIdx, name, 'description', v)"
               />
-              <v-text-field
-                :model-value="cellOf(day, name)?.price ?? ''"
-                type="number" placeholder="₽/чел" density="compact" variant="outlined" hide-details
-                :disabled="disabled"
-                @update:model-value="(v: string) => setCell(dayIdx, name, 'price', numOrNull(v))"
-              />
+              <div class="d-flex ga-1">
+                <v-text-field
+                  :model-value="cellOf(day, name)?.price ?? ''"
+                  type="number" placeholder="₽/чел" density="compact" variant="outlined" hide-details
+                  :disabled="disabled"
+                  @update:model-value="(v: string) => setCell(dayIdx, name, 'price', numOrNull(v))"
+                />
+                <!-- Своё число человек у этого приёма (владелец, 30.09, «люди
+                     на каждый приём») — пусто = общее «Человек» наверху
+                     панели (placeholder показывает это значение, в данные не
+                     подставляется, см. комментарий у numPlaceholder в
+                     ItemFormFields.vue — тот же приём). -->
+                <v-text-field
+                  :model-value="numDisplay(cellOf(day, name)?.persons)"
+                  type="number" :placeholder="String(personsNum)" title="Человек на этот приём (пусто = общее число)"
+                  density="compact" variant="outlined" hide-details style="max-width:78px"
+                  :disabled="disabled"
+                  @update:model-value="(v: string) => setCell(dayIdx, name, 'persons', numOrNull(v))"
+                />
+              </div>
             </td>
             <td class="food-menu-table__total-col text-body-2">{{ fmtMoney(dayTotal(day)) }} ₽</td>
           </tr>
@@ -89,7 +103,8 @@
 // (превью) и backend/app/services/item_amounts.py::_food_menu_amounts
 // (источник истины при сохранении, Правило №6).
 import { computed, watch } from 'vue'
-import type { FoodMenuDay, FoodMenuMeal } from '@/utils/itemAmounts'
+import type { ExtraAttrs, FoodMenuDay, FoodMenuMeal } from '@/utils/itemAmounts'
+import { foodMenuAmounts, foodMenuMealPersons } from '@/utils/itemAmounts'
 import { itemFormDescriptor } from '@/composables/items/useItemForm'
 import { numOrNull } from '@/utils/numberFormat'
 
@@ -148,16 +163,37 @@ function cellOf(day: FoodMenuDay, name: string): FoodMenuMeal | undefined {
   return (Array.isArray(day?.meals) ? day.meals : []).find(m => m?.name === name)
 }
 
-function dayTotal(day: FoodMenuDay): number {
-  const meals = Array.isArray(day?.meals) ? day.meals : []
-  return meals.reduce((s, m) => s + toNum(m?.price), 0)
+function numDisplay(v: unknown): string {
+  return v === undefined || v === null || v === '' ? '' : String(v)
 }
 
+// «Итого за день» — деньги за день с учётом СВОЕГО числа человек у каждого
+// приёма (meal.persons, если задан, иначе общее persons — задача владельца
+// «люди на каждый приём», 30.09); сумма этих значений по всем дням равна
+// общему «Итого» ниже (та же логика, применённая на уровне дня, не вторая
+// формула — Правило №6, единственный расчёт денег живёт в
+// foodMenuAmounts/foodMenuMealPersons, utils/itemAmounts.ts).
+function dayTotal(day: FoodMenuDay): number {
+  const meals = Array.isArray(day?.meals) ? day.meals : []
+  return meals.reduce((s, m) => s + toNum(m?.price) * foodMenuMealPersons(m, personsNum.value), 0)
+}
+
+// «Всего на человека» — справочная сумма цен приёмов БЕЗ учёта persons
+// (совпадает с прежним расчётом, когда ни у одного приёма нет своего
+// persons); не участвует в сохраняемой сумме позиции.
 const perPersonTotal = computed(() => days_.value.reduce((sum, d) => {
   const meals = Array.isArray(d?.meals) ? d.meals : []
   return sum + meals.reduce((s, m) => s + toNum(m?.price), 0)
 }, 0))
-const grandTotal = computed(() => Math.round((perPersonTotal.value * personsNum.value + Number.EPSILON) * 100) / 100)
+
+// Итог позиции — ЕДИНСТВЕННАЯ формула денег (foodMenuAmounts, та же, что
+// применяется при сохранении через applyItemAmounts, Правило №6); раньше тут
+// был отдельный расчёт perPersonTotal × персон — терял per-meal persons.
+const grandTotal = computed(() => {
+  const extra: ExtraAttrs = { persons: props.persons, menu: days_.value }
+  const [, , total] = foodMenuAmounts(extra)
+  return total
+})
 
 // Синхронизация числа дней (общее поле формы «Дней», props.days) с длиной
 // массива menu — владелец: «в позициях закупки должен добавлять дни»; дни
@@ -170,7 +206,9 @@ watch(
   ([target, currentLen]) => {
     if (!target || target === currentLen) return
     const next = days_.value.slice(0, target).map(d => ({ ...d, meals: d.meals.map(m => ({ ...m })) }))
-    const template = next.length ? next[next.length - 1].meals.map(m => ({ ...m, price: null })) : makeDefaultMeals()
+    // persons: null — новый день не наследует чужую персональную правку
+    // «человек на приём» последнего дня, начинает с общего числа (как price).
+    const template = next.length ? next[next.length - 1].meals.map(m => ({ ...m, price: null, persons: null })) : makeDefaultMeals()
     while (next.length < target) {
       next.push({ day: next.length + 1, meals: template.map(m => ({ ...m })) })
     }
@@ -208,7 +246,7 @@ function renameMealColumn(oldName: string, newName: string) {
   emit('update:modelValue', next)
 }
 
-function setCell(dayIdx: number, name: string, field: 'description' | 'price', value: any) {
+function setCell(dayIdx: number, name: string, field: 'description' | 'price' | 'persons', value: any) {
   const next = days_.value.map((d, i) => {
     if (i !== dayIdx) return d
     const meals = Array.isArray(d.meals) ? d.meals : []

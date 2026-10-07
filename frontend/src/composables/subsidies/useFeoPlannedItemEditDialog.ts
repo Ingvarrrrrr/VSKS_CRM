@@ -10,6 +10,7 @@ import { numOrNull } from '@/utils/numberFormat'
 import { pushFeoUndo } from './useFeoUndoStack'
 import { buildPlannedItemFullPayload, putPlannedItemFull } from './useFeoLevel5'
 import { fetchMonthlySchedulePreview } from './feoMonthlySchedulePreview'
+import { withPreservedScroll } from './usePreserveScroll'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoPlannedItem } from './types'
 
@@ -181,7 +182,7 @@ const editPlannedItemDisabled = computed(() => {
 // нужен putPlannedItemFull ниже, чтобы решить direct/revision через
 // feoWriteAdapter.ts; usePlannedItems.ts (единственный вызывающий) уже
 // прокидывает selectedId в своём PlannedItemsCtx.
-type EditDialogCtx = Pick<SubsidyDetailContext, 'refreshComparison' | 'refreshReqData' | 'selectedId'>
+type EditDialogCtx = Pick<SubsidyDetailContext, 'refreshComparison' | 'refreshReqData' | 'selectedId' | 'feoTableArea'>
 
 export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
   const toast = useToast()
@@ -319,10 +320,13 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
       } else if (res.mode === 'direct' && unitPriceWasEmpty && saved.unit_price != null) {
         showSnack(`Сумма пересчитана по цене за единицу ${Number(saved.unit_price).toLocaleString('ru-RU')} ₽`, 'info')
       }
-      // См. комментарий у deletePlannedItem (SubsidiesView.vue) — refreshComparison
+      // См. комментарий у deletePlannedItem (useFeoLevel5.ts) — refreshComparison
       // один не обновляет planTreeByCat, от которого зависят числа узла/родителей и
-      // плашка превышения.
-      await Promise.all([ctx.refreshComparison(d.feo_category_id), ctx.refreshReqData()])
+      // плашка превышения. withPreservedScroll (usePreserveScroll.ts, Правило №6) —
+      // жалоба владельца 30.09, п.5: «изменил сумму в категории — перекинуло
+      // наверх страницы».
+      await withPreservedScroll(ctx.feoTableArea.value, () =>
+        Promise.all([ctx.refreshComparison(d.feo_category_id), ctx.refreshReqData()]))
     } catch (e: any) {
       showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения', 'error')
     } finally {
@@ -346,12 +350,14 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
       label: `изменение позиции «${name}»`,
       undo: async () => {
         const res = await putPlannedItemFull(itemId, before)
-        if (res.ok) await Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()])
+        if (res.ok) await withPreservedScroll(ctx.feoTableArea.value, () =>
+          Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()]))
         return res.ok ? { ok: true } : { ok: false, error: res.error }
       },
       redo: async () => {
         const res = await putPlannedItemFull(itemId, after)
-        if (res.ok) await Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()])
+        if (res.ok) await withPreservedScroll(ctx.feoTableArea.value, () =>
+          Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()]))
         return res.ok ? { ok: true } : { ok: false, error: res.error }
       },
     })

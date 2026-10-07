@@ -39,9 +39,3 @@ def test_unrecognized_status_flagged():
     res = statuses_mod.resolve_status("Непонятно что")
     assert res["recognized"] is False
     assert res["target_status"] is None
-
-
-def test_is_payroll_path():
-    assert statuses_mod.is_payroll_path(["Заробатная плата и иные выплаты"], "Заработная плата работников")
-    assert statuses_mod.is_payroll_path([], "Командировочные расходы")
-    assert not statuses_mod.is_payroll_path(["Прочее"], "Бумага А4")

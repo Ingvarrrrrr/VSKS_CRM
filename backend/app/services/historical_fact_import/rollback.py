@@ -28,14 +28,19 @@ async def _collect_blockers(db: AsyncSession, run) -> dict:
 
     purchase_ids = (run.created_refs or {}).get("purchase_ids") or []
     existing_match_backups = (run.created_refs or {}).get("existing_match_item_backups") or []
+    # Задача B («Оплачено, но уже в закупке») — закупки, которым этот прогон
+    # поднял статус/добавил оплату БЕЗ создания новой закупки.
+    existing_update_backups = (run.created_refs or {}).get("existing_update_backups") or []
+    existing_update_purchase_ids = [b["purchase_id"] for b in existing_update_backups]
     blockers: list[str] = []
     will_delete = {
         "purchases": 0, "payments": 0, "contractors": 0, "contracts": 0, "planned_items": 0,
         # 🟢🔵 «та же закупка» (Часть А) — позиции СУЩЕСТВУЮЩЕЙ закупки,
         # которым откат вернёт прежнюю (до импорта) привязку к плану.
         "existing_match_items_restored": len(existing_match_backups),
+        "existing_updates_restored": len(existing_update_backups),
     }
-    if not purchase_ids and not existing_match_backups:
+    if not purchase_ids and not existing_match_backups and not existing_update_backups:
         return {"can_rollback": False, "blockers": ["В этом прогоне нет созданных закупок"], "will_delete": will_delete}
 
     purchases = (await db.execute(select(Purchase).where(Purchase.id.in_(purchase_ids)))).scalars().all()
@@ -72,6 +77,32 @@ async def _collect_blockers(db: AsyncSession, run) -> dict:
 
     all_payments = (await db.execute(select(Payment).where(Payment.purchase_id.in_(purchase_ids)))).scalars().all()
     will_delete["payments"] = len(all_payments)
+
+    # Задача B — блокеры по аналогии с покупками, которые ЭТОТ прогон создал
+    # (выше): закупку правили после импорта (любое событие кроме fact_
+    # import_existing_update) или есть платёж, подтверждённый выпиской.
+    if existing_update_purchase_ids:
+        eu_other_events = (await db.execute(
+            select(PurchaseEvent).where(
+                PurchaseEvent.purchase_id.in_(existing_update_purchase_ids),
+                PurchaseEvent.event_type != "fact_import_existing_update",
+            )
+        )).scalars().all()
+        eu_touched = sorted({e.purchase_id for e in eu_other_events})
+        if eu_touched:
+            blockers.append(f"Закупки (обновление существующих) правили после импорта: {eu_touched}")
+
+        eu_confirmed_payments = (await db.execute(
+            select(Payment).where(
+                Payment.purchase_id.in_(existing_update_purchase_ids),
+                Payment.confirmed_by_statement == True,  # noqa: E712
+            )
+        )).scalars().all()
+        if eu_confirmed_payments:
+            blockers.append(
+                "Есть платежи, подтверждённые выпиской (обновление существующих закупок): "
+                f"{[pay.purchase_id for pay in eu_confirmed_payments]}"
+            )
 
     created_refs = run.created_refs or {}
     will_delete["contractors"] = len(created_refs.get("contractor_ids") or [])
@@ -144,6 +175,52 @@ async def execute_rollback(db: AsyncSession, run) -> dict:
             existing_purchase = await db.get(Purchase, pid)
             if existing_purchase:
                 await recalc_purchase_money(db, existing_purchase)
+
+    # Задача B («Оплачено, но уже в закупке») — вернуть статус/поля закупки,
+    # которую прогон обновил БЕЗ создания новой (платёж с import_run_id уже
+    # удалён выше — тем же общим запросом, что и для обычного пути). Если
+    # закупка раньше не имела договора (backup['contract_id'] is None), а
+    # теперь имеет — ставим её contract_id на проверку вместе с контрактами
+    # созданных закупок (contract_ids_to_check ниже), чтобы осиротевший
+    # договор, заведённый этим прогоном, удалился тем же циклом, не вторым.
+    restored_eu_purchase_ids: set = set()
+    # Закупка не имела договора ДО этого прогона (contract_number пуст в
+    # backup) → все её ContractItem (если появились) заведены ИМ, удаляем
+    # их на откате (владелец: «удалить договор/договорные позиции, если их
+    # создал этот прогон»). Была реальная/временная нумерация ДО прогона —
+    # ContractItem могли существовать и до импорта, трогать их не будем.
+    eu_contract_items_purchase_ids: set = set()
+    for backup in created_refs.get("existing_update_backups") or []:
+        eu_p = await db.get(Purchase, backup["purchase_id"])
+        if not eu_p:
+            continue
+        if eu_p.contract_id and not backup.get("contract_id"):
+            contract_ids_to_check.add(eu_p.contract_id)
+        if not backup.get("contract_number"):
+            eu_contract_items_purchase_ids.add(eu_p.id)
+        eu_p.status = backup["status"]
+        eu_p.contract_number = backup["contract_number"]
+        eu_p.contract_number_is_temporary = backup["contract_number_is_temporary"]
+        eu_p.is_prepayment = backup["is_prepayment"]
+        eu_p.contract_price = backup["contract_price"]
+        eu_p.contract_id = backup.get("contract_id")
+        restored_eu_purchase_ids.add(eu_p.id)
+    if eu_contract_items_purchase_ids:
+        from app.models.contract_item import ContractItem
+        eu_cis = (await db.execute(
+            select(ContractItem).where(ContractItem.purchase_id.in_(eu_contract_items_purchase_ids))
+        )).scalars().all()
+        for ci in eu_cis:
+            await db.delete(ci)
+    if restored_eu_purchase_ids:
+        await db.flush()
+        from app.services.purchase_money_writer import recalc_purchase_money
+        from app.services.purchase_payments import recompute_purchase_payments
+        for pid in restored_eu_purchase_ids:
+            eu_pp = await db.get(Purchase, pid)
+            if eu_pp:
+                await recalc_purchase_money(db, eu_pp)
+                await recompute_purchase_payments(db, pid)
 
     for contractor_id in created_refs.get("contractor_ids") or []:
         still_used = (await db.execute(

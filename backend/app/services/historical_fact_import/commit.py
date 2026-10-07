@@ -37,8 +37,10 @@ from app.services.documents.formatting import _fmt_money
 # в самой колонке для любого другого потребителя, который сравнивает
 # item_type буквально (PurchaseItemsEditor.vue и т.п. ждут "товар"/"услуга").
 from app.services.item_types import normalize_item_type
-
-_RANK = {"work_in_progress": 1, "contracted": 2, "ordered": 3, "delivered": 4, "paid": 5}
+# ПРАВИЛО №6: ранг статуса — ОДИН источник (existing_update.py), и для
+# «наивысшая стадия строк группы» здесь, и для «поднимать статус СУЩЕСТВУЮЩЕЙ
+# закупки только вверх» там — раньше это была вторая копия того же словаря.
+from app.services.historical_fact_import.existing_update import RANK as _RANK
 
 
 def _format_rub(v) -> str:
@@ -94,12 +96,10 @@ async def commit_import(
     from app.schemas.purchases import PurchaseCreate, PurchaseItemCreate
     from app.services.contractor_resolve import find_or_create_contractor
     from app.services.purchase_create_core import insert_purchase_with_items
-    from app.services.contract_items_materialize import copy_items_to_contract
-    from app.services.temp_contract_number import generate_temp_contract_number
-    from app.routers.contracts import ensure_contract_linked
     from app.services.purchase_money_writer import recalc_purchase_money
     from app.services.purchase_payments import recompute_purchase_payments
     from app.services.historical_fact_import import existing_link as existing_link_mod
+    from app.services.historical_fact_import import existing_update as existing_update_mod
 
     subsidy = await db.get(Subsidy, subsidy_id)
 
@@ -128,6 +128,10 @@ async def commit_import(
         # привязанные к плану этим прогоном; rollback.py восстанавливает их
         # прежние значения feo_planned_item_id/feo_category_id.
         "existing_match_item_backups": [],
+        # Задача B («Оплачено, но уже в закупке») — закупки, которым этот
+        # прогон поднял статус/добавил оплату БЕЗ создания новой закупки;
+        # rollback.py восстанавливает поля закупки из backup.
+        "existing_update_backups": [],
     }
     purchases_created = 0
     payments_created = 0
@@ -154,7 +158,13 @@ async def commit_import(
     existing_match_report: list[dict] = []
 
     for group in preview["groups"]:
-        group_rows = [rows_by_num[rn] for rn in group["rows"] if not rows_by_num[rn]["skip"]]
+        # Задача B: строки, обновляющие СУЩЕСТВУЮЩУЮ закупку (row['existing_
+        # purchase']) — применяются ОТДЕЛЬНО (existing_update_mod.apply_
+        # existing_updates ниже, после цикла групп), не как позиции новой.
+        group_rows = [
+            rows_by_num[rn] for rn in group["rows"]
+            if not rows_by_num[rn]["skip"] and not rows_by_num[rn].get("existing_purchase")
+        ]
         if not group_rows:
             continue
 
@@ -343,11 +353,13 @@ async def commit_import(
             p.nmck = total_amount
 
         if target_status in ("contracted", "ordered", "delivered", "paid"):
-            p.contract_number = await generate_temp_contract_number(p, db)
-            p.contract_number_is_temporary = True
-            await copy_items_to_contract(db, p.id)
-            await ensure_contract_linked(p, db)
-            await recalc_purchase_money(db, p)
+            # ПРАВИЛО №6: тот же путь, что и «обновить СУЩЕСТВУЮЩУЮ закупку»
+            # (apply_existing_updates ниже) — temp-номер/договорные позиции/
+            # привязка/пересчёт вынесены в existing_update.materialize_contract.
+            # force_temp_number=True — insert_purchase_with_items уже мог
+            # подставить дефолтный contract_number («{год}/{id}»), для новой
+            # закупки он ВСЕГДА перезаписывается временным (как раньше).
+            await existing_update_mod.materialize_contract(db, p, force_temp_number=True)
         else:
             # «В работе» — договора ещё нет (владелец: «не отмечена → закупка
             # в работе БЕЗ суммы договора»). recalc_purchase_money внутри
@@ -380,6 +392,18 @@ async def commit_import(
         purchases_created += 1
         created_refs["purchase_ids"].append(p.id)
 
+    # Задача B («Оплачено, но уже в закупке») — preview['existing_updates']
+    # уже посчитан build_preview() выше (тот же набор entries, что показывался
+    # человеку на шаге итогов, ПРАВИЛО №6 — без повторного расчёта); здесь
+    # только применяем: статус ТОЛЬКО вверх + платёж «по отметке».
+    existing_update_backups = await existing_update_mod.apply_existing_updates(
+        db, run_id=run.id, current_user=current_user, entries=preview.get("existing_updates") or [],
+    )
+    created_refs["existing_update_backups"] = existing_update_backups
+    # apply_existing_updates создаёт Payment РОВНО когда entry['paid_add'] > 0
+    # (см. его код) — считаем по тому же условию, второй счётчик не заводим.
+    payments_created += sum(1 for e in (preview.get("existing_updates") or []) if (e.get("paid_add") or 0) > 0)
+
     run.purchases_created = purchases_created
     run.payments_created = payments_created
     run.contractors_created = contractors_created
@@ -399,6 +423,14 @@ async def commit_import(
             "missing": [],
         }
         for r in existing_match_report
+    ] + [
+        {
+            "purchase_id": b["purchase_id"],
+            "registry_number": None,
+            "existing_update": True,
+            "missing": [],
+        }
+        for b in existing_update_backups
     ]
 
     await db.flush()

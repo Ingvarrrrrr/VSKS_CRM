@@ -57,6 +57,15 @@ export interface FactImportMatch {
   candidates: FactImportMatchCandidate[]
 }
 
+// 🟢 Задача B («Оплачено, но уже в закупке», 07.10.2026) — строка файла,
+// чья плановая позиция уже лежит в этой СУЩЕСТВУЮЩЕЙ закупке; закупка
+// обновится по файлу, новая закупка на эту строку не создаётся.
+export interface FactImportRowExistingPurchase {
+  id: number
+  registry_number: string | null
+  status: string
+}
+
 export interface FactImportRow {
   row: number
   name: string
@@ -70,6 +79,7 @@ export interface FactImportRow {
   supplier: string | null
   purchase_no: string | null
   match: FactImportMatch
+  existing_purchase: FactImportRowExistingPurchase | null
   needs_contract_decision: boolean
   // 🔵 правка 3 (план breezy-mixing-lovelace.md): статус строки не распознан
   // как один из 6 статусов GALA — строка ждёт выбора человеком (см.
@@ -152,6 +162,19 @@ export interface FactImportTotals {
   contract_amount: number
   paid_amount: number
   skipped: number
+  existing_updates: number
+}
+
+// 🟢 Задача B — одна СУЩЕСТВУЮЩАЯ закупка, которую этот прогон обновит по
+// статусу/оплате из файла (не создаёт новую). status_from/status_to — коды
+// из того же 6-статусного словаря (statusLabel ниже их переводит).
+export interface FactImportExistingUpdate {
+  purchase_id: number
+  registry_number: string | null
+  status_from: string
+  status_to: string
+  paid_add: number
+  rows: number[]
 }
 
 export interface FactImportPreview {
@@ -161,6 +184,7 @@ export interface FactImportPreview {
   columns: FactImportColumn[]
   rows: FactImportRow[]
   groups: FactImportGroup[]
+  existing_updates: FactImportExistingUpdate[]
   totals: FactImportTotals
   warnings: string[]
   statuses: FactImportStatusOption[]
@@ -573,6 +597,8 @@ export function useFactImport() {
   const visibleRows = computed(() => factImport.preview?.rows ?? [])
   const visibleGroups = computed(() => factImport.preview?.groups ?? [])
   const totals = computed(() => factImport.preview?.totals ?? null)
+  // 🟢 Задача B — список для шага итогов (FactImportStepConfirm.vue).
+  const existingUpdates = computed(() => factImport.preview?.existing_updates ?? [])
 
   function rowOverride(row: number): FactImportRowOverride {
     const key = String(row)
@@ -751,6 +777,7 @@ export function useFactImport() {
     visibleRows,
     visibleGroups,
     totals,
+    existingUpdates,
     rowOverride,
     setRowSkip,
     setRowPlannedItem,

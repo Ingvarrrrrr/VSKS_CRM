@@ -70,6 +70,49 @@ def test_ho_columns_format_detected_and_mapped():
     assert by_field["supplier"] == "AB"
 
 
+def test_ho_header_oplata_variants_mapped():
+    """Повод: файл ЛНР МАО 07.10.2026, лист «Смета доходов и расходов 20 (3)»
+    — колонка T «Оплата» (без «-но») не распознавалась как paid. «Оплата»/
+    «Оплата факт» → paid, «Оплачено »/«Оплачено» (как в образце ХО) → paid,
+    «Оплата труда» — НЕ paid (ФОТ, не платёж)."""
+    header = _ho_header()
+    header[21] = "Оплата"
+    detected = {"format": "columns", "header_row": 1, "rows": [header], "header": header}
+    cols = columns_mod.build_columns(detected)
+    by_field = {c["field"]: c["letter"] for c in cols if c["field"]}
+    assert by_field["paid"] == "V"
+
+    header2 = _ho_header()
+    header2[21] = "Оплата факт"
+    detected2 = {"format": "columns", "header_row": 1, "rows": [header2], "header": header2}
+    cols2 = columns_mod.build_columns(detected2)
+    by_field2 = {c["field"]: c["letter"] for c in cols2 if c["field"]}
+    assert by_field2["paid"] == "V"
+
+    header3 = _ho_header()
+    header3[21] = "Оплачено "
+    detected3 = {"format": "columns", "header_row": 1, "rows": [header3], "header": header3}
+    cols3 = columns_mod.build_columns(detected3)
+    by_field3 = {c["field"]: c["letter"] for c in cols3 if c["field"]}
+    assert by_field3["paid"] == "V"
+
+    header4 = _ho_header()
+    header4[21] = "Оплата труда"
+    detected4 = {"format": "columns", "header_row": 1, "rows": [header4], "header": header4}
+    cols4 = columns_mod.build_columns(detected4)
+    assert "paid" not in {c["field"] for c in cols4}
+
+    # Значение из колонки «Оплата» действительно попадает в row["paid"].
+    row = _ho_row(
+        l3="Заработная плата работников", unit="усл", qty=1, price=18492000, amount=18492000,
+        fact_price=18492000, fact_amount=18492000, paid=171159, status="Оплачено", status_raw="Оплачено",
+    )
+    detected5 = {"format": "columns", "header_row": 1, "rows": [header, row], "header": header}
+    parsed = rows_mod.parse_rows(detected5, cols, 1)
+    assert len(parsed) == 1
+    assert float(parsed[0]["paid"]) == 171159
+
+
 def test_ho_total_row_without_leaf_name_is_skipped():
     header = _ho_header()
     total_row = _ho_row(l2="Заработная плата и иные выплаты", amount=14359242.42, fact_amount=14359242.42)

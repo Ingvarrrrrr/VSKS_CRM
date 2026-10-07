@@ -55,8 +55,16 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
     # субсидии «занимала» плановую позицию ЭТОЙ субсидии навечно. Теперь —
     # та же субсидия, PLANNED_STATUSES, не остановлена.
     from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
+    # Задача B (план breezy-mixing-lovelace.md, «Оплачено, но уже в закупке»):
+    # тот же запрос, что раньше отдавал только множество связанных
+    # planned_item_id — теперь ещё и id/номер/статус закупки, которой
+    # принадлежит привязка (ПРАВИЛО №6: existing_update.py читает отсюда, не
+    # заводит второй запрос «какая закупка держит эту плановую позицию»).
     bound_rows = (await db.execute(
-        select(PurchaseItem.feo_planned_item_id)
+        select(
+            PurchaseItem.feo_planned_item_id,
+            Purchase.id, Purchase.registry_number, Purchase.status,
+        )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(
             PurchaseItem.feo_planned_item_id.isnot(None),
@@ -64,8 +72,13 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
             Purchase.status.in_(list(PLANNED_STATUSES)),
             Purchase.stopped_at.is_(None),
         )
-    )).scalars().all()
-    already_bound = set(bound_rows)
+    )).all()
+    already_bound = {r[0] for r in bound_rows}
+    bound_purchases: dict[int, list[dict]] = {}
+    for fpi_id, pid, registry_number, status in bound_rows:
+        bound_purchases.setdefault(fpi_id, []).append(
+            {"id": pid, "registry_number": registry_number, "status": status}
+        )
 
     # Баг РЕЕ-2026-08630 (владелец/соседняя сессия, 02.10): 4 строки файла по
     # 50 шт. все схлопнулись на ОДНУ плановую позицию (план 50 шт.) — каждый
@@ -74,7 +87,10 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
     # выданных строкам текущего предпросмотра/коммита (мутируется match_row,
     # живёт на время одного build_preview()); одна плановая позиция не может
     # получить больше одной строки файла В ОДНОМ прогоне.
-    return {"catalog": catalog, "by_name": by_name, "already_bound": already_bound, "used_ids": set()}
+    return {
+        "catalog": catalog, "by_name": by_name, "already_bound": already_bound,
+        "bound_purchases": bound_purchases, "used_ids": set(),
+    }
 
 
 def match_row(ctx: dict, row: dict) -> dict:

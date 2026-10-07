@@ -93,7 +93,14 @@ def build_groups(rows_with_match: list, decisions: Optional[dict] = None) -> lis
         # payroll и т.п. — они не станут частью будущей закупки). `.get`,
         # т.к. у вызывающих тестов (test_fact_import_grouping.py) строки без
         # ключа "skip" — там он всегда отсутствует, что равнозначно False.
-        non_skipped = [it for it in items if not it["row"].get("skip", False)] or items
+        # 🟢 Задача B: строки, обновляющие СУЩЕСТВУЮЩУЮ закупку (row[
+        # 'existing_purchase']), тоже не часть будущей новой закупки —
+        # исключаем их из суммы группы тем же приёмом, не заводя второй фильтр.
+        effective_items = [it for it in items if not it["row"].get("existing_purchase")]
+        non_skipped = (
+            [it for it in effective_items if not it["row"].get("skip", False)]
+            or effective_items or items
+        )
         contract_amount = sum(
             (Decimal(str(it["row"]["fact"]["amount"])) if it["row"]["fact"]["amount"] is not None
              else (Decimal(str(it["row"]["contracted"])) if it["row"]["contracted"] is not None else Decimal(0)))

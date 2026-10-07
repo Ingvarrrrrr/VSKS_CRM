@@ -129,16 +129,3 @@ def resolve_status_by_code(code: str) -> dict:
         return {"target_status": None, "needs_payment": False, "recognized": False, "correction": None}
     target = None if code == "plan_schedule" else code
     return {"target_status": target, "needs_payment": _NEEDS_PAYMENT[code], "recognized": True, "correction": None}
-
-
-def is_payroll_path(path: list, name: str) -> bool:
-    """ФОТ (зарплата, НДФЛ, взносы, командировочные) — исключены по
-    умолчанию (decisions.include_payroll включает обратно). Признак —
-    ключевые слова уровня «ФОТ/Заработная плата и иные выплаты» в пути или
-    имени листовой позиции (владелец, план часть 2)."""
-    haystack = " ".join([*(path or []), name or ""]).lower().replace("ё", "е")
-    keywords = (
-        "заработн", "зарплат", "ндфл", "оплата труда", "страхов",
-        "командировоч", "фот",
-    )
-    return any(k in haystack for k in keywords)

@@ -32,6 +32,21 @@
   <v-alert v-if="totals && totals.skipped > 0" type="info" variant="tonal" density="compact" class="mt-3">
     Пропущено строк: {{ totals.skipped }}
   </v-alert>
+
+  <!-- 🟢 Задача B («Оплачено, но уже в закупке», 07.10.2026) — закупки,
+       которые НЕ создаются заново, а обновляются по статусу/оплате из
+       файла. Подписи статусов — statusLabel(), тот же словарь из
+       preview.statuses, второго справочника на фронте не заводим. -->
+  <v-alert v-if="existingUpdates.length" type="info" variant="tonal" density="compact" class="mt-3">
+    <div>Обновятся существующие закупки: {{ existingUpdates.length }}</div>
+    <ul class="mt-1 mb-0 pl-4">
+      <li v-for="u in existingUpdates" :key="u.purchase_id">
+        {{ u.registry_number || `#${u.purchase_id}` }}:
+        «{{ statusLabel(u.status_from) }}» → «{{ statusLabel(u.status_to) }}»<template v-if="u.paid_add > 0">, оплата +{{ fmt(u.paid_add) }}</template>
+      </li>
+    </ul>
+  </v-alert>
+
   <p class="text-caption text-medium-emphasis mt-3">
     Оплата из таблицы попадёт как отметка человека. Подтверждённой станет после загрузки выписки
     банка/казначейства и сопоставления.
@@ -42,7 +57,7 @@
 import { useFactImport } from '@/composables/subsidies/useFactImport'
 // ПРАВИЛО №6: формат суммы — общий хелпер, не своя копия Intl.NumberFormat.
 import { formatMoney } from '@/utils/formatMoney'
-const { totals } = useFactImport()
+const { totals, existingUpdates, statusLabel } = useFactImport()
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
   return formatMoney(v)

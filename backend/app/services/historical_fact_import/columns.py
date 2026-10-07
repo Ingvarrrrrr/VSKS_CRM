@@ -27,7 +27,7 @@ from app.services.import_preview_sheets import read_preview_sheets, read_full_sh
 # Хинты для detect_header_row/listing — общий словарь слов обоих форматов,
 # достаточно широкий, чтобы найти заголовок независимо от формата файла.
 _HEADER_HINTS = (
-    "уровень", "план", "факт", "оплач", "аванс", "законтракт", "статус", "поставщик",
+    "уровень", "план", "факт", "оплач", "оплат", "аванс", "законтракт", "статус", "поставщик",
     "№ закупки", "наименование", "подкатегория", "количество", "сумма",
     "ед. изм", "товар/услуга",
 )
@@ -74,6 +74,21 @@ FIELDS = (
 
 def _norm(s) -> str:
     return str(s).strip().lower() if s is not None else ""
+
+
+def _is_paid_header(h: str) -> bool:
+    """Заголовок колонки «оплата по отметке» в ОБОИХ форматах — одно правило,
+    один источник истины (ПРАВИЛО №6), вызывается и из _map_columns_format, и
+    из _map_sections_format. Повод: файл ЛНР МАО 07.10.2026, лист «Смета
+    доходов и расходов 20 (3)», колонка T — заголовок «Оплата» (не
+    «Оплачено»), не распознавалась → 35 строк со статусом «Оплачено» давали
+    «Оплачено (по отметке) 0,00 ₽» без единого платежа. "оплач" ловит
+    «Оплачено»/«Оплачена»; "оплат" (startswith) — «Оплата»/«Оплата факт»;
+    "оплач" не начинается с "оплат", поэтому держим оба варианта. Исключение —
+    «оплата труда» (ФОТ, не платёж)."""
+    if "труд" in h:
+        return False
+    return "оплач" in h or h.startswith("оплат")
 
 
 def list_sheets(content: bytes, filename: str) -> dict:
@@ -131,7 +146,7 @@ def detect_format_and_header(content: bytes, filename: str, sheet_name: Optional
     # Формат 'columns' (ХО) — одна строка заголовка с явными текстами уровней.
     for idx in range(max_scan):
         norm = [_norm(c) for c in all_rows[idx]]
-        score = sum(1 for c in norm if c and any(h in c for h in ("уровень", "факт", "оплач", "законтракт", "правильный статус")))
+        score = sum(1 for c in norm if c and (any(h in c for h in ("уровень", "факт", "законтракт", "правильный статус")) or _is_paid_header(c)))
         if score >= 3:
             return {"format": "columns", "header_row": idx + 1, "rows": all_rows, "header": all_rows[idx]}
 
@@ -191,7 +206,7 @@ def _map_columns_format(header: list) -> list:
                 cols.append({"index": i + 2, "letter": _col_letter(i + 2), "header": header[i + 2], "field": "fact_amount"})
             i += 3
             continue
-        elif "оплач" in h:
+        elif _is_paid_header(h):
             field = "paid"
         elif "аванс" in h:
             # Задача 2 (владелец, 05.10.2026) — «Аванс (да/нет)», сразу после
@@ -248,7 +263,7 @@ def _map_sections_format(group_row: list, sub_row: list) -> list:
             field = "fact_price"
         elif current_group == "факт" and "всего" in s:
             field = "fact_amount"
-        elif "оплата" in current_group:
+        elif _is_paid_header(current_group):
             field = "paid"
         elif "законтракт" in current_group:
             field = "contracted"

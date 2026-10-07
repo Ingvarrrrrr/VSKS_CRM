@@ -18,6 +18,13 @@ from app.services.historical_fact_import import rows as rows_mod
 from app.services.historical_fact_import import statuses as statuses_mod
 from app.services.historical_fact_import import matching as matching_mod
 from app.services.historical_fact_import import grouping as grouping_mod
+from app.services.historical_fact_import import existing_update as existing_update_mod
+# ПРАВИЛО №6: подпись статуса — тот же источник, что statuses.py/
+# purchase_transitions.py используют для STATUS_CHOICES, не вторая копия.
+from app.routers.purchase_transitions import STATUS_LABELS
+# ЕДИНСТВЕННЫЙ резолвер «категория ФЭО — ФОТ» (себя или предка) — задача A
+# (владелец, 07.10.2026): «ФОТ определяется по категории, а не по названиям».
+from app.services.feo_payroll import payroll_category_ids
 
 
 async def build_preview(
@@ -40,6 +47,18 @@ async def build_preview(
     parsed_rows = rows_mod.parse_rows(detected, cols, detected["header_row"])
 
     ctx = await matching_mod.build_matching_context(db, subsidy_id)
+
+    # Задача A (владелец, 07.10.2026): ФОТ — по категории ФЭО плановой
+    # позиции строки (себя или предка, feo_payroll.payroll_category_ids),
+    # НЕ по словам в названии/пути. Один набор категорий на весь
+    # предпросмотр. planned_item_category — та же карта id→category_id, что
+    # уже лежит в каталоге плановых позиций (matching_mod.build_matching_
+    # context → ctx['catalog']), повторного похода в БД не делаем.
+    payroll_cat_ids = await payroll_category_ids(db, [subsidy_id])
+    planned_item_category: dict[int, Optional[int]] = {
+        entry["id"]: entry.get("category_id")
+        for entry in ctx["catalog"] if entry.get("kind") == "planned_item"
+    }
 
     # Превышение плана (owner: «договор больше плана» — предупреждение с
     # выбором). Переиспользуем tz_excess_approval.collect_tz_over_plan_violations
@@ -101,8 +120,6 @@ async def build_preview(
         if is_advance:
             status_info = {**status_info, "target_status": "ordered"}
 
-        is_payroll = statuses_mod.is_payroll_path(row["path"], row["name"])
-
         warnings: list[str] = []
         fact_amount = row["fact"]["amount"]
         if fact_amount and not row["status_raw"]:
@@ -117,6 +134,16 @@ async def build_preview(
             warnings.append('Статус «Заключён договор» (из «Оплачено частично»), но «Оплачено» не заполнено')
         if is_advance:
             warnings.append("аванс: оплачено до поставки")
+        if status_info["target_status"] == "paid" and not row["paid"]:
+            # Повод: файл ЛНР МАО 07.10.2026 — колонка «Оплата» не
+            # распозналась как paid, 35 строк «Оплачено» ушли с суммой 0 ₽ и
+            # без единого платежа, молча (columns.py теперь ловит «Оплата»
+            # через _is_paid_header, но на случай ручного mapping/override
+            # оставляем предупреждение).
+            warnings.append(
+                'Статус «Оплачено», но сумма оплаты пуста — платёж не будет создан '
+                '(проверьте, что колонка оплаты сопоставлена)'
+            )
 
         plan_amount = row["plan"]["amount"]
         contract_amount_for_row = fact_amount if fact_amount is not None else row["contracted"]
@@ -146,10 +173,36 @@ async def build_preview(
             # пропускать строку даже после явного выбора.
             match = {**match, "planned_item_id": override["planned_item_id"], "state": "found"}
 
+        # Задача A — ФОТ по категории плановой позиции (после override, т.к.
+        # override.planned_item_id может сменить, какая категория у строки).
+        _cat_id = planned_item_category.get(match.get("planned_item_id"))
+        is_payroll = bool(_cat_id) and _cat_id in payroll_cat_ids
+
         skip = bool(override.get("skip", False))
+        existing_purchase: Optional[dict] = None
         if match["state"] == "already_purchased" and "skip" not in override:
-            skip = True
-            warnings.append("У плановой позиции уже есть закупка — строка пропущена по умолчанию")
+            # Задача B (владелец, 07.10.2026): «он должен статусы смотреть» —
+            # не пропускать строку молча, а обновить закупку, которой уже
+            # принадлежит эта плановая позиция, по статусу/оплате из файла
+            # (см. existing_update.py). ctx['bound_purchases'] — тот же запрос,
+            # что и already_bound (matching.py), просто с данными о закупке.
+            bound = ctx.get("bound_purchases", {}).get(match["planned_item_id"]) or []
+            status_ok = status_info["target_status"] is not None and not needs_status
+            if len(bound) == 1 and status_ok:
+                bp = bound[0]
+                existing_purchase = {"id": bp["id"], "registry_number": bp["registry_number"], "status": bp["status"]}
+                warnings.append(
+                    f'Плановая позиция уже в закупке {bp["registry_number"] or bp["id"]} — она будет '
+                    f'обновлена по файлу (статус «{STATUS_LABELS.get(status_info["target_status"], status_info["target_status"])}», '
+                    'оплата по отметке)'
+                )
+            elif len(bound) > 1:
+                skip = True
+                regs = ", ".join(str(b["registry_number"] or b["id"]) for b in bound)
+                warnings.append(f"У плановой позиции уже есть закупки: {regs} — строка пропущена по умолчанию")
+            else:
+                skip = True
+                warnings.append("У плановой позиции уже есть закупка — строка пропущена по умолчанию")
         if match["state"] == "ambiguous" and "skip" not in override:
             skip = True
             warnings.append(
@@ -164,9 +217,22 @@ async def build_preview(
             skip = True
         if is_payroll and not include_payroll:
             skip = True
+        if skip:
+            # Строка полностью пропущена — не одновременно «обновит
+            # существующую» (иначе она бы вошла и в skipped_count, и в
+            # existing_updates — состояния взаимоисключающие).
+            existing_purchase = None
 
         if skip:
             skipped_count += 1
+        elif existing_purchase:
+            # Задача B: эта строка НЕ создаёт новую закупку (см. grouping.py/
+            # commit.py — существующая закупка обновляется отдельно, не через
+            # обычную группировку) — в totals.contract_amount/«Договоров на
+            # сумму» не попадает, но её «Оплачено» всё равно реальная оплата
+            # по субсидии.
+            if row["paid"]:
+                totals_paid += Decimal(str(row["paid"]))
         else:
             amt = contract_amount_for_row or Decimal(0)
             if over_plan_choice == "trim" and plan_amount is not None:
@@ -204,6 +270,7 @@ async def build_preview(
             "needs_status": needs_status,
             "is_payroll": is_payroll,
             "skip": skip,
+            "existing_purchase": existing_purchase,
             "warnings": warnings,
             "_status_info": status_info,
         })
@@ -230,8 +297,14 @@ async def build_preview(
 
     rows_by_num = {r["row"]: r for r in out_rows}
     existing_decisions = decisions.get("existing_match") or {}
+    purchases_count = 0
     for group in groups:
-        group_rows = [rows_by_num[rn] for rn in group["rows"] if not rows_by_num[rn]["skip"]]
+        group_rows = [
+            rows_by_num[rn] for rn in group["rows"]
+            if not rows_by_num[rn]["skip"] and not rows_by_num[rn].get("existing_purchase")
+        ]
+        if group_rows:
+            purchases_count += 1
         if not group_rows:
             group["existing_matches"] = []
             group["needs_existing_decision"] = False
@@ -281,6 +354,35 @@ async def build_preview(
         # „возможно“ не выбрано»).
         group["needs_existing_decision"] = has_same_supplier_only and not decided
 
+    # Задача B: агрегируем строки с существующей закупкой (row['existing_
+    # purchase']) по id закупки — несколько строк файла могут указывать на
+    # одну и ту же существующую закупку (разные плановые позиции одной
+    # РЕЕ-...). build_preview_entries (existing_update.py) считает paid_add/
+    # status_to; commit.py применит РОВНО этот же список (ПРАВИЛО №6).
+    existing_update_buckets: dict[int, dict] = {}
+    for r in out_rows:
+        ep = r.get("existing_purchase")
+        if not ep or r["skip"]:
+            continue
+        bucket = existing_update_buckets.setdefault(ep["id"], {
+            "registry_number": ep["registry_number"],
+            "status_from": ep["status"],
+            "rows": [],
+            "paid_sum": Decimal(0),
+            "target_status": None,
+            "is_advance": False,
+        })
+        bucket["rows"].append(r["row"])
+        if r["paid"]:
+            bucket["paid_sum"] += Decimal(str(r["paid"]))
+        if r.get("is_advance"):
+            bucket["is_advance"] = True
+        rs = r["status"]
+        if rs and (bucket["target_status"] is None or existing_update_mod.rank_of(rs) > existing_update_mod.rank_of(bucket["target_status"])):
+            bucket["target_status"] = rs
+
+    existing_updates_list = await existing_update_mod.build_preview_entries(db, existing_update_buckets)
+
     return {
         "format": detected["format"],
         "sheet": sheet,
@@ -289,12 +391,14 @@ async def build_preview(
         "rows": out_rows,
         "groups": groups,
         "statuses": statuses_mod.STATUS_CHOICES,
+        "existing_updates": existing_updates_list,
         "totals": {
             "rows": len(out_rows),
-            "purchases": len(groups),
+            "purchases": purchases_count,
             "contract_amount": float(totals_contract),
             "paid_amount": float(totals_paid),
             "skipped": skipped_count,
+            "existing_updates": len(existing_updates_list),
         },
         "warnings": top_warnings,
     }

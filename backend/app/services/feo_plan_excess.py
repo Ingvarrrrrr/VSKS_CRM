@@ -86,10 +86,14 @@ async def find_excess_culprit(
     «сверх плана») впервые пересекла budget:
       1) для узлов (листьев и направлений/групп с собственными позициями) в
          режиме 'planned_items' (и НЕ замещённых заказом «целиком») — активные
-         FeoPlannedItem узла, по возрастанию `created_at` (у FeoPlannedItem ЕСТЬ
-         created_at — реальное время появления плановой позиции, самый честный
-         источник «времени попадания в план», который вообще есть в модели
-         данных), tie-break — id. Каждая плановая позиция резолвится к
+         FeoPlannedItem узла, по возрастанию `plan_changed_at` (владелец
+         08.10.2026, план binary-crunching-island.md раздел 1 — ПРАВИЛО №6,
+         тот же ключ, что и у feo_card_drill._excess_culprit_items,
+         app.services.excess_culprit_order.plan_changed_at_sort_key; ДО этой
+         правки сортировка шла по `created_at`, который не двигается при
+         массовом переносе позиции между категориями ФЭО — «старая» по
+         created_at позиция на деле была изменена план-значимо позже
+         реального виновника), tie-break — id. Каждая плановая позиция резолвится к
          закупке, которая на неё ссылается (PurchaseItem.feo_planned_item_id)
          — берётся САМАЯ РАННЯЯ (min Purchase.id), т.к. обычно именно она
          породила эту плановую позицию автозаведением
@@ -374,11 +378,20 @@ async def find_excess_culprit(
             })
 
     if itemized_node_ids:
+        # Порядок — ЕДИНОЕ правило «кто перешёл лимит» (владелец 08.10.2026,
+        # план binary-crunching-island.md раздел 1, ПРАВИЛО №6):
+        # (plan_changed_at, id), НЕ created_at. Причина: created_at не
+        # двигается при массовом переносе позиции между категориями ФЭО
+        # (перенос не создаёт новую строку), из-за чего «старая» по
+        # created_at позиция на самом деле была изменена план-значимо позже
+        # реального виновника превышения — см. app.services.
+        # excess_culprit_order (plan_changed_at_sort_key — тот же ключ, что
+        # и у app.services.feo_card_drill._excess_culprit_items).
         fpi_rows = (await db.execute(
-            select(FeoPlannedItem.id, FeoPlannedItem.name, FeoPlannedItem.amount, FeoPlannedItem.created_at)
+            select(FeoPlannedItem.id, FeoPlannedItem.name, FeoPlannedItem.amount, FeoPlannedItem.plan_changed_at)
             .where(FeoPlannedItem.feo_category_id.in_(itemized_node_ids))
             .where(FeoPlannedItem.is_active.is_(True))
-            .order_by(FeoPlannedItem.created_at.asc(), FeoPlannedItem.id.asc())
+            .order_by(FeoPlannedItem.plan_changed_at.asc(), FeoPlannedItem.id.asc())
         )).all()
         fpi_ids = [r.id for r in fpi_rows]
         linked_purchase_by_fpi: dict[int, tuple] = {}
@@ -404,7 +417,7 @@ async def find_excess_culprit(
                 continue
             contributors.append({
                 "amount": amt, "purchase_id": pur_id, "purchase_number": pur_num,
-                "item_name": r.name, "created_at": r.created_at, "sort_key": (1, i),
+                "item_name": r.name, "plan_changed_at": r.plan_changed_at, "sort_key": (1, i),
             })
 
     # ── Источник №1а: узлы, ЗАМЕЩЁННЫЕ заказом целиком — сами позиции закупок,

@@ -62,13 +62,23 @@ COL_WIDTHS = [16, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20]
 NUM_FMT = "#,##0.00"
 
 
-def write_summary_sheet(wb, sub, summary_by_kind: dict, contract_remaining_by_kind: dict = None) -> None:
+def write_summary_sheet(
+    wb, sub, summary_by_kind: dict, contract_remaining_by_kind: dict = None, directions: list = None,
+) -> None:
     """Пишет лист «Сводная» (вставляется первым, index 0). `summary_by_kind` —
     результат subsidy_summary_by_kind(db, subsidy_id). `contract_remaining_by_kind`
     (владелец 08.10.2026, часть C) — {kind: Σ остатков договоров}, из
     app.services.contract_balances.contract_balances (группы, агрегированные
     по kind вызывающим кодом, plan_graph_export_data.gather_live_plan_graph_data)
-    — столбец «Остаток на договорах, ₽»; None/пусто — столбец весь 0."""
+    — столбец «Остаток на договорах, ₽»; None/пусто — столбец весь 0.
+
+    `directions` (владелец 08.10.2026, раздел 3 плана binary-crunching-
+    island.md) — список {"name","feo","plan","ordered","paid"} по
+    направлениям субсидии, передаётся дальше в
+    app.services.plan_graph_export_dashboard.write_dashboard (ПРАВИЛО №6 —
+    роллап считает вызывающий код, plan_graph_export_xlsx.py, тем же путём,
+    что строки направлений листа «по направлениям»; None — дашборд рисует
+    график 4 с заглушкой «Нет данных»)."""
     HEADER_FILL = PatternFill("solid", fgColor="1E3A5F")
     HEADER_FONT = Font(color="FFFFFF", bold=True, size=9)
     BANNER_FILL = PatternFill("solid", fgColor="FFF2CC")
@@ -176,3 +186,11 @@ def write_summary_sheet(wb, sub, summary_by_kind: dict, contract_remaining_by_ki
     total_label.fill = TOTAL_FILL
 
     sm.freeze_panes = "A5"
+
+    # Дашборд (владелец 08.10.2026, раздел 3) — только над уже написанными
+    # выше числами/формулами, см. app.services.plan_graph_export_dashboard.
+    from app.services.plan_graph_export_dashboard import write_dashboard
+    write_dashboard(
+        sm, first_data_row=first_data_row, last_data_row=last_data_row,
+        total_row=total_row, directions=directions,
+    )

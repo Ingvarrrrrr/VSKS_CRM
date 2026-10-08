@@ -91,6 +91,7 @@
           planned: s.planned,
           contracted: s.contracted,
           paid: s.paid,
+          ordered: s.ordered,
         }"
       />
       <!-- Кликабельна (владелец 07.10.2026, решение №6, план .planning/quick/

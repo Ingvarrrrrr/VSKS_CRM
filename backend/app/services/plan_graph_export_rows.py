@@ -188,11 +188,20 @@ def write_flat_top_summary_rows(ws, money_col_indices, *, title: str, data_first
     «Реестр договоров» (ПРАВИЛО №5 — не копия на каждый лист); иерархический
     «План закупок (по направлениям)» использует СВОЮ схему (SUBTOTAL на
     строках групп + SUMIFS по «Уровню» в строке 1), см.
-    plan_graph_export_xlsx.py."""
-    from openpyxl.styles import Font
+    plan_graph_export_xlsx.py.
+
+    ИСПРАВЛЕНО (владелец 09.10.2026, 4-й заход): числа в этих двух строках
+    должны выглядеть как остальные числа столбца («с пробелами», тот же
+    формат) — денежным ячейкам ставится number_format "#,##0.00" (тот же,
+    что у данных столбца, см. _write_row в plan_graph_export_contracts_sheet.
+    py и аналогичные хелперы соседних листов) и выравнивание вправо, а не
+    только жирный синий шрифт."""
+    from openpyxl.styles import Alignment, Font
     from openpyxl.utils import get_column_letter
 
     label_font = Font(bold=True, size=9, color="1E3A5F")
+    money_align = Alignment(horizontal="right", vertical="center")
+    NUM_FMT = "#,##0.00"
     ws.cell(row=1, column=1, value=title).font = label_font
     ws.cell(row=2, column=1, value="Итого по фильтру").font = label_font
     for ci in money_col_indices:
@@ -200,8 +209,12 @@ def write_flat_top_summary_rows(ws, money_col_indices, *, title: str, data_first
         rng = f"{col_letter}{data_first_row}:{col_letter}{MAX_DATA_ROW}"
         c1 = ws.cell(row=1, column=ci, value=f"=SUM({rng})")
         c1.font = label_font
+        c1.number_format = NUM_FMT
+        c1.alignment = money_align
         c2 = ws.cell(row=2, column=ci, value=f"=SUBTOTAL(109,{rng})")
         c2.font = label_font
+        c2.number_format = NUM_FMT
+        c2.alignment = money_align
 
 
 def category_full_path(cats: list, cat_id) -> str:

@@ -483,7 +483,25 @@ def build_live_plan_graph_xlsx(
         contract_remaining_by_kind: dict = {}
         for _g in data.get("contract_balance_groups") or []:
             contract_remaining_by_kind[_g["kind"]] = contract_remaining_by_kind.get(_g["kind"], 0.0) + _g["remaining"]
-        write_summary_sheet(wb, sub, summary_by_kind, contract_remaining_by_kind)
+
+        # Дашборд (владелец 08.10.2026, раздел 3) — график «По направлениям»:
+        # ФЭО/План/Заказано/Оплачено по корневым категориям, ТЕ ЖЕ числа, что
+        # уже даёт _money_cols_dict этому самому листу (ПРАВИЛО №6, не вторая
+        # формула). «План» = used (Σ вклада позиций поддерева, кумулятивная
+        # сумма по всем 5 стадиям — то же значение, что столбец
+        # «Запланировано» направления).
+        dashboard_directions = []
+        for _root in cats_by_parent.get(None, []):
+            _mc = _money_cols_dict(_root.id, "")
+            dashboard_directions.append({
+                "name": _root.name,
+                "feo": _mc["feo_budget"] if isinstance(_mc["feo_budget"], (int, float)) else 0.0,
+                "plan": _mc["planned"] if isinstance(_mc["planned"], (int, float)) else 0.0,
+                "ordered": _mc["ordered"] if isinstance(_mc["ordered"], (int, float)) else 0.0,
+                "paid": _mc["paid"] if isinstance(_mc["paid"], (int, float)) else 0.0,
+            })
+
+        write_summary_sheet(wb, sub, summary_by_kind, contract_remaining_by_kind, dashboard_directions)
         sm = wb["Сводная"]
         apply_row_heights(sm, range(2, sm.max_row + 1))
 

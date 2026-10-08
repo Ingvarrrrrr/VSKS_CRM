@@ -55,15 +55,24 @@ compute_feo_plan_tree (order-substitution/floor/manual_sum/клэмп по budge
                 добавленные первыми) — как раньше, для ссылки «Показать весь
                 состав» (владелец, 08.10.2026: разворачивать по умолчанию
                 десятки строк «непонятно, какие именно дали превышение»).
-              "excess_items" — ТОЛЬКО позиции-«виновники» превышения, см.
-                _excess_culprit_items ниже (от новых к старым, пока не
-                покрыта |amount|); у граничной позиции "over_amount" может
-                быть МЕНЬШЕ её "amount" (покрыла только часть превышения).
-              "excess_items_total" — Σ over_amount по excess_items; ОБЯЗАНА
+              "excess_groups" — ТОЛЬКО позиции-«виновники» превышения,
+                СГРУППИРОВАННЫЕ ПО ЗАКУПКЕ (владелец 08.10.2026, план
+                binary-crunching-island.md раздел 1), см. _excess_culprit_groups
+                ниже (от новых к старым, пока не покрыта |amount|); у
+                граничной позиции "over_amount" может быть МЕНЬШЕ её "amount"
+                (покрыла только часть превышения). Порядок виновников —
+                ЕДИНОЕ правило (plan_changed_at, id), см.
+                app.services.excess_culprit_order — то же, что
+                feo_plan_excess.find_excess_culprit.
+              "excess_items_total" — Σ over_amount по excess_groups; ОБЯЗАНА
                 совпасть с |amount| строки, когда в items достаточно позиций
-                для покрытия (см. докстринг _excess_culprit_items про случай,
+                для покрытия (см. докстринг _excess_culprit_groups про случай,
                 когда это НЕ так — замещение заказом/договором/«полом», эти
                 позиции сюда не попадают, как и в find_excess_culprit).
+              "excess_batch_note" — None или {"date","count","message"},
+                когда превышение случилось внутри одной одновременной
+                загрузки позиций — честная оговорка «виновник на деле не
+                выделяется, это исходный план».
             Пусто (с reason), если ФЭО не введено.
 
 kind — all|goods|services|payroll|unspecified: фильтр по одной корзине (all —
@@ -161,75 +170,80 @@ def _split_rows_proportionally(own_amount: float, weighted_rows: list) -> list:
     return out
 
 
-async def _excess_culprit_items(db: AsyncSession, items: list, excess_amount: float, cats: dict) -> list:
+async def _excess_culprit_groups(
+    db: AsyncSession, items: list, excess_amount: float, cats: dict,
+) -> tuple[list, float, Optional[dict]]:
     """Виновники превышения НАПРАВЛЕНИЯ по ОДНОМУ ТИПУ (товар/услуга/...) —
-    card="free", kind≠"all" (см. докстринг модуля). Жалоба владельца
-    08.10.2026: раскрытие направления с превышением показывало ВЕСЬ состав
-    (десятки позиций с датами) — «какие именно закупки дали превышение —
-    абсолютно непонятно». По образцу окна «Поставлено, не оплачено» нужен
-    список ИМЕННО тех строк, что формируют превышение.
+    card="free", kind!="all" (см. докстринг модуля), СГРУППИРОВАННЫЕ ПО
+    ЗАКУПКЕ (владелец 08.10.2026, план binary-crunching-island.md раздел 1):
+    "Сейчас закупка, при которой произошёл переход за лимит, определяется
+    рандомно" -- окно показывало виновником позицию, отсортированную по
+    created_at, который не двигается при массовом переносе позиции между
+    категориями ФЭО. Правило "кто виновник" и порядок (plan_changed_at, id)
+    -- ЕДИНЫЕ (ПРАВИЛО №6, app.services.excess_culprit_order.
+    culprits_after_crossing), та же функция, что использует
+    feo_plan_excess.find_excess_culprit.
 
-    ПРАВИЛО №6 — почему это НЕ вызов app.services.feo_plan_excess.
-    find_excess_culprit, а отдельная (маленькая) функция: find_excess_culprit
-    ищет виновника превышения ПЛАНА НАД БЮДЖЕТОМ ОДНОЙ категории ФЭО
-    (compute_feo_plan_tree.excess_amount узла — ось «статья»), читая ВСЕ
-    источники плана узла (плановые позиции, order-substitution, «пол»
-    committed, over_plan) и останавливаясь на ПЕРВОЙ позиции по created_at
-    ASC, после которой сумма пересекла бюджет. Здесь — другая ось: разница
-    feo_{kind} − plan_{kind} ОДНОГО ТИПА во ВСЁМ ПОДДЕРЕВЕ НАПРАВЛЕНИЯ
-    (несколько категорий сразу, никакого отдельного «бюджета категории» —
-    budget_amount/planned_amount строки — это кумулятивные feo_kind/plan_kind
-    корня, не FeoCategory.budget), и порядок, который явно просил владелец —
-    «от новых к старым» (created_at DESC — так уже сортирует card_drill_rows
-    для card='free', эта функция только решает, СКОЛЬКО из них показывать).
-    Выборка вторым механизмом не становится: это всё та же единственная
-    выборка позиций _classify_items (ПРАВИЛО №6, items уже посчитаны один раз
-    вызывающим кодом), здесь только отбор префикса + разбивка суммы
-    граничной позиции — ни один показатель не пересчитывается заново.
+    items -- тот же список FeoPlannedItem-строк, что card_drill_rows уже
+    собрал для направления (_classify_items, ПРАВИЛО №6 -- вторая выборка не
+    заводится). excess_amount -- |amount| строки направления.
 
-    items — тот же список FeoPlannedItem-строк, что card_drill_rows уже
-    собрал для direction.items (created_at DESC — НОВЕЙШИЕ первыми).
-    excess_amount — |amount| строки направления (budget_amount − planned_amount,
-    отрицательное значение уже превращено в положительное вызывающим кодом).
-
-    Идём от самой новой позиции, копим Σ amount; у каждой включённой
-    позиции over_amount = min(её amount, остаток непокрытого excess_amount
-    на этот момент) — последняя включённая позиция обычно покрывает только
-    ЧАСТЬ своей суммы. Останавливаемся, как только остаток покрыт. Если
-    суммы всех items не хватает, чтобы покрыть excess_amount (превышение
-    пришло из order-substitution/«пола»/over_plan — позиций, которых в этом
-    списке типа нет, см. find_excess_culprit про те же источники), список
-    возвращается ЦЕЛИКОМ (все items — виновники), а Σ over_amount будет
-    МЕНЬШЕ excess_amount — вызывающая сторона/фронт обязаны показать это
-    расхождение честно (как в PaidOverDeliveredDrillDialog.vue), не прятать.
-
-    Для каждой включённой позиции — № и предмет закупки, которая на неё
-    ссылается (PurchaseItem.feo_planned_item_id), САМАЯ РАННЯЯ (min Purchase.id,
-    та же логика «кто породил эту плановую позицию», что и в
-    find_excess_culprit._itemized_node_ids); если закупка ещё не привязана —
-    purchase_id=None (фронт показывает «—»)."""
+    Возврат: (excess_groups, excess_items_total, batch_note).
+      excess_groups -- список групп-виновников (от НОВЫХ к СТАРЫМ -- так
+        попросил владелец для отображения), группа = закупка (по
+        PurchaseItem.feo_planned_item_id -> Purchase наибольшего id, если
+        позиция привязана к нескольким; позиция без закупки -- своя группа с
+        purchase_id=None):
+        {purchase_id, purchase_number, registry_number, subject,
+         category_path, kind_label, date (ISO, max plan_changed_at группы),
+         amount (Σ вклада позиций группы), over_amount (Σ over позиций
+         группы), items: [{planned_item_id, name, amount, over_amount,
+         plan_changed_at}]}.
+      excess_items_total -- Σ over_amount по группам (= |excess_amount|,
+        когда позиций хватает на покрытие; иначе меньше -- расхождение
+        показывается честно, не прячется).
+      batch_note -- None или {"date","count","message"} (пачка одновременных
+        позиций -- "превышение заложено в исходном плане")."""
     target = Decimal(str(excess_amount))
     if target <= Decimal("0.005") or not items:
-        return []
+        return [], 0.0, None
 
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
+    from app.services.excess_culprit_order import culprits_after_crossing
 
     ids = [it.id for it in items]
+    # Последняя (max Purchase.id) закупка, ссылающаяся на позицию -- владелец
+    # мыслит закупками; при нескольких ссылках на одну позицию (редкий
+    # исторический случай) актуальнее последняя (order asc -> перезаписываем).
     linked: dict[int, tuple] = {}
     link_rows = (await db.execute(
-        select(PurchaseItem.feo_planned_item_id, Purchase.id, Purchase.purchase_number, Purchase.subject)
+        select(
+            PurchaseItem.feo_planned_item_id, Purchase.id, Purchase.purchase_number,
+            Purchase.registry_number, Purchase.subject,
+        )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(PurchaseItem.feo_planned_item_id.in_(ids))
         .order_by(PurchaseItem.feo_planned_item_id, Purchase.id.asc())
     )).all()
-    for fpi_id, pur_id, pur_num, pur_subj in link_rows:
-        if fpi_id not in linked:
-            linked[fpi_id] = (pur_id, pur_num, pur_subj)
+    for fpi_id, pur_id, pur_num, pur_reg, pur_subj in link_rows:
+        linked[fpi_id] = (pur_id, pur_num, pur_reg, pur_subj)
 
-    out: list = []
+    # "Лимит", при котором culprits_after_crossing честно воспроизводит
+    # старое поведение (идём от старых к новым, виновник -- первая строка,
+    # после которой накопленная сумма впервые превышает budget_equiv):
+    # Σ items - budget_equiv == excess_amount.
+    items_total = sum(Decimal(str(it.amount or 0)) for it in items)
+    budget_equiv = items_total - target
+    res = culprits_after_crossing(
+        items, float(budget_equiv), amount_of=lambda it: Decimal(str(it.amount or 0)),
+    )
+    if res is None or not res.culprits:
+        return [], 0.0, None
+
+    rows_with_over: list = []
     cumulative = Decimal("0")
-    for it in items:
+    for it in res.culprits:
         remaining = target - cumulative
         if remaining <= Decimal("0.005"):
             break
@@ -238,20 +252,62 @@ async def _excess_culprit_items(db: AsyncSession, items: list, excess_amount: fl
             continue
         over_amount = amt if amt <= remaining else remaining
         cumulative += amt
-        pur_id, pur_num, pur_subj = linked.get(it.id, (None, None, None))
-        out.append({
+        rows_with_over.append((it, amt, over_amount))
+
+    groups_by_key: dict = {}
+    order: list = []
+    for it, amt, over_amount in rows_with_over:
+        pur_id, pur_num, pur_reg, pur_subj = linked.get(it.id, (None, None, None, None))
+        gkey = pur_id if pur_id is not None else f"item-{it.id}"
+        if gkey not in groups_by_key:
+            groups_by_key[gkey] = {
+                "purchase_id": pur_id,
+                "purchase_number": pur_num,
+                "registry_number": pur_reg,
+                "subject": pur_subj or it.name,
+                "category_path": _category_path(it.feo_category_id, cats),
+                "kind_label": None,
+                "date": None,
+                "amount": Decimal("0"),
+                "over_amount": Decimal("0"),
+                "items": [],
+            }
+            order.append(gkey)
+        g = groups_by_key[gkey]
+        g["amount"] += amt
+        g["over_amount"] += over_amount
+        pca = it.plan_changed_at
+        if pca is not None and (g["date"] is None or pca > g["date"]):
+            g["date"] = pca
+        g["items"].append({
             "planned_item_id": it.id,
-            "purchase_id": pur_id,
-            "purchase_number": pur_num,
-            "subject": pur_subj,
             "name": it.name,
-            "category_path": _category_path(it.feo_category_id, cats),
-            "item_type": it.item_type,
-            "created_at": it.created_at.isoformat() if it.created_at else None,
             "amount": float(amt),
             "over_amount": float(over_amount),
+            "plan_changed_at": pca.isoformat() if pca else None,
         })
-    return out
+
+    # Отображение -- от НОВЫХ к СТАРЫМ (владелец): сортируем группы по дате
+    # (max plan_changed_at группы) DESC.
+    groups = [groups_by_key[k] for k in order]
+    groups.sort(key=lambda g: g["date"] or datetime.min, reverse=True)
+
+    excess_groups = []
+    for g in groups:
+        excess_groups.append({
+            "purchase_id": g["purchase_id"],
+            "purchase_number": g["purchase_number"],
+            "registry_number": g["registry_number"],
+            "subject": g["subject"],
+            "category_path": g["category_path"],
+            "kind_label": g["kind_label"],
+            "date": g["date"].isoformat() if g["date"] else None,
+            "amount": float(g["amount"]),
+            "over_amount": float(g["over_amount"]),
+            "items": g["items"],
+        })
+    excess_items_total = sum(g["over_amount"] for g in excess_groups)
+    return excess_groups, excess_items_total, res.batch_note
 
 
 async def _load_categories(db: AsyncSession, subsidy_id: int) -> tuple[dict, dict]:
@@ -301,7 +357,7 @@ async def _classify_items(db: AsyncSession, subsidy_id: int, cat_ids) -> tuple[l
         select(
             FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.name,
             FeoPlannedItem.item_type, FeoPlannedItem.quantity, FeoPlannedItem.amount,
-            FeoPlannedItem.created_at,
+            FeoPlannedItem.created_at, FeoPlannedItem.plan_changed_at,
         )
         .where(FeoPlannedItem.feo_category_id.in_(list(cat_ids)))
         .where(FeoPlannedItem.is_active.is_(True))
@@ -453,12 +509,17 @@ async def card_drill_rows(
             for dcid in desc_ids:
                 items.extend(items_by_cat_kind.get((dcid, kind), []))
             items.sort(key=lambda it: it.created_at or datetime.min, reverse=True)
-            excess_items = await _excess_culprit_items(db, items, -free_amt if free_amt < -_EPS else 0.0, cats)
+            excess_groups, excess_items_total, excess_batch_note = await _excess_culprit_groups(
+                db, items, -free_amt if free_amt < -_EPS else 0.0, cats,
+            )
+            kind_label = _KIND_LABELS.get(kind, kind)
+            for g in excess_groups:
+                g["kind_label"] = kind_label
             rows.append({
                 "feo_category_id": cid,
                 "category_path": _category_path(cid, cats),
                 "kind": kind,
-                "kind_label": _KIND_LABELS.get(kind, kind),
+                "kind_label": kind_label,
                 "budget_amount": budget_amt,
                 "planned_amount": planned_amt,
                 "amount": free_amt,
@@ -471,10 +532,12 @@ async def card_drill_rows(
                     }
                     for it in items
                 ],
-                # Виновники превышения (владелец, 08.10.2026) — см.
-                # _excess_culprit_items выше; пусто при amount>=0.
-                "excess_items": excess_items,
-                "excess_items_total": sum(ei["over_amount"] for ei in excess_items),
+                # Виновники превышения, сгруппированные по закупке (владелец,
+                # 08.10.2026) — см. _excess_culprit_groups выше; пусто при
+                # amount>=0.
+                "excess_groups": excess_groups,
+                "excess_items_total": excess_items_total,
+                "excess_batch_note": excess_batch_note,
             })
         reason = None if rows else "ФЭО равно плану по направлениям — свободных средств по типу нет"
         return {"card": card, "kind": kind, "total": total, "rows": rows, "reason": reason}

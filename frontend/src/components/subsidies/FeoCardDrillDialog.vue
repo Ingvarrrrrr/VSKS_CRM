@@ -165,24 +165,20 @@
                   <td colspan="4" class="pa-0" style="border-top:none">
                     <div class="pa-3" style="background: rgba(146, 64, 14, 0.03)">
                       <!-- Жалоба владельца 08.10.2026: раньше здесь был ВЕСЬ состав
-                           (десятки строк) — теперь по умолчанию ТОЛЬКО виновники
-                           (excess_items, см. докстринг файла сверху), с переключателем
-                           на полный состав. -->
+                           (десятки строк) — теперь по умолчанию ТОЛЬКО виновники,
+                           с переключателем на полный состав. Таблица виновников —
+                           FeoExcessCulpritsTable.vue (Правило №5, вынесена из этого
+                           файла — строка там = закупка, не позиция, Правило №6:
+                           порядок/виновник считает только backend). -->
                       <div class="d-flex align-center flex-wrap" style="gap:8px">
                         <span class="text-caption text-medium-emphasis">
-                          {{ showFull.has(r.feo_category_id) ? `Весь состав (${r.items.length})` : `Виновники превышения (${r.excess_items.length})` }}
+                          {{ showFull.has(r.feo_category_id) ? `Весь состав (${r.items.length})` : `Виновники превышения` }}
                         </span>
                         <v-btn size="x-small" variant="text" color="primary" @click="toggleFull(r.feo_category_id)">
                           {{ showFull.has(r.feo_category_id) ? 'Показать только виновников' : `Показать весь состав (${r.items.length})` }}
                         </v-btn>
                       </div>
-                      <v-alert v-if="!showFull.has(r.feo_category_id) && excessMismatch(r)" type="warning" variant="tonal"
-                        density="compact" class="mt-2 text-caption">
-                        Σ «сверх ФЭО» по виновникам ({{ formatCurrency(r.excess_items_total) }}) отличается от превышения
-                        направления ({{ formatCurrency(Math.abs(r.amount)) }}) — часть превышения пришла не из плановых
-                        позиций этого типа (замещение заказом/договором или «пол»), смотрите «Показать весь состав».
-                      </v-alert>
-                      <v-table density="compact" class="mt-2" style="min-width:760px; background:transparent">
+                      <v-table v-if="showFull.has(r.feo_category_id)" density="compact" class="mt-2" style="min-width:760px; background:transparent">
                         <thead>
                           <tr>
                             <th class="px-2">№ закупки</th>
@@ -192,32 +188,28 @@
                             <th class="px-2">Тип</th>
                             <th class="px-2">Дата добавления</th>
                             <th class="text-right px-2">Сумма</th>
-                            <th v-if="!showFull.has(r.feo_category_id)" class="text-right px-2">в т.ч. сверх ФЭО</th>
                           </tr>
                         </thead>
                         <tbody>
-                          <tr v-for="it in (showFull.has(r.feo_category_id) ? r.items : r.excess_items)"
-                            :key="'item-' + (it.planned_item_id ?? it.name)">
-                            <td class="px-2 text-caption">{{ it.purchase_number || it.purchase_id || '—' }}</td>
-                            <td class="px-2 py-1 text-caption" style="max-width:220px; white-space:normal">{{ it.subject || it.name || '—' }}</td>
-                            <td class="px-2 text-caption" style="max-width:220px; white-space:normal">{{ it.category_path || '—' }}</td>
+                          <tr v-for="it in r.items" :key="'item-' + (it.planned_item_id ?? it.name)">
+                            <td class="px-2 text-caption">{{ (it as DirectionExcessItem).purchase_number || (it as DirectionExcessItem).purchase_id || '—' }}</td>
+                            <td class="px-2 py-1 text-caption" style="max-width:220px; white-space:normal">{{ (it as DirectionExcessItem).subject || it.name || '—' }}</td>
+                            <td class="px-2 text-caption" style="max-width:220px; white-space:normal">{{ (it as DirectionExcessItem).category_path || '—' }}</td>
                             <td class="px-2 py-1 text-caption" style="max-width:220px; white-space:normal">{{ it.name || '—' }}</td>
-                            <td class="px-2 text-caption">{{ it.item_type || '—' }}</td>
+                            <td class="px-2 text-caption">{{ (it as DirectionExcessItem).item_type || '—' }}</td>
                             <td class="px-2 text-caption text-medium-emphasis">{{ formatDate(it.created_at) }}</td>
                             <td class="text-right px-2 text-caption">{{ formatCurrency(it.amount) }}</td>
-                            <td v-if="!showFull.has(r.feo_category_id)" class="text-right px-2 text-caption font-weight-medium text-error">
-                              {{ formatCurrency(it.over_amount) }}
-                            </td>
                           </tr>
                         </tbody>
-                        <tfoot v-if="!showFull.has(r.feo_category_id) && r.excess_items.length">
-                          <tr>
-                            <td colspan="6" class="px-2 text-right font-weight-medium">Итого сверх ФЭО:</td>
-                            <td />
-                            <td class="text-right px-2 font-weight-bold text-error">{{ formatCurrency(r.excess_items_total) }}</td>
-                          </tr>
-                        </tfoot>
                       </v-table>
+                      <FeoExcessCulpritsTable
+                        v-else
+                        :groups="r.excess_groups || null"
+                        :items="r.excess_items"
+                        :excess-total="r.excess_items_total"
+                        :row-excess-amount="Math.abs(r.amount)"
+                        :batch-note="r.excess_batch_note || null"
+                      />
                     </div>
                   </td>
                 </tr>
@@ -287,6 +279,8 @@ import { KIND_LABELS, type ItemTypeKind } from '@/utils/itemTypeKind'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useFeoLevel5ItemType } from '@/composables/subsidies/useFeoLevel5ItemType'
 import type { FeoPlannedItem } from '@/composables/subsidies/types'
+import FeoExcessCulpritsTable from '@/components/subsidies/FeoExcessCulpritsTable.vue'
+import type { ExcessGroup, ExcessBatchNote } from '@/components/subsidies/FeoExcessCulpritsTable.vue'
 
 const { mobile } = useDisplay()
 const toast = useToast()
@@ -329,6 +323,13 @@ interface DirectionRow extends BudgetFreeRow {
   items: DirectionItem[]
   excess_items: DirectionExcessItem[]
   excess_items_total: number
+  // Новый формат (план binary-crunching-island.md, раздел 1) — строка на
+  // закупку, не на позицию; null/undefined, пока backend отдаёт старый
+  // excess_items без группировки (фолбэк в FeoExcessCulpritsTable.vue).
+  excess_groups?: ExcessGroup[] | null
+  // Превышение внесено одной загрузкой — виновника честно не называем
+  // (см. докстринг файла и excess_culprit_order.py).
+  excess_batch_note?: ExcessBatchNote | null
 }
 
 const props = defineProps<{
@@ -456,13 +457,8 @@ function toggleFull(feoCategoryId: number | null) {
   else next.add(feoCategoryId)
   showFull.value = next
 }
-// Σ over_amount виновников ОБЯЗАНА совпасть с превышением строки — если нет
-// (позиции этого типа не покрывают весь перебор — замещение заказом/
-// договором/«полом», см. докстринг _excess_culprit_items), честно показываем
-// обе суммы, как в PaidOverDeliveredDrillDialog.vue (mismatch).
-function excessMismatch(r: DirectionRow): boolean {
-  return Math.abs((r.excess_items_total || 0) - Math.abs(r.amount)) > 0.5
-}
+// Σ over_amount виновников ОБЯЗАНА совпасть с превышением строки — проверка
+// и сообщение перенесены в FeoExcessCulpritsTable.vue (mismatch, Правило №5).
 
 function allFolderKeys(nodes: FolderNode[], out: string[] = []): string[] {
   for (const n of nodes) {
@@ -575,19 +571,54 @@ async function exportXlsx() {
     const out: Record<string, any>[] = []
     for (const r of directionRows.value) {
       if (!(r.amount < -0.5 && r.items.length && expanded.value.has('dir-' + r.feo_category_id))) continue
-      const list = showFull.value.has(r.feo_category_id as number) ? r.items : r.excess_items
-      for (const it of list as (DirectionItem | DirectionExcessItem)[]) {
-        const ex = it as DirectionExcessItem
+      if (showFull.value.has(r.feo_category_id as number)) {
+        for (const it of r.items) {
+          out.push({
+            'Направление': r.category_path,
+            '№ закупки': '',
+            'Предмет': it.name ?? '',
+            'Категория ФЭО': '',
+            'Позиция': it.name ?? '',
+            'Тип': '',
+            'Дата добавления': formatDate(it.created_at),
+            'Сумма': it.amount,
+            'в т.ч. сверх ФЭО': '',
+          })
+        }
+        continue
+      }
+      // Виновники — новый формат (группы=закупки) приоритетнее старого
+      // плоского excess_items (Правило №6, см. докстринг FeoExcessCulpritsTable.vue).
+      if (r.excess_groups && r.excess_groups.length) {
+        for (const g of r.excess_groups) {
+          for (const it of g.items) {
+            out.push({
+              'Направление': r.category_path,
+              '№ закупки': g.purchase_number ?? g.purchase_id ?? '',
+              'Реестровый №': g.registry_number ?? '',
+              'Предмет': g.subject ?? '',
+              'Категория ФЭО': g.category_path ?? '',
+              'Позиция': it.name ?? '',
+              'Тип': g.kind_label ?? '',
+              'Дата добавления в план': formatDate(it.plan_changed_at),
+              'Сумма': it.amount,
+              'в т.ч. сверх ФЭО': it.over_amount ?? '',
+            })
+          }
+        }
+        continue
+      }
+      for (const it of r.excess_items) {
         out.push({
           'Направление': r.category_path,
-          '№ закупки': ex.purchase_number ?? ex.purchase_id ?? '',
-          'Предмет': ex.subject ?? it.name ?? '',
-          'Категория ФЭО': ex.category_path ?? '',
+          '№ закупки': it.purchase_number ?? it.purchase_id ?? '',
+          'Предмет': it.subject ?? it.name ?? '',
+          'Категория ФЭО': it.category_path ?? '',
           'Позиция': it.name ?? '',
-          'Тип': ex.item_type ?? '',
+          'Тип': it.item_type ?? '',
           'Дата добавления': formatDate(it.created_at),
           'Сумма': it.amount,
-          'в т.ч. сверх ФЭО': ex.over_amount ?? '',
+          'в т.ч. сверх ФЭО': it.over_amount ?? '',
         })
       }
     }

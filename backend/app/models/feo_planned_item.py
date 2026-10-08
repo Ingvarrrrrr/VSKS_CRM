@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, Text, DateTime, Date, ForeignKey, func, text
+from sqlalchemy import Column, Integer, String, Numeric, Boolean, Text, DateTime, Date, ForeignKey, func, text, inspect
+from sqlalchemy import event
 from sqlalchemy.orm import relationship, backref
 from app.database import Base
 
@@ -30,6 +31,17 @@ class FeoPlannedItem(Base):
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
+    # Момент, когда ВКЛАД позиции в план появился или изменился — владелец
+    # 08.10.2026 (план binary-crunching-island.md, раздел 1): «виновник
+    # превышения определяется рандомно» — у created_at нет связи с реальным
+    # временем попадания в план (массовый перенос позиций между категориями
+    # 05-07.10 не трогал created_at, заведённый при создании из заявки
+    # 01.10). Единственное место, где это поле проставляется — события модели
+    # ниже (_feo_planned_item_touch_plan_changed_at): НЕ трогать его руками
+    # ни в одном роутере/сервисе (ПРАВИЛО №6 — одна точка записи).
+    # Бэкфилл существующих строк = created_at (миграция
+    # q2s4u6w8y0a2_feo_planned_item_plan_changed_at.py).
+    plan_changed_at = Column(DateTime, nullable=False, server_default=func.now())
     payment_mode = Column(String(20), nullable=False, server_default='one_time')  # 'one_time' | 'monthly'
     planned_date = Column(Date, nullable=True)          # «когда потребуется» для one_time
     monthly_start_date = Column(Date, nullable=True)    # первый платёж для monthly
@@ -139,3 +151,37 @@ class FeoPlannedItem(Base):
         "FeoCategory",
         backref=backref("planned_items", cascade="all, delete-orphan", passive_deletes=True),
     )
+
+
+# Поля, чьё изменение означает «вклад позиции в план изменился» (владелец
+# 08.10.2026, план binary-crunching-island.md раздел 1) — ЕДИНСТВЕННЫЙ список,
+# используемый обоими событиями ниже. Правка названия/заметки/sort_order и
+# т.п. НЕ двигает plan_changed_at — только то, что меняет деньги/классификацию
+# позиции в плане.
+_PLAN_CHANGED_AT_WATCHED_FIELDS = ("amount", "quantity", "unit_price", "item_type", "feo_category_id", "is_active")
+
+
+@event.listens_for(FeoPlannedItem, "before_insert")
+def _feo_planned_item_set_plan_changed_at_on_insert(mapper, connection, target):
+    """Новая позиция — её вклад в план появился ПРЯМО СЕЙЧАС, если вызывающий
+    код не задал plan_changed_at явно (скрипт backend/scripts/
+    set_plan_changed_at.py и бэкфилл-миграция пишут конкретное историческое
+    время по delete/insert или core UPDATE — через ORM-событие явно заданное
+    значение не перетирается)."""
+    if target.plan_changed_at is None:
+        target.plan_changed_at = func.now()
+
+
+@event.listens_for(FeoPlannedItem, "before_update")
+def _feo_planned_item_touch_plan_changed_at_on_update(mapper, connection, target):
+    """Правка одного из _PLAN_CHANGED_AT_WATCHED_FIELDS двигает plan_changed_at
+    на «сейчас» — покрывает ЛЮБОЙ путь через ORM (ручная правка, «Сменить
+    тип», перенос по статьям, автосоздание из заявки/закупки,
+    copy_into_subsidy), т.к. все они идут через UPDATE этой модели. Правка
+    ТОЛЬКО названия/заметки/sort_order и т.п. (ни одно поле из списка не
+    менялось) — plan_changed_at НЕ трогаем."""
+    state = inspect(target)
+    for field in _PLAN_CHANGED_AT_WATCHED_FIELDS:
+        if state.attrs[field].history.has_changes():
+            target.plan_changed_at = func.now()
+            return

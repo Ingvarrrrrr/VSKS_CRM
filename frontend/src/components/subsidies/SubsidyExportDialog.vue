@@ -15,6 +15,18 @@
         density="compact"
         hide-details
       />
+      <v-checkbox
+        v-model="withByOrder"
+        label="Лист «План закупок (по порядку)»"
+        density="compact"
+        hide-details
+      />
+      <v-checkbox
+        v-model="withContracts"
+        label="Лист «Реестр договоров»"
+        density="compact"
+        hide-details
+      />
     </template>
   </ExportColumnsDialog>
 </template>
@@ -38,6 +50,10 @@ const props = defineProps<{
 
 const dialog = ref<InstanceType<typeof ExportColumnsDialog> | null>(null)
 const withSummary = ref(true)
+// Владелец 08.10.2026: новые листы «План закупок (по порядку)» и «Реестр
+// договоров» — по умолчанию включены, своими галочками (как withSummary).
+const withByOrder = ref(true)
+const withContracts = ref(true)
 
 async function doExport(selectedKeys: string[]) {
   if (!props.subsidyId) throw new Error('Субсидия не выбрана')
@@ -45,6 +61,8 @@ async function doExport(selectedKeys: string[]) {
   const params = new URLSearchParams()
   params.set('columns', selectedKeys.join(','))
   params.set('summary', withSummary.value ? '1' : '0')
+  params.set('by_order', withByOrder.value ? '1' : '0')
+  params.set('contracts', withContracts.value ? '1' : '0')
   const response = await fetch(`/api/subsidies/${props.subsidyId}/plan-graph/export?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   })

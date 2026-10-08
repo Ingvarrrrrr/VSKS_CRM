@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
+from app.services.contract_balances import contract_balances
 from app.services.purchase_amounts import load_purchase_amounts
 from app.services.purchase_export_cells import build_purchase_export_ctx
 
@@ -224,6 +225,17 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
                 _P.monthly_payment_amount,
                 _P.acceptance_doc_number,
                 _P.acceptance_docs,
+                # Валидность привязки к плановой позиции (владелец 09.10.2026,
+                # прод ФАДМ 2026_2 — закупки 909/975/2044/3218 пропадали):
+                # feo_planned_item_id указывает на НЕАКТИВНУЮ/чужой-категории
+                # позицию — такая ссылка не "валидна", строка не попадает в
+                # purchased_by_item (там фильтр по активным item_ids) и раньше
+                # молча выпадала и из purchased_by_cat (фильтр был только
+                # "feo_planned_item_id IS NULL"). Та же проверка валидности
+                # ссылки, что в app.services.committed_amounts (_valid_link).
+                _FPI.id.label("fpi_id"),
+                _FPI.is_active.label("fpi_is_active"),
+                _FPI.feo_category_id.label("fpi_cat_id"),
             )
             .join(_P, _PI.purchase_id == _P.id)
             .outerjoin(_C, _P.contractor_id == _C.id)
@@ -234,9 +246,17 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
         for r in cpi_rows:
             if r.contractor_name and r.ecat not in cat_contractor_map:
                 cat_contractor_map[r.ecat] = r.contractor_name
-            # Детализацию по категории показываем только для позиций БЕЗ привязки к
-            # плановой статье — иначе задвоится со строками под плановой позицией.
-            if r.feo_planned_item_id is None:
+            _valid_link = (
+                r.feo_planned_item_id is not None
+                and r.fpi_id is not None
+                and bool(r.fpi_is_active)
+                and r.fpi_cat_id == r.ecat
+            )
+            # Детализацию по категории показываем для позиций БЕЗ ВАЛИДНОЙ
+            # привязки к плановой статье (нет ссылки ВООБЩЕ, ИЛИ ссылка на
+            # неактивную/чужую-категории позицию) — иначе такая позиция не
+            # попадёт никуда (не покрыта и purchased_by_item).
+            if not _valid_link:
                 purchased_by_cat.setdefault(r.ecat, []).append({
                     "name": r.item_name or "",
                     "unit": r.unit or "",
@@ -255,6 +275,20 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
 
     # ── Закупки БЕЗ позиций: факт живёт на самой закупке (item_name/суммы) ──
     # Иначе такие закупки полностью выпадают из выгрузки.
+    #
+    # ИСКЛЮЧЕНИЕ (владелец 08.10.2026, прод ФАДМ 2026_2): ГОЛОВА рамочного
+    # договора (purchase_contract_type начинается с 'framework', parent_
+    # purchase_id IS NULL) — сама договор, а не закупка-товар; у неё нет
+    # PurchaseItem, поэтому без этого фильтра она попадала в «план закупок»
+    # строкой с нулями («ПАО РОСТЕЛЕКОМ — рамочный договор (закупка 1)» и
+    # т.п.). Реальные деньги несут её заказы (parent_purchase_id = голова,
+    # есть собственные позиции/факт) — они продолжают попадать в выгрузку как
+    # обычно. Тот же критерий рамочности, что в «Реестре договоров»
+    # (plan_graph_export_contracts_sheet.py) и в app.services.committed_amounts
+    # .is_framework_purchase_expr — не второй признак.
+    from app.services.committed_amounts import is_framework_purchase_expr as _is_fw_expr
+    from sqlalchemy import and_ as _sqland, not_ as _sqlnot
+
     unlinked_purchases: list[dict] = []  # секция «без категории ФЭО»
     pl_rows = (await db.execute(
         select(
@@ -273,6 +307,7 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
             _P.subsidy_id == subsidy_id,
         ))
         .where(~select(_PI.id).where(_PI.purchase_id == _P.id).exists())
+        .where(_sqlnot(_sqland(_is_fw_expr(_P), _P.parent_purchase_id.is_(None))))
         .order_by(_P.id)
     )).all()
     _cat_id_set = set(cat_ids)
@@ -377,6 +412,12 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
         )).scalars().all()
         purchase_rows_by_id = {p.id: p for p in _p_rows}
     purchase_export_ctx = await build_purchase_export_ctx(db, list(purchase_rows_by_id.values()))
+    # «Остаток по договору» (владелец 08.10.2026, часть C) — ЕДИНЫЙ источник,
+    # не второй расчёт (ПРАВИЛО №6): plan_graph_export_rows.collect_plan_graph_rows
+    # читает contract_balances_by_purchase, сама его не считает.
+    _cb = await contract_balances(db, subsidy_id)
+    contract_balances_by_purchase = _cb["by_purchase"]
+    contract_balance_groups = _cb["groups"]
 
     return {
         "cats": list(cats),
@@ -393,5 +434,7 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
         "purchased_by_cat": purchased_by_cat,
         "unlinked_purchases": unlinked_purchases,
         "purchase_rows_by_id": purchase_rows_by_id,
+        "contract_balances_by_purchase": contract_balances_by_purchase,
+        "contract_balance_groups": contract_balance_groups,
         "purchase_export_ctx": purchase_export_ctx,
     }

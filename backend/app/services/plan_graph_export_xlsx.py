@@ -35,45 +35,34 @@ try:
 except ImportError:
     openpyxl = None
 
-from app.routers.purchases import STATUS_ORDER as _STATUS_ORDER
 from app.services.plan_graph_export_columns import (
-    CONTRACT_PAYMENT_COL_KEYS,
     MONEY_COL_KEYS,
+    STAGE_MONEY_COL_KEYS,
+    TOP_SUMMARY_EXCLUDED_KEYS,
     column_index,
     headers_and_widths,
     resolve_selected_keys,
 )
+from app.services.plan_graph_export_rows import MAX_DATA_ROW, cascade_by_stage, collect_plan_graph_rows
 from app.services.plan_graph_export_summary_sheet import write_summary_sheet
-from app.services.purchase_export_cells import get_cell_value as _purchase_cell_value
-from app.utils.numbers import format_ru_money
 from app.utils.xlsx_row_height import apply_row_heights
 
-# ── Каскад стадий (Задача B) — ЕДИНСТВЕННАЯ реализация на весь модуль ───────
-_PLANNED_STATUS_SET = {"wishes", "plan_schedule", "work_in_progress"}
-_STAGE_BY_STATUS: dict = {}
-for _s in _STATUS_ORDER:
-    if _s in _PLANNED_STATUS_SET:
-        _STAGE_BY_STATUS[_s] = 0
-    elif _s == "contracted":
-        _STAGE_BY_STATUS[_s] = 1
-    elif _s == "ordered":
-        _STAGE_BY_STATUS[_s] = 2
-    elif _s == "delivered":
-        _STAGE_BY_STATUS[_s] = 3
-    elif _s == "paid":
-        _STAGE_BY_STATUS[_s] = 4
+HEADER_ROW = 3
+DATA_FIRST_ROW = 4
+# Денежные столбцы, которые НИКОГДА не дублируются между уровнем-родителем и
+# его потомками (payment_amount/unit_price — атрибуты КОНКРЕТНОЙ закупленной
+# позиции, заполнены только в строках уровня «Закупка», в строках групп
+# всегда пусто) — верхние строки 1/2 считают их ПРОСТЫМ SUM/SUBTOTAL по
+# всему столбцу, без SUMIFS по уровню (владелец 08.10.2026, часть B).
+_SIMPLE_TOTAL_MONEY_KEYS = MONEY_COL_KEYS - set(STAGE_MONEY_COL_KEYS) - {
+    "feo_budget", "residual", "pct",
+} - TOP_SUMMARY_EXCLUDED_KEYS
 
+__all__ = ["build_live_plan_graph_xlsx", "cascade_by_stage"]
 
-def cascade_by_stage(raw_status: str, total: float) -> tuple:
-    """(planned, contract, ordered, delivered, paid) — сумма позиции попадает
-    НАКОПИТЕЛЬНО во все столбцы ДО текущей стадии включительно (Задача B):
-    Запланировано ⊇ Договор ⊇ Заказано ⊇ Поставлено ⊇ Оплачено. Отменённые
-    (status='cancelled') и статусы вне STATUS_ORDER (purchases.py) — везде 0."""
-    t = round(total or 0, 2)
-    idx = _STAGE_BY_STATUS.get(raw_status)
-    if idx is None:
-        return 0.0, 0.0, 0.0, 0.0, 0.0
-    return tuple(t if i <= idx else 0.0 for i in range(5))
+# Подписи столбца «Уровень» (владелец 09.10.2026) — 1/2/3 именованы как
+# раньше; 4+ (дерево местами глубже) — обобщённая подпись.
+_LEVEL_LABELS = {1: "Направление", 2: "Тип", 3: "Статья"}
 
 
 def build_live_plan_graph_xlsx(
@@ -108,17 +97,11 @@ def build_live_plan_graph_xlsx(
     used_map = data["used_map"]
     contractor_map = data["contractor_map"]
     status_sums_map = data["status_sums_map"]
-    purchased_by_item = data["purchased_by_item"]
     cat_status_map = data["cat_status_map"]
     cat_monthly_map = data["cat_monthly_map"]
     cat_contractor_map = data["cat_contractor_map"]
-    purchased_by_cat = data["purchased_by_cat"]
-    unlinked_purchases = data["unlinked_purchases"]
-    # Группа «Договор и оплата» — отсутствуют в синтетических данных тестов
-    # рендера (test_plan_graph_export_cascade.py строит `data` вручную, без
-    # БД) — .get с пустыми фолбэками, чтобы они и дальше проходили как есть.
-    purchase_rows_by_id = data.get("purchase_rows_by_id") or {}
-    purchase_export_ctx = data.get("purchase_export_ctx") or {}
+    # Факт по закупкам (под-строки) — читается из rows_info, см. ниже
+    # (plan_graph_export_rows.collect_plan_graph_rows), не напрямую из data.
 
     def _st(item_id: int, *statuses: str) -> float:
         d = status_sums_map.get(item_id, {})
@@ -160,27 +143,33 @@ def build_live_plan_graph_xlsx(
     subtree_map: dict[int, dict] = {}
 
     def _compute_subtree(cat) -> dict:
+        """Роллап поддерева категории `cat` — СОБСТВЕННЫЙ факт/бюджет
+        (cat_status_map/cat_monthly_map/items_by_cat для ЭТОЙ категории,
+        независимо от того, есть ли у неё подкатегории) ПЛЮС рекурсивно
+        поддеревья детей (владелец 09.10.2026, прод ФАДМ 2026_2: «плановые
+        позиции и закупки висят и на level 1/2» — раньше категория с детьми
+        игнорировала СВОИ прямые позиции/закупки целиком, считая только от
+        детей). cat.budget (ручной) — ОТМЕНЯЕТ авторасчёт (свой + детей), как
+        и раньше для листа (см. docstring FeoCategory.budget)."""
         if cat.id in subtree_map:
             return subtree_map[cat.id]
         children = cats_by_parent.get(cat.id, [])
         status_agg: dict[str, float] = {}
-        if not children:
-            for k, v in cat_status_map.get(cat.id, {}).items():
+        for k, v in cat_status_map.get(cat.id, {}).items():
+            status_agg[k] = status_agg.get(k, 0.0) + v
+        monthly = cat_monthly_map.get(cat.id, 0.0)
+        children_budget = 0.0
+        for ch in children:
+            r = _compute_subtree(ch)
+            for k, v in r["status"].items():
                 status_agg[k] = status_agg.get(k, 0.0) + v
-            monthly = cat_monthly_map.get(cat.id, 0.0)
-            if cat.budget is not None:
-                budget = float(cat.budget)
-            else:
-                budget = sum(float(it.amount or 0) for it in items_by_cat.get(cat.id, []))
+            children_budget += r["budget"]
+            monthly += r["monthly"]
+        if cat.budget is not None:
+            budget = float(cat.budget)
         else:
-            budget = 0.0
-            monthly = 0.0
-            for ch in children:
-                r = _compute_subtree(ch)
-                for k, v in r["status"].items():
-                    status_agg[k] = status_agg.get(k, 0.0) + v
-                budget += r["budget"]
-                monthly += r["monthly"]
+            own_items_budget = sum(float(it.amount or 0) for it in items_by_cat.get(cat.id, []))
+            budget = own_items_budget + children_budget
         res = {"status": status_agg, "budget": budget, "monthly": monthly}
         subtree_map[cat.id] = res
         return res
@@ -229,30 +218,62 @@ def build_live_plan_graph_xlsx(
             "monthly": _nz(monthly),
         }
 
+    # Сбор пронумерованных («N»/«N.k») строк фактических закупленных позиций —
+    # ОДИН проход, общий с листом «План закупок (по порядку)»
+    # (app.services.plan_graph_export_flat_sheet), см. plan_graph_export_rows.
+    rows_info = collect_plan_graph_rows(data)
+
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "План закупок"
+    ws.title = "План закупок (по направлениям)"
 
     n_cols = len(HEADERS)
     last_col_letter = ws.cell(row=1, column=n_cols).column_letter
+    level_ci = column_index(selected_keys, "level")
 
-    title_cell = ws.cell(row=1, column=1, value=f"ПЛАН-ГРАФИК — {sub.name} ({sub.year})")
-    title_cell.font = Font(bold=True, size=12, color="1E3A5F")
-    ws.merge_cells(f"A1:{last_col_letter}1")
-    title_cell.alignment = CENTER_ALIGN
-    ws.row_dimensions[1].height = 28
+    # Часть B (владелец 08.10.2026): строка 1 — «Итого всего» (подпись + SUM/
+    # SUMIFS), строка 2 — «Итого по фильтру» (SUBTOTAL), строка 3 — шапка,
+    # данные — с 4-й. Лист иерархический: SUM обычный задвоил бы группы, —
+    # «Запланировано/Договор/Заказано/Поставлено/Оплачено/Фактически/Ежемес.»
+    # считаются SUMIFS по служебному столбцу «Уровень» = "Закупка" (листовые
+    # строки закупок — единственные НЕ формула-SUBTOTAL ячейки этих
+    # столбцов); «Бюджет ФЭО» — SUMIFS по «Уровень» = "Направление" (бюджет
+    # уже агрегирован вручную/по дереву на уровне направления); «Остаток»/
+    # «% исполнения» — верхние ячейки пустые (ФЭО статьи не обязан совпадать
+    # с суммой позиций, см. _money_cols_dict); остальные денежные столбцы
+    # (unit_price/payment_amount — атрибуты конкретной закупки, никогда не
+    # дублируются по дереву) — простой SUM/SUBTOTAL по всему столбцу.
+    label_font = Font(bold=True, size=9, color="1E3A5F")
+    ws.cell(row=1, column=1, value=f"{sub.name} ({sub.year}) — итого всего").font = label_font
+    ws.cell(row=2, column=1, value="Итого по фильтру").font = label_font
+    for ci, key in enumerate(selected_keys, 1):
+        if key not in MONEY_COL_KEYS or key in TOP_SUMMARY_EXCLUDED_KEYS:
+            continue
+        col_letter = ws.cell(row=1, column=ci).column_letter
+        rng = f"{col_letter}{DATA_FIRST_ROW}:{col_letter}{MAX_DATA_ROW}"
+        if key in STAGE_MONEY_COL_KEYS and level_ci is not None:
+            level_letter = ws.cell(row=1, column=level_ci).column_letter
+            level_rng = f"{level_letter}{DATA_FIRST_ROW}:{level_letter}{MAX_DATA_ROW}"
+            ws.cell(row=1, column=ci, value=f'=SUMIFS({rng},{level_rng},"Закупка")').font = label_font
+            ws.cell(row=2, column=ci, value=f"=SUBTOTAL(109,{rng})").font = label_font
+        elif key == "feo_budget" and level_ci is not None:
+            level_letter = ws.cell(row=1, column=level_ci).column_letter
+            level_rng = f"{level_letter}{DATA_FIRST_ROW}:{level_letter}{MAX_DATA_ROW}"
+            ws.cell(row=1, column=ci, value=f'=SUMIFS({rng},{level_rng},"Направление")').font = label_font
+        elif key in _SIMPLE_TOTAL_MONEY_KEYS:
+            ws.cell(row=1, column=ci, value=f"=SUM({rng})").font = label_font
+            ws.cell(row=2, column=ci, value=f"=SUBTOTAL(109,{rng})").font = label_font
 
     for col_idx, (header, width) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
-        cell = ws.cell(row=2, column=col_idx, value=header)
+        cell = ws.cell(row=HEADER_ROW, column=col_idx, value=header)
         cell.fill = HEADER_FILL
         cell.font = HEADER_FONT
         cell.alignment = CENTER_ALIGN
         cell.border = THIN_BORDER
         ws.column_dimensions[cell.column_letter].width = width
-    ws.freeze_panes = "A3"
+    ws.freeze_panes = f"A{DATA_FIRST_ROW}"
 
-    row_num = 3
-    seq = 0
+    row_num = DATA_FIRST_ROW
 
     def _write_row_projected(values: dict, fill, font, height=None) -> int:
         """Пишет строку по словарю {key: значение} в порядке selected_keys —
@@ -289,143 +310,130 @@ def build_live_plan_graph_xlsx(
         cell.hyperlink = f"{base_url}/orders/{purchase_id}"
         cell.font = LINK_FONT
 
-    def _purchased_item_values(pi: dict) -> tuple:
-        """Готовит (values-словарь без name/money, price_note, cascade) для
-        под-строки фактически закупленной позиции — общий код для трёх мест
-        (под плановой позицией, под категорией, в секции «без категории»)."""
-        price_note = f"    └ {pi['name']} — {format_ru_money(pi['unit_price'])} ₽/ед."
-        status_txt = pi["status"]
-        monthly_val = ""
-        if pi.get("is_monthly"):
-            cnt = pi.get("monthly_count")
-            amt = pi.get("monthly_amount") or 0
-            status_txt = f"{status_txt} · ежемес." + (f" ×{cnt}" if cnt else "")
-            monthly_val = round(pi["total"], 2)
-            if amt:
-                price_note += f" ({format_ru_money(amt)} ₽/мес)"
-        planned_a, contract_a, ordered_a, delivered_a, paid_a = cascade_by_stage(pi["raw_status"], pi["total"])
-        total_display = 0.0 if pi["raw_status"] == "cancelled" else round(pi["total"], 2)
-        values = {
-            "name": price_note, "unit": pi["unit"], "qty": round(pi["qty"], 3),
-            "planned": planned_a, "contract": contract_a, "ordered": ordered_a,
-            "delivered": delivered_a, "paid": paid_a, "fact_total": total_display,
-            "contractor": pi["contractor"], "status": status_txt,
-            "monthly": monthly_val, "act": pi["act_number"],
-        }
-        # Группа «Договор и оплата» — только для под-строк фактических позиций
-        # (есть purchase_id → сама закупка найдена) и только если хоть один из
-        # этих столбцов выбран (CONTRACT_PAYMENT_COL_KEYS ∩ selected_keys).
-        purchase_row = purchase_rows_by_id.get(pi.get("purchase_id"))
-        if purchase_row is not None and CONTRACT_PAYMENT_COL_KEYS.intersection(selected_keys):
-            for ck in CONTRACT_PAYMENT_COL_KEYS:
-                if ck in selected_keys:
-                    values[ck] = _purchase_cell_value(ck, purchase_row, purchase_export_ctx)
-        return values, (planned_a, contract_a, ordered_a, delivered_a, paid_a)
+    def _write_fact_rows(rows: list) -> None:
+        """Пишет строки фактических позиций (уже собранные
+        plan_graph_export_rows.collect_plan_graph_rows) — leaf-уровень
+        «Закупка», значения литеральные (не формула)."""
+        for row in rows:
+            row_idx = _write_row_projected(row, SUB_FILL, SUB_FONT, height=16)
+            _set_doc_link(row.get("_purchase_id"), row_idx)
+
+    def _apply_group_subtotal(row_idx: int, start: int, end: int) -> None:
+        """Перезаписывает денежные столбцы-стадии (STAGE_MONEY_COL_KEYS)
+        строки-группы `row_idx` формулой =SUBTOTAL(109, start:end) — владелец
+        08.10.2026, часть B: группа (направление/тип/статья/плановая
+        позиция) больше не несёт литеральное число по этим столбцам сама —
+        его считает Excel по диапазону строк-потомков (сплошной блок под
+        родителем). Диапазон пуст (нет потомков, start > end) — литеральное
+        значение (уже записанное при _write_row_projected, обычно 0) не
+        трогаем."""
+        if end < start:
+            return
+        for key in STAGE_MONEY_COL_KEYS:
+            ci = column_index(selected_keys, key)
+            if ci is None:
+                continue
+            col_letter = ws.cell(row=row_idx, column=ci).column_letter
+            ws.cell(row=row_idx, column=ci, value=f"=SUBTOTAL(109,{col_letter}{start}:{col_letter}{end})")
 
     def _traverse(cat, direction_name="", type_name=""):
-        nonlocal seq
+        """Пишет строку категории `cat` ЛЮБОГО уровня (1, 2, 3, 4+) и ВСЁ её
+        содержимое — собственные закупки (fact_rows_by_cat), собственные
+        плановые позиции (items_order_by_cat) с их закупками, затем
+        подкатегории — владелец 09.10.2026, прод ФАДМ 2026_2: «плановые
+        позиции и закупки висят и на level 1/2» (раньше это содержимое
+        писалось ТОЛЬКО для level==3, выше/глубже — молча терялось)."""
         if cat.level == 1:
             direction_name = cat.name
-            values = {"num": cat.code or "", "direction": cat.name}
-            values.update(_money_cols_dict(cat.id, ""))
-            _write_row_projected(values, L1_FILL, L1_FONT, height=22)
+            values = {"num": cat.code or "", "direction": cat.name, "level": _LEVEL_LABELS.get(1, "Направление")}
+            fill, font, height = L1_FILL, L1_FONT, 22
         elif cat.level == 2:
             type_name = cat.name
-            values = {"direction": direction_name, "type": cat.name}
-            values.update(_money_cols_dict(cat.id, ""))
-            _write_row_projected(values, L2_FILL, L2_FONT)
-        elif cat.level == 3:
-            values = {"direction": direction_name, "type": type_name, "name": cat.name}
-            values.update(_money_cols_dict(cat.id, cat_contractor_map.get(cat.id, "")))
-            _write_row_projected(values, L3_FILL, L3_FONT)
+            values = {"direction": direction_name, "type": cat.name, "level": _LEVEL_LABELS.get(2, "Тип")}
+            fill, font, height = L2_FILL, L2_FONT, None
+        else:
+            values = {
+                "direction": direction_name, "type": type_name, "name": cat.name,
+                "level": _LEVEL_LABELS.get(cat.level, f"Категория {cat.level}"),
+            }
+            fill, font, height = L3_FILL, L3_FONT, None
+        values.update(_money_cols_dict(cat.id, cat_contractor_map.get(cat.id, "")))
+        row_idx = _write_row_projected(values, fill, font, height=height)
 
-            # Под-строки: закупки, привязанные напрямую к категории (без плановой статьи).
-            cat_purchases = purchased_by_cat.get(cat.id, [])
-            cat_sums = [0.0] * 5
-            for pi in cat_purchases:
-                sub_values, stages = _purchased_item_values(pi)
-                for i in range(5):
-                    cat_sums[i] += stages[i]
-                row_idx = _write_row_projected(sub_values, SUB_FILL, SUB_FONT, height=16)
-                _set_doc_link(pi["purchase_id"], row_idx)
-            if cat_purchases:
-                totals = {
-                    "name": "    Итого по факту:",
-                    "planned": round(cat_sums[0], 2), "contract": round(cat_sums[1], 2),
-                    "ordered": round(cat_sums[2], 2), "delivered": round(cat_sums[3], 2),
-                    "paid": round(cat_sums[4], 2),
-                }
-                _write_row_projected(totals, SUB_FILL, TOTAL_FONT, height=16)
+        start_row = row_num
 
-            for item in items_by_cat.get(cat.id, []):
-                seq += 1
-                feo_budget = float(item.amount or 0)
-                plan0 = _st(item.id, "plan_schedule", "work_in_progress", "wishes")
-                contract0 = _st(item.id, "contracted")
-                ordered0 = _st(item.id, "ordered")
-                delivered0 = _st(item.id, "delivered")
-                paid0 = _st(item.id, "paid")
-                used = used_map.get(item.id, 0.0)
-                contract_cum = contract0 + ordered0 + delivered0 + paid0
-                ordered_cum = ordered0 + delivered0 + paid0
-                delivered_cum = delivered0 + paid0
-                paid_cum = paid0
-                residual = feo_budget - used
-                pct = round(used / feo_budget * 100) if feo_budget > 0 else 0
-                contractor = contractor_map.get(item.id, "")
-                status = "Выполнено" if pct >= 100 else ("В работе" if used > 0 else "Не начато")
-                font = RED_FONT if used > feo_budget else ITEM_FONT
-                values = {
-                    "num": seq, "direction": direction_name, "type": type_name, "name": item.name,
-                    "unit": item.unit or "", "qty": float(item.quantity or 0),
-                    "feo_budget": round(feo_budget, 2), "planned": round(used, 2),
-                    "contract": round(contract_cum, 2), "ordered": round(ordered_cum, 2),
-                    "delivered": round(delivered_cum, 2), "paid": round(paid_cum, 2),
-                    "fact_total": round(used, 2), "residual": round(residual, 2),
-                    "pct": f"{pct}%", "contractor": contractor, "status": status,
-                }
-                _write_row_projected(values, NO_FILL, font)
+        # Собственные закупки категории (ЛЮБОЙ уровень — без плановой статьи).
+        _write_fact_rows(rows_info["fact_rows_by_cat"].get(cat.id, []))
 
-                for pi in purchased_by_item.get(item.id, []):
-                    sub_values, _stages = _purchased_item_values(pi)
-                    row_idx = _write_row_projected(sub_values, SUB_FILL, SUB_FONT, height=16)
-                    _set_doc_link(pi["purchase_id"], row_idx)
+        # Собственные плановые позиции категории (ЛЮБОЙ уровень).
+        for item in rows_info["items_order_by_cat"].get(cat.id, []):
+            seq = rows_info["item_seq"][item.id]
+            feo_budget = float(item.amount or 0)
+            plan0 = _st(item.id, "plan_schedule", "work_in_progress", "wishes")
+            contract0 = _st(item.id, "contracted")
+            ordered0 = _st(item.id, "ordered")
+            delivered0 = _st(item.id, "delivered")
+            paid0 = _st(item.id, "paid")
+            used = used_map.get(item.id, 0.0)
+            contract_cum = contract0 + ordered0 + delivered0 + paid0
+            ordered_cum = ordered0 + delivered0 + paid0
+            delivered_cum = delivered0 + paid0
+            paid_cum = paid0
+            residual = feo_budget - used
+            pct = round(used / feo_budget * 100) if feo_budget > 0 else 0
+            contractor = contractor_map.get(item.id, "")
+            status = "Выполнено" if pct >= 100 else ("В работе" if used > 0 else "Не начато")
+            item_font = RED_FONT if used > feo_budget else ITEM_FONT
+            item_values = {
+                "num": seq, "direction": direction_name, "type": type_name, "name": item.name,
+                "level": "Позиция",
+                "unit": item.unit or "", "qty": float(item.quantity or 0),
+                "feo_budget": round(feo_budget, 2), "planned": round(used, 2),
+                "contract": round(contract_cum, 2), "ordered": round(ordered_cum, 2),
+                "delivered": round(delivered_cum, 2), "paid": round(paid_cum, 2),
+                "fact_total": round(used, 2), "residual": round(residual, 2),
+                "pct": f"{pct}%", "contractor": contractor, "status": status,
+            }
+            item_row_idx = _write_row_projected(item_values, NO_FILL, item_font)
+
+            item_start = row_num
+            _write_fact_rows(rows_info["fact_rows_by_item"].get(item.id, []))
+            _apply_group_subtotal(item_row_idx, item_start, row_num - 1)
 
         for child in cats_by_parent.get(cat.id, []):
             _traverse(child, direction_name, type_name)
+
+        end_row = row_num - 1
+        _apply_group_subtotal(row_idx, start_row, end_row)
 
     for root in cats_by_parent.get(None, []):
         _traverse(root)
 
     # ── Секция: закупки, привязанные к субсидии, но без категории ФЭО ────────
-    if unlinked_purchases:
-        _write_row_projected(
-            {"direction": "Закупки по субсидии без привязки к категории ФЭО"},
+    unlinked_rows = rows_info["fact_rows_unlinked"]
+    if unlinked_rows:
+        unlinked_header_idx = _write_row_projected(
+            {"direction": "Закупки по субсидии без привязки к категории ФЭО", "level": "Направление"},
             L1_FILL, L1_FONT, height=22,
         )
-        u_sums = [0.0] * 5
-        for pi in unlinked_purchases:
-            sub_values, stages = _purchased_item_values(pi)
-            for i in range(5):
-                u_sums[i] += stages[i]
-            row_idx = _write_row_projected(sub_values, SUB_FILL, SUB_FONT, height=16)
-            _set_doc_link(pi["purchase_id"], row_idx)
-        _write_row_projected(
-            {
-                "name": "    Итого по факту:",
-                "planned": round(u_sums[0], 2), "contract": round(u_sums[1], 2),
-                "ordered": round(u_sums[2], 2), "delivered": round(u_sums[3], 2),
-                "paid": round(u_sums[4], 2),
-            },
-            SUB_FILL, TOTAL_FONT, height=16,
-        )
+        unlinked_start = row_num
+        _write_fact_rows(unlinked_rows)
+        _apply_group_subtotal(unlinked_header_idx, unlinked_start, row_num - 1)
 
     last_row = row_num - 1
-    # Задача C — высота строк по тексту (заголовок строка 2 + все строки данных).
-    apply_row_heights(ws, range(2, last_row + 1))
+    # Автофильтр по строке заголовков (владелец 08.10.2026, часть B).
+    ws.auto_filter.ref = f"A{HEADER_ROW}:{last_col_letter}{max(last_row, HEADER_ROW)}"
+    # Задача C — высота строк по тексту (строки 1-3 + все строки данных).
+    apply_row_heights(ws, range(1, last_row + 1))
 
     if summary_by_kind is not None:
-        write_summary_sheet(wb, sub, summary_by_kind)
+        # Часть C (владелец 08.10.2026): «Остаток на договорах, ₽» по видам —
+        # Σ remaining групп contract_balances (ПРАВИЛО №6, читаем уже
+        # посчитанные группы, не второй расчёт).
+        contract_remaining_by_kind: dict = {}
+        for _g in data.get("contract_balance_groups") or []:
+            contract_remaining_by_kind[_g["kind"]] = contract_remaining_by_kind.get(_g["kind"], 0.0) + _g["remaining"]
+        write_summary_sheet(wb, sub, summary_by_kind, contract_remaining_by_kind)
         sm = wb["Сводная"]
         apply_row_heights(sm, range(2, sm.max_row + 1))
 

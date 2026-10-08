@@ -38,6 +38,10 @@ HEADERS = [
     "Поставлено, ₽",
     "Оплачено, ₽",
     "Поставлено, не оплачено (треб. оплата), ₽",
+    # Владелец 08.10.2026, часть C — Σ остатков договоров (app.services.
+    # contract_balances.contract_balances) по виду ГОЛОВЫ договора (не
+    # второй расчёт — читает уже посчитанные группы).
+    "Остаток на договорах, ₽",
 ]
 _HOW_CALCULATED = [
     "Как считается",
@@ -51,15 +55,20 @@ _HOW_CALCULATED = [
     "= Оплачено + Поставлено, не оплачено (формула)",
     "Сумма оплат по отметке в закупках",
     "Остаток к оплате по поставленным закупкам",
+    "Сумма договоров минус заявки по ним (рамочные без суммы договора — 0)",
 ]
-COL_WIDTHS = [16, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20]
+COL_WIDTHS = [16, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20]
 
 NUM_FMT = "#,##0.00"
 
 
-def write_summary_sheet(wb, sub, summary_by_kind: dict) -> None:
+def write_summary_sheet(wb, sub, summary_by_kind: dict, contract_remaining_by_kind: dict = None) -> None:
     """Пишет лист «Сводная» (вставляется первым, index 0). `summary_by_kind` —
-    результат subsidy_summary_by_kind(db, subsidy_id)."""
+    результат subsidy_summary_by_kind(db, subsidy_id). `contract_remaining_by_kind`
+    (владелец 08.10.2026, часть C) — {kind: Σ остатков договоров}, из
+    app.services.contract_balances.contract_balances (группы, агрегированные
+    по kind вызывающим кодом, plan_graph_export_data.gather_live_plan_graph_data)
+    — столбец «Остаток на договорах, ₽»; None/пусто — столбец весь 0."""
     HEADER_FILL = PatternFill("solid", fgColor="1E3A5F")
     HEADER_FONT = Font(color="FFFFFF", bold=True, size=9)
     BANNER_FILL = PatternFill("solid", fgColor="FFF2CC")
@@ -132,6 +141,7 @@ def write_summary_sheet(wb, sub, summary_by_kind: dict) -> None:
         sm.cell(row=row, column=9, value=f"=J{row}+K{row}")
         sm.cell(row=row, column=10, value=round(d.get("paid", 0.0), 2))
         sm.cell(row=row, column=11, value=round(d.get("delivered_unpaid", 0.0), 2))
+        sm.cell(row=row, column=12, value=round((contract_remaining_by_kind or {}).get(kind, 0.0), 2))
 
         fill = _KIND_FILL[kind]
         for ci in range(1, n_cols + 1):

@@ -43,7 +43,12 @@ from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_R
 from app.models.user import User
 from app.models.subsidy import Subsidy
 from app.services.plan_graph_export_columns import columns_catalog, resolve_selected_keys
+from app.services.plan_graph_export_contracts_sheet import (
+    gather_contracts_sheet_data,
+    write_contracts_sheet,
+)
 from app.services.plan_graph_export_data import gather_live_plan_graph_data
+from app.services.plan_graph_export_flat_sheet import write_flat_plan_graph_sheet
 from app.services.plan_graph_export_xlsx import build_live_plan_graph_xlsx
 from app.services.plan_graph_export_render import render_plan_graph_workbook
 from app.services.plan_graph_export_docx import (
@@ -74,6 +79,8 @@ async def export_plan_graph_excel(
     request: Request,
     columns: Optional[str] = Query(None, description="Ключи столбцов через запятую (Задача D); пусто — все"),
     summary: bool = Query(True, description="Включать лист «Сводная» (Задача А)"),
+    by_order: bool = Query(True, description="Лист «План закупок (по порядку)» (владелец 08.10.2026)"),
+    contracts: bool = Query(True, description="Лист «Реестр договоров» (владелец 08.10.2026)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -97,6 +104,16 @@ async def export_plan_graph_excel(
     wb = build_live_plan_graph_xlsx(
         sub, base_url, data, selected_columns=selected_keys, summary_by_kind=summary_by_kind,
     )
+    # Порядок листов (владелец 08.10.2026): «Сводная» (вставлен внутри
+    # build_live_plan_graph_xlsx первым), «План закупок (по направлениям)»,
+    # затем — добавленные здесь, в порядке вызова.
+    if by_order:
+        write_flat_plan_graph_sheet(
+            wb, data, selected_keys, base_url, title=f"{sub.name} ({sub.year}) — итого всего",
+        )
+    if contracts:
+        contracts_data = await gather_contracts_sheet_data(db, subsidy_id)
+        write_contracts_sheet(wb, contracts_data, title=f"{sub.name} ({sub.year}) — итого всего")
 
     buf = io.BytesIO()
     wb.save(buf)

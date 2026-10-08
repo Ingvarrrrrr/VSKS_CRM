@@ -80,6 +80,11 @@ def _scenario():
         "unlinked_purchases": [],
         "purchase_rows_by_id": purchase_rows_by_id,
         "purchase_export_ctx": _empty_ctx(),
+        # Владелец 09.10.2026 — «План» теперь читается из item_plan_map
+        # (контрибьюция, см. plan_graph_export_data.py), не из item.amount
+        # напрямую; на этой фикстуре оба числа совпадают (amount=1000 у всех
+        # трёх, без замещения savings).
+        "item_plan_map": {20: 1000.0, 21: 1000.0, 22: 1000.0},
     }
     return data, item20, item21, item22
 
@@ -142,3 +147,40 @@ def test_flat_sheet_sorted_globally_by_purchase_number_with_tail():
     # Автофильтр и закреплённая шапка — владелец п.2.
     assert ws.auto_filter.ref is not None
     assert ws.freeze_panes == f"A{DATA_FIRST_ROW}"
+
+
+def test_plan_amount_on_first_fact_row_only_no_duplication():
+    """Владелец 09.10.2026, замечание 3б — на листе «по порядку» у позиции
+    С закупками план пишется РОВНО на первую (по номеру закупки) строку
+    позиции, не на каждую, иначе простой SUM по столбцу задвоится. Позиция
+    БЕЗ закупок (хвост) несёт план в своей единственной строке."""
+    data, item20, item21, item22 = _scenario()
+    selected = resolve_selected_keys(None)
+    import openpyxl
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    write_flat_plan_graph_sheet(wb, data, selected, "http://example.test")
+
+    ws = wb["План закупок (по порядку)"]
+    headers = {cell.value: idx + 1 for idx, cell in enumerate(ws[HEADER_ROW])}
+    rows = list(ws.iter_rows(min_row=DATA_FIRST_ROW, values_only=False))
+
+    def _val(row, label):
+        return row[headers[label] - 1].value
+
+    plan_col = "План (плановые позиции), ₽"
+    # item21 ("Позиция B", amount=1000) — одна закупка, её единственная
+    # строка несёт план.
+    row_b = next(r for r in rows if _val(r, "Наименование") == "Позиция B")
+    assert _val(row_b, plan_col) == 1000.0
+    # item22 — без закупок, хвостовая строка несёт план.
+    row_tail = next(r for r in rows if _val(r, "Наименование") == "Позиция без закупок")
+    assert _val(row_tail, plan_col) == 1000.0
+    # «Бюджет ФЭО» пусто у этой же строки (владелец 09.10.2026, замечание 3а
+    # — не смешиваем с planом).
+    assert _val(row_tail, "Бюджет ФЭО, ₽") in (None, "")
+
+    # Σ по столбцу «План» (простой SUM, владелец) == Σ item.amount всех трёх
+    # позиций (1000 × 3) — не задвоено.
+    total = sum(v for v in (_val(r, plan_col) for r in rows) if isinstance(v, (int, float)))
+    assert total == 3000.0

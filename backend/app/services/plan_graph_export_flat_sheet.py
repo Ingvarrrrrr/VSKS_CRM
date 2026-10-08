@@ -93,10 +93,33 @@ def write_flat_plan_graph_sheet(wb, data: dict, selected_keys: list, base_url: s
         row_num += 1
         return idx
 
+    # «План (плановые позиции)» (владелец 09.10.2026, замечание 3б, сверка
+    # проверка на проде ФАДМ 2026_2) — на этом листе у позиции С закупками
+    # нет своей отдельной строки (только её закупки, см. ниже); план пишется
+    # РОВНО на первую (по сортировке) строку позиции — иначе задвоится при
+    # простом SUM по столбцу (владелец: «выбери и опиши решение»). Значение —
+    # item_plan_map (ПРАВИЛО №6: та же контрибьюция, что суммирует дерево
+    # ФЭО, см. docstring gather_live_plan_graph_data; НЕ голое item.amount).
+    item_plan_map = data.get("item_plan_map") or {}
+    # Фолбэк на item.amount (только если item_plan_map не несёт эту позицию —
+    # в реальных данных gather_live_plan_graph_data заполняет её для КАЖДОЙ
+    # активной позиции; фолбэк нужен только старым синтетическим данным в
+    # тестах, не меняет поведение на проде).
+    item_by_id: dict = {
+        item.id: item
+        for items in (data.get("items_by_cat") or {}).values()
+        for item in items
+    }
+
     # Все фактические строки (по плановым позициям + прямо на статье + без
     # категории ФЭО), в ОДНОМ списке, отсортированные по № закупки → id закупки.
     all_rows: list = []
-    for rows in rows_info["fact_rows_by_item"].values():
+    for item_id, rows in rows_info["fact_rows_by_item"].items():
+        if rows:
+            if item_id in item_plan_map:
+                rows[0]["plan_amount"] = round(item_plan_map[item_id], 2)
+            elif item_id in item_by_id:
+                rows[0]["plan_amount"] = round(float(item_by_id[item_id].amount or 0), 2)
         all_rows.extend(rows)
     for rows in rows_info["fact_rows_by_cat"].values():
         all_rows.extend(rows)
@@ -112,16 +135,31 @@ def write_flat_plan_graph_sheet(wb, data: dict, selected_keys: list, base_url: s
             cell.hyperlink = f"{base_url}/orders/{pid}"
             cell.font = LINK_FONT
 
+    # «Товар / услуга» плановой позиции (владелец 08.10.2026, замечание 1) —
+    # уже посчитано централизовано gather_live_plan_graph_data (ПРАВИЛО №6).
+    item_kind_map = data.get("item_kind_map") or {}
+    # «План. месяц платежа» позиций без закупок (владелец 09.10.2026, п.2) —
+    # item_plan_month_map (см. plan_graph_export_data.item_planned_month).
+    item_plan_month_map = data.get("item_plan_month_map") or {}
+
     # Хвост — плановые позиции без закупок, по порядку дерева (владелец:
     # «в конце — позиции без закупок»).
     for info in rows_info["items_without_purchase"]:
         item = info["item"]
         feo_budget = float(item.amount or 0)
+        plan_contribution = item_plan_map.get(item.id, feo_budget)
         values = {
             "level": "Позиция",
             "num": str(info["seq"]), "direction": info["direction"], "type": info["type"],
             "name": item.name, "unit": item.unit or "", "qty": float(item.quantity or 0),
-            "feo_budget": round(feo_budget, 2), "residual": round(feo_budget, 2),
+            "item_kind": item_kind_map.get(item.id, ""),
+            "planned_payment_month": item_plan_month_map.get(item.id, ""),
+            # «Бюджет ФЭО» — только в строках статей (владелец 09.10.2026,
+            # замечание 3а), здесь (строка позиции) пусто; план самой позиции —
+            # "plan_amount" (единственная её строка на листе — без закупок,
+            # повторения нет); «Остаток» — против собственного бюджета
+            # позиции (как и раньше, см. тот же комментарий в xlsx.py).
+            "plan_amount": round(plan_contribution, 2), "residual": round(feo_budget, 2),
             "status": "Не начато",
         }
         _write(values, EMPTY_FONT)

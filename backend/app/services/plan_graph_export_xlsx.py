@@ -54,8 +54,12 @@ DATA_FIRST_ROW = 4
 # позиции, заполнены только в строках уровня «Закупка», в строках групп
 # всегда пусто) — верхние строки 1/2 считают их ПРОСТЫМ SUM/SUBTOTAL по
 # всему столбцу, без SUMIFS по уровню (владелец 08.10.2026, часть B).
+# "plan_amount" (владелец 09.10.2026, замечание 3б) — ЖИВЁТ на уровне
+# «Позиция» (не «Закупка»), поэтому верхние строки считают её СВОЕЙ SUMIFS-
+# формулой (см. ниже), не простым SUM — исключена отсюда так же, как
+# feo_budget/residual/pct.
 _SIMPLE_TOTAL_MONEY_KEYS = MONEY_COL_KEYS - set(STAGE_MONEY_COL_KEYS) - {
-    "feo_budget", "residual", "pct",
+    "feo_budget", "residual", "pct", "plan_amount",
 } - TOP_SUMMARY_EXCLUDED_KEYS
 
 __all__ = ["build_live_plan_graph_xlsx", "cascade_by_stage"]
@@ -100,6 +104,20 @@ def build_live_plan_graph_xlsx(
     cat_status_map = data["cat_status_map"]
     cat_monthly_map = data["cat_monthly_map"]
     cat_contractor_map = data["cat_contractor_map"]
+    # «Товар / услуга» плановой позиции (владелец 08.10.2026, замечание 1) —
+    # уже посчитано централизовано app.services.plan_graph_export_data
+    # .gather_live_plan_graph_data (item_kind_label, ПРАВИЛО №6 — не второй
+    # расчёт здесь); .get(..., {}) — синтетические данные тестов могут не
+    # нести этот ключ вовсе.
+    item_kind_map = data.get("item_kind_map") or {}
+    # «План (плановые позиции)»/«План. месяц платежа» (владелец 09.10.2026) —
+    # уже посчитано централизовано gather_live_plan_graph_data (ПРАВИЛО №6:
+    # item_plan_map — тот же вклад в план, что суммирует дерево ФЭО, НЕ
+    # голое item.amount; item_plan_month_map — planned_date/monthly_start_date
+    # позиции, см. item_planned_month()). `.get(...) or {}` — синтетические
+    # данные старых тестов могут не нести эти ключи вовсе.
+    item_plan_map = data.get("item_plan_map") or {}
+    item_plan_month_map = data.get("item_plan_month_map") or {}
     # Факт по закупкам (под-строки) — читается из rows_info, см. ниже
     # (plan_graph_export_rows.collect_plan_graph_rows), не напрямую из data.
 
@@ -260,6 +278,16 @@ def build_live_plan_graph_xlsx(
             level_letter = ws.cell(row=1, column=level_ci).column_letter
             level_rng = f"{level_letter}{DATA_FIRST_ROW}:{level_letter}{MAX_DATA_ROW}"
             ws.cell(row=1, column=ci, value=f'=SUMIFS({rng},{level_rng},"Направление")').font = label_font
+        elif key == "plan_amount" and level_ci is not None:
+            # Владелец 09.10.2026, замечание 3: «План» верхней строки — Σ
+            # ПЛАНОВЫХ ПОЗИЦИЙ (уровень «Позиция»), а не Σ закупок — иначе
+            # задвоится с SUMIFS(level="Закупка") других денежных столбцов.
+            # Строка 2 («Итого по фильтру») не ставится — тот же приём, что
+            # у "feo_budget" (SUBTOTAL+критерий не выражается простой
+            # формулой; см. docstring модуля).
+            level_letter = ws.cell(row=1, column=level_ci).column_letter
+            level_rng = f"{level_letter}{DATA_FIRST_ROW}:{level_letter}{MAX_DATA_ROW}"
+            ws.cell(row=1, column=ci, value=f'=SUMIFS({rng},{level_rng},"Позиция")').font = label_font
         elif key in _SIMPLE_TOTAL_MONEY_KEYS:
             ws.cell(row=1, column=ci, value=f"=SUM({rng})").font = label_font
             ws.cell(row=2, column=ci, value=f"=SUBTOTAL(109,{rng})").font = label_font
@@ -318,18 +346,26 @@ def build_live_plan_graph_xlsx(
             row_idx = _write_row_projected(row, SUB_FILL, SUB_FONT, height=16)
             _set_doc_link(row.get("_purchase_id"), row_idx)
 
-    def _apply_group_subtotal(row_idx: int, start: int, end: int) -> None:
-        """Перезаписывает денежные столбцы-стадии (STAGE_MONEY_COL_KEYS)
-        строки-группы `row_idx` формулой =SUBTOTAL(109, start:end) — владелец
-        08.10.2026, часть B: группа (направление/тип/статья/плановая
-        позиция) больше не несёт литеральное число по этим столбцам сама —
-        его считает Excel по диапазону строк-потомков (сплошной блок под
-        родителем). Диапазон пуст (нет потомков, start > end) — литеральное
-        значение (уже записанное при _write_row_projected, обычно 0) не
-        трогаем."""
+    def _apply_group_subtotal(row_idx: int, start: int, end: int, keys=STAGE_MONEY_COL_KEYS) -> None:
+        """Перезаписывает денежные столбцы `keys` (по умолчанию
+        STAGE_MONEY_COL_KEYS) строки-группы `row_idx` формулой =SUBTOTAL(109,
+        start:end) — владелец 08.10.2026, часть B: группа (направление/тип/
+        статья/плановая позиция) больше не несёт литеральное число по этим
+        столбцам сама — его считает Excel по диапазону строк-потомков
+        (сплошной блок под родителем). Диапазон пуст (нет потомков, start >
+        end) — литеральное значение (уже записанное при _write_row_projected,
+        обычно 0) не трогаем.
+
+        "plan_amount" (владелец 09.10.2026, замечание 3б) передаётся ТОЛЬКО
+        вызовом на уровне категории (направление/тип/статья) — у строки
+        ПОЗИЦИИ это её собственный литеральный план (FeoPlannedItem.amount),
+        он не должен быть перезаписан SUBTOTAL по её собственным закупкам
+        (которые plan_amount не несут вовсе) — поэтому вызов на уровне
+        позиции (ниже, _apply_group_subtotal(item_row_idx, ...)) НЕ передаёт
+        "plan_amount" в keys."""
         if end < start:
             return
-        for key in STAGE_MONEY_COL_KEYS:
+        for key in keys:
             ci = column_index(selected_keys, key)
             if ci is None:
                 continue
@@ -368,7 +404,13 @@ def build_live_plan_graph_xlsx(
         # Собственные плановые позиции категории (ЛЮБОЙ уровень).
         for item in rows_info["items_order_by_cat"].get(cat.id, []):
             seq = rows_info["item_seq"][item.id]
+            # «Остаток»/«% исполнения» ниже — против СОБСТВЕННОГО бюджета
+            # позиции (item.amount), это другая величина, чем столбец «План
+            # (плановые позиции)» (item_plan_map — контрибьюция, см. выше);
+            # владелец просил сверить именно Σ «План», этих двух менять не
+            # просили — оставлены как было.
             feo_budget = float(item.amount or 0)
+            plan_contribution = item_plan_map.get(item.id, feo_budget)
             plan0 = _st(item.id, "plan_schedule", "work_in_progress", "wishes")
             contract0 = _st(item.id, "contracted")
             ordered0 = _st(item.id, "ordered")
@@ -388,7 +430,15 @@ def build_live_plan_graph_xlsx(
                 "num": seq, "direction": direction_name, "type": type_name, "name": item.name,
                 "level": "Позиция",
                 "unit": item.unit or "", "qty": float(item.quantity or 0),
-                "feo_budget": round(feo_budget, 2), "planned": round(used, 2),
+                # «Бюджет ФЭО» — ТОЛЬКО в строках статей/направлений (владелец
+                # 09.10.2026, замечание 3а: раньше тут был item.amount, то есть
+                # план позиции, смешанный с ФЭО статьи в одном столбце) —
+                # ключ не добавляем, ячейка остаётся пустой. Сам план позиции —
+                # новый столбец "plan_amount".
+                "plan_amount": round(plan_contribution, 2),
+                "item_kind": item_kind_map.get(item.id, ""),
+                "planned_payment_month": item_plan_month_map.get(item.id, ""),
+                "planned": round(used, 2),
                 "contract": round(contract_cum, 2), "ordered": round(ordered_cum, 2),
                 "delivered": round(delivered_cum, 2), "paid": round(paid_cum, 2),
                 "fact_total": round(used, 2), "residual": round(residual, 2),
@@ -404,7 +454,7 @@ def build_live_plan_graph_xlsx(
             _traverse(child, direction_name, type_name)
 
         end_row = row_num - 1
-        _apply_group_subtotal(row_idx, start_row, end_row)
+        _apply_group_subtotal(row_idx, start_row, end_row, keys=STAGE_MONEY_COL_KEYS + ("plan_amount",))
 
     for root in cats_by_parent.get(None, []):
         _traverse(root)

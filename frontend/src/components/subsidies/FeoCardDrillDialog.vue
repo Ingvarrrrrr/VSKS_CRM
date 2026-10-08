@@ -38,10 +38,24 @@
      planned_amount/items прямо на корне (см. feo_card_drill.py), это окно
      просто их отображает, Σ amount по направлениям == total == карточке
      «Свободно» по этому типу (тот же ряд, что splitRowsFor('free') в
-     SubsidyKpiCards.vue — не трогаем файл, сверяем числом). items — позиции
-     плана этого направления/типа, отданные backend'ом уже created_at DESC
-     (последние добавленные первыми) — показываются раскрывающимся списком
-     под строкой превышения. -->
+     SubsidyKpiCards.vue — не трогаем файл, сверяем числом). items — ПОЛНЫЙ
+     состав позиций плана этого направления/типа, created_at DESC, доступен
+     по ссылке «Показать весь состав».
+
+     Жалоба владельца 08.10.2026: раскрытие направления с превышением
+     показывало ВЕСЬ состав (десятки строк) — «какие именно закупки дали
+     превышение — абсолютно непонятно». Теперь по умолчанию раскрывается
+     ТОЛЬКО excess_items (виновники — см. _excess_culprit_items,
+     feo_card_drill.py, ПРАВИЛО №6: один расчёт на backend, фронт не
+     пересчитывает) — таблица по образцу PaidOverDeliveredDrillDialog.vue/
+     StageFeoDrillDialog.vue (№ закупки/Предмет/Категория ФЭО/Позиция/Тип/
+     Дата/Сумма/«сверх ФЭО»), «Итого сверх ФЭО» сверяется с суммой превышения
+     строки (excessMismatch — та же проверка-предупреждение, что у
+     PaidOverDeliveredDrillDialog.vue, если позиций типа не хватает покрыть
+     превышение — см. докстринг _excess_culprit_items). Ссылка «Показать весь
+     состав (N)» переключает на полный items (не теряет функцию). Скачать
+     Excel — тот же клиентский экспорт (библиотека xlsx), что и в
+     StageFeoDrillDialog.vue, по текущей показанной таблице виновников/состава. -->
 <template>
   <v-dialog :model-value="visible" max-width="1100" scrollable :fullscreen="mobile"
     @update:model-value="v => !v && emit('close')">
@@ -147,14 +161,66 @@
                     {{ r.amount < -0.5 ? 'превышение ' : 'свободно ' }}{{ formatCurrency(Math.abs(r.amount)) }}
                   </td>
                 </tr>
-                <template v-if="r.amount < -0.5 && r.items.length && expanded.has('dir-' + r.feo_category_id)">
-                  <tr v-for="it in r.items" :key="'item-' + it.planned_item_id">
-                    <td class="px-4 py-1 text-caption" style="padding-left:40px; max-width:320px; white-space:normal">{{ it.name || '—' }}</td>
-                    <td class="px-4" />
-                    <td class="text-right px-4 text-caption">{{ formatCurrency(it.amount) }}</td>
-                    <td class="px-4 text-caption text-medium-emphasis">{{ formatDate(it.created_at) }}</td>
-                  </tr>
-                </template>
+                <tr v-if="r.amount < -0.5 && r.items.length && expanded.has('dir-' + r.feo_category_id)">
+                  <td colspan="4" class="pa-0" style="border-top:none">
+                    <div class="pa-3" style="background: rgba(146, 64, 14, 0.03)">
+                      <!-- Жалоба владельца 08.10.2026: раньше здесь был ВЕСЬ состав
+                           (десятки строк) — теперь по умолчанию ТОЛЬКО виновники
+                           (excess_items, см. докстринг файла сверху), с переключателем
+                           на полный состав. -->
+                      <div class="d-flex align-center flex-wrap" style="gap:8px">
+                        <span class="text-caption text-medium-emphasis">
+                          {{ showFull.has(r.feo_category_id) ? `Весь состав (${r.items.length})` : `Виновники превышения (${r.excess_items.length})` }}
+                        </span>
+                        <v-btn size="x-small" variant="text" color="primary" @click="toggleFull(r.feo_category_id)">
+                          {{ showFull.has(r.feo_category_id) ? 'Показать только виновников' : `Показать весь состав (${r.items.length})` }}
+                        </v-btn>
+                      </div>
+                      <v-alert v-if="!showFull.has(r.feo_category_id) && excessMismatch(r)" type="warning" variant="tonal"
+                        density="compact" class="mt-2 text-caption">
+                        Σ «сверх ФЭО» по виновникам ({{ formatCurrency(r.excess_items_total) }}) отличается от превышения
+                        направления ({{ formatCurrency(Math.abs(r.amount)) }}) — часть превышения пришла не из плановых
+                        позиций этого типа (замещение заказом/договором или «пол»), смотрите «Показать весь состав».
+                      </v-alert>
+                      <v-table density="compact" class="mt-2" style="min-width:760px; background:transparent">
+                        <thead>
+                          <tr>
+                            <th class="px-2">№ закупки</th>
+                            <th class="px-2">Предмет</th>
+                            <th class="px-2">Категория ФЭО</th>
+                            <th class="px-2">Позиция</th>
+                            <th class="px-2">Тип</th>
+                            <th class="px-2">Дата добавления</th>
+                            <th class="text-right px-2">Сумма</th>
+                            <th v-if="!showFull.has(r.feo_category_id)" class="text-right px-2">в т.ч. сверх ФЭО</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="it in (showFull.has(r.feo_category_id) ? r.items : r.excess_items)"
+                            :key="'item-' + (it.planned_item_id ?? it.name)">
+                            <td class="px-2 text-caption">{{ it.purchase_number || it.purchase_id || '—' }}</td>
+                            <td class="px-2 py-1 text-caption" style="max-width:220px; white-space:normal">{{ it.subject || it.name || '—' }}</td>
+                            <td class="px-2 text-caption" style="max-width:220px; white-space:normal">{{ it.category_path || '—' }}</td>
+                            <td class="px-2 py-1 text-caption" style="max-width:220px; white-space:normal">{{ it.name || '—' }}</td>
+                            <td class="px-2 text-caption">{{ it.item_type || '—' }}</td>
+                            <td class="px-2 text-caption text-medium-emphasis">{{ formatDate(it.created_at) }}</td>
+                            <td class="text-right px-2 text-caption">{{ formatCurrency(it.amount) }}</td>
+                            <td v-if="!showFull.has(r.feo_category_id)" class="text-right px-2 text-caption font-weight-medium text-error">
+                              {{ formatCurrency(it.over_amount) }}
+                            </td>
+                          </tr>
+                        </tbody>
+                        <tfoot v-if="!showFull.has(r.feo_category_id) && r.excess_items.length">
+                          <tr>
+                            <td colspan="6" class="px-2 text-right font-weight-medium">Итого сверх ФЭО:</td>
+                            <td />
+                            <td class="text-right px-2 font-weight-bold text-error">{{ formatCurrency(r.excess_items_total) }}</td>
+                          </tr>
+                        </tfoot>
+                      </v-table>
+                    </div>
+                  </td>
+                </tr>
               </template>
             </tbody>
             <tfoot>
@@ -196,6 +262,13 @@
       </v-card-text>
 
       <v-card-actions class="px-5 pb-4">
+        <!-- card='free' с конкретной корзиной — экспорт виновников/состава
+             раскрытых направлений (тот же клиентский xlsx-экспорт, что и
+             StageFeoDrillDialog.vue — не вводим второй механизм экспорта). -->
+        <v-btn v-if="card === 'free' && kind !== 'all'" color="success" variant="tonal"
+          prepend-icon="mdi-microsoft-excel" :loading="xlsxLoading" @click="exportXlsx">
+          Скачать Excel
+        </v-btn>
         <v-spacer />
         <v-btn @click="emit('close')">Закрыть</v-btn>
       </v-card-actions>
@@ -239,10 +312,23 @@ interface DirectionItem {
   amount: number
   created_at: string | null
 }
+// Виновники превышения (owner 08.10.2026) — то же, что DirectionItem, плюс
+// привязка к закупке/категории/типу и доля, пришедшая именно от этой
+// позиции (over_amount), см. app.services.feo_card_drill._excess_culprit_items.
+interface DirectionExcessItem extends DirectionItem {
+  purchase_id: number | null
+  purchase_number: string | number | null
+  subject: string | null
+  category_path: string
+  item_type: string | null
+  over_amount: number
+}
 interface DirectionRow extends BudgetFreeRow {
   budget_amount: number
   planned_amount: number
   items: DirectionItem[]
+  excess_items: DirectionExcessItem[]
+  excess_items_total: number
 }
 
 const props = defineProps<{
@@ -356,6 +442,28 @@ function toggleFolder(key: string) {
   expanded.value = next
 }
 
+// ── card='free', kind≠'all': переключатель «виновники / весь состав» у
+// развёрнутого направления (владелец 08.10.2026, см. докстринг файла выше) —
+// по умолчанию (direction НЕ в showFull) таблица показывает excess_items,
+// клик по ссылке переключает на полный items и обратно. Отдельный Set от
+// `expanded` — раскрытие направления и выбор «виновники/состав» внутри него
+// не связаны (закрыть и снова открыть направление сохраняет выбор).
+const showFull = ref<Set<number>>(new Set())
+function toggleFull(feoCategoryId: number | null) {
+  if (feoCategoryId == null) return
+  const next = new Set(showFull.value)
+  if (next.has(feoCategoryId)) next.delete(feoCategoryId)
+  else next.add(feoCategoryId)
+  showFull.value = next
+}
+// Σ over_amount виновников ОБЯЗАНА совпасть с превышением строки — если нет
+// (позиции этого типа не покрывают весь перебор — замещение заказом/
+// договором/«полом», см. докстринг _excess_culprit_items), честно показываем
+// обе суммы, как в PaidOverDeliveredDrillDialog.vue (mismatch).
+function excessMismatch(r: DirectionRow): boolean {
+  return Math.abs((r.excess_items_total || 0) - Math.abs(r.amount)) > 0.5
+}
+
 function allFolderKeys(nodes: FolderNode[], out: string[] = []): string[] {
   for (const n of nodes) {
     out.push(n.key)
@@ -451,6 +559,51 @@ async function saveItemType(row: PlannedRow, newType: 'товар' | 'услуг
     toast.error(describeApiError(e, { fallback: 'Не удалось изменить тип позиции' }))
   } finally {
     togglingId.value = null
+  }
+}
+
+// ── Excel (card='free', kind≠'all') — тот же клиентский экспорт (библиотека
+// xlsx), что и StageFeoDrillDialog.vue/CreateOrderView.vue (Правило №6, не
+// заводим второй механизм экспорта/серверную ручку). Выгружает ПО КАЖДОМУ
+// раскрытому направлению строки той таблицы, что сейчас показана
+// (виновники или полный состав, в зависимости от showFull) — один лист.
+const xlsxLoading = ref(false)
+async function exportXlsx() {
+  xlsxLoading.value = true
+  try {
+    const XLSX = await import('xlsx')
+    const out: Record<string, any>[] = []
+    for (const r of directionRows.value) {
+      if (!(r.amount < -0.5 && r.items.length && expanded.value.has('dir-' + r.feo_category_id))) continue
+      const list = showFull.value.has(r.feo_category_id as number) ? r.items : r.excess_items
+      for (const it of list as (DirectionItem | DirectionExcessItem)[]) {
+        const ex = it as DirectionExcessItem
+        out.push({
+          'Направление': r.category_path,
+          '№ закупки': ex.purchase_number ?? ex.purchase_id ?? '',
+          'Предмет': ex.subject ?? it.name ?? '',
+          'Категория ФЭО': ex.category_path ?? '',
+          'Позиция': it.name ?? '',
+          'Тип': ex.item_type ?? '',
+          'Дата добавления': formatDate(it.created_at),
+          'Сумма': it.amount,
+          'в т.ч. сверх ФЭО': ex.over_amount ?? '',
+        })
+      }
+    }
+    if (out.length === 0) {
+      toast.error('Нет раскрытых направлений с превышением — раскройте направление перед экспортом')
+      return
+    }
+    const ws = XLSX.utils.json_to_sheet(out)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Свободно'.slice(0, 31))
+    const fname = `svobodno_${kindTitle.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    XLSX.writeFile(wb, fname)
+  } catch (e) {
+    toast.error('Не удалось сформировать Excel')
+  } finally {
+    xlsxLoading.value = false
   }
 }
 </script>

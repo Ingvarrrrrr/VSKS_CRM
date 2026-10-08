@@ -153,6 +153,11 @@ def _build_fact_row(
         "planned": planned_a, "contract": contract_a, "ordered": ordered_a,
         "delivered": delivered_a, "paid": paid_a, "fact_total": total_display,
         "status": status_txt, "act": pi["act_number"], "monthly": monthly_val,
+        # «Товар / услуга» (владелец 08.10.2026, замечание 1) — уже посчитано
+        # централизовано app.services.plan_graph_export_data (item_kind_label,
+        # ПРАВИЛО №6 — не второй расчёт здесь); отсутствует в синтетических
+        # данных старых тестов → "".
+        "item_kind": pi.get("item_kind", ""),
     }
     row.update(_composition_values(pi, purchase_rows_by_id, purchase_export_ctx))
     row.update(_purchase_field_values(pi, purchase_rows_by_id, purchase_export_ctx))

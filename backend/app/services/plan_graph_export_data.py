@@ -34,9 +34,53 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
+from app.services.committed_amounts import planned_item_contributions
 from app.services.contract_balances import contract_balances
+from app.services.feo_payroll import payroll_category_ids
+from app.services.item_type_split import (
+    KIND_GOODS, KIND_PAYROLL, KIND_SERVICES, KIND_UNSPECIFIED,
+    kind_of_by_category_id,
+)
 from app.services.purchase_amounts import load_purchase_amounts
 from app.services.purchase_export_cells import build_purchase_export_ctx
+
+
+def item_planned_month(item) -> str:
+    """«План. месяц платежа» ПОЗИЦИИ (не закупки) — владелец 09.10.2026,
+    сверка на проде: grep plan_cashflow.py показал, что единственное
+    существующее понятие «когда позиция должна быть оплачена по плану»
+    (без закупки) — её СОБСТВЕННЫЕ FeoPlannedItem.planned_date (one_time) /
+    monthly_start_date (monthly), те же поля, что app.services.plan_cashflow
+    .expand_planned_item использует для прогноза cash-flow (ПРАВИЛО №6 — не
+    второй резолвер, те же два поля по тому же payment_mode). Отдельного
+    резолвера «закупка → позиция → график» в проекте НЕТ (Purchase.
+    planned_payment_month и FeoPlannedItem.planned_date/monthly_start_date
+    живут в разных, не связанных друг с другом местах) — для строк закупок
+    столбец продолжает читаться через get_cell_value (Purchase.
+    planned_payment_month), для строк позиций БЕЗ закупок — отсюда."""
+    d = item.monthly_start_date if (item.payment_mode or "one_time") == "monthly" else item.planned_date
+    return str(d) if d else ""
+
+# «Товар / услуга» (владелец 08.10.2026, замечание 1 экспорта плана-графика)
+# — подписи ОДНОЙ позиции/закупки, единственное число. Отличаются от подписей
+# множественного числа агрегатных строк по виду («Товары»/«Услуги» на листе
+# «Сводная» — plan_graph_export_summary_sheet._KIND_LABELS, и в карточках ФЭО
+# — feo_card_drill._KIND_LABELS): те подписывают СУММУ по виду, не одну
+# позицию — разный текст для разного места вывода, не вторая копия одной и
+# той же подписи (ПРАВИЛО №6).
+_ITEM_KIND_LABELS = {
+    KIND_GOODS: "Товар", KIND_SERVICES: "Услуга",
+    KIND_PAYROLL: "ФОТ", KIND_UNSPECIFIED: "Без типа",
+}
+
+
+def item_kind_label(item_type, feo_category_id, payroll_ids) -> str:
+    """Подпись столбца «Товар / услуга» экспорта плана-графика (владелец
+    08.10.2026) — ЕДИНСТВЕННАЯ точка вызова kind_of_by_category_id для этого
+    столбца (app.services.item_type_split, ПРАВИЛО №6 — классификатор там,
+    здесь только подпись). `payroll_ids` — любой контейнер с `in`
+    (см. app.services.feo_payroll.payroll_category_ids)."""
+    return _ITEM_KIND_LABELS[kind_of_by_category_id(item_type, feo_category_id, payroll_ids)]
 
 # статусы: plan_schedule, work_in_progress → «Запланировано»;
 #          contracted → «Договор»; ordered → «Заказано»;
@@ -86,6 +130,39 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
     )).scalars().all()
 
     item_ids = [i.id for i in feo_items]
+    # «Товар / услуга» (владелец 08.10.2026, замечание 1) — payroll-категории
+    # субсидии (ПРАВИЛО №6: единственный резолвер — app.services.feo_payroll
+    # .payroll_category_ids) и {item_id: feo_category_id} плановых позиций,
+    # нужны ниже для item_kind_label (и покупок, привязанных к позиции, и
+    # самих позиций).
+    payroll_ids = await payroll_category_ids(db, [subsidy_id])
+    item_cat_map = {i.id: i.feo_category_id for i in feo_items}
+    item_kind_map = {
+        i.id: item_kind_label(i.item_type, i.feo_category_id, payroll_ids)
+        for i in feo_items
+    }
+    # «План (плановые позиции)» (владелец 09.10.2026, сверка на проде ФАДМ
+    # 2026_2 id 89 — Σ «План» в выгрузке 15 883 686,50 против 15 880 300,00 у
+    # дерева/subsidy_type_totals): дерево (feo_plan_tree._manual_plan_for) для
+    # категории с plan_source='planned_items' (умолчание) считает план УЗЛА
+    # как Σ КОНТРИБЬЮЦИЙ позиций (committed_amounts.planned_item_contributions
+    # — замещение savings законтрактованной суммой, если количество набрано
+    # полностью), а НЕ голую Σ FeoPlannedItem.amount; для 'manual_sum' —
+    # дерево читает СЫРУЮ Σ amount (контрибьюция туда не подставляется,
+    # владелец явно просил не трогать этот режим). Экспорт раньше всегда брал
+    # item.amount — расходился с деревом ровно на величину замещённых savings.
+    # ПРАВИЛО №6 — тот же резолвер, что дерево, не второй расчёт.
+    _cat_plan_source = {c.id: (c.plan_source or "planned_items") for c in cats}
+    _contributions = await planned_item_contributions(db, [c.id for c in cats])
+    item_plan_map: dict[int, float] = {}
+    item_plan_month_map: dict[int, str] = {}
+    for i in feo_items:
+        if _cat_plan_source.get(i.feo_category_id) == "manual_sum":
+            item_plan_map[i.id] = float(i.amount or 0)
+        else:
+            _c = _contributions.get(i.id)
+            item_plan_map[i.id] = _c["amount"] if _c is not None else float(i.amount or 0)
+        item_plan_month_map[i.id] = item_planned_month(i)
     used_map: dict[int, float] = {}
     if item_ids:
         # Задача B (07.10.2026): join на Purchase + исключение 'cancelled' —
@@ -148,6 +225,13 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
                 _P.status,
                 _P.acceptance_doc_number,
                 _P.acceptance_docs,
+                # «Товар / услуга» (владелец 08.10.2026, замечание 1) —
+                # ТОЛЬКО Purchase.item_type (товар/услуга/работа); НЕ
+                # PurchaseItem.item_type — то поле хранит свободный «вид
+                # товара» («Клей-карандаш…», см. app/models/purchase_item.py),
+                # не классификатор товар/услуга (не второй механизм — тот же
+                # источник, что у остальных строк этого модуля).
+                _P.item_type,
             )
             .join(_P, _PI.purchase_id == _P.id)
             .where(_PI.feo_planned_item_id.in_(item_ids))
@@ -165,6 +249,9 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
                 "status": _STATUS_HUMAN.get(r.status, r.status or ""),
                 "purchase_id": r.purchase_id,
                 "act_number": _act_number(r.acceptance_doc_number, r.acceptance_docs),
+                "item_kind": item_kind_label(
+                    r.item_type, item_cat_map.get(r.feo_planned_item_id), payroll_ids,
+                ),
             })
 
     # FCAT: закупки часто привязаны к КАТЕГОРИИ (feo_category_id), а не к плановой
@@ -236,6 +323,10 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
                 _FPI.id.label("fpi_id"),
                 _FPI.is_active.label("fpi_is_active"),
                 _FPI.feo_category_id.label("fpi_cat_id"),
+                # «Товар / услуга» (владелец 08.10.2026, замечание 1) — та же
+                # оговорка, что у pi_rows выше: Purchase.item_type, не
+                # PurchaseItem.item_type.
+                _P.item_type,
             )
             .join(_P, _PI.purchase_id == _P.id)
             .outerjoin(_C, _P.contractor_id == _C.id)
@@ -271,6 +362,7 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
                     "is_monthly": bool(r.is_monthly_payment),
                     "monthly_count": r.monthly_payment_count,
                     "monthly_amount": float(r.monthly_payment_amount or 0),
+                    "item_kind": item_kind_label(r.item_type, r.ecat, payroll_ids),
                 })
 
     # ── Закупки БЕЗ позиций: факт живёт на самой закупке (item_name/суммы) ──
@@ -340,6 +432,7 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
             "monthly_amount": float(r.monthly_payment_amount or 0),
             "item_type": (r.item_type or "").strip().lower(),
             "is_likely_needed": bool(r.is_likely_needed),
+            "item_kind": item_kind_label(r.item_type, r.feo_category_id, payroll_ids),
         }
         if r.feo_category_id in _cat_id_set:
             purchased_by_cat.setdefault(r.feo_category_id, []).append(d)
@@ -361,6 +454,12 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
             _PI.item_name, _PI.unit, _PI.quantity, _PI.unit_price, _PI.total_price,
             func.coalesce(_PI.contractor_name, _C.name).label("contractor_name"),
             func.coalesce(_PI.item_type, _P.item_type).label("item_type"),
+            # «Товар / услуга» (владелец 08.10.2026, замечание 1) — отдельно
+            # от "item_type" выше: тот коалесс исторически предпочитает
+            # PurchaseItem.item_type (свободный «вид товара», не классификатор
+            # товар/услуга, см. pi_rows выше) — для item_kind нужен ТОЛЬКО
+            # Purchase.item_type.
+            _P.item_type.label("p_item_type"),
             _P.id.label("purchase_id"), _P.status,
             _P.is_monthly_payment, _P.monthly_payment_count, _P.monthly_payment_amount,
             _P.acceptance_doc_number, _P.acceptance_docs, _P.is_likely_needed,
@@ -387,6 +486,10 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
             "is_monthly": bool(r.is_monthly_payment),
             "monthly_count": r.monthly_payment_count,
             "monthly_amount": float(r.monthly_payment_amount or 0),
+            # Нет категории ФЭО вовсе (секция «без категории») — payroll
+            # неприменим, item_kind_label(None, ...) корректно деградирует к
+            # kind_of(p_item_type).
+            "item_kind": item_kind_label(r.p_item_type, None, payroll_ids),
         })
 
     items_by_cat: dict[int, list] = {}
@@ -427,6 +530,17 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
         "used_map": used_map,
         "contractor_map": contractor_map,
         "status_sums_map": status_sums_map,
+        # «Товар / услуга» плановых позиций (владелец 08.10.2026, замечание 1)
+        # — {feo_planned_item_id: "Товар"/"Услуга"/"ФОТ"/"Без типа"},
+        # прочитано xlsx/flat_sheet builder'ами (ПРАВИЛО №6, один расчёт).
+        "item_kind_map": item_kind_map,
+        # «План (плановые позиции)» (владелец 09.10.2026) — {item_id: её
+        # вклад в план, см. комментарий выше — ТО ЖЕ число, что суммирует
+        # дерево в своём "plan_manual"/items_total для этого узла}.
+        "item_plan_map": item_plan_map,
+        # «План. месяц платежа» позиций БЕЗ закупок (владелец 09.10.2026,
+        # п.2) — {item_id: "YYYY-MM-DD" | ""}, см. item_planned_month().
+        "item_plan_month_map": item_plan_month_map,
         "purchased_by_item": purchased_by_item,
         "cat_status_map": cat_status_map,
         "cat_monthly_map": cat_monthly_map,

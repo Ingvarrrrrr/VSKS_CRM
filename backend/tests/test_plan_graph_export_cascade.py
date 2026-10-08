@@ -86,7 +86,7 @@ def test_build_live_plan_graph_xlsx_item_row_cumulative_and_cancelled_excluded()
     # Владелец 08.10.2026, часть B: плановая позиция ИМЕЕТ закупки — её
     # денежные столбцы-стадии теперь формула =SUBTOTAL(109,...) по строке(ам)
     # её собственных закупок, не литеральное число.
-    for label in ("Запланировано, ₽", "Договор, ₽", "Заказано, ₽", "Поставлено, ₽", "Оплачено, ₽", "Фактически (итого), ₽"):
+    for label in ("В закупках (все стадии), ₽", "Договор, ₽", "Заказано, ₽", "Поставлено, ₽", "Оплачено, ₽", "Фактически (итого), ₽"):
         assert str(_val(item_row, label)).startswith("=SUBTOTAL(109,")
 
     # Проверка «значения совпадают с прежними числами» (владелец) — сама
@@ -96,7 +96,7 @@ def test_build_live_plan_graph_xlsx_item_row_cumulative_and_cancelled_excluded()
     sub_row = next(
         r for r in rows if "Купленное" in str(r[headers["Состав закупки"] - 1].value or "")
     )
-    assert _val(sub_row, "Запланировано, ₽") == 1000.0
+    assert _val(sub_row, "В закупках (все стадии), ₽") == 1000.0
     assert _val(sub_row, "Фактически (итого), ₽") == 1000.0
     assert _val(sub_row, "Уровень") == "Закупка"
     assert _val(item_row, "Уровень") == "Позиция"
@@ -108,7 +108,7 @@ def test_build_live_plan_graph_xlsx_item_row_cumulative_and_cancelled_excluded()
     cancelled_row = next(
         r for r in rows if "Без категории (отменена)" in str(r[headers["Состав закупки"] - 1].value or "")
     )
-    assert _val(cancelled_row, "Запланировано, ₽") == 0.0
+    assert _val(cancelled_row, "В закупках (все стадии), ₽") == 0.0
     assert _val(cancelled_row, "Фактически (итого), ₽") == 0.0
 
 
@@ -135,7 +135,7 @@ def test_hierarchical_group_rows_use_subtotal_and_level_column():
     item_row = next(r for r in rows if _val(r, "Уровень") == "Позиция")
 
     for group_row in (l1_row, l2_row, l3_row, item_row):
-        assert str(_val(group_row, "Запланировано, ₽")).startswith("=SUBTOTAL(109,")
+        assert str(_val(group_row, "В закупках (все стадии), ₽")).startswith("=SUBTOTAL(109,")
         assert str(_val(group_row, "Оплачено, ₽")).startswith("=SUBTOTAL(109,")
 
     # «Бюджет ФЭО»/«Остаток»/«% исполнения» — значения, не формулы (ФЭО
@@ -149,14 +149,14 @@ def test_hierarchical_group_rows_use_subtotal_and_level_column():
     # SUBTOTAL(109,...) её диапазона физически суммирует ЭТУ строку (нижний,
     # не-SUBTOTAL уровень «Закупка», игнорируя вложенные SUBTOTAL — так
     # работает Excel/Google Sheets).
-    leaf_row = next(r for r in rows if _val(r, "Уровень") == "Закупка" and _val(r, "Запланировано, ₽") == 1000.0)
+    leaf_row = next(r for r in rows if _val(r, "Уровень") == "Закупка" and _val(r, "В закупках (все стадии), ₽") == 1000.0)
     assert _val(leaf_row, "Оплачено, ₽") == 1000.0
 
     # Часть B — верхние строки 1/2: «Итого всего» (SUMIFS по Уровень=
     # "Закупка" для денежных столбцов-стадий, SUMIFS по "Направление" для
     # «Бюджет ФЭО»), «Итого по фильтру» (SUBTOTAL); «Остаток»/«% исполнения» —
     # пусто в обеих строках (сумма по ним бессмысленна).
-    planned_ci = headers["Запланировано, ₽"]
+    planned_ci = headers["В закупках (все стадии), ₽"]
     assert str(ws.cell(row=1, column=planned_ci).value).startswith("=SUMIFS(")
     assert '"Закупка"' in ws.cell(row=1, column=planned_ci).value
     assert str(ws.cell(row=2, column=planned_ci).value).startswith("=SUBTOTAL(109,")
@@ -172,6 +172,53 @@ def test_hierarchical_group_rows_use_subtotal_and_level_column():
 
     assert ws.freeze_panes == f"A{DATA_FIRST_ROW}"
     assert ws.auto_filter.ref is not None
+
+    # Владелец 09.10.2026, замечание 3б — «План» верхней строки: SUMIFS по
+    # Уровень="Позиция" (не "Закупка" — иначе задвоится с «В закупках»).
+    plan_ci = headers["План (плановые позиции), ₽"]
+    assert str(ws.cell(row=1, column=plan_ci).value).startswith("=SUMIFS(")
+    assert '"Позиция"' in ws.cell(row=1, column=plan_ci).value
+
+
+def test_plan_amount_and_feo_budget_separated_item_vs_category_rows():
+    """Владелец 09.10.2026, замечание 3а/3б — «Бюджет ФЭО» только в строках
+    статей/направлений (не в строке позиции — раньше там жил item.amount,
+    смешанный с ФЭО статьи); план самой позиции — новый столбец «План
+    (плановые позиции), ₽»: в строке позиции литерал (= item.amount), в
+    строке-группе SUBTOTAL(109,...) по диапазону потомков, в строке закупки
+    пусто (на этих синтетических данных у позиции есть ровно одна закупка —
+    план виден только на позиции, не задвоен на закупке)."""
+    data = _base_data()
+    data["item_kind_map"] = {10: "Товар"}
+    wb = build_live_plan_graph_xlsx(_make_sub(), "http://example.test", data)
+    ws = wb["План закупок (по направлениям)"]
+    headers = {cell.value: idx + 1 for idx, cell in enumerate(ws[HEADER_ROW])}
+    rows = list(ws.iter_rows(min_row=DATA_FIRST_ROW, values_only=False))
+
+    def _val(row, label):
+        return row[headers[label] - 1].value
+
+    item_row = next(r for r in rows if _val(r, "Уровень") == "Позиция")
+    l1_row = next(r for r in rows if _val(r, "Уровень") == "Направление")
+    leaf_row = next(r for r in rows if _val(r, "Уровень") == "Закупка" and "Купленное" in str(_val(r, "Состав закупки") or ""))
+
+    # «Бюджет ФЭО» — пусто в строке позиции (замечание 3а), значение — в
+    # строке направления (роллап по дереву, см. _compute_subtree).
+    assert _val(item_row, "Бюджет ФЭО, ₽") in (None, "")
+    assert _val(l1_row, "Бюджет ФЭО, ₽") == 1000.0
+
+    # «План (плановые позиции)» — литерал на позиции, пусто на закупке,
+    # SUBTOTAL(109,...) на направлении (роллап).
+    assert _val(item_row, "План (плановые позиции), ₽") == 1000.0
+    assert _val(leaf_row, "План (плановые позиции), ₽") in (None, "")
+    assert str(_val(l1_row, "План (плановые позиции), ₽")).startswith("=SUBTOTAL(109,")
+
+    # «Остаток» позиции не ломается (план − фактически, как и раньше).
+    assert _val(item_row, "Остаток, ₽") == 0.0
+
+    # «Товар / услуга» (владелец 08.10.2026, замечание 1) — item_kind_map
+    # заполняет строку позиции; закупки под ней несут свой item_kind из pi.
+    assert _val(item_row, "Товар / услуга") == "Товар"
 
 
 def test_column_selection_limits_headers_and_keeps_name():

@@ -302,3 +302,82 @@ async def test_positions_at_any_level_appear_exactly_once_and_sums_match(db_sess
     rows2 = list(ws2.iter_rows(min_row=4, values_only=False))
     leaf_rows2 = [r for r in rows2 if r[level_col2 - 1].value == "Закупка"]
     assert len(leaf_rows2) == 8
+
+
+@pytest.mark.asyncio
+async def test_plan_amount_matches_tree_with_substitution_and_manual_sum(db_session, test_org):
+    """Владелец 09.10.2026, сверка на проде ФАДМ 2026_2 (id 89) — Σ «План» в
+    выгрузке (15 883 686,50) расходилась с деревом/subsidy_type_totals
+    (15 880 300,00). Причина: дерево (feo_plan_tree._manual_plan_for) считает
+    план УЗЛА с plan_source='planned_items' как Σ КОНТРИБЬЮЦИЙ позиций
+    (committed_amounts.planned_item_contributions — закрытая количеством
+    позиция замещается её законтрактованной суммой, экономия высвобождается),
+    а экспорт раньше брал голое FeoPlannedItem.amount. Фикстура — ОДИН К
+    ОДНОМУ с test_money_committed.py::test_2_both_items_closed_releases_savings
+    (ПРАВИЛО №6 — не второй сценарий): позиция quantity=2/amount=200000,
+    закрыта двумя contracted-закупками 101000+80000=181000 → её вклад в план
+    181000, не 200000. Плюс контрольная позиция в категории plan_source=
+    'manual_sum' (amount=50000), тоже полностью законтрактованная, — там
+    замещение НЕ применяется (дерево явно читает голую Σ amount для этого
+    режима) — её вклад остаётся 50000."""
+    from app.services.type_totals import subsidy_type_totals
+    from tests.test_feo_plan_tree_scenarios import _make_category, _make_planned_item, _make_subsidy
+    from tests.test_money_committed import _make_linked_purchase
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    leaf = await _make_category(db_session, subsidy.id, name="Бензопила (лист)")
+    fpi = await _make_planned_item(db_session, leaf.id, "Бензопила", 2, 200_000)
+    await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, quantity=1, contract_price=101_000)
+    await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, quantity=1, contract_price=80_000)
+
+    # manual_plan_amount == Σ позиций (50000), иначе дерево видело бы
+    # несогласованное превышение и держало бы план на manual_plan_amount
+    # (здесь — 0, т.к. он не введён) — см. _manual_plan_for в feo_plan_tree.py.
+    from decimal import Decimal as _D
+    manual_leaf = await _make_category(
+        db_session, subsidy.id, name="Ручная сумма (лист)",
+        plan_source="manual_sum", manual_plan_amount=_D("50000"),
+    )
+    fpi_manual = await _make_planned_item(db_session, manual_leaf.id, "Ручная позиция", 1, 50_000)
+    await _make_linked_purchase(db_session, subsidy.id, manual_leaf.id, fpi_manual.id, quantity=1, contract_price=50_000)
+
+    _totals = (await subsidy_type_totals(db_session, [subsidy.id]))[subsidy.id]
+    expected_plan_total = sum(
+        _totals[k] for k in ("plan_goods", "plan_services", "plan_payroll", "plan_unspecified")
+    )
+    assert expected_plan_total == 231_000.0  # 181000 (замещено) + 50000 (manual_sum, не замещено)
+
+    data = await gather_live_plan_graph_data(db_session, subsidy.id)
+    assert data["item_plan_map"][fpi.id] == 181_000.0
+    assert data["item_plan_map"][fpi_manual.id] == 50_000.0
+
+    # ── Лист «по направлениям» — верхняя строка SUMIFS(level="Позиция"). ────
+    wb = build_live_plan_graph_xlsx(subsidy, "http://example.test", data)
+    ws = wb["План закупок (по направлениям)"]
+    headers = {cell.value: idx + 1 for idx, cell in enumerate(ws[3])}
+    plan_ci = headers["План (плановые позиции), ₽"]
+    level_col = headers["Уровень"]
+    rows_h = list(ws.iter_rows(min_row=4, values_only=False))
+    evaluator = _FormulaEvaluator(ws)
+    row1_formula = ws.cell(row=1, column=plan_ci).value
+    assert str(row1_formula).startswith("=SUMIFS(")
+    row1_value = sum(
+        r[plan_ci - 1].value for r in rows_h
+        if r[level_col - 1].value == "Позиция" and isinstance(r[plan_ci - 1].value, (int, float))
+    )
+    assert row1_value == expected_plan_total
+
+    # ── Лист «по порядку» — простой SUM по столбцу (владелец, часть 3). ─────
+    import openpyxl
+    wb2 = openpyxl.Workbook()
+    wb2.remove(wb2.active)
+    selected = resolve_selected_keys(None)
+    write_flat_plan_graph_sheet(wb2, data, selected, "http://example.test")
+    ws2 = wb2["План закупок (по порядку)"]
+    headers2 = {cell.value: idx + 1 for idx, cell in enumerate(ws2[3])}
+    plan_ci2 = headers2["План (плановые позиции), ₽"]
+    rows2_h = list(ws2.iter_rows(min_row=4, values_only=False))
+    flat_total = sum(
+        r[plan_ci2 - 1].value for r in rows2_h if isinstance(r[plan_ci2 - 1].value, (int, float))
+    )
+    assert flat_total == expected_plan_total

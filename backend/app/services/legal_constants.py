@@ -29,12 +29,18 @@ from typing import Union
 
 from app.services.legal_generated import (
     DEADLINES_WORKING_DAYS,
-    REGISTRATION_CONSENT_DOCUMENTS,
+    PD_CONSENT_DOCUMENTS,
+    PD_CONSENT_VERSION,
+    PORUCHENIE_DOCUMENTS,
+    PORUCHENIE_VERSION,
 )
 
 __all__ = [
     "DEADLINES_WORKING_DAYS",
-    "REGISTRATION_CONSENT_DOCUMENTS",
+    "PD_CONSENT_DOCUMENTS",
+    "PD_CONSENT_VERSION",
+    "PORUCHENIE_DOCUMENTS",
+    "PORUCHENIE_VERSION",
     "add_working_days",
     "get_response_deadline_days",
     "get_response_due_at",

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role
 from app.database import get_db
+from app.models.organization import Organization
 from app.models.user import User
 from app.models.user_consent import (
     PersonalDataRequest,
@@ -30,9 +31,30 @@ from app.models.user_consent import (
     PersonalDataRequestType,
     UserConsent,
 )
-from app.services.legal_constants import get_response_due_at
+from app.services.consent_status import pd_consent_required, poruchenie_required
+from app.services.legal_constants import (
+    PD_CONSENT_DOCUMENTS,
+    PD_CONSENT_VERSION,
+    PORUCHENIE_DOCUMENTS,
+    PORUCHENIE_VERSION,
+    get_response_due_at,
+)
 
 router = APIRouter(prefix="/api/legal", tags=["legal"])
+
+# 152-ФЗ: отказ принять «за чужую организацию» — то же сообщение везде,
+# где могло бы возникнуть (сейчас только здесь, ПРАВИЛО №6: одна константа,
+# а не копия текста при появлении второго места).
+PORUCHENIE_NOT_OWNER_MESSAGE = (
+    "Условия поручения обработки персональных данных может принять только "
+    "владелец организации"
+)
+
+
+class ConsentAcceptRequest(BaseModel):
+    kind: str  # 'pd' | 'poruchenie'
+    accepted: bool
+    org_id: Optional[int] = None
 
 
 def client_ip(request: Request) -> str:
@@ -164,3 +186,96 @@ async def list_personal_data_requests(
         )
     ).scalars().all()
     return [_request_out(r) for r in rows]
+
+
+@router.get("/consent-status")
+async def consent_status(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Единственное место, откуда фронт узнаёт, нужно ли показать гейт
+    согласия после входа (router/index.ts beforeEach → useConsentGate.ts).
+    Решение считает backend/app/services/consent_status.py — сервер не верит
+    тому, что скажет фронт, версии берёт из своей сборки legal_generated.py.
+
+    poruchenie_required: true только для ДЕЙСТВИТЕЛЬНОГО владельца
+    организации (Organization.owner_user_id == current_user.id) — не для
+    любого account_owner/admin (см. feedback_permission_check_vs_candidate_pool
+    — тот же класс ошибки: право/обязанность должны идти по владению, а не
+    по роли). Владелец нескольких организаций без поручения — отдаётся
+    первая по id, остальные подхватятся на следующий заход после принятия.
+    """
+    pd_required = await pd_consent_required(db, current_user.id)
+
+    poruchenie_org: Optional[dict] = None
+    poruchenie_needed = False
+    owned_orgs = (
+        await db.execute(
+            select(Organization)
+            .where(Organization.owner_user_id == current_user.id)
+            .order_by(Organization.id)
+        )
+    ).scalars().all()
+    for org in owned_orgs:
+        if await poruchenie_required(db, current_user.id, org.id):
+            poruchenie_needed = True
+            poruchenie_org = {"id": org.id, "name": org.name}
+            break
+
+    return {
+        "pd_consent_required": pd_required,
+        "poruchenie_required": poruchenie_needed,
+        "poruchenie_org": poruchenie_org,
+        "pd_version": PD_CONSENT_VERSION,
+        "poruchenie_version": PORUCHENIE_VERSION,
+    }
+
+
+@router.post("/consent", status_code=201)
+async def accept_consent(
+    data: ConsentAcceptRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Приём согласия ВНЕ регистрации (гейт после входа, ConsentRequiredView.vue).
+    document_version всегда СЕРВЕРНАЯ текущая версия (PD_CONSENT_VERSION /
+    PORUCHENIE_VERSION) — тело запроса её не диктует (ПРАВИЛО №6, та же
+    версия, что строит сам consent-status)."""
+    if not data.accepted:
+        raise HTTPException(400, "Согласие не отмечено")
+
+    if data.kind == "pd":
+        documents = list(PD_CONSENT_DOCUMENTS)
+        version = PD_CONSENT_VERSION
+        org_id = None
+    elif data.kind == "poruchenie":
+        if not data.org_id:
+            raise HTTPException(400, "Не указана организация")
+        org = (
+            await db.execute(select(Organization).where(Organization.id == data.org_id))
+        ).scalar_one_or_none()
+        if org is None:
+            raise HTTPException(404, "Организация не найдена")
+        if org.owner_user_id != current_user.id:
+            raise HTTPException(403, PORUCHENIE_NOT_OWNER_MESSAGE)
+        documents = list(PORUCHENIE_DOCUMENTS)
+        version = PORUCHENIE_VERSION
+        org_id = org.id
+    else:
+        raise HTTPException(400, f"Неизвестный тип согласия: {data.kind!r}")
+
+    consent = UserConsent(
+        user_id=current_user.id,
+        org_id=org_id,
+        email=current_user.email or "",
+        document_version=version,
+        documents=documents,
+        ip_address=client_ip(request),
+        user_agent=request.headers.get("User-Agent"),
+        source="login",
+    )
+    db.add(consent)
+    await db.commit()
+    await db.refresh(consent)
+    return _consent_out(consent)

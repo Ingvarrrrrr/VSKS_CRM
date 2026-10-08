@@ -6,7 +6,8 @@
 ПРАВИЛО №6), рендерит markdown из legal/sources/{public,internal}/*.md и
 пишет:
   - frontend/src/legal/documents.generated.ts — только kind == "public",
-    интерфейс LegalDoc/LEGAL_DOCS/LEGAL_DOC_LIST/LEGAL_VERSION/OPERATOR
+    интерфейс LegalDoc/LEGAL_DOCS/LEGAL_DOC_LIST/LEGAL_VERSION/
+    PD_CONSENT_VERSION/PORUCHENIE_VERSION/OPERATOR
     (см. CONTRACT.md);
   - backend/app/services/legal_generated.py — константы, нужные бэкенду
     (сроки 152-ФЗ из deadlines_working_days, перечень документов согласия
@@ -14,6 +15,12 @@
     не видит legal/operator.json (см. CONTRACT.md) — этот файл едет в образ
     вместе с остальным кодом, поэтому backend/app/services/legal_constants.py
     больше не читает JSON с диска;
+  - backend/app/services/legal_internal_docs_generated.py — HTML внутренних
+    документов (kind == "internal": модель угроз, акт уровня защищённости,
+    уведомление РКН и т.п.) для закрытого раздела «Документы» админки
+    (решение владельца 08.10.2026). Внутренние HTML НЕ попадают в публичную
+    статику фронтенда — отдаются backend/app/routers/admin_legal_docs.py
+    только администратору, см. app/services/internal_legal_docs.py;
   - legal/out/<slug>.docx — все документы, публичные и внутренние.
 
 Использование:
@@ -39,6 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from render_docx import build_internal_docx, build_public_docx, save_docx_deterministic  # noqa: E402
+from render_internal_docs import write_internal_docs_py  # noqa: E402
 from render_md import BuildError, parse_markdown, render_html, render_template  # noqa: E402
 
 LEGAL_DIR = Path(__file__).resolve().parent
@@ -47,15 +55,26 @@ OPERATOR_PATH = LEGAL_DIR / "operator.json"
 OUT_DIR = LEGAL_DIR / "out"
 TS_OUT_PATH = REPO_ROOT / "frontend" / "src" / "legal" / "documents.generated.ts"
 PY_OUT_PATH = REPO_ROOT / "backend" / "app" / "services" / "legal_generated.py"
+# Внутренние документы (kind == "internal") — HTML для закрытого раздела
+# админки, см. docstring модуля выше и app/services/internal_legal_docs.py.
+INTERNAL_PY_OUT_PATH = REPO_ROOT / "backend" / "app" / "services" / "legal_internal_docs_generated.py"
 
 # Перечень slug публичных документов, на согласие с которыми пользователь
-# ставит ОДИН флажок при регистрации (backend/app/routers/organizations.py,
-# POST /api/register). Это подмножество kind == "public" — оферта и cookies
-# не запрашиваются отдельным согласием при регистрации. В operator.json такого
-# флага нет (это решение процесса регистрации, а не реквизит оператора), поэтому
-# перечень живёт здесь и уезжает в legal_generated.py при сборке — единственное
-# место в репозитории, где он записан (ПРАВИЛО №6).
-REGISTRATION_CONSENT_SLUGS: tuple[str, ...] = ("privacy", "consent")
+# ставит флажок «согласие на обработку персональных данных» — при регистрации
+# (backend/app/routers/organizations.py, POST /api/register) и повторно после
+# входа, если документы обновились (POST /api/legal/consent kind='pd', см.
+# backend/app/services/consent_status.py). Это подмножество kind == "public" —
+# оферта и cookies не требуют отдельного согласия. В operator.json такого
+# флага нет (это решение процесса регистрации/входа, а не реквизит оператора),
+# поэтому перечень живёт здесь и уезжает в legal_generated.py при сборке —
+# единственное место в репозитории, где он записан (ПРАВИЛО №6).
+PD_CONSENT_DOCUMENTS: tuple[str, ...] = ("privacy", "consent")
+
+# «Условия поручения обработки персональных данных» — отдельное согласие,
+# которое ставит ВЛАДЕЛЕЦ организации (не любой пользователь): организация
+# поручает обработку ПДн своих сотрудников/контрагентов оператору сервиса
+# (ч. 3 ст. 6 152-ФЗ). Привязано к конкретной организации (UserConsent.org_id).
+PORUCHENIE_DOCUMENTS: tuple[str, ...] = ("poruchenie",)
 
 
 def load_operator() -> dict:
@@ -72,6 +91,13 @@ def _compute_legal_version(public_records: list[dict]) -> str:
     по slug. Меняется, как только меняется версия любого из документов.
     """
     return "+".join(f"{r['slug']}:{r['version']}" for r in sorted(public_records, key=lambda r: r["slug"]))
+
+
+def _compute_subset_version(public_records: dict[str, dict], slugs: tuple[str, ...]) -> str:
+    """Версия конкретного ПОДМНОЖЕСТВА публичных документов (PD_CONSENT_VERSION,
+    PORUCHENIE_VERSION) — та же механика, что и _compute_legal_version, но
+    только по перечисленным slug, отсортированным для детерминизма."""
+    return "+".join(f"{slug}:{public_records[slug]['version']}" for slug in sorted(slugs))
 
 
 def _ts_string(value: str) -> str:
@@ -106,27 +132,37 @@ def _ts_ident(slug: str) -> str:
     return f"_doc_{safe}"
 
 
-def build_all(out_root: Path, ts_path: Path, py_path: Path) -> None:
+def build_all(out_root: Path, ts_path: Path, py_path: Path, internal_py_path: Path) -> None:
     operator = load_operator()
     docs = operator.get("documents", [])
 
     out_root.mkdir(parents=True, exist_ok=True)
 
-    # slug публичных документов, на согласие с которыми регистрация ссылается
-    # (REGISTRATION_CONSENT_SLUGS), обязан быть опубликован — иначе на фронте
-    # появится ссылка на страницу, которой нет в LEGAL_DOCS.
+    # slug публичных документов, на согласие с которыми ссылаются
+    # PD_CONSENT_DOCUMENTS/PORUCHENIE_DOCUMENTS, обязаны быть опубликованы —
+    # иначе на фронте появится ссылка на страницу, которой нет в LEGAL_DOCS.
     published_by_slug = {d["slug"]: d.get("published", True) for d in docs if d["kind"] == "public"}
-    for slug in REGISTRATION_CONSENT_SLUGS:
-        if slug not in published_by_slug:
-            raise BuildError(
-                f"REGISTRATION_CONSENT_SLUGS ссылается на неизвестный публичный документ «{slug}»"
-            )
-        if not published_by_slug[slug]:
-            raise BuildError(
-                f"REGISTRATION_CONSENT_SLUGS ссылается на документ «{slug}», у которого published=false"
-            )
+    for group_name, slugs in (
+        ("PD_CONSENT_DOCUMENTS", PD_CONSENT_DOCUMENTS),
+        ("PORUCHENIE_DOCUMENTS", PORUCHENIE_DOCUMENTS),
+    ):
+        for slug in slugs:
+            if slug not in published_by_slug:
+                raise BuildError(
+                    f"{group_name} ссылается на неизвестный публичный документ «{slug}»"
+                )
+            if not published_by_slug[slug]:
+                raise BuildError(
+                    f"{group_name} ссылается на документ «{slug}», у которого published=false"
+                )
 
     public_records: dict[str, dict] = {}
+    # Внутренние документы — в порядке operator.json, для закрытого раздела
+    # админки (см. _write_internal_py ниже). В отличие от public_records,
+    # published здесь не проверяется: это не публичные страницы, а
+    # внутренний реестр для администратора — published у internal-записей
+    # operator.json не используется и не означает "скрыт от админки".
+    internal_records: list[dict] = []
 
     for doc in docs:
         slug = doc["slug"]
@@ -158,8 +194,8 @@ def build_all(out_root: Path, ts_path: Path, py_path: Path) -> None:
             # published=false (по умолчанию true) — документ не попадает на
             # фронт (LEGAL_DOCS/LEGAL_DOC_LIST), docx собирается всё равно
             # (нужен, например, юристу до публикации). Проверка выше
-            # гарантирует, что REGISTRATION_CONSENT_SLUGS на такой slug не
-            # ссылается.
+            # гарантирует, что PD_CONSENT_DOCUMENTS/PORUCHENIE_DOCUMENTS на
+            # такой slug не ссылаются.
             if doc.get("published", True):
                 public_records[slug] = {
                     "slug": slug,
@@ -172,16 +208,27 @@ def build_all(out_root: Path, ts_path: Path, py_path: Path) -> None:
             document = build_public_docx(title, nodes)
         elif kind == "internal":
             document = build_internal_docx(title, nodes, operator)
+            internal_records.append({
+                "slug": slug,
+                "title": title,
+                "version": doc_meta["version"],
+                "effective_date": doc_meta["effective_date"],
+                "html": render_html(nodes),
+            })
         else:
             raise BuildError(f"Неизвестный kind «{kind}» у документа {doc_label}")
 
         save_docx_deterministic(document, out_root / f"{slug}.docx")
 
-    _write_ts(ts_path, public_records, docs, operator)
-    _write_py(py_path, operator)
+    pd_consent_version = _compute_subset_version(public_records, PD_CONSENT_DOCUMENTS)
+    poruchenie_version = _compute_subset_version(public_records, PORUCHENIE_DOCUMENTS)
+
+    _write_ts(ts_path, public_records, docs, operator, pd_consent_version, poruchenie_version)
+    _write_py(py_path, operator, pd_consent_version, poruchenie_version)
+    write_internal_docs_py(internal_py_path, internal_records)
 
 
-def _write_py(py_path: Path, operator: dict) -> None:
+def _write_py(py_path: Path, operator: dict, pd_consent_version: str, poruchenie_version: str) -> None:
     """Пишет backend/app/services/legal_generated.py — константы 152-ФЗ,
     нужные бэкенду, ровно в тех блоках, что реально используются
     (backend/app/services/legal_constants.py). Лишнего из operator.json
@@ -203,9 +250,10 @@ def _write_py(py_path: Path, operator: dict) -> None:
         "\"\"\"СГЕНЕРИРОВАНО legal/build.py — не редактировать руками.",
         "",
         "Источник данных: legal/operator.json (блок deadlines_working_days) и",
-        "legal/build.py (REGISTRATION_CONSENT_SLUGS — перечень документов согласия",
-        "для регистрации, это решение процесса регистрации, а не реквизит",
-        "оператора, поэтому в operator.json его нет).",
+        "legal/build.py (PD_CONSENT_DOCUMENTS/PORUCHENIE_DOCUMENTS — перечни",
+        "документов по назначению согласия, это решение процесса",
+        "регистрации/входа, а не реквизит оператора, поэтому в operator.json",
+        "его нет).",
         "",
         "Существует, потому что backend-образ собирается из каталога backend/ и",
         "не видит legal/ (см. legal/CONTRACT.md) — этот файл едет в образ вместе",
@@ -222,10 +270,19 @@ def _write_py(py_path: Path, operator: dict) -> None:
         lines.append(f"    {_py_string(key)}: {int(value)!r},")
     lines.append("}")
     lines.append("")
-    lines.append("REGISTRATION_CONSENT_DOCUMENTS: tuple[str, ...] = (")
-    for slug in REGISTRATION_CONSENT_SLUGS:
+    lines.append("PD_CONSENT_DOCUMENTS: tuple[str, ...] = (")
+    for slug in PD_CONSENT_DOCUMENTS:
         lines.append(f"    {_py_string(slug)},")
     lines.append(")")
+    lines.append("")
+    lines.append(f"PD_CONSENT_VERSION: str = {_py_string(pd_consent_version)}")
+    lines.append("")
+    lines.append("PORUCHENIE_DOCUMENTS: tuple[str, ...] = (")
+    for slug in PORUCHENIE_DOCUMENTS:
+        lines.append(f"    {_py_string(slug)},")
+    lines.append(")")
+    lines.append("")
+    lines.append(f"PORUCHENIE_VERSION: str = {_py_string(poruchenie_version)}")
     lines.append("")
 
     py_path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,7 +295,14 @@ def _py_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _write_ts(ts_path: Path, public_records: dict[str, dict], all_docs: list[dict], operator: dict) -> None:
+def _write_ts(
+    ts_path: Path,
+    public_records: dict[str, dict],
+    all_docs: list[dict],
+    operator: dict,
+    pd_consent_version: str,
+    poruchenie_version: str,
+) -> None:
     order = [d["slug"] for d in all_docs if d["kind"] == "public"]
     ordered = [public_records[s] for s in order if s in public_records]
     legal_version = _compute_legal_version(ordered)
@@ -297,6 +361,14 @@ def _write_ts(ts_path: Path, public_records: dict[str, dict], all_docs: list[dic
 
     lines.append(f"export const LEGAL_VERSION: string = {_ts_string(legal_version)}")
     lines.append("")
+    # Версии по назначению согласия — сервер сам считает эти же величины из
+    # legal_generated.py (ПРАВИЛО №6: фронт их больше не диктует серверу, но
+    # может использовать для отображения/отправки «что-то» в consent_version
+    # при регистрации, см. RegisterView.vue).
+    lines.append(f"export const PD_CONSENT_VERSION: string = {_ts_string(pd_consent_version)}")
+    lines.append("")
+    lines.append(f"export const PORUCHENIE_VERSION: string = {_ts_string(poruchenie_version)}")
+    lines.append("")
 
     lines.append("export const OPERATOR = {")
     lines.append(f"  form: {_ts_string(_op_value(op.get('form', '')))},")
@@ -327,7 +399,8 @@ def run_check() -> int:
         tmp_out = tmp_path / "out"
         tmp_ts = tmp_path / "documents.generated.ts"
         tmp_py = tmp_path / "legal_generated.py"
-        build_all(tmp_out, tmp_ts, tmp_py)
+        tmp_internal_py = tmp_path / "legal_internal_docs_generated.py"
+        build_all(tmp_out, tmp_ts, tmp_py, tmp_internal_py)
 
         problems: list[str] = []
 
@@ -340,6 +413,11 @@ def run_check() -> int:
             problems.append(f"нет {PY_OUT_PATH}")
         elif PY_OUT_PATH.read_bytes() != tmp_py.read_bytes():
             problems.append(f"{PY_OUT_PATH} отличается от пересобранного варианта")
+
+        if not INTERNAL_PY_OUT_PATH.exists():
+            problems.append(f"нет {INTERNAL_PY_OUT_PATH}")
+        elif INTERNAL_PY_OUT_PATH.read_bytes() != tmp_internal_py.read_bytes():
+            problems.append(f"{INTERNAL_PY_OUT_PATH} отличается от пересобранного варианта")
 
         expected = _all_files(tmp_out)
         actual = _all_files(OUT_DIR)
@@ -366,8 +444,14 @@ def main() -> None:
     try:
         if check:
             sys.exit(run_check())
-        build_all(OUT_DIR, TS_OUT_PATH, PY_OUT_PATH)
-        print(f"legal/build.py: собрано.\n  TS   -> {TS_OUT_PATH}\n  PY   -> {PY_OUT_PATH}\n  docx -> {OUT_DIR}")
+        build_all(OUT_DIR, TS_OUT_PATH, PY_OUT_PATH, INTERNAL_PY_OUT_PATH)
+        print(
+            f"legal/build.py: собрано.\n"
+            f"  TS            -> {TS_OUT_PATH}\n"
+            f"  PY            -> {PY_OUT_PATH}\n"
+            f"  PY (internal) -> {INTERNAL_PY_OUT_PATH}\n"
+            f"  docx          -> {OUT_DIR}"
+        )
     except BuildError as e:
         print(f"legal/build.py: ОШИБКА СБОРКИ: {e}", file=sys.stderr)
         sys.exit(1)

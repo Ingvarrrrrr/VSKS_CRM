@@ -145,8 +145,8 @@
       "route": "/legal/privacy",
       "source": "sources/public/privacy.md",
       "title": "Политика в отношении обработки персональных данных",
-      "version": "1.0",
-      "effective_date": "03.10.2026",
+      "version": "1.1",
+      "effective_date": "06.10.2026",
       "published": true
     },
     {
@@ -167,6 +167,26 @@
       "title": "Политика использования файлов cookie",
       "version": "1.0",
       "effective_date": "03.10.2026",
+      "published": true
+    },
+    {
+      "slug": "poruchenie",
+      "kind": "public",
+      "route": "/legal/poruchenie",
+      "source": "sources/public/poruchenie.md",
+      "title": "Условия поручения обработки персональных данных",
+      "version": "1.0",
+      "effective_date": "06.10.2026",
+      "published": true
+    },
+    {
+      "slug": "requisites",
+      "kind": "public",
+      "route": "/legal/requisites",
+      "source": "sources/public/requisites.md",
+      "title": "Сведения о владельце сайта",
+      "version": "1.0",
+      "effective_date": "06.10.2026",
       "published": true
     },
     {
@@ -234,14 +254,16 @@
       "kind": "internal",
       "source": "sources/internal/08-akt-uroven.md",
       "title": "Акт определения уровня защищённости персональных данных",
-      "version": "1.0"
+      "version": "1.1",
+      "_version": "1.1 (08.10.2026) — раздел 3.1: уточнена формулировка про СКЗИ/TLS 1.2-1.3 (ПРАВИЛО: не писать «используются сертифицированные средства защиты»)."
     },
     {
       "slug": "model-ugroz",
       "kind": "internal",
       "source": "sources/internal/09-model-ugroz.md",
       "title": "Модель угроз безопасности персональных данных",
-      "version": "1.0"
+      "version": "1.1",
+      "_version": "1.1 (08.10.2026) — добавлены разделы 2.7 (перехват в канале связи, СКЗИ/ФСБ №378) и 2.8 (паспортные данные/СНИЛС контрагентов-физлиц по ГПХ, contractor.py)."
     },
     {
       "slug": "reglament-incidenta",
@@ -290,6 +312,13 @@
       "kind": "internal",
       "source": "sources/internal/16-uvedomlenie-rkn.md",
       "title": "Сведения для уведомления Роскомнадзора об обработке персональных данных",
+      "version": "1.0"
+    },
+    {
+      "slug": "ocenka-vreda",
+      "kind": "internal",
+      "source": "sources/internal/17-ocenka-vreda.md",
+      "title": "Акт оценки вреда, который может быть причинён субъектам персональных данных",
       "version": "1.0"
     }
   ],

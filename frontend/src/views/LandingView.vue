@@ -220,8 +220,6 @@
     <!-- ═══ Footer ═══ -->
     <legal-footer />
 
-    <cookie-banner />
-
   </div>
 </template>
 
@@ -229,7 +227,6 @@
 import { computed } from 'vue'
 import { useTheme } from 'vuetify'
 import LegalFooter from '@/components/legal/LegalFooter.vue'
-import CookieBanner from '@/components/legal/CookieBanner.vue'
 
 const vuetifyTheme = useTheme()
 const isDark = computed(() => vuetifyTheme.global.name.value === 'dark')

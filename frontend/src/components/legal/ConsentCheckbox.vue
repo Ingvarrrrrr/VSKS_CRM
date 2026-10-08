@@ -22,10 +22,12 @@
 </template>
 
 <script lang="ts">
-// Реэкспорт версии комплекта правовых документов — единственный источник (ПРАВИЛО №6),
-// см. legal/CONTRACT.md. Компоненты форм импортируют LEGAL_VERSION отсюда, а не
-// хардкодят строку версии у себя.
-export { LEGAL_VERSION } from '@/legal/documents.generated'
+// Реэкспорт версии именно согласия на обработку ПДн (privacy+consent) —
+// единственный источник (ПРАВИЛО №6), см. legal/CONTRACT.md. RegisterView.vue
+// шлёт её серверу только как проверку «фронт прислал что-то»; фактическую
+// версию сервер всё равно считает сам (PD_CONSENT_VERSION в
+// backend/app/services/legal_generated.py).
+export { PD_CONSENT_VERSION } from '@/legal/documents.generated'
 </script>
 
 <script setup lang="ts">

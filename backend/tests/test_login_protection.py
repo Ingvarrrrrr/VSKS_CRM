@@ -138,6 +138,7 @@ async def test_register_rejects_short_password(client):
         "email": f"short-{uuid.uuid4().hex[:8]}@example.com",
         "consent_accepted": True,
         "consent_version": "privacy:1.0+consent:1.0",
+        "poruchenie_accepted": True,
     })
     assert resp.status_code == 422, resp.text
     assert "8 символов" in resp.json()["message"]
@@ -152,6 +153,7 @@ async def test_register_rejects_common_password(client):
         "email": f"common-{uuid.uuid4().hex[:8]}@example.com",
         "consent_accepted": True,
         "consent_version": "privacy:1.0+consent:1.0",
+        "poruchenie_accepted": True,
     })
     assert resp.status_code == 422, resp.text
     assert "распространён" in resp.json()["message"]

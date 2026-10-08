@@ -2,10 +2,10 @@
   <div v-if="visible" class="cookie-banner" role="dialog" aria-label="Уведомление об использовании cookie и аналогичных технологий хранения данных браузера">
     <div class="cookie-banner-row">
       <span class="cookie-banner-text">
-        Сервис не устанавливает cookie-файлов на стороне сервера — вместо этого браузер хранит в local storage и session storage данные для входа и настроек интерфейса.
+        Мы используем cookie и аналогичные технологии хранения в браузере только для входа и настроек интерфейса. Аналитики и рекламы нет.
         <router-link to="/legal/cookies" target="_blank" class="cookie-banner-link">Подробнее</router-link>
       </span>
-      <v-btn size="small" color="primary" variant="flat" @click="accept">Принять</v-btn>
+      <v-btn size="small" color="primary" variant="flat" @click="accept">Понятно</v-btn>
     </div>
   </div>
 </template>
@@ -55,6 +55,17 @@ onMounted(() => {
   /* Баннер лежит в потоке своего фиксированного слоя, но не перехватывает
      касания вне собственного прямоугольника — только его содержимое кликабельно. */
   pointer-events: auto;
+}
+/* Теперь смонтирован глобально (App.vue) — на mobile внутри приложения снизу
+   экрана уже стоит фиксированный bottom-nav (AppBar.vue .mobile-bottom-nav,
+   высота 60px + safe-area, z-index 2000). Поднимаем баннер над ним, иначе
+   он перекрывает кнопку «Понятно» таб-баром. На публичных страницах
+   (лендинг/логин/регистрация) bottom-nav нет — здесь просто небольшой
+   отступ от низа экрана, не баг. */
+@media (max-width: 959.98px) {
+  .cookie-banner {
+    bottom: calc(60px + env(safe-area-inset-bottom));
+  }
 }
 .cookie-banner-row {
   max-width: 900px;

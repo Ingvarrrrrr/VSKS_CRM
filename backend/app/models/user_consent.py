@@ -34,6 +34,12 @@ class UserConsent(Base):
     # Nullable: согласие логически привязано к попытке регистрации, а не
     # обязательно к уже существующему пользователю (см. docstring файла).
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Привязка к организации — только для kind='poruchenie' (владелец принимает
+    # Условия поручения за конкретную организацию, может владеть несколькими).
+    # kind='pd' (privacy+consent) org_id не ставит — согласие пользователя, не
+    # организации. ON DELETE SET NULL: запись о согласии переживает удаление
+    # организации (см. alembic d2f4h6j8k0m2_user_consent_org_id.py).
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True)
     email = Column(String(255), nullable=False, index=True)
     document_version = Column(String(255), nullable=False)
     # Перечень slug'ов документов, на которые дано согласие одним действием
@@ -51,6 +57,7 @@ class UserConsent(Base):
     withdrawal_reason = Column(Text, nullable=True)
 
     user = relationship("User")
+    org = relationship("Organization")
 
 
 class PersonalDataRequestType:

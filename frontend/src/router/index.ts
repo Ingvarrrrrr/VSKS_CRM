@@ -3,6 +3,7 @@ import LoginView from '../views/LoginView.vue'
 import LandingView from '../views/LandingView.vue'
 import { useAuthStore } from '../stores/auth'
 import { useToast } from '../composables/useToast'
+import { consentGateRequired, ensureConsentGateLoaded } from '../composables/useConsentGate'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -240,6 +241,17 @@ const router = createRouter({
       meta: { requiresAuth: false, public: true, title: 'Регистрация' }
     },
     {
+      // 152-ФЗ: гейт согласия после входа (beforeEach ниже). requiresAuth —
+      // неавторизованный сюда попасть не должен (гейт проверяется только
+      // после проверки токена), но сам маршрут НЕ public — иначе гейт-проверка
+      // ниже решила бы его пропустить как публичный, не в этом смысл: страница
+      // не для анонимов, просто сама не участвует в проверке "нужен ли гейт".
+      path: '/consent-required',
+      name: 'consent-required',
+      component: () => import('../views/legal/ConsentRequiredView.vue'),
+      meta: { requiresAuth: true, title: 'Подтвердите согласие' }
+    },
+    {
       path: '/verify-email',
       name: 'verify-email',
       component: () => import('../views/VerifyEmailView.vue'),
@@ -344,6 +356,20 @@ const router = createRouter({
       name: 'admin-roles',
       component: () => import('../views/AdminRolesView.vue'),
       meta: { requiresAuth: true, title: 'Роли и права', tab_key: 'admin.roles' }
+    },
+    // Закрытый раздел «Документы» — внутренние документы 152-ФЗ, только
+    // администратору (решение владельца 08.10.2026). Намеренно без
+    // tab_key: право на tab_key настраивается в UI «Роли и права» и может
+    // быть делегировано вниз по иерархии — для документов, которые сами
+    // описывают модель угроз, доступ должен определяться только ролью
+    // (requiresAccountAdmin в beforeEach ниже, та же проверка, что на
+    // backend — require_role('superadmin', 'admin', 'account_owner') в
+    // app/routers/admin_legal_docs.py), а не настраиваемым правом.
+    {
+      path: '/admin/legal-docs',
+      name: 'admin-legal-docs',
+      component: () => import('../views/legal/InternalLegalDocsView.vue'),
+      meta: { requiresAuth: true, title: 'Правовые документы', requiresAccountAdmin: true }
     },
     // Payment import (Phase 22)
     {
@@ -575,12 +601,41 @@ router.beforeEach(async (to, _, next) => {
     return next('/')
   }
 
+  // 152-ФЗ: гейт согласия после входа — ДО tab_key-проверки ниже и ДО
+  // admin/superadmin bypass (согласие не зависит от роли). Публичные
+  // маршруты (включая /legal/*) уже пропущены выше — сюда дошли только
+  // защищённые. Сам /consent-required не проверяет себя (иначе
+  // бесконечный редирект).
+  if (to.path !== '/consent-required') {
+    const gateStatus = await ensureConsentGateLoaded()
+    if (consentGateRequired(gateStatus)) {
+      return next({ path: '/consent-required', query: { redirect: to.fullPath } })
+    }
+  } else {
+    // Сама страница гейта: ни tab_key у неё нет, ни admin/superadmin bypass
+    // ей не нужен — выходим ЗДЕСЬ. Без этого выполнение проваливалось в блок
+    // "Ensure permissions are loaded" ниже (admin bypass не срабатывает для
+    // обычных ролей) и всё равно уводило /users/me ДО прохождения гейта —
+    // тот самый запрос с данными пользователя, которого на этой странице не
+    // должно быть (воспроизведено в Playwright: GET /users/me?org_id=...).
+    return next()
+  }
+
   // Superadmin / admin bypass (D-05.3 + защита от пустого effectiveTabs у admin без org_id —
   // на проде admin привязан к ВСКС и tabs наполнены, локально/после wipe LS admin может
   // оказаться без org → пустые tabs → бесконечный redirect на /my-tasks. Админ всё равно
   // имеет полный доступ по матрице, поэтому пропускаем guard).
   if (role === 'superadmin' || role === 'admin') {
     return next()
+  }
+
+  // Маршруты с meta.requiresAccountAdmin (сейчас только /admin/legal-docs —
+  // закрытый раздел внутренних документов 152-ФЗ) не используют tab_key:
+  // проверяем ТОТ ЖЕ набор ролей, что backend (require_role('superadmin',
+  // 'admin', 'account_owner') в app/routers/admin_legal_docs.py); superadmin
+  // и admin уже вышли через bypass выше, здесь остаётся дорешить account_owner.
+  if (to.meta.requiresAccountAdmin) {
+    return role === 'account_owner' ? next() : next('/my-tasks')
   }
 
   // Ensure permissions are loaded before enforcing tab_key guard

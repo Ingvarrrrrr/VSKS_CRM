@@ -221,8 +221,14 @@ class RegisterRequest(BaseModel):
     email: str
     # 152-ФЗ (2026-09-16): согласие на обработку ПДн, обязательное условие
     # регистрации — см. backend/app/routers/organizations.py:register().
-    # consent_version = LEGAL_VERSION с фронта
-    # (frontend/src/legal/documents.generated.ts), фиксируется как есть.
+    # consent_version с фронта используется только как проверка «фронт
+    # прислал что-то» — фактически записывается СЕРВЕРНАЯ версия
+    # PD_CONSENT_VERSION (app/services/legal_constants.py), сервер фронту не верит.
     consent_accepted: bool = False
     consent_version: Optional[str] = None
+    # 152-ФЗ (2026-10-06): «Условия поручения обработки персональных данных» —
+    # отдельная галочка, организация поручает оператору сервиса обработку ПДн
+    # своих сотрудников/контрагентов (ч. 3 ст. 6 152-ФЗ). Без неё регистрация
+    # организации невозможна — см. organizations.py:register().
+    poruchenie_accepted: bool = False
 

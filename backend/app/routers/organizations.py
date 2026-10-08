@@ -18,7 +18,12 @@ from app.schemas.schemas import OrganizationCreate, OrganizationOut, RegisterReq
 from app.utils.email import send_verification_email
 from app.services.fio import compose_fio, resolve_user_name_input
 from app.services.org_requisites import org_requisites
-from app.services.legal_constants import REGISTRATION_CONSENT_DOCUMENTS
+from app.services.legal_constants import (
+    PD_CONSENT_DOCUMENTS,
+    PD_CONSENT_VERSION,
+    PORUCHENIE_DOCUMENTS,
+    PORUCHENIE_VERSION,
+)
 from app.services.password_policy import validate_new_password
 from app.routers.contractors import apply_requisite_fields
 
@@ -135,6 +140,12 @@ async def register(data: RegisterRequest, request: Request, db: AsyncSession = D
         )
     if not data.consent_version or not data.consent_version.strip():
         raise HTTPException(400, CONSENT_VERSION_MISSING_MESSAGE)
+    if not data.poruchenie_accepted:
+        raise HTTPException(
+            400,
+            "Регистрация невозможна без принятия условий поручения обработки "
+            "персональных данных сотрудников организации",
+        )
     validate_new_password(data.password, identifiers=[data.email, data.username])
 
     # Check email uniqueness (email = login)
@@ -173,16 +184,34 @@ async def register(data: RegisterRequest, request: Request, db: AsyncSession = D
     # Link org to its owner
     org.owner_user_id = user.id
 
+    # document_version — ВСЕГДА серверная PD_CONSENT_VERSION (ПРАВИЛО №6):
+    # data.consent_version выше использован только как проверка «фронт
+    # прислал что-то», фактическая версия сервер не берёт у клиента.
     consent = UserConsent(
         user_id=user.id,
         email=data.email,
-        document_version=data.consent_version.strip(),
-        documents=list(REGISTRATION_CONSENT_DOCUMENTS),
+        document_version=PD_CONSENT_VERSION,
+        documents=list(PD_CONSENT_DOCUMENTS),
         ip_address=client_ip(request),
         user_agent=request.headers.get("User-Agent"),
         source="registration",
     )
     db.add(consent)
+
+    # Поручение обработки ПДн — отдельная запись, привязанная к org.id
+    # (владелец может принять такие же условия для другой организации
+    # отдельно, см. backend/app/routers/legal.py POST /api/legal/consent).
+    poruchenie_consent = UserConsent(
+        user_id=user.id,
+        org_id=org.id,
+        email=data.email,
+        document_version=PORUCHENIE_VERSION,
+        documents=list(PORUCHENIE_DOCUMENTS),
+        ip_address=client_ip(request),
+        user_agent=request.headers.get("User-Agent"),
+        source="registration",
+    )
+    db.add(poruchenie_consent)
 
     await db.commit()
     await db.refresh(user)

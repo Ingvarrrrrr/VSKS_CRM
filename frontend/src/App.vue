@@ -54,12 +54,17 @@
     <toast-container />
     <install-pwa-banner />
     <funding-sources-dialog />
+    <!-- Cookie-баннер смонтирован ОДИН раз глобально (152-ФЗ) — раньше жил
+         отдельно в LandingView/RegisterView и не показывался ни на /login,
+         ни внутри приложения. См. CookieBanner.vue про z-index относительно
+         install-баннера выше. -->
+    <cookie-banner />
   </v-app>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import AppBar from './components/AppBar.vue'
 import ApiErrorDialog from './components/ApiErrorDialog.vue'
@@ -73,9 +78,11 @@ import InstallPwaBanner from './components/InstallPwaBanner.vue'
 // закупки, панель подтверждений оплаты) через module-level singleton
 // useFundingSources.ts (Правило №6).
 import FundingSourcesDialog from './components/subsidies/FundingSourcesDialog.vue'
+import CookieBanner from './components/legal/CookieBanner.vue'
 import { useAuthStore } from './stores/auth'
 
 const route = useRoute()
+const router = useRouter()
 const theme = useTheme()
 const authStore = useAuthStore()
 
@@ -85,7 +92,11 @@ function onApiLoading(e: Event) {
   apiLoading.value = count > 0
 }
 
-const PUBLIC_ROUTES = ['/', '/login', '/register', '/verify-email', '/reset-password']
+// 152-ФЗ: /consent-required тоже скрывает AppBar — страница гейта согласия
+// обязана быть «голой», как /login (та же переменная/механизм, не второй):
+// AppBar.vue onMounted сам запускает чат/бейджи/геолокацию/счётчики/выбор
+// организаций — пока AppBar не смонтирован, ничего из этого не стартует.
+const PUBLIC_ROUTES = ['/', '/login', '/register', '/verify-email', '/reset-password', '/consent-required']
 
 const isAuthenticated = computed(() => localStorage.getItem('auth_token') !== null)
 // Phase 30 PR4: /m/* routes используют собственный MobileLayout с bottom-tab-bar —
@@ -126,12 +137,27 @@ onMounted(async () => {
       }
     } catch {}
 
-    // Load effective permissions from /users/me
-    try {
-      await authStore.loadPermissions(localStorage.getItem('active_org_id') || localStorage.getItem('user_org_id'))
-    } catch (e) {
-      console.error('[app] loadPermissions failed on mount, fail-open', e)
-      authStore.loaded = true
+    // 152-ФЗ: до прохождения гейта согласия (/consent-required) запросов с
+    // данными пользователя (кроме /api/auth/me выше и /api/legal/*) быть не
+    // должно — /users/me отдаёт effective permissions (роли, вкладки,
+    // организации), откладываем до гейта. router/index.ts beforeEach сам
+    // вызовет loadPermissions() на первой защищённой навигации после
+    // прохождения /consent-required (authStore.loaded ещё false).
+    //
+    // await router.isReady() ОБЯЗАТЕЛЕН: main.ts делает app.mount() сразу
+    // после app.use(router), не дожидаясь первой навигации — без этого
+    // await здесь route.path читается до того, как router.beforeEach успел
+    // (асинхронно, внутри — await fetch /api/legal/consent-status) сделать
+    // редирект на /consent-required, и loadPermissions всё равно уходит
+    // (гонка, воспроизведена в Playwright: GET /users/me летел ДО редиректа).
+    await router.isReady()
+    if (route.path !== '/consent-required') {
+      try {
+        await authStore.loadPermissions(localStorage.getItem('active_org_id') || localStorage.getItem('user_org_id'))
+      } catch (e) {
+        console.error('[app] loadPermissions failed on mount, fail-open', e)
+        authStore.loaded = true
+      }
     }
   }
 })

@@ -55,13 +55,14 @@
               density="compact" class="mb-4" :error-messages="confirmError"
             />
 
-            <consent-checkbox v-model="consentAccepted" class="mb-4" />
+            <consent-checkbox v-model="consentAccepted" class="mb-2" />
+            <poruchenie-checkbox v-model="poruchenieAccepted" class="mb-4" />
 
             <v-alert v-if="error" type="error" class="mb-4" density="compact">{{ error }}</v-alert>
 
             <v-btn
               type="submit" color="primary" size="large" block :loading="loading"
-              :disabled="!consentAccepted"
+              :disabled="!consentAccepted || !poruchenieAccepted"
             >
               Зарегистрироваться
             </v-btn>
@@ -76,23 +77,22 @@
 
       </v-card>
     </v-responsive>
-
-    <cookie-banner />
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
-import ConsentCheckbox, { LEGAL_VERSION } from '@/components/legal/ConsentCheckbox.vue'
-import CookieBanner from '@/components/legal/CookieBanner.vue'
+import ConsentCheckbox, { PD_CONSENT_VERSION } from '@/components/legal/ConsentCheckbox.vue'
+import PoruchenieCheckbox from '@/components/legal/PoruchenieCheckbox.vue'
 
 const success = ref(false)
 const loading = ref(false)
 const error = ref('')
 const validationErrors = ref<Record<string, string>>({})
 const passwordConfirm = ref('')
-// Чекбокс согласия — по умолчанию всегда снят, ни при каких условиях не предзаполняется.
+// Чекбоксы согласия — по умолчанию всегда сняты, ни при каких условиях не предзаполняются.
 const consentAccepted = ref(false)
+const poruchenieAccepted = ref(false)
 
 const form = reactive({
   org_name: '',
@@ -123,6 +123,7 @@ async function register() {
   if (form.password.length < 8) { validationErrors.value.password = 'Минимум 8 символов'; return }
   if (form.password !== passwordConfirm.value) { return }
   if (!consentAccepted.value) { error.value = 'Нужно дать согласие на обработку персональных данных'; return }
+  if (!poruchenieAccepted.value) { error.value = 'Нужно принять условия поручения обработки персональных данных'; return }
 
   loading.value = true
   try {
@@ -136,7 +137,8 @@ async function register() {
         email: form.email,
         password: form.password,
         consent_accepted: true,
-        consent_version: LEGAL_VERSION,
+        consent_version: PD_CONSENT_VERSION,
+        poruchenie_accepted: true,
       }),
     })
     if (!res.ok) {

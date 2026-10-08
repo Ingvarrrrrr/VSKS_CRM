@@ -90,13 +90,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAuthStore } from '../stores/auth'
 import { useToast } from '@/composables/useToast'
 import { LEGAL_DOC_LIST } from '@/legal/documents.generated'
 
 const router = useRouter()
 const route = useRoute()
-const authStore = useAuthStore()
 const username = ref('')
 const password = ref('')
 const showPassword = ref(false)
@@ -142,12 +140,13 @@ const login = async () => {
     }
     if (data.org_name) localStorage.setItem('user_org_name', data.org_name)
     localStorage.setItem('can_publish', data.can_publish ? 'true' : 'false')
-    try {
-      await authStore.loadPermissions(localStorage.getItem('active_org_id') || localStorage.getItem('user_org_id'))
-    } catch (e) {
-      console.error('[login] loadPermissions failed, fail-open', e)
-      authStore.loaded = true
-    }
+    // 152-ФЗ: effective permissions (/users/me) сюда больше НЕ грузим — этот
+    // вызов всё равно отбрасывался следующей строкой (window.location.href
+    // делает полную перезагрузку, Pinia-стор создаётся заново), а до гейта
+    // согласия (/consent-required) такой запрос с данными пользователя не
+    // должен уходить вовсе. App.vue:onMounted (после router.isReady()) и
+    // router/index.ts beforeEach сами загрузят permissions, когда это
+    // уместно — одно место вместо двух (ПРАВИЛО №6).
     window.location.href = '/'
   } catch (err: any) {
     error.value = err.message || 'Ошибка авторизации'

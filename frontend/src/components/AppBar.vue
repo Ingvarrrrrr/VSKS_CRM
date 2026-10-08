@@ -500,6 +500,7 @@ import { apiFetch, forceClearCacheAndReload } from '@/api'
 import { totalUnread, initChat, destroyChat } from '@/composables/useChat'
 import { myPendingApprovalsCount, initApprovalsBadge, destroyApprovalsBadge } from '@/composables/useApprovalsBadge'
 import { initStaffLocationTracking, destroyStaffLocationTracking } from '@/composables/useStaffLocationTracking'
+import { resetConsentGate } from '@/composables/useConsentGate'
 import ShiftToggleButton from '@/components/staff/ShiftToggleButton.vue'
 import { useAuthStore } from '../stores/auth'
 import { ROLE_LABELS } from '@/composables/staff/staffLabels'
@@ -668,9 +669,21 @@ const _allMenuItems = [
   { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', tab_key: 'chat' },
   { title: 'Роли', icon: 'mdi-shield-key-outline', route: '/admin/roles', tab_key: 'admin.roles' },
 ]
-const menuItems = computed(() =>
-  _allMenuItems.filter(i => authStore.hasTab(i.tab_key))
+// Закрытый раздел «Документы» (152-ФЗ) — не tab_key (см. комментарий в
+// router/index.ts у /admin/legal-docs): видимость пункта меню, как и сам
+// маршрут, определяется той же ролью, что backend require_role('superadmin',
+// 'admin', 'account_owner') в app/routers/admin_legal_docs.py, а не
+// настраиваемым в «Роли и права» правом.
+const isAccountAdminRole = computed(() =>
+  ['superadmin', 'admin', 'account_owner'].includes(userRoleRaw.value || '')
 )
+const _adminOnlyMenuItems = [
+  { title: 'Правовые документы', icon: 'mdi-file-lock-outline', route: '/admin/legal-docs' },
+]
+const menuItems = computed(() => [
+  ..._allMenuItems.filter(i => authStore.hasTab(i.tab_key)),
+  ...(isAccountAdminRole.value ? _adminOnlyMenuItems : []),
+])
 
 // ── Sidebar drag-and-drop reorder ──
 const SIDEBAR_ORDER_KEY = 'sidebar_menu_order'
@@ -790,6 +803,7 @@ function onPhotoSaved(photoUrl: string | null) {
 const logout = () => {
   destroyStaffLocationTracking()  // прекратить передачу местоположения при выходе из аккаунта
   authStore.clear()
+  resetConsentGate()  // 152-ФЗ: следующий пользователь не должен увидеть кэш статуса этого
   localStorage.removeItem('auth_token')
   localStorage.removeItem('user_role')
   localStorage.removeItem('user_name')

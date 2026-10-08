@@ -269,6 +269,10 @@ from app.routers import dictionaries as dictionaries_router
 # Собственный префикс /api/legal, конфликтов по форме пути с catch-all
 # других роутеров нет — порядок регистрации не важен.
 from app.routers import legal as legal_router
+# Закрытый раздел «Документы» админки — внутренние документы 152-ФЗ (решение
+# владельца 08.10.2026). Отдельный роутер, не legal_router: там публичные
+# согласия/обращения без проверки роли, здесь — только администратору.
+from app.routers import admin_legal_docs as admin_legal_docs_router
 # Категории закупки товара — отдельный справочник, many-to-many (владелец, 2026-09-16)
 from app.routers import purchase_categories as purchase_categories_router
 # Разрезание contractors.py (Правило №5, сессия 2026-09-08): contractors_directory,
@@ -544,4 +548,5 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(diag_router.router)                 # /api/diag/*
     app.include_router(dictionaries_router.router)         # /api/dictionaries/purchase (Правило №6)
     app.include_router(legal_router.router)                # /api/legal (152-ФЗ, 2026-09-16)
+    app.include_router(admin_legal_docs_router.router)      # /api/admin/legal-docs (152-ФЗ, закрытый раздел, 2026-10-08)
     app.include_router(purchase_categories_router.router)  # /api/purchase-categories (2026-09-16)

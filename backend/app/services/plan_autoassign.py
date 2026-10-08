@@ -92,12 +92,22 @@ async def auto_assign_planned_items(
     from app.models.feo_category import FeoCategory
     from app.services.feo_import_common import resolve_origin_flags
     from app.services.text_match import normalize
+    from app.services.feo_plan_duplicate_match import find_unique_feo_plan_match
     from app.services import feo_history
 
     # cat_id -> {normalize(name): fpi_id}; загружается лениво, один раз на категорию.
     _cat_index: dict[int, dict[str, int]] = {}
     # cat_id -> есть ли у листа собственный «ручной план» (planned_quantity/amount)
     _cat_has_leaf_plan: dict[int, bool] = {}
+    # cat_id -> subsidy_id (для поиска по всей субсидии ниже)
+    _cat_subsidy_id: dict[int, Optional[int]] = {}
+    # subsidy_id -> [FeoPlannedItem НЕ-auto, is_active] всей субсидии; лениво,
+    # нужен только когда внутри своей категории пары не нашлось (см. ниже).
+    _subsidy_candidates: dict[int, list] = {}
+    # subsidy_id -> {id уже занятых в ЭТОМ вызове дублей} — каждая настоящая
+    # позиция ФЭО может быть парой только ОДНОМУ дублю этого же прогона
+    # (см. докстринг find_unique_feo_plan_match).
+    _subsidy_claimed: dict[int, set] = {}
     for it in items:
         if getattr(it, "feo_planned_item_id", None):
             continue
@@ -127,6 +137,7 @@ async def auto_assign_planned_items(
                 cat_row is not None
                 and ((cat_row.planned_quantity or 0) > 0 or (cat_row.planned_amount or 0) > 0)
             )
+            _cat_subsidy_id[eff_cat_id] = cat_row.subsidy_id if cat_row is not None else None
         index = _cat_index[eff_cat_id]
         entry = index.get(norm_name)
         if entry is None:
@@ -136,11 +147,62 @@ async def auto_assign_planned_items(
                 # дублирующую FeoPlannedItem, оставляем позицию непривязанной —
                 # assert_tz_not_over_plan и дерево ФЭО прочитают план с листа.
                 continue
-            new_fpi = await create_auto_planned_item(db, it, eff_cat_id, note)
-            entry = (new_fpi.id, new_fpi.item_type)
-            index[norm_name] = entry  # следующая позиция этого же вызова с тем же
-            # нормализованным именем (напр. «Бумага А4,» после «Бумага А4») найдёт
-            # её здесь и не создаст вторую плановую строку.
+
+            # Причина бага с прода (см. докстринг feo_plan_duplicate_match.py):
+            # прежде чем заводить НОВУЮ auto_created позицию, проверяем, нет ли
+            # уже настоящей (не-auto) позиции ФЭО с тем же именем+суммой в
+            # ДРУГОЙ категории ЭТОЙ ЖЕ субсидии — если позиция заявки/закупки
+            # осталась без собственной feo_category_id (упала в fallback,
+            # обычно «Не определена»), её план скорее всего уже где-то есть.
+            _sid = _cat_subsidy_id.get(eff_cat_id)
+            matched_fpi_id = None
+            matched_item_type = None
+            if _sid is not None:
+                candidates = _subsidy_candidates.get(_sid)
+                if candidates is None:
+                    cand_res = await db.execute(
+                        select(FeoPlannedItem)
+                        .join(FeoCategory, FeoPlannedItem.feo_category_id == FeoCategory.id)
+                        .where(
+                            FeoCategory.subsidy_id == _sid,
+                            FeoPlannedItem.is_active == True,
+                            FeoPlannedItem.auto_created == False,
+                        )
+                    )
+                    candidates = cand_res.scalars().all()
+                    _subsidy_candidates[_sid] = candidates
+                claimed = _subsidy_claimed.setdefault(_sid, set())
+                matched_fpi_id, _how = find_unique_feo_plan_match(
+                    getattr(it, "item_name", None), getattr(it, "total_price", None),
+                    candidates, claimed,
+                )
+                if matched_fpi_id is not None:
+                    claimed.add(matched_fpi_id)
+                    matched_item_type = next(
+                        (c.item_type for c in candidates if c.id == matched_fpi_id), None,
+                    )
+                    matched_cat_id = next(
+                        (c.feo_category_id for c in candidates if c.id == matched_fpi_id), eff_cat_id,
+                    )
+                    # Позиция заявки/закупки переезжает вслед за найденным планом
+                    # (правило проекта: план и факт в одной категории) — та же
+                    # сама идея, что и move_or_detach_planned_item, но здесь
+                    # позиция ещё ни на что не ссылалась, переносить нечего,
+                    # кроме самой feo_category_id.
+                    if hasattr(it, "feo_category_id") and matched_cat_id != eff_cat_id:
+                        it.feo_category_id = matched_cat_id
+
+            if matched_fpi_id is not None:
+                entry = (matched_fpi_id, matched_item_type)
+                # В локальный индекс категории НЕ кладём: это позиция из чужой
+                # категории, следующий дубль этого же вызова с таким же именем
+                # обязан пройти ту же проверку «не занято ли уже» (claimed).
+            else:
+                new_fpi = await create_auto_planned_item(db, it, eff_cat_id, note)
+                entry = (new_fpi.id, new_fpi.item_type)
+                index[norm_name] = entry  # следующая позиция этого же вызова с тем же
+                # нормализованным именем (напр. «Бумага А4,» после «Бумага А4») найдёт
+                # её здесь и не создаст вторую плановую строку.
         fpi_id, _fpi_item_type = entry
         it.feo_planned_item_id = fpi_id
         if hasattr(it, "over_plan"):

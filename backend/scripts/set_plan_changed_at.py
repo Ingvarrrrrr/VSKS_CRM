@@ -47,6 +47,20 @@ from app.models.feo_planned_item import FeoPlannedItem  # noqa: E402
 from app.models.purchase_item import PurchaseItem  # noqa: E402
 
 
+def _to_naive_local(dt: datetime) -> datetime:
+    """plan_changed_at — TIMESTAMP WITHOUT TIME ZONE (как created_at) —
+    asyncpg валит DataError на aware datetime для такой колонки (владелец
+    09.10.2026, прогон на проде). Если --at пришёл со смещением (+03:00 и
+    т.п.) — переводим на ЛОКАЛЬНОЕ время сервера/БД (astimezone() без
+    аргументов берёт системный tz процесса) и обрезаем tzinfo — тот же
+    смысл, что у created_at (func.now() пишет локальное время сессии БД,
+    без зоны). Наивный datetime (без смещения) передаётся как есть —
+    предполагается, что он уже в локальном времени сервера."""
+    if dt.tzinfo is not None:
+        return dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
 async def _resolve_planned_item_ids(db, purchase_id, subsidy_id) -> list[int]:
     if purchase_id:
         res = await db.execute(
@@ -102,7 +116,17 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--purchase-id", type=int, default=None, help="закупка — все позиции, на которые ссылается хоть одна её строка")
     parser.add_argument("--subsidy-id", type=int, default=None, help="субсидия — ВСЕ активные плановые позиции (используй осторожно)")
-    parser.add_argument("--at", type=str, required=True, help="новое plan_changed_at, ISO-8601 (напр. 2026-10-07T12:00:00+03:00)")
+    parser.add_argument(
+        "--at", type=str, required=True,
+        help=(
+            "новое plan_changed_at, ISO-8601 (напр. 2026-10-07T12:00:00+03:00 "
+            "или 2026-10-07T12:00:00 без зоны). Колонка — TIMESTAMP WITHOUT "
+            "TIME ZONE: значение со смещением автоматически переводится в "
+            "ЛОКАЛЬНОЕ время сервера/БД и зона отбрасывается (как у "
+            "created_at); значение без смещения считается уже локальным и "
+            "передаётся как есть."
+        ),
+    )
     parser.add_argument("--apply", action="store_true", help="применить (без флага — только печать, dry-run)")
     args = parser.parse_args()
 
@@ -110,7 +134,7 @@ async def main() -> int:
         print("Нужен хотя бы один из --purchase-id / --subsidy-id.")
         return 1
 
-    at = datetime.fromisoformat(args.at)
+    at = _to_naive_local(datetime.fromisoformat(args.at))
 
     async with async_session() as db:
         count = await run(db, args.purchase_id, args.subsidy_id, at, apply=args.apply)

@@ -175,35 +175,55 @@ async def _excess_culprit_groups(
 ) -> tuple[list, float, Optional[dict]]:
     """Виновники превышения НАПРАВЛЕНИЯ по ОДНОМУ ТИПУ (товар/услуга/...) —
     card="free", kind!="all" (см. докстринг модуля), СГРУППИРОВАННЫЕ ПО
-    ЗАКУПКЕ (владелец 08.10.2026, план binary-crunching-island.md раздел 1):
-    "Сейчас закупка, при которой произошёл переход за лимит, определяется
-    рандомно" -- окно показывало виновником позицию, отсортированную по
-    created_at, который не двигается при массовом переносе позиции между
-    категориями ФЭО. Правило "кто виновник" и порядок (plan_changed_at, id)
-    -- ЕДИНЫЕ (ПРАВИЛО №6, app.services.excess_culprit_order.
-    culprits_after_crossing), та же функция, что использует
-    feo_plan_excess.find_excess_culprit.
+    ЗАКУПКЕ ЦЕЛИКОМ (владелец 08-09.10.2026, план binary-crunching-island.md
+    раздел 1): «Сейчас закупка, при которой произошёл переход за лимит,
+    определяется рандомно» — окно показывало виновником позицию,
+    отсортированную по created_at, который не двигается при массовом
+    переносе позиции между категориями ФЭО. Правило «кто виновник» и порядок
+    (plan_changed_at, id) — ЕДИНЫЕ (ПРАВИЛО №6, app.services.
+    excess_culprit_order.culprits_after_crossing), та же функция, что
+    использует feo_plan_excess.find_excess_culprit.
 
-    items -- тот же список FeoPlannedItem-строк, что card_drill_rows уже
-    собрал для направления (_classify_items, ПРАВИЛО №6 -- вторая выборка не
-    заводится). excess_amount -- |amount| строки направления.
+    Владелец, правка 09.10.2026 (после проверки на проде, ФАДМ 2026_2):
+      1) «Пачка» — ТОЛЬКО если позиции с ОДНИМ plan_changed_at, лежащие ДО
+         границы пересечения, относятся к ≥2 РАЗНЫМ закупкам/группам
+         (позиция без закупки считается своей отдельной группой). Если все
+         позиции этого одновременного окна принадлежат ОДНОЙ закупке —
+         виновник вся эта закупка целиком, БЕЗ batch_note (одинаковое время
+         у позиций одной закупки — это просто одна закупка, а не «пачка
+         одновременной загрузки нескольких закупок»).
+      2) Группа = закупка ЦЕЛИКОМ: "amount" группы — Σ вклада ВСЕХ её
+         позиций в этом направлении/виде (не только тех, что физически
+         «после» границы пересечения) — если закупка стала виновником
+         частично, она всё равно показывается целиком. "over_amount" —
+         Σ over ТОЛЬКО тех её позиций, что реально дали превышение (как и
+         раньше, через накопление по culprits_after_crossing).
+      3) Когда реальная пачка (многозакупочная) обнаружена — excess_groups
+         ПУСТОЙ (ни одной «случайной» группы), excess_items_total =
+         |excess_amount| целиком, оговорка — только batch_note.
+
+    items — тот же список FeoPlannedItem-строк, что card_drill_rows уже
+    собрал для направления (_classify_items, ПРАВИЛО №6 — вторая выборка не
+    заводится). excess_amount — |amount| строки направления.
 
     Возврат: (excess_groups, excess_items_total, batch_note).
-      excess_groups -- список групп-виновников (от НОВЫХ к СТАРЫМ -- так
+      excess_groups — список групп-виновников (от НОВЫХ к СТАРЫМ — так
         попросил владелец для отображения), группа = закупка (по
         PurchaseItem.feo_planned_item_id -> Purchase наибольшего id, если
-        позиция привязана к нескольким; позиция без закупки -- своя группа с
+        позиция привязана к нескольким; позиция без закупки — своя группа с
         purchase_id=None):
         {purchase_id, purchase_number, registry_number, subject,
          category_path, kind_label, date (ISO, max plan_changed_at группы),
-         amount (Σ вклада позиций группы), over_amount (Σ over позиций
+         amount (Σ ВСЕХ позиций группы), over_amount (Σ over позиций
          группы), items: [{planned_item_id, name, amount, over_amount,
-         plan_changed_at}]}.
-      excess_items_total -- Σ over_amount по группам (= |excess_amount|,
-        когда позиций хватает на покрытие; иначе меньше -- расхождение
-        показывается честно, не прячется).
-      batch_note -- None или {"date","count","message"} (пачка одновременных
-        позиций -- "превышение заложено в исходном плане")."""
+         plan_changed_at}] — ВСЕ позиции группы, не только давшие over}.
+      excess_items_total — Σ over_amount по группам (= |excess_amount|,
+        когда позиций хватает на покрытие; иначе меньше — расхождение
+        показывается честно, не прячется). При реальной пачке — всегда
+        |excess_amount| целиком (см. п.3 выше).
+      batch_note — None или {"date","count","message"} (пачка одновременной
+        загрузки НЕСКОЛЬКИХ закупок/позиций — «превышение заложено в
+        исходном плане»)."""
     target = Decimal(str(excess_amount))
     if target <= Decimal("0.005") or not items:
         return [], 0.0, None
@@ -213,7 +233,7 @@ async def _excess_culprit_groups(
     from app.services.excess_culprit_order import culprits_after_crossing
 
     ids = [it.id for it in items]
-    # Последняя (max Purchase.id) закупка, ссылающаяся на позицию -- владелец
+    # Последняя (max Purchase.id) закупка, ссылающаяся на позицию — владелец
     # мыслит закупками; при нескольких ссылках на одну позицию (редкий
     # исторический случай) актуальнее последняя (order asc -> перезаписываем).
     linked: dict[int, tuple] = {}
@@ -229,8 +249,12 @@ async def _excess_culprit_groups(
     for fpi_id, pur_id, pur_num, pur_reg, pur_subj in link_rows:
         linked[fpi_id] = (pur_id, pur_num, pur_reg, pur_subj)
 
-    # "Лимит", при котором culprits_after_crossing честно воспроизводит
-    # старое поведение (идём от старых к новым, виновник -- первая строка,
+    def _group_key(it):
+        pur_id, *_ = linked.get(it.id, (None, None, None, None))
+        return pur_id if pur_id is not None else f"item-{it.id}"
+
+    # «Лимит», при котором culprits_after_crossing честно воспроизводит
+    # старое поведение (идём от старых к новым, виновник — первая строка,
     # после которой накопленная сумма впервые превышает budget_equiv):
     # Σ items - budget_equiv == excess_amount.
     items_total = sum(Decimal(str(it.amount or 0)) for it in items)
@@ -241,7 +265,28 @@ async def _excess_culprit_groups(
     if res is None or not res.culprits:
         return [], 0.0, None
 
-    rows_with_over: list = []
+    # ── Пачка — ТОЛЬКО если одновременное окно пересечения охватывает ≥2
+    # РАЗНЫЕ группы (п.1 выше). culprits_after_crossing уже нашла окно
+    # (первые res.batch_note["count"] элементов res.culprits, старые→новые);
+    # если все они из ОДНОЙ группы — это одна закупка, не пачка нескольких.
+    real_batch_note = None
+    if res.batch_note is not None:
+        window = res.culprits[: res.batch_note["count"]]
+        distinct_groups = {_group_key(it) for it in window}
+        if len(distinct_groups) >= 2:
+            real_batch_note = res.batch_note
+
+    if real_batch_note is not None:
+        # Реальная пачка нескольких закупок/позиций, загруженных одновременно
+        # — виновник не выделяется, excess_groups пустой целиком (п.3).
+        return [], float(target), real_batch_note
+
+    # ── Не пачка (или пачка внутри одной закупки) — группируем по закупке
+    # ЦЕЛИКОМ. over_amount по позиции — накопление ТОЛЬКО по res.culprits
+    # (старые→новые), ровно как раньше; позиции группы, не вошедшие в
+    # res.culprits (т.е. были частью плана ДО пересечения границы), несут
+    # over_amount=0, но входят в "amount"/"items" группы целиком (п.2).
+    over_by_item_id: dict[int, Decimal] = {}
     cumulative = Decimal("0")
     for it in res.culprits:
         remaining = target - cumulative
@@ -252,48 +297,65 @@ async def _excess_culprit_groups(
             continue
         over_amount = amt if amt <= remaining else remaining
         cumulative += amt
-        rows_with_over.append((it, amt, over_amount))
+        over_by_item_id[it.id] = over_amount
 
-    groups_by_key: dict = {}
-    order: list = []
-    for it, amt, over_amount in rows_with_over:
-        pur_id, pur_num, pur_reg, pur_subj = linked.get(it.id, (None, None, None, None))
-        gkey = pur_id if pur_id is not None else f"item-{it.id}"
-        if gkey not in groups_by_key:
-            groups_by_key[gkey] = {
-                "purchase_id": pur_id,
-                "purchase_number": pur_num,
-                "registry_number": pur_reg,
-                "subject": pur_subj or it.name,
-                "category_path": _category_path(it.feo_category_id, cats),
-                "kind_label": None,
-                "date": None,
-                "amount": Decimal("0"),
-                "over_amount": Decimal("0"),
-                "items": [],
-            }
-            order.append(gkey)
-        g = groups_by_key[gkey]
-        g["amount"] += amt
-        g["over_amount"] += over_amount
-        pca = it.plan_changed_at
-        if pca is not None and (g["date"] is None or pca > g["date"]):
-            g["date"] = pca
-        g["items"].append({
-            "planned_item_id": it.id,
-            "name": it.name,
-            "amount": float(amt),
-            "over_amount": float(over_amount),
-            "plan_changed_at": pca.isoformat() if pca else None,
+    culprit_group_keys: list = []
+    seen_keys: set = set()
+    for it in res.culprits:
+        gkey = _group_key(it)
+        if gkey not in seen_keys:
+            seen_keys.add(gkey)
+            culprit_group_keys.append(gkey)
+
+    items_by_group: dict = {}
+    for it in items:
+        items_by_group.setdefault(_group_key(it), []).append(it)
+
+    groups_out: list = []
+    for gkey in culprit_group_keys:
+        group_items = items_by_group.get(gkey, [])
+        sample = group_items[0] if group_items else None
+        pur_id = pur_num = pur_reg = pur_subj = None
+        if sample is not None:
+            pur_id, pur_num, pur_reg, pur_subj = linked.get(sample.id, (None, None, None, None))
+        group_amount = Decimal("0")
+        group_over = Decimal("0")
+        group_date = None
+        items_payload = []
+        for it in group_items:
+            amt = Decimal(str(it.amount or 0))
+            over = over_by_item_id.get(it.id, Decimal("0"))
+            group_amount += amt
+            group_over += over
+            pca = it.plan_changed_at
+            if pca is not None and (group_date is None or pca > group_date):
+                group_date = pca
+            items_payload.append({
+                "planned_item_id": it.id,
+                "name": it.name,
+                "amount": float(amt),
+                "over_amount": float(over),
+                "plan_changed_at": pca.isoformat() if pca else None,
+            })
+        groups_out.append({
+            "purchase_id": pur_id,
+            "purchase_number": pur_num,
+            "registry_number": pur_reg,
+            "subject": pur_subj or (sample.name if sample else None),
+            "category_path": _category_path(sample.feo_category_id, cats) if sample else "",
+            "kind_label": None,
+            "date": group_date,
+            "amount": group_amount,
+            "over_amount": group_over,
+            "items": items_payload,
         })
 
-    # Отображение -- от НОВЫХ к СТАРЫМ (владелец): сортируем группы по дате
+    # Отображение — от НОВЫХ к СТАРЫМ (владелец): сортируем группы по дате
     # (max plan_changed_at группы) DESC.
-    groups = [groups_by_key[k] for k in order]
-    groups.sort(key=lambda g: g["date"] or datetime.min, reverse=True)
+    groups_out.sort(key=lambda g: g["date"] or datetime.min, reverse=True)
 
     excess_groups = []
-    for g in groups:
+    for g in groups_out:
         excess_groups.append({
             "purchase_id": g["purchase_id"],
             "purchase_number": g["purchase_number"],
@@ -307,7 +369,7 @@ async def _excess_culprit_groups(
             "items": g["items"],
         })
     excess_items_total = sum(g["over_amount"] for g in excess_groups)
-    return excess_groups, excess_items_total, res.batch_note
+    return excess_groups, excess_items_total, None
 
 
 async def _load_categories(db: AsyncSession, subsidy_id: int) -> tuple[dict, dict]:

@@ -411,12 +411,27 @@ elif [ "$BACKEND_BUILD_OK" -eq 0 ]; then
             echo "[$(ts)] frontend: используется образ из GHCR, локальная сборка (npm/vite) пропущена" >> "$LOG"
             echo "$FRONTEND_TREE" > "$FRONTEND_TREE_MARKER" 2>/dev/null
         fi
-    else
+    elif [ "${ALLOW_SERVER_FRONTEND_BUILD:-0}" = "1" ]; then
+        # Аварийный ручной выход (по умолчанию выключен, см. ниже) — сервер
+        # (3.9 ГБ RAM) собирает фронт сам, как делал ДО переноса сборки в
+        # GitHub Actions. Включать только осознанно: именно эта сборка
+        # (`docker compose build frontend_a` → vite) уложила прод в
+        # подкачку (load 184, 502) в ночь 08→09.10.2026, когда образ из
+        # GHCR не появился вовремя.
+        echo "[$(ts)] frontend: ALLOW_SERVER_FRONTEND_BUILD=1 — собираю локально на сервере (аварийный режим)" >> "$LOG"
         docker compose build --build-arg GIT_SHA="$GIT_SHA" frontend_a >> "$LOG" 2>&1
         FRONTEND_BUILD_OK=$?
         if [ "$FRONTEND_BUILD_OK" -eq 0 ]; then
             echo "$FRONTEND_TREE" > "$FRONTEND_TREE_MARKER" 2>/dev/null
         fi
+    else
+        # Образ из GHCR не получен — сервер фронт НЕ собирает (инцидент
+        # 08→09.10.2026: сервер 3.9 ГБ RAM ушёл в подкачку, load 184, сайт
+        # отдавал 502, когда autodeploy.sh после неудачного ожидания собрал
+        # фронт локально). Деплой прерывается ниже тем же путём, что и
+        # провал сборки — предыдущая версия продолжает работать.
+        echo "[$(ts)] frontend: образ фронта из GitHub не получен — деплой прерван, сервер фронт не собирает (иначе 3.9 ГБ RAM уходят в подкачку и сайт падает); проверь Actions → Frontend image (GHCR)" >> "$LOG"
+        FRONTEND_BUILD_OK=1
     fi
 fi
 BACKEND_OK=1

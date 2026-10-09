@@ -18,7 +18,6 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.purchase import Purchase
-from app.models.purchase_item import PurchaseItem
 from app.models.purchase_file import PurchaseFile
 from app.models.purchase_receipt import PurchaseReceipt
 from app.models.contract import Contract
@@ -28,6 +27,7 @@ from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.services.receipt_identity import receipt_fiscal_key, find_duplicate_receipt
 
 from ._clone import clone_row
+from .clone_items import clone_purchase_items
 
 
 class PurchaseCopyResult:
@@ -191,21 +191,16 @@ async def copy_purchases(
             await db.flush()
             receipt_id_map[rcpt.id] = new_r.id
 
-        items = (await db.execute(
-            select(PurchaseItem).where(PurchaseItem.purchase_id == p.id)
-        )).scalars().all()
-        for it in items:
-            new_it = clone_row(
-                it, PurchaseItem,
-                purchase_id=new_p.id,
-                feo_planned_item_id=planned_item_id_map.get(it.feo_planned_item_id) if it.feo_planned_item_id else None,
-                feo_category_id=category_id_map.get(it.feo_category_id) if it.feo_category_id else None,
-                receipt_id=receipt_id_map.get(it.receipt_id) if it.receipt_id else None,
-                wish_item_id=None,
-            )
-            db.add(new_it)
-            await db.flush()
-            item_id_map[it.id] = new_it.id
+        # Клонирование позиций закупки — общий хелпер (ПРАВИЛО №6), см.
+        # clone_items.py: та же функция используется scripts/fadm_restore_items.py
+        # для восстановления разбивки позиций без клонирования закупки целиком.
+        new_item_ids = await clone_purchase_items(
+            db, p.id, new_p.id,
+            category_id_map=category_id_map,
+            planned_item_id_map=planned_item_id_map,
+            receipt_id_map=receipt_id_map,
+        )
+        item_id_map.update(new_item_ids)
 
         # Файлы — та же ссылка на физический файл (filepath), новая строка.
         files = (await db.execute(

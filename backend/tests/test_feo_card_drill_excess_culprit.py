@@ -193,6 +193,100 @@ async def test_batch_note_for_simultaneous_upload(db_session, test_org):
     assert row["amount"] == pytest.approx(-200.0)
     assert row["excess_batch_note"] is not None
     assert row["excess_batch_note"]["count"] == 3
-    # Все три позиции без закупки — одна «группа» на каждую (отдельные items),
-    # но Σ over_amount обязана совпасть с превышением.
+    # Владелец 09.10.2026, п.3: реальная пачка (3 РАЗНЫЕ группы — позиции без
+    # закупки, каждая своя группа) — excess_groups ПУСТОЙ, ни одной
+    # «случайной» группы не выдаём.
+    assert row["excess_groups"] == []
+    assert row["excess_items_total"] == pytest.approx(200.0)
+
+
+@pytest.mark.asyncio
+async def test_single_purchase_same_timestamp_is_whole_group_not_batch(db_session, test_org):
+    """Владелец 09.10.2026 (прод, ФАДМ 2026_2, закупка №975): позиции ОДНОЙ
+    закупки с одинаковым plan_changed_at (перенесены одной операцией) — это
+    ОДНА закупка, не «пачка». Виновник — вся закупка ЦЕЛИКОМ (все 3 позиции,
+    Σ=600), over_amount = Σ over только тех позиций, что реально дали
+    превышение (200, не 400/600) — БЕЗ batch_note."""
+    import datetime as _dt
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
+    direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("1000"))
+    article = await _make_category(db_session, subsidy.id, name="Статья", parent_id=direction.id)
+
+    old = await _make_planned_item(db_session, article.id, "Старая позиция (600)", 1, 600)
+    old.item_type = "товар"
+    same_dt = _dt.datetime(2026, 10, 7, 12, 0, 0)
+    group_items = []
+    for i in range(3):
+        it = await _make_planned_item(db_session, article.id, f"Позиция закупки {i}", 1, 200)
+        it.item_type = "товар"
+        group_items.append(it)
+    await db_session.commit()
+    await _set_plan_changed_at(db_session, old, _dt.datetime(2026, 1, 1, 10, 0, 0))
+    for it in group_items:
+        await _set_plan_changed_at(db_session, it, same_dt)
+
+    purchase = await _link_purchase(db_session, subsidy.id, article.id, group_items[0].id, purchase_number=975)
+    # Остальные позиции той же закупки — та же закупка 975 (несколько строк).
+    from app.models.purchase_item import PurchaseItem
+    for it in group_items[1:]:
+        pi = PurchaseItem(
+            purchase_id=purchase.id, feo_planned_item_id=it.id,
+            item_name="товар", quantity=Decimal("1"), total_price=Decimal("0"),
+        )
+        db_session.add(pi)
+    await db_session.commit()
+
+    result = await card_drill_rows(db_session, subsidy.id, "free", "goods")
+    row = result["rows"][0]
+    # 600+200*3=1200, лимит 1000 → превышение 200.
+    assert row["amount"] == pytest.approx(-200.0)
+    assert row["excess_batch_note"] is None
+    assert len(row["excess_groups"]) == 1
+    group = row["excess_groups"][0]
+    assert group["purchase_id"] == purchase.id
+    assert group["purchase_number"] == 975
+    # Группа ЦЕЛИКОМ — Σ всех 3 её позиций, не только «хвоста».
+    assert group["amount"] == pytest.approx(600.0)
+    assert len(group["items"]) == 3
+    assert group["over_amount"] == pytest.approx(200.0)
+    assert row["excess_items_total"] == pytest.approx(200.0)
+
+
+@pytest.mark.asyncio
+async def test_batch_across_multiple_purchases_same_timestamp(db_session, test_org):
+    """Владелец 09.10.2026 (прод, ФАДМ 2026_2, «услуги»): пересечение внутри
+    одновременной загрузки, затронувшей ≥2 РАЗНЫЕ закупки — настоящая
+    «пачка», excess_groups пустой, batch_note сообщает про общую загрузку
+    (а не одну «случайную» закупку из нескольких)."""
+    import datetime as _dt
+    from app.models.purchase_item import PurchaseItem
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
+    direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("1000"))
+    article = await _make_category(db_session, subsidy.id, name="Статья", parent_id=direction.id)
+
+    same_dt = _dt.datetime(2026, 10, 5, 9, 0, 0)
+    items = []
+    for i in range(3):
+        it = await _make_planned_item(db_session, article.id, f"Позиция {i}", 1, 400)
+        it.item_type = "товар"
+        items.append(it)
+    await db_session.commit()
+    for it in items:
+        await _set_plan_changed_at(db_session, it, same_dt)
+
+    purchases = []
+    for i, it in enumerate(items):
+        p = await _link_purchase(db_session, subsidy.id, article.id, it.id, purchase_number=100 + i)
+        purchases.append(p)
+
+    result = await card_drill_rows(db_session, subsidy.id, "free", "goods")
+    row = result["rows"][0]
+    # 400*3=1200, лимит 1000 → превышение 200, пересечение на 3-й закупке,
+    # но 1-я и 2-я тоже в одном одновременном окне — 3 РАЗНЫЕ закупки.
+    assert row["amount"] == pytest.approx(-200.0)
+    assert row["excess_batch_note"] is not None
+    assert row["excess_batch_note"]["count"] == 3
+    assert row["excess_groups"] == []
     assert row["excess_items_total"] == pytest.approx(200.0)

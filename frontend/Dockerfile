@@ -15,10 +15,15 @@ ARG GIT_SHA=unknown
 RUN echo "$GIT_SHA" > /app/.git-sha
 
 COPY . .
-# heap 1536MB — Phase 26 раздула CreateOrderView, 768MB перестало хватать
-# (было FATAL ERROR: Reached heap limit Allocation failed). 1536 — компромисс
-# между скоростью OOM-recovery и реальной потребностью vite + Vuetify + ApexCharts.
-ENV NODE_OPTIONS="--max-old-space-size=1536"
+# heap 4096MB (09.10.2026, инцидент 08.10 23:30-00:09: прод 3.9 ГБ RAM
+# ушёл в подкачку, load 184, сайт 502 — автодеплой не дождался образа из
+# GHCR и собрал фронт ЛОКАЛЬНО на сервере с лимитом 1536МБ, который к этому
+# времени уже не хватал OOM при `npm run build`; см. также autodeploy.sh —
+# сервер больше НЕ собирает фронт в обычном режиме, сборка только здесь,
+# на GitHub Actions раннере с 7 ГБ RAM). 1536 был компромиссом под рост кода
+# Phase 26 (CreateOrderView), с тех пор код продолжил расти — 4096 даёт запас
+# на раннере, где память не дефицит, и не является нагрузкой на прод.
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN npm run build
 
 # ── Runtime stage — только готовый bundle + server.mjs ────────────

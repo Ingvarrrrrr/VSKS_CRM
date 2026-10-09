@@ -86,6 +86,12 @@
       </tfoot>
     </v-table>
 
+    <!-- Пачка: groups пуст (виновника не называем), но items тоже нет —
+         только плашка выше, без пустой таблицы. -->
+    <div v-else-if="!items || !items.length" class="text-caption text-medium-emphasis">
+      Весь состав — по ссылке «Показать весь состав».
+    </div>
+
     <!-- Фолбэк — старый плоский список позиций (backend ещё без excess_groups) -->
     <v-table v-else density="compact" class="mt-1" style="min-width:760px; background:transparent">
       <thead>

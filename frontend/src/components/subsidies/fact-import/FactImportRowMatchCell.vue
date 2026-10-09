@@ -16,8 +16,19 @@
       </v-btn>
     </template>
     <template v-else>
-      <v-chip size="x-small" :color="row.match.state === 'ambiguous' ? 'warning' : 'error'" variant="tonal" class="mb-1">
-        {{ row.match.state === 'ambiguous' ? 'неоднозначно' : 'не найдено' }}
+      <!-- 🔵 Правка (план lazy-swimming-hollerith.md, п.4): состояние
+           no_item_name («Плановая позиция» пуста у строки-категории с
+           данными) — своя подпись словами владельца, остальная вёрстка
+           (кандидаты + «Выбрать плановую позицию…») общая с ambiguous/
+           not_found, второй компонент не завели. -->
+      <v-chip
+        size="x-small"
+        :color="row.match.state === 'ambiguous' || row.match.state === 'no_item_name' ? 'warning' : 'error'"
+        variant="tonal" class="mb-1"
+      >
+        {{ row.match.state === 'ambiguous' ? 'неоднозначно'
+          : row.match.state === 'no_item_name' ? 'нет названия позиции'
+          : 'не найдено' }}
       </v-chip>
       <!-- Задание 07.10.2026 (п.1/п.2): у ambiguous — строка «уже у строки N»,
            клик переносит к той строке (useRowJump, ПРАВИЛО №5/№6 — тот же

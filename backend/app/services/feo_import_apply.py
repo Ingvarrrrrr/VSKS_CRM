@@ -21,7 +21,7 @@ from app.models.feo_category import FeoCategory
 from app.services.feo_import_common import (
     QUANT, ZERO, build_level_name_index, find_or_create_category, find_uniformly_empty_levels, format_rows,
     get_cell, level_label, normalize_need_level_cell, resolve_origin_flags, resolve_target_subsidy_id,
-    row_feo_money, row_plan_money, to_bool, to_dec,
+    row_feo_money, row_is_position, row_plan_money, to_bool, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
@@ -410,7 +410,7 @@ async def apply_rows(state) -> None:
         # статьи становится позицией с её именем). Если колонка используется
         # хоть где-то в файле — решает факт ЭТОЙ строки (_row_had_own_
         # position_name).
-        _row_treat_as_real_position = _row_had_own_position_name or not _lvl5_column_in_use
+        _row_treat_as_real_position = row_is_position(_row_had_own_position_name, _lvl5_column_in_use)
 
         # --- Продвижение «Плановой позиции» в уровень (задача владельца
         # 2026-09-09, план dreamy-booping-piglet.md, задача A, п.2) --------------

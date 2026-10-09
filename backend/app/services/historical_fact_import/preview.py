@@ -29,11 +29,38 @@ from app.services.feo_payroll import payroll_category_ids
 # _fmt_money, что уже используется в commit.py (_format_rub) и шаблонах
 # документов, не второй форматтер.
 from app.services.documents.formatting import _fmt_money
+# ПРАВИЛО №6: список номеров строк диапазонами («99–101, 103») — тот же
+# хелпер, что собирает сводные предупреждения импорта ФЭО (feo_import_apply.py/
+# feo_import_plan.py), не вторая копия схлопывания диапазонов.
+from app.services.feo_import_common import format_rows as _format_rows
 
 
 def _rub(v) -> str:
     formatted = _fmt_money(v)
     return f"{formatted} ₽" if formatted else "0,00 ₽"
+
+
+def _row_ranges_only(rows: list) -> str:
+    """Номера строк диапазонами БЕЗ слова «строка/строки» впереди (нужно для
+    текста ambiguous ниже, где слово уже стоит в своём месте по-русски:
+    «строке 99» / «строкам 99–101, 103») — переиспользует feo_import_common.
+    format_rows (ПРАВИЛО №6), просто отрезает его собственный префикс."""
+    text = _format_rows(rows)
+    return text.split(" ", 1)[1] if " " in text else text
+
+
+def _ru_plural_position(n: int) -> str:
+    """«1 позиция» / «2 позиции» / «5 позиций» — стандартные русские
+    окончания (11-14 — всегда «позиций», как и любое число, кончающееся на
+    11-14, напр. 111)."""
+    if n % 100 in (11, 12, 13, 14):
+        return "позиций"
+    last = n % 10
+    if last == 1:
+        return "позиция"
+    if 2 <= last <= 4:
+        return "позиции"
+    return "позиций"
 
 
 # Задание 07.10.2026 (чек-лист п.4): короткие подписи причин пропуска для
@@ -46,10 +73,17 @@ SKIP_REASON_LABELS: dict[str, str] = {
     "no_status": "Нет статуса / план закупок",
     "needs_status": "Статус не распознан",
     "payroll": "ФОТ",
-    "ambiguous": "Несколько строк на одну плановую позицию",
+    # 🔵 правка (план lazy-swimming-hollerith.md): раньше это означало «N
+    # строк одноимённой позиции при одной свободной в плане GALA» — теперь,
+    # когда позицию из названия категории автоматически не заводят, это
+    # всегда «в плане GALA такой позиции нет совсем» (владелец).
+    "ambiguous": "Позиции нет в плане GALA",
     "already_purchased_multi": "Позиция уже в нескольких закупках",
     "already_purchased_unknown": "Позиция уже в закупке",
     "over_plan_skip": "Пропущено по решению о превышении",
+    # 🔵 правка (план lazy-swimming-hollerith.md): строка-категория («Плановая
+    # позиция» пуста) с данными — не пропуск молча, а уведомление владельцу.
+    "no_item_name": "Нет названия позиции",
 }
 
 
@@ -113,7 +147,32 @@ async def build_preview(
     tz_units = []
     row_to_match: dict = {}
     for row in parsed_rows:
-        match = matching_mod.match_row(ctx, row)
+        if row.get("no_item_name"):
+            # 🔵 правка (план lazy-swimming-hollerith.md): строка-категория
+            # без своей «Плановой позиции» НЕ привязывается автоматически,
+            # даже если в плане GALA есть позиция с именем, совпадающим с
+            # именем категории (owner: «категорию с позицией импорт не
+            # склеивает, один клик делает владелец») — match_row() не
+            # вызывается (он бы занял свободную позицию и пометил её
+            # used_ids). Кандидаты — тот же каталог по тому же нормализован-
+            # ному имени (matching_mod.normalize_item_name, ctx['by_name'],
+            # ПРАВИЛО №6 — тот же индекс, что строит match_row, второй не
+            # заводим), просто без потребления/привязки.
+            _key = matching_mod.normalize_item_name(row["name"])
+            _candidates = ctx["by_name"].get(_key, [])
+            match = {
+                "state": "no_item_name",
+                "planned_item_id": None,
+                "candidates": [
+                    {
+                        "id": c["id"], "name": c["name"], "path": c["path"], "amount": c.get("amount"),
+                        "category_id": c.get("category_id"),
+                    }
+                    for c in _candidates
+                ],
+            }
+        else:
+            match = matching_mod.match_row(ctx, row)
         row_to_match[row["row"]] = match
         if match["planned_item_id"]:
             amount = row["fact"]["amount"] if row["fact"]["amount"] is not None else row["contracted"]
@@ -322,29 +381,67 @@ async def build_preview(
         if match["state"] == "ambiguous" and "skip" not in override:
             skip = True
             skip_forced = True
-            # Задание 07.10.2026 (п.1/п.2): какая строка заняла позицию раньше
-            # (matching.py:competing_rows/competing_item_name) — без этого
-            # предупреждение «несколько строк претендуют» не говорит, куда
-            # смотреть (owner: «Стр. 16 — какие?»).
+            # 🟡 Правка (план lazy-swimming-hollerith.md, п.3): остаётся
+            # только для случая «позицию добавили в файл, а в план GALA не
+            # завели» (владелец: «KAMAZ 43101» дважды в файле при одной
+            # позиции в плане). N — реальное число одноимённых позиций в
+            # плане (len(candidates)), не «сколько строк её хотят» — для
+            # этой строки места в плане действительно больше нет.
             competing_rows = match.get("competing_rows") or []
             competing_name = match.get("competing_item_name") or row["name"]
+            n_candidates = len(match["candidates"])
+            word = _ru_plural_position(n_candidates)
             if competing_rows:
-                rows_text = ", ".join(str(n) for n in competing_rows)
-                plural = "строке" if len(competing_rows) == 1 else "строкам"
-                detail = (
-                    f'уже сопоставлена {plural} {rows_text} '
-                    '(позиций с таким названием в плане меньше, чем строк в файле)'
+                rows_label = "строке" if len(competing_rows) == 1 else "строкам"
+                rows_text = _row_ranges_only(competing_rows)
+                linked = (
+                    "она уже сопоставлена" if n_candidates == 1 else "все уже сопоставлены"
                 )
+                linked_part = f"{linked} {rows_label} {rows_text}"
             else:
-                detail = "уже сопоставлена другой строке файла"
+                linked_part = (
+                    "она уже сопоставлена другой строке файла"
+                    if n_candidates == 1 else "все уже сопоставлены другим строкам файла"
+                )
             reason_text = (
-                f'Плановая позиция «{competing_name}» {detail} — выберите для этой строки другую '
-                'позицию в колонке «Сопоставление» или пропустите'
+                f'В плане GALA {n_candidates} {word} «{competing_name}», {linked_part} — для этой строки '
+                'позиции в плане нет. Похоже, позицию добавили в файл, но не в план GALA: добавьте её в '
+                'План закупок или пропустите строку'
             )
             skip_reason = {"code": "ambiguous", "text": reason_text}
             warnings.append(reason_text)
 
-        if status_info["target_status"] is None and not needs_status:
+        if match["state"] == "no_item_name" and "skip" not in override:
+            # 🔵 Правка (план lazy-swimming-hollerith.md, п.2): «Плановая
+            # позиция» пуста у строки-категории, но в строке есть данные —
+            # строка не загружается молча, владелец выбирает позицию вручную
+            # в колонке «Сопоставление» (override.planned_item_id выше уже
+            # превратил бы match.state в «found» ДО этой проверки). skip_
+            # forced=False — владелец может и просто снять пропуск галочкой
+            # (как у not_found), это его решение.
+            skip = True
+            skip_forced = False
+            if row["status_raw"]:
+                hint = f'статус «{STATUS_LABELS.get(status_info["target_status"], row["status_raw"])}»'
+            elif fact_amount:
+                hint = f'факт {_rub(fact_amount)}'
+            elif row["paid"]:
+                hint = f'оплата {_rub(row["paid"])}'
+            else:
+                hint = "есть данные"
+            reason_text = (
+                f'«Плановая позиция» пуста, а в строке {hint} — похоже, название позиции забыли. '
+                'Строка не загружена: впишите позицию в файл или выберите её в колонке «Сопоставление»'
+            )
+            skip_reason = {"code": "no_item_name", "text": reason_text}
+            warnings.append(reason_text)
+
+        if status_info["target_status"] is None and not needs_status and match["state"] != "no_item_name":
+            # match.state == "no_item_name" исключён (координатор, повторная
+            # правка 10.10): у такой строки «План закупок» — ОДНА из причин
+            # самого уведомления no_item_name (ДНРР 152), не отдельная общая
+            # причина «нет статуса» — без исключения этот блок перетирал бы
+            # skip_reason/текст, выставленные выше, причём безусловно.
             skip = True
             skip_forced = True
             skip_reason = {

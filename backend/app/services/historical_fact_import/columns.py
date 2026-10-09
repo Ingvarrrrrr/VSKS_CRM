@@ -134,7 +134,13 @@ def detect_format_and_header(content: bytes, filename: str, sheet_name: Optional
     """Возвращает {format, header_row (1-based, строка С ДАННЫМИ начинается
     сразу после), rows: [[...]]} — все строки листа, уже прочитанные один раз
     (используются и для построения columns[], и дальше для rows.py)."""
-    all_rows = read_full_sheet_rows(content, filename, sheet_name)
+    # fill_merged=True — ТОЛЬКО для импорта факта (план lazy-swimming-
+    # hollerith.md, п.2): объединённая на несколько строк ячейка уровня —
+    # одна и та же Excel-ячейка, её значение честно повторяется во все
+    # строки диапазона. Другие вызывающие read_full_sheet_rows (products_
+    # import.py, feo_import.py) не передают этот параметр и не меняют
+    # поведение.
+    all_rows = read_full_sheet_rows(content, filename, sheet_name, fill_merged=True)
     all_rows = [list(r) for r in all_rows]
 
     max_scan = min(15, len(all_rows))

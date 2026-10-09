@@ -640,7 +640,101 @@ async def test_preview_skip_reason_ambiguous(client, auth_headers, test_user, db
     assert second["skip_reason"]["code"] == "ambiguous"
     assert str(rows[0]["row"]) in second["skip_reason"]["text"]
     assert "Аренда оборудования" in second["skip_reason"]["text"]
-    assert "в колонке «Сопоставление»" in second["skip_reason"]["text"]
+    # 🔵 Правка (план lazy-swimming-hollerith.md, п.3): текст ambiguous
+    # переписан — «позиции в плане нет» (владелец), а не «выберите другую
+    # позицию в колонке «Сопоставление»» (это осталось верно по смыслу —
+    # картинка пикера, но текст теперь другой).
+    assert "в плане нет" in second["skip_reason"]["text"]
+    assert "План закупок" in second["skip_reason"]["text"]
+
+
+async def test_preview_no_item_name_notification_and_manual_override(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """🔵 Правка (план lazy-swimming-hollerith.md, п.2-3): категория без своей
+    «Плановой позиции», но со статусом «Оплачено» (боевой пример — ДНРР
+    150–152 «Проезд, проживание, питание») — не пропуск молча, а уведомление
+    с кодом no_item_name; ручной выбор позиции в decisions.row_overrides
+    снимает пропуск (строка становится found)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook([
+        # Эта строка задаёт «Плановую позицию» — колонка используется в
+        # файле, значит правило категорий включается для ВСЕХ строк файла.
+        _row("Прочее", 1, 1, 1, item_name="Прочее", status_raw="В работе"),
+        _row("Командировочные расходы", 50000, None, None, status_raw="Оплачено"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    cat_row = rows[1]
+    assert cat_row["match"]["state"] == "no_item_name"
+    assert cat_row["skip"] is True
+    assert cat_row["skip_forced"] is False
+    assert cat_row["skip_reason"]["code"] == "no_item_name"
+    assert "Плановая позиция" in cat_row["skip_reason"]["text"]
+    assert "Оплачено" in cat_row["skip_reason"]["text"]
+    assert "Сопоставление" in cat_row["skip_reason"]["text"]
+
+    # Ручной выбор плановой позиции в «Сопоставлении» снимает пропуск.
+    resp2 = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"decisions": json.dumps({
+            "row_overrides": {str(cat_row["row"]): {"planned_item_id": item_wip.id}},
+        })},
+        headers=auth_headers,
+    )
+    assert resp2.status_code == 200, resp2.text
+    rows2 = resp2.json()["rows"]
+    cat_row2 = next(r for r in rows2 if r["row"] == cat_row["row"])
+    assert cat_row2["match"]["state"] == "found"
+    assert cat_row2["match"]["planned_item_id"] == item_wip.id
+    assert cat_row2["skip"] is False
+
+
+async def test_preview_no_item_name_with_plan_schedule_status_still_notifies(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Координатор, повторная правка 10.10 (ДНРР 152): категория без своей
+    «Плановой позиции» со статусом «План закупок» — ТОЖЕ уведомление
+    no_item_name, а не общая причина «нет статуса» (код и текст не должны
+    перетираться последующей общей проверкой `target_status is None`)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    content = _build_ho_workbook([
+        _row("Прочее", 1, 1, 1, item_name="Прочее", status_raw="В работе"),
+        _row("Проезд, проживание, питание", None, None, None, status_raw="План закупок"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    cat_row = rows[1]
+    assert cat_row["match"]["state"] == "no_item_name"
+    assert cat_row["skip"] is True
+    assert cat_row["skip_forced"] is False
+    assert cat_row["skip_reason"]["code"] == "no_item_name"
+    assert "План закупок" in cat_row["skip_reason"]["text"]
+    assert "Плановая позиция" in cat_row["skip_reason"]["text"]
+
+    breakdown = resp.json()["totals"]["breakdown"]["skipped_by_reason"]
+    bucket = next(b for b in breakdown if b["code"] == "no_item_name")
+    assert cat_row["row"] in bucket["rows"]
+    assert not any(b["code"] == "no_status" and cat_row["row"] in b["rows"] for b in breakdown)
 
 
 async def test_preview_skip_reason_manual(client, auth_headers, test_user, db_session, subsidy_with_plan):

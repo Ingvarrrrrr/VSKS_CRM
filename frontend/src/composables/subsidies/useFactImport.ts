@@ -49,7 +49,7 @@ export interface FactImportMatchCandidate {
   amount: number | null
 }
 
-export type FactImportMatchState = 'found' | 'ambiguous' | 'not_found' | 'already_purchased'
+export type FactImportMatchState = 'found' | 'ambiguous' | 'not_found' | 'already_purchased' | 'no_item_name'
 
 export interface FactImportMatch {
   state: FactImportMatchState

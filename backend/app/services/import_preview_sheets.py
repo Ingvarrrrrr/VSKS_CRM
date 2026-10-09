@@ -158,11 +158,30 @@ def read_preview_sheets(content: bytes, filename: str, hints: tuple, sample_rows
     return {"sheets": sheets}
 
 
-def read_full_sheet_rows(content: bytes, filename: str, sheet_name: Optional[str]) -> list:
+def read_full_sheet_rows(
+    content: bytes, filename: str, sheet_name: Optional[str], fill_merged: bool = False,
+) -> list:
     """Все строки ОДНОГО листа (.xlsx/.xls) по точному имени; если `sheet_name`
     не задан или не найден среди листов файла — берётся первый лист (НЕ
     `wb.active`, который может отличаться от первого листа по порядку —
-    см. test_products_import_sheet_select.py)."""
+    см. test_products_import_sheet_select.py).
+
+    `fill_merged=True` (задача импорта факта, план lazy-swimming-hollerith.md,
+    п.2) — единственное законное «размножение» значения по строкам: ячейка,
+    объединённая в Excel на несколько строк/столбцов, физически хранит
+    значение только в своей верхней-левой ячейке (`ws.merged_cells.ranges`),
+    openpyxl во всех остальных ячейках диапазона отдаёт `None`. Без этого
+    параметра поведение не меняется для существующих вызывающих (products_
+    import.py, feo_import.py, historical_fact_import без явного запроса) —
+    Правило №6: это НЕ перенос значения из строки выше произвольной ячейки
+    (`carry`, который мы убираем из historical_fact_import/rows.py), а просто
+    честное прочтение одной и той же Excel-ячейки, которая физически
+    занимает несколько строк.
+    .xls (xlrd) не поддерживает этот параметр здесь — xlrd отдаёт объединения
+    через `ws.merged_cells` отдельным списком диапазонов, но старые .xls-файлы
+    исторического импорта факта на практике объединённых ячеек уровня не
+    используют; при необходимости это отдельная доработка (не блокирует эту
+    задачу)."""
     fname = (filename or "").lower()
     if fname.endswith(".xls"):
         if _xlrd is None:
@@ -175,8 +194,31 @@ def read_full_sheet_rows(content: bytes, filename: str, sheet_name: Optional[str
 
     if load_workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
+    # Как и раньше (read_only не указан => False) — `ws.merged_cells.ranges`
+    # нужен только в режиме НЕ read_only, поведение для остальных вызывающих
+    # (products_import.py, feo_import.py) не меняется: они и раньше грузили
+    # книгу без read_only.
     wb = load_workbook(BytesIO(content), data_only=True)
     ws_names = wb.sheetnames
     target = sheet_name if sheet_name in ws_names else ws_names[0]
     ws = wb[target]
-    return list(ws.iter_rows(values_only=True))
+    rows = [list(r) for r in ws.iter_rows(values_only=True)]
+    if fill_merged:
+        for merged_range in ws.merged_cells.ranges:
+            top_value = ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
+            if top_value is None:
+                continue
+            for r in range(merged_range.min_row, merged_range.max_row + 1):
+                row_idx = r - 1
+                if row_idx >= len(rows):
+                    continue
+                row = rows[row_idx]
+                for c in range(merged_range.min_col, merged_range.max_col + 1):
+                    col_idx = c - 1
+                    while len(row) <= col_idx:
+                        row.append(None)
+                    row[col_idx] = top_value
+        wb.close()
+        return rows
+    wb.close()
+    return rows

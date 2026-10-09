@@ -36,6 +36,7 @@ export function feoWarnKindLabel(kind: string): string {
     item_promoted_needs_review: 'Разберите вручную: позиция ниже используется как подраздел',
     item_name_used_as_level: 'Разберите вручную: позиция лежит под чужим подразделом',
     item_promoted_to_level: 'Плановая позиция стала подразделом',
+    missing_level_hint: 'Похоже, забыт уровень подкатегории',
   }
   return labels[kind] ?? kind
 }

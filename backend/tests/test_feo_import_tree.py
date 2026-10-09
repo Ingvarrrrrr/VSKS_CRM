@@ -365,6 +365,6 @@ async def test_plan_vs_items_mismatch_warns_when_amount_from_feo_fallback(db_ses
         msg = mismatches[0]["message"]
         assert "Категория I8" in msg
         assert "(взят из чисел по ФЭО, плановые колонки пустые)" in msg
-        assert "800 000.00" in msg
+        assert "800 000,00" in msg
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)

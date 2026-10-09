@@ -101,8 +101,8 @@ async def test_budget_overwritten_by_row_names_all_rows(db_session):
         ow = next((w for w in overwritten if w["name"] == "Родитель W1"), None)
         assert ow is not None, f"нет budget_overwritten_by_row для «Родитель W1»: {result['warnings']}"
         msg = ow["message"]
-        assert "2" in msg and "500 000.00" in msg, msg
-        assert "4" in msg and "999 999.00" in msg, msg
+        assert "2" in msg and "500 000,00" in msg, msg
+        assert "4" in msg and "999 999,00" in msg, msg
         assert "учтена последняя (строка 4)" in msg, msg
 
         cats = await _get_categories(db_session, subsidy.id)
@@ -130,8 +130,8 @@ async def test_parent_sum_mismatch_names_parent_and_children_rows(db_session):
         assert len(mism) == 1
         msg = mism[0]["message"]
         assert "раздела «Родитель W2»" in msg, msg
-        assert "500 000.00" in msg and "строка 2" in msg, msg
-        assert "200 000.00" in msg and "строка 3" in msg, msg
+        assert "500 000,00" in msg and "строка 2" in msg, msg
+        assert "200 000,00" in msg and "строка 3" in msg, msg
         assert "подразделов" in msg, msg
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)
@@ -162,12 +162,12 @@ async def test_amount_without_level2_names_the_amount(db_session):
         aw = [w for w in result["warnings"] if w["kind"] == "amount_without_level2"]
         assert len(aw) == 1
         assert aw[0]["row"] == 2
-        assert "29 000 000.00" in aw[0]["message"]
+        assert "29 000 000,00" in aw[0]["message"]
         assert "Уровень 2" in aw[0]["message"]
 
         assert len(result["skipped_details"]) == 1
         _reason = result["skipped_details"][0]["reason"]
-        assert "29 000 000.00" in _reason, f"skipped_details не должен молчать про сумму: {_reason!r}"
+        assert "29 000 000,00" in _reason, f"skipped_details не должен молчать про сумму: {_reason!r}"
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)
 

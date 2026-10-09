@@ -189,7 +189,7 @@ async def test_resolution_sum_adds_values(db_session):
         assert result["budget_conflict_groups"][0]["resolution"] == "sum"
 
         overwritten = [w for w in result["warnings"] if w["kind"] == "budget_overwritten_by_row"]
-        assert "по вашему выбору сложены: 2 900 000.00" in overwritten[0]["message"]
+        assert "по вашему выбору сложены: 2 900 000,00" in overwritten[0]["message"]
 
         cats = await _get_categories(db_session, subsidy_id)
         leaf = next(c for c in cats if c.name == "Пожарное оборудование")
@@ -314,8 +314,8 @@ async def test_resolution_items_clears_own_budget(db_session):
 
         replaced = [w for w in result["warnings"] if w["kind"] == "category_sum_replaced_by_items"]
         assert len(replaced) == 1
-        assert "900 000.00" in replaced[0]["message"]
-        assert "1 000 000.00" in replaced[0]["message"]
+        assert "900 000,00" in replaced[0]["message"]
+        assert "1 000 000,00" in replaced[0]["message"]
 
         cats = await _get_categories(db_session, subsidy_id)
         leaf = next(c for c in cats if c.name == "Катера")

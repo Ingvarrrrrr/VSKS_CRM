@@ -33,6 +33,7 @@ from app.services.feo_import_budget_conflicts import (
     register_budget_write,
 )
 from app.services.feo_import_item_types import resolve_item_type_for_row
+from app.services.feo_import_missing_level import detect_missing_level_hints
 from app.services.plan_need_level import NEED_LEVEL_LABELS, NEED_LEVEL_LIKELY
 from app.services.feo_import_comments import register_category_comment_intent, register_item_comment_intent
 from app.routers.feo_planned_items import normalize_item_type
@@ -292,6 +293,18 @@ async def apply_rows(state) -> None:
     # «Плановой позиции» — у него своя, независимая от файловой уникальности,
     # защита от разрыва: смотрит только на ЭТУ строку).
     uniformly_empty_levels = find_uniformly_empty_levels(rows, c_lvl2, c_lvl3, c_lvl4)
+
+    # Решение владельца 10.10.2026: предупреждение «похоже, забыт уровень
+    # подкатегории» — итог без «Плановой позиции», чья сумма равна сумме
+    # нескольких следующих строк-позиций, у части которых не указан
+    # следующий уровень (см. docstring feo_import_missing_level.py и боевой
+    # пример «ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx», лист «ДНРР», строки 251/253/
+    # 254). Только предупреждение — дерево и суммы не меняются, ничего из
+    # соседних строк не переносится.
+    warnings.extend(detect_missing_level_hints(
+        rows, c_lvl2, c_lvl3, c_lvl4, c_lvl5,
+        c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4,
+    ))
 
     # Коррекция владельца (07.10, после первого отчёта по шагу 0.5): охват
     # правила «строка без „Плановой позиции“ — статья, не позиция» (ниже,

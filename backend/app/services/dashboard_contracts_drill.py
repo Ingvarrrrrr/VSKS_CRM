@@ -10,15 +10,25 @@ redistributable-подстроки). Не вызываем contracted_total_by_s
 (она агрегирует СРАЗУ по субсидии — нет начала строки «один договор»), но
 строим amount КАЖДОЙ строки ТЕМИ ЖЕ выражениями/предикатами:
   - single/framework_with_amount — effective_amount_expr() Σ по закупкам,
-    committed_status_predicate()/FRAMEWORK_COMMITTED_STATUSES (committed_amounts.py),
-    greatest(max_amount, Σ факт) — тот же приём, что _fwa_children_sum в
-    contracted_total_by_subsidy (framework_with_amount) и
-    single_contract_topup_by_subsidy (single: «лимит или факт, что больше» —
+    committed_status_predicate()/FRAMEWORK_COMMITTED_STATUSES ∪ reserved_child_
+    predicate() (committed_amounts.py/stage_cumulative.py — «заказано+
+    зарезервировано», та же пара, что fwa_children_cat_stmt/cfc_cat_stmt в
+    contracted_rows_by_category), greatest(max_amount, Σ факт) — тот же приём,
+    что _fwa_children_sum в contracted_total_by_subsidy (framework_with_amount)
+    и single_contract_topup_by_subsidy (single: «лимит или факт, что больше» —
     то же greatest(), просто показан как ОДНО число строки, а не отдельная
-    добавка).
+    добавка). framework_with_amount НЕ гейтится статусом закупки-шапки —
+    решение владельца 09.10.2026 (прод-пример «АДС-АВТО», договор «1», закупка
+    №1253): действующий (status='active') framework_with_amount-договор сам
+    по себе увеличивает «законтрактовано», даже если заказов по нему не было
+    и сама шапка ещё не дошла до стадии «Договор» — «увеличивает
+    законтрактованное, но не запланированное». Гейт по шапке (функция
+    framework_with_amount_head_committed_expr) был введён и тем же днём
+    отменён владельцем — см. git-историю, в committed_amounts.py не осталось.
   - framework_cumulative — Σ effective_amount_expr() по закупкам, привязанным
-    к договору (committed_status_predicate), group by Contract.id вместо
-    Purchase.subsidy_id у cfc_q.
+    к договору (FRAMEWORK_COMMITTED_STATUSES ∪ reserved_child_predicate(), та
+    же пара, что и выше), group by Contract.id вместо Purchase.subsidy_id у
+    cfc_q.
   - committed-закупки БЕЗ активного контракта признанного типа
     (committed_uncounted_expr(), stage_cumulative.py) — каждая такая закупка
     своей строкой («без закупки» в dashboard_type_drill.py — здесь наоборот,
@@ -26,11 +36,21 @@ redistributable-подстроки). Не вызываем contracted_total_by_s
 
 Σ amount всех строк == contracted_total_by_subsidy(...)[subsidy_id]['amount']
 — проверено test_dashboard_contracts_drill.py на синтетических данных (один
-разовый, один framework_with_amount с остатком, один framework_cumulative).
+разовый, один framework_with_amount с остатком, один framework_cumulative) И
+test_contracted_total_stage_rules.py (framework_with_amount независимо от
+статуса шапки + смешанные данные, включая договор с subsidy_id=NULL).
+
+ИСПРАВЛЕНО 09.10.2026 (прод-находка, ФАДМ 2026_2, карточка 13 634 734,35 vs
+список 13 599 122,55 — разница 35 611,80): _fwa_children_sum/cfc_stmt раньше
+считали ТОЛЬКО FRAMEWORK_COMMITTED_STATUSES (ordered/delivered/paid), а
+карточка (contracted_rows_by_category) уже включала reserved_child_predicate()
+(заказ рамочного в статусе 'contracted' — договор на партию уже заключён) —
+список «терял» зарезервированные-но-не-оформленные-как-заказ деньги, которые
+карточка считала. Теперь оба места — ОДНО и то же выражение (ПРАВИЛО №6).
 """
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_ as sqlor, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract import Contract
@@ -42,7 +62,7 @@ from app.services.committed_amounts import (
     committed_status_predicate,
 )
 from app.services.purchase_amounts import effective_amount_expr
-from app.services.stage_cumulative import committed_uncounted_expr
+from app.services.stage_cumulative import committed_uncounted_expr, reserved_child_predicate
 
 CONTRACT_TYPE_LABELS = {
     "single": "Разовый",
@@ -66,11 +86,17 @@ async def contracts_drill_rows(db: AsyncSession, *, subsidy_ids: list[int]) -> l
         return rows
 
     # ── single / framework_with_amount — активные контракты этих типов ──────
+    # Те же предикаты, что и contracted_rows_by_category (карточка) — ОБЕ
+    # группы статусов (FRAMEWORK_COMMITTED_STATUSES И reserved_child_predicate,
+    # т.е. «ordered+reserved», ПРАВИЛО №6): раньше здесь был только
+    # FRAMEWORK_COMMITTED_STATUSES, из-за чего список на 35 611,80 расходился
+    # с карточкой на «зарезервированных» (status='contracted', заказ рамочного
+    # договора) детях (прод-находка 09.10.2026).
     _fwa_children_sum = (
         select(func.coalesce(func.sum(effective_amount_expr()), 0))
         .where(Purchase.contract_id == Contract.id)
         .where(Purchase.parent_purchase_id.isnot(None))
-        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
+        .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
         .correlate(Contract)
         .scalar_subquery()
     )
@@ -135,7 +161,12 @@ async def contracts_drill_rows(db: AsyncSession, *, subsidy_ids: list[int]) -> l
         .where(Contract.status == "active")
         .where(Contract.contract_type == "framework_cumulative")
         .where(Contract.subsidy_id.in_(subsidy_ids))
-        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
+        # Та же пара статусов, что и cfc_cat_stmt в contracted_rows_by_category
+        # (карточка) — FRAMEWORK_COMMITTED_STATUSES ИЛИ reserved_child_predicate
+        # (заказ накопительного рамочного в статусе 'contracted' — договор на
+        # партию уже заключён). Раньше здесь не было reserved — часть источника
+        # расхождения карточка/список (прод-находка 09.10.2026).
+        .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
         .group_by(Contract.id, Contract.number, Contract.subject, Contract.contractor_id, Contract.subsidy_id)
     )
     cfc_rows = (await db.execute(cfc_stmt)).all()

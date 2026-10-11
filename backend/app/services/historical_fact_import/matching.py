@@ -99,6 +99,51 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
     }
 
 
+def order_rows_for_matching(ctx: dict, rows: list) -> list:
+    """Задача A (владелец, боевой файл ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx, лист
+    ДНРР, 11.10.2026): план GALA содержит ОДНУ позицию «Проезд, проживание,
+    питание» на 292 815,90 ₽. Строка 151 файла (план 407 184,10) идёт раньше
+    строки 152 (план 292 815,90) — но именно 152 точно совпадает по сумме
+    плана с позицией GALA. match_row вызывался по строкам сверху вниз, 151
+    забирала позицию первой (ложное «превышение» 407 184,10 > 292 815,90), а
+    152 получала «позиции нет в плане».
+
+    Возвращает `rows` в ДВА прохода: сначала строки, у которых среди
+    СВОБОДНЫХ (не привязанных к чужой закупке — already_bound; used_ids на
+    момент сортировки пуст, сортировка идёт ДО единого прохода match_row)
+    одноимённых позиций каталога есть позиция с суммой плана, равной
+    (±0,01) сумме плана строки файла, — точное совпадение однозначно решает,
+    кому принадлежит позиция; затем все остальные строки, в исходном
+    порядке. Сам каскад выбора внутри match_row (имя→сумма→путь→порядок) НЕ
+    меняется ни для одной строки — меняется только ОЧЕРЁДНОСТЬ вызова.
+    by_name/already_bound — тот же словарь/множество, что строит и читает
+    match_row (ПРАВИЛО №6), второй индекс не заводится."""
+    by_name: dict = ctx["by_name"]
+    already_bound: set = ctx["already_bound"]
+
+    def _has_exact_free_amount_match(row: dict) -> bool:
+        plan_amount = (row.get("plan") or {}).get("amount")
+        if plan_amount is None:
+            return False
+        target = Decimal(str(plan_amount))
+        key = normalize_item_name(row.get("name"))
+        for c in by_name.get(key, []):
+            if c["id"] in already_bound:
+                continue
+            c_amount = c.get("amount")
+            if c_amount is None:
+                continue
+            if abs(Decimal(str(c_amount)) - target) <= Decimal("0.01"):
+                return True
+        return False
+
+    exact: list = []
+    rest: list = []
+    for row in rows:
+        (exact if _has_exact_free_amount_match(row) else rest).append(row)
+    return exact + rest
+
+
 def match_row(ctx: dict, row: dict) -> dict:
     """{state: found|ambiguous|not_found|already_purchased, planned_item_id,
     candidates: [{id, name, path, amount}]}.

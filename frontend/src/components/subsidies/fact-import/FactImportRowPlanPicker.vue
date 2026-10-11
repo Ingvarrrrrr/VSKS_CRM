@@ -24,7 +24,7 @@
         <FeoPlannedSearchBox
           v-if="subsidyId"
           v-model:search-text="search.searchText.value"
-          :rows="selectableRows"
+          :rows="displayRows"
           :loading="search.searchLoading.value"
           :fmt="formatMoney"
           @select="onSearchSelect"
@@ -107,6 +107,30 @@ const { setRowPlannedItem, setRowSkip } = useFactImport()
 // подмены id).
 const selectableRows = computed(() => search.searchRows.value.filter(r => r.kind === 'planned_item'))
 const hiddenCount = computed(() => search.searchRows.value.length - selectableRows.value.length)
+
+// Задание владельца (баг с меню): если по имени строки ничего не найдено —
+// дать листать ВЕСЬ план субсидии, а не только совпадения /match. Источник —
+// тот же plannedResiduals, что уже загружен выше для остатков (ПРАВИЛО №6,
+// второй список плановых позиций не завели); фильтр по тексту — локальный,
+// т.к. полный список не ходит через серверный /match.
+const allPlannedRows = computed<FeoPlannedSearchRow[]>(() => plannedResiduals.value
+  .filter(r => r.kind === 'planned_item')
+  .map(r => ({ ...r, score: 0, crossCategory: false })))
+
+const browseRows = computed<FeoPlannedSearchRow[]>(() => {
+  const q = search.searchText.value.trim().toLowerCase()
+  if (!q) return allPlannedRows.value
+  const filtered = allPlannedRows.value.filter(r => r.name.toLowerCase().includes(q))
+  // Подставленное при открытии имя строки файла почти никогда не совпадёт
+  // подстрокой с названием плановой позиции (иначе матчинг нашёл бы его сам)
+  // — в этом случае отдаём ВЕСЬ список, а не пустой: листать можно всегда,
+  // фильтр сужает список только когда он реально находит совпадения.
+  return filtered.length > 0 ? filtered : allPlannedRows.value
+})
+
+// Что реально показываем в поле поиска: совпадения /match, если они есть;
+// иначе — весь план (листаемый/фильтруемый по тексту вручную).
+const displayRows = computed(() => selectableRows.value.length > 0 ? selectableRows.value : browseRows.value)
 
 const currentName = computed(() => props.row?.match?.planned_item_name ?? null)
 const currentAmount = computed(() => props.row?.match?.planned_item_amount ?? null)

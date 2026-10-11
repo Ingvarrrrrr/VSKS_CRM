@@ -199,6 +199,26 @@ export interface FactImportPaidNotDelivered {
   rows: FactImportPaidNotDeliveredRow[]
 }
 
+// Задача C (владелец, файл ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx, 11.10.2026):
+// строки со статусом «Оплачено», у которых колонка «Оплачено» в файле пуста
+// — платёж не создаётся, они не попадают в totals.paid_amount. Источник —
+// backend preview.py::paid_status_without_paid_predicate (ПРАВИЛО №6, тот
+// же предикат у предупреждения строки и у totals). rows_text — готовые
+// диапазоны строк (backend _row_ranges_only), второй раз на фронте не
+// схлопываем.
+export interface FactImportPaidStatusWithoutPaidRow {
+  row: number
+  name: string
+  fact: number
+}
+
+export interface FactImportPaidStatusWithoutPaid {
+  count: number
+  fact_amount: number
+  rows: FactImportPaidStatusWithoutPaidRow[]
+  rows_text: string
+}
+
 // Задание 07.10.2026 (чек-лист, п.4): «Из чего сложились итоги» — разбивка
 // по статусу GALA × {включены в итог / пропущены}, посчитанная бэкендом В
 // ТОМ ЖЕ цикле, что totals (ПРАВИЛО №6, не вторая формула). Σ by_status[*]
@@ -242,6 +262,7 @@ export interface FactImportTotals {
   existing_updates: number
   breakdown: FactImportBreakdown
   paid_not_delivered: FactImportPaidNotDelivered
+  paid_status_without_paid: FactImportPaidStatusWithoutPaid
 }
 
 // 🟢 Задача B — одна СУЩЕСТВУЮЩАЯ закупка, которую этот прогон обновит по

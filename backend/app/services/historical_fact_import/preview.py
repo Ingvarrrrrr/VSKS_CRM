@@ -33,11 +33,13 @@ from app.services.documents.formatting import _fmt_money
 # хелпер, что собирает сводные предупреждения импорта ФЭО (feo_import_apply.py/
 # feo_import_plan.py), не вторая копия схлопывания диапазонов.
 from app.services.feo_import_common import format_rows as _format_rows
-
-
-def _rub(v) -> str:
-    formatted = _fmt_money(v)
-    return f"{formatted} ₽" if formatted else "0,00 ₽"
+# Задача B (11.10.2026): _rub переехал в plan_diff_warnings.py (ПРАВИЛО №6 —
+# единственный форматтер суммы для этого модуля, второй копии не держим);
+# build_file_plan_vs_gala_warning/build_tz_excess_message — тексты двух
+# предупреждений про расхождение плана/факта файла с планом GALA.
+from app.services.historical_fact_import.plan_diff_warnings import (
+    _rub, build_file_plan_vs_gala_warning, build_tz_excess_message,
+)
 
 
 def _row_ranges_only(rows: list) -> str:
@@ -99,6 +101,19 @@ def paid_not_delivered_predicate(paid, target_status: Optional[str], is_advance:
     return bool(paid and target_status and target_status not in ("delivered", "paid") and not is_advance)
 
 
+def paid_status_without_paid_predicate(target_status: Optional[str], paid) -> bool:
+    """Единственный предикат «статус «Оплачено», но колонка «Оплачено» в
+    файле пуста» (владелец, файл ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx, строки
+    141/142/151: статус «Оплачено», колонка оплаты пуста, платёж не
+    создаётся — владелец посчитал их «оплатой» по своей таблице, в GALA они
+    не попадут в «Оплачено»). ПРАВИЛО №6 — один источник и для
+    предупреждения строки (ниже), и для totals.paid_status_without_paid
+    (задача C, видно уже на шаге итогов мастера, не только у самой строки).
+    target_status — уже ПОСЛЕ подмены is_advance (ордер вместо paid для
+    авансов) — авансовые строки сюда не попадают, у них своё предупреждение."""
+    return bool(target_status == "paid" and not paid)
+
+
 async def build_preview(
     db: AsyncSession,
     subsidy_id: int,
@@ -144,36 +159,50 @@ async def build_preview(
     # (ПРАВИЛО №6) — read-only здесь, ничего не пишет.
     from app.services.tz_excess_approval import collect_tz_over_plan_violations
 
-    tz_units = []
     row_to_match: dict = {}
     for row in parsed_rows:
-        if row.get("no_item_name"):
-            # 🔵 правка (план lazy-swimming-hollerith.md): строка-категория
-            # без своей «Плановой позиции» НЕ привязывается автоматически,
-            # даже если в плане GALA есть позиция с именем, совпадающим с
-            # именем категории (owner: «категорию с позицией импорт не
-            # склеивает, один клик делает владелец») — match_row() не
-            # вызывается (он бы занял свободную позицию и пометил её
-            # used_ids). Кандидаты — тот же каталог по тому же нормализован-
-            # ному имени (matching_mod.normalize_item_name, ctx['by_name'],
-            # ПРАВИЛО №6 — тот же индекс, что строит match_row, второй не
-            # заводим), просто без потребления/привязки.
-            _key = matching_mod.normalize_item_name(row["name"])
-            _candidates = ctx["by_name"].get(_key, [])
-            match = {
-                "state": "no_item_name",
-                "planned_item_id": None,
-                "candidates": [
-                    {
-                        "id": c["id"], "name": c["name"], "path": c["path"], "amount": c.get("amount"),
-                        "category_id": c.get("category_id"),
-                    }
-                    for c in _candidates
-                ],
-            }
-        else:
-            match = matching_mod.match_row(ctx, row)
-        row_to_match[row["row"]] = match
+        if not row.get("no_item_name"):
+            continue
+        # 🔵 правка (план lazy-swimming-hollerith.md): строка-категория
+        # без своей «Плановой позиции» НЕ привязывается автоматически,
+        # даже если в плане GALA есть позиция с именем, совпадающим с
+        # именем категории (owner: «категорию с позицией импорт не
+        # склеивает, один клик делает владелец») — match_row() не
+        # вызывается (он бы занял свободную позицию и пометил её
+        # used_ids). Кандидаты — тот же каталог по тому же нормализован-
+        # ному имени (matching_mod.normalize_item_name, ctx['by_name'],
+        # ПРАВИЛО №6 — тот же индекс, что строит match_row, второй не
+        # заводим), просто без потребления/привязки.
+        _key = matching_mod.normalize_item_name(row["name"])
+        _candidates = ctx["by_name"].get(_key, [])
+        row_to_match[row["row"]] = {
+            "state": "no_item_name",
+            "planned_item_id": None,
+            "candidates": [
+                {
+                    "id": c["id"], "name": c["name"], "path": c["path"], "amount": c.get("amount"),
+                    "category_id": c.get("category_id"),
+                }
+                for c in _candidates
+            ],
+        }
+
+    # Задача A (владелец, боевой файл ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx, лист
+    # ДНРР, 11.10.2026): строки с точным совпадением суммы плана сопоставляются
+    # ПЕРВЫМИ (matching_mod.order_rows_for_matching, ПРАВИЛО №6 — порядок
+    # решает тот же каскад match_row, здесь меняется только очерёдность
+    # вызова) — иначе более РАННЯЯ по номеру строка той же одноимённой
+    # позиции забирает её себе, даже когда сумма плана точно совпадает у
+    # ДРУГОЙ строки. row_to_match заполняется по номеру строки — итоговый
+    # порядок строк предпросмотра (цикл ниже проходит parsed_rows как раньше)
+    # не меняется.
+    matchable_rows = [r for r in parsed_rows if not r.get("no_item_name")]
+    for row in matching_mod.order_rows_for_matching(ctx, matchable_rows):
+        row_to_match[row["row"]] = matching_mod.match_row(ctx, row)
+
+    tz_units = []
+    for row in parsed_rows:
+        match = row_to_match[row["row"]]
         if match["planned_item_id"]:
             amount = row["fact"]["amount"] if row["fact"]["amount"] is not None else row["contracted"]
             tz_units.append(SimpleNamespace(
@@ -246,7 +275,7 @@ async def build_preview(
             warnings.append('Статус «Заключён договор» (из «Оплачено частично»), но «Оплачено» не заполнено')
         if is_advance:
             warnings.append("аванс: оплачено до поставки")
-        if status_info["target_status"] == "paid" and not row["paid"]:
+        if paid_status_without_paid_predicate(status_info["target_status"], row["paid"]):
             # Повод: файл ЛНР МАО 07.10.2026 — колонка «Оплата» не
             # распозналась как paid, 35 строк «Оплачено» ушли с суммой 0 ₽ и
             # без единого платежа, молча (columns.py теперь ловит «Оплата»
@@ -295,8 +324,16 @@ async def build_preview(
         # «Превышение», не правка ТЗ/плана). Сам факт превышения (is_over_plan)
         # остаётся сигналом независимо от этого дедупа.
         if match["planned_item_id"] in violations_by_fpi and not over_plan_choice and not is_over_plan:
+            # Задача B: текст словами владельца («Факт больше плана GALA:
+            # количество — в плане 1, в строке 4…»), НЕ v["message"]
+            # (tz_excess_approval.collect_tz_over_plan_violations — тот текст
+            # написан для карточки заявки/закупки, «уменьшите ТЗ» здесь
+            # неприменимо: владелец сравнивает со своим файлом, не с ТЗ).
+            # violation_details — структурные поля того же нарушения
+            # (ПРАВИЛО №6, добавлены в feo_plan_tz_checks.tz_over_plan_
+            # violations, не вторая формула сравнения).
             for v in violations_by_fpi[match["planned_item_id"]]:
-                warnings.append(v["message"])
+                warnings.append(build_tz_excess_message(v.get("violation_details") or []))
 
         # «Законтрактовано» без факта при статусе «В работе» (правка 2, план) —
         # решается ПОЧЕЛОВЕЧНО через decisions.contract_confirmed_rows в commit.
@@ -327,6 +364,14 @@ async def build_preview(
                 "planned_item_path": _entry.get("path") if _entry else None,
                 "planned_item_amount": _entry.get("amount") if _entry else None,
             }
+            # Задача B (владелец, строка 89 «Бочка металлическая…»): план
+            # строки файла (кол-во/цена/сумма) отличается от плана
+            # сопоставленной позиции GALA, даже когда сумма совпала случайно
+            # (4 × 5 500 = 1 × 22 000 = 22 000 — количество и цена разные).
+            if _entry is not None:
+                _plan_diff_warning = build_file_plan_vs_gala_warning(row["plan"], _entry)
+                if _plan_diff_warning:
+                    warnings.append(_plan_diff_warning)
 
         # Задача A — ФОТ по категории плановой позиции (после override, т.к.
         # override.planned_item_id может сменить, какая категория у строки).
@@ -674,6 +719,17 @@ async def build_preview(
     # existing_purchase не меняет её «итоговый статус ниже delivered»).
     paid_not_delivered_rows: list[dict] = []
     paid_not_delivered_amount = Decimal(0)
+    # Задача C (владелец, файл ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx): строки
+    # 141/142/151 — статус «Оплачено», колонка «Оплачено» пуста; у строки
+    # уже есть предупреждение (paid_status_without_paid_predicate выше), но
+    # на шаге итогов мастера их не видно, и владелец принимает их за «Факт:
+    # Сумма» строк со статусом «Оплачено» = «Оплачено» (расхождение
+    # 438 376,10 ₽ с его подсчётом по Excel). Тот же предикат, не вторая
+    # формула (ПРАВИЛО №6). Только НЕ пропущенные строки — ПОЛНОСТЬЮ
+    # пропущенная строка не создаёт закупку/платёж вообще, в totals она уже
+    # учтена отдельно (skipped_by_reason).
+    paid_status_without_paid_rows: list[dict] = []
+    paid_status_without_paid_amount = Decimal(0)
     for r in out_rows:
         if r["skip"]:
             continue
@@ -685,6 +741,10 @@ async def build_preview(
                 "paid": r["paid"],
             })
             paid_not_delivered_amount += Decimal(str(r["paid"]))
+        if paid_status_without_paid_predicate(r["status"], r["paid"]):
+            fact_val = r["fact"]["amount"] if r["fact"]["amount"] is not None else 0
+            paid_status_without_paid_rows.append({"row": r["row"], "name": r["name"], "fact": fact_val})
+            paid_status_without_paid_amount += Decimal(str(fact_val))
 
     # Задание 07.10.2026 (п.4): собрать breakdown в контракт — коды статуса
     # в порядке GALA-стадий ("none" = «Без статуса / план закупок» первым,
@@ -757,6 +817,14 @@ async def build_preview(
                 "count": len(paid_not_delivered_rows),
                 "amount": float(paid_not_delivered_amount),
                 "rows": paid_not_delivered_rows,
+            },
+            # Задача C: rows_text — те же диапазоны строк, что и в
+            # skipped_by_reason выше (_row_ranges_only, ПРАВИЛО №6).
+            "paid_status_without_paid": {
+                "count": len(paid_status_without_paid_rows),
+                "fact_amount": float(paid_status_without_paid_amount),
+                "rows": paid_status_without_paid_rows,
+                "rows_text": _row_ranges_only(sorted(r["row"] for r in paid_status_without_paid_rows)),
             },
         },
         "warnings": top_warnings,

@@ -39,6 +39,40 @@
     </v-expansion-panels>
   </v-alert>
 
+  <!-- Задача C (владелец, файл ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx, 11.10.2026):
+       строки со статусом «Оплачено», у которых колонка «Оплачено» пуста —
+       у строки уже есть предупреждение (backend preview.py::paid_status_
+       without_paid_predicate), но на шаге итогов его не видно, и владелец
+       принимал «Факт: Сумма» таких строк за «Оплачено». По образцу плашки
+       paid_not_delivered выше, второй компонент не заводим. -->
+  <v-alert
+    v-if="totals && totals.paid_status_without_paid.count > 0"
+    type="warning"
+    variant="tonal"
+    density="compact"
+    class="mb-3"
+    icon="mdi-cash-remove"
+  >
+    <div>
+      Статус «Оплачено», но колонка «Оплачено» пуста: {{ totals.paid_status_without_paid.rows_text }} —
+      факт {{ fmt(totals.paid_status_without_paid.fact_amount) }}. В «Оплачено» они не входят, платёж не создаётся.
+    </div>
+    <v-expansion-panels class="mt-2" variant="accordion">
+      <v-expansion-panel>
+        <v-expansion-panel-title class="text-caption">
+          Показать строки ({{ totals.paid_status_without_paid.count }})
+        </v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <ul class="mb-0 pl-4">
+            <li v-for="r in totals.paid_status_without_paid.rows" :key="r.row">
+              Строка {{ r.row }}{{ r.name ? `, «${r.name}»` : '' }} — факт {{ fmt(r.fact) }}
+            </li>
+          </ul>
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+    </v-expansion-panels>
+  </v-alert>
+
   <v-row dense v-if="totals">
     <v-col cols="12" sm="6" md="3">
       <v-card variant="outlined"><v-card-text>

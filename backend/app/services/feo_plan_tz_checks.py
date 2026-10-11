@@ -288,7 +288,7 @@ async def tz_over_plan_violations(
     def _empty() -> dict:
         return {
             "violations": [], "planned_total": None, "total_d": Decimal("0"), "name": name,
-            "reason": "", "message": "", "has_siblings": False,
+            "reason": "", "message": "", "has_siblings": False, "violation_details": [],
         }
 
     if planned_qty is None and planned_unit_price is None and planned_total is None:
@@ -306,25 +306,36 @@ async def tz_over_plan_violations(
     total_d = own_total_d + sib_total_d
     has_siblings = sib_qty_d != 0 or sib_total_d != 0
 
+    # violation_details (задача B, план импорта факта, 11.10.2026) —
+    # структурные поля ТЕХ ЖЕ нарушений РЯДОМ со строками текста выше (не
+    # вторая формула ПРАВИЛО №6): app.services.historical_fact_import.
+    # plan_diff_warnings.build_tz_excess_message строит по ним свой текст
+    # («Факт больше плана GALA: …») для мастера импорта факта — у него
+    # другой читатель, чем у message ниже («ТЗ позиции… уменьшите ТЗ»,
+    # адресован карточке заявки/закупки), reason/message здесь НЕ меняются.
     violations: list[str] = []
+    violation_details: list[dict] = []
     if planned_qty is not None and qty_d > planned_qty:
         diff = qty_d - planned_qty
         violations.append(
             f"количество: план {_fmt_qty(planned_qty)}, указано {_fmt_qty(qty_d)} "
             f"(больше на {_fmt_qty(diff)})"
         )
+        violation_details.append({"kind": "qty", "planned": planned_qty, "actual": qty_d, "diff": diff})
     if planned_unit_price is not None and price_d > planned_unit_price:
         diff = price_d - planned_unit_price
         violations.append(
             f"цена за единицу: план {_fmt_money(planned_unit_price)}, указано {_fmt_money(price_d)} "
             f"(больше на {_fmt_money(diff)})"
         )
+        violation_details.append({"kind": "unit_price", "planned": planned_unit_price, "actual": price_d, "diff": diff})
     if planned_total is not None and total_d > planned_total:
         diff = total_d - planned_total
         violations.append(
             f"сумма: план {_fmt_money(planned_total)}, указано {_fmt_money(total_d)} "
             f"(больше на {_fmt_money(diff)})"
         )
+        violation_details.append({"kind": "amount", "planned": planned_total, "actual": total_d, "diff": diff})
 
     if not violations:
         return _empty()
@@ -349,6 +360,7 @@ async def tz_over_plan_violations(
     return {
         "violations": violations, "planned_total": planned_total, "total_d": total_d, "name": name,
         "reason": reason, "message": message, "has_siblings": has_siblings,
+        "violation_details": violation_details,
     }
 
 

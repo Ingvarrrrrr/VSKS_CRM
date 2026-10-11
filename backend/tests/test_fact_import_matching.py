@@ -151,6 +151,64 @@ async def test_ambiguous_match_reports_competing_row(db_session, test_org):
 
 
 @pytest.mark.asyncio
+async def test_exact_plan_amount_matched_before_earlier_row(db_session, test_org):
+    """Задача A (владелец, боевой файл ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx, лист
+    ДНРР, 11.10.2026): план GALA содержит ОДНУ позицию «Проезд, проживание,
+    питание» на 292 815,90 ₽. Строка 151 файла (план 407 184,10) идёт раньше
+    строки 152 (план 292 815,90), но именно 152 точно совпадает по сумме
+    плана — должна получить позицию, 151 — «позиции нет», с указанием, что
+    позиция уже сопоставлена строке 152."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_leaf_category(db_session, subsidy.id, "Проезд, проживание, питание")
+    item = await _make_planned_item(db_session, cat.id, "Проезд, проживание, питание", 292815.90)
+
+    ctx = await matching_mod.build_matching_context(db_session, subsidy.id)
+    row151 = {"row": 151, "name": "Проезд, проживание, питание", "path": [], "plan": {"amount": 407184.10}}
+    row152 = {"row": 152, "name": "Проезд, проживание, питание", "path": [], "plan": {"amount": 292815.90}}
+
+    ordered = matching_mod.order_rows_for_matching(ctx, [row151, row152])
+    assert [r["row"] for r in ordered] == [152, 151]
+
+    results = {}
+    for row in ordered:
+        results[row["row"]] = matching_mod.match_row(ctx, row)
+
+    assert results[152]["state"] == "found"
+    assert results[152]["planned_item_id"] == item.id
+    assert results[151]["state"] == "ambiguous"
+    assert results[151]["planned_item_id"] is None
+    assert results[151]["competing_rows"] == [152]
+
+
+@pytest.mark.asyncio
+async def test_two_exact_amount_rows_keep_own_planned_items_gsm_regression(db_session, test_org):
+    """Регрессия «ГСМ» (боевой файл ХО — см. test_fact_import_rows.py::
+    test_total_row_above_two_same_named_positions_is_skipped): две строки
+    одноимённой позиции «Расходы на приобретение ГСМ» с планом 413 050,66 и
+    286 949,34 — ОБЕ точно совпадают по сумме со своими, РАЗНЫМИ плановыми
+    позициями; двухпроходное упорядочивание (Задача A) не должно их
+    перепутать независимо от порядка в файле."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_leaf_category(db_session, subsidy.id, "Расходы на приобретение ГСМ")
+    item1 = await _make_planned_item(db_session, cat.id, "Расходы на приобретение ГСМ", 413050.66)
+    item2 = await _make_planned_item(db_session, cat.id, "Расходы на приобретение ГСМ", 286949.34)
+
+    ctx = await matching_mod.build_matching_context(db_session, subsidy.id)
+    row147 = {"row": 147, "name": "Расходы на приобретение ГСМ", "path": [], "plan": {"amount": 413050.66}}
+    row148 = {"row": 148, "name": "Расходы на приобретение ГСМ", "path": [], "plan": {"amount": 286949.34}}
+
+    ordered = matching_mod.order_rows_for_matching(ctx, [row147, row148])
+    results = {}
+    for row in ordered:
+        results[row["row"]] = matching_mod.match_row(ctx, row)
+
+    assert results[147]["state"] == "found"
+    assert results[148]["state"] == "found"
+    assert results[147]["planned_item_id"] == item1.id
+    assert results[148]["planned_item_id"] == item2.id
+
+
+@pytest.mark.asyncio
 async def test_already_purchased_planned_item_flagged(db_session, test_org):
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem

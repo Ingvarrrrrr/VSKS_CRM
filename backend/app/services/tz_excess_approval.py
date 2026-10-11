@@ -223,6 +223,12 @@ async def collect_tz_over_plan_violations(
             "excess_amount": excess_amount,
             "reason": reason,
             "message": result["message"],
+            # violation_details (задача B, импорт факта, 11.10.2026) —
+            # структурные поля того же нарушения (feo_plan_tz_checks.
+            # tz_over_plan_violations, ПРАВИЛО №6), для читателей, которым
+            # нужен не этот message, а свой текст (historical_fact_import.
+            # plan_diff_warnings.build_tz_excess_message).
+            "violation_details": result.get("violation_details", []),
         })
     return violations
 

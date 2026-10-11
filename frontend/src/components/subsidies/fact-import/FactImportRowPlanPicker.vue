@@ -20,18 +20,16 @@
           </div>
         </div>
 
-        <div class="text-caption text-medium-emphasis mb-1">Поиск по всей субсидии:</div>
-        <FeoPlannedSearchBox
-          v-if="subsidyId"
-          v-model:search-text="search.searchText.value"
-          :rows="displayRows"
-          :loading="search.searchLoading.value"
-          :fmt="formatMoney"
-          @select="onSearchSelect"
+        <div class="text-caption text-medium-emphasis mb-1">План субсидии:</div>
+        <FeoPlanTreePicker
+          v-if="subsidyId && row"
+          :subsidy-id="subsidyId"
+          :planned-items="plannedItemRows"
+          :row-path="row.path"
+          :candidate-ids="candidateIds"
+          :open="model"
+          @select="onTreeSelect"
         />
-        <div v-if="hiddenCount > 0" class="text-caption text-medium-emphasis mt-1">
-          Скрыто ещё {{ hiddenCount }}: статья ФЭО без детализации до плановой позиции — выбрать нельзя.
-        </div>
       </v-card-text>
       <v-card-actions>
         <v-btn variant="text" color="warning" @click="skipRow">Пропустить строку</v-btn>
@@ -47,20 +45,26 @@
 // И на ambiguous/not_found, И (чек-лист 07.10.2026, п.3) на found/
 // already_purchased через кнопку «Изменить…».
 //
-// Дефект (владелец, 2-я приёмка 07.10.2026, «ничего вводить не могу» —
-// главная жалоба): раньше здесь стоял FeoPlannedItemsSelect целиком с
-// :category-id="null" — но FeoPlannedItemsSelect.vue:13 рендерит ВСЁ своё
-// содержимое (поиск, дерево, список) только при `v-if="categoryId != null"`.
-// С null компонент был пуст с момента создания пикера — ни поля поиска, ни
-// списка не было видно НИ РАЗУ. Строка импорта факта категорию не выбирает
-// (ищет по всей субсидии сразу), поэтому весь FeoPlannedItemsSelect — не тот
-// инструмент; переиспользован его внутренний блок поиска по субсидии
-// напрямую: FeoPlannedSearchBox.vue + useFeoPlannedSearch.ts (ПРАВИЛО №6 —
-// тот же движок/эндпоинт /feo-planned-items/match, второй поиск не пишем).
-import { computed, watch } from 'vue'
-import FeoPlannedSearchBox from '@/components/items/feo-planned/FeoPlannedSearchBox.vue'
-import { useFeoPlannedSearch, type FeoPlannedSearchRow } from '@/composables/items/feoPlanned/useFeoPlannedSearch'
-import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
+// 🟡 Решение владельца (прод, субсидия «ДНР», строка 151 «Проезд, проживание,
+// питание», скриншоты): плоский поиск FeoPlannedSearchBox (/feo-planned-items/
+// match) путал — точное имя строки находило «бинты/перчатки» (серверный
+// fuzzy-скоринг), а запрос без совпадений («преддрейсовых») тихо подменялся
+// ВСЕМ планом без предупреждения. Заменено на FeoPlanTreePicker.vue — дерево
+// Направление›Тип›Подкатегория (тот же источник узлов, что «План закупок»),
+// с ДЕТЕРМИНИРОВАННЫМ клиентским поиском (все слова запроса — подстроки
+// нормализованного имени, без фаззи-скоринга бэкенда) и явным «ничего не
+// найдено» без подмены. FeoPlannedSearchBox.vue/useFeoPlannedSearch.ts НЕ
+// тронуты — используются как раньше в FeoPlannedItemsSelect.vue (ПРАВИЛО №6:
+// это не второй механизм ВМЕСТО старого, а замена инструмента ИМЕННО в этом
+// диалоге, старый остаётся работать там, где работал).
+//
+// История (2-я приёмка 07.10.2026, «ничего вводить не могу»): раньше здесь
+// стоял FeoPlannedItemsSelect целиком с :category-id="null" — но тот рендерит
+// содержимое только при categoryId != null, был пуст с момента создания
+// пикера.
+import { computed } from 'vue'
+import FeoPlanTreePicker from './FeoPlanTreePicker.vue'
+import { useFeoPlannedResiduals, type FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { useFactImport, type FactImportRow } from '@/composables/subsidies/useFactImport'
 import { formatMoney } from '@/utils/formatMoney'
 
@@ -79,17 +83,6 @@ const model = computed({
 const subsidyIdRef = computed(() => props.subsidyId)
 const { plannedResiduals } = useFeoPlannedResiduals({ subsidyId: subsidyIdRef })
 
-// Геттеры вместо обычных полей — useFeoPlannedSearch читает props.items/
-// props.subsidyId ВНУТРИ computed/watch (та же схема, что и в
-// FeoPlannedItemsSelect.vue, где туда передаётся реактивный defineProps()
-// целиком); геттеры дают то же самое без второго компонента-обёртки.
-const searchProps = {
-  get items() { return plannedResiduals.value },
-  get categoryId() { return null as number | null },
-  get subsidyId() { return subsidyIdRef.value },
-}
-const search = useFeoPlannedSearch({ props: searchProps })
-
 const { setRowPlannedItem, setRowSkip } = useFactImport()
 
 // Бэкенд принимает в decisions.row_overrides.planned_item_id ТОЛЬКО id
@@ -97,55 +90,18 @@ const { setRowPlannedItem, setRowSkip } = useFactImport()
 // строит catalog/by_name/candidates ИСКЛЮЧИТЕЛЬНО из записей kind=
 // 'planned_item' (остальные kind туда не попадают), а commit.py пишет id
 // НАПРЯМУЮ в purchase_items.feo_planned_item_id (commit.py:295) без всякого
-// резолва. Общий поиск по субсидии (/feo-planned-items/match, тот же, что
-// питает это поле) умеет отдавать ещё 'plan_position'/'feo_article' —
-// статью/категорию ФЭО с планом, но БЕЗ детализации до FeoPlannedItem, где
-// id — это id FeoCategory, в ДРУГОМ пространстве идентификаторов. Отправить
-// такой id как planned_item_id значило бы привязать закупку к чужой сущности
-// под чужим числом — такие строки отфильтрованы из выдачи (не исключение
-// бэкенда, который их примет как есть, а именно фронтовая защита от
-// подмены id).
-const selectableRows = computed(() => search.searchRows.value.filter(r => r.kind === 'planned_item'))
-const hiddenCount = computed(() => search.searchRows.value.length - selectableRows.value.length)
+// резолва. У 'plan_position'/'feo_article' id — это id FeoCategory, в ДРУГОМ
+// пространстве идентификаторов — отправить такой id как planned_item_id
+// значило бы привязать закупку к чужой сущности под чужим числом. Дерево
+// (FeoPlanTreePicker) и так показывает «plan_position»/«feo_article» только
+// как категории-папки (не кликабельны для выбора), а кликабельные листья —
+// только planned_item, но на входе фильтруем явно, belt-and-braces.
+const plannedItemRows = computed<FeoPlanPosition[]>(() => plannedResiduals.value.filter(r => r.kind === 'planned_item'))
 
-// Задание владельца (баг с меню): если по имени строки ничего не найдено —
-// дать листать ВЕСЬ план субсидии, а не только совпадения /match. Источник —
-// тот же plannedResiduals, что уже загружен выше для остатков (ПРАВИЛО №6,
-// второй список плановых позиций не завели); фильтр по тексту — локальный,
-// т.к. полный список не ходит через серверный /match.
-const allPlannedRows = computed<FeoPlannedSearchRow[]>(() => plannedResiduals.value
-  .filter(r => r.kind === 'planned_item')
-  .map(r => ({ ...r, score: 0, crossCategory: false })))
-
-const browseRows = computed<FeoPlannedSearchRow[]>(() => {
-  const q = search.searchText.value.trim().toLowerCase()
-  if (!q) return allPlannedRows.value
-  const filtered = allPlannedRows.value.filter(r => r.name.toLowerCase().includes(q))
-  // Подставленное при открытии имя строки файла почти никогда не совпадёт
-  // подстрокой с названием плановой позиции (иначе матчинг нашёл бы его сам)
-  // — в этом случае отдаём ВЕСЬ список, а не пустой: листать можно всегда,
-  // фильтр сужает список только когда он реально находит совпадения.
-  return filtered.length > 0 ? filtered : allPlannedRows.value
-})
-
-// Что реально показываем в поле поиска: совпадения /match, если они есть;
-// иначе — весь план (листаемый/фильтруемый по тексту вручную).
-const displayRows = computed(() => selectableRows.value.length > 0 ? selectableRows.value : browseRows.value)
+const candidateIds = computed<number[]>(() => props.row?.match.candidates?.map(c => c.id) ?? [])
 
 const currentName = computed(() => props.row?.match?.planned_item_name ?? null)
 const currentAmount = computed(() => props.row?.match?.planned_item_amount ?? null)
-
-// Открытие диалога — поле поиска сразу предзаполнено именем строки файла
-// (чек-лист 07.10.2026, п.1: «варианты должны появиться сразу»), человек
-// может стереть и искать своё. Закрытие — очистка, чтобы следующее открытие
-// на ДРУГОЙ строке не унаследовало чужой текст/результаты.
-watch(() => props.modelValue, (open) => {
-  if (open && props.row) {
-    search.searchText.value = props.row.name
-  } else {
-    search.clearSearch()
-  }
-})
 
 function selectPlannedItem(id: number) {
   if (!props.row) return
@@ -153,8 +109,8 @@ function selectPlannedItem(id: number) {
   model.value = false
 }
 
-function onSearchSelect(row: FeoPlannedSearchRow) {
-  selectPlannedItem(row.id)
+function onTreeSelect(item: FeoPlanPosition) {
+  selectPlannedItem(item.id)
 }
 
 function skipRow() {

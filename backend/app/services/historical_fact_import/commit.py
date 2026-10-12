@@ -295,6 +295,12 @@ async def commit_import(
                 feo_planned_item_id=planned_item_id,
                 feo_category_id=item_category_id,
                 match_confirmed=True,
+                # Часть объединённой позиции (план merged-item-parts.md) —
+                # уже решена build_preview() выше, override.plan_part_key
+                # учтён ТАМ (ПРАВИЛО №6 — одно место решения строка→часть,
+                # здесь просто читаем результат). Не найдено/не выбрана —
+                # None, закупка создаётся без части.
+                feo_plan_part_key=row["match"].get("plan_part_key"),
             ))
             total_amount += amount_dec
             if row["paid"]:

@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Numeric, Boolean, Text, DateTime, Date, ForeignKey, func, text, inspect
 from sqlalchemy import event
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, backref
 from app.database import Base
 
@@ -146,6 +147,19 @@ class FeoPlannedItem(Base):
     # app.services.plan_need_level (ПРАВИЛО №6). См. миграцию
     # p1q3r5s7t9v1_feo_planned_item_need_level.py.
     need_level = Column(String(20), nullable=False, server_default="likely")
+
+    # Состав объединённой позиции (владелец, 12.10.2026, план
+    # merged-item-parts.md): при загрузке плана «Объединить в одну» несколько
+    # строк файла схлопываются в ОДНУ позицию (напр. «Gaz A22R35 Х920АЕ 180» —
+    # 4 отдельные закупки на одну позицию ремонта). parts хранит СОСТАВ —
+    # [{key, row, qty, unit, unit_price, amount}], key = номер строки файла
+    # строкой («151») — стабилен между повторными загрузками того же файла
+    # (ПРАВИЛО №6: единственное место записи — _merge_totals/_upsert_one,
+    # app/services/feo_import_duplicates.py). У обычных (не объединённых)
+    # позиций — []. JSON — только str/float/int (Decimal роняет транзакцию),
+    # см. _part_to_json там же. Ручного редактирования состава в GALA нет (см.
+    # план, раздел «Не делаем»).
+    parts = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 
     feo_category = relationship(
         "FeoCategory",

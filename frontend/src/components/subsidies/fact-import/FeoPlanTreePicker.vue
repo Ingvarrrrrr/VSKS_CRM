@@ -23,10 +23,11 @@
         class="fptp-row"
         :class="{
           'fptp-row--category': row.isCategory,
-          'fptp-row--item': !row.isCategory,
-          'fptp-row--candidate': !row.isCategory && candidateIdSet.has(row.item!.id),
+          'fptp-row--item': !row.isCategory && !row.part,
+          'fptp-row--part': !!row.part,
+          'fptp-row--candidate': !row.isCategory && !row.part && candidateIdSet.has(row.item!.id),
         }"
-        @click="row.isCategory ? toggleExpand(row.id) : selectItem(row.item!)"
+        @click="row.isCategory ? toggleExpand(row.id) : row.part ? selectPart(row.item!, row.part) : selectItem(row.item!)"
       >
         <span v-for="(hasLine, li) in row.ancestorLines" :key="'r' + li" class="fptp-rail" :class="{ 'fptp-rail--line': hasLine }" />
         <span v-if="row.depth > 0" class="fptp-elbow" :class="{ 'fptp-elbow--open': !row.isLast }" />
@@ -38,10 +39,23 @@
           <v-icon size="15" class="mr-1 flex-shrink-0" :icon="expanded.has(row.id) ? 'mdi-folder-open' : 'mdi-folder'" color="#3B82F6" />
           <span class="fptp-name">{{ row.name }}</span>
         </template>
+        <template v-else-if="row.part">
+          <!-- Часть объединённой позиции (план merged-item-parts.md) —
+               «стр. 20 — 317 400,00 ₽ · закупка РЕЕ-… / нет закупки». -->
+          <v-icon size="13" class="mr-1 flex-shrink-0" icon="mdi-call-split" color="#9333EA" />
+          <span class="fptp-name">стр. {{ row.part.row ?? '—' }} — {{ fmt(row.part.amount) }}</span>
+          <span class="fptp-residual">
+            <template v-if="row.part.purchases?.length">
+              {{ row.part.purchases.map(p => p.registry_number || ('#' + p.id)).join(', ') }}
+            </template>
+            <template v-else>нет закупки</template>
+          </span>
+        </template>
         <template v-else>
           <v-icon size="15" class="mr-1 flex-shrink-0" icon="mdi-file-document-outline" color="#22C55E" />
           <span class="fptp-name">{{ row.name }}</span>
           <v-chip v-if="candidateIdSet.has(row.item!.id)" size="x-small" color="amber" variant="tonal" class="ml-1">похоже по имени</v-chip>
+          <v-chip v-if="row.item!.parts?.length" size="x-small" color="purple" variant="tonal" class="ml-1">{{ row.item!.parts.length }} части</v-chip>
           <span class="fptp-residual">{{ fmt(row.item!.planned_amount) }} · ост. {{ fmt(row.item!.residual) }}</span>
         </template>
       </div>
@@ -70,7 +84,7 @@
 // родителем (plannedResiduals, уже загружен для остатков).
 import { computed, nextTick, ref, watch } from 'vue'
 import { useFeoLeaves, type FeoNode } from '@/composables/useFeoLeaves'
-import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
+import type { FeoPlanPosition, FeoPlanPositionPart } from '@/composables/useFeoPlannedResiduals'
 import { formatMoney } from '@/utils/formatMoney'
 
 const props = defineProps<{
@@ -93,7 +107,10 @@ const props = defineProps<{
   open: boolean
 }>()
 
-const emit = defineEmits<{ select: [item: FeoPlanPosition] }>()
+// Часть объединённой позиции (план merged-item-parts.md) — partKey=null,
+// когда выбрана позиция целиком (как раньше, кликом по самой позиции, не по
+// её части — напр. у позиций без parts).
+const emit = defineEmits<{ select: [item: FeoPlanPosition, partKey: string | null] }>()
 
 const subsidyIdRef = computed(() => props.subsidyId)
 const includeUnfunded = ref(true)
@@ -165,6 +182,25 @@ interface FlatRow {
   isCategory: boolean
   name: string
   item?: FeoPlanPosition
+  /** Часть объединённой позиции (план merged-item-parts.md) — строка сама
+   *  часть item, не сама позиция (depth = depth позиции + 1). */
+  part?: FeoPlanPositionPart
+}
+
+/** Разворачивает строку позиции в [позиция, ...её части] — одна функция,
+ *  используется обоими деревьями (обычным и поиском, ПРАВИЛО №6). */
+function pushItemRows(result: FlatRow[], it: FeoPlanPosition, depth: number, isLast: boolean, ancestorLines: boolean[]) {
+  const parts = it.parts ?? []
+  result.push({ key: it.key, id: it.id, depth, isLast: isLast && parts.length === 0, ancestorLines, isCategory: false, name: it.name, item: it })
+  if (parts.length) {
+    const partLines = [...ancestorLines, !isLast]
+    parts.forEach((part, pi) => {
+      result.push({
+        key: `${it.key}::${part.key}`, id: it.id, depth: depth + 1, isLast: pi === parts.length - 1,
+        ancestorLines: partLines, isCategory: false, name: it.name, item: it, part,
+      })
+    })
+  }
 }
 
 // ── режим без поиска: обычное дерево, раскрытие по expanded ──
@@ -180,10 +216,7 @@ function buildPlainTree(): FlatRow[] {
         const childLines = [...ancestorLines, !(idx === nodes.length - 1)]
         if (children.length) walk(children, depth + 1, childLines)
         items.forEach((it, ii) => {
-          result.push({
-            key: it.key, id: it.id, depth: depth + 1, isLast: ii === items.length - 1,
-            ancestorLines: childLines, isCategory: false, name: it.name, item: it,
-          })
+          pushItemRows(result, it, depth + 1, ii === items.length - 1, childLines)
         })
       }
     })
@@ -221,10 +254,7 @@ function buildSearchTree(): FlatRow[] {
       const childLines = [...ancestorLines, !(idx === siblings.length - 1)]
       if (children.length) walk(children, depth + 1, childLines)
       items.forEach((it, ii) => {
-        result.push({
-          key: it.key, id: it.id, depth: depth + 1, isLast: ii === items.length - 1,
-          ancestorLines: childLines, isCategory: false, name: it.name, item: it,
-        })
+        pushItemRows(result, it, depth + 1, ii === items.length - 1, childLines)
       })
     })
   }
@@ -241,7 +271,11 @@ function toggleExpand(id: number) {
 }
 
 function selectItem(item: FeoPlanPosition) {
-  emit('select', item)
+  emit('select', item, null)
+}
+
+function selectPart(item: FeoPlanPosition, part: FeoPlanPositionPart) {
+  emit('select', item, part.key)
 }
 
 // ── авто-раскрытие при монтировании: ветка строки файла (rowPath) + ветки
@@ -297,6 +331,7 @@ nextTick(() => searchInputEl.value?.focus?.())
 }
 .fptp-row:hover { background: rgba(0,0,0,0.04); }
 .fptp-row--candidate { background: rgba(251, 191, 36, 0.12); }
+.fptp-row--part { background: rgba(147, 51, 234, 0.06); }
 .fptp-rail, .fptp-elbow { position: relative; width: 16px; align-self: stretch; flex-shrink: 0; }
 .fptp-rail--line::before { content: ''; position: absolute; left: 7px; top: 0; bottom: 0; width: 1px; background: rgba(0,0,0,0.15); }
 .fptp-elbow::before { content: ''; position: absolute; left: 7px; top: 0; height: 14px; width: 1px; background: rgba(0,0,0,0.15); }

@@ -34,6 +34,7 @@ from app.services.feo_import_budget_conflicts import (
 )
 from app.services.feo_import_item_types import resolve_item_type_for_row
 from app.services.feo_import_missing_level import detect_missing_level_hints
+from app.services.feo_import_leaf_item_count import count_self_declared_rows_by_path
 from app.services.plan_need_level import NEED_LEVEL_LABELS, NEED_LEVEL_LIKELY
 from app.services.feo_import_comments import register_category_comment_intent, register_item_comment_intent
 from app.routers.feo_planned_items import normalize_item_type
@@ -293,6 +294,13 @@ async def apply_rows(state) -> None:
     # «Плановой позиции» — у него своя, независимая от файловой уникальности,
     # защита от разрыва: смотрит только на ЭТУ строку).
     uniformly_empty_levels = find_uniformly_empty_levels(rows, c_lvl2, c_lvl3, c_lvl4)
+
+    # Пред-проход для self-declared («Плановая позиция» = имя самого глубокого
+    # уровня, см. ветку ниже, item_name_equals_category): сколько строк файла
+    # на ТОЧНО ТАКОМ ЖЕ пути Уровень2/3/4 заявляют «Плановую позицию» вообще —
+    # решает владельческое правило 09.10 «одинаковое название не делает
+    # позицию категорией» (см. docstring feo_import_leaf_item_count.py).
+    leaf_item_counts = count_self_declared_rows_by_path(rows, c_lvl2, c_lvl3, c_lvl4, c_lvl5)
 
     # Решение владельца 10.10.2026: предупреждение «похоже, забыт уровень
     # подкатегории» — итог без «Плановой позиции», чья сумма равна сумме
@@ -593,45 +601,72 @@ async def apply_rows(state) -> None:
                     default=None,
                 )
                 if _deepest_level is not None and _norm(_level_vals[_deepest_level]) == _norm(lvl5_name):
-                    # Задача владельца (в), боевой инцидент 2026-09-16, файл
-                    # «Абхазия ЦЭМАК», строка 189 «Катер»: подраздел получает
-                    # свою Сумму по ФЭО как обычно (лист без явно построчной
-                    # позиции — cat.budget этого узла и, если у листа нет своих
-                    # Ур.5 строк, обобщённая плановая позиция с именем категории
-                    # заводятся дальше по циклу тем же путём, что и раньше, см.
-                    # apply_collected_plan в feo_import_plan.py). Решение
-                    # владельца: поведение НЕ меняем (и подраздел, и позиция
-                    # остаются), но человек должен узнать об этом совпадении —
-                    # раньше оно проходило молча. Предупреждаем ЗДЕСЬ (в точке,
-                    # где обнаружено совпадение имени с уже занятым уровнем), а
-                    # не в блоке создания FeoPlannedItem Ур.5 — туда эта строка
-                    # никогда не попадает (lvl5_name обнуляется ниже).
-                    _self_decl_amt = _row_feo_money(row)
-                    if _self_decl_amt is None:
-                        _self_decl_amt = row_plan_money(
-                            row, c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4
-                        )
-                    warnings.append({
-                        "kind": "item_name_equals_category",
-                        "row": row_num,
-                        "name": lvl5_name,
-                        "message": (
-                            f"Строка {row_num}: «{lvl5_name}» названа и подразделом, и позицией — "
-                            f"сумма {_fmt(_self_decl_amt)} записана подразделу как ФЭО и позицией в него; "
-                            f"если это разные вещи, переименуйте одно из них"
-                        ),
-                    })
-                    # Задача владельца 22.09: если эта сумма на самом деле —
-                    # итог СЛЕДУЮЩИХ строк того же уровня (боевой случай
-                    # «Расходы закупка товаров…» = Проезд+МТО+Доп комплектация),
-                    # пост-проход после цикла по всем строкам (ниже) заменит
-                    # это предупреждение на group_total_row и уберёт авто-
-                    # позицию категории (collected_plan) — см. warning_ref.
-                    _self_declared_regs.append({
-                        "row": row_num, "amount": _self_decl_amt, "name": lvl5_name,
-                        "warning_ref": warnings[-1],
-                    })
-                    lvl5_name = None
+                    # Правило владельца (09.10.2026, дословно): «одинаковое
+                    # название не даёт оснований смешивать категорию и
+                    # плановую… плановая так и остаётся на плановой и не
+                    # является категорией и не мержится с категорией, даже
+                    # если они имеют одинаковое название». Боевой инцидент
+                    # 12.10.2026 (субсидия «ДНР 3», файл «ХО_ЛНР_ДНР_МАКЛЮК_
+                    # Отправил.xlsx», лист «ДНРР», строки 151/152 — ОБЕ назвали
+                    # себя как лист «Проезд, проживание, питание», с РАЗНЫМИ
+                    # суммами 407 184,10 и 292 815,90): старое правило «имя
+                    # совпало ⇒ строка-итог» зануляло lvl5_name у ОБЕИХ, и
+                    # вторая запись в collected_plan затирала первую — 407 184,10
+                    # терялись молча (Правило №6 — тут было два источника суммы
+                    # одной категории вместо одного).
+                    #
+                    # Решает не совпадение имени, а факт: сколько строк файла
+                    # на этом ТОЧНО ТАКОМ ЖЕ пути Уровень2/3/4 вообще заявляют
+                    # «Плановую позицию» (leaf_item_counts, пред-проход выше,
+                    # см. docstring feo_import_leaf_item_count.py). Если их
+                    # БОЛЬШЕ ОДНОЙ — это не строка-итог (сама не может быть
+                    # итогом остальных, пока рядом есть другая настоящая
+                    # позиция на том же месте) — lvl5_name НЕ зануляем, строка
+                    # идёт обычным путём позиции Ур.5 ниже (register_pending_
+                    # item → группа дублей по имени, feo_import_duplicates.py,
+                    # — для 151/152 это группа «Проезд, проживание, питание»
+                    # из 2 строк, по умолчанию «оставить как есть» — обе суммы
+                    # сохраняются). Если строка на пути ОДНА — поведение не
+                    # меняется (боевой случай «Катер», 2026-09-16: подраздел
+                    # получает свою Сумму по ФЭО как обычно, и, если у листа
+                    # нет своих Ур.5 строк, обобщённая плановая позиция с
+                    # именем категории заводится через collected_plan/
+                    # apply_collected_plan в feo_import_plan.py).
+                    _path_key = (_norm(lvl2_name or ""), _norm(lvl3_name or ""), _norm(lvl4_name or ""))
+                    _siblings_with_position = leaf_item_counts.get(_path_key, 0)
+                    if _siblings_with_position >= 2:
+                        pass  # настоящая позиция — lvl5_name остаётся, см. выше
+                    else:
+                        # Предупреждаем ЗДЕСЬ (в точке, где обнаружено
+                        # совпадение имени с уже занятым уровнем), а не в блоке
+                        # создания FeoPlannedItem Ур.5 — туда эта строка
+                        # никогда не попадает (lvl5_name обнуляется ниже).
+                        _self_decl_amt = _row_feo_money(row)
+                        if _self_decl_amt is None:
+                            _self_decl_amt = row_plan_money(
+                                row, c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4
+                            )
+                        warnings.append({
+                            "kind": "item_name_equals_category",
+                            "row": row_num,
+                            "name": lvl5_name,
+                            "message": (
+                                f"Строка {row_num}: «{lvl5_name}» названа и подразделом, и позицией — "
+                                f"сумма {_fmt(_self_decl_amt)} записана подразделу как ФЭО и позицией в него; "
+                                f"если это разные вещи, переименуйте одно из них"
+                            ),
+                        })
+                        # Задача владельца 22.09: если эта сумма на самом деле —
+                        # итог СЛЕДУЮЩИХ строк того же уровня (боевой случай
+                        # «Расходы закупка товаров…» = Проезд+МТО+Доп комплектация),
+                        # пост-проход после цикла по всем строкам (ниже) заменит
+                        # это предупреждение на group_total_row и уберёт авто-
+                        # позицию категории (collected_plan) — см. warning_ref.
+                        _self_declared_regs.append({
+                            "row": row_num, "amount": _self_decl_amt, "name": lvl5_name,
+                            "warning_ref": warnings[-1],
+                        })
+                        lvl5_name = None
 
         # --- Предупреждение: «Плановая позиция» остаётся ПОЗИЦИЕЙ, но её имя
         # ГДЕ-ТО в файле встречается как значение колонки уровня (задача

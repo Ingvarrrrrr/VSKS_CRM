@@ -439,6 +439,29 @@
                       </div>
                     </template>
                   </template>
+                  <!-- Состав объединённой позиции (владелец, 12.10.2026, план
+                       merged-item-parts.md) — «Gaz A22R35…» 4 строки файла плана =
+                       4 ОТДЕЛЬНЫЕ закупки внутри одной позиции. Показано ВСЕГДА,
+                       когда у позиции есть parts (развёрнуто или нет — закупка
+                       целиком уже видна выше, здесь — её разбивка по частям),
+                       закупки каждой части — через feo_plan_part_key (ПРАВИЛО №6,
+                       те же данные comparisonData, без второго запроса). -->
+                  <div v-if="planned.parts?.length" class="feo-plan-parts">
+                    <div v-for="part in planned.parts" :key="part.key" class="feo-plan-part-row">
+                      <span class="feo-plan-part-row__label">стр. {{ part.row ?? '—' }} — {{ formatCurrency(part.amount) }}</span>
+                      <template v-if="feoLevel5.purchasesForPlanPart(node.id, planned.id, part.key).length">
+                        <a
+                          v-for="p in feoLevel5.purchasesForPlanPart(node.id, planned.id, part.key)"
+                          :key="`part-${part.key}-${p.purchase_id}`"
+                          href="javascript:void(0)"
+                          class="feo-purchase-link ml-1"
+                          :title="`Перейти в закупку ${p.registry_number || ('#' + p.purchase_id)}`"
+                          @click.stop="ctx.router.push(`/orders/${p.purchase_id}`)"
+                        >{{ p.registry_number || (p.purchase_number != null ? `№ ${p.purchase_number}` : `#${p.purchase_id}`) }}</a>
+                      </template>
+                      <span v-else class="text-caption text-medium-emphasis ml-1">нет закупки</span>
+                    </div>
+                  </div>
                 </td>
                 <td :style="feoResize.resizeStyle('residual')"></td>
                 <td style="width:112px;min-width:112px;max-width:112px;padding:2px;text-align:center">
@@ -1075,6 +1098,25 @@ const typeSubtotals = computed(() => {
 }
 .feo-stage-list-row__status {
   font-weight: 600;
+  flex-shrink: 0;
+}
+/* Состав объединённой позиции (план merged-item-parts.md, владелец 12.10.2026). */
+.feo-plan-parts {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(147, 51, 234, 0.3);
+}
+.feo-plan-part-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow: hidden;
+  color: #7E22CE;
+}
+.feo-plan-part-row__label {
   flex-shrink: 0;
 }
 

@@ -102,6 +102,25 @@ export interface FeoPlanPosition {
    *  UI). Та же формула, что leaf_items_not_committed_by_need_level и карточка
    *  «Можно перераспределить» (ПРАВИЛО №6). */
   not_committed_raw?: number
+  /** Состав объединённой позиции (владелец, 12.10.2026, план
+   *  merged-item-parts.md) — ТОЛЬКО у kind='planned_item', заполнена загрузкой
+   *  плана с «Объединить в одну» (см. backend FeoPlannedItem.parts,
+   *  app/services/feo_import_duplicates.py). [] у обычной позиции — пикер и
+   *  «План закупок» рисуют позицию как раньше (без раскрытия на части). */
+  parts?: FeoPlanPositionPart[]
+}
+
+/** Одна часть объединённой позиции — исходная строка файла плана плюс её
+ *  закупки (см. backend app.services.feo_plan_part_purchases). */
+export interface FeoPlanPositionPart {
+  /** Номер строки файла плана строкой — стабилен между повторными загрузками. */
+  key: string
+  row: number | null
+  qty: number | null
+  unit: string | null
+  unit_price: number | null
+  amount: number | null
+  purchases: { id: number; registry_number: string | null; status: string | null; status_label?: string | null; amount: number; paid?: number }[]
 }
 
 /** @deprecated старое имя интерфейса (было завязано на /feo-planned-items/residuals) —

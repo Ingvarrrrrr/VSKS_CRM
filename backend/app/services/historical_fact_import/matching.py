@@ -26,6 +26,37 @@ from app.services.plan_catalog import load_plan_catalog
 _WS_RE = re.compile(r"\s+")
 
 
+def _row_category_key(row: dict) -> str:
+    """Категория строки файла — самый глубокий заполненный уровень её
+    `row['path']` (rows.py: path = предки строки без дублей с именем
+    позиции, последний элемент — непосредственная категория строки, см.
+    _build_path в rows.py). Пустой путь (в т.ч. старые вызовы/тесты без
+    категории) → "" — НЕ сигнал «нет категории у позиции», а «категория
+    строки неизвестна», поэтому "" ниже всегда означает «не фильтровать по
+    категории», а не «фильтровать на пустую категорию»."""
+    path = row.get("path")
+    if not path:
+        return ""
+    return normalize_item_name(path[-1])
+
+
+def _candidate_category_key(candidate: dict) -> str:
+    """Категория кандидата каталога — последний сегмент его `path`
+    («Направление › Подкатегория › Лист», services.feo_plan_totals.
+    build_category_path) — конечная категория ФЭО, к которой привязан сам
+    кандидат (FeoCategory для kind='plan_position'/'feo_article', родительская
+    категория листа для kind='planned_item'). Сравнивается нормализованно,
+    тем же normalize_item_name, что и имена позиций (ПРАВИЛО №6 — одна
+    функция нормализации везде)."""
+    path = candidate.get("path")
+    if not path:
+        return ""
+    parts = path.split(" › ") if isinstance(path, str) else list(path)
+    if not parts:
+        return ""
+    return normalize_item_name(parts[-1])
+
+
 def normalize_item_name(raw: Optional[str]) -> str:
     if not raw:
         return ""
@@ -182,15 +213,29 @@ def _assign_shared_groups(ctx: dict, rows: list) -> None:
     forced: dict = ctx.setdefault("forced", {})
     forced_groups: dict = ctx.setdefault("forced_groups", {})
 
-    groups: dict[str, list] = {}
+    # Задача В (12.10.2026, баг «ДНР 3»/лист ДНРР): группировка ТОЛЬКО по
+    # имени смешивала строки из РАЗНЫХ категорий плана в одну группу — «Gaz
+    # A22R35 Х920АЕ 180» в файле встречается в 4 категориях (Ремонт ТС,
+    # Мойка, Шиномонтажные работы, Страхование) суммарно 7 строками, план
+    # GALA содержит 4 РАЗНЫЕ позиции с этим именем (по одной на категорию);
+    # группа «все 7 строк» при 4 кандидатах не проходила проверку len(free)
+    # ==1 → shared не применялся вовсе, 2 из 4 строк «Ремонт ТС» уходили в
+    # ambiguous. Группа теперь — (имя, категория СТРОКИ) — см. _row_category_
+    # key; категория строки "" (путь не передан — старые вызовы/тесты без
+    # path) означает «неизвестна», тогда кандидаты не фильтруются по
+    # категории (прежнее поведение, см. _candidate_category_key).
+    groups: dict[tuple[str, str], list] = {}
     for row in rows:
         key = normalize_item_name(row.get("name"))
-        groups.setdefault(key, []).append(row)
+        cat_key = _row_category_key(row)
+        groups.setdefault((key, cat_key), []).append(row)
 
-    for key, group_rows in groups.items():
+    for (key, cat_key), group_rows in groups.items():
         if len(group_rows) < 2:
             continue
         candidates = by_name.get(key, [])
+        if cat_key:
+            candidates = [c for c in candidates if _candidate_category_key(c) == cat_key]
         free = [c for c in candidates if c["id"] not in already_bound]
         # Ровно ОДНА свободная одноимённая позиция, и строк группы СТРОГО
         # больше — иначе обычный каскад справляется сам (len(free) >= len
@@ -281,6 +326,20 @@ def match_row(ctx: dict, row: dict) -> dict:
         return {"state": "already_purchased", "planned_item_id": chosen["id"], "candidates": cand_out}
 
     pool = list(available)
+    # Задача В (12.10.2026) — тот же критерий категории, что и в
+    # _assign_shared_groups выше (ПРАВИЛО №6 — _row_category_key/
+    # _candidate_category_key, одна функция сравнения категорий на оба
+    # места), теперь первым шагом обычного каскада: если у строки есть
+    # одноимённые кандидаты в ЕЁ категории — выбор идёт только среди них, а
+    # не среди одноимённых кандидатов во всех категориях субсидии сразу.
+    # Строка без категории (path пуст — старые вызовы/тесты) не сужает пул
+    # вовсе (прежнее поведение).
+    row_cat_key = _row_category_key(row)
+    if len(pool) > 1 and row_cat_key:
+        same_cat = [c for c in pool if _candidate_category_key(c) == row_cat_key]
+        if same_cat and len(same_cat) < len(pool):
+            pool = same_cat
+
     plan_amount = row["plan"].get("amount")
     if len(pool) > 1 and plan_amount is not None:
         def _amt_dist(c):

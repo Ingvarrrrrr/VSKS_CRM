@@ -195,6 +195,32 @@ def _merge_totals(rows: list) -> dict:
     }
 
 
+def _build_parts(rows: list) -> list[dict]:
+    """Состав объединённой позиции (владелец, 12.10.2026, план
+    merged-item-parts.md) — ОДНА строка файла группы = ОДНА часть
+    («Gaz A22R35 Х920АЕ 180»: 317 400 + 20 000 + 10 000 + 5 000 — 4 разные
+    закупки внутри одной позиции, а не одна усреднённая цена). key = номер
+    строки файла СТРОКОЙ — стабилен между повторными импортами того же файла
+    (тот же файл даёт те же номера строк), поэтому привязка закупки к части
+    (purchase_items.feo_plan_part_key) переживает повторную загрузку плана.
+
+    JSON-совместимые типы ТОЛЬКО (str/float/int — Decimal роняет транзакцию
+    при записи в JSONB, см. ПРАВИЛО проекта): Decimal → float здесь, один раз,
+    единственное место сборки parts (Правило №6 — _combine_rows зовёт только
+    её, сама не собирает второй вариант)."""
+    return [
+        {
+            "key": str(r["row"]),
+            "row": r["row"],
+            "qty": _num(r.get("qty")),
+            "unit": r.get("unit"),
+            "unit_price": _num(_row_unit_price(r)),
+            "amount": _num(r.get("amount")),
+        }
+        for r in rows
+    ]
+
+
 def _combine_rows(rows: list) -> dict:
     """Объединение группы дублей в ОДНУ позицию (владелец, уточнение №2):
     суммы и количества СКЛАДЫВАЮТСЯ — деньги не должны измениться ни на
@@ -216,6 +242,7 @@ def _combine_rows(rows: list) -> dict:
     merged["feo_amount"] = totals["feo_amount"]
     merged["row"] = rows[-1]["row"]
     merged["_prices_differ"] = totals["prices_differ"]
+    merged["parts"] = _build_parts(rows)
     return merged
 
 
@@ -318,6 +345,10 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         # колонки другого агента не применена).
         if hasattr(FeoPlannedItem, "need_level"):
             _fpi_kwargs["need_level"] = item_data.get("need_level")
+        # Состав объединённой позиции (план merged-item-parts.md) — [] у
+        # обычной (не объединённой — item_data без "parts") позиции.
+        if hasattr(FeoPlannedItem, "parts"):
+            _fpi_kwargs["parts"] = item_data.get("parts") or []
         pi = FeoPlannedItem(**_fpi_kwargs)
         db.add(pi)
         await db.flush()
@@ -333,7 +364,7 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
 
     _tracked = (
         "quantity", "unit", "amount", "item_type", "is_feo_breakdown", "is_internal_plan",
-        "unit_price", "feo_quantity", "feo_unit_price", "feo_amount", "need_level",
+        "unit_price", "feo_quantity", "feo_unit_price", "feo_amount", "need_level", "parts",
     )
     _old_vals = {f: getattr(existing_item, f, None) for f in _tracked}
     ch2 = False
@@ -359,6 +390,15 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         existing_item.feo_amount = item_data["feo_amount"]; ch2 = True
     if item_data.get("need_level") is not None and hasattr(existing_item, "need_level") and existing_item.need_level != item_data["need_level"]:
         existing_item.need_level = item_data["need_level"]; ch2 = True
+    # Состав объединённой позиции (план merged-item-parts.md) — "parts"
+    # присутствует в item_data ТОЛЬКО когда ЭТА загрузка объединяет группу
+    # (_combine_rows); обычная/разделённая строка её не несёт (item_data.get
+    # возвращает None) — старый состав прежней загрузки НЕ затирается пустым
+    # списком молча. Повторная загрузка ТОГО ЖЕ файла с тем же «Объединить» —
+    # те же key (номера строк) — пересчитанный parts обычно совпадёт с
+    # сохранённым и ch2 не взведётся.
+    if item_data.get("parts") is not None and hasattr(existing_item, "parts") and (existing_item.parts or []) != item_data["parts"]:
+        existing_item.parts = item_data["parts"]; ch2 = True
     if ch2:
         state.updated += 1
         reason = extra_reason or "обновлена позиция — значения перезаписаны из файла"

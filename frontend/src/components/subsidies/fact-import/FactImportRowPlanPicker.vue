@@ -8,6 +8,11 @@
         <div v-if="currentName" class="text-body-2 mb-3">
           Сейчас: <strong>{{ currentName }}</strong>
           <span v-if="currentAmount != null" class="text-medium-emphasis"> ({{ formatMoney(currentAmount) }})</span>
+          <!-- Часть объединённой позиции (план merged-item-parts.md) -->
+          <span v-if="row?.match.plan_parts?.length">
+            <span v-if="currentPartRow" class="text-purple"> · часть: стр. {{ currentPartRow }}</span>
+            <span v-else class="text-warning"> · часть не выбрана — выберите ниже</span>
+          </span>
         </div>
 
         <div v-if="row?.match.candidates?.length" class="mb-3">
@@ -66,6 +71,8 @@ import { computed } from 'vue'
 import FeoPlanTreePicker from './FeoPlanTreePicker.vue'
 import { useFeoPlannedResiduals, type FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { useFactImport, type FactImportRow } from '@/composables/subsidies/useFactImport'
+// Часть объединённой позиции (план merged-item-parts.md) — показана тут же,
+// не отдельным диалогом (ПРАВИЛО №6: один пикер решает и позицию, и часть).
 import { formatMoney } from '@/utils/formatMoney'
 
 const props = defineProps<{
@@ -102,15 +109,20 @@ const candidateIds = computed<number[]>(() => props.row?.match.candidates?.map(c
 
 const currentName = computed(() => props.row?.match?.planned_item_name ?? null)
 const currentAmount = computed(() => props.row?.match?.planned_item_amount ?? null)
+const currentPartRow = computed(() => {
+  const key = props.row?.match?.plan_part_key
+  if (!key) return null
+  return props.row?.match?.plan_parts?.find(p => p.key === key)?.row ?? null
+})
 
-function selectPlannedItem(id: number) {
+function selectPlannedItem(id: number, planPartKey: string | null = null) {
   if (!props.row) return
-  setRowPlannedItem(props.row.row, id, false)
+  setRowPlannedItem(props.row.row, id, false, planPartKey)
   model.value = false
 }
 
-function onTreeSelect(item: FeoPlanPosition) {
-  selectPlannedItem(item.id)
+function onTreeSelect(item: FeoPlanPosition, partKey: string | null) {
+  selectPlannedItem(item.id, partKey)
 }
 
 function skipRow() {

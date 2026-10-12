@@ -264,6 +264,67 @@ async def test_shared_group_does_not_apply_when_sums_mismatch(db_session, test_o
 
 
 @pytest.mark.asyncio
+async def test_shared_group_scoped_to_row_category_not_whole_subsidy(db_session, test_org):
+    """Баг прод (субсидия «ДНР 3», лист ДНРР, 12.10.2026): «Gaz A22R35
+    Х920АЕ 180» в плане ЕСТЬ в 4-х РАЗНЫХ категориях (Ремонт ТС, Мойка,
+    Шиномонтажные работы, Страхование), в файле — 7 строк с этим именем:
+    4 строки категории «Ремонт ТС» (Σ=352400, план этой позиции), по одной
+    строке в Мойке/Шиномонтаже/Страховании. Группировка ТОЛЬКО по имени
+    видела бы 7 строк при 4 кандидатах (len(free)=4 < len(rows)=7, но
+    len(free) != 1) — shared не применился бы вовсе, и 2 строки «Ремонт ТС»
+    стали бы ambiguous. Группировка по (имя, категория СТРОКИ) должна
+    выделить 4 строки «Ремонт ТС» в свою shared-группу (Σ=352400, 1 свободный
+    кандидат в этой категории) и решить 3 остальные строки обычным каскадом
+    по имени+категории (без shared, по одной позиции каждая)."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat_repair = await _make_leaf_category(db_session, subsidy.id, "Ремонт ТС")
+    cat_wash = await _make_leaf_category(db_session, subsidy.id, "Мойка")
+    cat_tires = await _make_leaf_category(db_session, subsidy.id, "Шиномонтажные работы")
+    cat_insurance = await _make_leaf_category(
+        db_session, subsidy.id, "Страхование транспортных средств получателя субсидии"
+    )
+    name = "Gaz A22R35 Х920АЕ 180"
+    item_repair = await _make_planned_item(db_session, cat_repair.id, name, 352400)
+    item_wash = await _make_planned_item(db_session, cat_wash.id, name, 7000)
+    item_tires = await _make_planned_item(db_session, cat_tires.id, name, 18600)
+    item_insurance = await _make_planned_item(db_session, cat_insurance.id, name, 25000)
+
+    ctx = await matching_mod.build_matching_context(db_session, subsidy.id)
+    rows = [
+        {"row": 20, "name": name, "path": ["Ремонт ТС"], "plan": {"amount": 317400}},
+        {"row": 27, "name": name, "path": ["Ремонт ТС"], "plan": {"amount": 20000}},
+        {"row": 28, "name": name, "path": ["Ремонт ТС"], "plan": {"amount": 10000}},
+        {"row": 31, "name": name, "path": ["Ремонт ТС"], "plan": {"amount": 5000}},
+        {"row": 42, "name": name, "path": ["Мойка"], "plan": {"amount": 7000}},
+        {"row": 50, "name": name, "path": ["Шиномонтажные работы"], "plan": {"amount": 18600}},
+        {"row": 143, "name": name,
+         "path": ["Страхование транспортных средств получателя субсидии"],
+         "plan": {"amount": 25000}},
+    ]
+
+    ordered = matching_mod.order_rows_for_matching(ctx, rows)
+    results = {row["row"]: matching_mod.match_row(ctx, row) for row in ordered}
+
+    for rn in (20, 27, 28, 31):
+        assert results[rn]["state"] == "found", results[rn]
+        assert results[rn]["planned_item_id"] == item_repair.id
+        assert results[rn]["shared_item"] is True
+        assert results[rn]["shared_rows"] == [20, 27, 28, 31]
+
+    assert results[42]["state"] == "found"
+    assert results[42]["planned_item_id"] == item_wash.id
+    assert not results[42].get("shared_item")
+
+    assert results[50]["state"] == "found"
+    assert results[50]["planned_item_id"] == item_tires.id
+    assert not results[50].get("shared_item")
+
+    assert results[143]["state"] == "found"
+    assert results[143]["planned_item_id"] == item_insurance.id
+    assert not results[143].get("shared_item")
+
+
+@pytest.mark.asyncio
 async def test_already_purchased_planned_item_flagged(db_session, test_org):
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem

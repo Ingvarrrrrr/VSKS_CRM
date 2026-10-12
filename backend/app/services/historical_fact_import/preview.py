@@ -40,6 +40,11 @@ from app.services.feo_import_common import format_rows as _format_rows
 from app.services.historical_fact_import.plan_diff_warnings import (
     _rub, build_file_plan_vs_gala_warning, build_tz_excess_message,
 )
+# Часть объединённой плановой позиции (план merged-item-parts.md) —
+# ПРАВИЛО №6, единственное место решения строка→часть (см. docstring модуля).
+from app.services.historical_fact_import.plan_parts import (
+    resolve_row_plan_part, part_by_key, build_part_excess_warning,
+)
 
 
 def _row_ranges_only(rows: list) -> str:
@@ -233,6 +238,10 @@ async def build_preview(
     breakdown_by_status: dict[str, dict] = {}
     breakdown_existing = {"rows": 0, "paid": Decimal(0)}
     breakdown_skip_by_reason: dict[str, dict] = {}
+    # Часть объединённой позиции (план merged-item-parts.md) — какие key уже
+    # отданы более ранним строкам ЭТОГО прогона (на позицию), чтобы 4 строки
+    # «Gaz A22R35» получили 4 РАЗНЫЕ части, а не одну и ту же дважды.
+    assigned_plan_parts: dict[int, set] = {}
 
     for row in parsed_rows:
         match = row_to_match[row["row"]]
@@ -372,6 +381,29 @@ async def build_preview(
                 _plan_diff_warning = build_file_plan_vs_gala_warning(row["plan"], _entry)
                 if _plan_diff_warning:
                     warnings.append(_plan_diff_warning)
+
+            # Часть объединённой позиции (план merged-item-parts.md) — только
+            # когда у позиции есть parts (объединённая загрузкой плана);
+            # обычная позиция (parts=[]) не несёт plan_part_key вовсе.
+            _parts = (_entry or {}).get("parts") or []
+            if _parts:
+                _fpi_id = match["planned_item_id"]
+                _assigned = assigned_plan_parts.setdefault(_fpi_id, set())
+                _override_part_key = override.get("plan_part_key")
+                _plan_part_key = resolve_row_plan_part(_parts, _override_part_key, plan_amount, _assigned)
+                if _plan_part_key:
+                    _assigned.add(_plan_part_key)
+                    match = {**match, "plan_part_key": _plan_part_key, "plan_parts": _parts}
+                    _part = part_by_key(_parts, _plan_part_key)
+                    _part_excess_warning = build_part_excess_warning(_part, contract_amount_for_row) if _part else None
+                    if _part_excess_warning:
+                        warnings.append(_part_excess_warning)
+                else:
+                    match = {**match, "plan_part_key": None, "plan_parts": _parts}
+                    warnings.append(
+                        f'Выберите часть позиции «{match.get("planned_item_name") or row["name"]}» '
+                        'в колонке «Сопоставление»'
+                    )
 
             # Задача Б (12.10.2026, «Gaz A22R35 Х920АЕ 180») — позиция GALA
             # объединяет несколько строк файла (matching_mod._assign_shared_

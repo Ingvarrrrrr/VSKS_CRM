@@ -134,6 +134,10 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     # либо явно есть, либо запрос не про синхронизацию по имени).
     product_kind_synced: bool = False
     product_name: Optional[str] = None
+    # Состав объединённой позиции (план merged-item-parts.md) — read-only,
+    # заполняется только импортом плана (feo_import_duplicates.py); не на
+    # FeoPlannedItemCreate — ручного редактирования состава в GALA нет.
+    parts: list[dict] = []
     model_config = {"from_attributes": True}
 
 
@@ -209,6 +213,10 @@ class FeoActualItemOut(BaseModel):
     accepted_quantity: Optional[Decimal] = None
     accepted_unit: Optional[str] = None
     stages: list[FeoStageOut] = []  # цепочка стадий feo→plan→purchase→contract→accepted, только заполненные
+    # Часть объединённой плановой позиции (план merged-item-parts.md) — какой
+    # элемент FeoPlannedItem.parts получила ЭТА строка закупки (импорт факта,
+    # ручные закупки часть не выбирают — см. план, «Не делаем»).
+    feo_plan_part_key: Optional[str] = None
     model_config = {"from_attributes": True}
 
 

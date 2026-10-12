@@ -335,6 +335,12 @@ export interface FeoPlannedItem {
   // @/utils/planNeedLevel.ts (Правило №6, единственный источник подписей) и
   // backend/app/services/plan_need_level.py.
   need_level?: 'likely' | 'nice_to_have' | null
+  // Состав объединённой позиции (владелец, 12.10.2026, план
+  // merged-item-parts.md) — заполняется ТОЛЬКО загрузкой плана «Объединить в
+  // одну» (см. backend FeoPlannedItem.parts, app/services/
+  // feo_import_duplicates.py). [] у обычной позиции — FeoLevel5Panel.vue не
+  // рисует раскрытие на части.
+  parts?: { key: string; row: number | null; qty: number | null; unit: string | null; unit_price: number | null; amount: number | null }[]
 }
 
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
@@ -385,6 +391,10 @@ export interface FeoActualItem {
   // ОСТАНОВЛЕНА» ниже по файлу не появится, пока бэкенд их не добавит.
   stopped_at?: string | null
   stopped_by_name?: string | null
+  // Часть объединённой позиции (план merged-item-parts.md) — какой элемент
+  // FeoPlannedItem.parts получила эта строка закупки (импорт факта); null —
+  // позиция не объединённая, ИЛИ часть не выбрана.
+  feo_plan_part_key?: string | null
 }
 
 // ── Левая группа колонок панели «план vs факт» (см. leftGroupInfo в feoCategoryUtils.ts) ──

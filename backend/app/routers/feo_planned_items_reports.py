@@ -382,6 +382,7 @@ async def get_comparison(
             accepted_quantity=pi.accepted_quantity,
             accepted_unit=pi.accepted_unit,
             stages=_stages,
+            feo_plan_part_key=pi.feo_plan_part_key,
         ))
 
     planned_out: list[FeoPlannedItemOut] = []

@@ -67,6 +67,14 @@ export interface FactImportMatch {
   // претендуют» не говорит, на какую строку смотреть.
   competing_rows?: number[]
   competing_item_name?: string | null
+  // Часть объединённой позиции (владелец, 12.10.2026, план
+  // merged-item-parts.md) — заполнено preview.py, когда у сопоставленной
+  // позиции есть parts (объединена загрузкой плана «Объединить в одну»).
+  // null при наличии plan_parts означает «часть не выбрана» — строка несёт
+  // предупреждение «Выберите часть позиции…» (см. warnings), но НЕ
+  // блокируется (закупка создастся без части).
+  plan_part_key?: string | null
+  plan_parts?: { key: string; row: number | null; qty: number | null; unit: string | null; unit_price: number | null; amount: number | null }[]
 }
 
 // 🟢 Задача B («Оплачено, но уже в закупке», 07.10.2026) — строка файла,
@@ -297,6 +305,9 @@ export interface FactImportRowOverride {
   planned_item_id?: number | null
   create_planned_item?: boolean
   status?: string
+  // Часть объединённой позиции (план merged-item-parts.md) — явный выбор
+  // человека, побеждает автоподбор по сумме (preview.py::resolve_row_plan_part).
+  plan_part_key?: string | null
 }
 
 export interface FactImportExistingMatchItemLink {
@@ -713,10 +724,19 @@ export function useFactImport() {
     rowOverride(row).skip = skip
   }
 
-  function setRowPlannedItem(row: number, plannedItemId: number | null, createNew = false) {
+  function setRowPlannedItem(row: number, plannedItemId: number | null, createNew = false, planPartKey: string | null = null) {
     const o = rowOverride(row)
     o.planned_item_id = plannedItemId
     o.create_planned_item = createNew
+    // Смена позиции сбрасывает ранее выбранную часть ЧУЖОЙ позиции — часть
+    // имеет смысл только относительно parts именно ЭТОЙ плановой позиции.
+    o.plan_part_key = planPartKey
+  }
+
+  /** Часть объединённой позиции (план merged-item-parts.md) — выбор человека
+   *  без смены самой позиции (клик по части в FeoPlanTreePicker.vue). */
+  function setRowPlanPart(row: number, planPartKey: string | null) {
+    rowOverride(row).plan_part_key = planPartKey
   }
 
   function setContractConfirmed(row: number, confirmed: boolean) {
@@ -886,6 +906,7 @@ export function useFactImport() {
     rowOverride,
     setRowSkip,
     setRowPlannedItem,
+    setRowPlanPart,
     setContractConfirmed,
     markAllContractsConfirmed,
     setOverPlanChoice,

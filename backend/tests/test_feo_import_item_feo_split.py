@@ -140,3 +140,59 @@ async def test_item_name_equals_deepest_level_warns_and_keeps_both(db_session):
         )
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)
+
+
+@pytest.mark.asyncio
+async def test_two_rows_same_name_as_category_stay_separate_items(db_session):
+    """Боевой инцидент 12.10.2026, субсидия «ДНР 3», файл «ХО_ЛНР_ДНР_МАКЛЮК_
+    Отправил.xlsx», лист «ДНРР», строки 151/152: ОБЕ называют себя как лист
+    «Проезд, проживание, питание» (= имя Уровня 4), с РАЗНЫМИ суммами
+    407 184,10 и 292 815,90. Старое правило «имя позиции = имя категории ⇒
+    строка-итог» зануляло «Плановую позицию» у ОБЕИХ — вторая запись в
+    collected_plan затирала первую, 407 184,10 терялись молча.
+
+    Владелец (09.10.2026): «одинаковое название не даёт оснований смешивать
+    категорию и плановую… плановая так и остаётся на плановой». Раз на этом
+    пути ДВЕ строки заявляют позицию (а не одна, как в тесте про «Катер»
+    выше) — это НЕ строка-итог ни у одной из них: обе уходят в обычный путь
+    позиций Ур.5 и становятся группой дублей по имени (feo_import_duplicates.py),
+    по умолчанию «оставить как есть» — суммы не теряются и не складываются."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [
+            mk_row(
+                lvl3="Расходы закупка товаров, услуг, в том числе проезд, проживание и питание",
+                lvl4="Проезд, проживание, питание",
+                item_name="Проезд, проживание, питание",
+                feo_sum="407184.10", plan_sum="407184.10",
+            ),
+            mk_row(
+                lvl3="Расходы закупка товаров, услуг, в том числе проезд, проживание и питание",
+                lvl4="Проезд, проживание, питание",
+                item_name="Проезд, проживание, питание",
+                feo_sum="292815.90", plan_sum="292815.90",
+            ),
+        ]
+        result = await _import(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+
+        assert not any(w["kind"] == "item_name_equals_category" for w in result["warnings"]), (
+            "строка не одна на этом пути — это не самообъявленный итог категории"
+        )
+        assert not any(w["kind"] == "group_total_row" for w in result["warnings"])
+
+        cats = await _get_categories(db_session, subsidy.id)
+        leaf = next(c for c in cats if c.name == "Проезд, проживание, питание")
+
+        items = await _get_items(db_session, leaf.id)
+        assert len(items) == 2, "обе строки обязаны остаться ОТДЕЛЬНЫМИ позициями, а не слиться в одну"
+        amounts = sorted(it.amount for it in items)
+        assert amounts == [Decimal("292815.90"), Decimal("407184.10")]
+        assert sum(amounts) == Decimal("700000.00"), "сумма плана не должна потеряться"
+
+        groups = [g for g in result.get("duplicate_groups", []) if g["name"] == "Проезд, проживание, питание"]
+        assert len(groups) == 1, "две строки с одинаковым именем — группа дублей, человек решает сам"
+        assert groups[0]["count"] == 2
+        assert groups[0]["resolution"] == "keep"
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)

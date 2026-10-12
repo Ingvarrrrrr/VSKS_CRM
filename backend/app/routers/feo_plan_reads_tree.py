@@ -514,6 +514,12 @@ async def get_plan_positions(
             fpi_ids = [it.id for it in fpi_rows]
             fpi_cons = await planned_item_consumption(db, fpi_ids, exclude_purchase_id, exclude_wish_id)
             fpi_committed = await committed_by_planned_item(db, fpi_ids)
+            # Состав объединённой позиции (план merged-item-parts.md) — закупки
+            # КАЖДОЙ части (fpi.parts), для окна выбора импорта факта и «Плана
+            # закупок» (ПРАВИЛО №6 — отдельное измерение группировки, не вторая
+            # формула расхода плана, см. docstring функции).
+            from app.services.feo_plan_part_purchases import planned_item_part_purchases
+            fpi_part_purchases = await planned_item_part_purchases(db, fpi_ids, exclude_purchase_id)
             # Задача «Что ещё заказать» (владелец, 04.10.2026, приёмка субсидии «ХО»
             # id 75): окну PlanToOrderDialog нужен остаток, СОВПАДАЮЩИЙ с карточкой
             # «Можно перераспределить» (subsidy_money_summary → compute_feo_plan_tree),
@@ -565,6 +571,15 @@ async def get_plan_positions(
                     # количество/цену отдельной строки группы как превышение по
                     # отдельности, см. composite_group_metrics.
                     "is_composite": bool(it.is_composite),
+                    # Состав объединённой позиции (план merged-item-parts.md) —
+                    # [] у обычной позиции; у объединённой — её части + закупки
+                    # КАЖДОЙ части (fpi_part_purchases, построены на том же
+                    # fpi_ids выше). Части без закупок получают пустой список
+                    # (фронт показывает «нет закупки»), не отсутствие ключа.
+                    "parts": [
+                        {**part, "purchases": fpi_part_purchases.get(it.id, {}).get(part["key"], [])}
+                        for part in (it.parts or [])
+                    ],
                     "consumed": consumed,
                     "consumed_quantity": consumed_qty,
                     "residual": planned_total - consumed,

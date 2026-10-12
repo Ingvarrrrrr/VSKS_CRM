@@ -89,6 +89,11 @@ async def load_plan_catalog(db: AsyncSession, subsidy_id: int) -> list[dict]:
                 "quantity": _it_qty,
                 "unit_price": _it_unit_price,
                 "amount": _it_amount,
+                # Состав объединённой позиции (план merged-item-parts.md) —
+                # нужен импорту факта (historical_fact_import/plan_parts.py)
+                # для автовыбора части по точной сумме строки файла; [] у
+                # обычной (не объединённой) позиции.
+                "parts": it.parts or [],
             })
 
     return catalog

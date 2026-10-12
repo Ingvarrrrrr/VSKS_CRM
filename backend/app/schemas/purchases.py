@@ -65,6 +65,13 @@ class PurchaseItemCreate(BaseModel):
     # ROW_CHOICES; для остальных contract_form не используется (форма одна на
     # всю закупку, как и раньше). См. item_forms.py::item_form_for_row.
     item_form: Optional[str] = None
+    # Часть объединённой плановой позиции (план merged-item-parts.md,
+    # владелец 12.10.2026) — к какому элементу FeoPlannedItem.parts относится
+    # эта строка. Заполняется ТОЛЬКО импортом факта (historical_fact_import/
+    # plan_parts.py); без этого поля на входной схеме pydantic молча отбросил
+    # бы его из payload (тот же баг, что уже был с receipt_id — см. комментарий
+    # выше). Заявки/закупки, созданные вручную, часть не выбирают (None).
+    feo_plan_part_key: Optional[str] = None
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int

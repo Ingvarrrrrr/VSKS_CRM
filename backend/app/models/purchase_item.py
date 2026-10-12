@@ -43,6 +43,15 @@ class PurchaseItem(Base):
     vat_on_top = Column(Boolean, nullable=True)
     receipt_id = Column(Integer, ForeignKey('purchase_receipts.id', ondelete='SET NULL'), nullable=True, index=True)  # Phase 26-BB
     needed_date = Column(Date, nullable=True)   # дата потребности per-item
+    # Часть объединённой плановой позиции (владелец, 12.10.2026, план
+    # merged-item-parts.md) — какому элементу FeoPlannedItem.parts
+    # принадлежит эта строка закупки. key тот же, что в parts[].key (номер
+    # строки файла импорта плана строкой). NULL — позиция не объединённая
+    # (parts=[]) ИЛИ часть не выбрана (см. historical_fact_import/plan_parts.py:
+    # не найдено точного совпадения суммы — закупка создаётся без части,
+    # владелец решает вручную). Заполняется ТОЛЬКО импортом факта — заявки/
+    # закупки, созданные вручную, часть не выбирают (см. план, «Не делаем»).
+    feo_plan_part_key = Column(String(32), nullable=True)
     wish_item_id = Column(Integer, ForeignKey("wish_items.id", ondelete="SET NULL"), nullable=True)  # W1: hard link to source WishItem
     # false — позиция расходует план своего конечного элемента ФЭО; true — «сверх плана»,
     # прибавляется к плановой сумме (не вычитается из исходного лимита элемента).

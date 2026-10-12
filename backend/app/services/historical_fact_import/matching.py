@@ -96,6 +96,11 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
         # used_by[planned_item_id] = row["row"] того прогона, что её забрал
         # (ПРАВИЛО №6 — одно место, где used_ids.add(...), там же и used_by[...] = ...).
         "used_by": {},
+        # Задача Б (12.10.2026) — заполняется _assign_shared_groups
+        # (order_rows_for_matching), читается match_row (ПРАВИЛО №6, одно
+        # место решения «строка → позиция» для группы «общая позиция на
+        # несколько отдельных закупок»).
+        "forced": {}, "forced_groups": {},
     }
 
 
@@ -141,7 +146,70 @@ def order_rows_for_matching(ctx: dict, rows: list) -> list:
     rest: list = []
     for row in rows:
         (exact if _has_exact_free_amount_match(row) else rest).append(row)
+
+    # Задача Б (владелец, боевой файл ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx, лист
+    # ДНРР, 12.10.2026): «Gaz A22R35 Х920АЕ 180» — план GALA содержит ОДНУ
+    # позицию на 352 400 ₽ (ремонт этой машины), а в файле факта — 4 СТРОКИ
+    # с этим же именем на 317 400 / 20 000 / 10 000 / 5 000 — четыре ОТДЕЛЬНЫЕ
+    # закупки в рамках одной плановой позиции, не «3 строки без места в
+    # плане». Решение «какая строка какую позицию получает» принимается
+    # ЗДЕСЬ, один раз, ДО основного прохода match_row (ПРАВИЛО №6 — второй
+    # механизм распределения строка→позиция не заводим, match_row ниже
+    # только читает ctx['forced']/ctx['forced_groups']).
+    _assign_shared_groups(ctx, rows)
+
     return exact + rest
+
+
+def _assign_shared_groups(ctx: dict, rows: list) -> None:
+    """Группа одноимённых строк файла (после нормализации имени), у которых
+    Σ плана СТРОК РАВНА (±0,01) плановой сумме ОДНОЙ свободной одноимённой
+    позиции GALA, а свободных одноимённых позиций в плане МЕНЬШЕ, чем строк
+    в группе, — вся группа получает эту ОДНУ позицию (`ctx['forced']`,
+    `row_num -> planned_item_id`); match_row() ниже отдаёт её каждой строке
+    группы без обычного состязания за «свободность» (used_ids), помечая
+    `shared_item=True` — несколько закупок на одну FeoPlannedItem — ожидаемо
+    и легитимно для этого случая (owner: «это разные закупки»).
+
+    Если в group_rows для какой-то строки план неизвестен (amount=None) —
+    группа НЕ трогается (нельзя проверить равенство сумм, см. контрольный
+    пример владельца: 2 строки 407 184,10/292 815,90 при ОДНОЙ позиции
+    292 815,90 — сумма строк НЕ равна сумме позиции, это другой случай,
+    решается обычным каскадом match_row/order_rows_for_matching выше, а не
+    этой функцией — у него остаётся одна found, одна ambiguous, как раньше)."""
+    by_name: dict = ctx["by_name"]
+    already_bound: set = ctx["already_bound"]
+    forced: dict = ctx.setdefault("forced", {})
+    forced_groups: dict = ctx.setdefault("forced_groups", {})
+
+    groups: dict[str, list] = {}
+    for row in rows:
+        key = normalize_item_name(row.get("name"))
+        groups.setdefault(key, []).append(row)
+
+    for key, group_rows in groups.items():
+        if len(group_rows) < 2:
+            continue
+        candidates = by_name.get(key, [])
+        free = [c for c in candidates if c["id"] not in already_bound]
+        # Ровно ОДНА свободная одноимённая позиция, и строк группы СТРОГО
+        # больше — иначе обычный каскад справляется сам (len(free) >= len
+        # (group_rows) — всем хватает по одной; len(free) > 1 при нескольких
+        # разных суммах — не наш случай, его разбор не запрошен владельцем).
+        if len(free) != 1 or len(group_rows) <= len(free):
+            continue
+        amounts = [(row.get("plan") or {}).get("amount") for row in group_rows]
+        if any(a is None for a in amounts):
+            continue
+        total = sum(Decimal(str(a)) for a in amounts)
+        target = free[0]
+        c_amount = target.get("amount")
+        if c_amount is None or abs(Decimal(str(c_amount)) - total) > Decimal("0.01"):
+            continue
+        row_nums = sorted(r.get("row") for r in group_rows if r.get("row") is not None)
+        for row in group_rows:
+            forced[row.get("row")] = target["id"]
+        forced_groups[target["id"]] = {"rows": row_nums, "amount": total, "name": target["name"]}
 
 
 def match_row(ctx: dict, row: dict) -> dict:
@@ -171,6 +239,23 @@ def match_row(ctx: dict, row: dict) -> dict:
         }
         for c in candidates
     ]
+
+    # Задача Б (12.10.2026) — группа строк уже получила ОДНУ общую позицию
+    # через _assign_shared_groups (order_rows_for_matching, ПРАВИЛО №6, одно
+    # место решения). Эксклюзивность used_ids здесь НЕ применяется намеренно
+    # — несколько закупок на одну FeoPlannedItem легитимны ровно для этого
+    # случая (каждая строка группы = отдельная закупка внутри одной позиции).
+    forced: dict = ctx.get("forced") or {}
+    row_num = row.get("row")
+    if row_num in forced:
+        chosen_id = forced[row_num]
+        group_info = (ctx.get("forced_groups") or {}).get(chosen_id) or {}
+        return {
+            "state": "found", "planned_item_id": chosen_id, "candidates": cand_out,
+            "shared_item": True,
+            "shared_rows": group_info.get("rows"),
+            "shared_amount": group_info.get("amount"),
+        }
 
     used_ids: set = ctx["used_ids"]
     already_bound: set = ctx["already_bound"]

@@ -107,55 +107,122 @@ def _num(v) -> float | None:
     return float(v)
 
 
-def _combine_rows(rows: list) -> dict:
-    """Объединение группы дублей в ОДНУ позицию (владелец, уточнение №2):
-    суммы и количества СКЛАДЫВАЮТСЯ, цена за единицу выводится делением —
-    деньги не должны измениться ни на рубль. `amount` объединённой позиции —
-    точная сумма amount всех строк (без промежуточного округления через
-    цену), поэтому инвариант «сумма не изменилась» выполняется тождественно,
-    а не в пределах округления.
+def _row_unit_price(r: dict) -> Decimal | None:
+    """Цена за единицу ОДНОЙ строки группы — явная `unit_price` строки, если
+    задана, иначе `amount/qty` при известном `qty` и `amount`. Используется
+    `_merge_totals` ниже, чтобы решить, одинакова ли цена у ВСЕХ строк
+    группы — никакого деления Σamount/Σqty на уровне ОДНОЙ строки тут нет."""
+    up = r.get("unit_price")
+    if up is not None:
+        return up
+    amt = r.get("amount")
+    qty = r.get("qty")
+    if amt is not None and qty:
+        return (amt / qty).quantize(QUANT)
+    return None
 
-    То же самое — ОТДЕЛЬНО — для комплекта «по ФЭО» (feo_qty/feo_unit/
-    feo_amount, боевой инцидент 2026-09-16, см. feo_import_apply.py у
-    объявления item_plan_qty): без этого объединение группы дублей молча
-    брало ФЭО-числа ПОСЛЕДНЕЙ строки (через `dict(rows[-1])`), и они переставали
-    сходиться с объединённым планом/суммой."""
+
+def _row_feo_unit_price(r: dict) -> Decimal | None:
+    """Сестра `_row_unit_price` для комплекта «по ФЭО» (feo_unit_price/
+    feo_amount/feo_qty) — тот же приём, отдельная функция, т.к. поля другие."""
+    up = r.get("feo_unit_price")
+    if up is not None:
+        return up
+    amt = r.get("feo_amount")
+    qty = r.get("feo_qty")
+    if amt is not None and qty:
+        return (amt / qty).quantize(QUANT)
+    return None
+
+
+def _common_price(rows: list, price_fn) -> tuple[Decimal | None, bool]:
+    """Цена за единицу ОБЪЕДИНЁННОЙ позиции (владелец, 12.10.2026, экран
+    дублей загрузки плана ФЭО: «не должно быть так, что цена делится
+    равномерно. Это разные закупки» — пример «Gaz A22R35 Х920АЕ 180»: план
+    352 400 на ремонт машины складывается из 4 ОТДЕЛЬНЫХ закупок 317 400 /
+    20 000 / 10 000 / 5 000 — цена «28 000 за ед.», полученная делением
+    352 400/4 (количество «услуг»), ничего не значит и не может быть ценой
+    закупки).
+
+    Возвращает (цена, prices_differ): цена — ТОЛЬКО если она известна У
+    ВСЕХ строк группы (`price_fn(r)` не None ни у одной) И совпадает
+    (±0,01 — округление квантования) у всех строк; иначе None. `prices_differ`
+    — True, когда цена известна у всех строк, но они РАЗНЫЕ (используется
+    и в тексте предупреждения/экрана дублей, и отличает этот случай от
+    случая «цена неизвестна хотя бы у одной строки» — у них разные причины
+    для человека)."""
+    prices = [price_fn(r) for r in rows]
+    if any(p is None for p in prices):
+        return None, False
+    first = prices[0]
+    if all(abs(p - first) <= Decimal("0.01") for p in prices[1:]):
+        return first, False
+    return None, True
+
+
+def _merge_totals(rows: list) -> dict:
+    """Единственное место вычисления «итогов объединения» группы дублей —
+    Правило №6 (раньше `_combine_rows` и `_describe_group` считали одну и ту
+    же формулу количества/цены раздельно, каждая своими словами).
+
+    Количество складывается (Σ), ТОЛЬКО если оно задано У ВСЕХ строк группы
+    И единица измерения одна и та же у всех строк после нормализации —
+    иначе None (нельзя складывать штуки с часами, и нельзя выдавать
+    количество, часть которого угадана). Цена за единицу — см. `_common_price`
+    (НЕ усредняется делением общей суммы на общее количество — владелец,
+    12.10.2026). Сумма (amount) — всегда точная Σ amount всех строк,
+    независимо от кол-ва/цены — деньги не зависят от того, разложена ли
+    сумма на кол-во/цену."""
     total_amount = sum((r["amount"] or ZERO) for r in rows)
-    total_qty = _sum_qty(rows)
     all_qty_known = all(r["qty"] is not None for r in rows)
-    unit = next((r["unit"] for r in rows if r["unit"]), None)
-    unit_price = (
-        (total_amount / total_qty).quantize(QUANT)
-        if (all_qty_known and total_qty)
-        else None
-    )
+    units_normed = {norm(r.get("unit") or "") for r in rows}
+    unit_uniform = len(units_normed) == 1
+    total_qty = _sum_qty(rows) if (all_qty_known and unit_uniform) else None
+    unit = rows[0].get("unit") if (unit_uniform and total_qty is not None) else None
+    unit_price, prices_differ = _common_price(rows, _row_unit_price)
+
     total_feo_amount = sum((r.get("feo_amount") or ZERO) for r in rows)
     total_feo_qty = sum((r.get("feo_qty") or ZERO) for r in rows)
     feo_unit = next((r.get("feo_unit") for r in rows if r.get("feo_unit")), None)
-    feo_unit_price = (total_feo_amount / total_feo_qty).quantize(QUANT) if total_feo_qty else None
+    feo_unit_price, feo_prices_differ = _common_price(rows, _row_feo_unit_price)
+
+    return {
+        "qty": total_qty, "unit": unit, "amount": total_amount, "unit_price": unit_price,
+        "prices_differ": prices_differ,
+        "feo_qty": total_feo_qty or None, "feo_unit": feo_unit,
+        "feo_amount": total_feo_amount or None, "feo_unit_price": feo_unit_price,
+        "feo_prices_differ": feo_prices_differ,
+    }
+
+
+def _combine_rows(rows: list) -> dict:
+    """Объединение группы дублей в ОДНУ позицию (владелец, уточнение №2):
+    суммы и количества СКЛАДЫВАЮТСЯ — деньги не должны измениться ни на
+    рубль. `amount` объединённой позиции — точная сумма amount всех строк
+    (без промежуточного округления через цену), поэтому инвариант «сумма не
+    изменилась» выполняется тождественно, а не в пределах округления. Цена
+    за единицу — см. `_merge_totals`/`_common_price`: НЕ усредняется делением,
+    если строки группы — разные закупки с разными ценами (владелец,
+    12.10.2026)."""
+    totals = _merge_totals(rows)
     merged = dict(rows[-1])  # берём последние флаги/тип как есть — они одинаковы по построению группы
-    merged["qty"] = total_qty
-    merged["unit"] = unit
-    merged["amount"] = total_amount
-    merged["unit_price"] = unit_price
-    merged["feo_qty"] = total_feo_qty or None
-    merged["feo_unit"] = feo_unit
-    merged["feo_unit_price"] = feo_unit_price
-    merged["feo_amount"] = total_feo_amount or None
+    merged["qty"] = totals["qty"]
+    merged["unit"] = totals["unit"]
+    merged["amount"] = totals["amount"]
+    merged["unit_price"] = totals["unit_price"]
+    merged["feo_qty"] = totals["feo_qty"]
+    merged["feo_unit"] = totals["feo_unit"]
+    merged["feo_unit_price"] = totals["feo_unit_price"]
+    merged["feo_amount"] = totals["feo_amount"]
     merged["row"] = rows[-1]["row"]
+    merged["_prices_differ"] = totals["prices_differ"]
     return merged
 
 
 def _describe_group(key: str, name: str, rows: list) -> dict:
+    totals = _merge_totals(rows)
     total_amount = sum((r["amount"] or ZERO) for r in rows)
     total_qty = _sum_qty(rows)
-    all_qty_known = all(r["qty"] is not None for r in rows)
-    unit = next((r["unit"] for r in rows if r["unit"]), None)
-    merged_price = (
-        (total_amount / total_qty).quantize(QUANT)
-        if (all_qty_known and total_qty)
-        else None
-    )
     path_names = rows[0].get("path") or []
     return {
         "key": key,
@@ -174,10 +241,16 @@ def _describe_group(key: str, name: str, rows: list) -> dict:
         "sum_before": _num(total_amount),
         "qty_before": _num(total_qty),
         "merged_preview": {
-            "qty": _num(total_qty),
-            "unit": unit,
-            "price": _num(merged_price),
-            "amount": _num(total_amount),
+            "qty": _num(totals["qty"]),
+            "unit": totals["unit"],
+            "price": _num(totals["unit_price"]),
+            "amount": _num(totals["amount"]),
+            # Владелец, 12.10.2026: экран дублей должен различать «цена не
+            # задана, т.к. у строк разные цены (это отдельные закупки)» и
+            # «цена не задана, т.к. неизвестны количество/цена хотя бы у
+            # одной строки» — фронт (DuplicateMergeDialog.vue/FeoImportWizard.vue)
+            # показывает разный текст по этому флагу.
+            "prices_differ": totals["prices_differ"],
         },
     }
 
@@ -307,7 +380,13 @@ async def _upsert_merge(state, leaf, rows: list, key: str) -> None:
     merged = _combine_rows(rows)
     matches = await _matching_items(state.db, leaf.id, merged["name"])
     _rows_str = format_rows([r["row"] for r in rows])
-    _reason = f"объединено из {len(rows)} строк файла ({_rows_str}) — суммы сложены, цена усреднена делением"
+    if merged["unit_price"] is not None:
+        _price_part = "цена за единицу одинакова у всех строк"
+    elif merged.get("_prices_differ"):
+        _price_part = "цена за единицу не задана — у строк разные цены, это отдельные закупки"
+    else:
+        _price_part = "цена за единицу не задана"
+    _reason = f"объединено из {len(rows)} строк файла ({_rows_str}) — суммы сложены, {_price_part}"
     item = await _upsert_one(state, leaf, merged, extra_reason=_reason, matches=matches)
     # Владелец, 22.09: ВСЕ исходные строки группы указывают на ОДНУ объединённую
     # позицию — комментарий любой из них должен резолвиться к её id.
@@ -334,6 +413,12 @@ async def _upsert_merge(state, leaf, rows: list, key: str) -> None:
                 )
     total_before = sum((r["amount"] or ZERO) for r in rows)
     _qty_str = _fmt(merged["qty"]) if merged["qty"] is not None else "не задано"
+    if merged["unit_price"] is not None:
+        _price_clause = ""
+    elif merged.get("_prices_differ"):
+        _price_clause = "; цена за единицу не задана — у строк разные цены, это отдельные закупки"
+    else:
+        _price_clause = "; цена за единицу не задана"
     state.warnings.append({
         "kind": "duplicate_group_merged",
         "row": None,
@@ -341,7 +426,7 @@ async def _upsert_merge(state, leaf, rows: list, key: str) -> None:
         "message": (
             f"«{merged['name']}» — объединены {len(rows)} строк файла ({_rows_str}): "
             f"количество {_qty_str}, сумма {_fmt(merged['amount'])} "
-            f"(было по строкам: {_fmt(total_before)} — сумма не изменилась)"
+            f"(было по строкам: {_fmt(total_before)} — сумма не изменилась){_price_clause}"
         ),
     })
 

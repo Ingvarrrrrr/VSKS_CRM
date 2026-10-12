@@ -373,6 +373,20 @@ async def build_preview(
                 if _plan_diff_warning:
                     warnings.append(_plan_diff_warning)
 
+            # Задача Б (12.10.2026, «Gaz A22R35 Х920АЕ 180») — позиция GALA
+            # объединяет несколько строк файла (matching_mod._assign_shared_
+            # groups) — каждая строка станет ОТДЕЛЬНОЙ закупкой в рамках этой
+            # одной позиции; владелец должен видеть это явно, не только по
+            # совпавшим суммам строк.
+            if match.get("shared_item") and match.get("shared_rows"):
+                _shared_name = match.get("planned_item_name") or row["name"]
+                _shared_rows_text = _row_ranges_only(match["shared_rows"])
+                _shared_amount_text = _rub(match.get("shared_amount"))
+                warnings.append(
+                    f'Позиция GALA «{_shared_name}» ({_shared_amount_text}) объединяет строки '
+                    f'{_shared_rows_text} файла — каждая строка будет отдельной закупкой в этой позиции'
+                )
+
         # Задача A — ФОТ по категории плановой позиции (после override, т.к.
         # override.planned_item_id может сменить, какая категория у строки).
         _cat_id = planned_item_category.get(match.get("planned_item_id"))

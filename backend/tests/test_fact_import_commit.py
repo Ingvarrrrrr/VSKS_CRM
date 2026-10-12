@@ -166,6 +166,69 @@ async def test_commit_creates_purchase_contract_and_payment(client, auth_headers
     assert p.feo_category_id == cat.id
 
 
+async def test_commit_shared_group_creates_separate_purchases_on_one_planned_item(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Задача Б (владелец, 12.10.2026, «Gaz A22R35 Х920АЕ 180»): план GALA —
+    ОДНА позиция на 352 400 ₽, в файле факта 4 СТРОКИ того же имени на
+    317 400 / 20 000 / 10 000 / 5 000 (Σ = 352 400) с РАЗНЫМИ поставщиками —
+    коммит должен создать 4 ОТДЕЛЬНЫЕ закупки, все 4 с одной и той же
+    FeoPlannedItem (ПРАВИЛО №6 — не второй механизм, тот же feo_planned_item_id
+    на каждой PurchaseItem)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    item_gaz = FeoPlannedItem(feo_category_id=cat.id, name="Gaz A22R35 Х920АЕ 180", amount=352400, is_active=True)
+    db_session.add(item_gaz)
+    await db_session.commit()
+
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 317400, 317400, 317400, paid=317400, status_raw="Оплачено",
+             supplier="ООО Альфа", item_name="Gaz A22R35 Х920АЕ 180"),
+        _row("Аренда оборудования", 20000, 20000, 20000, paid=20000, status_raw="Оплачено",
+             supplier="ООО Бета", item_name="Gaz A22R35 Х920АЕ 180"),
+        _row("Аренда оборудования", 10000, 10000, 10000, paid=10000, status_raw="Оплачено",
+             supplier="ООО Гамма", item_name="Gaz A22R35 Х920АЕ 180"),
+        _row("Аренда оборудования", 5000, 5000, 5000, paid=5000, status_raw="Оплачено",
+             supplier="ООО Дельта", item_name="Gaz A22R35 Х920АЕ 180"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    preview = resp.json()
+    shared_rows = [r for r in preview["rows"] if r["match"].get("shared_item")]
+    assert len(shared_rows) == 4, preview["rows"]
+    assert all(r["match"]["planned_item_id"] == item_gaz.id for r in shared_rows)
+    assert any("объединяет строки" in w for r in shared_rows for w in r["warnings"])
+
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/commit",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["purchases_created"] == 4
+
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    purchases = (await db_session.execute(
+        select(Purchase).where(Purchase.subsidy_id == subsidy.id, Purchase.import_run_id == data["run_id"])
+    )).scalars().all()
+    assert len(purchases) == 4
+    items = (await db_session.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id.in_([p.id for p in purchases]))
+    )).scalars().all()
+    assert len(items) == 4
+    assert all(it.feo_planned_item_id == item_gaz.id for it in items)
+    assert sum(float(it.total_price) for it in items) == 352400
+
+
 async def test_commit_fact_visible_in_feo_plan_tree(client, auth_headers, test_user, db_session, subsidy_with_plan):
     """Коммит должен быть виден в compute_feo_plan_tree (committed/fact узла
     категории), не только в таблице purchases — иначе дерево ФЭО показывает

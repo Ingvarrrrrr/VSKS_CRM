@@ -109,8 +109,12 @@
                   <template #label>
                     <span>
                       Объединить в одну (сумма {{ formatCurrency(g.merged_preview.amount ?? 0) }},
-                      кол-во {{ g.merged_preview.qty != null ? g.merged_preview.qty + (g.merged_preview.unit ? ' ' + g.merged_preview.unit : '') : 'не задано' }},
-                      цена {{ g.merged_preview.price != null ? formatCurrency(g.merged_preview.price) + ' за ед.' : 'не задана (количество не у всех строк указано)' }})
+                      кол-во {{ g.merged_preview.qty != null ? g.merged_preview.qty + (g.merged_preview.unit ? ' ' + g.merged_preview.unit : '') : 'не задано' }};
+                      {{ g.merged_preview.price != null
+                        ? 'цена ' + formatCurrency(g.merged_preview.price) + ' за ед.'
+                        : (g.merged_preview.prices_differ
+                          ? 'цена за единицу не задаётся — у строк разные цены, это отдельные закупки внутри одной позиции'
+                          : 'цена за единицу не задаётся — не у всех строк известны количество/цена') }})
                     </span>
                   </template>
                 </v-radio>

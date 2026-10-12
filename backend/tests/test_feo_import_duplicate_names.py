@@ -108,12 +108,13 @@ async def test_default_resolution_keeps_rows_separate(db_session):
 
 @pytest.mark.asyncio
 async def test_merge_resolution_combines_sum_and_quantity(db_session):
-    """Владелец: «объединить со средней ценой, тогда получилась бы одна
-    строчка «Чайник» с ценой средней 5000, которая получилась из
-    (4000+5000+6000)/3» — суммы и количества СКЛАДЫВАЮТСЯ (владелец,
-    уточнение №2: деньги не должны измениться ни на рубль), цена выводится
-    делением. Три строки с явным количеством 1/1/1 → объединённое
-    количество = 3, сумма = 15000, цена = 5000."""
+    """Владелец (12.10.2026, повторное уточнение — экран дублей загрузки
+    плана ФЭО): цена за единицу объединённой позиции НЕ усредняется делением
+    общей суммы на общее количество — «это разные закупки». Три строки с
+    явным количеством 1/1/1, но РАЗНЫМИ ценами (4000/5000/6000 за «штуку») →
+    количество и сумма складываются (3 и 15000 — деньги не должны измениться
+    ни на рубль), а цена за единицу — None (цены строк разные, усреднять
+    запрещено)."""
     subsidy = await _make_subsidy(db_session)
     # `subsidy.id` захвачен здесь ЯВНО, обычным int'ом — dry_run ниже делает
     # `db.rollback()`, который истекает (expire) все ORM-объекты сессии, а
@@ -140,8 +141,8 @@ async def test_merge_resolution_combines_sum_and_quantity(db_session):
         assert preview["errors"] == []
         group_key = preview["duplicate_groups"][0]["key"]
         assert preview["duplicate_groups"][0]["merged_preview"] == {
-            "qty": 3.0, "unit": None, "price": 5000.0, "amount": 15000.0,
-        }
+            "qty": 3.0, "unit": None, "price": None, "amount": 15000.0, "prices_differ": True,
+        }, "цены строк разные (4000/5000/6000 за ед.) — цена объединённой позиции НЕ усредняется"
         cats_after_dry_run = await _get_categories(db_session, subsidy_id)
         assert cats_after_dry_run == [], "dry_run обязан откатывать транзакцию"
 
@@ -157,10 +158,12 @@ async def test_merge_resolution_combines_sum_and_quantity(db_session):
         assert item.name == "Чайник"
         assert item.amount == Decimal("15000"), "сумма не должна измениться ни на рубль"
         assert item.quantity == Decimal("3"), "количество — сумма явно заданных количеств строк"
+        assert item.unit_price is None, "цены строк разные — усреднять запрещено, цена не выводится"
 
         merge_warn = [w for w in result["warnings"] if w["kind"] == "duplicate_group_merged"]
         assert len(merge_warn) == 1
         assert "15 000" in merge_warn[0]["message"], merge_warn[0]["message"]
+        assert "разные цены" in merge_warn[0]["message"], merge_warn[0]["message"]
     finally:
         await _cleanup_subsidy(db_session, subsidy_id)
 

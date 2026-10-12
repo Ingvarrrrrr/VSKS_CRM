@@ -755,7 +755,7 @@ export interface FeoDuplicateGroup {
   count: number
   sum_before: number | null
   qty_before: number | null
-  merged_preview: { qty: number | null; unit: string | null; price: number | null; amount: number | null }
+  merged_preview: { qty: number | null; unit: string | null; price: number | null; amount: number | null; prices_differ?: boolean }
   // Присутствует только в ОТВЕТЕ (после того, как это решение уже применено
   // сервером) — на предпросмотре (dry-run) до выбора человека равно 'keep'
   // (серверный дефолт), фронт держит собственный выбор в

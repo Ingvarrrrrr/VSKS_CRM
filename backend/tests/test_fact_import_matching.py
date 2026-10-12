@@ -209,6 +209,61 @@ async def test_two_exact_amount_rows_keep_own_planned_items_gsm_regression(db_se
 
 
 @pytest.mark.asyncio
+async def test_shared_group_assigns_all_rows_to_one_planned_item(db_session, test_org):
+    """Задача Б (владелец, боевой файл ХО_ЛНР_ДНР_МАКЛЮК_Отправил.xlsx, лист
+    ДНРР, 12.10.2026): «Gaz A22R35 Х920АЕ 180» — план GALA содержит ОДНУ
+    позицию на 352 400 ₽ (ремонт этой машины), а в файле факта — 4 СТРОКИ с
+    тем же именем на 317 400 / 20 000 / 10 000 / 5 000 (Σ = 352 400, точное
+    совпадение с планом ОДНОЙ свободной позиции) — КАЖДАЯ строка получает
+    эту позицию (found, не ambiguous), shared_item=True, без «позиции нет
+    в плане» для трёх из четырёх."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_leaf_category(db_session, subsidy.id, "Ремонт ТС")
+    item = await _make_planned_item(db_session, cat.id, "Gaz A22R35 Х920АЕ 180", 352400)
+
+    ctx = await matching_mod.build_matching_context(db_session, subsidy.id)
+    rows = [
+        {"row": 20, "name": "Gaz A22R35 Х920АЕ 180", "path": [], "plan": {"amount": 317400}},
+        {"row": 27, "name": "Gaz A22R35 Х920АЕ 180", "path": [], "plan": {"amount": 20000}},
+        {"row": 28, "name": "Gaz A22R35 Х920АЕ 180", "path": [], "plan": {"amount": 10000}},
+        {"row": 31, "name": "Gaz A22R35 Х920АЕ 180", "path": [], "plan": {"amount": 5000}},
+    ]
+
+    ordered = matching_mod.order_rows_for_matching(ctx, rows)
+    results = {row["row"]: matching_mod.match_row(ctx, row) for row in ordered}
+
+    for rn in (20, 27, 28, 31):
+        assert results[rn]["state"] == "found", results[rn]
+        assert results[rn]["planned_item_id"] == item.id
+        assert results[rn]["shared_item"] is True
+        assert results[rn]["shared_rows"] == [20, 27, 28, 31]
+
+
+@pytest.mark.asyncio
+async def test_shared_group_does_not_apply_when_sums_mismatch(db_session, test_org):
+    """Контроль: 2 строки 407 184,10 / 292 815,90 при ОДНОЙ свободной позиции
+    292 815,90 — суммы строк (Σ=700 000) НЕ совпадают с планом позиции,
+    поэтому группа НЕ объединяется через shared-механизм — поведение как
+    раньше (одна found по точному совпадению суммы, вторая ambiguous), см.
+    test_exact_plan_amount_matched_before_earlier_row."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_leaf_category(db_session, subsidy.id, "Проезд, проживание, питание")
+    item = await _make_planned_item(db_session, cat.id, "Проезд, проживание, питание", 292815.90)
+
+    ctx = await matching_mod.build_matching_context(db_session, subsidy.id)
+    row151 = {"row": 151, "name": "Проезд, проживание, питание", "path": [], "plan": {"amount": 407184.10}}
+    row152 = {"row": 152, "name": "Проезд, проживание, питание", "path": [], "plan": {"amount": 292815.90}}
+
+    ordered = matching_mod.order_rows_for_matching(ctx, [row151, row152])
+    results = {row["row"]: matching_mod.match_row(ctx, row) for row in ordered}
+
+    assert results[152]["state"] == "found"
+    assert results[152]["planned_item_id"] == item.id
+    assert not results[152].get("shared_item")
+    assert results[151]["state"] == "ambiguous"
+
+
+@pytest.mark.asyncio
 async def test_already_purchased_planned_item_flagged(db_session, test_org):
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem

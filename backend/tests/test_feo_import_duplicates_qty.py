@@ -7,16 +7,19 @@
 количества (`r["qty"] if r["qty"] is not None else ONE`) — оба числа
 (кол-во 2, цена 0,00) были выдуманы, реального количества в файле нет.
 
-Правило теперь (Правило №6 — обе функции зовут общую `_sum_qty`):
-  - ни у одной строки группы количество не задано → merged qty = None
-    (не 0 и не подстановка единицы), цена за единицу = None;
-  - количество известно только у ЧАСТИ строк → merged qty = сумма
-    известных, но цена за единицу ВСЁ РАВНО None (числитель верный, но
-    знаменатель занижен — недостающее количество не 0, показывать цену,
-    посчитанную на заведомо неполном количестве, нельзя);
-  - количество известно у ВСЕХ строк группы → merged qty = сумма всех,
-    цена = сумма amount / сумма qty (старое поведение для полностью
-    заполненных строк не меняется, см.
+Правило теперь (Правило №6 — обе функции зовут общую `_merge_totals` в
+app/services/feo_import_duplicates.py):
+  - количество задано НЕ у всех строк группы → merged qty = None (ни 0, ни
+    подстановка единицы, ни частичная сумма известных — владелец,
+    12.10.2026: показывать количество/цену на неполном наборе нельзя);
+  - количество известно у ВСЕХ строк, но единицы измерения разные → merged
+    qty = None (нельзя складывать штуки с часами);
+  - количество известно у ВСЕХ строк и единица одна → merged qty = сумма
+    всех; цена за единицу объединённой позиции — ТОЛЬКО если цена
+    (unit_price строки, либо amount/qty) ОДИНАКОВА у всех строк группы —
+    иначе None (владелец, 12.10.2026, экран дублей: «не должно быть так,
+    что цена делится равномерно. Это разные закупки» — цена больше НЕ
+    выводится делением Σamount/Σqty, см.
     test_feo_import_duplicate_names.py::test_merge_resolution_combines_sum_and_quantity).
 
 Сумма (`amount`) всегда точная сумма amount всех строк, независимо от того,
@@ -88,7 +91,7 @@ async def test_merge_without_any_qty_leaves_qty_and_price_unset(db_session):
         assert preview["errors"] == []
         group = preview["duplicate_groups"][0]
         assert group["merged_preview"] == {
-            "qty": None, "unit": None, "price": None, "amount": 4000.0,
+            "qty": None, "unit": None, "price": None, "amount": 4000.0, "prices_differ": False,
         }, "количество не задано ни у одной строки — merged qty и price обязаны быть None, а не 2 и 0,00"
 
         result = await _import(
@@ -113,10 +116,11 @@ async def test_merge_without_any_qty_leaves_qty_and_price_unset(db_session):
 
 @pytest.mark.asyncio
 async def test_merge_partially_known_qty_sums_known_but_price_stays_unset(db_session):
-    """Одна строка с количеством 3, вторая — без количества: merged qty =
-    3 (сумма ИЗВЕСТНЫХ количеств), но цена за единицу всё равно None — 3
-    посчитано не на полном количестве группы, показывать цену на заведомо
-    заниженном знаменателе нельзя."""
+    """Одна строка с количеством 3, вторая — без количества: количество
+    задано НЕ у всех строк группы → merged qty = None (владелец,
+    12.10.2026: количество складывается только когда оно известно у ВСЕХ
+    строк — частичная сумма на заведомо неполном наборе не показывается),
+    цена за единицу тоже None."""
     subsidy = await _make_subsidy(db_session)
     subsidy_id = subsidy.id
     try:
@@ -129,7 +133,7 @@ async def test_merge_partially_known_qty_sums_known_but_price_stays_unset(db_ses
         assert preview["errors"] == []
         group = preview["duplicate_groups"][0]
         assert group["merged_preview"] == {
-            "qty": 3.0, "unit": None, "price": None, "amount": 4000.0,
+            "qty": None, "unit": None, "price": None, "amount": 4000.0, "prices_differ": False,
         }
     finally:
         await _cleanup_subsidy(db_session, subsidy_id)
@@ -151,7 +155,7 @@ async def test_merge_all_qty_known_computes_price_as_before(db_session):
         assert preview["errors"] == []
         group = preview["duplicate_groups"][0]
         assert group["merged_preview"] == {
-            "qty": 5.0, "unit": None, "price": 1000.0, "amount": 5000.0,
+            "qty": 5.0, "unit": None, "price": 1000.0, "amount": 5000.0, "prices_differ": False,
         }
     finally:
         await _cleanup_subsidy(db_session, subsidy_id)

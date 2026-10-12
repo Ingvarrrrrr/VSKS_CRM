@@ -474,6 +474,7 @@ const EGRUL_FIELDS: { key: string; label: string }[] = [
   { key: 'signatory_first_name', label: 'Имя подписанта' },
   { key: 'signatory_middle_name', label: 'Отчество подписанта' },
   { key: 'signatory_position', label: 'Должность подписанта' },
+  { key: 'signatory_basis', label: 'На основании чего действует' },
 ]
 
 const contractorCardFile = ref<File | null>(null)

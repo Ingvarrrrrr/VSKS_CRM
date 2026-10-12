@@ -202,6 +202,14 @@ async def lookup_inn(
             "status": row.get("s"),  # status text
             "registration_date": row.get("r"),
         }
+        # ИП: у ЕГРИП нет поля руководителя ("g") — подписант = сам
+        # предприниматель, из наименования + ОГРНИП (Корректировки GALA
+        # 12.10, п.1; единственное место — contractor_ip_signatory.py,
+        # ПРАВИЛО №6). director_* не трогаем — ЕГРИП не возвращает
+        # руководителя для ИП, пусть остаются None как раньше.
+        if result["org_type"] == "ИП":
+            from app.services.contractor_ip_signatory import resolve_ip_signatory
+            result.update(resolve_ip_signatory(result.get("name"), result.get("ogrn")))
         return result
     except HTTPException:
         raise

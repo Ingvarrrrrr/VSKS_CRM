@@ -21,6 +21,7 @@ from app.auth.jwt import get_current_user
 from app.auth.permissions import require_tab
 from app.schemas.schemas import ContractorOut
 from app.services.contractor_lookup import _split_signatory, _check_npd_status, fetch_egrul_row
+from app.services.contractor_pii import filter_contractor_payload
 from app.services.fio import split_fio
 
 router = APIRouter(prefix="/api/contractors", tags=["contractors"])
@@ -222,7 +223,7 @@ async def lookup_inn(
 async def enrich_contractor_from_fns(
     contractor_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('contractors')),
+    current_user=Depends(require_tab('contractors')),
 ):
     """Fetch data from FNS by contractor's INN and fill empty fields."""
     res = await db.execute(select(Contractor).where(Contractor.id == contractor_id))
@@ -232,14 +233,13 @@ async def enrich_contractor_from_fns(
     if not c.inn:
         raise HTTPException(400, "У контрагента не заполнен ИНН")
 
-    # Reuse lookup. Дефект (сессия 2026-09-08): `_` — результат require_tab
-    # (усечённый current_user-подобный объект), позиционно попадал на
-    # force_egrul: bool. Смысл эндпоинта — «дотянуться до ЕГРЮЛ/ФНС», а не
-    # найти совпадение по ИНН в локальной таблице (совпало бы с самим `c` и
-    # ничего не обновило бы) — поэтому force_egrul=True, db передан явно
-    # (при прямом вызове функции Depends(get_db) не резолвится). current_user
-    # внутри lookup_inn не используется — не прокидываем чужой объект туда,
-    # где ждут bool.
+    # Reuse lookup. Исторический дефект (сессия 2026-09-08, решён): результат
+    # require_tab/get_current_user позиционно попадал на force_egrul: bool.
+    # Смысл эндпоинта — «дотянуться до ЕГРЮЛ/ФНС», а не найти совпадение по
+    # ИНН в локальной таблице (совпало бы с самим `c` и ничего не обновило бы)
+    # — поэтому force_egrul=True, db передан явно (при прямом вызове функции
+    # Depends(get_db) не резолвится). current_user внутри lookup_inn не
+    # используется этим вызовом — передаётся отдельно именованным аргументом.
     fns_data = await lookup_inn(c.inn, force_egrul=True, db=db)
 
     updated_fields = []
@@ -255,7 +255,13 @@ async def enrich_contractor_from_fns(
 
     await db.commit()
     await db.refresh(c)
-    return {"updated_fields": updated_fields, "contractor": ContractorOut.model_validate(c)}
+    # ЕГРЮЛ/ФНС никогда не возвращают ПДн физлица — но карточка контрагента
+    # могла получить паспорт/СНИЛС раньше от пользователя с правом; без
+    # права на «Договоры» их не отдаём и в этом ответе (app/services/
+    # contractor_pii.py, ПРАВИЛО №6, единственное место гейта).
+    item = ContractorOut.model_validate(c).model_dump()
+    item = await filter_contractor_payload(item, current_user, db)
+    return {"updated_fields": updated_fields, "contractor": item}
 
 
 @router.post("/enrich-all-fns")

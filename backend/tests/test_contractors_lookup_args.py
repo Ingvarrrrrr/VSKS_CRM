@@ -30,7 +30,7 @@ def test_lookup_inn_signature_force_egrul_is_second_bool_param():
 
 
 @pytest.mark.asyncio
-async def test_enrich_from_fns_passes_bool_force_egrul_not_user_object(db_session, monkeypatch):
+async def test_enrich_from_fns_passes_bool_force_egrul_not_user_object(db_session, test_user, monkeypatch):
     from app.models.contractor import Contractor
 
     captured = {}
@@ -47,9 +47,12 @@ async def test_enrich_from_fns_passes_bool_force_egrul_not_user_object(db_sessio
     await db_session.commit()
     await db_session.refresh(contractor)
 
-    fake_gate_result = object()  # ровно то, что раньше просачивалось в force_egrul
+    # Правка (2026-10-08, PII-гейт): параметр переименован из `_` в
+    # `current_user` — теперь реально используется (user_can_view_contractor_
+    # pii для PII-фильтра ответа), поэтому вызывающая сторона обязана передать
+    # настоящего User, а не произвольный объект из Depends(require_tab(...)).
     result = await enrich_contractor_from_fns(
-        contractor_id=contractor.id, db=db_session, _=fake_gate_result,
+        contractor_id=contractor.id, db=db_session, current_user=test_user,
     )
     assert result["updated_fields"] == []
 

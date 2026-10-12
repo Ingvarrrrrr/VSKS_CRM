@@ -70,6 +70,7 @@ from app.services.tz_items import tz_required
 from app.services.documents.stages_methodology import attach_methodology
 from app.services.documents.stages_merge import merge_secondary_doc
 from app.services.documents.stages_finalize import finalize_response
+from app.services.contractor_pii import user_can_view_contractor_pii
 
 
 async def generate_document_bytes(
@@ -156,7 +157,11 @@ async def generate_document_bytes(
         c, subject_kind,
         amounts,
     )
-    add_phase28_context(context, subsidy, c, p)
+    # Паспорт/СНИЛС/адрес регистрации/дата рождения контрагента-физлица в
+    # печатаемый документ — только с правом на раздел «Договоры» (владелец,
+    # 2026-10-08; app/services/contractor_pii.py, ПРАВИЛО №6).
+    _can_view_pii = await user_can_view_contractor_pii(current_user, db)
+    add_phase28_context(context, subsidy, c, p, can_view_pii=_can_view_pii)
     add_genitive_forms(context, p, resolved_responsible)
     add_customer_context(context, customer_org, customer_ctr)
     await add_fabrikant_context(context, db, p)

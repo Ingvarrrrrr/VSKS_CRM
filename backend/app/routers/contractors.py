@@ -32,6 +32,11 @@ from app.auth.permissions import require_tab
 from app.models.user import User
 from app.services.fio import compose_fio
 from app.services.contractor_lookup import _check_npd_status
+from app.services.contractor_pii import (
+    filter_contractor_payload,
+    sanitize_contractor_write_fields,
+    user_can_view_contractor_pii,
+)
 from typing import List
 
 
@@ -97,19 +102,25 @@ async def list_contractors(
     else:
         q = q.order_by(ru_inn_priority, Contractor.name)
     result = await db.execute(q.limit(limit))
-    return result.scalars().all()
+    contractors = result.scalars().all()
+    # ПДн контрагента-физлица (паспорт/СНИЛС/адрес регистрации/дата рождения)
+    # вырезаются для пользователей без права на раздел «Договоры» — см.
+    # app/services/contractor_pii.py (ПРАВИЛО №6, единственное место гейта).
+    items = [ContractorOut.model_validate(c).model_dump() for c in contractors]
+    return await filter_contractor_payload(items, current_user, db)
 
 
 @router.get("/{cid}", response_model=ContractorOut)
 async def get_contractor(
     cid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     c = await db.get(Contractor, cid)
     if not c:
         raise HTTPException(404, "Контрагент не найден")
-    return c
+    item = ContractorOut.model_validate(c).model_dump()
+    return await filter_contractor_payload(item, current_user, db)
 
 
 @router.post("/{cid}/check-npd-status")
@@ -220,7 +231,8 @@ async def create_contractor(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('contractors')),
 ):
-    d = data.model_dump()
+    can_write_pii = await user_can_view_contractor_pii(current_user, db)
+    d = sanitize_contractor_write_fields(data.model_dump(), can_write_pii)
     d['org_id'] = get_single_org_id(current_user) or current_user.org_id
 
     # phase26-oo: дедуп по ИНН — фронт-quick-add часто вызывает POST даже когда
@@ -248,7 +260,8 @@ async def create_contractor(
             if updated:
                 await db.commit()
                 await db.refresh(existing)
-            return existing
+            item = ContractorOut.model_validate(existing).model_dump()
+            return await filter_contractor_payload(item, current_user, db)
 
     c = Contractor(**d)
     # Пересобираем signatory из структурированных частей (только ФИО, без должности)
@@ -261,7 +274,8 @@ async def create_contractor(
     db.add(c)
     await db.commit()
     await db.refresh(c)
-    return c
+    item = ContractorOut.model_validate(c).model_dump()
+    return await filter_contractor_payload(item, current_user, db)
 
 
 @router.patch("/{cid}/email", response_model=ContractorOut)
@@ -269,7 +283,7 @@ async def patch_contractor_email(
     cid: int,
     email: str = Body(..., embed=True),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('contractors')),
+    current_user: User = Depends(require_tab('contractors')),
 ):
     c = (await db.execute(select(Contractor).where(Contractor.id == cid))).scalar_one_or_none()
     if not c:
@@ -277,7 +291,8 @@ async def patch_contractor_email(
     c.email = email
     await db.commit()
     await db.refresh(c)
-    return c
+    item = ContractorOut.model_validate(c).model_dump()
+    return await filter_contractor_payload(item, current_user, db)
 
 
 @router.put("/{cid}", response_model=ContractorOut)
@@ -285,16 +300,22 @@ async def update_contractor(
     cid: int,
     data: ContractorCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('contractors'))
+    current_user: User = Depends(require_tab('contractors')),
 ):
     result = await db.execute(select(Contractor).where(Contractor.id == cid))
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Not found")
-    apply_requisite_fields(c, data.model_dump())
+    can_write_pii = await user_can_view_contractor_pii(current_user, db)
+    # Без права на «Договоры» ПДн-поля в payload игнорируются — существующий
+    # паспорт/СНИЛС/адрес регистрации/дата рождения НЕ затирается (см.
+    # app/services/contractor_pii.py).
+    updates = sanitize_contractor_write_fields(data.model_dump(), can_write_pii)
+    apply_requisite_fields(c, updates)
     await db.commit()
     await db.refresh(c)
-    return c
+    item = ContractorOut.model_validate(c).model_dump()
+    return await filter_contractor_payload(item, current_user, db)
 
 
 @router.delete("/bulk")

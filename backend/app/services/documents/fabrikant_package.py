@@ -54,6 +54,7 @@ from .contexts_extra import (
     add_day_words_context,
     contractor_org_type_for_docs,
 )
+from app.services.contractor_pii import contractor_pii_doc_fields, user_can_view_contractor_pii
 
 import logging
 
@@ -63,8 +64,16 @@ logger = logging.getLogger(__name__)
 async def render_fabrikant_package_files(
     db: AsyncSession,
     purchase_id: int,
+    current_user=None,
 ) -> tuple[list[tuple[str, str, bytes]], list[str]]:
     """Render 5 Fabrikant documents for *purchase_id*.
+
+    `current_user` (владелец, 2026-10-08): без права на раздел «Договоры»
+    паспорт/СНИЛС/адрес регистрации/дату рождения контрагента-физлица в
+    пакет не кладём (app.services.contractor_pii, ПРАВИЛО №6 — тот же расчёт,
+    что в contexts_extra.py::add_phase28_context). `None` — сохранённая
+    обратная совместимость для прочих/тестовых вызовов без HTTP-контекста;
+    тогда ПДн не блокируются (как было раньше).
 
     Returns:
         rendered: list of (ascii_file_name, ru_title, bytes)
@@ -73,6 +82,8 @@ async def render_fabrikant_package_files(
     import traceback as _traceback
     from docxtpl import DocxTemplate as _DxTpl
     from app.models.contract_item import ContractItem as _CI
+
+    can_view_pii = True if current_user is None else await user_can_view_contractor_pii(current_user, db)
 
     result = await db.execute(
         select(Purchase)
@@ -516,13 +527,10 @@ async def render_fabrikant_package_files(
         "commission_member_1_name": "",
         "commission_member_2_name": "",
         "commission_member_3_name": "",
-        "contractor_passport_series": (c.passport_series or '') if c else '',
-        "contractor_passport_number": (c.passport_number or '') if c else '',
-        "contractor_passport_issuer": (c.passport_issuer or '') if c else '',
-        "contractor_passport_issued_date": _fmt_date(c.passport_issued_date) if c and c.passport_issued_date else '',
-        "contractor_snils": (c.snils or '') if c else '',
-        "contractor_registration_address": (c.registration_address or c.address or '') if c else '',
-        "contractor_birth_date": _fmt_date(c.birth_date) if c and c.birth_date else '',
+        # ПДн контрагента-физлица (ГПХ) — единый расчёт с PII-гейтом, см.
+        # app.services.contractor_pii.contractor_pii_doc_fields (ПРАВИЛО №6,
+        # тот же вызывается из contexts_extra.py::add_phase28_context).
+        **contractor_pii_doc_fields(c, can_view_pii, _fmt_date),
         "contractor_ogrnip_date": _fmt_date(p.contractor_ogrnip_date) if p.contractor_ogrnip_date else "",
         "repair_request_number": (p.repair_request_number or "").strip() if hasattr(p, "repair_request_number") else "",
         "procurement_protocol_number": (p.procurement_protocol_number or "").strip(),

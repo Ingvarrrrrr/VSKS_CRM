@@ -142,7 +142,7 @@ async def download_fabrikant_package(
     """
     import zipfile as _zipfile
 
-    rendered, errors = await render_fabrikant_package_files(db, pid)
+    rendered, errors = await render_fabrikant_package_files(db, pid, current_user)
 
     if not rendered:
         raise HTTPException(

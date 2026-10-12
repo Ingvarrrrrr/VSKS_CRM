@@ -191,8 +191,16 @@
           </v-row>
           <v-textarea v-model="form.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
-          <!-- ── Реквизиты физ.лица (ГПХ) — только для Физ.лицо ── -->
-          <template v-if="form.org_type === 'Физ.лицо'">
+          <!-- ── Реквизиты физ.лица (ГПХ) — только для Физ.лицо, и только с
+               правом на раздел «Договоры» (backend/app/services/contractor_pii.py) ── -->
+          <template v-if="form.org_type === 'Физ.лицо' && !canViewContractorPii">
+            <div class="section-label mt-4">Реквизиты физ.лица (ГПХ)</div>
+            <v-alert type="info" variant="tonal" density="compact" class="mb-2">
+              Нет доступа к паспортным данным. Эти поля видят и редактируют
+              только пользователи с правом на раздел «Договоры».
+            </v-alert>
+          </template>
+          <template v-if="form.org_type === 'Физ.лицо' && canViewContractorPii">
             <div class="section-label mt-4">Реквизиты физ.лица (ГПХ)</div>
             <v-row dense class="mb-2">
               <v-col cols="4">
@@ -349,8 +357,16 @@ import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth'
 
 const { mobile } = useDisplay()
+
+// Паспорт/СНИЛС/адрес регистрации/дата рождения контрагента-физлица (ГПХ) —
+// блок показывается только тем, у кого есть право на раздел «Договоры»
+// (владелец, 2026-10-08). Тот же tab_key, которым backend гейтит выдачу и
+// запись этих полей — см. backend/app/services/contractor_pii.py.
+const authStore = useAuthStore()
+const canViewContractorPii = computed(() => authStore.hasTab('contracts'))
 
 interface ContractorFull {
   id: number

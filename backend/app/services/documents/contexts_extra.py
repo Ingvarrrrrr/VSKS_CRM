@@ -20,12 +20,20 @@ from app.services.documents.formatting import _fmt_date, _clean_id, _fio_to_init
 from app.services.documents.morphology import _to_gen_fio, _to_gen_phrase, _inflect_phrase_genitive
 from app.services.documents.contexts import _signatory_split
 from app.services.documents.contract_terms import warranty_period_text
+from app.services.contractor_pii import contractor_pii_doc_fields
 
 logger = logging.getLogger(__name__)
 
 
-def add_phase28_context(context: dict, subsidy, c, p: Purchase) -> None:
+def add_phase28_context(context: dict, subsidy, c, p: Purchase, can_view_pii: bool = True) -> None:
     """Phase 28: расширенные ключи для типовых договоров.
+
+    `can_view_pii` (владелец, 2026-10-08): без права на раздел «Договоры»
+    паспорт/СНИЛС/адрес регистрации/дату рождения контрагента-физлица сюда
+    не кладём — см. app.services.contractor_pii.contractor_pii_doc_fields
+    (ПРАВИЛО №6, единственный расчёт этих ключей, тот же вызывается из
+    fabrikant_package.py). Документ всё равно формируется, просто с
+    пустыми этими полями.
 
     Все ключи NULL-safe (пустая строка / ноль / пустой список при отсутствии
     данных). Любая ошибка здесь ТОЛЬКО логируется — не должна ронять генерацию
@@ -42,14 +50,8 @@ def add_phase28_context(context: dict, subsidy, c, p: Purchase) -> None:
         )
         context["subsidy_agreement_date"] = _fmt_date(_subsidy_agreement_date_obj) if _subsidy_agreement_date_obj else ""
 
-        # Реквизиты физ.лица (ГПХ) — читаем из контрагента
-        context["contractor_passport_series"]       = (c.passport_series or '') if c else ''
-        context["contractor_passport_number"]       = (c.passport_number or '') if c else ''
-        context["contractor_passport_issuer"]       = (c.passport_issuer or '') if c else ''
-        context["contractor_passport_issued_date"]  = _fmt_date(c.passport_issued_date) if c and c.passport_issued_date else ''
-        context["contractor_snils"]                 = (c.snils or '') if c else ''
-        context["contractor_registration_address"]  = (c.registration_address or c.address or c.postal_address or '') if c else ''
-        context["contractor_birth_date"]            = _fmt_date(c.birth_date) if c and c.birth_date else ''
+        # Реквизиты физ.лица (ГПХ) — читаем из контрагента, с PII-гейтом
+        context.update(contractor_pii_doc_fields(c, can_view_pii, _fmt_date))
 
         # Комиссия закупки (для протокола) — из полей закупки Phase 28
         context["commission_member_1_name"] = (p.commission_member_1_name or "").strip()

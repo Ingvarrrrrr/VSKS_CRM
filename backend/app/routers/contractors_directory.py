@@ -23,6 +23,7 @@ from app.auth.jwt import get_current_user
 from app.auth.permissions import require_tab
 from app.schemas.schemas import ContractorOut
 from app.models.user import User
+from app.services.contractor_pii import filter_contractor_payload
 
 router = APIRouter(prefix="/api/contractors", tags=["contractors"])
 
@@ -121,6 +122,9 @@ async def list_contractors_with_stats(
             merged = list(dict.fromkeys(manual + auto))
             c_dict["product_categories"] = merged
         result.append(c_dict)
+    # ПДн контрагента-физлица вырезаются без права на «Договоры» — см.
+    # app/services/contractor_pii.py (ПРАВИЛО №6, единственное место гейта).
+    result = await filter_contractor_payload(result, current_user, db)
     return {"items": result, "total": total}
 
 

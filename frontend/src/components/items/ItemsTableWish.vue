@@ -133,16 +133,17 @@
           </td>
           <td>
             <v-text-field
-              :model-value="formatNumber(item.unit_price)"
+              :model-value="moneyFieldDisplay(item, 'unit_price')"
               density="compact" variant="outlined" hide-details class="my-1"
               :disabled="readonly"
-              @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
+              @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
+                  @blur="moneyFieldOnBlur(item, 'unit_price')"
             />
             <PriceFreshnessStamp :price-meta="item._price_meta" />
           </td>
           </template>
           <td>
-            <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
+            <v-text-field :model-value="formatMoneyInput(item.total_price)" readonly density="compact"
               variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
           </td>
           <td>
@@ -206,6 +207,7 @@ import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import { isItemFeoCategoryLocked } from '@/utils/feoItemLock'
 import type { FeoNode } from '@/composables/useFeoLeaves'
+import { formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur } from '@/utils/numberFormat'
 
 type EditorItem = any
 

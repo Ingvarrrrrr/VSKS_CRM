@@ -128,7 +128,7 @@
         :disabled="localContractItems.length > 0 && localItems.length === 0"
         @click="handleCopyFromPurchase"
       >
-        Перенести все позиции из ТЗ
+        Перенести все позиции из ТЗ в договор
       </v-btn>
       <v-btn
         variant="tonal" prepend-icon="mdi-form-textbox" size="small" color="primary"
@@ -143,6 +143,20 @@
         @click="openContractImportDialog"
       >
         Импорт из файла/QR
+      </v-btn>
+      <!-- Владелец, чек-лист п.22 (2026-10-13): «в Поставку тоже должна быть возможность
+           перенести все позиции из Договора» — тот же механизм, что кнопка выше, одна
+           стадия дальше. Видна только когда «Поставка» вообще редактируется
+           (isDelivered — delivered/paid, см. ItemsTableStages.vue::isDelivered тот же
+           флаг), до этого переносить в Поставку нечего показывать. -->
+      <v-btn
+        v-if="purchaseStatus === 'delivered' || purchaseStatus === 'paid'"
+        variant="tonal" prepend-icon="mdi-content-copy" size="small" color="purple"
+        :loading="deliveryItemCopying"
+        :disabled="localContractItems.length === 0"
+        @click="handleCopyContractToDelivery"
+      >
+        Перенести все позиции из договора в поставку
       </v-btn>
     </div>
 
@@ -854,6 +868,7 @@ import type { ContractItem } from '@/types/contractItem'
 import {
   copyFromPurchase as apiCopyFromPurchase,
   copyNamesFromPurchase as apiCopyNamesFromPurchase,
+  copyContractToDelivery as apiCopyContractToDelivery,
 } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { formatNumber, parseNumber, fmtRub } from '@/utils/numberFormat'
@@ -877,6 +892,7 @@ import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import { ACTIONS } from '@/constants/permissionActions'
 import type { PriceFreshness } from '@/composables/usePriceFreshness'
+import { pluralRu } from '@/utils/pluralize'
 import {
   VAT_RATE_OPTIONS,
   vatAmount,
@@ -1733,7 +1749,7 @@ async function handleCopyFromPurchase() {
     const result = await apiCopyFromPurchase(props.purchaseId)
     localContractItems.value = result
     emit('update:contractItems', result)
-    showSnack(`Перенесено ${result.length} позиций из ТЗ`)
+    showSnack(`Перенесено ${result.length} ${pluralRu(result.length, 'позиция', 'позиции', 'позиций')} из ТЗ в договор`)
   } catch (e: any) {
     const msg = e?.response?.data?.detail?.message || e?.detail || e?.message || 'Ошибка переноса позиций'
     showSnack(msg, 'error')
@@ -1777,6 +1793,44 @@ async function handleCopyNamesFromPurchase() {
     showSnack(msg, 'error')
   } finally {
     contractNamesCopying.value = false
+  }
+}
+
+const deliveryItemCopying = ref(false)
+
+// Владелец, чек-лист п.22 (2026-10-13): «Перенести все позиции из договора в
+// поставку» — обобщённый перенос Договор → Поставка, тот же паттерн
+// (confirm + снэк с числом), что и handleCopyFromPurchase выше (ТЗ →
+// Договор), второй механизм копирования не заводится — оба вызывают
+// server-side auto-fill, эта кнопка только форсирует перезапись (force=True,
+// см. backend/app/routers/contract_items.py::copy_contract_items_to_delivery).
+async function handleCopyContractToDelivery() {
+  if (!props.purchaseId) {
+    showSnack('Сохраните закупку перед переносом позиций', 'warning')
+    return
+  }
+  const ok = confirm(
+    'Поля «Поставка» (наименование/количество/единица) у ВСЕХ позиций будут заменены ' +
+    'данными из договора — уже внесённые вручную правки приёмки будут стёрты. Продолжить?'
+  )
+  if (!ok) return
+  deliveryItemCopying.value = true
+  try {
+    const result = await apiCopyContractToDelivery(props.purchaseId)
+    for (const upd of result.items) {
+      const target = (localItems.value as any[]).find(it => it.id === upd.id)
+      if (target) {
+        target.accepted_name = upd.accepted_name
+        target.accepted_quantity = upd.accepted_quantity
+        target.accepted_unit = upd.accepted_unit
+      }
+    }
+    showSnack(`Перенесено ${result.updated_count} ${pluralRu(result.updated_count, 'позиция', 'позиции', 'позиций')} из договора в поставку`)
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail?.message || e?.detail || e?.message || 'Ошибка переноса позиций'
+    showSnack(msg, 'error')
+  } finally {
+    deliveryItemCopying.value = false
   }
 }
 

@@ -42,7 +42,20 @@
           <span class="text-caption">Загрузка...</span>
         </div>
 
-        <table v-else-if="ctx.comparisonData.value[node.id]" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px">
+        <template v-else-if="ctx.comparisonData.value[node.id]">
+        <!-- Легенда цветов стадий закупки (владелец, п.15, 13.10.2026) — один раз
+             над таблицей позиций, а не у каждой строки. Весь жизненный цикл
+             (PURCHASE_STATUS_ORDER) — тот же единственный словарь цветов/подписей
+             статусов закупки, что рисует и полоску, и список закупок ниже
+             (Правило №6, второй словарь не заводим). -->
+        <div class="feo-stage-legend">
+          <span class="feo-stage-legend__label">Стадии закупки:</span>
+          <span v-for="st in stageLegend" :key="st.key" class="feo-stage-legend__item">
+            <span class="feo-stage-legend__dot" :style="{ background: st.color }" />{{ st.label }}
+          </span>
+        </div>
+
+        <table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px">
           <thead>
             <tr>
               <th :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
@@ -418,7 +431,22 @@
                           :style="{ width: seg.pct + '%', background: seg.color }"
                         />
                       </div>
-                      <div class="feo-stage-bar__caption">Закупок: {{ feoLevel5.purchasesForPlanned(node.id, planned.id).length }}</div>
+                      <!-- Подпись под полоской (владелец, п.15, 13.10.2026) — точка
+                           цвета стадии + сумма закупок на ней (компактно, не
+                           переписывает сумму — те же seg.amount, посчитанные
+                           buildStageBreakdown из тех же факт-сумм, что и «План vs
+                           факт», Правило №6), итог = сумма отрезков. -->
+                      <div class="feo-stage-bar__sums">
+                        <span v-for="seg in feoLevel5.stageBreakdownFor(node.id, planned.id)" :key="'sum-' + seg.key"
+                          class="feo-stage-bar__sum-chip" :title="`${seg.label}: ${seg.count}`"
+                        >
+                          <span class="feo-stage-bar__sum-dot" :style="{ background: seg.color }" />{{ formatCurrency(seg.amount) }}
+                        </span>
+                      </div>
+                      <div class="feo-stage-bar__caption">
+                        Закупок: {{ feoLevel5.purchasesForPlanned(node.id, planned.id).length }}
+                        · Итого: {{ formatCurrency(feoLevel5.stageBreakdownTotal(node.id, planned.id)) }}
+                      </div>
                     </template>
                     <template v-else>
                       <div
@@ -736,6 +764,7 @@
             </tr>
           </tfoot>
         </table>
+        </template>
 
         <!-- Раздел C0 (план ancient-prancing-music.md, 2026-09-21): подытоги
              товары/услуги/без типа по СТРОКАМ ЭТОЙ панели — считаются на клиенте
@@ -809,7 +838,7 @@ import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { leftGroupInfo, withNameColumnFloor } from '@/composables/subsidies/feoCategoryUtils'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
-import { purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { purchaseStatusLabel, purchaseStatusColor, PURCHASE_STATUS_ORDER } from '@/constants/purchaseStatus'
 import type { FeoNode, FeoPlannedItem } from '@/composables/subsidies/types'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { computed, reactive, watch } from 'vue'
@@ -1020,6 +1049,16 @@ function feoAmountFor(p: FeoPlannedItem): number | null {
 // наследования от позиций закупок, см. resolve_effective_item_types на
 // бэкенде) — псевдо-строка ручного плана (isManual) не имеет этого поля и
 // честно попадает в «без типа».
+// Легенда цветов стадий закупки над таблицей позиций (владелец, п.15,
+// 13.10.2026) — весь жизненный цикл разом, а не только стадии, встреченные в
+// ЭТОЙ категории: позиция без закупок пока на стадии не показана вовсе, но
+// легенда должна читаться одинаково для любой категории субсидии. Тот же
+// PURCHASE_STATUS_ORDER/purchaseStatusColor/purchaseStatusLabel, что и в
+// самой полоске (Правило №6).
+const stageLegend = computed(() => PURCHASE_STATUS_ORDER.map(key => ({
+  key, label: purchaseStatusLabel(key), color: purchaseStatusColor(key),
+})))
+
 const typeSubtotals = computed(() => {
   const acc = {
     goods: { sum: 0, count: 0 },
@@ -1107,6 +1146,61 @@ const typeSubtotals = computed(() => {
   font-size: 10px;
   color: #94A3B8;
   white-space: nowrap;
+}
+/* Легенда цветов стадий над таблицей позиций (владелец, п.15, 13.10.2026). */
+.feo-stage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  row-gap: 4px;
+  margin-bottom: 6px;
+  font-size: 10px;
+  color: #64748b;
+}
+.feo-stage-legend__label {
+  font-weight: 600;
+  color: #475569;
+}
+.feo-stage-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.feo-stage-legend__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+/* Суммы по стадиям под полоской (владелец, п.15) — компактно: точка цвета
+   стадии + сумма, перенос строки вместо сжатия (как и шильдики происхождения
+   выше в этом файле). */
+.feo-stage-bar__sums {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  row-gap: 2px;
+  margin-top: 2px;
+}
+.feo-stage-bar__sum-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #475569;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.feo-stage-bar__sum-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 .feo-stage-list-row {
   display: flex;

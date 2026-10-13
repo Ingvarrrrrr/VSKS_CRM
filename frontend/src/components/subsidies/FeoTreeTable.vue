@@ -223,6 +223,10 @@
        экземпляр на дерево, тот же приём, что и FeoRowDrillDialog.vue выше;
        открывает FeoLevel5Panel.vue (карандаш у строки «Как запланировано»). -->
   <FeoPlannedItemPartEditDialog />
+
+  <!-- Массовый перенос плановых позиций (п.12, 13.10.2026) — один экземпляр
+       на дерево, тот же приём, что у двух диалогов выше. -->
+  <FeoBulkMoveBar />
 </template>
 
 <script setup lang="ts">
@@ -245,6 +249,7 @@ import FeoByPurchasesRows from './FeoByPurchasesRows.vue'
 import RevisionTotalsHeader from './RevisionTotalsHeader.vue'
 import FeoRowDrillDialog from './FeoRowDrillDialog.vue'
 import FeoPlannedItemPartEditDialog from './FeoPlannedItemPartEditDialog.vue'
+import FeoBulkMoveBar from './FeoBulkMoveBar.vue'
 import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
 import { useRevisionChangedFilter } from '@/composables/subsidies/useRevisionChangedFilter'
 

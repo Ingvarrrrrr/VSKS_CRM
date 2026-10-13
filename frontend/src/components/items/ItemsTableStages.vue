@@ -105,11 +105,12 @@
                 <template #activator="{ props: tip }">
                   <v-text-field
                     v-bind="tip"
-                    :model-value="formatNumber(item.unit_price)"
+                    :model-value="moneyFieldDisplay(item, 'unit_price')"
                     density="compact" variant="outlined" hide-details class="my-1 summary-num-input"
                     :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
                     :disabled="tzDisabled"
-                    @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
+                    @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
+                    @blur="moneyFieldOnBlur(item, 'unit_price')"
                   />
                 </template>
               </v-tooltip>
@@ -276,17 +277,18 @@
                         <template #activator="{ props: tip }">
                           <v-text-field
                             v-bind="tip"
-                            :model-value="formatNumber(item.unit_price)"
+                            :model-value="moneyFieldDisplay(item, 'unit_price')"
                             density="compact" variant="outlined" hide-details class="my-1"
                             :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
                             :disabled="tzDisabled"
-                            @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
+                            @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
+                            @blur="moneyFieldOnBlur(item, 'unit_price')"
                           />
                         </template>
                       </v-tooltip>
                       <div v-if="planForItem?.(item)?.unit_price != null" class="text-caption plan-hint"
                         :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
-                        план: {{ formatNumber(planForItem!(item)!.unit_price) }} ₽
+                        план: {{ formatMoneyInput(planForItem!(item)!.unit_price) }} ₽
                       </div>
                       <div v-else-if="planForItem?.(item)" class="text-caption plan-hint text-medium-emphasis">
                         {{ UNIT_PRICE_NOT_FIXED_HINT }}
@@ -497,7 +499,7 @@
                     </td>
                     <td>
                       <v-text-field
-                        :model-value="getContractItemFor(idx)?.quantity ?? (isAdvance ? (items[idx] as any)?.quantity ?? '' : '')"
+                        :model-value="contractFieldNumber(getContractItemFor(idx)?.quantity ?? (isAdvance ? (items[idx] as any)?.quantity : null))"
                         type="number" density="compact" variant="outlined" hide-details
                         :disabled="readonly"
                         @update:model-value="(v: string) => emit('update-contract-field', idx, 'quantity', Number(v))"
@@ -513,10 +515,11 @@
                     </td>
                     <td>
                       <v-text-field
-                        :model-value="getContractItemFor(idx)?.unit_price ?? (isAdvance ? (items[idx] as any)?.unit_price ?? '' : '')"
-                        type="number" density="compact" variant="outlined" hide-details
+                        :model-value="contractPriceDisplay(idx)"
+                        density="compact" variant="outlined" hide-details
                         :disabled="readonly"
-                        @update:model-value="(v: string) => emit('update-contract-field', idx, 'unit_price', Number(v))"
+                        @update:model-value="(v: string) => contractPriceInput(idx, v)"
+                        @blur="contractPriceBlur(idx)"
                       />
                       <!-- 2026-10-02: построчный флаг «НДС сверху» для стадии «Договор»/УПД —
                            только в режиме per_item, тот же generic update-contract-field,
@@ -585,7 +588,7 @@
                       </td>
                       <td>
                         <v-text-field
-                          :model-value="(items[idx] as any)?.accepted_quantity ?? ''"
+                          :model-value="contractFieldNumber((items[idx] as any)?.accepted_quantity)"
                           type="number" density="compact" variant="outlined" hide-details
                           :disabled="readonly"
                           @update:model-value="(v: string) => emit('update-accepted-field', idx, 'accepted_quantity', v === '' ? null : Number(v))"
@@ -599,7 +602,7 @@
                           @update:model-value="(v: string) => emit('update-accepted-field', idx, 'accepted_unit', v)"
                         />
                       </td>
-                      <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit_price ?? '—' }}</td>
+                      <td class="text-caption text-grey-darken-1">{{ formatMoneyInput(getContractItemFor(idx)?.unit_price) || '—' }}</td>
                       <!-- Fix 4/5: НДС % readonly (Поставка) -->
                       <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ effectiveVatRate(idx, 'delivery') ?? '—' }}</td>
                       <!-- Fix 4/5: НДС сумма readonly (Поставка) -->
@@ -630,9 +633,9 @@
                           :title="(items[idx] as any)?.item_name || ''"
                         >{{ (items[idx] as any)?.item_name || '—' }}</div>
                       </td>
-                      <td class="text-caption text-grey-darken-1">{{ (items[idx] as any)?.quantity ?? '—' }}</td>
+                      <td class="text-caption text-grey-darken-1">{{ formatNumber((items[idx] as any)?.quantity) || '—' }}</td>
                       <td class="text-caption text-grey-darken-1">{{ (items[idx] as any)?.unit ?? '—' }}</td>
-                      <td class="text-caption text-grey-darken-1">{{ (items[idx] as any)?.unit_price ?? '—' }}</td>
+                      <td class="text-caption text-grey-darken-1">{{ formatMoneyInput((items[idx] as any)?.unit_price) || '—' }}</td>
                       <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ (items[idx] as any)?.vat_rate ?? '—' }}</td>
                       <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ fmtRub(vatAmount((items[idx] as any) ?? {})) }}</td>
                       <td class="text-caption text-grey-darken-1 font-weight-medium">{{ fmtRub(Number((items[idx] as any)?.total_price ?? 0)) }}</td>
@@ -693,7 +696,7 @@ import type { Contractor } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
-import { formatPlanResidual } from '@/utils/numberFormat'
+import { formatPlanResidual, formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur, parseNumber as parseNumberUtil } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 // item-forms-accommodation-transport.md: спец-форма позиции — ItemRowFormSwitch.vue
@@ -840,6 +843,50 @@ const props = defineProps<{
 // объявлена — либо потому что вся таблица readonly, либо потому что план
 // заморожен статусом закупки. Отдельный от `readonly` флаг — чтобы в тултипе
 // показать ИМЕННО причину заморозки, а не общий «нет доступа».
+// Владелец (чек-лист, пункт 22, 2026-10-13): «в ТЗ Кол-во = 2, а после
+// переноса в договорные уже 2,000». ТЗ-поля (quantity: v-model.number,
+// unit_price: formatMoneyInput — обе ветки правлены руками, значение всегда
+// нормальный JS number) против полей Договор/Поставка ниже — те читают
+// contract_items.quantity/unit_price ПРЯМО из ответа API, а Decimal(15,4)
+// сериализуется pydantic'ом как ТЕКСТОВАЯ строка («2.0000», не число 2) —
+// именно эта строка и попадала в type="number"-поле как есть. Единственное
+// место приведения к обычному number для этих двух полей — не плодить
+// копию в каждом :model-value по отдельности.
+function contractFieldNumber(v: unknown): number | null {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+// Доработка пункта 22 (владелец, 2026-10-13, вторая приёмка): цена строки
+// «Договор» реформатировалась НА КАЖДОЕ нажатие клавиши (formatMoneyInput от
+// текущего getContractItemFor(idx)?.unit_price, пересчитываемого на каждый
+// рендер) — воспроизведено в приёмке: набор «123.45» в поле сохранялся как
+// «1,00». moneyFieldDisplay/OnInput/OnBlur (numberFormat.ts) чинят это для
+// объекта с собственным `_unit_price_display` — но Договор-строка берётся
+// через getContractItemFor(idx), с фолбэком на props.items при isAdvance без
+// ещё созданной ContractItem; эти три обёртки решают, с каким объектом
+// работать, остальное делегируют общим хелперам (ПРАВИЛО №6).
+function contractPriceDisplay(idx: number): string {
+  const ci = props.getContractItemFor(idx)
+  if (ci) return moneyFieldDisplay(ci, 'unit_price')
+  const fallback = props.isAdvance ? (props.items[idx] as any)?.unit_price : null
+  return formatMoneyInput(fallback)
+}
+function contractPriceInput(idx: number, v: string): void {
+  const ci = props.getContractItemFor(idx)
+  if (ci) {
+    const n = moneyFieldOnInput(ci, 'unit_price', v)
+    emit('update-contract-field', idx, 'unit_price', n)
+    return
+  }
+  emit('update-contract-field', idx, 'unit_price', parseNumberUtil(v))
+}
+function contractPriceBlur(idx: number): void {
+  const ci = props.getContractItemFor(idx)
+  if (ci) moneyFieldOnBlur(ci, 'unit_price')
+}
+
 const tzDisabled = computed(() => props.readonly || !!props.tzFrozen)
 const tzFrozenTooltip = 'Закупка объявлена — кол-во и цена ТЗ зафиксированы. Итоговую цену по результатам закупки внесите в подстроке «Договор» ниже.'
 

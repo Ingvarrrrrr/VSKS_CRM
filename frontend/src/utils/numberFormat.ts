@@ -15,6 +15,65 @@ export function formatNumber(v: number | null | undefined): string {
 }
 
 /**
+ * Формат «цена за единицу» для редактируемого поля (владелец, чек-лист
+ * 2026-10-13, пункт 22: «цена за ед. в ТЗ тоже должна указываться с
+ * копейками»). formatNumber() выше — общий форматтер КОЛИЧЕСТВА (там
+ * maximumFractionDigits без minimum специально, чтобы целое «20» не
+ * превращалось в «20,00») — та же функция была ошибочно переиспользована
+ * и для цены во ВСЕХ построчных редакторах (ItemsTableFlat/Stages/Cards/
+ * Wish.vue), из-за чего 86.40 показывалось как «86,4» — копейки визуально
+ * терялись, хотя в данных они на месте. Деньгам нужен ВСЕГДА фиксированный
+ * minimumFractionDigits:2 (тот же принцип, что у formatMoney() в
+ * formatMoney.ts, но без суффикса «₽» — поле редактируемое, и без '—' на
+ * пустом значении, иначе из поля нельзя стереть число). Единственный
+ * источник формата цены для этих полей — не плодить второй рядом.
+ */
+export function formatMoneyInput(v: number | string | null | undefined): string {
+  if (v == null || v === ('' as any)) return ''
+  const n = typeof v === 'string' ? parseFloat(v) : Number(v)
+  if (isNaN(n)) return ''
+  return n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+/**
+ * Три хелпера одного денежного поля без «борьбы с курсором» (владелец,
+ * чек-лист 2026-10-13, пункт 22, доработка после «86,4 без копеек»).
+ *
+ * Баг, который чинят: если :model-value на каждое нажатие клавиши
+ * пересчитывать через formatMoneyInput(item.unit_price) — поле реформатируется
+ * ПРЯМО ВО ВРЕМЯ набора (minimumFractionDigits:2 на промежуточном «123» уже
+ * даёт «123,00», следующая цифра печатается поверх уже переставленного
+ * курсора) — воспроизведено в приёмке: набор «123.45» сохранялся как «1,00».
+ *
+ * Паттерн: пока поле редактируется, модель-строка — ТО, ЧТО буквально набрал
+ * человек (транзитное UI-поле `_<numberField>_display` прямо на объекте
+ * строки — тот же приём, что `_photo_url`/`_description` в
+ * CreateOrderView.vue::doSave, на сервер не уходит, фильтруется там же, где
+ * и остальные `_*`-поля); число для итогов обновляется рядом на каждый
+ * символ. При потере фокуса displayField нормализуется в canonical вид
+ * («86,40»). Один источник на ТЗ/Договор/все редакторы позиций — второй
+ * копии этой логики не заводить.
+ */
+export function moneyFieldDisplay(item: any, numberField: string): string {
+  if (!item) return ''
+  const displayField = `_${numberField}_display`
+  const d = item[displayField]
+  return d != null ? d : formatMoneyInput(item[numberField])
+}
+
+export function moneyFieldOnInput(item: any, numberField: string, raw: string): number | null {
+  const displayField = `_${numberField}_display`
+  item[displayField] = raw
+  return parseNumber(raw)
+}
+
+export function moneyFieldOnBlur(item: any, numberField: string): void {
+  if (!item) return
+  const displayField = `_${numberField}_display`
+  item[displayField] = formatMoneyInput(item[numberField])
+}
+
+/**
  * Parse a user-typed string (with spaces / NBSP / comma decimal) into a number.
  * Empty / unparseable → null.
  */

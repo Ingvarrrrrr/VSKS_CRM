@@ -38,6 +38,22 @@ export async function copyNamesFromPurchase(purchaseId: number): Promise<CopyNam
   )
 }
 
+// Пункт 22 чек-листа (владелец, 2026-10-13) «Перенести все позиции из
+// договора в поставку» — та же пара, что copyFromPurchase выше, один шаг
+// дальше (ТЗ → Договор → Поставка). Перезаписывает accepted_* ВСЕХ позиций
+// (см. backend/app/routers/contract_items.py::copy_contract_items_to_delivery).
+export interface CopyToDeliveryResult {
+  updated_count: number
+  items: { id: number; accepted_name: string | null; accepted_quantity: number | null; accepted_unit: string | null }[]
+}
+
+export async function copyContractToDelivery(purchaseId: number): Promise<CopyToDeliveryResult> {
+  return apiFetch<CopyToDeliveryResult>(
+    `/purchases/${purchaseId}/contract-items/copy-to-delivery`,
+    { method: 'POST' },
+  )
+}
+
 export async function replaceAllContractItems(
   purchaseId: number,
   items: ContractItemDraft[],

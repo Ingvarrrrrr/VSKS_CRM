@@ -55,6 +55,26 @@ export function clearFeoUndoStack() {
   redoStack.value = []
 }
 
+// Очередь записи в стек (владелец, п.4, 13.10.2026): «удалил "Аренда офиса",
+// потом "Канцтовары" — Ctrl+Z вернул "Аренда офиса"» вместо последней
+// удалённой. Причина — гонка: у каждой позиции СВОЙ ряд (deletingPlannedItemId
+// держит id именно этой строки), поэтому можно нажать удаление второй позиции,
+// не дождавшись ответа сервера на первую, и если второй запрос (вместе с
+// refreshComparison/refreshReqData) ответит раньше — pushFeoUndo для него
+// отработает раньше, и порядок в стеке окажется противоположным порядку
+// кликов. runFeoWriteSerialized — ЕДИНЫЙ механизм (Правило №6), которым
+// оборачивается промежуток «запрос на сервер → pushFeoUndo» у удаления/
+// переноса/создания позиции и переноса категории: каждое следующее действие
+// ждёт, пока предыдущее не положит (или не откажется положить) свою запись,
+// так что порядок в стеке = порядку, в котором человек нажимал кнопки,
+// а не порядку ответов сети.
+let _feoWriteChain: Promise<unknown> = Promise.resolve()
+export function runFeoWriteSerialized<T>(fn: () => Promise<T>): Promise<T> {
+  const run = _feoWriteChain.then(fn, fn)
+  _feoWriteChain = run.then(() => undefined, () => undefined)
+  return run
+}
+
 export const canUndoFeo = computed(() => undoStack.value.length > 0)
 export const canRedoFeo = computed(() => redoStack.value.length > 0)
 // Подпись под кнопкой/хоткеем — «Отменить: удаление позиции «Чайник»» (владелец:
@@ -143,9 +163,14 @@ export function feoUndoHotkeyBlocked(): boolean {
 // addEventListener, чтобы её было легко подключать/отключать и тестировать.
 export function handleFeoUndoKeydown(e: KeyboardEvent) {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return
-  const key = e.key.toLowerCase()
-  const isUndo = key === 'z' && !e.shiftKey
-  const isRedo = key === 'y' || (key === 'z' && e.shiftKey)
+  // Владелец (п.4, 13.10.2026): «сочетание клавиш не работают». Причина —
+  // e.key на русской раскладке для физических клавиш Z/Y отдаёт «я»/«н»
+  // (раскладка меняет СИМВОЛ, который сравнивали с 'z'/'y' — сравнение
+  // никогда не совпадало). e.code — код физической клавиши, не зависит от
+  // раскладки: 'KeyZ'/'KeyY' одинаковы и на латинице, и на кириллице.
+  const code = e.code
+  const isUndo = code === 'KeyZ' && !e.shiftKey
+  const isRedo = code === 'KeyY' || (code === 'KeyZ' && e.shiftKey)
   if (!isUndo && !isRedo) return
   if (feoUndoHotkeyBlocked()) return
   if (isUndo) {

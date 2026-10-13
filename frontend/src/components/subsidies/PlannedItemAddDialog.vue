@@ -56,180 +56,19 @@
           @create-new="onPlannedCreateNewProduct"
           @clear="p.onPlannedItemProductClear"
         />
-        <!-- Владелец (Волна 3, п.2, «двоится Количество»): «Тут я выбрал ежемесячный
-             платёж, соответственно должно перемножаться количество месяцев на
-             ежемесячный платёж. Поле "Кол-во" в данном случае сбивает с толку»
-             — количество ЕДИНИЦ товара/услуги не участвует в сумме ежемесячного
-             платежа (сумма = срок × платёж за месяц, см. ниже) и не имеет
-             отношения к сроку, поэтому для monthly-режима это поле скрыто, а не
-             показано рядом со сроком под тем же общим смыслом «количество».
-             Именно сюда раньше просачивалось дробное число месяцев (боевой
-             случай владельца — «Кол-во» 6.66 в данных по субсидии). -->
-        <v-row v-if="p.plannedItemForm.value.payment_mode !== 'monthly'">
-          <v-col cols="5">
-            <v-text-field
-              v-model.number="p.plannedItemForm.value.quantity"
-              label="Количество" type="number"
-              variant="outlined" density="compact"
-            />
-          </v-col>
-          <v-col cols="7">
-            <v-text-field
-              v-model="p.plannedItemForm.value.unit"
-              label="Единица измерения"
-              variant="outlined" density="compact"
-              placeholder="шт, кг, услуга..."
-            />
-          </v-col>
-        </v-row>
-        <!-- Тип позиции — товар/услуга/работа (владелец, 21.09, раздел W2):
-             автоподставляется из каталога при выборе товара (см.
-             applyPlannedProductHint в useFeoPlannedItemAddDialog.ts), пока
-             пользователь не тронул поле сам. ITEM_TYPE_OPTIONS — единственный
-             источник списка (Правило №6). -->
-        <v-select
-          v-model="p.plannedItemForm.value.item_type"
-          :items="ITEM_TYPE_OPTIONS"
-          label="Тип" clearable
-          variant="outlined" density="compact"
-          class="mb-2"
-          @update:model-value="p.onPlannedItemTypeInput"
+        <!-- Раскладка (владелец, п.15б, 13.10.2026): Наименование (и товар) →
+             галочки происхождения (каждая раскрывает СВОИ кол-во/ед.изм./цена/
+             сумма) → общий блок «Тип платежа» → остальное (тип позиции,
+             нужность, составная позиция). Общая секция-компонент с диалогом
+             правки (PlannedItemEditDialog.vue) — см. докстринг
+             FeoPlannedOriginFields.vue, Правило №6, второй копии разметки не
+             заводим. -->
+        <FeoPlannedOriginFields
+          :form="p.plannedItemForm.value"
+          :amount-is-computed="p.plannedItemAmountIsComputed.value"
+          :price-caption="p.addPlannedPriceCaption.value || ''"
+          :feo-amount-is-computed="p.plannedItemFeoAmountIsComputed.value"
         />
-        <!-- Чекбокс синхронизации типа с каталогом — виден только когда выбран
-             товар каталога И тип позиции расходится с типом товара в каталоге
-             (или у товара тип не задан), см. addShowSyncProductKindCheckbox. -->
-        <v-checkbox
-          v-if="p.addShowSyncProductKindCheckbox.value"
-          v-model="p.addSyncProductKind.value"
-          density="compact" hide-details
-          label="Обновить тип товара в каталоге"
-          class="mb-2"
-        />
-        <!-- Статус «нужности» позиции (владелец, 04.10.2026) — NEED_LEVEL_OPTIONS
-             единственный источник вариантов (@/utils/planNeedLevel.ts, Правило №6). -->
-        <v-select
-          v-model="p.plannedItemForm.value.need_level"
-          :items="NEED_LEVEL_OPTIONS"
-          label="Нужность"
-          variant="outlined" density="compact"
-          class="mb-2"
-        />
-        <!-- Плановая стоимость за единицу (владелец, 2026-09-01): подставляется из
-             каталога при выборе товара (onPlannedItemProductPick), полностью
-             редактируема; пока задана и не равна 0 — «Плановая сумма» ниже считается
-             как количество × эта цена (см. watch на plannedItemForm.quantity/unitPrice
-             в usePlannedItems.ts). -->
-        <v-text-field
-          v-model.number="p.plannedItemForm.value.unitPrice"
-          label="Плановая стоимость за единицу, ₽" type="number"
-          variant="outlined" density="compact" suffix="₽"
-          class="mb-1"
-          :hint="p.plannedItemForm.value.unitPrice == null ? UNIT_PRICE_NOT_FIXED_HINT : ''"
-          :persistent-hint="p.plannedItemForm.value.unitPrice == null"
-        />
-        <div v-if="p.addPlannedPriceCaption.value" class="text-caption text-medium-emphasis mb-2" style="line-height:1.35">
-          <v-icon icon="mdi-information-outline" size="13" style="margin-top:-2px" class="mr-1" />{{ p.addPlannedPriceCaption.value }}
-        </div>
-        <v-text-field
-          v-model.number="p.plannedItemForm.value.amount"
-          label="Плановая сумма (₽)" type="number"
-          variant="outlined" density="compact" suffix="₽"
-          :readonly="p.plannedItemAmountIsComputed.value"
-          :bg-color="p.plannedItemAmountIsComputed.value ? 'grey-lighten-4' : undefined"
-          :hint="p.plannedItemAmountIsComputed.value ? 'Считается автоматически: количество × стоимость за единицу' : ''"
-          :persistent-hint="p.plannedItemAmountIsComputed.value"
-          :class="p.plannedItemForm.value.payment_mode === 'monthly' ? 'd-none' : 'mb-3'"
-        />
-        <!-- Происхождение плановой позиции (владелец, 2026-09-01): «это плановая
-             позиция в соответствии с ФЭО, или только в соответствии с нашим
-             внутренним планом» — ДВЕ НЕЗАВИСИМЫЕ галочки, не переключатель, обе
-             можно поставить/снять независимо. Доступны только тому, кто может
-             редактировать ФЭО (вкладка feo_categories) — эта же панель уже целиком
-             ограничена ею, см. проверку доступа страницы. -->
-        <div class="text-caption text-medium-emphasis mb-1">Происхождение позиции</div>
-        <v-checkbox
-          v-model="p.plannedItemForm.value.is_feo_breakdown"
-          density="compact" hide-details
-          class="mb-1"
-        >
-          <template #label>
-            <div>
-              <div style="line-height:1.2">По ФЭО</div>
-              <div class="text-caption text-medium-emphasis" style="line-height:1.2">жёсткая разбивка ФЭО — покупать будут именно это, отчётность строгая</div>
-            </div>
-          </template>
-        </v-checkbox>
-        <v-checkbox
-          v-model="p.plannedItemForm.value.is_internal_plan"
-          density="compact" hide-details
-          class="mb-3"
-        >
-          <template #label>
-            <div>
-              <div style="line-height:1.2">Внутренний план</div>
-              <div class="text-caption text-medium-emphasis" style="line-height:1.2">в ФЭО была более широкая категория (или позиции не было) — разбивку придумали сами</div>
-            </div>
-          </template>
-        </v-checkbox>
-        <!-- Составная позиция (задача «Составная плановая позиция»): несколько
-             строк закупки (напр. «проживание» + «питание») покрывают одну и ту же
-             позицию на одно и то же количество, не на сумму количеств. См.
-             докстринг FeoPlannedItem.is_composite. -->
-        <v-checkbox
-          v-model="p.plannedItemForm.value.is_composite"
-          density="compact" hide-details
-          class="mb-3"
-        >
-          <template #label>
-            <div>
-              <div style="line-height:1.2">Составная позиция</div>
-              <div class="text-caption text-medium-emphasis" style="line-height:1.2">
-                несколько услуг на одно количество, например проживание + питание.
-                Строки закупки, привязанные к этой позиции, не складывают количество:
-                133 чел. проживания и 133 чел. питания = 133 чел. Цена за единицу
-                проверяется по сумме цен строк.
-              </div>
-            </div>
-          </template>
-        </v-checkbox>
-        <!-- Раздельные числа по ФЭО (владелец, 2026-09-14): «надо отдельно если я
-             включил по ФЭО, и отдельно для Внутреннего плана, это нужно если ФЭО
-             и внутренний план разнятся». Поля выше (Количество/Плановая стоимость
-             за единицу/Плановая сумма) остаются «внутренним планом» — единственным
-             источником для дерева плана и контроля превышения (см. докстринг
-             FeoPlannedItem.feo_quantity в backend/app/models/feo_planned_item.py).
-             Второй набор — только когда ОБЕ галочки выше стоят разом; при одной
-             галочке единственный набор выше и есть план — «как сейчас» (задача,
-             п.3), второй набор не показываем и не заставляем заполнять. -->
-        <template v-if="p.addShowBothOriginFields.value && p.plannedItemForm.value.payment_mode !== 'monthly'">
-          <div class="text-caption text-medium-emphasis mb-1">Числа по ФЭО (для сверки с внутренним планом выше)</div>
-          <v-row>
-            <v-col cols="5">
-              <v-text-field
-                v-model.number="p.plannedItemForm.value.feoQuantity"
-                label="Кол-во по ФЭО" type="number"
-                variant="outlined" density="compact"
-              />
-            </v-col>
-            <v-col cols="7">
-              <v-text-field
-                v-model.number="p.plannedItemForm.value.feoUnitPrice"
-                label="Цена за единицу по ФЭО, ₽" type="number"
-                variant="outlined" density="compact" suffix="₽"
-              />
-            </v-col>
-          </v-row>
-          <v-text-field
-            v-model.number="p.plannedItemForm.value.feoAmount"
-            label="Сумма по ФЭО (₽)" type="number"
-            variant="outlined" density="compact" suffix="₽"
-            :readonly="p.plannedItemFeoAmountIsComputed.value"
-            :bg-color="p.plannedItemFeoAmountIsComputed.value ? 'grey-lighten-4' : undefined"
-            :hint="p.plannedItemFeoAmountIsComputed.value ? 'Считается автоматически: кол-во × цена за единицу по ФЭО' : 'Необязательно — не заполняйте, если числа по ФЭО и по внутреннему плану совпадают'"
-            persistent-hint
-            class="mb-3"
-          />
-        </template>
         <!-- Тип платежа -->
         <div class="text-caption text-medium-emphasis mb-1">Тип платежа</div>
         <v-btn-toggle
@@ -297,6 +136,61 @@
             Проверьте даты — конец периода должен быть позже начала.
           </div>
         </template>
+        <!-- Остальное (владелец, п.15б: «Тип платежа — он общий для всех», всё
+             прочее — после него). -->
+        <!-- Тип позиции — товар/услуга/работа (владелец, 21.09, раздел W2):
+             автоподставляется из каталога при выборе товара (см.
+             applyPlannedProductHint в useFeoPlannedItemAddDialog.ts), пока
+             пользователь не тронул поле сам. ITEM_TYPE_OPTIONS — единственный
+             источник списка (Правило №6). -->
+        <v-select
+          v-model="p.plannedItemForm.value.item_type"
+          :items="ITEM_TYPE_OPTIONS"
+          label="Тип" clearable
+          variant="outlined" density="compact"
+          class="mb-2"
+          @update:model-value="p.onPlannedItemTypeInput"
+        />
+        <!-- Чекбокс синхронизации типа с каталогом — виден только когда выбран
+             товар каталога И тип позиции расходится с типом товара в каталоге
+             (или у товара тип не задан), см. addShowSyncProductKindCheckbox. -->
+        <v-checkbox
+          v-if="p.addShowSyncProductKindCheckbox.value"
+          v-model="p.addSyncProductKind.value"
+          density="compact" hide-details
+          label="Обновить тип товара в каталоге"
+          class="mb-2"
+        />
+        <!-- Статус «нужности» позиции (владелец, 04.10.2026) — NEED_LEVEL_OPTIONS
+             единственный источник вариантов (@/utils/planNeedLevel.ts, Правило №6). -->
+        <v-select
+          v-model="p.plannedItemForm.value.need_level"
+          :items="NEED_LEVEL_OPTIONS"
+          label="Нужность"
+          variant="outlined" density="compact"
+          class="mb-2"
+        />
+        <!-- Составная позиция (задача «Составная плановая позиция»): несколько
+             строк закупки (напр. «проживание» + «питание») покрывают одну и ту же
+             позицию на одно и то же количество, не на сумму количеств. См.
+             докстринг FeoPlannedItem.is_composite. -->
+        <v-checkbox
+          v-model="p.plannedItemForm.value.is_composite"
+          density="compact" hide-details
+          class="mb-3"
+        >
+          <template #label>
+            <div>
+              <div style="line-height:1.2">Составная позиция</div>
+              <div class="text-caption text-medium-emphasis" style="line-height:1.2">
+                несколько услуг на одно количество, например проживание + питание.
+                Строки закупки, привязанные к этой позиции, не складывают количество:
+                133 чел. проживания и 133 чел. питания = 133 чел. Цена за единицу
+                проверяется по сумме цен строк.
+              </div>
+            </div>
+          </template>
+        </v-checkbox>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
@@ -337,13 +231,13 @@
 // диалогами панели «план vs факт»).
 import { useDisplay } from 'vuetify'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
-import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
 import { NEED_LEVEL_OPTIONS } from '@/utils/planNeedLevel'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { usePlannedItems } from '@/composables/subsidies/usePlannedItems'
 import { formatCurrency } from '@/composables/subsidies/format'
 import FeoPlannedDuplicateDialog from '@/components/items/feo-planned/FeoPlannedDuplicateDialog.vue'
+import FeoPlannedOriginFields from '@/components/items/feo-planned/FeoPlannedOriginFields.vue'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import type { MatchCandidate } from '@/composables/useItemMatching'

@@ -364,6 +364,23 @@ async def apply_purchase_status_transition(
     old_status = p.status
     p.status = target_status
 
+    # Владелец (чек-лист, пункт 21, 2026-10-13): «порядковый номер внутри
+    # рамочного договора — автоматическое число, которое программа
+    # высчитывает сама, после согласования закупки и отправления её в
+    # работу» (пример — заявка 908). Механизм auto-assign уже существовал
+    # (_assign_framework_seq, app/routers/purchase_budget.py) и был подключён
+    # к созданию закупки / согласованию договора / сменам контракта — но НЕ
+    # к этому общему переходу статуса, которым реально двигают закупку в
+    # work_in_progress (ручная кнопка «В работу», app/routers/
+    # purchase_transitions.py::transition_status, и автопереход в
+    # wish_distribution.py). Из-за этого у №908 (рамочный, work_in_progress)
+    # framework_seq остался NULL. Зовём существующий механизм здесь — один
+    # источник присвоения номера, ПРАВИЛО №6, без второй копии логики.
+    if target_status == "work_in_progress" and p.contract_id:
+        from app.routers.purchase_budget import _assign_framework_seq, FRAMEWORK_TYPES
+        if p.purchase_contract_type in FRAMEWORK_TYPES:
+            await _assign_framework_seq(p, db)
+
     if target_status == "delivered":
         await _autofill_accepted_fields(p, db)
 

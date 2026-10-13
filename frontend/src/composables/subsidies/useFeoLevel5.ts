@@ -13,7 +13,7 @@ import { formatCurrency, formatCurrencyRound } from './format'
 import { normName } from './feoCategoryUtils'
 import { filterFundedNodes, type FeoLeaf as FeoPickerLeaf, type FeoNode as FeoPickerNode } from '@/composables/useFeoLeaves'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor, purchaseStatusLabel } from '@/constants/purchaseStatus'
-import { pushFeoUndo } from './useFeoUndoStack'
+import { pushFeoUndo, runFeoWriteSerialized } from './useFeoUndoStack'
 import { createPlannedItemRaw } from './useFeoPlannedItemAddDialog'
 import { notifyFeoPlanChanged } from './feoPlanChangeBus'
 import { makeCtxSingleton } from './ctxSingleton'
@@ -136,7 +136,7 @@ async function moveOnePlannedItem(item: FeoPlannedItem, targetCategoryId: number
   return res.ok ? { ok: true } : { ok: false, error: res.error }
 }
 
-export interface StageBreakdownSegment { key: string; label: string; color: string; count: number; pct: number }
+export interface StageBreakdownSegment { key: string; label: string; color: string; count: number; amount: number; pct: number }
 
 // Жалоба владельца, п.15 волны 4 (2026-09-13): «в позициях плана должно быть...
 // на каком этапе находится данная закупка». У одной плановой позиции может
@@ -205,26 +205,33 @@ export function buildPlanVsFactRowsWithParts(
   return rows
 }
 
-// Полоска по стадиям (свёрнутый вид новой колонки «Стадия закупки»): мера —
-// КОЛИЧЕСТВО закупок на стадии, не деньги и не количество товара. Деньги
-// недоступны на ранних стадиях (plan_schedule ещё не имеет fact_amount, см.
-// purchase_item_fact_amount) — полоска бы молчала там, где владелец как раз
-// хочет видеть «в плане-графике». Количество товара несравнимо между
-// позициями с разными единицами измерения. Количество закупок — единственная
-// мера, всегда доступная и однородная. Тот же приём (PURCHASE_STATUS_ORDER,
-// filter+map по счётчику статусов), что useFeoReqItems.groupStatuses — там
-// считаются статусы товаров виртуальной группы позиций заявок, здесь —
-// закупки одной плановой позиции; второй счётчик статусов НЕ заводится,
-// переиспользуется тот же канонический порядок жизненного цикла закупки.
+// Полоска по стадиям (свёрнутый вид новой колонки «Стадия закупки»): накопи-
+// тельная полоска по СУММЕ закупок в каждой стадии (владелец, 13.10.2026: «а
+// то непонятно, сколько и чего заказано... с разными размерами и цветами
+// статусов... в конце эти накопления должны сойтись») — ширина отрезка
+// пропорциональна сумме, а не количеству закупок, как было раньше. Сумма
+// закупки — ТА ЖЕ формула, что и в factForPlannedTotal (fact_amount, если
+// подтверждён, иначе total_price позиции закупки) — второй расчёт суммы не
+// заводим (Правило №6), поэтому сумма всех отрезков всегда равна сумме,
+// которую показывает «План vs факт» ниже той же плановой позиции. Закупка без
+// суммы (ни fact_amount, ни total_price — вырожденный случай) даёт 0 — она
+// всё равно попадает в разбивку (count учтён), просто не занимает ширины;
+// при total=0 ширины делятся поровну по count, чтобы полоска не исчезла молча.
+// Порядок/цвет/подпись стадии — PURCHASE_STATUS_ORDER/purchaseStatusColor/
+// purchaseStatusLabel (единственный словарь статусов закупки, Правило №6).
 export function buildStageBreakdown(facts: FeoActualItem[]): StageBreakdownSegment[] {
   const purchases = dedupPurchasesByPurchaseId(facts)
   const total = purchases.length
   if (!total) return []
   const counts = new Map<string, number>()
+  const sums = new Map<string, number>()
   for (const p of purchases) {
     const st = p.purchase_status || ''
+    const amount = Number(p.fact_amount ?? p.total_price ?? 0)
     counts.set(st, (counts.get(st) || 0) + 1)
+    sums.set(st, (sums.get(st) || 0) + amount)
   }
+  const totalAmount = [...sums.values()].reduce((s, v) => s + v, 0)
   return PURCHASE_STATUS_ORDER
     .filter(key => counts.get(key))
     .map(key => ({
@@ -232,7 +239,8 @@ export function buildStageBreakdown(facts: FeoActualItem[]): StageBreakdownSegme
       label: purchaseStatusLabel(key),
       color: purchaseStatusColor(key),
       count: counts.get(key)!,
-      pct: (counts.get(key)! / total) * 100,
+      amount: sums.get(key)!,
+      pct: totalAmount > 0.005 ? (sums.get(key)! / totalAmount) * 100 : (counts.get(key)! / total) * 100,
     }))
 }
 
@@ -469,7 +477,14 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     return buildStageBreakdown(factForPlanned(catId, plannedId))
   }
   function stageBreakdownTitle(catId: number, plannedId: number): string {
-    return stageBreakdownFor(catId, plannedId).map(s => `${s.label}: ${s.count}`).join(' · ')
+    return stageBreakdownFor(catId, plannedId).map(s => `${s.label}: ${s.count} · ${formatCurrency(s.amount)}`).join(' · ')
+  }
+  // Итог полоски (владелец, 13.10.2026: «эти накопления должны сойтись») —
+  // сумма отрезков, та же цифра, что уже показывает «Сумма (факт)»/«План vs
+  // факт» для этой позиции (factForPlannedTotal, Правило №6, второй расчёт не
+  // заводим), здесь просто просуммированы уже посчитанные segment.amount.
+  function stageBreakdownTotal(catId: number, plannedId: number): number {
+    return stageBreakdownFor(catId, plannedId).reduce((s, seg) => s + seg.amount, 0)
   }
 
   function purchaseLabelFor(a: { registry_number?: string | null; purchase_number?: number | null; purchase_id: number }): string {
@@ -706,11 +721,18 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     if (!confirm(`Удалить плановую позицию «${item.name}»?`)) return
     deletingPlannedItemId.value = item.id
     try {
-      const res = await deletePlannedItemRaw(item.id, selectedId.value ?? undefined)
-      if (!res.ok) throw new Error(res.error)
-      await withPreservedScroll(feoTableArea.value, () =>
-        Promise.all([refreshComparison(item.feo_category_id), refreshReqData()]))
-      if (!isRevisionMode(selectedId.value ?? undefined)) registerDeleteUndo(item)
+      // runFeoWriteSerialized (useFeoUndoStack.ts) — у каждой строки свой
+      // «занят» (deletingPlannedItemId хранит id ИМЕННО этой строки), поэтому
+      // можно удалить вторую позицию, не дождавшись ответа на первую; без
+      // очереди pushFeoUndo ниже может сработать в порядке ответов сети, а не
+      // в порядке кликов (жалоба владельца, п.4, 13.10.2026).
+      await runFeoWriteSerialized(async () => {
+        const res = await deletePlannedItemRaw(item.id, selectedId.value ?? undefined)
+        if (!res.ok) throw new Error(res.error)
+        await withPreservedScroll(feoTableArea.value, () =>
+          Promise.all([refreshComparison(item.feo_category_id), refreshReqData()]))
+        if (!isRevisionMode(selectedId.value ?? undefined)) registerDeleteUndo(item)
+      })
     } catch (e: any) {
       showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось удалить плановую позицию', 'error')
     } finally {
@@ -766,14 +788,18 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     const sourceCategoryId = item.feo_category_id
     movingPlannedItemId.value = item.id
     try {
-      const result = await moveOnePlannedItem(item, targetCategoryId, selectedId.value ?? undefined)
-      if (!result.ok) throw new Error(result.error)
-      await Promise.all([refreshComparison(sourceCategoryId), refreshComparison(targetCategoryId)])
-      await refreshReqData()
-      showSnack(isRevisionMode(selectedId.value ?? undefined) ? 'Перенос позиции добавлен в корректировку' : 'Позиция перенесена')
-      // См. комментарий у registerCategoryMoveUndo в useFeoTreeDnd.ts — та же
-      // причина не заводить undo поверх операции корректировки.
-      if (!isRevisionMode(selectedId.value ?? undefined)) registerMoveUndo(item, sourceCategoryId, targetCategoryId)
+      // runFeoWriteSerialized — та же причина, что у deletePlannedItem выше
+      // (гонка сетевых ответов могла бы перепутать порядок записей в стеке).
+      await runFeoWriteSerialized(async () => {
+        const result = await moveOnePlannedItem(item, targetCategoryId, selectedId.value ?? undefined)
+        if (!result.ok) throw new Error(result.error)
+        await Promise.all([refreshComparison(sourceCategoryId), refreshComparison(targetCategoryId)])
+        await refreshReqData()
+        showSnack(isRevisionMode(selectedId.value ?? undefined) ? 'Перенос позиции добавлен в корректировку' : 'Позиция перенесена')
+        // См. комментарий у registerCategoryMoveUndo в useFeoTreeDnd.ts — та же
+        // причина не заводить undo поверх операции корректировки.
+        if (!isRevisionMode(selectedId.value ?? undefined)) registerMoveUndo(item, sourceCategoryId, targetCategoryId)
+      })
     } catch (e: any) {
       showSnack(e?.message || 'Ошибка переноса', 'error')
     } finally {
@@ -869,14 +895,10 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
   const bulkMoveSubmitting = ref(false)
   const bulkMoveFailures = ref<{ name: string; error: string }[]>([])
 
-  async function openBulkMoveDialog(node: FeoNode) {
-    const ids = selectedIdsForNode(node)
-    if (!ids.length) return
-    bulkMoveActiveNodeId.value = node.id
-    bulkMoveItemIds.value = ids
-    bulkMoveTargetCategoryId.value = null
-    bulkMoveFailures.value = []
-    bulkMoveDialogOpen.value = true
+  // Полное дерево категорий субсидии для окна переноса — общий код для
+  // node-версии ниже и глобальной (FeoBulkMoveBar.vue, п.12, 13.10.2026), не
+  // дублируем запрос второй раз (Правило №6).
+  async function loadBulkMoveCategoryTree() {
     const subsId = selectedId.value
     if (!subsId) return
     bulkMoveLoadingTree.value = true
@@ -895,6 +917,44 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     } finally {
       bulkMoveLoadingTree.value = false
     }
+  }
+
+  async function openBulkMoveDialog(node: FeoNode) {
+    const ids = selectedIdsForNode(node)
+    if (!ids.length) return
+    bulkMoveActiveNodeId.value = node.id
+    bulkMoveItemIds.value = ids
+    bulkMoveTargetCategoryId.value = null
+    bulkMoveFailures.value = []
+    bulkMoveDialogOpen.value = true
+    await loadBulkMoveCategoryTree()
+  }
+
+  // Глобальный перенос (владелец, п.12, 13.10.2026): «выделить-то можно, а
+  // кнопки "Перенести в категорию" я не вижу» — кнопка внутри панели
+  // конкретной категории уходит из виду при скролле длинного списка или когда
+  // позиции отмечены в НЕСКОЛЬКИХ категориях сразу (общий Set выбора —
+  // selectedPlannedItemIds). Эта функция берёт ВСЕ отмеченные id (across all
+  // categories), а не только видимые в одной панели — та же submitBulkMove
+  // ниже, второй операции переноса не заводим. bulkMoveActiveNodeId получает
+  // служебный id -1 (ни одна настоящая категория ФЭО такой не имеет), чтобы
+  // не совпасть ни с одним per-node <v-dialog v-if> в FeoLevel5Panel.vue —
+  // диалог для этого случая рисует отдельный компонент FeoBulkMoveBar.vue,
+  // смонтированный один раз в FeoTreeTable.vue (тот же приём, что и у
+  // FeoPlannedItemPartEditDialog/FeoRowDrillDialog там же).
+  const GLOBAL_BULK_MOVE_NODE_ID = -1
+  async function openBulkMoveDialogGlobal() {
+    const ids = [...selectedPlannedItemIds.value]
+    if (!ids.length) return
+    bulkMoveActiveNodeId.value = GLOBAL_BULK_MOVE_NODE_ID
+    bulkMoveItemIds.value = ids
+    bulkMoveTargetCategoryId.value = null
+    bulkMoveFailures.value = []
+    bulkMoveDialogOpen.value = true
+    await loadBulkMoveCategoryTree()
+  }
+  function clearAllPlannedSelection() {
+    selectedPlannedItemIds.value = new Set()
   }
 
   function closeBulkMoveDialog() {
@@ -1020,7 +1080,7 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     anyPlannedExpandedFor, toggleAllPlannedItemsForCategory,
     FACT_STATUSES, isFactActual, WISH_PLAN_LOCKED_STATUSES, isWishLocked,
     actualFactFor, allActualFor, fallbackAbsorbedByCategory, factForPlanned, factForPlannedTotal,
-    purchasesForPlanned, planVsFactRowsWithParts, stageBreakdownFor, stageBreakdownTitle,
+    purchasesForPlanned, planVsFactRowsWithParts, stageBreakdownFor, stageBreakdownTitle, stageBreakdownTotal,
     purchaseLabelFor, factExcessReasonItems, factExcessReasonRemainder,
     stageHeaderLabelFor, stageChipLabelFor, stageChipTitleFor, stageChipColorFor, factStageHeaderFor,
     planBreakdownText, displayPlannedRowsFor, unplannedActualFor, isOrphanedActual,
@@ -1035,5 +1095,6 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     bulkMoveDialogOpen, bulkMoveActiveNodeId, bulkMoveItemIds, bulkMoveTargetCategoryId,
     bulkMoveNodes, bulkMoveLeaves, bulkMoveLoadingTree, bulkMoveSubmitting, bulkMoveFailures,
     openBulkMoveDialog, closeBulkMoveDialog, submitBulkMove,
+    openBulkMoveDialogGlobal, clearAllPlannedSelection, GLOBAL_BULK_MOVE_NODE_ID,
   }
 }

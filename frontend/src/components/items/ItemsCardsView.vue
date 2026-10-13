@@ -249,15 +249,16 @@
             <!-- Цена ед. -->
             <v-col cols="6" sm="4">
               <v-text-field
-                :model-value="formatNumber(item.unit_price)"
+                :model-value="moneyFieldDisplay(item, 'unit_price')"
                 density="compact" variant="outlined" label="Цена ед., ₽" hide-details
                 :disabled="readonly"
                 :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
-                @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
+                @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
+                  @blur="moneyFieldOnBlur(item, 'unit_price')"
               />
               <div v-if="planForItem?.(item)?.unit_price != null" class="text-caption plan-hint"
                 :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
-                план: {{ formatNumber(planForItem!(item)!.unit_price) }} ₽
+                план: {{ formatMoneyInput(planForItem!(item)!.unit_price) }} ₽
               </div>
               <div v-else-if="planForItem?.(item)" class="text-caption plan-hint text-medium-emphasis">
                 {{ UNIT_PRICE_NOT_FIXED_HINT }}
@@ -268,7 +269,7 @@
 
             <!-- Сумма (readonly) -->
             <v-col cols="6" sm="4">
-              <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
+              <v-text-field :model-value="formatMoneyInput(item.total_price)" readonly density="compact"
                 variant="outlined" label="Сумма, ₽" hide-details bg-color="grey-lighten-4"
                 :class="{ 'tz-over-plan': planExcessFor?.(item)?.totalOver }" />
               <template v-if="categoryResidualFor?.(item)?.canViewBudget">
@@ -413,7 +414,7 @@ import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/item
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
-import { formatPlanResidual } from '@/utils/numberFormat'
+import { formatPlanResidual, formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'

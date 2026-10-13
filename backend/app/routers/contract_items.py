@@ -462,3 +462,67 @@ async def copy_names_from_purchase_items(pid: int, db: AsyncSession = Depends(ge
         "contract_items_total": len(contract_items),
         "composition_mismatch": len(purchase_items_map) != len(contract_items),
     }
+
+
+@router.post("/copy-to-delivery", dependencies=[Depends(require_tab("purchases"))])
+async def copy_contract_items_to_delivery(pid: int, db: AsyncSession = Depends(get_db)):
+    """Пункт 22 чек-листа (владелец, 2026-10-13): «в Поставку тоже должна быть
+    возможность перенести все позиции из Договора» — та же пара, что
+    «Перенести все позиции из ТЗ в договор» выше, один шаг дальше по стадиям
+    (ТЗ → Договор → Поставка).
+
+    Переносит name/quantity/unit из contract_items в purchase_items.accepted_*
+    — тот же механизм, что автозаполняет «Поставку» при переходе закупки в
+    delivered (app.routers.purchase_transitions._autofill_accepted_fields,
+    вызывается здесь с force=True — ПОЛНОСТЬЮ перезаписывает уже введённые
+    accepted_* поля, второй копии логики нет, ПРАВИЛО №6). Доступно только
+    когда поля «Поставка» вообще редактируются (статус delivered/paid — см.
+    ItemsTableStages.vue::isDelivered) — до этого переносить в Поставку нечего
+    показывать в UI, фронт прячет кнопку раньше этого статуса.
+
+    Возвращает 422 если у закупки нет contract_items.
+    """
+    p = await db.get(Purchase, pid)
+    if not p:
+        raise HTTPException(404, detail={"code": "PURCHASE_NOT_FOUND",
+                                          "message": f"Закупка #{pid} не найдена"})
+    if p.status not in ("delivered", "paid"):
+        raise HTTPException(
+            422,
+            detail={
+                "code": "NOT_DELIVERED",
+                "message": "Перенос в «Поставку» доступен только после статуса «Поставлено».",
+            },
+        )
+    has_contract_items = await db.scalar(
+        select(ContractItem.id).where(ContractItem.purchase_id == pid).limit(1)
+    )
+    if not has_contract_items:
+        raise HTTPException(
+            422,
+            detail={
+                "code": "NO_CONTRACT_ITEMS",
+                "message": "В договоре нет позиций — сначала перенесите позиции из ТЗ в договор.",
+            },
+        )
+    from app.routers.purchase_transitions import _autofill_accepted_fields
+    updated_count = await _autofill_accepted_fields(p, db, force=True)
+    await db.commit()
+
+    items_res = await db.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == pid).order_by(PurchaseItem.id)
+    )
+    items = list(items_res.scalars().all())
+    return {
+        "updated_count": updated_count,
+        "items": [_item_accepted_brief(it) for it in items],
+    }
+
+
+def _item_accepted_brief(it: PurchaseItem) -> dict:
+    return {
+        "id": it.id,
+        "accepted_name": it.accepted_name,
+        "accepted_quantity": float(it.accepted_quantity) if it.accepted_quantity is not None else None,
+        "accepted_unit": it.accepted_unit,
+    }

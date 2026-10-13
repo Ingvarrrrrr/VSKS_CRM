@@ -450,10 +450,19 @@
               <!-- data-field="feo_category" — цель для highlightMissingFeoCategory.
                    Владелец (2026-09-17): «подсвети поле "Категория ФЭО", я его найти
                    не могу, даже зная что он должен быть» — рамка + подпись сверху,
-                   тот же приём, что contract-terms-box в PurchaseContractParamsSection.vue. -->
+                   тот же приём, что contract-terms-box в PurchaseContractParamsSection.vue.
+                   Владелец (2026-10-13, пункт 20): «по-прежнему не вижу... о, нашёл» —
+                   прежняя подпись (text-caption, обычный вес) не цепляла взгляд. Подпись
+                   увеличена (text-subtitle-2, акцентный цвет), добавлена подсказка
+                   «необязательно — уточнит согласующий» — полем остаётся необязательным,
+                   required НЕ выставляется ни в форме, ни на бэке. -->
               <div data-field="feo_category" class="feo-category-highlight pa-3 mb-3">
-                <div class="text-caption text-medium-emphasis font-weight-medium mb-1">
-                  <v-icon size="16" class="mr-1">mdi-sitemap</v-icon>Категория ФЭО
+                <div class="text-subtitle-2 font-weight-bold mb-1" style="color: #6366f1;">
+                  <v-icon size="18" color="#6366f1" class="mr-1">mdi-sitemap</v-icon>Категория ФЭО
+                </div>
+                <div class="text-caption text-medium-emphasis mb-2">
+                  Необязательно — если не знаете, куда отнести, оставьте «Не определена»: согласующий
+                  уточнит категорию при рассмотрении заявки.
                 </div>
                 <template v-if="!wishForm.feo_per_item">
                   <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
@@ -1917,14 +1926,14 @@ defineExpose({
 /* Владелец (2026-09-17): «подсвети поле "Категория ФЭО"» — рамка + лёгкий фон,
    тот же приём, что .contract-terms-box в PurchaseContractParamsSection.vue. */
 .feo-category-highlight {
-  border: 1px solid #6366f1;
+  border: 2px solid #6366f1;
   border-radius: 8px;
 }
 .v-theme--light .feo-category-highlight {
-  background: rgba(99, 102, 241, 0.05);
+  background: rgba(99, 102, 241, 0.07);
 }
 .v-theme--dark .feo-category-highlight {
-  background: rgba(99, 102, 241, 0.1);
+  background: rgba(99, 102, 241, 0.12);
 }
 
 /* Мобильный вид (макет «Вариант А», владелец, 05.10) — ТОЛЬКО то, что

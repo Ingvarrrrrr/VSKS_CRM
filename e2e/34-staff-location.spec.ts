@@ -56,7 +56,11 @@ test.describe.serial('Отслеживание местоположения со
   test('0. Стартовое состояние БД — таблицы пусты', async () => {
     expect(psql('select count(*) from staff_shifts')).toBe('0');
     expect(psql('select count(*) from staff_location_points')).toBe('0');
-    expect(psql('select count(*) from users')).toBe('41');
+    // Число пользователей на стенде меняется по ходу жизни стенда (создают/чистят
+    // тестовые аккаунты другие спеки) — важен не конкретный счётчик, а что admin
+    // (id=1), на которого опирается весь сценарий ниже, реально существует.
+    expect(parseInt(psql('select count(*) from users') || '0')).toBeGreaterThan(0);
+    expect(psql("select count(*) from users where id=1")).toBe('1');
   });
 
   test('1-2. Начало смены → точки уходят на сервер, индикатор виден', async ({ page, context }) => {
@@ -257,11 +261,16 @@ test.describe.serial('Отслеживание местоположения со
       });
       expect(apiRes.status()).toBe(403);
 
-      // Frontend: переход на /staff-location уводит редиректом, страница карты не остаётся открытой
+      // Frontend: переход на /staff-location уводит редиректом, страница карты не остаётся открытой.
+      // Сравниваем PATHNAME, а не всю строку URL — редирект на гейт согласия
+      // 152-ФЗ (/consent-required?redirect=/staff-location у свежего
+      // пользователя, который ещё не принял согласие) содержит
+      // «/staff-location» как часть query-параметра, substring-проверка
+      // ложно считала бы это «остался на карте».
       await empPage.goto('/staff-location');
       await empPage.waitForLoadState('networkidle');
       await empPage.waitForTimeout(500);
-      expect(empPage.url()).not.toContain('/staff-location');
+      expect(new URL(empPage.url()).pathname).not.toBe('/staff-location');
 
       // «Моё местоположение» при этом доступно — свои данные без права
       const myLastRes = await request.get('/api/staff-location/mine/last', {
@@ -284,6 +293,6 @@ test.describe.serial('Отслеживание местоположения со
     psql('delete from staff_shifts');
     expect(psql('select count(*) from staff_shifts')).toBe('0');
     expect(psql('select count(*) from staff_location_points')).toBe('0');
-    expect(psql('select count(*) from users')).toBe('41');
+    expect(psql("select count(*) from users where id=1")).toBe('1');
   });
 });

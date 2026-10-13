@@ -9,10 +9,15 @@ import { login, apiLoginToken } from './helpers';
 // удаляется в конце (afterAll), даже если проверка упала на середине.
 
 const SUBSIDY_ID = 45;
-const PARENT_CAT_ID = 976; // «Расходы на мероприятия...» — есть подкатегории
-const CHILD_CAT_ID = 974; // «Социально значимые мероприятия» — цель переноса
+// Раньше здесь были захардкожены id прод-копии (976/974) — на локальном
+// стенде таких узлов нет гарантированно (прод-копия может быть пересеяна
+// без них). Пара родитель+ребёнок теперь заводится сама в beforeAll через
+// API и удаляется в afterAll — тест не зависит от конкретного наполнения БД.
+let PARENT_CAT_ID: number;
+let CHILD_CAT_ID: number;
 
 let createdItemIds: number[] = [];
+let createdCategoryIds: number[] = [];
 
 async function apiCreatePlannedItem(page: Page, name: string, categoryId = PARENT_CAT_ID) {
   const token = await apiLoginToken(page.request);
@@ -80,6 +85,28 @@ test.describe('Стек отмены/повтора дерева плана (Ctr
   test.beforeAll(async ({ browser }) => {
     page = await browser.newPage();
     await login(page);
+
+    // Родитель+ребёнок под перенос позиции (п.5 основного теста) — заводим
+    // сами вместо жёсткого id прод-копии (976/974), которого на локальном
+    // стенде может не быть.
+    const token = await apiLoginToken(page.request);
+    const parentRes = await page.request.post('/api/feo-categories/', {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { subsidy_id: SUBSIDY_ID, name: 'UNDO_SEED_PARENT', parent_id: null },
+    });
+    const parent = await parentRes.json();
+    PARENT_CAT_ID = parent.id;
+    createdCategoryIds.push(PARENT_CAT_ID);
+
+    const childRes = await page.request.post('/api/feo-categories/', {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { subsidy_id: SUBSIDY_ID, name: 'UNDO_SEED_CHILD', parent_id: PARENT_CAT_ID },
+    });
+    const child = await childRes.json();
+    CHILD_CAT_ID = child.id;
+    // Не пушим CHILD_CAT_ID в createdCategoryIds отдельно — DELETE родителя
+    // каскадом уносит ребёнка (как и везде в этом файле, см.
+    // apiCleanupCategoriesByName выше).
   });
 
   test.afterAll(async () => {
@@ -89,6 +116,7 @@ test.describe('Стек отмены/повтора дерева плана (Ctr
     await apiCleanupCategoriesByName(page, 'UNDO_CAT_');
     await apiCleanupCategoriesByName(page, 'UNDO_MIX_');
     await apiCleanupCategoriesByName(page, 'UNDO_DEL_');
+    await apiCleanupCategoriesByName(page, 'UNDO_SEED_');
     await page.close();
   });
 
@@ -110,7 +138,9 @@ test.describe('Стек отмены/повтора дерева плана (Ctr
     await parentRow.scrollIntoViewIfNeeded();
 
     // Открыть панель «план vs факт» родителя (иконка списка в «Действиях»).
-    const panelToggle = parentRow.locator('button[title*="Состав плана"], button[title*="плановые"]').first();
+    // У узла С ДЕТЬМИ (FeoTreeRow.vue) title другой («показать / добавить
+    // плановую», ед.ч.), у листа — «показать плановые...» (мн.ч.) — матчим оба.
+    const panelToggle = parentRow.locator('button[title*="плановые"], button[title*="плановую"]').first();
     await panelToggle.click();
     await page.waitForTimeout(800);
 
@@ -143,7 +173,22 @@ test.describe('Стек отмены/повтора дерева плана (Ctr
     await expect(panelRow.getByText('UNDO_QA_ITEM', { exact: false })).toHaveCount(0);
     await page.screenshot({ path: 'e2e/_undo_03_create_undone.png' });
 
-    // Ctrl+Y → позиция возвращается
+    // Ctrl+Y → позиция возвращается.
+    // НАСТОЯЩИЙ БАГ (QA 2026-10-13, НЕ ослаблять эту проверку): Ctrl+Y после
+    // успешного Ctrl+Z не присылает НИ ОДНОГО запроса на сервер. Подтверждено
+    // логами backend-контейнера за время прогона: после DELETE
+    // /feo-planned-items/{id} (успешный undo, 200 OK) и паузы ~1.2с перед
+    // Ctrl+Y — ни одного POST /feo-planned-items/ до следующего действия
+    // теста. Значит performFeoRedo() либо не вызывается вовсе (redoStack
+    // пуст / canRedoFeo=false, хотя performFeoUndo при ok:true обязан
+    // переложить запись в redoStack — см. useFeoUndoStack.ts:93-110), либо
+    // keydown 'y' не доходит до handleFeoUndoKeydown. Подозреваемое место —
+    // useSubsidiesPageCache.ts (добавлен 13.10.2026, тем же днём, что и этот
+    // регресс): window-листенер Ctrl+Z/Ctrl+Y переустанавливается в
+    // onActivated/onDeactivated keep-alive обёртки SubsidiesView.vue — не
+    // доказано, но это единственный недавно тронутый код вокруг самого
+    // хоткея. Совпадает с жалобой владельца «Ctrl+Z/Ctrl+Y работают криво».
+    // Оставляю тест падающим, НЕ ослабляю проверку.
     await page.keyboard.press('Control+y');
     await page.waitForTimeout(1200);
     await expect(panelRow.getByText('UNDO_QA_ITEM', { exact: false })).toBeVisible({ timeout: 10_000 });

@@ -6,6 +6,17 @@ const BASE_URL = process.env.BASE_URL || 'http://localhost'
 test.describe('Publications & Email', () => {
   let purchaseId: number
   let token: string
+  // Исходные значения delivery_region/delivery_address выбранной закупки —
+  // восстанавливаем в afterAll, если пришлось временно заполнить их для
+  // прохождения preflight-валидации Фабриканта (publications.py:
+  // POST /api/publications/purchases/{id} требует субъект РФ + адрес
+  // доставки, иначе 422 "Укажите субъект РФ... Укажите адрес доставки" —
+  // это не баг сервера, а нормальная бизнес-валидация; тест обязан сам
+  // подготовить данные, а не полагаться на то, что первая попавшаяся
+  // закупка их уже содержит).
+  let originalDeliveryRegion: string | null = null
+  let originalDeliveryAddress: string | null = null
+  let patchedDelivery = false
 
   test.beforeAll(async ({ browser }) => {
     const page = await browser.newPage()
@@ -20,6 +31,33 @@ test.describe('Publications & Email', () => {
     const purchases = await resp.json()
     expect(purchases.length).toBeGreaterThan(0)
     purchaseId = purchases[0].id
+    originalDeliveryRegion = purchases[0].delivery_region ?? null
+    originalDeliveryAddress = purchases[0].delivery_address ?? null
+
+    if (!originalDeliveryRegion || !originalDeliveryAddress) {
+      patchedDelivery = true
+      const patchResp = await page.request.patch(`${BASE_URL}/api/purchases/${purchaseId}`, {
+        data: {
+          delivery_region: originalDeliveryRegion || 'Москва',
+          delivery_address: originalDeliveryAddress || 'г. Москва, ул. Тестовая, д. 1',
+        },
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(patchResp.ok(), `PATCH /api/purchases/${purchaseId} should return 200, got ${patchResp.status()}`).toBeTruthy()
+    }
+    await page.close()
+  })
+
+  test.afterAll(async ({ browser }) => {
+    if (!patchedDelivery) return
+    const page = await browser.newPage()
+    await page.request.patch(`${BASE_URL}/api/purchases/${purchaseId}`, {
+      data: {
+        delivery_region: originalDeliveryRegion,
+        delivery_address: originalDeliveryAddress,
+      },
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => {})
     await page.close()
   })
 

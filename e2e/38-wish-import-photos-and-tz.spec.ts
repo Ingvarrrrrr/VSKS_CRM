@@ -61,11 +61,15 @@ wb.save("/tmp/wish_import_test.xlsx")
 
 test('импорт xlsx в заявку подтягивает фото из каталога; ТЗ сворачивается и скачивается', async ({ page }) => {
   await login(page);
-  await page.goto('/wishes');
+  // Экран «Заявки на закупку» больше не несёт отдельной кнопки «+» (иконка
+  // mdi-plus) для создания — переход на create теперь только через
+  // ?create=1 (WishesView.vue::onMounted дёргает onCreate() сам при этом
+  // query-параметре) — это тот же путь, что и router /create-order
+  // (редиректит сюда же) и кнопка «Добавить» на других экранах (см.
+  // AppBar.vue/OrdersToolbar.vue) — переходим прямо туда вместо поиска
+  // конкретной кнопки на экране.
+  await page.goto('/wishes?create=1');
   await page.waitForLoadState('networkidle');
-
-  // ── Открыть создание заявки ──────────────────────────────────────────────
-  await page.locator('button:has(.mdi-plus)').last().click();
   await expect(page.getByText('Новая заявка', { exact: false }).first()).toBeVisible({ timeout: 10_000 });
 
   const title = `E2E ТЗ и фото 20260916 ${Date.now()}`;
@@ -112,13 +116,13 @@ test('импорт xlsx в заявку подтягивает фото из к�
   // ── Секция ТЗ: свёрнута по умолчанию, раскрывается по клику ──────────────
   const tzHeader = page.getByText('Техническое задание', { exact: true });
   await expect(tzHeader).toBeVisible();
-  const tzBodyBefore = page.locator('.wish-tz-table');
+  const tzBodyBefore = page.locator('.tz-table');
   await expect(tzBodyBefore).toBeHidden();
 
   await tzHeader.click();
-  await expect(page.locator('.wish-tz-table')).toBeVisible();
-  await expect(page.locator('.wish-tz-table')).toContainText(CATALOG_NAME_1);
-  await expect(page.locator('.wish-tz-table')).toContainText(NOT_IN_CATALOG_NAME);
+  await expect(page.locator('.tz-table')).toBeVisible();
+  await expect(page.locator('.tz-table')).toContainText(CATALOG_NAME_1);
+  await expect(page.locator('.tz-table')).toContainText(NOT_IN_CATALOG_NAME);
 
   await page.screenshot({ path: path.join(SCREEN_DIR, 'wish_tz.png'), fullPage: true });
 

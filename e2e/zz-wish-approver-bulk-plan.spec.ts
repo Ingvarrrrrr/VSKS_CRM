@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
-import { applySessionToken } from './helpers';
+import { applySessionToken, acceptConsentIfShown } from './helpers';
 
 // Владелец (2026-09-16): «Я согласующий заявку — не могу одной кнопкой создать
 // всем позициям в заявке плановую позицию» — согласующий по иерархии
@@ -41,6 +41,10 @@ test('менеджер вне цепочки видит и использует 
   expect(before).toBe('');
 
   await applySessionToken(page, TOKEN);
+  // Гейт согласия 152-ФЗ после входа (см. e2e/helpers.ts) — этот тест логинится
+  // не через login()/loginViaApi() (нужен конкретный пользователь 565, пароль
+  // неизвестен), поэтому принимаем согласие явно тем же общим помощником.
+  await acceptConsentIfShown(page);
   await page.goto('/wishes');
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1000);

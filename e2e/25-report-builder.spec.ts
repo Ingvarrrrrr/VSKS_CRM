@@ -29,8 +29,12 @@ test.describe('Phase 25 — Report Builder smoke', () => {
     if (await firstRow.isVisible({ timeout: 5000 })) {
       await firstRow.click();
       await page.waitForURL(/\/orders\/\d+\/edit/);
-      // Поле «Регион проведения мероприятия» — autocomplete с RUSSIAN_REGIONS
-      const regionField = page.getByLabel('Регион проведения мероприятия');
+      // Поле «Регион проведения мероприятия» — autocomplete с RUSSIAN_REGIONS.
+      // exact:true обязателен: без него getByLabel матчит и сам combobox, и
+      // кнопку-крестик очистки с aria-label="Clear Регион проведения
+      // мероприятия" (подстрока совпадает) — strict-mode violation на 2
+      // элемента.
+      const regionField = page.getByLabel('Регион проведения мероприятия', { exact: true });
       await expect(regionField).toBeVisible({ timeout: 10000 });
     }
   });

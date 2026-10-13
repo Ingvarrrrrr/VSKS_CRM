@@ -9,8 +9,17 @@ import { dismissOrgPicker, waitForOverlays, collectApiErrors, apiLoginToken } fr
 // «На согласование мне» — заявка стала converted, но список и повторное
 // открытие показывали «На согласовании».
 //
-// Тестовые заявки созданы в beforeAll SQL-инъекцией (subsidy 61 «ДНР», org 29,
-// категория-лист 4848) — одна цепочка из согласующего qa_revision_executor.
+// Тестовые заявки раньше были заведены руками (id 2916/2917) — на локальном
+// стенде их нет. Заводим сами в beforeAll через API (без psql
+// INSERT/UPDATE): автор — qa_revision_reviewer (account_owner, org 29,
+// пароль тот же QaTest123!, см. e2e/zz-subsidy-revision.spec.ts) — создаёт
+// заявку СВОИМ токеном, тогда create_wish (app/routers/wishes.py) сам
+// проставляет org_id=29 текущего пользователя, без обхода через прямую
+// правку БД (как это делает zz-k2-approver-ui.spec.ts для admin/org 1).
+// Субсидия 61 «ДНР» (org 29, approved) и лист-категория 4848 — существующие
+// на стенде сущности, используются только по ссылке (ничего в них не
+// меняем). Единственный согласующий цепочки — qa_revision_executor (org 29,
+// id 9550), как и было задумано сценарием. Обе заявки удаляются в afterAll.
 
 const SCREENSHOT_DIR = 'C:/Users/1/AppData/Local/Temp/claude/c--Users-1-Desktop-Cursor-VSKS-CRM/d36d66f7-79cb-4df8-99d0-d97e5330b8cd/scratchpad/accept/wish-approve-refresh';
 
@@ -22,8 +31,56 @@ function psql(sql: string): string {
   return out.trim();
 }
 
-const WISH_1 = Number(process.env.QA_WISH_1 || 2916);
-const WISH_2 = Number(process.env.QA_WISH_2 || 2917);
+const SUBSIDY_ID = 61;
+const FEO_CATEGORY_ID = 4848;
+const APPROVER_USER_ID = 9550; // qa_revision_executor
+
+let WISH_1: number;
+let WISH_2: number;
+
+test.beforeAll(async ({ request }) => {
+  const authorToken = await apiLoginToken(request, 'qa_revision_reviewer', 'QaTest123!');
+  const headers = { Authorization: `Bearer ${authorToken}` };
+
+  async function createSubmittedWish(title: string): Promise<number> {
+    const createRes = await request.post('/api/wishes/', {
+      headers,
+      data: {
+        title,
+        subsidy_id: SUBSIDY_ID,
+        feo_category_id: FEO_CATEGORY_ID,
+        items: [{
+          item_name: `${title} — позиция`, item_type: 'товар', quantity: 1, unit: 'шт',
+          unit_price: 1000, total_price: 1000, feo_category_id: FEO_CATEGORY_ID,
+          needed_date: '2026-12-01',
+        }],
+      },
+    });
+    if (!createRes.ok()) throw new Error(`create wish failed: ${await createRes.text()}`);
+    const wish = await createRes.json();
+
+    const addApproverRes = await request.post(`/api/wishes/${wish.id}/approvers`, {
+      headers, data: { user_id: APPROVER_USER_ID },
+    });
+    if (!addApproverRes.ok()) throw new Error(`add approver failed: ${await addApproverRes.text()}`);
+
+    const submitRes = await request.post(`/api/wishes/${wish.id}/submit`, { headers });
+    if (!submitRes.ok()) throw new Error(`submit failed: ${await submitRes.text()}`);
+
+    return wish.id;
+  }
+
+  WISH_1 = await createSubmittedWish('QA приёмка: согласование сценарий 1');
+  WISH_2 = await createSubmittedWish('QA приёмка: согласование сценарий 2');
+});
+
+test.afterAll(async ({ request }) => {
+  const authorToken = await apiLoginToken(request, 'qa_revision_reviewer', 'QaTest123!');
+  const headers = { Authorization: `Bearer ${authorToken}` };
+  for (const id of [WISH_1, WISH_2]) {
+    if (id) await request.delete(`/api/wishes/${id}`, { headers }).catch(() => {});
+  }
+});
 
 async function loginAs(page: Page, username: string, password: string) {
   await page.goto('/login');

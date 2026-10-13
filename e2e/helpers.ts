@@ -1,4 +1,4 @@
-import { Page, APIRequestContext, expect } from '@playwright/test';
+import { Page, Locator, APIRequestContext, expect } from '@playwright/test';
 
 /**
  * Dismiss the global org picker ("Выберите организации") if it pops up after
@@ -55,6 +55,59 @@ export async function waitForOverlays(page: Page) {
   }
 }
 
+/**
+ * Принимает гейт согласия 152-ФЗ (/consent-required, useConsentGate.ts),
+ * если он требуется для текущего пользователя, и жмёт «Принять» на
+ * cookie-баннере (CookieBanner.vue), если он показан и перекрывает кнопки.
+ * ЕДИНСТВЕННОЕ место в e2e, которое это делает (ПРАВИЛО №6) — вызывается из
+ * login() и loginViaApi(), так что все тесты получают обработку сразу, без
+ * собственных костылей по страницам.
+ *
+ * Согласие принимается через тот же API, которым фронт сам пользуется при
+ * нажатии «Продолжить» (GET/POST /api/legal/consent-status, /api/legal/consent
+ * — см. ConsentRequiredView.vue submit()), а не через клик по чекбоксам в UI:
+ * владелец нескольких организаций без поручения получает согласие по одной
+ * организации за раз (consent-status отдаёт только первую, см. комментарий
+ * в backend/app/routers/legal.py), поэтому цикл повторяет запрос, пока
+ * сервер не перестанет его требовать — ровно как делает сама форма.
+ */
+export async function acceptConsentIfShown(page: Page): Promise<void> {
+  const origin = process.env.BASE_URL || 'http://localhost:8079';
+  for (let i = 0; i < 5; i++) {
+    const statusResp = await page.request.get('/api/legal/consent-status', {
+      headers: { Origin: origin },
+    }).catch(() => null);
+    if (!statusResp || !statusResp.ok()) break;
+    const status = await statusResp.json().catch(() => null);
+    if (!status || (!status.pd_consent_required && !status.poruchenie_required)) break;
+    if (status.pd_consent_required) {
+      await page.request.post('/api/legal/consent', {
+        headers: { Origin: origin },
+        data: { kind: 'pd', accepted: true },
+      }).catch(() => {});
+    }
+    if (status.poruchenie_required && status.poruchenie_org) {
+      await page.request.post('/api/legal/consent', {
+        headers: { Origin: origin },
+        data: { kind: 'poruchenie', accepted: true, org_id: status.poruchenie_org.id },
+      }).catch(() => {});
+    }
+  }
+  // Навигация могла уже случиться до вызова этого помощника и застрять на
+  // /consent-required — API выше её саму никуда не уводит, нужен reload.
+  if (page.url().includes('/consent-required')) {
+    await page.reload().catch(() => {});
+    await page.waitForLoadState('networkidle').catch(() => {});
+  }
+
+  // Cookie-баннер может лежать поверх кнопок формы входа/согласия.
+  const cookieBtn = page.locator('.cookie-banner').getByRole('button', { name: 'Принять' });
+  if (await cookieBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await cookieBtn.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(300);
+  }
+}
+
 /** Login as admin and return authenticated page */
 export async function login(page: Page) {
   await page.goto('/login');
@@ -65,6 +118,7 @@ export async function login(page: Page) {
   // Wait for redirect to dashboard or any authenticated page
   await page.waitForURL(url => !url.pathname.includes('/login'), { timeout: 15_000 });
   await page.waitForLoadState('networkidle');
+  await acceptConsentIfShown(page);
   await waitForOverlays(page);
   await dismissOrgPicker(page);
 }
@@ -138,6 +192,7 @@ export async function applySessionToken(page: Page, token: string, baseURL?: str
 export async function loginViaApi(page: Page, username = 'admin', password = 'admin123'): Promise<string> {
   const token = await apiLoginToken(page.request, username, password);
   await applySessionToken(page, token);
+  await acceptConsentIfShown(page);
   return token;
 }
 
@@ -187,6 +242,65 @@ export async function clickButton(page: Page, text: string | RegExp) {
     return true;
   }
   return false;
+}
+
+/**
+ * Перетаскивает карточку канбана (CategoryKanbanBoard.vue, components/kanban) —
+ * ЕДИНСТВЕННОЕ место в e2e для этого жеста (ПРАВИЛО №6), используется из
+ * e2e/35-wish-kanban-dnd-fullscreen.spec.ts и
+ * e2e/36-purchase-split-kanban-fullscreen.spec.ts (один и тот же компонент,
+ * один и тот же баг).
+ *
+ * locator.dragTo() там НАДЁЖНО не срабатывает: доска использует vuedraggable
+ * (SortableJS) с :force-fallback="true" — JS-имитация drag через обычные
+ * mouse-события вместо нативного HTML5 DnD (см. комментарий в
+ * CategoryKanbanBoard.vue про зависающий курсор при scroll+native DnD).
+ * dragTo() делает mouse.move одним прыжком с внутренней интерполяцией без
+ * пауз между кадрами — Sortable с :fallback-tolerance="3" слушает
+ * mousemove/pointermove и считает жест начавшимся только когда ПОЛУЧИЛ
+ * несколько событий за пределами допуска; одиночный синтетический прыжок
+ * Playwright эти промежуточные события не производит в количестве,
+ * достаточном для срабатывания фолбэка — drag молча не стартует, карточка
+ * остаётся на месте (воспроизведено: e2e/35-...spec.ts несколько прогонов,
+ * .wish-card count не меняется ни в исходной, ни в целевой колонке).
+ *
+ * Фикс — настоящая пошаговая эмуляция мыши: mouse.down → много маленьких
+ * mouse.move с paus'ами (даём Sortable обработать каждый кадр через
+ * requestAnimationFrame) → mouse.up. Шаг держим не менее fallback-tolerance,
+ * иначе первые несколько мс движения не посчитаются за старт drag.
+ */
+export async function dragCardTo(page: Page, card: Locator, target: Locator): Promise<void> {
+  await card.scrollIntoViewIfNeeded();
+  const cardBox = await card.boundingBox();
+  if (!cardBox) throw new Error('dragCardTo: карточка-источник не видна (boundingBox() вернул null)');
+  const startX = cardBox.x + cardBox.width / 2;
+  const startY = cardBox.y + cardBox.height / 2;
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  // Первое маленькое движение — переводит Sortable (force-fallback) из
+  // "mousedown" в режим активного drag, иначе targetBox колонки может ещё не
+  // учитывать автоскролл/ререндер, вызванный началом перетаскивания.
+  await page.mouse.move(startX + 5, startY + 5, { steps: 3 });
+  await page.waitForTimeout(80);
+
+  const targetBox = await target.boundingBox();
+  if (!targetBox) throw new Error('dragCardTo: целевая зона не видна (boundingBox() вернул null)');
+  const endX = targetBox.x + targetBox.width / 2;
+  const endY = targetBox.y + targetBox.height / 2;
+
+  const steps = 14;
+  for (let i = 1; i <= steps; i++) {
+    const x = startX + (endX - startX) * (i / steps);
+    const y = startY + (endY - startY) * (i / steps);
+    await page.mouse.move(x, y, { steps: 3 });
+    await page.waitForTimeout(40);
+  }
+  // Задержка на конечной точке — forceFallback вычисляет целевой контейнер
+  // через elementFromPoint на следующем animation frame, не синхронно.
+  await page.waitForTimeout(200);
+  await page.mouse.up();
+  await page.waitForTimeout(200);
 }
 
 /** Check for API errors (4xx/5xx) */

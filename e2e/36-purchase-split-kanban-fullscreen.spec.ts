@@ -17,7 +17,7 @@
  * data-item-id — см. WishDistributionCard.vue), а не предполагается заранее.
  */
 import { test, expect, APIRequestContext } from '@playwright/test';
-import { login, dismissOrgPicker, apiLoginToken } from './helpers';
+import { login, dismissOrgPicker, apiLoginToken, dragCardTo } from './helpers';
 
 const API_BASE = 'http://localhost:8079/api';
 
@@ -103,7 +103,7 @@ test.describe('Канбан «Разбить закупку на несколь�
     draggedItemId = Number(await cardToDrag.getAttribute('data-item-id'));
     expect(draggedItemId).toBeGreaterThan(0);
 
-    await cardToDrag.dragTo(targetCol.locator('.kb-drop'));
+    await dragCardTo(page, cardToDrag, targetCol.locator('.kb-drop'));
     await expect(targetCol.locator('.wish-card')).toHaveCount(1, { timeout: 5000 });
 
     const headers = { Authorization: `Bearer ${token}` };

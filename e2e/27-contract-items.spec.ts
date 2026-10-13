@@ -133,8 +133,8 @@ test.describe('Phase 27.1 contract_items UI', () => {
 
   // ── Phase 27.1.1: expand-row layout tests ──────────────────────────────────
 
-  test.skip(true, 'Requires autodeploy: expand-row chevron toggle shows 3 sub-rows')
   test('expand-row: click chevron → 3 sub-rows visible (ТЗ/Договор/Поставка)', async ({ page }) => {
+    test.skip(true, 'Requires autodeploy: expand-row chevron toggle shows 3 sub-rows')
     await page.goto(`${BASE_URL}/purchases`)
     await page.waitForURL(/purchases/, { timeout: 10000 })
     // open first purchase in contracted/confirmed state that has contract items
@@ -150,8 +150,8 @@ test.describe('Phase 27.1 contract_items UI', () => {
     await expect(page.locator('.v-chip').filter({ hasText: 'Поставка' }).first()).toBeVisible({ timeout: 5000 })
   })
 
-  test.skip(true, 'Requires autodeploy: auto-expand for unconfirmed match')
   test('expand-row: match_confirmed=false row auto-expands without click', async ({ page }) => {
+    test.skip(true, 'Requires autodeploy: auto-expand for unconfirmed match')
     await page.goto(`${BASE_URL}/purchases`)
     await page.waitForTimeout(1000)
     // Find purchase with warning icon (unconfirmed match)
@@ -165,8 +165,8 @@ test.describe('Phase 27.1 contract_items UI', () => {
     }
   })
 
-  test.skip(true, 'Requires autodeploy: rematch autocomplete updates source_item_id')
   test('expand-row: rematch autocomplete updates contract item source_item_id', async ({ page }) => {
+    test.skip(true, 'Requires autodeploy: rematch autocomplete updates source_item_id')
     await page.goto(`${BASE_URL}/purchases`)
     await page.waitForTimeout(1000)
     const chevron = page.locator('.summary-row button').first()
@@ -187,8 +187,8 @@ test.describe('Phase 27.1 contract_items UI', () => {
     }
   })
 
-  test.skip(true, 'Requires autodeploy: delivered status shows Поставка as readonly copy of Договор')
   test('expand-row: delivered status Поставка sub-row shows contract copy with info tooltip', async ({ page }) => {
+    test.skip(true, 'Requires autodeploy: delivered status shows Поставка as readonly copy of Договор')
     await page.goto(`${BASE_URL}/purchases`)
     await page.waitForTimeout(1000)
     // Look for a purchase chip with 'delivered' or 'paid' label

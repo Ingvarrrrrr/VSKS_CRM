@@ -13,7 +13,7 @@
  * надёжнее UI-заведения заявки/закупки) + управление самим канбаном через UI.
  */
 import { test, expect, APIRequestContext, Page } from '@playwright/test';
-import { login, dismissOrgPicker, apiLoginToken } from './helpers';
+import { login, dismissOrgPicker, apiLoginToken, dragCardTo } from './helpers';
 
 const API_BASE = 'http://localhost:8079/api';
 
@@ -130,7 +130,7 @@ test.describe('Канбан «Распределить и одобрить» (з
       { timeout: 15000 },
     ).catch(() => null);
 
-    await cardA.dragTo(colB.locator('.kb-drop'));
+    await dragCardTo(page, cardA, colB.locator('.kb-drop'));
     await page.waitForTimeout(300);
     const resp = await patchResponse;
 

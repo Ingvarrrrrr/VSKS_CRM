@@ -114,11 +114,28 @@
             <v-text-field v-model="form.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details />
           </v-col>
         </v-row>
+
+        <!-- 152-ФЗ (2026-10-14): account_owner становится владельцем новой
+             организации (owner_user_id) → поручает ей обработку ПДн своих
+             сотрудников и контрагентов, backend без этой галочки отвечает 400.
+             superadmin не становится владельцем — для него поле не показываем. -->
+        <PoruchenieCheckbox
+          v-if="isAccountOwner"
+          v-model="poruchenieAccepted"
+          class="mt-2"
+        />
       </v-card-text>
       <v-card-actions class="pa-4 pt-0">
         <v-spacer />
         <v-btn variant="text" @click="show = false">Отмена</v-btn>
-        <v-btn color="deep-purple" variant="flat" :disabled="!form.name.trim()" :loading="form.loading" @click="emit('create')">Создать</v-btn>
+        <v-btn
+          color="deep-purple" variant="flat"
+          :disabled="!form.name.trim() || (isAccountOwner && !poruchenieAccepted)"
+          :loading="form.loading"
+          @click="emit('create')"
+        >
+          Создать
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -126,6 +143,7 @@
 
 <script setup lang="ts">
 import { useDisplay } from 'vuetify'
+import PoruchenieCheckbox from '@/components/legal/PoruchenieCheckbox.vue'
 
 defineProps<{
   form: {
@@ -134,6 +152,10 @@ defineProps<{
     signatory_last_name: string; signatory_first_name: string; signatory_middle_name: string; signatory_position: string
   }
   isSuperadmin: boolean
+  // 152-ФЗ (2026-10-14): только account_owner становится owner_user_id новой
+  // организации (см. create_organization) — только для него нужна и
+  // проверяется галочка поручения.
+  isAccountOwner: boolean
   accountOptions: { id: number; name: string }[]
   contractors: any[]
   searching: boolean
@@ -153,4 +175,5 @@ const { mobile } = useDisplay()
 const show = defineModel<boolean>({ default: false })
 const accountId = defineModel<number | null>('accountId', { default: null })
 const contractorId = defineModel<number | null>('contractorId', { default: null })
+const poruchenieAccepted = defineModel<boolean>('poruchenieAccepted', { default: false })
 </script>

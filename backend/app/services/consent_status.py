@@ -25,6 +25,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.organization import Organization
 from app.models.user_consent import UserConsent
 from app.services.legal_constants import PD_CONSENT_VERSION, PORUCHENIE_VERSION
 
@@ -34,6 +35,7 @@ __all__ = [
     "is_consent_current",
     "pd_consent_required",
     "poruchenie_required",
+    "orgs_requiring_poruchenie",
 ]
 
 
@@ -124,3 +126,28 @@ async def poruchenie_required(db: AsyncSession, user_id: int, org_id: int) -> bo
     поручения обработки персональных данных (PORUCHENIE_VERSION)."""
     have = await _merged_versions(db, user_id, org_id=org_id)
     return not versions_satisfy(have, PORUCHENIE_REQUIRED_VERSIONS)
+
+
+async def orgs_requiring_poruchenie(db: AsyncSession, user_id: int) -> list[Organization]:
+    """ВСЕ организации, где user_id — ДЕЙСТВИТЕЛЬНЫЙ владелец
+    (Organization.owner_user_id == user_id) и поручение обработки ПДн ещё не
+    принято на актуальную версию. Владелец нескольких организаций видит и
+    отмечает их ОДНИМ экраном (/legal/consent-required) — раньше
+    poruchenie_required()/consent-status отдавали только первую организацию
+    по id, заставляя проходить гейт по кругу (жалоба владельца 2026-10-14).
+    Переиспользует poruchenie_required() на каждую org — второй расчёт
+    версии не заводится (ПРАВИЛО №6). Отсортировано по названию — порядок,
+    видимый пользователю на экране согласия, должен быть стабильным и
+    осмысленным, а не случайным порядком id."""
+    owned_orgs = (
+        await db.execute(
+            select(Organization)
+            .where(Organization.owner_user_id == user_id)
+            .order_by(Organization.name)
+        )
+    ).scalars().all()
+    result: list[Organization] = []
+    for org in owned_orgs:
+        if await poruchenie_required(db, user_id, org.id):
+            result.append(org)
+    return result

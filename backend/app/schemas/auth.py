@@ -172,6 +172,14 @@ class OrganizationCreate(BaseModel):
     # только superadmin; см. app/services/org_account_resolution.py. Для
     # остальных ролей игнорируется бэкендом (аккаунт = свой контур).
     root_org_id: Optional[int] = None
+    # 152-ФЗ (2026-10-14): account_owner, создающий организацию в своём
+    # контуре, становится её owner_user_id (см. create_organization) — то же
+    # обязательство, что и при регистрации (RegisterRequest.poruchenie_accepted),
+    # проверяется ТОЛЬКО когда создающий действительно становится владельцем
+    # (backend/app/routers/organizations.py::create_organization). Superadmin,
+    # создающий организацию для клиента, не представитель её сотрудников и
+    # контрагентов — для него поле не требуется и значение игнорируется.
+    poruchenie_accepted: bool = False
 
 class OrganizationOut(BaseModel):
     id: int

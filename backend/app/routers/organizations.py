@@ -319,13 +319,31 @@ async def get_my_org(current_user: User = Depends(get_current_user), db: AsyncSe
 @router.post("/api/organizations/", response_model=OrganizationOut, status_code=201)
 async def create_organization(
     data: OrganizationCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Superadmin: создать любую org. account_owner: добавить дочернюю org к своему контуру."""
+    """Superadmin: создать любую org. account_owner: добавить дочернюю org к своему контуру.
+
+    152-ФЗ (2026-10-14): account_owner становится owner_user_id новой
+    организации (ниже) — тем самым поручает ей обработку ПДн своих
+    сотрудников и контрагентов, то же обязательство, что при регистрации
+    (register(): poruchenie_accepted). Без galочки — 400, не 403: это не
+    отсутствие прав, а недостающее согласие. Superadmin НЕ становится
+    owner_user_id (строка ниже: `owner_user_id=... if role == 'account_owner'
+    else None`) — он создаёт организацию ДЛЯ клиента, а не от его имени,
+    поэтому для него поле не проверяется."""
     if current_user.role not in (*OWNER_ROLES,):
         from fastapi import HTTPException as _HTTPException
         raise _HTTPException(403, "Недостаточно прав")
+    _becomes_owner = current_user.role == 'account_owner'
+    if _becomes_owner and not data.poruchenie_accepted:
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(
+            400,
+            "Чтобы добавить организацию, примите условия поручения обработки "
+            "персональных данных её сотрудников и контрагентов",
+        )
     # ИНН уникален (бизнес-правило + UNIQUE-индекс uq_organizations_inn). Заранее
     # отдаём понятную 400 со ссылкой на существующую орг, а не сырой 500.
     _inn = (data.inn or '').strip() if data.inn else ''
@@ -367,7 +385,7 @@ async def create_organization(
         signatory_middle_name=data.signatory_middle_name,
         is_active=True,
         root_org_id=_root_org_id,
-        owner_user_id=current_user.id if current_user.role == 'account_owner' else None,
+        owner_user_id=current_user.id if _becomes_owner else None,
         contractor_id=data.contractor_id,
         color=data.color,
     )
@@ -375,6 +393,21 @@ async def create_organization(
     await db.flush()  # get org.id so we can link a new Contractor back
     # Auto-link to Contractor by INN (or create minimal Contractor if missing)
     await _auto_link_contractor_by_inn(db, org, data)
+    if _becomes_owner:
+        # Та же транзакция, что и org — запись поручения обязана существовать
+        # для КАЖДОЙ организации, где current_user становится owner_user_id
+        # (ПРАВИЛО №6: единственный источник правды о версии/документах —
+        # app/services/legal_constants, тот же, что register()).
+        db.add(UserConsent(
+            user_id=current_user.id,
+            org_id=org.id,
+            email=current_user.email or "",
+            document_version=PORUCHENIE_VERSION,
+            documents=list(PORUCHENIE_DOCUMENTS),
+            ip_address=client_ip(request),
+            user_agent=request.headers.get("User-Agent"),
+            source="org_create",
+        ))
     await db.commit()
     await db.refresh(org)
     # Re-fetch with contractor eager-loaded

@@ -184,8 +184,10 @@
       v-model="newOrgDialog.show"
       v-model:account-id="newOrgAccountId"
       v-model:contractor-id="newOrgContractorId"
+      v-model:poruchenie-accepted="newOrgPoruchenieAccepted"
       :form="newOrgDialog"
       :is-superadmin="isSuperadmin"
+      :is-account-owner="isAccountOwner"
       :account-options="newOrgAccountOptions"
       :contractors="newOrgContractors"
       :searching="contractorsStore.searching"
@@ -261,7 +263,7 @@ const { ORG_COLORS_HV, getOrgColor, pickOrgColor, colorPickerVisible, applyOrgCo
 
 const {
   contractorsStore,
-  newOrgDialog, newOrgAccountId, newOrgAccountOptions, openNewOrgDialog,
+  newOrgDialog, newOrgAccountId, newOrgAccountOptions, newOrgPoruchenieAccepted, openNewOrgDialog,
   newOrgEgrulLoading, newOrgEgrulMessage, newOrgEgrulMessageType,
   newOrgContractors, newOrgContractorId, orgContractorFilter,
   onNewOrgContractorSearch, onNewOrgContractorSelect, createNewOrg, enrichNewOrgFromEgrul,

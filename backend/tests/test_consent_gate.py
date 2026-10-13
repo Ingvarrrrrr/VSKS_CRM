@@ -157,3 +157,146 @@ async def test_post_poruchenie_for_someone_elses_org_forbidden(
         headers=admin_headers,
     )
     assert resp.status_code == 403
+
+
+# ── Владелец НЕСКОЛЬКИХ организаций — один экран, не по кругу (2026-10-14) ──
+
+@pytest.mark.asyncio
+async def test_status_lists_all_orgs_owned_without_poruchenie(
+    client, test_user, auth_headers, test_org, db_session,
+):
+    test_org.owner_user_id = test_user.id
+    org2 = Organization(name=f"Org2-{uuid.uuid4().hex[:8]}", owner_user_id=test_user.id)
+    org3 = Organization(name=f"Org3-{uuid.uuid4().hex[:8]}", owner_user_id=test_user.id)
+    db_session.add_all([org2, org3])
+    await db_session.commit()
+
+    resp = await client.get("/api/legal/consent-status", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["poruchenie_required"] is True
+    assert len(body["poruchenie_orgs"]) == 3
+    assert {o["id"] for o in body["poruchenie_orgs"]} == {test_org.id, org2.id, org3.id}
+    # Обратная совместимость: старое поле = первый элемент нового списка.
+    assert body["poruchenie_org"] == body["poruchenie_orgs"][0]
+
+
+@pytest.mark.asyncio
+async def test_post_poruchenie_partial_list_rejected_with_missing_name(
+    client, test_user, auth_headers, test_org, db_session,
+):
+    test_org.owner_user_id = test_user.id
+    org2 = Organization(name=f"Org2-{uuid.uuid4().hex[:8]}", owner_user_id=test_user.id)
+    org3 = Organization(name=f"Org3-{uuid.uuid4().hex[:8]}", owner_user_id=test_user.id)
+    db_session.add_all([org2, org3])
+    await db_session.commit()
+
+    resp = await client.post(
+        "/api/legal/consent",
+        json={"kind": "poruchenie", "accepted": True, "org_ids": [test_org.id, org2.id]},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400, resp.text
+    assert org3.name in resp.json()["message"]
+
+    # Ничего не записано частично — отказ без создания хотя бы одной записи.
+    rows = (
+        await db_session.execute(
+            select(UserConsent).where(UserConsent.user_id == test_user.id, UserConsent.org_id.isnot(None))
+        )
+    ).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_post_poruchenie_full_list_accepted_creates_all_records(
+    client, test_user, auth_headers, test_org, db_session,
+):
+    test_org.owner_user_id = test_user.id
+    org2 = Organization(name=f"Org2-{uuid.uuid4().hex[:8]}", owner_user_id=test_user.id)
+    org3 = Organization(name=f"Org3-{uuid.uuid4().hex[:8]}", owner_user_id=test_user.id)
+    db_session.add_all([org2, org3])
+    await db_session.commit()
+
+    resp = await client.post(
+        "/api/legal/consent",
+        json={"kind": "poruchenie", "accepted": True, "org_ids": [test_org.id, org2.id, org3.id]},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    rows = (
+        await db_session.execute(
+            select(UserConsent).where(UserConsent.user_id == test_user.id, UserConsent.org_id.isnot(None))
+        )
+    ).scalars().all()
+    assert {r.org_id for r in rows} == {test_org.id, org2.id, org3.id}
+
+    status_resp = await client.get("/api/legal/consent-status", headers=auth_headers)
+    assert status_resp.json()["poruchenie_required"] is False
+    assert status_resp.json()["poruchenie_orgs"] == []
+
+
+@pytest.mark.asyncio
+async def test_post_poruchenie_with_one_foreign_org_in_list_forbidden(
+    client, test_user, auth_headers, test_org, db_session,
+):
+    test_org.owner_user_id = test_user.id
+    foreign_org = Organization(name=f"ForeignOrg2-{uuid.uuid4().hex[:8]}")
+    db_session.add(foreign_org)
+    await db_session.commit()
+
+    resp = await client.post(
+        "/api/legal/consent",
+        json={"kind": "poruchenie", "accepted": True, "org_ids": [test_org.id, foreign_org.id]},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 403
+    assert foreign_org.name in resp.json()["message"]
+
+
+# ── Создание организации account_owner'ом — требует poruchenie_accepted ──
+
+@pytest.mark.asyncio
+async def test_create_organization_without_poruchenie_rejected(
+    client, test_user, auth_headers, db_session,
+):
+    test_user.role = "account_owner"
+    await db_session.commit()
+
+    resp = await client.post(
+        "/api/organizations/",
+        json={"name": f"NewOrg-{uuid.uuid4().hex[:8]}"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "поручения" in resp.json()["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_create_organization_with_poruchenie_accepted_creates_consent(
+    client, test_user, auth_headers, db_session,
+):
+    test_user.role = "account_owner"
+    await db_session.commit()
+
+    org_name = f"NewOrg-{uuid.uuid4().hex[:8]}"
+    resp = await client.post(
+        "/api/organizations/",
+        json={"name": org_name, "poruchenie_accepted": True},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    new_org_id = resp.json()["id"]
+
+    row = (
+        await db_session.execute(
+            select(UserConsent).where(
+                UserConsent.user_id == test_user.id,
+                UserConsent.org_id == new_org_id,
+            )
+        )
+    ).scalar_one()
+    assert row.document_version == PORUCHENIE_VERSION
+    assert row.documents == list(PORUCHENIE_DOCUMENTS)
+    assert row.source == "org_create"

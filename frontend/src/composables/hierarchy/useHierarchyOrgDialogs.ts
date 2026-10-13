@@ -22,8 +22,13 @@ export function useHierarchyOrgDialogs(opts: HierarchyOrgDialogsOptions) {
   // см. app/services/org_account_resolution.py на бэкенде.
   const newOrgAccountId = ref<number | null>(null)
   const newOrgAccountOptions = ref<{ id: number; name: string }[]>([])
+  // 152-ФЗ (2026-10-14): account_owner, создающий организацию, становится её
+  // owner_user_id — чекбокс в HierarchyNewOrgDialog.vue, по умолчанию снят на
+  // КАЖДОЕ открытие (см. openNewOrgDialog ниже и сброс в createNewOrg).
+  const newOrgPoruchenieAccepted = ref(false)
   async function openNewOrgDialog() {
     newOrgDialog.value.show = true
+    newOrgPoruchenieAccepted.value = false
     if (!opts.isSuperadmin) return
     try {
       newOrgAccountOptions.value = await apiFetch<{ id: number; name: string }[]>('/organizations/accounts')
@@ -89,6 +94,9 @@ export function useHierarchyOrgDialogs(opts: HierarchyOrgDialogsOptions) {
         signatory_position: d.signatory_position.trim() || null,
         contractor_id: newOrgContractorId.value || null,
         root_org_id: opts.isSuperadmin ? (newOrgAccountId.value || null) : null,
+        // Требуется backend'ом только когда создающий становится владельцем
+        // (account_owner) — для superadmin игнорируется, но передаём как есть.
+        poruchenie_accepted: newOrgPoruchenieAccepted.value,
       }
       await apiFetch('/organizations/', { method: 'POST', body })
       opts.showSnack(`Организация "${name}" создана`)
@@ -97,6 +105,7 @@ export function useHierarchyOrgDialogs(opts: HierarchyOrgDialogsOptions) {
       newOrgContractors.value = []
       newOrgEgrulMessage.value = ''
       newOrgAccountId.value = null
+      newOrgPoruchenieAccepted.value = false
       await opts.loadGraph()
     } catch (e: any) {
       opts.showSnack(e?.message || 'Ошибка создания организации', 'error')
@@ -322,7 +331,7 @@ export function useHierarchyOrgDialogs(opts: HierarchyOrgDialogsOptions) {
 
   return {
     contractorsStore,
-    newOrgDialog, newOrgAccountId, newOrgAccountOptions, openNewOrgDialog,
+    newOrgDialog, newOrgAccountId, newOrgAccountOptions, newOrgPoruchenieAccepted, openNewOrgDialog,
     newOrgEgrulLoading, newOrgEgrulMessage, newOrgEgrulMessageType,
     newOrgContractors, newOrgContractorId, orgContractorFilter,
     onNewOrgContractorSearch, onNewOrgContractorSelect, createNewOrg, enrichNewOrgFromEgrul,

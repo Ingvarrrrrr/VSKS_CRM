@@ -114,6 +114,18 @@ export function useOrgContractorAutofill(orgsList: Ref<OrgLikeItem[]>) {
     return !!role && OWNER_ROLES.includes(role)
   }
 
+  // 152-ФЗ (2026-10-14): account_owner, создающий организацию, становится её
+  // owner_user_id → backend/app/routers/organizations.py::create_organization
+  // теперь требует poruchenie_accepted (условия поручения обработки ПДн),
+  // которого здесь, в тихом автосоздании по выбору контрагента, физически
+  // негде получить — нет диалога с галочкой. superadmin НЕ становится
+  // owner_user_id (поле не проверяется для него), поэтому его автосоздание
+  // не трогаем; account_owner — направляем на явный диалог «Новая
+  // организация» в Иерархии, где галочка есть (useHierarchyOrgDialogs.ts).
+  function canSilentlyCreateOrg(): boolean {
+    return localStorage.getItem('user_role') === 'superadmin'
+  }
+
   async function resolveSelection(uid: string | null): Promise<ResolveResult> {
     if (!uid) return { orgId: null }
     const dash = uid.indexOf('-')
@@ -138,6 +150,14 @@ export function useOrgContractorAutofill(orgsList: Ref<OrgLikeItem[]>) {
         orgId: null,
         error: `У контрагента «${c.name}» ещё нет организации в аккаунте. Создать её может ` +
           `администратор/владелец аккаунта — обратитесь к нему либо выберите уже существующую организацию.`,
+      }
+    }
+    if (!canSilentlyCreateOrg()) {
+      return {
+        orgId: null,
+        error: `У контрагента «${c.name}» ещё нет организации в аккаунте. Создайте её через ` +
+          `«Иерархия → Новая организация» — там нужно подтвердить условия поручения обработки ` +
+          `персональных данных, прежде чем мы сможем создать организацию здесь автоматически.`,
       }
     }
 

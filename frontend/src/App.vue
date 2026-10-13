@@ -54,7 +54,7 @@
     <api-error-dialog />
     <!-- Global chat FAB -->
     <v-btn
-      v-if="isAuthenticated && route.path !== '/chat'"
+      v-if="isAuthenticated && route.path !== '/chat' && route.path !== '/consent-required'"
       icon
       style="position: fixed; bottom: 90px; right: 24px; z-index: 999"
       color="primary"

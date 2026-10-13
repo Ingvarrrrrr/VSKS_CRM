@@ -15,6 +15,12 @@ import { apiFetch } from '@/api'
 export interface ConsentStatus {
   pd_consent_required: boolean
   poruchenie_required: boolean
+  // Все организации владельца без актуального поручения — экран
+  // ConsentRequiredView.vue отмечает их ОДНИМ списком, не по кругу
+  // (жалоба владельца 2026-10-14: раньше гейт отдавал по одной за заход).
+  poruchenie_orgs: { id: number; name: string }[]
+  // Старое поле — первый элемент poruchenie_orgs или null. Оставлено на
+  // случай закешированного старого фронта; новый код использует poruchenie_orgs.
   poruchenie_org: { id: number; name: string } | null
   pd_version: string
   poruchenie_version: string

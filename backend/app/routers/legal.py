@@ -14,7 +14,7 @@ purchase_approvals.py вне периметра этой задачи; здес�
 и более обоснованный вариант (rate_limit.py), а не скопирован второй.
 """
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -31,7 +31,11 @@ from app.models.user_consent import (
     PersonalDataRequestType,
     UserConsent,
 )
-from app.services.consent_status import pd_consent_required, poruchenie_required
+from app.services.consent_status import (
+    orgs_requiring_poruchenie,
+    pd_consent_required,
+    poruchenie_required,
+)
 from app.services.legal_constants import (
     PD_CONSENT_DOCUMENTS,
     PD_CONSENT_VERSION,
@@ -54,7 +58,8 @@ PORUCHENIE_NOT_OWNER_MESSAGE = (
 class ConsentAcceptRequest(BaseModel):
     kind: str  # 'pd' | 'poruchenie'
     accepted: bool
-    org_id: Optional[int] = None
+    org_id: Optional[int] = None  # совместимость со старым фронтом (одна org)
+    org_ids: Optional[List[int]] = None  # новый фронт: ВСЕ org одним запросом
 
 
 def client_ip(request: Request) -> str:
@@ -202,30 +207,22 @@ async def consent_status(
     организации (Organization.owner_user_id == current_user.id) — не для
     любого account_owner/admin (см. feedback_permission_check_vs_candidate_pool
     — тот же класс ошибки: право/обязанность должны идти по владению, а не
-    по роли). Владелец нескольких организаций без поручения — отдаётся
-    первая по id, остальные подхватятся на следующий заход после принятия.
+    по роли). Владелец НЕСКОЛЬКИХ организаций без поручения видит и
+    отмечает ВСЕ сразу (poruchenie_orgs) одним экраном — раньше отдавалась
+    только первая по id, и владелец проходил гейт по кругу (жалоба
+    владельца 2026-10-14). poruchenie_org (единственное число) — старое
+    поле, оставлено для обратной совместимости с закешированным фронтом:
+    первый элемент poruchenie_orgs или null.
     """
     pd_required = await pd_consent_required(db, current_user.id)
-
-    poruchenie_org: Optional[dict] = None
-    poruchenie_needed = False
-    owned_orgs = (
-        await db.execute(
-            select(Organization)
-            .where(Organization.owner_user_id == current_user.id)
-            .order_by(Organization.id)
-        )
-    ).scalars().all()
-    for org in owned_orgs:
-        if await poruchenie_required(db, current_user.id, org.id):
-            poruchenie_needed = True
-            poruchenie_org = {"id": org.id, "name": org.name}
-            break
+    pending_orgs = await orgs_requiring_poruchenie(db, current_user.id)
+    poruchenie_orgs = [{"id": org.id, "name": org.name} for org in pending_orgs]
 
     return {
         "pd_consent_required": pd_required,
-        "poruchenie_required": poruchenie_needed,
-        "poruchenie_org": poruchenie_org,
+        "poruchenie_required": bool(poruchenie_orgs),
+        "poruchenie_orgs": poruchenie_orgs,
+        "poruchenie_org": poruchenie_orgs[0] if poruchenie_orgs else None,
         "pd_version": PD_CONSENT_VERSION,
         "poruchenie_version": PORUCHENIE_VERSION,
     }
@@ -241,41 +238,100 @@ async def accept_consent(
     """Приём согласия ВНЕ регистрации (гейт после входа, ConsentRequiredView.vue).
     document_version всегда СЕРВЕРНАЯ текущая версия (PD_CONSENT_VERSION /
     PORUCHENIE_VERSION) — тело запроса её не диктует (ПРАВИЛО №6, та же
-    версия, что строит сам consent-status)."""
+    версия, что строит сам consent-status).
+
+    kind='poruchenie' принимает org_ids (новый фронт — все организации
+    владельца сразу) или старый одиночный org_id (обратная совместимость).
+    Требование «все сразу»: пока хоть одна организация из
+    orgs_requiring_poruchenie() не отмечена — 400 с перечислением
+    неотмеченных названий; одна запись UserConsent на организацию, все в
+    одной транзакции (ПРАВИЛО №6 — тот же источник правды, что и
+    consent-status, не считаем список заново по-другому)."""
     if not data.accepted:
         raise HTTPException(400, "Согласие не отмечено")
 
     if data.kind == "pd":
-        documents = list(PD_CONSENT_DOCUMENTS)
-        version = PD_CONSENT_VERSION
-        org_id = None
-    elif data.kind == "poruchenie":
-        if not data.org_id:
-            raise HTTPException(400, "Не указана организация")
-        org = (
-            await db.execute(select(Organization).where(Organization.id == data.org_id))
-        ).scalar_one_or_none()
-        if org is None:
-            raise HTTPException(404, "Организация не найдена")
-        if org.owner_user_id != current_user.id:
-            raise HTTPException(403, PORUCHENIE_NOT_OWNER_MESSAGE)
-        documents = list(PORUCHENIE_DOCUMENTS)
-        version = PORUCHENIE_VERSION
-        org_id = org.id
-    else:
+        consent = UserConsent(
+            user_id=current_user.id,
+            org_id=None,
+            email=current_user.email or "",
+            document_version=PD_CONSENT_VERSION,
+            documents=list(PD_CONSENT_DOCUMENTS),
+            ip_address=client_ip(request),
+            user_agent=request.headers.get("User-Agent"),
+            source="login",
+        )
+        db.add(consent)
+        await db.commit()
+        await db.refresh(consent)
+        return _consent_out(consent)
+
+    if data.kind != "poruchenie":
         raise HTTPException(400, f"Неизвестный тип согласия: {data.kind!r}")
 
-    consent = UserConsent(
-        user_id=current_user.id,
-        org_id=org_id,
-        email=current_user.email or "",
-        document_version=version,
-        documents=documents,
-        ip_address=client_ip(request),
-        user_agent=request.headers.get("User-Agent"),
-        source="login",
-    )
-    db.add(consent)
+    # org_ids (не None, пусть и пустой список) — новый фронт, явно работающий
+    # со ВСЕМ списком сразу (ConsentRequiredView.vue). Голый org_id без
+    # org_ids — старый фронт/клиент (см. e2e/helpers.ts::acceptConsentIfShown):
+    # принимает организации ПО ОДНОЙ за вызов, поэтому для него требование
+    # «все сразу» не включается — иначе старый клиент, шлющий по одному
+    # org_id за раз, получал бы 400 на каждый, кроме последнего.
+    is_all_at_once = data.org_ids is not None
+    submitted_ids = set(data.org_ids or [])
+    if data.org_id:
+        submitted_ids.add(data.org_id)
+    if not submitted_ids:
+        raise HTTPException(400, "Не указана организация")
+
+    pending_orgs = await orgs_requiring_poruchenie(db, current_user.id)
+    pending_by_id = {org.id: org for org in pending_orgs}
+
+    # Чужая организация в списке — 403 с названием (а не тихое игнорирование):
+    # проверяем ПРИНАДЛЕЖНОСТЬ (owner_user_id), не попадание в pending —
+    # иначе уже принятая своя организация, повторно отмеченная на фронте,
+    # ошибочно выглядела бы «чужой».
+    submitted_orgs = (
+        await db.execute(select(Organization).where(Organization.id.in_(submitted_ids)))
+    ).scalars().all()
+    submitted_by_id = {org.id: org for org in submitted_orgs}
+    foreign_ids = [
+        oid for oid in submitted_ids
+        if submitted_by_id.get(oid) is None or submitted_by_id[oid].owner_user_id != current_user.id
+    ]
+    if foreign_ids:
+        names = [
+            submitted_by_id[oid].name if oid in submitted_by_id else f"#{oid}"
+            for oid in foreign_ids
+        ]
+        raise HTTPException(
+            403,
+            f"{PORUCHENIE_NOT_OWNER_MESSAGE}: {', '.join(f'«{n}»' for n in names)}",
+        )
+
+    if is_all_at_once:
+        missing_ids = set(pending_by_id) - submitted_ids
+        if missing_ids:
+            missing_names = [pending_by_id[oid].name for oid in missing_ids]
+            raise HTTPException(
+                400,
+                "Отметьте все организации, владельцем которых вы являетесь: "
+                + ", ".join(f"«{n}»" for n in missing_names),
+            )
+
+    created: list[UserConsent] = []
+    for org_id in submitted_ids:
+        consent = UserConsent(
+            user_id=current_user.id,
+            org_id=org_id,
+            email=current_user.email or "",
+            document_version=PORUCHENIE_VERSION,
+            documents=list(PORUCHENIE_DOCUMENTS),
+            ip_address=client_ip(request),
+            user_agent=request.headers.get("User-Agent"),
+            source="login",
+        )
+        db.add(consent)
+        created.append(consent)
     await db.commit()
-    await db.refresh(consent)
-    return _consent_out(consent)
+    for consent in created:
+        await db.refresh(consent)
+    return [_consent_out(c) for c in created]

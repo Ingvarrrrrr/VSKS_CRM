@@ -90,6 +90,28 @@
             </tr>
           </thead>
           <tbody>
+            <!-- Жалоба владельца 14.10.2026: позицию, спрятанную переключателем
+                 «скрыть закупленные полностью» (useFeoHideFullyPurchased), было
+                 не найти — единственный сигнал был мелкой серой строкой В КОНЦЕ
+                 списка. Перенесена НАВЕРХ, сделана заметной (жёлтая плашка),
+                 и список = ровно скрытые строки (hiddenFullyPurchasedRows,
+                 computed из isPlannedRowHidden — Правило №6, не считаем
+                 заново через isRowFullyPurchased напрямую, см. докстринг ниже). -->
+            <tr v-if="hiddenFullyPurchasedRows.length > 0">
+              <td colspan="8" style="padding:0">
+                <div class="d-flex align-center" style="gap:6px;flex-wrap:wrap;background:#FEF3C7;border-left:3px solid #F59E0B;padding:6px 10px;font-size:12px;color:#92400E">
+                  <v-icon icon="mdi-eye-off-outline" size="15" color="#B45309" />
+                  <span>
+                    Скрыто закупленных полностью ({{ hiddenFullyPurchasedRows.length }}):
+                    <template v-for="(p, idx) in hiddenFullyPurchasedPreview" :key="p.id">
+                      <template v-if="idx > 0">, </template>{{ p.name }}<template v-if="p.source_row != null"> (стр. {{ p.source_row }})</template>
+                    </template>
+                    <template v-if="hiddenFullyPurchasedRows.length > hiddenFullyPurchasedPreview.length">, и ещё {{ hiddenFullyPurchasedRows.length - hiddenFullyPurchasedPreview.length }}</template>
+                    — <a href="#" style="color:inherit;text-decoration:underline;font-weight:600" @click.prevent="hideFullyPurchased.hideFullyPurchased.value = false">показать</a>
+                  </span>
+                </div>
+              </td>
+            </tr>
             <template v-for="(planned, pIdx) in ctx.displayPlannedRowsFor(node)" :key="`p-${planned.id}`">
               <!-- data-feo-planned-item-id — цель прокрутки+подсветки поиска по субсидии
                    (useFeoTreeSearch.ts::scrollAndHighlight), тот же приём, что и
@@ -734,18 +756,6 @@
               </tr>
             </template>
 
-            <!-- Баг владельца 06.10.2026, п.2: когда переключатель скрыл все
-                 закупленные полностью позиции, панель не должна выглядеть
-                 пустой/сломанной — подпись со счётчиком и ссылкой "показать"
-                 (снимает тот же флаг hideFullyPurchased, единый источник,
-                 Правило №6). Строки нет, если скрывать нечего. -->
-            <tr v-if="hiddenFullyPurchasedCount > 0">
-              <td colspan="8" class="feo-plan-note text-medium-emphasis" style="padding:4px 8px;font-size:11px">
-                Скрыто закупленных полностью: {{ hiddenFullyPurchasedCount }} —
-                <a href="#" style="color:inherit;text-decoration:underline" @click.prevent="hideFullyPurchased.hideFullyPurchased.value = false">показать</a>
-              </td>
-            </tr>
-
             <tr v-if="!ctx.displayPlannedRowsFor(node).length && !ctx.comparisonData.value[node.id]!.actual.length">
               <td colspan="8" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
                 Нет плановых позиций. Добавьте вручную или загрузите из Excel.
@@ -968,12 +978,19 @@ const hideFullyPurchased = useFeoHideFullyPurchased()
 function isPlannedRowHidden(planned: FeoPlannedItem & { isManual?: boolean }): boolean {
   return hideFullyPurchased.hideFullyPurchased.value && isRowFullyPurchased(planned) && !ctx.isFeoSearchHighlighted(`p-${planned.id}`)
 }
-// Счётчик скрытых переключателем позиций — для подписи-ссылки под списком
-// (п.2 того же бага), чтобы панель не выглядела пустой/сломанной.
-const hiddenFullyPurchasedCount = computed(() => {
-  if (!hideFullyPurchased.hideFullyPurchased.value) return 0
-  return ctx.displayPlannedRowsFor(node).filter((p) => isRowFullyPurchased(p)).length
+// Список скрытых переключателем позиций — для плашки НАД списком (жалоба
+// владельца 14.10.2026: позицию «Комбинезон» принял за потерянную импортом,
+// т.к. сигнал был мелкой строкой в конце списка, а счётчик врал — считал по
+// isRowFullyPurchased напрямую, не исключая найденную поиском строку, которую
+// показывает isPlannedRowHidden). Фильтруем ТЕМ ЖЕ isPlannedRowHidden, что и
+// сами <tr> (Правило №6, второй расчёт видимости не заводим) — список и
+// счётчик (.length) гарантированно совпадают с реально скрытыми строками.
+const hiddenFullyPurchasedRows = computed(() => {
+  return ctx.displayPlannedRowsFor(node).filter((p) => isPlannedRowHidden(p))
 })
+// Плашка показывает первые 8 названий, остальное — «и ещё K» (владелец,
+// 14.10.2026), чтобы не растягивать строку на весь экран при массовой закупке.
+const hiddenFullyPurchasedPreview = computed(() => hiddenFullyPurchasedRows.value.slice(0, 8))
 
 // Комментарии к плановым позициям (владелец, Волна 4, п.16) — переиспользуем
 // ОДИН FeoCommentThread.vue (та же копия, что и у категории в FeoTreeRow.vue,

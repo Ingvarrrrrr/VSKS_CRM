@@ -231,6 +231,18 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
             no_item_name_flag = True
 
         path = _build_path(l2, l3, l4, leaf_name)
+        # Чек-лист 13.10.2026 (прод «ДНР 3», «Проезд, проживание, питание»):
+        # `path` НЕ годится как категория строки для матчинга — _build_path
+        # выбрасывает уровень, РАВНЫЙ имени позиции (чтобы не дублировать его
+        # в отображаемом пути), а когда сам Ур.4 файла совпадает с именем
+        # позиции (как у строк 151/152), path обрывается на Ур.3 — категория
+        # «уезжает» на уровень выше настоящей. `category_name` — самый
+        # глубокий ЗАПОЛНЕННЫЙ уровень строки СЕБЯ, независимо от совпадения
+        # с leaf_name/именем позиции (matching.py::_row_category_key читает
+        # ЕГО, не path — ПРАВИЛО №6, одно поле «категория строки» для
+        # матчинга, path остаётся только для отображения/авто-раскрытия
+        # дерева, см. FeoPlanTreePicker.vue).
+        category_name = l4 or l3 or l2
 
         plan_qty = _to_dec(get(raw_row, "plan_qty"))
         plan_price = _to_dec(get(raw_row, "plan_price"))
@@ -257,6 +269,7 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
             "row": excel_row,
             "name": leaf_name,
             "path": path,
+            "category_name": category_name,
             "item_type": item_type,
             "unit": unit,
             "plan": {"qty": plan_qty, "price": plan_price, "amount": plan_amount},

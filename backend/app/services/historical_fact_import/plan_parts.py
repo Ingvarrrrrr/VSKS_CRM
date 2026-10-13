@@ -53,6 +53,32 @@ def resolve_row_plan_part(
     return candidates[0]["key"]
 
 
+def resolve_bound_row_part(
+    parts: list[dict],
+    bound_keys: set[str],
+    row_plan_amount,
+) -> Optional[str]:
+    """Чек-лист 13.10.2026, п.2: когда `resolve_row_plan_part` не находит
+    СВОБОДНУЮ часть по сумме строки (все точные совпадения уже заняты
+    существующей закупкой — `bound_keys`, см. matching.py::ctx['bound_
+    parts']), нужно отличить «строка 151 = уже закупленная часть 151» от
+    «строка вообще не про эту позицию»: ищем точное совпадение (±0,01) среди
+    ИМЕННО занятых частей. Вызывающий код (preview.py) переводит результат в
+    match.state='already_purchased' — та же ветка «обновить существующую»,
+    что и у обычной (без parts) позиции. Второе место сравнения сумм не
+    заводим — та же точность ±0,01, что и в resolve_row_plan_part выше."""
+    if row_plan_amount is None or not bound_keys:
+        return None
+    target = Decimal(str(row_plan_amount))
+    for p in parts:
+        key = p.get("key")
+        if key not in bound_keys or p.get("amount") is None:
+            continue
+        if abs(Decimal(str(p["amount"])) - target) <= Decimal("0.01"):
+            return key
+    return None
+
+
 def part_by_key(parts: list[dict], key: Optional[str]) -> Optional[dict]:
     if not key:
         return None

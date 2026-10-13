@@ -385,6 +385,18 @@ async def get_comparison(
             feo_plan_part_key=pi.feo_plan_part_key,
         ))
 
+    # Состав объединённой позиции (владелец, 12.10.2026, merged-item-parts.md;
+    # чек-лист 13.10.2026, п.1/3): закупки КАЖДОЙ части — ТОТ ЖЕ источник
+    # (planned_item_part_purchases, app.services.feo_plan_part_purchases), что
+    # и GET /feo-categories/plan-positions (окно выбора позиции импорта факта)
+    # — ПРАВИЛО №6, второй расчёт «закупка этой части» здесь не заводим.
+    # «План закупок» (FeoLevel5Panel.vue) раньше вычислял это сам по
+    # comparisonData.actual (feo_plan_part_key на фактических позициях) —
+    # второй источник для того же вопроса, расходился с пикером на проде.
+    from app.services.feo_plan_part_purchases import planned_item_part_purchases
+    _parts_fpi_ids = [r.id for r in planned_rows if r.parts]
+    _part_purchases = await planned_item_part_purchases(db, _parts_fpi_ids, exclude_purchase_id)
+
     planned_out: list[FeoPlannedItemOut] = []
     for r in planned_rows:
         out = FeoPlannedItemOut.model_validate(r)
@@ -396,6 +408,11 @@ async def get_comparison(
             _inherited = _inherited_type_map.get(r.id)
             out.item_type_effective = _inherited
             out.item_type_inherited = bool(_inherited)
+        if r.parts:
+            out.parts = [
+                {**part, "purchases": _part_purchases.get(r.id, {}).get(part.get("key"), [])}
+                for part in r.parts
+            ]
         planned_out.append(out)
 
     return FeoComparisonOut(

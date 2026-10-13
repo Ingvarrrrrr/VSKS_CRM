@@ -43,7 +43,7 @@ from app.services.historical_fact_import.plan_diff_warnings import (
 # Часть объединённой плановой позиции (план merged-item-parts.md) —
 # ПРАВИЛО №6, единственное место решения строка→часть (см. docstring модуля).
 from app.services.historical_fact_import.plan_parts import (
-    resolve_row_plan_part, part_by_key, build_part_excess_warning,
+    resolve_row_plan_part, resolve_bound_row_part, part_by_key, build_part_excess_warning,
 )
 # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б): «экономия видна»
 # при импорте факта — та же формула замещения плана заказом, что у дерева
@@ -403,10 +403,31 @@ async def build_preview(
             _parts = (_entry or {}).get("parts") or []
             if _parts:
                 _fpi_id = match["planned_item_id"]
-                _assigned = assigned_plan_parts.setdefault(_fpi_id, set())
+                # Правка (чек-лист 13.10.2026, п.2): части, уже занятые
+                # СУЩЕСТВУЮЩЕЙ закупкой (ctx['bound_parts'], см. matching.py),
+                # предзаполняют assigned ДО каскада — чтобы resolve_row_plan_
+                # part (ПРАВИЛО №6, единственное место выбора части) никогда
+                # не отдал занятую часть новой строке файла молча.
+                _bound_parts_for_item: dict = ctx.get("bound_parts", {}).get(_fpi_id, {})
+                if _fpi_id not in assigned_plan_parts:
+                    assigned_plan_parts[_fpi_id] = set(_bound_parts_for_item.keys())
+                _assigned = assigned_plan_parts[_fpi_id]
                 _override_part_key = override.get("plan_part_key")
                 _plan_part_key = resolve_row_plan_part(_parts, _override_part_key, plan_amount, _assigned)
-                if _plan_part_key:
+                if _plan_part_key is None and not _override_part_key:
+                    # resolve_row_plan_part ищет только СВОБОДНЫЕ части —
+                    # строка файла может быть «попаданием» в часть, которая
+                    # уже закуплена (bound_parts), а не «часть не выбрана».
+                    _plan_part_key = resolve_bound_row_part(_parts, set(_bound_parts_for_item.keys()), plan_amount)
+                _bound_info = _bound_parts_for_item.get(_plan_part_key) if _plan_part_key else None
+                if _plan_part_key and _bound_info:
+                    # Эта часть уже закуплена существующей закупкой —
+                    # строка не создаёт новую, а обновляет существующую по
+                    # ЭТОЙ части (текст/решение — ниже, та же ветка
+                    # «already_purchased», что и у обычных позиций).
+                    _assigned.add(_plan_part_key)
+                    match = {**match, "plan_part_key": _plan_part_key, "plan_parts": _parts, "state": "already_purchased"}
+                elif _plan_part_key:
                     _assigned.add(_plan_part_key)
                     match = {**match, "plan_part_key": _plan_part_key, "plan_parts": _parts}
                     _part = part_by_key(_parts, _plan_part_key)
@@ -460,16 +481,39 @@ async def build_preview(
             # принадлежит эта плановая позиция, по статусу/оплате из файла
             # (см. existing_update.py). ctx['bound_purchases'] — тот же запрос,
             # что и already_bound (matching.py), просто с данными о закупке.
-            bound = ctx.get("bound_purchases", {}).get(match["planned_item_id"]) or []
+            #
+            # Часть объединённой позиции (чек-лист 13.10.2026, п.2): если
+            # already_purchased решён по КОНКРЕТНОЙ части (match['plan_part_
+            # key'], см. блок выше) — закупка, которую обновляем, тоже РОВНО
+            # одна — закупка ЭТОЙ части (ctx['bound_parts']), а не список
+            # закупок всей позиции (у позиции может быть несколько частей,
+            # закупленных разными закупками — это не «несколько закупок на
+            # одну и ту же часть», ambiguous здесь не к месту).
+            _part_key_bound = match.get("plan_part_key")
+            if _part_key_bound:
+                _bp = ctx.get("bound_parts", {}).get(match["planned_item_id"], {}).get(_part_key_bound)
+                bound = [_bp] if _bp else []
+            else:
+                bound = ctx.get("bound_purchases", {}).get(match["planned_item_id"]) or []
             status_ok = status_info["target_status"] is not None and not needs_status
             if len(bound) == 1 and status_ok:
                 bp = bound[0]
                 existing_purchase = {"id": bp["id"], "registry_number": bp["registry_number"], "status": bp["status"]}
-                warnings.append(
-                    f'Плановая позиция уже в закупке {bp["registry_number"] or bp["id"]} — она будет '
-                    f'обновлена по файлу (статус «{STATUS_LABELS.get(status_info["target_status"], status_info["target_status"])}», '
-                    'оплата по отметке)'
-                )
+                if _part_key_bound:
+                    _part_row_label = (part_by_key(match.get("plan_parts") or [], _part_key_bound) or {}).get("row")
+                    warnings.append(
+                        f'Часть «строка {_part_row_label if _part_row_label is not None else _part_key_bound}» '
+                        f'позиции «{match.get("planned_item_name") or row["name"]}» уже в закупке '
+                        f'{bp["registry_number"] or bp["id"]} — она будет обновлена по файлу '
+                        f'(статус «{STATUS_LABELS.get(status_info["target_status"], status_info["target_status"])}», '
+                        'оплата по отметке)'
+                    )
+                else:
+                    warnings.append(
+                        f'Плановая позиция уже в закупке {bp["registry_number"] or bp["id"]} — она будет '
+                        f'обновлена по файлу (статус «{STATUS_LABELS.get(status_info["target_status"], status_info["target_status"])}», '
+                        'оплата по отметке)'
+                    )
             elif len(bound) > 1:
                 regs = ", ".join(str(b["registry_number"] or b["id"]) for b in bound)
                 text = f"у плановой позиции уже есть закупки: {regs} — строка пропущена по умолчанию"

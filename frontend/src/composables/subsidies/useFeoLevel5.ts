@@ -393,15 +393,14 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
   function purchasesForPlanned(catId: number, plannedId: number): FeoActualItem[] {
     return dedupPurchasesByPurchaseId(factForPlanned(catId, plannedId))
   }
-  // Часть объединённой позиции (план merged-item-parts.md, владелец
-  // 12.10.2026) — закупки КОНКРЕТНОЙ части (feo_plan_part_key), из ТЕХ ЖЕ
-  // данных, что и purchasesForPlanned выше (ПРАВИЛО №6 — без второго запроса,
-  // comparisonData уже содержит feo_plan_part_key на каждой строке).
-  function purchasesForPlanPart(catId: number, plannedId: number, partKey: string): FeoActualItem[] {
-    return dedupPurchasesByPurchaseId(
-      factForPlanned(catId, plannedId).filter(a => a.feo_plan_part_key === partKey),
-    )
-  }
+  // purchasesForPlanPart — УДАЛЕНО (чек-лист 13.10.2026, п.1): считало
+  // закупки части клиентским фильтром comparisonData.actual по
+  // feo_plan_part_key — ВТОРОЙ источник «закупка этой части» рядом с
+  // app.services.feo_plan_part_purchases (бэкенд, используется и GET
+  // /feo-categories/plan-positions для пикера импорта факта), расходился с
+  // ним на проде (ПРАВИЛО №6 — один источник). FeoLevel5Panel.vue теперь
+  // читает planned.parts[].purchases — то же поле, что заполняет GET
+  // /feo-planned-items/comparison (см. backend feo_planned_items_reports.py).
   function stageBreakdownFor(catId: number, plannedId: number): StageBreakdownSegment[] {
     return buildStageBreakdown(factForPlanned(catId, plannedId))
   }
@@ -957,7 +956,7 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     anyPlannedExpandedFor, toggleAllPlannedItemsForCategory,
     FACT_STATUSES, isFactActual, WISH_PLAN_LOCKED_STATUSES, isWishLocked,
     actualFactFor, allActualFor, fallbackAbsorbedByCategory, factForPlanned, factForPlannedTotal,
-    purchasesForPlanned, purchasesForPlanPart, stageBreakdownFor, stageBreakdownTitle,
+    purchasesForPlanned, stageBreakdownFor, stageBreakdownTitle,
     purchaseLabelFor, factExcessReasonItems, factExcessReasonRemainder,
     stageHeaderLabelFor, stageChipLabelFor, stageChipTitleFor, stageChipColorFor, factStageHeaderFor,
     planBreakdownText, displayPlannedRowsFor, unplannedActualFor, isOrphanedActual,

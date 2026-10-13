@@ -345,3 +345,81 @@ async def test_already_purchased_planned_item_flagged(db_session, test_org):
     match = matching_mod.match_row(ctx, row)
     assert match["state"] == "already_purchased"
     assert match["planned_item_id"] == item.id
+
+
+@pytest.mark.asyncio
+async def test_merged_item_with_free_part_is_not_fully_bound(db_session, test_org):
+    """Чек-лист 13.10.2026, п.2: позиция с parts, у которой закуплена ТОЛЬКО
+    одна часть (feo_plan_part_key='20'), не должна попадать в ctx['already_
+    bound'] целиком — иначе её свободные части (21/22) становятся недоступны
+    для новых строк файла (баг «Gaz»/«Проезд» — владелец, прод «ДНР 3»)."""
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_leaf_category(db_session, subsidy.id, "Категория")
+    item = FeoPlannedItem(
+        feo_category_id=cat.id, name="Gaz A22R35 Х920АЕ 180", amount=347400, is_active=True,
+        parts=[
+            {"key": "20", "row": 20, "qty": 1.0, "unit": None, "unit_price": 317400.0, "amount": 317400.0},
+            {"key": "21", "row": 21, "qty": 1.0, "unit": None, "unit_price": 20000.0, "amount": 20000.0},
+            {"key": "22", "row": 22, "qty": 1.0, "unit": None, "unit_price": 10000.0, "amount": 10000.0},
+        ],
+    )
+    db_session.add(item)
+    await db_session.commit()
+    await db_session.refresh(item)
+
+    purchase = Purchase(subsidy_id=subsidy.id, status="paid", registry_number="РЕЕ-TEST-0001")
+    db_session.add(purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(purchase_id=purchase.id, item_name=item.name,
+                                 total_price=317400, feo_planned_item_id=item.id,
+                                 feo_plan_part_key="20"))
+    await db_session.commit()
+
+    ctx = await matching_mod.build_matching_context(db_session, subsidy.id)
+    assert item.id not in ctx["already_bound"], "свободные части (21/22) должны оставаться доступны"
+    assert "20" in ctx["bound_parts"].get(item.id, {})
+    assert ctx["bound_parts"][item.id]["20"]["registry_number"] == "РЕЕ-TEST-0001"
+
+    row = {"name": "Gaz A22R35 Х920АЕ 180", "path": [], "plan": {"amount": 10000}}
+    match = matching_mod.match_row(ctx, row)
+    assert match["state"] == "found"
+    assert match["planned_item_id"] == item.id
+
+
+@pytest.mark.asyncio
+async def test_merged_item_fully_bound_by_parts_is_already_bound(db_session, test_org):
+    """Когда ВСЕ части позиции уже закуплены — позиция занята целиком, как
+    обычная (regression guard: не допустить, чтобы «частичная» логика выше
+    молча открыла полностью занятую позицию заново)."""
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_leaf_category(db_session, subsidy.id, "Категория")
+    item = FeoPlannedItem(
+        feo_category_id=cat.id, name="Проезд, проживание, питание", amount=700000, is_active=True,
+        parts=[
+            {"key": "151", "row": 151, "qty": None, "unit": None, "unit_price": None, "amount": 407184.10},
+            {"key": "152", "row": 152, "qty": None, "unit": None, "unit_price": None, "amount": 292815.90},
+        ],
+    )
+    db_session.add(item)
+    await db_session.commit()
+    await db_session.refresh(item)
+
+    purchase = Purchase(subsidy_id=subsidy.id, status="paid", registry_number="РЕЕ-TEST-0002")
+    db_session.add(purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(purchase_id=purchase.id, item_name=item.name,
+                                 total_price=407184.10, feo_planned_item_id=item.id, feo_plan_part_key="151"))
+    db_session.add(PurchaseItem(purchase_id=purchase.id, item_name=item.name,
+                                 total_price=292815.90, feo_planned_item_id=item.id, feo_plan_part_key="152"))
+    await db_session.commit()
+
+    ctx = await matching_mod.build_matching_context(db_session, subsidy.id)
+    assert item.id in ctx["already_bound"]

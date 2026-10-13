@@ -27,13 +27,22 @@ _WS_RE = re.compile(r"\s+")
 
 
 def _row_category_key(row: dict) -> str:
-    """Категория строки файла — самый глубокий заполненный уровень её
-    `row['path']` (rows.py: path = предки строки без дублей с именем
-    позиции, последний элемент — непосредственная категория строки, см.
-    _build_path в rows.py). Пустой путь (в т.ч. старые вызовы/тесты без
-    категории) → "" — НЕ сигнал «нет категории у позиции», а «категория
-    строки неизвестна», поэтому "" ниже всегда означает «не фильтровать по
-    категории», а не «фильтровать на пустую категорию»."""
+    """Категория строки файла для матчинга. Чек-лист 13.10.2026 (прод «ДНР
+    3», «Проезд, проживание, питание»): читаем `row['category_name']` —
+    самый глубокий ЗАПОЛНЕННЫЙ уровень строки СЕБЯ (rows.py), НЕ `row['path']`
+    — path строит _build_path, который выбрасывает уровень, совпавший с
+    именем позиции (чтобы не дублировать его при отображении); когда сам
+    Ур.4 файла текстуально равен имени позиции (как у строк 151/152), path
+    обрывался на Ур.3 — категория «уезжала» на уровень выше настоящей,
+    фильтр по категории отсекал верного кандидата (151 забирала позицию,
+    152 уходила в ambiguous, хотя их сумма 700 000 = план позиции).
+    `category_name` отсутствует (старые вызовы/тесты без него) → откат на
+    path[-1] (прежнее поведение). Пусто → "" — НЕ «нет категории у позиции»,
+    а «категория строки неизвестна», "" ниже всегда означает «не
+    фильтровать по категории», а не «фильтровать на пустую категорию»."""
+    category_name = row.get("category_name")
+    if category_name:
+        return normalize_item_name(category_name)
     path = row.get("path")
     if not path:
         return ""
@@ -95,6 +104,7 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
         select(
             PurchaseItem.feo_planned_item_id,
             Purchase.id, Purchase.registry_number, Purchase.status,
+            PurchaseItem.feo_plan_part_key,
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(
@@ -104,12 +114,57 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
             Purchase.stopped_at.is_(None),
         )
     )).all()
-    already_bound = {r[0] for r in bound_rows}
     bound_purchases: dict[int, list[dict]] = {}
-    for fpi_id, pid, registry_number, status in bound_rows:
+    # Состав объединённой позиции (владелец, 12.10.2026, merged-item-parts.md,
+    # п.2 чек-листа 13.10): «уже закуплено» у позиции С parts решается ПО
+    # ЧАСТИ (bound_parts[fpi_id][part_key]), не по всей позиции — иначе
+    # закупка на одну часть («Gaz», часть 20) молча занимает ВСЮ позицию и
+    # блокирует её свободные части (27/28/31). bound_rows_no_part — строки
+    # PurchaseItem без feo_plan_part_key (старые привязки до parts/обычная
+    # позиция без parts) — для них часть не определена, безопаснее считать
+    # позицию занятой целиком (прежнее поведение).
+    bound_parts: dict[int, dict[str, dict]] = {}
+    bound_rows_no_part: set[int] = set()
+    for fpi_id, pid, registry_number, status, part_key in bound_rows:
         bound_purchases.setdefault(fpi_id, []).append(
-            {"id": pid, "registry_number": registry_number, "status": status}
+            {"id": pid, "registry_number": registry_number, "status": status, "part_key": part_key}
         )
+        if part_key:
+            bound_parts.setdefault(fpi_id, {})[part_key] = {
+                "id": pid, "registry_number": registry_number, "status": status,
+            }
+        else:
+            bound_rows_no_part.add(fpi_id)
+
+    # parts_by_id — состав КАЖДОЙ позиции каталога (пусто у обычных позиций).
+    parts_by_id: dict[int, list] = {
+        entry["id"]: (entry.get("parts") or [])
+        for entry in catalog if entry.get("kind") == "planned_item"
+    }
+    already_bound: set = set()
+    for fpi_id in bound_purchases:
+        item_parts = parts_by_id.get(fpi_id)
+        if not item_parts:
+            # Обычная позиция (нет parts) — любая привязка занимает её
+            # целиком, как и раньше.
+            already_bound.add(fpi_id)
+            continue
+        if fpi_id in bound_rows_no_part:
+            # Привязка без part_key у составной позиции — неоднозначно, чья
+            # это часть; безопаснее считать позицию занятой целиком (не
+            # отдавать её часть другой строке молча).
+            already_bound.add(fpi_id)
+            continue
+        part_keys = {p.get("key") for p in item_parts if p.get("key")}
+        bound_keys = set(bound_parts.get(fpi_id, {}).keys())
+        if part_keys and part_keys <= bound_keys:
+            # Все части уже закуплены — позиция занята целиком.
+            already_bound.add(fpi_id)
+        # иначе — есть свободные части, позиция остаётся «доступной» для
+        # обычного каскада match_row/_assign_shared_groups; какая КОНКРЕТНО
+        # часть свободна для данной строки файла решает preview.py
+        # (resolve_row_plan_part, предзаполненный bound_parts — ПРАВИЛО №6,
+        # второй выбор части не заводим).
 
     # Баг РЕЕ-2026-08630 (владелец/соседняя сессия, 02.10): 4 строки файла по
     # 50 шт. все схлопнулись на ОДНУ плановую позицию (план 50 шт.) — каждый
@@ -120,7 +175,7 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
     # получить больше одной строки файла В ОДНОМ прогоне.
     return {
         "catalog": catalog, "by_name": by_name, "already_bound": already_bound,
-        "bound_purchases": bound_purchases, "used_ids": set(),
+        "bound_purchases": bound_purchases, "bound_parts": bound_parts, "used_ids": set(),
         # Задание 07.10.2026 (чек-лист, п.2): used_ids сам по себе хранит
         # только id позиции — чтобы предупреждение ambiguous у строки N
         # называло ПО НОМЕРУ строку, которая заняла позицию раньше,

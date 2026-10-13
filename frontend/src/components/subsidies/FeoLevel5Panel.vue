@@ -501,23 +501,30 @@
                   </template>
                 </td>
               </tr>
-              <!-- Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4г): части
-                   объединённой позиции («Gaz A22R35…» — 4 строки файла плана = 4
-                   ОТДЕЛЬНЫЕ закупки внутри одной позиции) — отдельными под-строками
-                   СРАЗУ под позицией, а не втиснуты в ячейку «Стадия закупки»
-                   (убрано выше). Своя цена/кол-во/сумма части (planned.parts уже
-                   несёт qty/unit/unit_price/amount) и своя стадия закупки — через
-                   feo_plan_part_key (feoLevel5.purchasesForPlanPart, ПРАВИЛО №6, те
-                   же данные comparisonData, без второго запроса). Показаны ВСЕГДА
-                   (не только при развороте — закупка целиком уже видна в основной
-                   строке, здесь её разбивка по частям). -->
+              <!-- Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4г;
+                   переработано чек-лист 13.10.2026, п.3): части объединённой
+                   позиции («Gaz A22R35…» 352 400 = 317 400 договор/оплачено +
+                   20 000 + 10 000 + 5 000 запланировано) — вложенные под-строки
+                   СРАЗУ под позицией (тот же отступ, что у дочерних строк дерева,
+                   +20px — видно, что они относятся к ОДНОЙ плановой). В колонке
+                   «Позиция плана» — имя самой позиции (мелко, повторять не нужно,
+                   но владелец просил не терять связь со строкой при скролле) +
+                   «строка N файла». Цена/кол-во/сумма — свои (planned.parts уже
+                   несёт qty/unit/unit_price/amount). «Стадия закупки» части —
+                   planned.parts[].purchases (ПРАВИЛО №6, тот же источник
+                   app.services.feo_plan_part_purchases, что и у пикера импорта
+                   факта /feo-categories/plan-positions — useFeoLevel5.
+                   purchasesForPlanPart удалён, был вторым расчётом). Есть
+                   закупка → номер (ссылка) + статус словами + «оплачено N ₽»,
+                   если есть оплата; нет закупки → «запланировано» (не «нет
+                   закупки» — часть — это ЕЩЁ план, не дыра). Показаны ВСЕГДА. -->
               <template v-if="planned.parts?.length && !isPlannedRowHidden(planned)">
               <tr v-for="part in planned.parts" :key="`part-${planned.id}-${part.key}`"
                 class="feo-plan-part-sub-row"
               >
                 <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node) + 20}px` }]" style="padding:2px 8px;color:#64748b">
-                  <span class="text-caption">часть — {{ part.unit ? `${parseFloat(String(part.qty ?? 0))} ${part.unit}` : '' }}</span>
-                  <div v-if="part.row != null" class="feo-plan-note text-medium-emphasis">строка {{ part.row }} файла</div>
+                  <span class="text-caption">{{ planned.name }}</span>
+                  <div class="feo-plan-note text-medium-emphasis">строка {{ part.row ?? '—' }} файла</div>
                 </td>
                 <td :style="feoResize.resizeStyle('budget')" style="padding:2px 8px;text-align:right;color:#64748b">
                   <span v-if="part.unit_price != null" class="text-caption">{{ formatCurrency(Number(part.unit_price)) }}</span>
@@ -530,22 +537,23 @@
                 </td>
                 <td style="width:86px;min-width:86px"></td>
                 <td :style="feoResize.resizeStyle('spent')" style="padding:2px 8px;vertical-align:top">
-                  <template v-if="feoLevel5.purchasesForPlanPart(node.id, planned.id, part.key).length">
+                  <template v-if="part.purchases?.length">
                     <div
-                      v-for="p in feoLevel5.purchasesForPlanPart(node.id, planned.id, part.key)"
-                      :key="`part-${part.key}-${p.purchase_id}`"
+                      v-for="p in part.purchases"
+                      :key="`part-${part.key}-${p.id}`"
                       class="feo-stage-list-row"
                     >
                       <a
                         href="javascript:void(0)"
                         class="feo-purchase-link"
-                        :title="`Перейти в закупку ${p.registry_number || ('#' + p.purchase_id)}`"
-                        @click.stop="ctx.router.push(`/orders/${p.purchase_id}`)"
-                      >{{ p.registry_number || (p.purchase_number != null ? `№ ${p.purchase_number}` : `#${p.purchase_id}`) }}</a>
-                      <span class="feo-stage-list-row__status" :style="{ color: purchaseStatusColor(p.purchase_status) }">{{ purchaseStatusLabel(p.purchase_status) }}</span>
+                        :title="`Перейти в закупку ${p.registry_number || ('#' + p.id)}`"
+                        @click.stop="ctx.router.push(`/orders/${p.id}`)"
+                      >{{ p.registry_number || `#${p.id}` }}</a>
+                      <span class="feo-stage-list-row__status" :style="{ color: purchaseStatusColor(p.status) }">{{ p.status_label || purchaseStatusLabel(p.status) }}</span>
+                      <span v-if="p.paid" class="text-caption text-medium-emphasis">оплачено {{ formatCurrency(p.paid) }}</span>
                     </div>
                   </template>
-                  <span v-else class="text-caption text-medium-emphasis">нет закупки</span>
+                  <span v-else class="text-caption text-medium-emphasis">запланировано</span>
                 </td>
                 <td :style="feoResize.resizeStyle('residual')"></td>
                 <td style="width:112px;min-width:112px;max-width:112px"></td>

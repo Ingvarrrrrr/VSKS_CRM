@@ -14,6 +14,7 @@ import json
 import pytest
 from sqlalchemy import select
 
+from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.models.permission import RolePermission
 from app.models.purchase import Purchase
@@ -231,6 +232,66 @@ async def test_part_excess_warning(
     assert any("Факт больше плана части" in w for w in row["warnings"]), row["warnings"]
 
 
+async def test_free_part_found_bound_part_already_purchased(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Чек-лист 13.10.2026, п.2 (прод «ДНР 3», позиция «Проезд…»): часть 151
+    УЖЕ закуплена существующей закупкой (feo_plan_part_key='151') — строка
+    файла с её суммой должна стать already_purchased ЭТОЙ закупкой (не
+    «пропущена по умолчанию» по всей позиции), а строка со свободной частью
+    152 — found, как обычно."""
+    await _grant(db_session)
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    item_trip = FeoPlannedItem(
+        feo_category_id=cat.id, name="Проезд, проживание, питание", amount=700000, is_active=True,
+        parts=[
+            {"key": "151", "row": 151, "qty": None, "unit": None, "unit_price": None, "amount": 407184.10},
+            {"key": "152", "row": 152, "qty": None, "unit": None, "unit_price": None, "amount": 292815.90},
+        ],
+    )
+    db_session.add(item_trip)
+    await db_session.commit()
+    await db_session.refresh(item_trip)
+
+    existing_purchase = Purchase(subsidy_id=subsidy.id, status="paid", registry_number="РЕЕ-2026-03471")
+    db_session.add(existing_purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(
+        purchase_id=existing_purchase.id, item_name=item_trip.name, total_price=407184.10,
+        feo_planned_item_id=item_trip.id, feo_plan_part_key="151",
+    ))
+    await db_session.commit()
+
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 407184.10, 407184.10, 407184.10, status_raw="Оплачено", paid=407184.10,
+             item_name="Проезд, проживание, питание"),
+        _row("Аренда оборудования", 292815.90, 292815.90, 292815.90, status_raw="Оплачено", paid=292815.90,
+             item_name="Проезд, проживание, питание"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    by_amount = {r["plan"]["amount"]: r for r in rows}
+
+    row_151 = by_amount[407184.10]
+    assert row_151["match"]["state"] == "already_purchased"
+    assert row_151["match"]["plan_part_key"] == "151"
+    assert row_151["existing_purchase"] is not None
+    assert row_151["existing_purchase"]["id"] == existing_purchase.id
+    assert row_151["skip"] is False
+    assert any("уже в закупке" in w and "РЕЕ-2026-03471" in w for w in row_151["warnings"]), row_151["warnings"]
+
+    row_152 = by_amount[292815.90]
+    assert row_152["match"]["state"] == "found"
+    assert row_152["match"]["plan_part_key"] == "152"
+    assert row_152["existing_purchase"] is None
+    assert row_152["skip"] is False
+
+
 async def test_plan_positions_endpoint_returns_parts(
     client, auth_headers, test_user, db_session, subsidy_with_plan,
 ):
@@ -257,3 +318,201 @@ async def test_plan_positions_endpoint_returns_parts(
 
     paid_row = next(r for r in rows if r["id"] == item_paid.id and r["kind"] == "planned_item")
     assert paid_row["parts"] == []
+
+
+async def test_shared_group_not_blocked_when_l4_equals_item_name(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Регресс прода «ДНР 3» (parts_check.py, 13.10.2026): Ур.4 файла у строк
+    151/152 текстуально равен имени позиции «Проезд, проживание, питание» —
+    rows.py::_build_path выбрасывает такой уровень (не дублировать при
+    отображении), и раньше matching._row_category_key брал path[-1] = Ур.3
+    («категория уехала» выше настоящей) → категория кандидата 26143 («Проезд…»)
+    не совпадала, shared-группа (151+152, Σ=700 000=план позиции) не
+    собиралась, 151 забирала позицию целиком, 152 уходила в ambiguous.
+    category_name (самый глубокий заполненный уровень СЕБЯ, независимо от
+    совпадения с именем позиции) фиксит: обе строки находят свою часть."""
+    await _grant(db_session)
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    # Прод-топология (владелец, «ДНР 3»): лист ФЭО назван ТАК ЖЕ, как
+    # плановая позиция внутри него («Проезд, проживание, питание») — именно
+    # поэтому _candidate_category_key (последний сегмент пути кандидата =
+    # имя ЭТОГО листа) совпадает с category_name строки файла (её Ур.4) —
+    # отдельный лист, не общий `cat` фикстуры («Аренда оборудования»).
+    cat_trip = FeoCategory(subsidy_id=subsidy.id, level=3, name="Проезд, проживание, питание")
+    db_session.add(cat_trip)
+    await db_session.flush()
+    item_trip = FeoPlannedItem(
+        feo_category_id=cat_trip.id, name="Проезд, проживание, питание", amount=700000, is_active=True,
+        parts=[
+            {"key": "151", "row": 151, "qty": None, "unit": None, "unit_price": None, "amount": 407184.10},
+            {"key": "152", "row": 152, "qty": None, "unit": None, "unit_price": None, "amount": 292815.90},
+        ],
+    )
+    db_session.add(item_trip)
+    await db_session.commit()
+
+    content = _build_ho_workbook([
+        _row("Расходы закупка товаров, работ, услуг", 407184.10, 407184.10, 407184.10,
+             status_raw="Оплачено", paid=407184.10, item_name="Проезд, проживание, питание",
+             l4="Проезд, проживание, питание"),
+        _row("Расходы закупка товаров, работ, услуг", 292815.90, 292815.90, 292815.90,
+             status_raw="Оплачено", paid=292815.90, item_name="Проезд, проживание, питание",
+             l4="Проезд, проживание, питание"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    by_amount = {r["plan"]["amount"]: r for r in rows}
+
+    row_151 = by_amount[407184.10]
+    row_152 = by_amount[292815.90]
+    assert row_151["match"]["state"] == "found", row_151["match"]
+    assert row_152["match"]["state"] == "found", row_152["match"]
+    assert row_151["match"]["plan_part_key"] == "151"
+    assert row_152["match"]["plan_part_key"] == "152"
+
+
+async def test_shared_group_free_part_found_bound_part_already_purchased_with_l4_name(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Тот же контрольный пример + существующая закупка на часть 151 —
+    151 должна стать already_purchased ЭТОЙ закупкой, 152 — found своей
+    частью (не слипнуться в ambiguous из-за той же l4=имя-позиции путаницы)."""
+    await _grant(db_session)
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    cat_trip = FeoCategory(subsidy_id=subsidy.id, level=3, name="Проезд, проживание, питание")
+    db_session.add(cat_trip)
+    await db_session.flush()
+    item_trip = FeoPlannedItem(
+        feo_category_id=cat_trip.id, name="Проезд, проживание, питание", amount=700000, is_active=True,
+        parts=[
+            {"key": "151", "row": 151, "qty": None, "unit": None, "unit_price": None, "amount": 407184.10},
+            {"key": "152", "row": 152, "qty": None, "unit": None, "unit_price": None, "amount": 292815.90},
+        ],
+    )
+    db_session.add(item_trip)
+    await db_session.commit()
+    await db_session.refresh(item_trip)
+
+    existing_purchase = Purchase(subsidy_id=subsidy.id, status="paid", registry_number="РЕЕ-2026-03471")
+    db_session.add(existing_purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(
+        purchase_id=existing_purchase.id, item_name=item_trip.name, total_price=407184.10,
+        feo_planned_item_id=item_trip.id, feo_plan_part_key="151",
+    ))
+    await db_session.commit()
+
+    content = _build_ho_workbook([
+        _row("Расходы закупка товаров, работ, услуг", 407184.10, 407184.10, 407184.10,
+             status_raw="Оплачено", paid=407184.10, item_name="Проезд, проживание, питание",
+             l4="Проезд, проживание, питание"),
+        _row("Расходы закупка товаров, работ, услуг", 292815.90, 292815.90, 292815.90,
+             status_raw="Оплачено", paid=292815.90, item_name="Проезд, проживание, питание",
+             l4="Проезд, проживание, питание"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/preview",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    by_amount = {r["plan"]["amount"]: r for r in rows}
+
+    row_151 = by_amount[407184.10]
+    row_152 = by_amount[292815.90]
+    assert row_151["match"]["state"] == "already_purchased", row_151["match"]
+    assert row_151["match"]["plan_part_key"] == "151"
+    assert row_151["existing_purchase"]["id"] == existing_purchase.id
+    assert row_152["match"]["state"] == "found", row_152["match"]
+    assert row_152["match"]["plan_part_key"] == "152"
+
+
+async def test_comparison_endpoint_shows_same_part_purchases_as_plan_positions(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Чек-лист 13.10.2026, п.1 (ПРАВИЛО №6 — один источник): GET /feo-
+    planned-items/comparison («План закупок», FeoLevel5Panel.vue) обязан
+    показать ТУ ЖЕ закупку части, что и GET /feo-categories/plan-positions
+    (пикер импорта факта) — оба читают app.services.feo_plan_part_purchases.
+    planned_item_part_purchases, второго расчёта «закупка этой части» нет."""
+    await _grant(db_session)
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    item_trip = FeoPlannedItem(
+        feo_category_id=cat.id, name="Проезд, проживание, питание", amount=700000, is_active=True,
+        parts=[
+            {"key": "151", "row": 151, "qty": None, "unit": None, "unit_price": None, "amount": 407184.10},
+            {"key": "152", "row": 152, "qty": None, "unit": None, "unit_price": None, "amount": 292815.90},
+        ],
+    )
+    db_session.add(item_trip)
+    await db_session.commit()
+    await db_session.refresh(item_trip)
+
+    purchase = Purchase(subsidy_id=subsidy.id, status="paid", registry_number="РЕЕ-2026-03471")
+    db_session.add(purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(purchase_id=purchase.id, item_name=item_trip.name, total_price=407184.10,
+                                 feo_planned_item_id=item_trip.id, feo_plan_part_key="151"))
+    await db_session.commit()
+
+    resp = await client.get(
+        f"/api/feo-planned-items/comparison?feo_category_id={cat.id}&subsidy_id={subsidy.id}",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    trip = next(p for p in data["planned"] if p["id"] == item_trip.id)
+    part_151 = next(p for p in trip["parts"] if p["key"] == "151")
+    part_152 = next(p for p in trip["parts"] if p["key"] == "152")
+    assert len(part_151["purchases"]) == 1, trip["parts"]
+    assert part_151["purchases"][0]["registry_number"] == "РЕЕ-2026-03471"
+    assert part_152["purchases"] == []
+
+
+async def test_plan_positions_endpoint_shows_purchase_on_bound_part(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Диагностика дефекта 1 (владелец, прод «ДНР 3», позиция «Проезд…»): у
+    части, уже привязанной к закупке (feo_plan_part_key), GET /feo-categories/
+    plan-positions обязан показать эту закупку в parts[].purchases — это тот
+    же источник (planned_item_part_purchases), которым пользуется и окно
+    выбора позиции импорта факта, и (после сведения к одному источнику)
+    «План закупок»."""
+    await _grant(db_session)
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    item_trip = FeoPlannedItem(
+        feo_category_id=cat.id, name="Проезд, проживание, питание", amount=700000, is_active=True,
+        parts=[
+            {"key": "151", "row": 151, "qty": None, "unit": None, "unit_price": None, "amount": 407184.10},
+            {"key": "152", "row": 152, "qty": None, "unit": None, "unit_price": None, "amount": 292815.90},
+        ],
+    )
+    db_session.add(item_trip)
+    await db_session.commit()
+    await db_session.refresh(item_trip)
+
+    purchase = Purchase(subsidy_id=subsidy.id, status="paid", registry_number="РЕЕ-2026-03471")
+    db_session.add(purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(purchase_id=purchase.id, item_name=item_trip.name, total_price=407184.10,
+                                 feo_planned_item_id=item_trip.id, feo_plan_part_key="151"))
+    await db_session.commit()
+
+    resp = await client.get(
+        f"/api/feo-categories/plan-positions?subsidy_id={subsidy.id}", headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    trip_row = next(r for r in rows if r["id"] == item_trip.id and r["kind"] == "planned_item")
+    part_151 = next(p for p in trip_row["parts"] if p["key"] == "151")
+    part_152 = next(p for p in trip_row["parts"] if p["key"] == "152")
+    assert len(part_151["purchases"]) == 1, trip_row["parts"]
+    assert part_151["purchases"][0]["registry_number"] == "РЕЕ-2026-03471"
+    assert part_152["purchases"] == []

@@ -340,7 +340,17 @@ export interface FeoPlannedItem {
   // одну» (см. backend FeoPlannedItem.parts, app/services/
   // feo_import_duplicates.py). [] у обычной позиции — FeoLevel5Panel.vue не
   // рисует раскрытие на части.
-  parts?: { key: string; row: number | null; qty: number | null; unit: string | null; unit_price: number | null; amount: number | null }[]
+  // purchases — закупки ЭТОЙ части (владелец, чек-лист 13.10.2026, п.1/3) —
+  // ЕДИНСТВЕННЫЙ источник (backend app.services.feo_plan_part_purchases.
+  // planned_item_part_purchases, ПРАВИЛО №6): тот же, что отдаёт GET
+  // /feo-categories/plan-positions пикеру импорта факта — больше не считаем
+  // это второй раз клиентским фильтром comparisonData.actual по
+  // feo_plan_part_key (см. FeoLevel5Panel.vue/useFeoLevel5.ts, было
+  // purchasesForPlanPart — удалено, расходилось с пикером на проде).
+  parts?: {
+    key: string; row: number | null; qty: number | null; unit: string | null; unit_price: number | null; amount: number | null
+    purchases: { id: number; registry_number: string | null; status: string | null; status_label?: string | null; amount: number; paid?: number }[]
+  }[]
   // Номер строки файла загрузки плана (правка 12.10.2026, план
   // lazy-swimming-hollerith.md п.4г) — «строка N файла» вместо нумерации
   // «2.»/«4.» у позиции (см. backend FeoPlannedItem.source_row). null —

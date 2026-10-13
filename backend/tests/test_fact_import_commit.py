@@ -46,10 +46,17 @@ def _build_ho_workbook(rows: list) -> bytes:
 
 
 def _row(l3, amount, fact_price, fact_amount, paid=None, contracted=None,
-         status_raw=None, purchase_no=None, supplier=None, item_name=None, item_type=None):
+         status_raw=None, purchase_no=None, supplier=None, item_name=None, item_type=None,
+         l4=None):
     r = [None] * 28
     r[0] = "ХО_2026"
     r[5] = l3
+    # l4 (опционально, чек-лист 13.10.2026, «Проезд, проживание, питание»):
+    # контрольный пример владельца — Ур.4 файла ТЕКСТУАЛЬНО совпадает с
+    # именем позиции (r[7]) — именно это обрезает rows.py::_build_path
+    # (см. matching.py::_row_category_key/category_name).
+    if l4 is not None:
+        r[6] = l4
     # item_name (опционально, test_fact_import_existing_match.py) — колонка
     # "Плановая позиция" (r[7]); без неё rows.py берёт имя строки из l3/l4
     # (см. rows.py:85 leaf_name fallback) — именно так работали прежние

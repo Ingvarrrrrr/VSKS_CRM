@@ -153,6 +153,58 @@ export function dedupPurchasesByPurchaseId(facts: FeoActualItem[]): FeoActualIte
   return [...seen.values()]
 }
 
+// Часть объединённой позиции (план merged-item-parts.md) — элемент
+// FeoPlannedItem.parts (см. types.ts).
+type PlannedItemPart = NonNullable<FeoPlannedItem['parts']>[number]
+
+export type PlanVsFactPartRow =
+  | { kind: 'actual'; actual: FeoActualItem }
+  | { kind: 'planned_only'; part: PlannedItemPart }
+
+// Строки развёртки «План vs факт» для позиции с parts (владелец, чек-лист
+// 13.10.2026): одна строка на КАЖДУЮ часть, в порядке `parts`. Часть с
+// закупкой (найдена среди `actuals` по feo_plan_part_key, уже проставлен
+// бэкендом на PurchaseItem — ПРАВИЛО №6, второй расчёт «закупка этой части»
+// не заводим, тот же feo_plan_part_key, что source-of-truth у пикера
+// импорта факта и GET /feo-categories/plan-positions) — kind:'actual',
+// FeoLevel5Panel.vue рисует её КАК ОБЫЧНУЮ фактическую строку («Как в
+// договоре»/«Позиция закупки», не менялось). Часть без закупки —
+// kind:'planned_only' со своими qty/price/amount, шаблон рисует «Как
+// запланировано». Закупки БЕЗ part_key (feo_plan_part_key пуст — обычные
+// позиции без parts, либо старые привязки) — после всех частей, как раньше.
+// Позиция без parts (`parts` пуст) — просто все actuals как 'actual', в
+// исходном порядке (старое поведение, факт-only). Чистая функция — без
+// Vue/ctx, юнит-тест в __tests__/useFeoLevel5.planVsFactRowsWithParts.spec.ts.
+export function buildPlanVsFactRowsWithParts(
+  parts: PlannedItemPart[], actuals: FeoActualItem[],
+): PlanVsFactPartRow[] {
+  if (!parts.length) {
+    return actuals.map(actual => ({ kind: 'actual' as const, actual }))
+  }
+  const byPartKey = new Map<string, FeoActualItem[]>()
+  const withoutPartKey: FeoActualItem[] = []
+  for (const a of actuals) {
+    if (a.feo_plan_part_key) {
+      const arr = byPartKey.get(a.feo_plan_part_key) ?? []
+      arr.push(a)
+      byPartKey.set(a.feo_plan_part_key, arr)
+    } else {
+      withoutPartKey.push(a)
+    }
+  }
+  const rows: PlanVsFactPartRow[] = []
+  for (const part of parts) {
+    const matched = byPartKey.get(part.key)
+    if (matched?.length) {
+      for (const a of matched) rows.push({ kind: 'actual', actual: a })
+    } else {
+      rows.push({ kind: 'planned_only', part })
+    }
+  }
+  for (const a of withoutPartKey) rows.push({ kind: 'actual', actual: a })
+  return rows
+}
+
 // Полоска по стадиям (свёрнутый вид новой колонки «Стадия закупки»): мера —
 // КОЛИЧЕСТВО закупок на стадии, не деньги и не количество товара. Деньги
 // недоступны на ранних стадиях (plan_schedule ещё не имеет fact_amount, см.
@@ -392,6 +444,18 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
   // список закупок — только вид данных, уже лежащих в памяти.
   function purchasesForPlanned(catId: number, plannedId: number): FeoActualItem[] {
     return dedupPurchasesByPurchaseId(factForPlanned(catId, plannedId))
+  }
+  // Строки развёртки «План vs факт» для позиции с parts (владелец,
+  // чек-лист 13.10.2026, правка после п.3 — вложенные под-строки в основной
+  // таблице убраны, разбивка по частям переехала СЮДА). Сама группировка —
+  // чистая функция buildPlanVsFactRowsWithParts (ниже, экспортирована для
+  // юнит-теста без Vue/ctx); здесь только подготовка её входа из уже
+  // загруженных данных (ПРАВИЛО №6 — второй запрос не заводим, те же
+  // comparisonData/factForPlanned, что и purchasesForPlanned).
+  function planVsFactRowsWithParts(catId: number, plannedId: number): PlanVsFactPartRow[] {
+    const planned = comparisonData.value[catId]?.planned.find(p => p.id === plannedId)
+    const actuals = dedupPurchasesByPurchaseId(factForPlanned(catId, plannedId))
+    return buildPlanVsFactRowsWithParts(planned?.parts ?? [], actuals)
   }
   // purchasesForPlanPart — УДАЛЕНО (чек-лист 13.10.2026, п.1): считало
   // закупки части клиентским фильтром comparisonData.actual по
@@ -956,7 +1020,7 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     anyPlannedExpandedFor, toggleAllPlannedItemsForCategory,
     FACT_STATUSES, isFactActual, WISH_PLAN_LOCKED_STATUSES, isWishLocked,
     actualFactFor, allActualFor, fallbackAbsorbedByCategory, factForPlanned, factForPlannedTotal,
-    purchasesForPlanned, stageBreakdownFor, stageBreakdownTitle,
+    purchasesForPlanned, planVsFactRowsWithParts, stageBreakdownFor, stageBreakdownTitle,
     purchaseLabelFor, factExcessReasonItems, factExcessReasonRemainder,
     stageHeaderLabelFor, stageChipLabelFor, stageChipTitleFor, stageChipColorFor, factStageHeaderFor,
     planBreakdownText, displayPlannedRowsFor, unplannedActualFor, isOrphanedActual,

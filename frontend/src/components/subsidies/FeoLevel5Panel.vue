@@ -501,64 +501,12 @@
                   </template>
                 </td>
               </tr>
-              <!-- Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4г;
-                   переработано чек-лист 13.10.2026, п.3): части объединённой
-                   позиции («Gaz A22R35…» 352 400 = 317 400 договор/оплачено +
-                   20 000 + 10 000 + 5 000 запланировано) — вложенные под-строки
-                   СРАЗУ под позицией (тот же отступ, что у дочерних строк дерева,
-                   +20px — видно, что они относятся к ОДНОЙ плановой). В колонке
-                   «Позиция плана» — имя самой позиции (мелко, повторять не нужно,
-                   но владелец просил не терять связь со строкой при скролле) +
-                   «строка N файла». Цена/кол-во/сумма — свои (planned.parts уже
-                   несёт qty/unit/unit_price/amount). «Стадия закупки» части —
-                   planned.parts[].purchases (ПРАВИЛО №6, тот же источник
-                   app.services.feo_plan_part_purchases, что и у пикера импорта
-                   факта /feo-categories/plan-positions — useFeoLevel5.
-                   purchasesForPlanPart удалён, был вторым расчётом). Есть
-                   закупка → номер (ссылка) + статус словами + «оплачено N ₽»,
-                   если есть оплата; нет закупки → «запланировано» (не «нет
-                   закупки» — часть — это ЕЩЁ план, не дыра). Показаны ВСЕГДА. -->
-              <template v-if="planned.parts?.length && !isPlannedRowHidden(planned)">
-              <tr v-for="part in planned.parts" :key="`part-${planned.id}-${part.key}`"
-                class="feo-plan-part-sub-row"
-              >
-                <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node) + 20}px` }]" style="padding:2px 8px;color:#64748b">
-                  <span class="text-caption">{{ planned.name }}</span>
-                  <div class="feo-plan-note text-medium-emphasis">строка {{ part.row ?? '—' }} файла</div>
-                </td>
-                <td :style="feoResize.resizeStyle('budget')" style="padding:2px 8px;text-align:right;color:#64748b">
-                  <span v-if="part.unit_price != null" class="text-caption">{{ formatCurrency(Number(part.unit_price)) }}</span>
-                </td>
-                <td :style="feoResize.resizeStyle('qty')" style="padding:2px 8px;text-align:right;color:#64748b">
-                  <span v-if="part.qty != null" class="text-caption">{{ parseFloat(String(part.qty)) }} {{ part.unit || '' }}</span>
-                </td>
-                <td :style="feoResize.resizeStyle('planned')" style="padding:2px 8px;text-align:right;color:#64748b">
-                  <span v-if="part.amount != null" class="text-caption">{{ formatCurrency(part.amount) }}</span>
-                </td>
-                <td style="width:86px;min-width:86px"></td>
-                <td :style="feoResize.resizeStyle('spent')" style="padding:2px 8px;vertical-align:top">
-                  <template v-if="part.purchases?.length">
-                    <div
-                      v-for="p in part.purchases"
-                      :key="`part-${part.key}-${p.id}`"
-                      class="feo-stage-list-row"
-                    >
-                      <a
-                        href="javascript:void(0)"
-                        class="feo-purchase-link"
-                        :title="`Перейти в закупку ${p.registry_number || ('#' + p.id)}`"
-                        @click.stop="ctx.router.push(`/orders/${p.id}`)"
-                      >{{ p.registry_number || `#${p.id}` }}</a>
-                      <span class="feo-stage-list-row__status" :style="{ color: purchaseStatusColor(p.status) }">{{ p.status_label || purchaseStatusLabel(p.status) }}</span>
-                      <span v-if="p.paid" class="text-caption text-medium-emphasis">оплачено {{ formatCurrency(p.paid) }}</span>
-                    </div>
-                  </template>
-                  <span v-else class="text-caption text-medium-emphasis">запланировано</span>
-                </td>
-                <td :style="feoResize.resizeStyle('residual')"></td>
-                <td style="width:112px;min-width:112px;max-width:112px"></td>
-              </tr>
-              </template>
+              <!-- Правка 13.10.2026 (чек-лист, владелец): вложенные под-строки
+                   частей объединённой позиции УБРАНЫ из основной таблицы
+                   «Позиция плана» — у объединённой позиции здесь ровно одна
+                   строка, как у обычной. Разбивка по частям теперь только в
+                   развороте «План vs факт» ниже (ctx.expandedPlannedItems,
+                   feoLevel5.planVsFactRowsWithParts) — см. комментарий там. -->
               <!-- Ветка комментариев плановой позиции (владелец, Волна 4, п.16) —
                    раскрывающийся блок под строкой, не колонка (см. докстринг задачи
                    про плотную таблицу). Тот же переиспользуемый FeoCommentThread.vue,
@@ -598,10 +546,46 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-if="!ctx.factForPlanned(node.id, planned.id).length">
+                      <!-- Правка 13.10.2026 (владелец, чек-лист): позиция с parts —
+                           по строке на КАЖДУЮ часть, в порядке частей
+                           (feoLevel5.planVsFactRowsWithParts, ПРАВИЛО №6 — те же
+                           данные comparisonData/part.purchases, что уже загружены,
+                           второй запрос не заводим). Часть с закупкой — обычная
+                           строка «Как в договоре» (не изменилась); часть без
+                           закупки — «Как запланировано» своими qty/price/amount
+                           (ветка kind==='planned_only' ниже). Позиция без parts —
+                           функция возвращает тот же список, что и раньше
+                           (factForPlanned), поведение не меняется. -->
+                      <tr v-if="!feoLevel5.planVsFactRowsWithParts(node.id, planned.id).length">
                         <td colspan="12" style="padding:8px 8px;color:#94a3b8;font-style:italic">Закупок по этой плановой позиции пока нет</td>
                       </tr>
-                      <template v-for="actual in ctx.factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
+                      <template v-for="row in feoLevel5.planVsFactRowsWithParts(node.id, planned.id)" :key="row.kind === 'actual' ? `pa-${row.actual.purchase_item_id}` : `pp-${planned.id}-${row.part.key}`">
+                      <tr v-if="row.kind === 'planned_only'" style="border-bottom:1px solid #E2E8F0">
+                        <td style="padding:4px 8px;color:#0c4a6e">
+                          {{ planned.name }}
+                          <v-chip size="x-small" color="grey" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                            title="Часть плановой позиции — своей закупки пока нет"
+                          >как запланировано</v-chip>
+                          <div v-if="row.part.row != null" class="feo-plan-note text-medium-emphasis">строка {{ row.part.row }} файла</div>
+                        </td>
+                        <td style="padding:4px 8px;text-align:right;color:#64748b">{{ row.part.unit_price != null ? formatCurrency(Number(row.part.unit_price)) : '—' }}</td>
+                        <td style="padding:4px 8px;text-align:right;color:#64748b">{{ row.part.qty != null ? `${parseFloat(String(row.part.qty))} ${row.part.unit || ''}` : '—' }}</td>
+                        <td style="padding:4px 8px;text-align:right;color:#64748b">{{ row.part.amount != null ? formatCurrency(row.part.amount) : '—' }}</td>
+                        <td style="padding:4px 8px;color:#94a3b8;font-style:italic">—</td>
+                        <td style="padding:4px 8px;text-align:right;color:#94a3b8">—</td>
+                        <td style="padding:4px 8px;text-align:right;color:#94a3b8">—</td>
+                        <td style="padding:4px 8px;text-align:right;color:#94a3b8">—</td>
+                        <td style="padding:4px 8px"></td>
+                        <td style="padding:4px 8px;color:#94a3b8;font-size:11px">—</td>
+                        <td style="padding:4px 8px;text-align:center;color:#94a3b8;font-size:10px">запланировано</td>
+                        <td style="padding:2px"></td>
+                      </tr>
+                      <template v-else>
+                      <!-- Локальный алиас `actual` = row.actual (v-for по
+                           одноэлементному массиву) — весь markup ниже не
+                           менялся, читает `actual`, как и до разбивки на
+                           части (чек-лист 13.10.2026). -->
+                      <template v-for="actual in [row.actual]" :key="`pa-${actual.purchase_item_id}`">
                         <tr
                           :class="ctx.kpiItemRowClass(actual)"
                           :data-item-id="actual.purchase_item_id" data-item-group="planned"
@@ -701,6 +685,8 @@
                           <td style="padding:2px 8px"></td>
                         </tr>
                         </template>
+                      </template>
+                      </template>
                       </template>
                     </tbody>
                   </table>
@@ -1124,19 +1110,6 @@ const typeSubtotals = computed(() => {
   font-weight: 600;
   flex-shrink: 0;
 }
-/* Состав объединённой позиции (план merged-item-parts.md, владелец 12.10.2026) —
-   правка 12.10.2026 (lazy-swimming-hollerith.md п.4г): части теперь отдельными
-   под-строками таблицы (<tr class="feo-plan-part-sub-row">), не втиснуты в
-   ячейку «Стадия закупки» — лёгкий фиолетовый фон отличает их от основной
-   строки позиции. */
-.feo-plan-part-sub-row {
-  background: rgba(147, 51, 234, 0.04);
-  border-bottom: 1px solid #E5E7EB;
-}
-.feo-plan-part-sub-row td {
-  border-top: none;
-}
-
 /* Раздел C0 (план ancient-prancing-music.md, 2026-09-21): подытоги товары/
    услуги/без типа под таблицей плановых позиций панели. */
 .feo-level5-type-subtotals {

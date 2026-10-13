@@ -16,6 +16,7 @@ import { computed, reactive, ref } from 'vue'
 import { apiFetch } from '@/api'
 import { describeApiError } from '@/utils/apiErrorMessage'
 import { useToast } from '@/composables/useToast'
+import { formatCurrency, roundMoney } from '@/composables/subsidies/format'
 
 export type FundingTargetKind = 'category' | 'planned_item' | 'subsidy'
 export type FundingScopeKind = 'branch' | 'subsidy'
@@ -72,6 +73,13 @@ const params = ref<OpenParams | null>(null)
 const rowAmounts = reactive<Record<number, number>>({})
 // id строки (planned_item_id), для которой сейчас идёт POST reduce.
 const actingId = ref<number | null>(null)
+// Сигнал странице субсидии «план изменился, перезагрузи дерево ФЭО/карточки
+// денег» (владелец, жалоба 13.10.2026: после reduce красное «превышение» в
+// дереве за окном оставалось) — tick меняется при каждом успешном reduce,
+// SubsidiesView.vue слушает watch() и сам решает, что перезагрузить своими
+// существующими silentRefreshSubsidies()/loadFeo() (Правило №6, второй
+// механизм обновления не заводим).
+const planChanged = ref<{ subsidyId: number; tick: number } | null>(null)
 
 const toast = useToast()
 
@@ -92,12 +100,20 @@ async function load() {
     data.value = await apiFetch<FundingSourcesResponse>(
       `/subsidies/${params.value.subsidyId}/funding-sources${qs ? `?${qs}` : ''}`
     )
+    // ПЕРЕЗАПИСЫВАЕМ rowAmounts при КАЖДОЙ загрузке (а не только для новых
+    // id) — иначе после успешного reduce поле у уже показанной строки
+    // продолжало предлагать старую (уже перенесённую) сумму, и владелец жал
+    // «Уменьшить» повторно, снимая лишнее (жалоба 13.10.2026). Строки, которых
+    // больше нет в ответе (списаны/расход не числится), убираем из rowAmounts.
+    const seenIds = new Set<number>()
     for (const g of data.value.groups) {
       for (const it of g.items) {
-        if (!(it.planned_item_id in rowAmounts)) {
-          rowAmounts[it.planned_item_id] = Math.min(it.suggested_take, it.residual)
-        }
+        seenIds.add(it.planned_item_id)
+        rowAmounts[it.planned_item_id] = roundMoney(Math.min(it.suggested_take, it.residual))
       }
+    }
+    for (const k of Object.keys(rowAmounts)) {
+      if (!seenIds.has(Number(k))) delete rowAmounts[Number(k)]
     }
   } catch (e: any) {
     data.value = null
@@ -159,20 +175,32 @@ async function reduceFrom(item: FundingSourceItem) {
     }>(`/feo-planned-items/${item.planned_item_id}/reduce`, { method: 'POST', body })
     for (const w of res.warnings || []) toast.addToast(w, 'warning')
     if (res.target_remaining_excess > 0.5) {
-      toast.addToast(`Перенесено ${formatMoney(res.reduced_by)} ₽. Осталось закрыть ${formatMoney(res.target_remaining_excess)} ₽`, 'success')
+      toast.addToast(`Перенесено ${formatCurrency(res.reduced_by)}. Осталось закрыть ${formatCurrency(res.target_remaining_excess)}`, 'success')
     } else {
       toast.addToast('Превышение закрыто', 'success')
     }
+    // Заголовок/«закрывает X из Y» в диалоге раньше навсегда застывали на
+    // amount, с которым окно было открыто (чип дерева, снапшот на момент
+    // открытия) — после переноса need_amount в ответе load() не менялся,
+    // пока params.value.amount продолжал слаться в запрос. Для target —
+    // category/subsidy бэкенд сам знает актуальный excess_amount (Правило
+    // №6, один источник), amount убираем, чтобы он его отдал; для
+    // planned_item сумма может быть подсказкой 409 ещё не сохранённой
+    // закупки, которой бэкенд не знает — досчитываем локально.
+    if (params.value) {
+      if (target.kind === 'planned_item' && params.value.amount != null) {
+        params.value.amount = Math.max(0, roundMoney(params.value.amount - res.reduced_by))
+      } else {
+        params.value.amount = null
+      }
+    }
     await load()
+    if (params.value) planChanged.value = { subsidyId: params.value.subsidyId, tick: (planChanged.value?.tick ?? 0) + 1 }
   } catch (e: any) {
     toast.addToast(describeApiError(e, { fallback: 'Не удалось перенести сумму' }), 'error')
   } finally {
     actingId.value = null
   }
-}
-
-function formatMoney(n: number): string {
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n)
 }
 
 /** GET /purchases/{id}/funding-hint — используется местами, где нет готового
@@ -224,7 +252,7 @@ const progressPct = computed(() => {
 
 export function useFundingSources() {
   return {
-    show, loading, error, data, rowAmounts, actingId, progressPct,
+    show, loading, error, data, rowAmounts, actingId, progressPct, planChanged,
     openFundingSources, openFundingSourcesForPurchase, openFundingSourcesFromHint, closeFundingSources,
     setRowAmount, reduceFrom, fetchFundingHint,
   }

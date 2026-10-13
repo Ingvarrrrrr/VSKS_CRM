@@ -216,6 +216,7 @@ import { provideRevisionOverlay } from '@/composables/subsidies/useRevisionOverl
 import RevisionDraftBar from '@/components/subsidies/RevisionDraftBar.vue'
 import { useFeoUndoStack, handleFeoUndoKeydown } from '@/composables/subsidies/useFeoUndoStack'
 import { useSubsidiesPageCache } from '@/composables/useSubsidiesPageCache'
+import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 import { useFeoReqItems } from '@/composables/subsidies/useFeoReqItems'
 import { useFeoTreeSearch } from '@/composables/subsidies/useFeoTreeSearch'
 import { captureScroll } from '@/composables/subsidies/usePreserveScroll'
@@ -1355,12 +1356,23 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleFeoUndoKeydown)
 })
 
+// Тихое обновление видимой субсидии (список + дерево ФЭО текущей, без
+// спиннера) — общая функция для keep-alive (ниже) и для реакции на reduce
+// в окне «Где взять деньги» (владелец, жалоба 13.10.2026, п.1: красное
+// «превышение» в дереве за окном не пропадало после уменьшения).
+function refreshVisibleSubsidy() {
+  if (allSubsidies.value.length) silentRefreshSubsidies(); else loadAll()
+  if (selectedId.value) loadFeo(selectedId.value)
+}
+
 // keep-alive (App.vue, 2026-10-13) — вся логика в composables/useSubsidiesPageCache.ts.
 useSubsidiesPageCache({
   keydownHandler: handleFeoUndoKeydown,
-  refresh: () => {
-    if (allSubsidies.value.length) silentRefreshSubsidies(); else loadAll()
-    if (selectedId.value) loadFeo(selectedId.value)
-  },
+  refresh: refreshVisibleSubsidy,
+})
+
+const funding = useFundingSources()
+watch(() => funding.planChanged.value, (v) => {
+  if (v && v.subsidyId === selectedId.value) refreshVisibleSubsidy()
 })
 </script>

@@ -38,6 +38,8 @@ export interface FeoUndoEntry {
 const MAX_DEPTH = 5
 const undoStack = ref<FeoUndoEntry[]>([])
 const redoStack = ref<FeoUndoEntry[]>([])
+// «busy» теперь отражает очередь (см. _feoUndoRedoChain ниже), а не блокирует
+// повторное нажатие — см. докстринг у неё.
 const busy = ref(false)
 
 // Вызывается из мест, где произошло исходное действие (см. докстринг выше) —
@@ -88,45 +90,68 @@ function toast() {
   return _toast
 }
 
-export async function performFeoUndo() {
-  if (busy.value) return
+// Очередь отмены/повтора (найдено QA, 13.10.2026 — волна 2): «удалил позицию из
+// плановой, Ctrl+Z, Ctrl+Z ещё раз — второе нажатие не делает НИЧЕГО: ни тоста,
+// ни запроса». Причина — busy-флаг СТАРОЙ реализации: пока первый undo() ждёт
+// сервер (а при большом дереве/категории с подкатегориями ctx.loadFeo() после
+// undo может занять больше времени, чем пауза между двумя нажатиями), второе
+// нажатие видело busy=true и тихо возвращалось — ни тоста об этом, ни попытки
+// повторить, вопреки «любая неудача отката — не молча» из докстринга выше.
+// Теперь оба действия (undo и redo) идут через ОДНУ очередь: второе нажатие не
+// теряется, а исполняется СРАЗУ ПОСЛЕ первого — то, что человек ожидает от
+// «быстро нажал Ctrl+Z дважды». Undo и redo нарочно делят одну очередь (а не
+// две раздельных), иначе быстрое чередование Ctrl+Z/Ctrl+Y могло бы исполниться
+// не по порядку и испортить оба стека одновременно.
+let _feoUndoRedoChain: Promise<unknown> = Promise.resolve()
+function queueFeoUndoRedo(fn: () => Promise<void>): Promise<void> {
+  busy.value = true
+  const run = _feoUndoRedoChain.then(fn, fn)
+  const settled = run.then(() => undefined, () => undefined)
+  _feoUndoRedoChain = settled
+  // Снимаем busy только когда ЭТА операция была последней поставленной в
+  // очередь — если за время её выполнения встали ещё нажатия, индикатор
+  // должен остаться «занято» до конца всей цепочки, а не мигать между ними.
+  settled.finally(() => {
+    if (_feoUndoRedoChain === settled) busy.value = false
+  })
+  return run as Promise<void>
+}
+
+async function doPerformFeoUndo() {
   const entry = undoStack.value[undoStack.value.length - 1]
   if (!entry) return
-  busy.value = true
-  try {
-    const res = await entry.undo()
-    if (res.ok) {
-      undoStack.value = undoStack.value.slice(0, -1)
-      redoStack.value = [...redoStack.value, entry].slice(-MAX_DEPTH)
-      toast().addToast(`Отменено: ${entry.label}`, 'success')
-    } else {
-      // Честно показываем причину и НЕ трогаем стек — запись остаётся на месте
-      // (ещё не отменена), повторный Ctrl+Z/клик может сработать, если причина
-      // была временной (сеть), либо человек увидит, что отменить нельзя вовсе.
-      toast().addToast(`Не удалось отменить «${entry.label}»: ${res.error}`, 'error')
-    }
-  } finally {
-    busy.value = false
+  const res = await entry.undo()
+  if (res.ok) {
+    undoStack.value = undoStack.value.slice(0, -1)
+    redoStack.value = [...redoStack.value, entry].slice(-MAX_DEPTH)
+    toast().addToast(`Отменено: ${entry.label}`, 'success')
+  } else {
+    // Честно показываем причину и НЕ трогаем стек — запись остаётся на месте
+    // (ещё не отменена), повторный Ctrl+Z/клик может сработать, если причина
+    // была временной (сеть), либо человек увидит, что отменить нельзя вовсе.
+    toast().addToast(`Не удалось отменить «${entry.label}»: ${res.error}`, 'error')
   }
 }
 
-export async function performFeoRedo() {
-  if (busy.value) return
+async function doPerformFeoRedo() {
   const entry = redoStack.value[redoStack.value.length - 1]
   if (!entry) return
-  busy.value = true
-  try {
-    const res = await entry.redo()
-    if (res.ok) {
-      redoStack.value = redoStack.value.slice(0, -1)
-      undoStack.value = [...undoStack.value, entry].slice(-MAX_DEPTH)
-      toast().addToast(`Повторено: ${entry.label}`, 'success')
-    } else {
-      toast().addToast(`Не удалось повторить «${entry.label}»: ${res.error}`, 'error')
-    }
-  } finally {
-    busy.value = false
+  const res = await entry.redo()
+  if (res.ok) {
+    redoStack.value = redoStack.value.slice(0, -1)
+    undoStack.value = [...undoStack.value, entry].slice(-MAX_DEPTH)
+    toast().addToast(`Повторено: ${entry.label}`, 'success')
+  } else {
+    toast().addToast(`Не удалось повторить «${entry.label}»: ${res.error}`, 'error')
   }
+}
+
+export function performFeoUndo(): Promise<void> {
+  return queueFeoUndoRedo(doPerformFeoUndo)
+}
+
+export function performFeoRedo(): Promise<void> {
+  return queueFeoUndoRedo(doPerformFeoRedo)
 }
 
 // ── Хоткеи ───────────────────────────────────────────────────────────────────

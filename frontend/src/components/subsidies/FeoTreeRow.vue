@@ -34,6 +34,7 @@
       isCategoryPartiallyPurchased ? 'feo-partially-purchased-row' : '',
       excessDrilldown.isExcessTarget(node.id) ? 'feo-excess-target-row' : '',
       excessDrilldown.isCurrentExcessTarget(node.id) ? 'feo-excess-target-row--current' : '',
+      ctx.isFeoSearchHighlighted(`c-${node.id}`) ? 'feo-search-highlight-row' : '',
     ]"
     :draggable="ctx.canEditFeo.value"
     @dragstart="ctx.canEditFeo.value && ctx.onDragStart($event, node)"
@@ -1059,7 +1060,10 @@ const isCategoryFullyPurchased = computed(() => !node.value.hasChildren && planT
 // плана категории не заводим.
 const isCategoryPartiallyPurchased = computed(() => !node.value.hasChildren && planToRequest.isCategoryPartiallyPurchased(node.value.id))
 const hideFullyPurchased = useFeoHideFullyPurchased()
-const hiddenByFullyPurchasedFilter = computed(() => hideFullyPurchased.hideFullyPurchased.value && isCategoryFullyPurchased.value)
+// Найденная поиском категория и путь к ней не прячутся этим фильтром, пока
+// держится подсветка (владелец, 2026-10-13) — см. докстринг
+// searchPathCategoryIds в useFeoTreeSearch.ts.
+const hiddenByFullyPurchasedFilter = computed(() => hideFullyPurchased.hideFullyPurchased.value && isCategoryFullyPurchased.value && !ctx.isOnFeoSearchPath(node.value.id))
 // Подпись чекбокса категории (правка 2026-09-21, СЖАТО после приёмки: полный
 // текст «Выбрано k из N незакупленных» рвал колонку «Наименование» по буквам —
 // теперь компактный чип «k из N» (N=0 → просто «0»), полный текст ушёл в

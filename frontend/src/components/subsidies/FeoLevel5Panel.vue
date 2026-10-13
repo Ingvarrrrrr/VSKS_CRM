@@ -96,7 +96,7 @@
                    data-feo-node-id у строки категории (FeoTreeRow.vue). -->
               <tr v-if="!isPlannedRowHidden(planned)"
                 style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id"
-                :class="{ 'feo-fully-purchased-row': isRowFullyPurchased(planned), 'feo-partially-purchased-row': isRowPartiallyPurchased(planned) }"
+                :class="{ 'feo-fully-purchased-row': isRowFullyPurchased(planned), 'feo-partially-purchased-row': isRowPartiallyPurchased(planned), 'feo-search-highlight-row': ctx.isFeoSearchHighlighted(`p-${planned.id}`) }"
               >
                 <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
                   <div class="d-flex align-center" style="gap:2px">
@@ -962,8 +962,11 @@ const hideFullyPurchased = useFeoHideFullyPurchased()
 // видимыми — на полностью закупленной субсидии были видны «висящие» блоки
 // без названия/цены/значка комментариев. ОДНА функция на все три v-if строки
 // (Правило №6, второй расчёт видимости не заводим).
+// Найденная поиском плановая позиция не прячется этим фильтром, пока держится
+// подсветка (владелец, 2026-10-13) — см. докстринг searchPathCategoryIds в
+// useFeoTreeSearch.ts (та же логика «путь к найденному», здесь — сама позиция).
 function isPlannedRowHidden(planned: FeoPlannedItem & { isManual?: boolean }): boolean {
-  return hideFullyPurchased.hideFullyPurchased.value && isRowFullyPurchased(planned)
+  return hideFullyPurchased.hideFullyPurchased.value && isRowFullyPurchased(planned) && !ctx.isFeoSearchHighlighted(`p-${planned.id}`)
 }
 // Счётчик скрытых переключателем позиций — для подписи-ссылки под списком
 // (п.2 того же бага), чтобы панель не выглядела пустой/сломанной.

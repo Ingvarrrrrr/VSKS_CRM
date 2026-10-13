@@ -97,6 +97,16 @@ export interface SubsidyDetailContext {
   feoSearchResults: ComputedRef<FeoSearchResult[]>
   feoSearchLoading: Ref<boolean>
   goToFeoSearchResult: (r: FeoSearchResult) => Promise<void>
+  // Правка 2026-10-13 (владелец): список закрывается отдельным флагом (запрос
+  // остаётся в поле после выбора), фокус/ввод открывают его снова, крестик/Esc —
+  // clearFeoSearch (запрос+список+подсветка сразу). isFeoSearchHighlighted —
+  // реактивная подсветка найденного узла/позиции в дереве (FeoTreeRow.vue /
+  // FeoLevel5Panel.vue), держится до очистки поиска или выбора другого варианта.
+  feoSearchOpen: Ref<boolean>
+  onFeoSearchFocus: () => void
+  clearFeoSearch: () => void
+  isFeoSearchHighlighted: (key: string) => boolean
+  isOnFeoSearchPath: (categoryId: number) => boolean
 
   // ── Стек отмены/повтора дерева плана (useFeoUndoStack.ts, владелец, п.4
   // волны 4, 2026-09-13): кнопки «назад»/«вперёд» в FeoTreeToolbar.vue +

@@ -30,6 +30,8 @@ import { computed, nextTick, ref, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import { makeCtxSingleton } from './ctxSingleton'
 import type { FeoCategory } from './types'
+import { useToast } from '@/composables/useToast'
+import { waitForFeoSearchElement } from './useFeoTreeSearchHighlight'
 
 export interface FeoSearchResult {
   key: string
@@ -75,6 +77,34 @@ function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
   const plannedItemRows = ref<PlanPositionRow[]>([])
   const plannedItemsLoadedFor = ref<number | null>(null)
   const feoSearchLoading = ref(false)
+  const toast = useToast()
+
+  // Открытость выпадающего списка — ОТДЕЛЬНЫЙ флаг от «запрос не пуст» (владелец,
+  // 2026-10-13): после выбора варианта запрос остаётся в поле, но список должен
+  // закрыться; снова открывается при вводе (watch ниже) или фокусе поля
+  // (onFeoSearchFocus). Раньше список был v-if="запрос не пуст" — тогда закрыть
+  // его без очистки поля было нечем, второго способа закрытия не заводим.
+  const feoSearchOpen = ref(false)
+  // Ключ найденного узла/позиции, который держит подсветку в дереве до явного
+  // сброса — тот же формат key, что у FeoSearchResult ('c-<id>' / 'p-<id>').
+  // Реактивный ref, а не inline-стиль с setTimeout (как было в прежней
+  // scrollAndHighlight) — дерево ФЭО перерисовывается (loadFeo), inline-стиль на
+  // DOM-узле слетел бы при перерисовке, реактивный класс переживает её.
+  const highlightedKey = ref<string | null>(null)
+  function isFeoSearchHighlighted(key: string): boolean {
+    return highlightedKey.value === key
+  }
+  // Категории на пути к найденному узлу (сама найденная категория/категория-
+  // владелец плановой позиции + все её предки) — владелец, правка 2026-10-13:
+  // переключатель «скрыть закупленные полностью» (useFeoHideFullyPurchased,
+  // FeoTreeRow.vue::hiddenByFullyPurchasedFilter) иначе прятал бы найденный
+  // узел, если он сам или путь к нему полностью закуплены, и поиск молча
+  // показывал бы «не удалось показать». Живёт СТРОГО вместе с highlightedKey —
+  // то же условие «пока подсветка держится», второй жизненный цикл не заводим.
+  const searchPathCategoryIds = ref<Set<number>>(new Set())
+  function isOnFeoSearchPath(categoryId: number): boolean {
+    return searchPathCategoryIds.value.has(categoryId)
+  }
 
   // Другая субсидия — сбросить и запрос, и кэш плановых позиций (иначе результаты
   // прошлой субсидии на миг показались бы для новой, пока не подгрузится её список).
@@ -82,7 +112,33 @@ function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
     feoSearchQuery.value = ''
     plannedItemRows.value = []
     plannedItemsLoadedFor.value = null
+    feoSearchOpen.value = false
+    highlightedKey.value = null
+    searchPathCategoryIds.value = new Set()
   })
+
+  // Открыть список при вводе; при полной очистке поля (крестик/Esc/Backspace до
+  // пустой строки) — закрыть список И снять подсветку (владелец, п.4: «пока
+  // человек не очистит поиск»). Срабатывает только на ИЗМЕНЕНИЕ запроса —
+  // goToFeoSearchResult больше не трогает feoSearchQuery при выборе варианта,
+  // поэтому сам выбор этот watch не переоткрывает.
+  watch(feoSearchQuery, (v) => {
+    const trimmed = (v || '').trim()
+    feoSearchOpen.value = !!trimmed
+    if (!trimmed) {
+      highlightedKey.value = null
+      searchPathCategoryIds.value = new Set()
+    }
+  })
+  function onFeoSearchFocus() {
+    if ((feoSearchQuery.value || '').trim()) feoSearchOpen.value = true
+  }
+  function clearFeoSearch() {
+    feoSearchQuery.value = ''
+    feoSearchOpen.value = false
+    highlightedKey.value = null
+    searchPathCategoryIds.value = new Set()
+  }
 
   async function ensurePlannedItemsLoaded() {
     const sid = ctx.selectedId.value
@@ -153,26 +209,26 @@ function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
     return out.slice(0, 50)
   })
 
-  // Прокрутка+подсветка узла — тот же приём, что и scrollToNewFeoNode в
-  // FeoCategoryDialog.vue (querySelector по data-атрибуту строки + scrollIntoView +
-  // временный inline-фон вместо своего CSS-класса), второй механизм не заводим.
+  // Прокрутка к найденному узлу — подсветка теперь реактивным классом
+  // (highlightedKey выше), эта функция только ЖДЁТ появления элемента в DOM
+  // (до 5 с, опрос каждые 100 мс — см. useFeoTreeSearchHighlight.ts) и
+  // центрирует его. Раньше ждала ровно 2 nextTick и тихо выходила, если
+  // элемент не успевал отрисоваться — пользователь не видел ни прокрутки,
+  // ни сигнала об ошибке (жалоба владельца, п.2-3).
   async function scrollAndHighlight(r: FeoSearchResult) {
     await nextTick()
-    await nextTick() // панель/дерево перерисовываются после смены expandedIds/comparisonData
+    const area = ctx.feoTableArea.value
     const selector = r.kind === 'planned_item'
       ? `[data-feo-planned-item-id="${r.id}"]`
       : `[data-feo-node-id="${r.id}"]`
-    const el = ctx.feoTableArea.value?.querySelector<HTMLElement>(selector)
-    if (!el) return
+    const el = area ? await waitForFeoSearchElement(area, selector) : null
+    if (!el) {
+      highlightedKey.value = null
+      searchPathCategoryIds.value = new Set()
+      toast.addToast(`Не удалось показать позицию «${r.name}» в дереве`, 'error')
+      return
+    }
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    const prevBg = el.style.backgroundColor
-    const prevTransition = el.style.transition
-    el.style.transition = 'background-color 1.6s ease'
-    el.style.backgroundColor = '#FEF3C7'
-    setTimeout(() => {
-      el.style.backgroundColor = prevBg
-      setTimeout(() => { el.style.transition = prevTransition }, 1700)
-    }, 400)
   }
 
   async function goToFeoSearchResult(r: FeoSearchResult) {
@@ -181,12 +237,17 @@ function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
     // тоже попадает в список — лишним не мешает (isNodeVisible смотрит только на
     // цепочку ПРЕДКОВ, не на сам узел), а если у найденной категории есть дети,
     // заодно раскрывает и их.
+    const pathIds = new Set<number>()
     let cur: FeoCategory | undefined = catById.value[r.categoryId]
     while (cur) {
       const id = cur.id
       if (!ctx.expandedIds.value.includes(id)) ctx.expandedIds.value.push(id)
+      pathIds.add(id)
       cur = cur.parent_id != null ? catById.value[cur.parent_id] : undefined
     }
+    // «Скрыть закупленные полностью» не должен прятать найденный узел/путь к
+    // нему, пока держится подсветка (см. докстринг searchPathCategoryIds выше).
+    searchPathCategoryIds.value = pathIds
     if (r.kind === 'planned_item') {
       // Открыть панель «План vs факт» категории-владельца и подгрузить данные — тот
       // же приём, что и applyKpiExpansion в useKpiDrilldown.ts (панель раскрывается
@@ -196,9 +257,19 @@ function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
         await ctx.refreshComparison(r.categoryId)
       }
     }
-    feoSearchQuery.value = ''
+    // Запрос ОСТАЁТСЯ в поле (владелец, п.2) — выбор варианта только закрывает
+    // список (feoSearchOpen), не трогая feoSearchQuery (watch на него не
+    // переоткроет список, т.к. значение не меняется).
+    feoSearchOpen.value = false
+    // Подсветка выставляется ДО ожидания элемента — к моменту, когда дерево
+    // дорисует найденную строку, класс уже забинден, и подсветка появляется
+    // сразу вместе со строкой, без лишнего мигания.
+    highlightedKey.value = r.key
     await scrollAndHighlight(r)
   }
 
-  return { feoSearchQuery, feoSearchResults, feoSearchLoading, goToFeoSearchResult }
+  return {
+    feoSearchQuery, feoSearchResults, feoSearchLoading, goToFeoSearchResult,
+    feoSearchOpen, onFeoSearchFocus, clearFeoSearch, isFeoSearchHighlighted, isOnFeoSearchPath,
+  }
 }

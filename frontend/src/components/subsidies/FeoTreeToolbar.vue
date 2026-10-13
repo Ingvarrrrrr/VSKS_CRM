@@ -50,9 +50,14 @@
         density="compact" variant="outlined" hide-details clearable
         placeholder="Поиск по субсидии…"
         prepend-inner-icon="mdi-magnify"
-        @keydown.esc="ctx.feoSearchQuery.value = ''"
+        @focus="ctx.onFeoSearchFocus()"
+        @keydown.esc="ctx.clearFeoSearch()"
+        @click:clear="ctx.clearFeoSearch()"
       />
-      <div v-if="(ctx.feoSearchQuery.value || '').trim()" class="feo-search-dropdown">
+      <!-- feoSearchOpen — отдельный флаг открытости (владелец, 2026-10-13): после
+           выбора варианта запрос остаётся в поле, но список закрывается; снова
+           открывается при вводе/фокусе (useFeoTreeSearch.ts). -->
+      <div v-if="ctx.feoSearchOpen.value" class="feo-search-dropdown">
         <div v-if="ctx.feoSearchLoading.value" class="feo-search-dropdown__empty">
           <v-progress-circular indeterminate size="16" width="2" color="teal" class="mr-2" />
           Загрузка плановых позиций…
@@ -70,6 +75,9 @@
               :icon="r.kind === 'planned_item' ? 'mdi-cube-outline' : 'mdi-folder-outline'"
               size="16" color="teal" class="mr-2"
             />
+            <!-- Название и путь — ЦЕЛИКОМ, с переносом строк, без многоточий
+                 (владелец, п.1): прежние white-space:nowrap + text-overflow:ellipsis
+                 в styles/subsidies.css обрезали оба текста. -->
             <div class="feo-search-dropdown__text">
               <div class="feo-search-dropdown__name">{{ r.name }}</div>
               <div v-if="r.path" class="feo-search-dropdown__path">{{ r.path }}</div>

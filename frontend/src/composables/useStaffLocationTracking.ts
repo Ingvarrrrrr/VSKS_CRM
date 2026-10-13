@@ -19,6 +19,7 @@
 import { ref } from 'vue'
 import { apiFetch } from '@/api'
 import { enqueue, getAllQueued, removeQueued, countQueued } from './useOfflineQueue'
+import { isLoggedIn } from './useAuthFlag'
 
 interface QueuedPoint {
   id?: number
@@ -64,7 +65,7 @@ let initialized = false
 let flushInFlight = false
 
 function isAuthed(): boolean {
-  return !!localStorage.getItem('auth_token')
+  return isLoggedIn()
 }
 
 async function refreshPermissionState() {

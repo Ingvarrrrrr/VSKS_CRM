@@ -251,9 +251,8 @@ export function useWishActions(deps: {
   async function downloadServiceNote(wish: Wish) {
     downloadingServiceNoteId.value = wish.id
     try {
-      const token = localStorage.getItem('auth_token') || ''
       const resp = await fetch(`/api/wishes/${wish.id}/documents/service_note`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
       })
       if (!resp.ok) {
         throw new Error(`HTTP ${resp.status}`)
@@ -277,9 +276,8 @@ export function useWishActions(deps: {
   async function downloadWishExcel(wish: Wish, withPhotos: boolean = true) {
     downloadingExcelId.value = wish.id
     try {
-      const token = localStorage.getItem('auth_token') || ''
       const resp = await fetch(`/api/wishes/${wish.id}/export.xlsx?with_photos=${withPhotos}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
       })
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const blob = await resp.blob()

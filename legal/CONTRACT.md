@@ -44,7 +44,7 @@ backend/app/services/
 {{operator.full_name}}   {{operator.inn}}        {{operator.legal_address}}
 {{head.fio}}             {{head.position}}       {{responsible.email}}
 {{site.url}}             {{site.product_name}}   {{site.support_email}}
-{{hosting.provider}}     {{consent.term_months}}
+{{hosting.provider}}     {{consent.term}}
 {{deadlines_working_days.info_request}}
 {{doc.title}}            {{doc.version}}         {{doc.effective_date}}
 {{today}}

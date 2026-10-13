@@ -293,7 +293,6 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     if (!itemsImportFile.value) return
     itemsImportLoading.value = true
     try {
-      const token = localStorage.getItem('auth_token')
       const fd = new FormData()
       fd.append('file', itemsImportFile.value)
       // Чтение файла ничего не пишет в БД — безопасно для одного тихого
@@ -301,7 +300,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       // apiFetch, владелец 29.09, см. api.ts).
       const resp = await fetchWithNetworkRetry(() => fetch('/api/purchases/items/import-preview', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+        headers: {} as HeadersInit,
         body: fd,
       }), { retryable: true, suppressErrorDialog: true })
       if (!resp.ok) {
@@ -400,7 +399,6 @@ export function useItemsImport(deps: UseItemsImportDeps) {
    * то же тело FormData, что и файл (backend принимает форму/query
    * одинаково — см. app/services/request_params.py). */
   async function _requestMappedImportPid(confirm: boolean, resolutions?: Record<number, SumMismatchChoice>) {
-    const token = localStorage.getItem('auth_token')
     const fd = new FormData()
     fd.append('file', itemsImportFile.value as File)
     const params = _mappedColParams()
@@ -413,7 +411,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     // что у apiFetch, владелец 29.09, см. api.ts).
     const resp = await fetchWithNetworkRetry(() => fetch(`/api/purchases/${props.purchaseId}/items/import-mapped`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+      headers: {} as HeadersInit,
       body: fd,
     }), { retryable: !confirm, suppressErrorDialog: true })
     if (!resp.ok) {
@@ -488,12 +486,11 @@ export function useItemsImport(deps: UseItemsImportDeps) {
         const fdNoPid = new FormData()
         fdNoPid.append('file', itemsImportFile.value as File)
         const paramsNoPid = _mappedColParams()
-        const token = localStorage.getItem('auth_token') || ''
         // Реальная запись (без confirm-фазы) — без повтора, но сетевая
         // ошибка всё равно переводится в человеческое сообщение (Правило №6).
         const respNoPid = await fetchWithNetworkRetry(() => fetch(`/api/purchases/items/import-mapped-nopid?${paramsNoPid}`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+          headers: {} as HeadersInit,
           body: fdNoPid,
         }), { retryable: false, suppressErrorDialog: true })
         if (!respNoPid.ok) {
@@ -583,11 +580,10 @@ export function useItemsImport(deps: UseItemsImportDeps) {
         if (detected['unit'] !== null) params.set('col_unit', String(detected['unit']))
         const fd = new FormData()
         fd.append('file', itemsImportFile.value as File)
-        const token = localStorage.getItem('auth_token')
         try {
           const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-mapped?${params.toString()}`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+            headers: {} as HeadersInit,
             body: fd,
           })
           if (!resp.ok) {
@@ -792,7 +788,6 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       smartImportPreview.value = null
       smartImportResult.value = null
       try {
-        const token = localStorage.getItem('auth_token')
         const fd = new FormData()
         fd.append('file', smartImportFile.value)
         const endpoint = isXlsx
@@ -800,7 +795,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
           : '/api/purchases/items/import-preview'
         const resp = await fetch(endpoint, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+          headers: {} as HeadersInit,
           body: fd,
         })
         if (!resp.ok) {
@@ -852,12 +847,11 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     smartImportPreview.value = null
     smartImportResult.value = null
     try {
-      const token = localStorage.getItem('auth_token')
       const fd = new FormData()
       fd.append('file', smartImportFile.value)
       const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart?confirm=false`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+        headers: {} as HeadersInit,
         body: fd,
       })
       if (!resp.ok) {
@@ -1125,7 +1119,6 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     if (!smartImportFile.value || !props.purchaseId) return
     smartImportLoading.value = true
     try {
-      const token = localStorage.getItem('auth_token')
       const fd = new FormData()
       fd.append('file', smartImportFile.value)
       fd.append('confirm', 'true')
@@ -1141,7 +1134,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       }
       const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+        headers: {} as HeadersInit,
         body: fd,
       })
       if (!resp.ok) {
@@ -1168,10 +1161,9 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     const fd = new FormData()
     fd.append('file', smartImportFile.value)
     try {
-      const token = localStorage.getItem('auth_token') || ''
       const res = await fetch('/api/purchases/items/import-pdf-debug', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+        headers: {} as HeadersInit,
         body: fd,
       })
       const data = await res.json()

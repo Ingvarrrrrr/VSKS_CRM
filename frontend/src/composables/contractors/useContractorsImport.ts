@@ -148,7 +148,6 @@ export function useContractorsImport(options: {
     contractorImportLoading.value = true
     contractorImportError.value = ''
     try {
-      const token = localStorage.getItem('auth_token') || ''
       const fd = new FormData()
       // contractorImportFile from v-file-input may be a File[] or File
       const fileObj = Array.isArray(contractorImportFile.value)
@@ -157,7 +156,7 @@ export function useContractorsImport(options: {
       fd.append('file', fileObj)
       const res = await fetch('/api/contractors/import/preview', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
         body: fd,
       })
       if (!res.ok) {
@@ -182,7 +181,6 @@ export function useContractorsImport(options: {
     contractorImportLoading.value = true
     contractorImportError.value = ''
     try {
-      const token = localStorage.getItem('auth_token') || ''
       const fd = new FormData()
       const fileObj = Array.isArray(contractorImportFile.value)
         ? contractorImportFile.value[0]
@@ -207,7 +205,7 @@ export function useContractorsImport(options: {
 
       const res = await fetch(`/api/contractors/import/mapped?${params.toString()}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
         body: fd,
       })
       if (!res.ok) {
@@ -239,9 +237,8 @@ export function useContractorsImport(options: {
   }
 
   async function downloadTemplate() {
-    const token = localStorage.getItem('auth_token') || ''
     const res = await fetch('/api/contractors/import/template', {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     if (!res.ok) { showSnack('Ошибка скачивания шаблона', 'error'); return }
     const blob = await res.blob()

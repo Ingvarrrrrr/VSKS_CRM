@@ -1,8 +1,14 @@
+import { clearLoggedIn } from './composables/useAuthFlag'
+
 const BASE = '/api'
 
+// 2026-10-13: JWT переехал в httpOnly-cookie gala_session — браузер шлёт её
+// сам на любой same-origin fetch (default credentials: 'same-origin'), без
+// явного заголовка Authorization. authHeaders() больше не читает токен из
+// localStorage (там его теперь и нет), оставлена пустышкой на случай если
+// кто-то когда-то снова добавит сюда заголовки (Правило №6 — одно место).
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('auth_token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  return {}
 }
 
 // 27.4-24: счётчик подряд 5xx/502 ошибок для авто-восстановления PWA из stale-SW кеша.
@@ -197,7 +203,7 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
       // 4xx (кроме 401) — не сбрасываем, но и не считаем как 5xx
     }
     if (res.status === 401) {
-      localStorage.removeItem('auth_token')
+      clearLoggedIn()
       localStorage.removeItem('user_role')
       localStorage.removeItem('user_name')
       window.location.href = '/'

@@ -15,10 +15,9 @@ export function useVehiclePhotos() {
 
   async function loadHeroPhoto(attId: number) {
     try {
-      const token = localStorage.getItem('auth_token')
       const res = await fetch(`/api/vehicle-attachments/${attId}/download`, {
         credentials: 'include',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
       })
       if (!res.ok) return
       const blob = await res.blob()

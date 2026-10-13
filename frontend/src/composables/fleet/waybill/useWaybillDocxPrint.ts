@@ -10,9 +10,8 @@ export function useWaybillDocxPrint(form: Ref<WaybillForm>, isLightVehicle: Ref<
     if (!form.value.id) return
     downloadingDocx.value = true
     try {
-      const token = localStorage.getItem('auth_token')
       const res = await fetch(`/api/trips/${form.value.id}/waybill.docx`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()

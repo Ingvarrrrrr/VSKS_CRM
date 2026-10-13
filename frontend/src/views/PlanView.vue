@@ -664,9 +664,8 @@ const saveVersion = async () => {
 const downloadVersionExcel = async (vid: number) => {
   if (filterSubsidyId.value === null) return
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/subsidies/${filterSubsidyId.value}/plan-graph/versions/${vid}/export`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     })
     if (!res.ok) throw new Error('Ошибка экспорта')
     const blob = await res.blob()

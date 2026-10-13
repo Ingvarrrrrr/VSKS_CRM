@@ -15,8 +15,7 @@ export function useStaffDeptImport(options: {
   const deptImportResult = ref<any>(null)
 
   async function downloadDeptTemplate() {
-    const token = localStorage.getItem('auth_token')
-    const res = await fetch('/api/departments/import/template', { headers: { Authorization: `Bearer ${token}` } })
+    const res = await fetch('/api/departments/import/template', { headers: {} })
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a'); a.href = url; a.download = 'Шаблон_импорта_отделов.xlsx'; a.click()
@@ -30,9 +29,8 @@ export function useStaffDeptImport(options: {
     try {
       const fd = new FormData()
       fd.append('file', deptImportFile.value)
-      const token = localStorage.getItem('auth_token')
       const res = await fetch('/api/departments/import/excel', {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+        method: 'POST', headers: {}, body: fd,
       })
       deptImportResult.value = await res.json()
       await loadDeptTree()

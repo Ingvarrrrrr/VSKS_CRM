@@ -47,6 +47,7 @@ import { formatRelativeTime } from '@/utils/relativeTime'
 import ShiftToggleButton from '@/components/staff/ShiftToggleButton.vue'
 import StaffTrackDialog from '@/components/staff/StaffTrackDialog.vue'
 import { destroyStaffLocationTracking } from '@/composables/useStaffLocationTracking'
+import { clearLoggedIn } from '@/composables/useAuthFlag'
 
 interface LastPoint {
   id: number
@@ -78,7 +79,8 @@ async function loadLast() {
 
 function logout() {
   destroyStaffLocationTracking()
-  localStorage.removeItem('auth_token')
+  fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+  clearLoggedIn()
   localStorage.removeItem('user_role')
   localStorage.removeItem('user_name')
   localStorage.removeItem('user_org_id')

@@ -138,9 +138,8 @@ export function usePurchaseReceipts(
     if (!rf.mime_type || !rf.mime_type.startsWith('image/')) return
     if (receiptFileThumbs.value[rf.id]) return
     try {
-      const token = localStorage.getItem('auth_token')
       const res = await fetch(`/api/purchases/${purchaseId.value}/files/${rf.id}/view`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       })
       if (!res.ok) return
       const blob = await res.blob()

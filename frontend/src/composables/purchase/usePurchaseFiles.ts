@@ -106,12 +106,11 @@ export function usePurchaseFiles(
   async function toggleDocFormat(f: UploadedFile) {
     if (!purchaseId.value) return
     const newFormat = f.doc_format === 'editable' ? 'scan' : 'editable'
-    const token = localStorage.getItem('auth_token')
     const fd = new FormData()
     fd.append('doc_format', newFormat)
     const res = await fetch(`/api/purchases/${purchaseId.value}/files/${f.id}`, {
       method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
       body: fd,
     })
     if (res.ok) {
@@ -125,13 +124,12 @@ export function usePurchaseFiles(
     if (!fileTypeEditTarget.value || !purchaseId.value) return
     savingFileType.value = true
     try {
-      const token = localStorage.getItem('auth_token')
       const fd = new FormData()
       fd.append('file_type', fileTypeEditValue.value)
       fd.append('doc_format', fileDocFormatEditValue.value)
       const res = await fetch(`/api/purchases/${purchaseId.value}/files/${fileTypeEditTarget.value.id}`, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
         body: fd,
       })
       if (res.ok) {
@@ -159,10 +157,9 @@ export function usePurchaseFiles(
       fd.append('file', file)
       fd.append('file_type', uploadFileType.value)
       fd.append('doc_format', resolvedFormat)
-      const token = localStorage.getItem('auth_token')
       const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
         body: fd,
       })
       if (!res.ok) {
@@ -196,10 +193,9 @@ export function usePurchaseFiles(
         fd.append('file', file)
         fd.append('file_type', fileType)
         fd.append('doc_format', resolvedFormat)
-        const token = localStorage.getItem('auth_token')
         const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {},
           body: fd,
         })
         if (!res.ok) {
@@ -235,12 +231,11 @@ export function usePurchaseFiles(
 
   async function toggleFileActive(f: UploadedFile) {
     const newActive = !(f.is_active ?? true)
-    const token = localStorage.getItem('auth_token')
     const fd = new FormData()
     fd.append('is_active', String(newActive))
     try {
       const res = await fetch(`/api/purchases/${f.purchase_id}/files/${f.id}`, {
-        method: 'PATCH', headers: { Authorization: `Bearer ${token}` }, body: fd,
+        method: 'PATCH', headers: {}, body: fd,
       })
       if (res.ok) {
         f.is_active = newActive
@@ -258,9 +253,8 @@ export function usePurchaseFiles(
   }
 
   const downloadFile = async (fid: number, filename: string) => {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/purchases/${purchaseId.value}/files/${fid}/download`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     if (!res.ok) { showSnack('Ошибка скачивания', 'error'); return }
     const blob = await res.blob()
@@ -292,9 +286,8 @@ export function usePurchaseFiles(
   const isPreviewable = (mime?: string) => mime === 'application/pdf' || (!!mime && BROWSER_RENDERABLE_IMAGE_MIME.has(mime))
 
   const openPreview = async (f: UploadedFile) => {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/purchases/${purchaseId.value}/files/${f.id}/view`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     if (!res.ok) { showSnack('Ошибка открытия файла', 'error'); return }
     const blob = await res.blob()

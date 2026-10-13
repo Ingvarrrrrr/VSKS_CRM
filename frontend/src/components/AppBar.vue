@@ -501,6 +501,7 @@ import { totalUnread, initChat, destroyChat } from '@/composables/useChat'
 import { myPendingApprovalsCount, initApprovalsBadge, destroyApprovalsBadge } from '@/composables/useApprovalsBadge'
 import { initStaffLocationTracking, destroyStaffLocationTracking } from '@/composables/useStaffLocationTracking'
 import { resetConsentGate } from '@/composables/useConsentGate'
+import { isLoggedIn, setLoggedIn, clearLoggedIn } from '@/composables/useAuthFlag'
 import ShiftToggleButton from '@/components/staff/ShiftToggleButton.vue'
 import { useAuthStore } from '../stores/auth'
 import { ROLE_LABELS } from '@/composables/staff/staffLabels'
@@ -800,11 +801,14 @@ function onPhotoSaved(photoUrl: string | null) {
   myPhotoUrl.value = photoUrl
 }
 
-const logout = () => {
+const logout = async () => {
   destroyStaffLocationTracking()  // прекратить передачу местоположения при выходе из аккаунта
   authStore.clear()
   resetConsentGate()  // 152-ФЗ: следующий пользователь не должен увидеть кэш статуса этого
-  localStorage.removeItem('auth_token')
+  // Снимаем httpOnly-cookie gala_session на бэкенде (п.11 переноса токена,
+  // 2026-10-13) — localStorage.removeItem('auth_token') её не доставал.
+  try { await fetch('/api/auth/logout', { method: 'POST' }) } catch {}
+  clearLoggedIn()
   localStorage.removeItem('user_role')
   localStorage.removeItem('user_name')
   localStorage.removeItem('user_org_id')
@@ -852,11 +856,8 @@ const activeOrgId = computed(() => {
 
 const loadMyOrgs = async () => {
   try {
-    const token = localStorage.getItem('auth_token')
-    if (!token) return
-    const response = await fetch('/api/auth/my-orgs', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    if (!isLoggedIn()) return
+    const response = await fetch('/api/auth/my-orgs')
     if (response.ok) {
       myOrgs.value = await response.json()
     }
@@ -867,15 +868,13 @@ const loadMyOrgs = async () => {
 
 const switchOrgSingle = async (org: {id: number; name: string}) => {
   try {
-    const token = localStorage.getItem('auth_token')
     const response = await fetch('/api/auth/switch-org', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ org_id: org.id })
     })
     if (response.ok) {
       const data = await response.json()
-      localStorage.setItem('auth_token', data.access_token)
       localStorage.setItem('user_org_id', String(data.org_id))
       localStorage.setItem('active_org_id', String(data.org_id))
       localStorage.setItem('user_org_name', data.org_name)
@@ -955,15 +954,13 @@ function cancelOrgPicker() {
 async function applyOrgSelection() {
   orgSwitching.value = true
   try {
-    const token = localStorage.getItem('auth_token')
     const response = await fetch('/api/auth/select-orgs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ org_ids: pendingOrgIds.value })
     })
     if (response.ok) {
       const data = await response.json()
-      localStorage.setItem('auth_token', data.access_token)
       localStorage.setItem('selected_org_ids', JSON.stringify(data.org_ids))
       localStorage.setItem('selected_org_names', JSON.stringify(data.org_names))
       selectedOrgIds.value = data.org_ids
@@ -987,10 +984,7 @@ async function applyOrgSelection() {
 
 const loadSubsidies = async () => {
   try {
-    const token = localStorage.getItem('auth_token')
-    const headers: Record<string, string> = {}
-    if (token) headers.Authorization = `Bearer ${token}`
-    const response = await fetch('/api/subsidies/', { headers })
+    const response = await fetch('/api/subsidies/')
     if (response.ok) {
       allSubsidies.value = await response.json()
       // Сбросить глобальный выбор, если субсидия стала недоступна (доступ отозван/

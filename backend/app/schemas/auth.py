@@ -12,7 +12,12 @@ class LoginRequest(BaseModel):
     password: str
 
 class Token(BaseModel):
-    access_token: str
+    # 2026-10-13: JWT переехал в httpOnly-cookie gala_session (см.
+    # app/auth/session_cookie.py) — тело ответа его больше не несёт (поле
+    # остаётся Optional ради старого закешированного фронта, который мог
+    # бы попытаться прочитать access_token и положить в localStorage;
+    # теперь получит None и переживёт это — см. docstring login()).
+    access_token: Optional[str] = None
     token_type: str = "bearer"
     role: str
     full_name: Optional[str] = None

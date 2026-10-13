@@ -80,6 +80,7 @@ import InstallPwaBanner from './components/InstallPwaBanner.vue'
 import FundingSourcesDialog from './components/subsidies/FundingSourcesDialog.vue'
 import CookieBanner from './components/legal/CookieBanner.vue'
 import { useAuthStore } from './stores/auth'
+import { isLoggedIn, setLoggedIn, clearLoggedIn } from './composables/useAuthFlag'
 
 const route = useRoute()
 const router = useRouter()
@@ -98,7 +99,7 @@ function onApiLoading(e: Event) {
 // организаций — пока AppBar не смонтирован, ничего из этого не стартует.
 const PUBLIC_ROUTES = ['/', '/login', '/register', '/verify-email', '/reset-password', '/consent-required']
 
-const isAuthenticated = computed(() => localStorage.getItem('auth_token') !== null)
+const isAuthenticated = computed(() => isLoggedIn())
 // Phase 30 PR4: /m/* routes используют собственный MobileLayout с bottom-tab-bar —
 // desktop AppBar не показывать
 const showAppBar = computed(() =>
@@ -116,21 +117,21 @@ onMounted(async () => {
   }
   initTableResize()
 
-  // Refresh role/profile from server on every app load
-  const token = localStorage.getItem('auth_token')
-  if (token && token.startsWith('eyJ')) {
+  // Refresh role/profile from server on every app load. Авторизация — через
+  // httpOnly-cookie gala_session (браузер шлёт сам, same-origin), признак
+  // «есть смысл спрашивать» — только useAuthFlag (сам токен фронту не виден).
+  if (isLoggedIn()) {
     try {
-      const res = await fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const res = await fetch('/api/auth/me')
       if (res.ok) {
         const user = await res.json()
+        setLoggedIn()
         localStorage.setItem('user_role', user.role || '')
         if (user.full_name) localStorage.setItem('user_name', user.full_name)
         if (user.id) localStorage.setItem('user_id', String(user.id))
         localStorage.setItem('can_publish', user.can_publish ? 'true' : 'false')
       } else if (res.status === 401) {
-        localStorage.removeItem('auth_token')
+        clearLoggedIn()
         localStorage.removeItem('user_role')
         localStorage.removeItem('user_name')
         window.location.href = '/'

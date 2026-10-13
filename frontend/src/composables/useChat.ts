@@ -1,4 +1,5 @@
 import { ref, onMounted, onUnmounted } from 'vue'
+import { isLoggedIn } from '@/composables/useAuthFlag'
 
 // Global state — shared across components via module-level refs
 export const totalUnread = ref(0)
@@ -44,12 +45,9 @@ function updateAppBadge(count: number) {
 async function pollBadgeCount() {
   // Fallback: fetch unread count via REST when WS is down
   if (wsConnected.value) return
-  const token = localStorage.getItem('auth_token')
-  if (!token) return
+  if (!isLoggedIn()) return
   try {
-    const res = await fetch('/api/tasks/badges', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const res = await fetch('/api/tasks/badges')
     if (res.ok) {
       const data = await res.json()
       const count = data.chat_unread ?? 0
@@ -67,11 +65,10 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 }
 
 async function sendSubToBackend(sub: globalThis.PushSubscription) {
-  const token = localStorage.getItem('auth_token') ?? ''
   const json = sub.toJSON()
   await fetch('/api/push/subscribe', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
   }).catch(() => {})
 }
@@ -105,10 +102,7 @@ export async function subscribeToPush(): Promise<PushSubscribeResult> {
       if (perm !== 'granted') return 'denied'
     }
     // Get VAPID public key from backend
-    const token = localStorage.getItem('auth_token') ?? ''
-    const res = await fetch('/api/push/vapid-key', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const res = await fetch('/api/push/vapid-key')
     if (!res.ok) return 'error'
     const { key } = await res.json()
     if (!key) return 'error'
@@ -163,15 +157,17 @@ function connect() {
   // Don't create duplicate connections
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
 
-  const token = localStorage.getItem('auth_token')
-  if (!token) {
-    // Token not yet available — retry in 2s (login may be in progress)
+  if (!isLoggedIn()) {
+    // Не вошли (или gala_session ещё не проставилась — логин в процессе) —
+    // повторим через 2с. Токен в URL больше не нужен: браузер сам шлёт
+    // httpOnly-cookie gala_session при открытии WS на свой же домен
+    // (app/routers/chat.py:chat_ws читает её, ?token= оставлен запасным).
     reconnectTimer = setTimeout(connect, 2000)
     return
   }
 
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${protocol}://${location.host}/api/ws/chat?token=${token}`)
+  ws = new WebSocket(`${protocol}://${location.host}/api/ws/chat`)
 
   ws.onopen = () => {
     wsConnected.value = true

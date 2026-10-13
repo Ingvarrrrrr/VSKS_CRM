@@ -15,9 +15,8 @@ export function useStaffUserImport(options: {
   })
 
   async function downloadUserTemplate() {
-    const token = localStorage.getItem('auth_token')
     const resp = await fetch('/api/users/import/template', {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     const blob = await resp.blob()
     const url = URL.createObjectURL(blob)
@@ -33,12 +32,11 @@ export function useStaffUserImport(options: {
     userImportDialog.loading = true
     userImportDialog.result = null
     try {
-      const token = localStorage.getItem('auth_token')
       const fd = new FormData()
       fd.append('file', userImportDialog.file)
       const resp = await fetch('/api/users/import/excel', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
         body: fd,
       })
       if (!resp.ok) {

@@ -131,10 +131,9 @@ async function downloadFile(att: RepairAttachment) {
     // Бинарный ответ — apiFetch тут не годится, ручной fetch с Bearer-токеном
     // (тот же паттерн, что и в VehiclePhotosTab.vue / VehicleAttachmentSlot.vue).
     // Обычный <a href> не может передать заголовок Authorization → раньше 401.
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/repair-attachments/${att.id}/download`, {
       credentials: 'include',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const blob = await res.blob()

@@ -34,13 +34,12 @@ const DEFAULT_EXPORT_KEYS = [
 const dialog = ref<InstanceType<typeof ExportColumnsDialog> | null>(null)
 
 async function doExport(selectedKeys: string[]) {
-  const token = localStorage.getItem('auth_token')
   const params = new URLSearchParams()
   if (props.filters.subsidyId) params.set('subsidy_id', String(props.filters.subsidyId))
   if (props.filters.status) params.set('status', props.filters.status)
   params.set('columns', selectedKeys.join(','))
   const response = await fetch(`/api/purchases/export/excel?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {},
   })
   if (!response.ok) {
     let msg = `Ошибка экспорта (HTTP ${response.status})`

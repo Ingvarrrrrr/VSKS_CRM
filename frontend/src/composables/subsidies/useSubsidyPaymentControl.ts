@@ -268,9 +268,8 @@ export function useSubsidyPaymentControl() {
   async function exportXlsx(subsidyId: number): Promise<void> {
     exporting.value = true
     try {
-      const token = localStorage.getItem('auth_token') || ''
       const res = await fetch(`/api/subsidies/${subsidyId}/payment-control/export.xlsx`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       })
       if (!res.ok) {
         let msg = `HTTP ${res.status}`

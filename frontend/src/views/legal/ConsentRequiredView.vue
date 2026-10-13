@@ -66,6 +66,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
+import { clearLoggedIn } from '@/composables/useAuthFlag'
 import {
   consentGateRequired,
   ensureConsentGateLoaded,
@@ -145,7 +146,8 @@ async function submit() {
 
 function logout() {
   resetConsentGate()
-  localStorage.removeItem('auth_token')
+  fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+  clearLoggedIn()
   localStorage.removeItem('user_role')
   window.location.href = '/login'
 }

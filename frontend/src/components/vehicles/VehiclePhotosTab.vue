@@ -236,10 +236,9 @@ async function loadBlobUrl(photo: PhotoMeta) {
   try {
     // Бинарный ответ (blob) — apiFetch тут не годится (он парсит JSON/текст),
     // поэтому ручной fetch с Bearer-токеном, как в VehicleDetailView.loadHeroPhoto().
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/vehicle-attachments/${photo.id}/download`, {
       credentials: 'include',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     })
     if (!res.ok) return
     const blob = await res.blob()

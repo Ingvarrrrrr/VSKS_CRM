@@ -221,8 +221,9 @@ function formatTime(dt: string) {
 }
 
 function fileUrl(msgId: number) {
-  const token = localStorage.getItem('auth_token') ?? ''
-  return `/api/chat/rooms/${roomId.value}/files/${msgId}?token=${encodeURIComponent(token)}`
+  // Токен в URL убран (2026-10-13), см. chatFormat.ts:fileUrl — браузер шлёт
+  // httpOnly-cookie gala_session сам.
+  return `/api/chat/rooms/${roomId.value}/files/${msgId}`
 }
 
 function renderMentions(text: string) {
@@ -273,10 +274,8 @@ async function sendMessage() {
   try {
     const form = new FormData()
     form.append('content', text)
-    const token = localStorage.getItem('auth_token') ?? ''
     const res = await fetch(`/api/chat/rooms/${roomId.value}/messages`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
       body: form,
     })
     if (res.ok) {
@@ -358,10 +357,9 @@ onMounted(async () => {
       name: roomTitle,
       participant_ids: props.participantIds ?? [],
     }
-    const token = localStorage.getItem('auth_token') ?? ''
     const res = await fetch('/api/chat/rooms/for-entity', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error('Не удалось загрузить чат')

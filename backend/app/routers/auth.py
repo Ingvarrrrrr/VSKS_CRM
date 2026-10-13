@@ -1,23 +1,29 @@
 import uuid
+import jwt as jwt_module
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from fastapi.responses import JSONResponse
 
-from app.auth.jwt import verify_password, create_access_token, get_current_user, hash_password
+from app.auth.jwt import (
+    verify_password, create_access_token, get_current_user, hash_password,
+    _is_well_formed_jwt, oauth2_scheme,
+)
 from app.auth.rate_limit import (
     rate_limit_response, record_failed_login, reset_login_rate_limit, resolve_client_ip,
 )
 from app.auth.account_lockout import lock_remaining_minutes, record_failed_password, reset_login_lockout
 from app.auth.token_version import bump_token_version
+from app.auth.session_cookie import set_session_cookie, clear_session_cookie
 from app.schemas.schemas import LoginRequest, Token, UserOut
 from app.utils.email import send_password_reset_email
 from app.services.password_policy import validate_new_password
@@ -26,7 +32,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=Token)
-async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(req: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     # 10 попыток/60с на IP (backend/app/auth/rate_limit.py) — раньше логин
     # был открыт для неограниченного перебора пароля. JSONResponse (а не
     # HTTPException) — иначе общий exception_handler (app/errors.py) съедает
@@ -124,7 +130,11 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
             jwt_payload["org_ids"] = contour_ids
     token = create_access_token(jwt_payload)
     reset_login_rate_limit(ip)
-    return Token(access_token=token, role=user.role, full_name=user.full_name,
+    set_session_cookie(response, token, request)
+    # access_token НЕ в теле ответа с 2026-10-13 — токен живёт только в
+    # httpOnly-cookie gala_session (см. set_session_cookie выше). Поле в
+    # Token осталось Optional для обратной совместимости схемы.
+    return Token(role=user.role, full_name=user.full_name,
                  org_id=effective_org_id, org_name=org_name, user_id=user.id,
                  can_publish=user.can_publish or False)
 
@@ -247,6 +257,8 @@ class SelectOrgsRequest(BaseModel):
 @router.post("/switch-org")
 async def switch_org(
     req: SwitchOrgRequest,
+    request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -281,8 +293,8 @@ async def switch_org(
         "org_id": target_org_id, "org_ids": [target_org_id],
         "tv": user.token_version or 0,
     })
+    set_session_cookie(response, token, request)
     return {
-        "access_token": token,
         "org_id": target_org_id,
         "org_name": org.name,
     }
@@ -291,6 +303,8 @@ async def switch_org(
 @router.post("/select-orgs")
 async def select_orgs(
     req: SelectOrgsRequest,
+    request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -316,8 +330,40 @@ async def select_orgs(
         "org_ids": req.org_ids,
         "tv": user.token_version or 0,
     })
+    set_session_cookie(response, token, request)
     return {
-        "access_token": token,
         "org_ids": req.org_ids,
         "org_names": org_names,
     }
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    """Снимает сессионную cookie. 200 даже без авторизации — выход должен
+    работать, даже если cookie уже истекла/отсутствует."""
+    clear_session_cookie(response)
+    return {"ok": True}
+
+
+@router.post("/session-from-token")
+async def session_from_token(
+    request: Request,
+    response: Response,
+    bearer_token: Optional[str] = Depends(oauth2_scheme),
+):
+    """Плавный переход на cookie-сессию (2026-10-13): уже вошедший
+    пользователь хранит JWT в localStorage('auth_token') со старой версии
+    фронта. Фронт на старте один раз шлёт этот токен сюда Bearer'ом — мы
+    ставим cookie и он больше не выходит из системы. Токен не переиздаётся
+    (ставим ровно тот, что прислали) — если он просрочен/невалиден, здесь же
+    (ниже) вернём 401, а фронт должен расценить это как «не вошёл» и удалить
+    старый ключ.
+    """
+    if not _is_well_formed_jwt(bearer_token):
+        raise HTTPException(status_code=401, detail="Токен недействителен")
+    try:
+        jwt_module.decode(bearer_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except jwt_module.PyJWTError:
+        raise HTTPException(status_code=401, detail="Токен недействителен")
+    set_session_cookie(response, bearer_token, request)
+    return {"ok": True}

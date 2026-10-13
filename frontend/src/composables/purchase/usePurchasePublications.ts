@@ -100,9 +100,8 @@ export function usePurchasePublications(
     _okpd2SearchTimer = setTimeout(async () => {
       okpd2Loading.value = true
       try {
-        const token = localStorage.getItem('auth_token')
         const res = await fetch(`/api/okpd2?q=${encodeURIComponent(q)}&limit=50`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {},
         })
         if (res.ok) {
           okpd2Error.value = ''

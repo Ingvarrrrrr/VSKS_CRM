@@ -4,6 +4,7 @@ import LandingView from '../views/LandingView.vue'
 import { useAuthStore } from '../stores/auth'
 import { useToast } from '../composables/useToast'
 import { consentGateRequired, ensureConsentGateLoaded } from '../composables/useConsentGate'
+import { isLoggedIn } from '../composables/useAuthFlag'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -576,8 +577,7 @@ const PUBLIC_PATHS = ['/', '/login', '/register', '/verify-email', '/reset-passw
 
 // Навигационные хуки для проверки авторизации + tab_key permission gate (Phase 17)
 router.beforeEach(async (to, _, next) => {
-  const token = localStorage.getItem('auth_token')
-  const isAuthenticated = token !== null && token.startsWith('eyJ')
+  const isAuthenticated = isLoggedIn()
   const role = localStorage.getItem('user_role')
 
   // Авторизован + лендинг → redirect по роли

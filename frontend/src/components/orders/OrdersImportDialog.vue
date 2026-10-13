@@ -433,14 +433,13 @@ const downloadTemplate = async (subsidyId?: number | null) => {
     props.showSnack('Сначала выберите субсидию: без неё в шаблоне не будет связанных списков направлений расходов (ФЭО)', 'error')
     return
   }
-  const token = localStorage.getItem('auth_token')
   const url = state.format === 'feo'
     ? '/api/purchases/import/feo-format/template'
     : state.subsidyId
       ? `/api/purchases/import/template?subsidy_id=${state.subsidyId}`
       : '/api/purchases/import/template'
   const filename = state.format === 'feo' ? 'Шаблон_импорта_закупок_формат_ФЭО.xlsx' : 'Шаблон_импорта_закупок.xlsx'
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  const response = await fetch(url, { headers: {} })
   if (!response.ok) {
     let detail = 'Не удалось скачать шаблон'
     try {
@@ -465,10 +464,9 @@ const doPreview = async () => {
   try {
     const formData = new FormData()
     formData.append('file', state.file)
-    const token = localStorage.getItem('auth_token')
     const response = await fetch(`/api/purchases/import/preview?subsidy_id=${state.subsidyId}`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
       body: formData,
     })
     if (!response.ok) {
@@ -493,7 +491,6 @@ const doImport = async () => {
   try {
     const formData = new FormData()
     formData.append('file', state.file)
-    const token = localStorage.getItem('auth_token')
     let endpoint: string
     if (state.format === 'feo') {
       const qs = state.assignedUserId ? `?assigned_user_id=${state.assignedUserId}` : ''
@@ -504,7 +501,7 @@ const doImport = async () => {
     }
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
       body: formData,
     })
     if (!response.ok) {

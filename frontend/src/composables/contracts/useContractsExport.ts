@@ -63,7 +63,6 @@ export function useContractsExport(options: {
       const rowLinks: Map<string, string>[] = []
 
       const contractFiles = new Map<number, CatFiles>()
-      const token = localStorage.getItem('auth_token')
       const baseUrl = window.location.origin
 
       // Collect and download all files, categorized
@@ -96,7 +95,7 @@ export function useContractsExport(options: {
 
                 try {
                   const resp = await fetch(`${baseUrl}/api/purchases/${p.id}/files/${f.id}/download`, {
-                    headers: { Authorization: `Bearer ${token}` }
+                    headers: {}
                   })
                   if (!resp.ok) continue
                   const blob = await resp.blob()

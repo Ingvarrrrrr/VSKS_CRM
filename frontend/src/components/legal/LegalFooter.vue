@@ -27,6 +27,9 @@
           <li v-for="d in docs" :key="d.slug">
             <router-link :to="d.route">{{ d.title }}</router-link>
           </li>
+          <li>
+            <button type="button" class="legal-footer-link-btn" @click="reset">Настройки cookie</button>
+          </li>
         </ul>
       </div>
 
@@ -40,10 +43,12 @@
 
 <script setup lang="ts">
 import { LEGAL_DOC_LIST, OPERATOR } from '@/legal/documents.generated'
+import { useCookieConsent } from '@/composables/useCookieConsent'
 
 const operator = OPERATOR
 const docs = LEGAL_DOC_LIST
 const year = new Date().getFullYear()
+const { reset } = useCookieConsent()
 </script>
 
 <style scoped>
@@ -113,6 +118,21 @@ const year = new Date().getFullYear()
   text-decoration: none;
 }
 .legal-footer-links a:hover {
+  color: rgb(var(--v-theme-primary));
+  text-decoration: underline;
+}
+.legal-footer-link-btn {
+  font-size: 13px;
+  color: var(--text-2, rgba(0, 0, 0, 0.6));
+  text-decoration: none;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.legal-footer-link-btn:hover {
   color: rgb(var(--v-theme-primary));
   text-decoration: underline;
 }

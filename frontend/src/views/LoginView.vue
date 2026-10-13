@@ -92,6 +92,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { LEGAL_DOC_LIST } from '@/legal/documents.generated'
+import { isLoggedIn, setLoggedIn } from '@/composables/useAuthFlag'
 
 const router = useRouter()
 const route = useRoute()
@@ -129,7 +130,10 @@ const login = async () => {
       throw new Error(errorData.message || errorData.detail || `Ошибка ${response.status}`)
     }
     const data = await response.json()
-    localStorage.setItem('auth_token', data.access_token)
+    // access_token больше не в теле ответа (2026-10-13) — сервер поставил
+    // httpOnly-cookie gala_session сам (Set-Cookie на этот же response).
+    // Признак «вошёл» для фронта — только useAuthFlag.
+    setLoggedIn()
     localStorage.setItem('user_role', data.role)
     localStorage.setItem('user_name', data.full_name || username.value)
     if (data.user_id) localStorage.setItem('user_id', String(data.user_id))
@@ -179,8 +183,7 @@ const sendReset = async () => {
 
 onMounted(() => {
   if (route.query.verified === '1') toast.success('Email подтверждён — можно войти!')
-  const savedToken = localStorage.getItem('auth_token')
-  if (savedToken && savedToken.startsWith('eyJ')) router.push('/')
+  if (isLoggedIn()) router.push('/')
 })
 </script>
 

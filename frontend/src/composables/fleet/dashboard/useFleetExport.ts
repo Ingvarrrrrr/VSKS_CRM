@@ -5,7 +5,6 @@ import type { Router } from 'vue-router'
 
 export function useFleetExport(activeFilter: Ref<string>, selectedTypes: Ref<string[]>, router: Router) {
   async function onExport() {
-    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || ''
     const params = new URLSearchParams()
     if (activeFilter.value && activeFilter.value !== 'all' && activeFilter.value !== 'docs_expiring') {
       params.set('state', activeFilter.value)
@@ -16,7 +15,7 @@ export function useFleetExport(activeFilter: Ref<string>, selectedTypes: Ref<str
     }
     const url = `/api/vehicles/export/excel${params.toString() ? '?' + params.toString() : ''}`
     try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      const res = await fetch(url, { headers: {} })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
       const dlUrl = URL.createObjectURL(blob)

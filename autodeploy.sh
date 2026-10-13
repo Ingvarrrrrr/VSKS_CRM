@@ -496,6 +496,12 @@ else
             # пересоздаются, только удаляются настоящие орфаны.
             docker compose up -d --no-recreate --remove-orphans >> "$LOG" 2>&1
             docker image prune -f >> "$LOG" 2>&1
+            # Старые GHCR-теги фронта (ghcr.io/.../vsks-crm-frontend:<sha>)
+            # остаются ПОМЕЧЕННЫМИ после каждого pull — `docker image prune`
+            # выше чистит только безымянные образы и их не трогает. За 11
+            # дней так накопилось 47 версий по ~214 МБ, диск дошёл до 95%.
+            # См. scripts/prune_old_images.sh — отдельный файл (ПРАВИЛО №5).
+            bash scripts/prune_old_images.sh "${GHCR_FRONTEND_IMAGE%:*}" 3 "$FRONTEND_LOCAL_IMAGE" >> "$LOG" 2>&1
         fi
     fi
 fi

@@ -488,9 +488,8 @@ async function downloadTemplate() {
   loadingTemplate.value = true
   templateError.value = ''
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch('/api/vehicles/import-template', {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     })
     if (!res.ok) {
       let detail = `HTTP ${res.status}`

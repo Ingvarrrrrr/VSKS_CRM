@@ -517,10 +517,9 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
       if (fullProductPhotoFile.value) {
         const fd = new FormData()
         fd.append('file', fullProductPhotoFile.value)
-        const token = localStorage.getItem('auth_token')
         const res = await fetch(`/api/products/${saved.id}/photo`, {
           method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: {},
           body: fd,
         })
         if (res.ok) Object.assign(saved, await res.json())

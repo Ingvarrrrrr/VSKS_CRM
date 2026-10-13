@@ -305,7 +305,10 @@ async def list_subsidies(
     # Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
     # потолку субсидии» — считаем батчем на список, не по одной (см. docstring
     # calculate_ceiling_forecasts_bulk в app/services/feo_plan.py).
-    ceiling_forecasts = await calculate_ceiling_forecasts_bulk(db, sid_list)
+    # budgets=budgets — уже посчитан строкой выше, calculate_ceiling_forecasts_bulk
+    # больше не пересчитывает его заново на тот же sid_list (ускорение
+    # 2026-10-12, координатор, тот же приём, что dashboard_charts.py).
+    ceiling_forecasts = await calculate_ceiling_forecasts_bulk(db, sid_list, budgets=budgets)
     contractor_ids = {s.contractor_id for s in subsidies if s.contractor_id}
     contractors = {}
     if contractor_ids:

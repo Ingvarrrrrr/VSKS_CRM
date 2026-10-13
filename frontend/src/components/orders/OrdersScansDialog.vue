@@ -187,11 +187,10 @@ const doScanPreview = async () => {
   if (state.uploadMode === 'folder' && !state.files.length) return
   state.loading = true
   try {
-    const token = localStorage.getItem('auth_token')
     const fd = buildScansFormData()
     const response = await fetch(`/api/purchases/files/bulk-upload?subsidy_id=${state.subsidyId}&dry_run=true`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
       body: fd,
     })
     if (!response.ok) {
@@ -212,11 +211,10 @@ const doScanUpload = async () => {
   if (!state.subsidyId) return
   state.loading = true
   try {
-    const token = localStorage.getItem('auth_token')
     const fd = buildScansFormData()
     const response = await fetch(`/api/purchases/files/bulk-upload?subsidy_id=${state.subsidyId}&dry_run=false`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
       body: fd,
     })
     if (!response.ok) {

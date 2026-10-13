@@ -65,8 +65,10 @@ export function isImage(msg: Message): boolean {
 }
 
 export function fileUrl(roomId: number | undefined, msgId: number): string {
-  const token = localStorage.getItem('auth_token') ?? ''
-  return `/api/chat/rooms/${roomId}/files/${msgId}?token=${encodeURIComponent(token)}`
+  // Токен в URL убран (2026-10-13) — оседал в логах nginx; браузер сам шлёт
+  // httpOnly-cookie gala_session на same-origin <img>/<a> (app/routers/chat.py
+  // download_file принимает cookie, ?token= оставлен там запасным путём).
+  return `/api/chat/rooms/${roomId}/files/${msgId}`
 }
 
 export function highlightSearch(text: string, query: string): string {

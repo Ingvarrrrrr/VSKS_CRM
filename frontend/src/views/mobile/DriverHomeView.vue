@@ -478,9 +478,8 @@ function openOdometerDialog() {
 
 async function loadVehicles() {
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch('/api/vehicles/?limit=50', {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     if (!res.ok) return
     const data = await res.json()
@@ -497,9 +496,8 @@ async function loadVehicles() {
 async function loadVehicle(id: number) {
   loadingVehicle.value = true
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/vehicles/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     if (!res.ok) return
     vehicle.value = await res.json()
@@ -514,13 +512,12 @@ async function loadVehicle(id: number) {
 async function loadFeed(vehicleId: number) {
   loadingFeed.value = true
   try {
-    const token = localStorage.getItem('auth_token')
     const [clRes, incRes] = await Promise.all([
       fetch(`/api/checklists/?vehicle_id=${vehicleId}&limit=5`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       }),
       fetch(`/api/incidents/?vehicle_id=${vehicleId}&limit=5`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       }),
     ])
 
@@ -575,9 +572,8 @@ function onVehicleSelect(id: number) {
 async function loadActiveWaybill() {
   loadingWaybill.value = true
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch('/api/trips/?limit=10&ordering=-id', {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     if (!res.ok) return
     const data = await res.json()
@@ -607,12 +603,10 @@ async function saveOdometer() {
   }
   savingOdometer.value = true
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/vehicles/${vehicle.value.id}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ current_odometer_km: newOdometer.value }),
     })

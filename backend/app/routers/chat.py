@@ -16,7 +16,7 @@ from typing import Optional, List
 
 from PIL import Image
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 import jwt
 from pydantic import BaseModel, ConfigDict
@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user
+from app.auth.session_cookie import SESSION_COOKIE_NAME
 from app.chat_manager import manager
 from app.config import settings
 from app.database import get_db, async_session
@@ -865,12 +866,20 @@ async def search_messages(
 async def download_file(
     room_id: int,
     msg_id: int,
+    request: Request,
     token: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a file attachment from a chat message."""
-    # Authenticate via query param token (needed for browser img/download links
-    # that cannot send Authorization headers).
+    """Download a file attachment from a chat message.
+
+    2026-10-13: JWT переехал в httpOnly-cookie gala_session — браузер шлёт
+    её сам на same-origin <img>/<a> без всякого ?token= в URL (который к
+    тому же оседал в логах nginx). ?token= остаётся ЗАПАСНЫМ путём (на
+    случай встраивания из контекста без cookie), cookie — основной.
+    """
+    token = request.cookies.get(SESSION_COOKIE_NAME) or token
+    # Authenticate via cookie or query param token (needed for browser
+    # img/download links that cannot send Authorization headers).
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
@@ -909,9 +918,10 @@ async def download_file(
 @ws_router.websocket("/api/ws/chat")
 async def chat_ws(
     ws: WebSocket,
-    token: str = Query(...),
+    token: str = Query(None),
 ):
-    """WebSocket endpoint authenticated via JWT query param ?token=...
+    """WebSocket endpoint authenticated via cookie gala_session (основной
+    путь с 2026-10-13) или запасной ?token=... (встраивание без cookie).
 
     Phase 29.2 — fix QueuePool exhaustion: НЕ берём db через Depends(get_db).
     WebSocket-подключение живёт часами/днями, пока вкладка чата открыта.
@@ -922,6 +932,10 @@ async def chat_ws(
     возвращается в pool. Все CRUD-операции чата идут через REST endpoints —
     у каждого свой short-lived session через Depends(get_db).
     """
+    token = ws.cookies.get(SESSION_COOKIE_NAME) or token
+    if not token:
+        await ws.close(code=4001)
+        return
     # 1. Decode JWT
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])

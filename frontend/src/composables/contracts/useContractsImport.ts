@@ -68,7 +68,7 @@ export function useContractsImport(options: {
       fd.append('file', importDialog.file)
       const res = await fetch('/api/contracts/import/preview', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+        headers: {},
         body: fd,
       })
       if (!res.ok) {
@@ -121,7 +121,7 @@ export function useContractsImport(options: {
       if (importDialog.subsidyId) params.set('subsidy_id', String(importDialog.subsidyId))
       const res = await fetch(`/api/contracts/import/mapped?${params}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+        headers: {},
         body: fd,
       })
       if (!res.ok) {

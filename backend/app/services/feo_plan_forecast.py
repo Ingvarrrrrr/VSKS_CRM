@@ -157,17 +157,27 @@ async def _monthly_committed_totals_bulk(db: AsyncSession, subsidy_ids: list[int
     return result
 
 
-async def calculate_ceiling_forecasts_bulk(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
+async def calculate_ceiling_forecasts_bulk(
+    db: AsyncSession, subsidy_ids: list[int], *, budgets: Optional[dict] = None,
+) -> dict[int, dict]:
     """Потолок субсидии + «сумма заказанного» + признаки приближения/превышения,
     одним батчем для набора субсидий (см. docstring calculate_ceiling_forecast
     для полной формулы и полей результата). Используется списком субсидий
     (list_subsidies) и дашбордом («субсидии у потолка»).
-    """
+
+    `budgets` — опционально уже посчитанный calculate_budgets_bulk(db,
+    subsidy_ids) ЭТОГО ЖЕ вызова (ускорение 2026-10-12, координатор: GET
+    /dashboard/charts и list_subsidies звали calculate_budgets_bulk ДВАЖДЫ за
+    один запрос — здесь и прямо в вызывающем коде, та же FeoCategory+
+    FeoPlannedItem выборка по всем видимым субсидиям пересчитывалась второй
+    раз. Правило №6 — не вторая формула, просто переданное готовое значение;
+    без аргумента поведение прежнее (считает сама)."""
     if not subsidy_ids:
         return {}
-    from app.routers.subsidies import calculate_budgets_bulk  # local: avoid router import cycle
-
-    ceilings = await calculate_budgets_bulk(db, subsidy_ids)
+    ceilings = budgets
+    if ceilings is None:
+        from app.routers.subsidies import calculate_budgets_bulk  # local: avoid router import cycle
+        ceilings = await calculate_budgets_bulk(db, subsidy_ids)
     one_off = await _one_off_committed_totals_bulk(db, subsidy_ids)
     monthly = await _monthly_committed_totals_bulk(db, subsidy_ids)
 

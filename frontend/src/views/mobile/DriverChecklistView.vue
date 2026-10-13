@@ -349,9 +349,8 @@ async function loadVehicle() {
   const id = localStorage.getItem('driver_selected_vehicle_id')
   if (!id) return
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/vehicles/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     if (res.ok) {
       vehicle.value = await res.json()
@@ -388,7 +387,6 @@ async function submitChecklist() {
 
   submitting.value = true
   try {
-    const token = localStorage.getItem('auth_token')
 
     // Build items array (основные + extra-поля для резины и радиостанции)
     const itemsArr = checkItems.map((ci) => ({
@@ -413,7 +411,6 @@ async function submitChecklist() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(body),
     })

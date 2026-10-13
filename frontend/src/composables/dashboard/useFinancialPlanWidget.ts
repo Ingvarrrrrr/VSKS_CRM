@@ -122,9 +122,8 @@ export function useFinancialPlanWidget(selectedSubsidyIds: Ref<number[]>, theme:
 
   async function exportFinplanXlsx() {
     const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
-    const token = localStorage.getItem('auth_token')
     const url = `/api/dashboard/financial-plan/export.xlsx?granularity=${finplanGranularity.value}${sidParam}&scope=dashboard`
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    const res = await fetch(url, { headers: {} })
     if (!res.ok) return
     const blob = await res.blob()
     const link = document.createElement('a')
@@ -137,8 +136,7 @@ export function useFinancialPlanWidget(selectedSubsidyIds: Ref<number[]>, theme:
   async function exportFinplanDrilldownXlsx() {
     const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
     const params = `period=${encodeURIComponent(finplanDrilldown.value.period)}&category=${finplanDrilldown.value.category}&granularity=${finplanGranularity.value}${sidParam}&scope=dashboard`
-    const token = localStorage.getItem('auth_token')
-    const res = await fetch(`/api/dashboard/financial-plan/details/export.xlsx?${params}`, { headers: { Authorization: `Bearer ${token}` } })
+    const res = await fetch(`/api/dashboard/financial-plan/details/export.xlsx?${params}`, { headers: {} })
     if (!res.ok) return
     const blob = await res.blob()
     const link = document.createElement('a')

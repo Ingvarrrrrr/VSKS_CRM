@@ -140,10 +140,9 @@ async function downloadTz() {
   if (!props.wishId) return
   downloading.value = true
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(
       `/api/wishes/${props.wishId}/documents/tech_spec?tz_override_mode=${descriptionMode.value}`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: {} }
     )
     if (!res.ok) {
       const err = await res.json().catch(() => null)

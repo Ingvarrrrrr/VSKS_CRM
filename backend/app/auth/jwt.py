@@ -2,13 +2,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 import jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.auth.session_cookie import get_session_token
 
 # Role constants
 ROLES = ("superadmin", "account_owner", "admin", "org_admin", "manager", "employee")
@@ -18,7 +19,25 @@ OWNER_ROLES = ("superadmin", "account_owner")
 ALL_ROLES = ROLES
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+# auto_error=False: заголовок Authorization — опциональный путь (API-клиенты,
+# тесты); основной путь — httpOnly-cookie gala_session (см. ниже). Если бы
+# OAuth2PasswordBearer сам кидал 401 на отсутствующий заголовок, cookie-путь
+# был бы недостижим.
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+
+def _is_well_formed_jwt(value: Optional[str]) -> bool:
+    """Три непустых сегмента, разделённых точкой. Отфильтровывает мусор
+    старого закешированного фронта — `Authorization: Bearer null` /
+    `Bearer undefined` после перехода на cookie (localStorage.getItem
+    вернул None, но шаблонная строка уже превратила его в текст)."""
+    if not value:
+        return False
+    if value.strip().lower() in ("null", "undefined"):
+        return False
+    parts = value.split(".")
+    return len(parts) == 3 and all(parts)
+
 
 def verify_password(plain, hashed):
     return pwd_context.verify(plain, hashed)
@@ -32,8 +51,20 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+async def get_current_user(
+    request: Request,
+    bearer_token: Optional[str] = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+):
+    """Источник JWT — Правило №6, одно место решает, откуда брать токен:
+    валидный по ФОРМЕ Bearer-заголовок (API-клиенты, тесты, Swagger) > иначе
+    httpOnly-cookie gala_session (браузер, основной путь с 2026-10-13).
+    Подпись/срок/token_version проверяются одинаково независимо от источника.
+    """
     cred_exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    token = bearer_token if _is_well_formed_jwt(bearer_token) else get_session_token(request)
+    if not token:
+        raise cred_exc
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         username: str = payload.get("sub")

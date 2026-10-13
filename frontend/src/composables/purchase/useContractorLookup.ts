@@ -61,7 +61,7 @@ export function useContractorLookup(
     try {
       const fd = new FormData()
       fd.append('file', addContractorFile.value)
-      const res = await fetch('/api/contractors/import/preview', { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` }, body: fd })
+      const res = await fetch('/api/contractors/import/preview', { method: 'POST', headers: {}, body: fd })
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
       // Take first data row and try to fill form

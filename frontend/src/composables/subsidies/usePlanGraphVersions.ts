@@ -81,9 +81,8 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
   async function downloadVersionExcel(vid: number) {
     if (!ctx?.selectedId.value) return
     try {
-      const token = localStorage.getItem('auth_token')
       const res = await fetch(`/api/subsidies/${ctx.selectedId.value}/plan-graph/versions/${vid}/export`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
       })
       if (!res.ok) throw new Error('Ошибка экспорта')
       const blob = await res.blob()
@@ -130,9 +129,8 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
   // случай «выбрана только текущая, без сохранённых редакций».
   async function exportFeoToExcel() {
     if (!ctx?.selectedId.value) return
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/feo-categories/export?subsidy_id=${ctx.selectedId.value}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     })
     if (!res.ok) { showSnack('Ошибка экспорта', 'error'); return }
     const blob = await res.blob()
@@ -171,10 +169,9 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
     // multi: several selected, or selected+current
     exportRunning.value = true
     try {
-      const token = localStorage.getItem('auth_token')
       const url = `/api/subsidies/${ctx.selectedId.value}/plan-graph/versions/export-multi.xlsx?ids=${sel.join(',')}&include_current=${inc}`
       const res = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
       })
       if (!res.ok) {
         let errMsg = 'Ошибка выгрузки'
@@ -204,10 +201,9 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
     if (!ctx?.selectedId.value || compareSelected.value.length !== 2) return
     compareLoading.value = true
     try {
-      const token = localStorage.getItem('auth_token')
       const [v1, v2] = [...compareSelected.value].sort((a, b) => a - b)
       const res = await fetch(`/api/subsidies/${ctx.selectedId.value}/plan-graph/versions/compare.xlsx?v1=${v1}&v2=${v2}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
       })
       if (!res.ok) {
         let errMsg = 'Ошибка сравнения'

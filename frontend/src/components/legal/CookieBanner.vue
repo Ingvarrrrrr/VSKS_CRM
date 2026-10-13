@@ -1,44 +1,40 @@
 <template>
-  <div v-if="visible" class="cookie-banner" role="dialog" aria-label="Уведомление об использовании cookie и аналогичных технологий хранения данных браузера">
+  <div v-if="needsChoice" class="cookie-banner" role="dialog" aria-label="Выбор cookie и аналогичных технологий хранения данных браузера">
     <div class="cookie-banner-row">
       <span class="cookie-banner-text">
-        Мы используем cookie и аналогичные технологии хранения в браузере только для входа и настроек интерфейса. Аналитики и рекламы нет.
+        Мы используем файлы cookie и аналогичные технологии хранения в браузере. Необходимые —
+        для входа и настроек интерфейса — работают всегда. Дополнительных (аналитика, реклама)
+        сейчас нет; если появятся, они включатся только после «Принять».
         <router-link to="/legal/cookies" target="_blank" class="cookie-banner-link">Подробнее</router-link>
       </span>
-      <v-btn size="small" color="primary" variant="flat" @click="accept">Понятно</v-btn>
+      <div class="cookie-banner-actions">
+        <v-btn size="small" color="primary" variant="tonal" class="cookie-banner-btn" @click="acceptAll">Принять</v-btn>
+        <v-btn size="small" color="primary" variant="tonal" class="cookie-banner-btn" @click="acceptNecessary">Отклонить</v-btn>
+      </div>
     </div>
   </div>
+  <v-snackbar v-model="savedNoticeVisible" :timeout="4000" location="bottom">
+    Выбор сохранён. Изменить можно в «Настройки cookie» внизу страницы.
+  </v-snackbar>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
+import { useCookieConsent } from '@/composables/useCookieConsent'
 
-const STORAGE_KEY = 'gala_cookie_consent_accepted'
+const { needsChoice, choose } = useCookieConsent()
 
-const visible = ref(false)
+const savedNoticeVisible = ref(false)
 
-function readAccepted(): boolean {
-  try {
-    return localStorage.getItem(STORAGE_KEY) === '1'
-  } catch {
-    // localStorage недоступен (приватный режим/заблокированные cookies) —
-    // не блокируем страницу баннером, который пользователь не сможет закрыть.
-    return true
-  }
+function acceptAll() {
+  choose('all')
+  savedNoticeVisible.value = true
 }
 
-function accept() {
-  visible.value = false
-  try {
-    localStorage.setItem(STORAGE_KEY, '1')
-  } catch {
-    /* ничего не сохранится — баннер просто появится снова в следующий раз, не критично */
-  }
+function acceptNecessary() {
+  choose('necessary')
+  savedNoticeVisible.value = true
 }
-
-onMounted(() => {
-  visible.value = !readAccepted()
-})
 </script>
 
 <style scoped>
@@ -56,10 +52,10 @@ onMounted(() => {
      касания вне собственного прямоугольника — только его содержимое кликабельно. */
   pointer-events: auto;
 }
-/* Теперь смонтирован глобально (App.vue) — на mobile внутри приложения снизу
+/* Смонтирован глобально (App.vue) — на mobile внутри приложения снизу
    экрана уже стоит фиксированный bottom-nav (AppBar.vue .mobile-bottom-nav,
    высота 60px + safe-area, z-index 2000). Поднимаем баннер над ним, иначе
-   он перекрывает кнопку «Понятно» таб-баром. На публичных страницах
+   он перекрывает кнопки таб-баром. На публичных страницах
    (лендинг/логин/регистрация) bottom-nav нет — здесь просто небольшой
    отступ от низа экрана, не баг. */
 @media (max-width: 959.98px) {
@@ -90,6 +86,15 @@ onMounted(() => {
 }
 .cookie-banner-link:hover {
   text-decoration: none;
+}
+.cookie-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cookie-banner-btn {
+  min-width: 112px;
 }
 
 /* Известное ограничение: на мобильных первым посещением InstallPwaBanner

@@ -1749,4 +1749,28 @@ async def compute_feo_plan_tree(
     return result
 
 
+# Правило №6/№5 (2026-10-12, координатор, прод-жалоба «/dashboard/charts
+# 7-15с, uvicorn не отвечает»): прозрачный request-scoped кэш ВОКРУГ этой же
+# функции, без изменения формулы выше ни на символ — см. докстринг
+# feo_plan_tree_cache.py. compute_feo_plan_tree вызывается ~30 местами по
+# всему проекту как раньше, под тем же именем; повторный вызов с тем же
+# набором subsidy_ids в пределах ОДНОГО открытого feo_plan_tree_request_scope()
+# (сейчас — dashboard_charts.py) отдаётся из памяти вместо пересчёта.
+_compute_feo_plan_tree_uncached = compute_feo_plan_tree
+
+
+async def _compute_feo_plan_tree_memoized(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
+    from app.services.feo_plan_tree_cache import get_cached_tree, store_cached_tree
+
+    cached = get_cached_tree(subsidy_ids)
+    if cached is not None:
+        return cached
+    tree = await _compute_feo_plan_tree_uncached(db, subsidy_ids)
+    store_cached_tree(subsidy_ids, tree)
+    return tree
+
+
+compute_feo_plan_tree = _compute_feo_plan_tree_memoized
+
+
 

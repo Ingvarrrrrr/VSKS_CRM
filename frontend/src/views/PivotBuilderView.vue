@@ -489,12 +489,11 @@ async function saveConfig() {
 }
 async function exportExcel() {
   try {
-    const token = localStorage.getItem('auth_token')
     const resp = await fetch('/api/analytics/export.xlsx', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...({}),
       },
       body: JSON.stringify({ config: pivot.buildQuery(), name: configName.value || 'Сводная' }),
     })
@@ -513,12 +512,11 @@ async function exportExcel() {
 }
 async function exportPdf() {
   try {
-    const token = localStorage.getItem('auth_token')
     const resp = await fetch('/api/analytics/export.pdf', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...({}),
       },
       body: JSON.stringify({ config: pivot.buildQuery(), name: configName.value || 'Сводная' }),
     })

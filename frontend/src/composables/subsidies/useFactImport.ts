@@ -620,9 +620,8 @@ export function useFactImport() {
   async function downloadTemplate() {
     if (!factImport.subsidyId) return
     try {
-      const token = localStorage.getItem('auth_token')
       const res = await fetch(`/api${basePath()}/template`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))

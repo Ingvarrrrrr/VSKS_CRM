@@ -60,10 +60,8 @@ async function _downloadBlob(res: Response, fallbackName: string): Promise<void>
 }
 
 function _authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('auth_token')
-  const h: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (token) h['Authorization'] = `Bearer ${token}`
-  return h
+  // Авторизация — httpOnly-cookie gala_session, браузер шлёт сам (2026-10-13).
+  return { 'Content-Type': 'application/json' }
 }
 
 function _sanitizeFilename(name: string): string {

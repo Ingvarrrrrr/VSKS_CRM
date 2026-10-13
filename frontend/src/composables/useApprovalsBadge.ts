@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { apiFetch } from '@/api'
+import { isLoggedIn } from '@/composables/useAuthFlag'
 
 // Единый счётчик «мои согласования» — закупки + заявки + превышения плана
 // ФЭО (GET /api/approvals/my-pending/count). По образцу totalUnread из
@@ -12,8 +13,7 @@ export const myPendingApprovalsCount = ref(0)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 export async function refreshMyPendingApprovals() {
-  const token = localStorage.getItem('auth_token')
-  if (!token) return
+  if (!isLoggedIn()) return
   try {
     const data = await apiFetch<{ total: number }>('/approvals/my-pending/count')
     myPendingApprovalsCount.value = data.total ?? 0

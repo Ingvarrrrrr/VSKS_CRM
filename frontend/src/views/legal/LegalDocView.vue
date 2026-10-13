@@ -29,6 +29,13 @@
         <!-- eslint-disable-next-line vue/no-v-html -- html приходит из legal/build.py, скрипты вырезаны на сборке -->
         <div class="legal-content" v-html="doc.html" />
 
+        <div v-if="slug === 'cookies'" class="legal-cookie-choice">
+          <p class="legal-cookie-choice-status">Ваш выбор: {{ cookieChoiceLabel }}</p>
+          <v-btn size="small" color="primary" variant="outlined" @click="resetCookieChoice">
+            Изменить выбор cookie
+          </v-btn>
+        </div>
+
         <nav v-if="otherDocs.length" class="legal-other-docs">
           <div class="legal-other-docs-title">Другие правовые документы</div>
           <ul class="legal-other-docs-list">
@@ -69,6 +76,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { LEGAL_DOCS, LEGAL_DOC_LIST, OPERATOR } from '@/legal/documents.generated'
+import { useCookieConsent } from '@/composables/useCookieConsent'
 
 const route = useRoute()
 const router = useRouter()
@@ -78,6 +86,12 @@ const doc = computed(() => LEGAL_DOCS[slug.value])
 
 const allDocs = computed(() => LEGAL_DOC_LIST)
 const otherDocs = computed(() => LEGAL_DOC_LIST.filter(d => d.slug !== slug.value))
+
+const { choice: cookieChoice, needsChoice: cookieNeedsChoice, reset: resetCookieChoice } = useCookieConsent()
+const cookieChoiceLabel = computed(() => {
+  if (cookieNeedsChoice.value || !cookieChoice.value) return 'не сделан'
+  return cookieChoice.value === 'all' ? 'принято' : 'отклонено (работают только необходимые)'
+})
 
 function goBack() {
   // Открыт напрямую (новая вкладка из ConsentCheckbox, прямой заход по ссылке) —
@@ -217,6 +231,23 @@ function goBack() {
   border: none;
   border-top: 1px solid var(--crm-border, rgba(0, 0, 0, 0.08));
   margin: 2em 0;
+}
+
+.legal-cookie-choice {
+  max-width: 70ch;
+  margin: 24px auto 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--crm-border, rgba(0, 0, 0, 0.08));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.legal-cookie-choice-status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--crm-text-muted, rgba(var(--v-theme-on-surface), 0.6));
 }
 
 .legal-other-docs {

@@ -80,6 +80,37 @@ from app.services.product_catalog_match import _sql_normalized_name_expr, normal
 ITEM_TYPE_DECISION_VALUES = ("file", "catalog")
 
 
+async def preload_catalog_products(state, item_names) -> None:
+    """Пред-проход (ускорение импорта, задача владельца 12.10.2026 — профиль
+    стенда показал 1780 SQL-запросов на 487 строк, классический N+1): один
+    batch-запрос `Product` по ВСЕМ именам, которые встречаются в колонках
+    уровня/позиции файла, вместо одного SELECT на КАЖДЫЙ вызов
+    `_catalog_product_for_name` внутри построчного цикла. Правило №6 — то же
+    правило неоднозначности («2+ совпадений → не брать», см. docstring модуля,
+    п.1), тот же кеш `state.item_type_product_cache`, тот же нормализатор
+    (`normalize_product_name`/`_sql_normalized_name_expr`) — меняется только
+    ИСТОЧНИК данных (пачка вместо одного запроса на вызов), не сама логика
+    решения. `_catalog_product_for_name` ниже продолжает проверять кеш первым
+    — промах (имя не попало в `item_names`, например собрано из cat.name уже
+    после продвижения уровня) просто ведёт к обычному разовому запросу, как и
+    раньше, поведение не меняется."""
+    cache = state.item_type_product_cache
+    norms = {normalize_product_name(n) for n in item_names if n}
+    norms.discard("")
+    norms -= set(cache.keys())
+    if not norms:
+        return
+    candidates = (
+        await state.db.execute(select(Product).where(_sql_normalized_name_expr().in_(norms)))
+    ).scalars().all()
+    buckets: dict[str, list[Product]] = {}
+    for p in candidates:
+        buckets.setdefault(normalize_product_name(p.name), []).append(p)
+    for n in norms:
+        found = buckets.get(n, [])
+        cache[n] = found[0] if len(found) == 1 else None
+
+
 async def _catalog_product_for_name(state, item_name: Optional[str]) -> Optional[Product]:
     """Товар каталога по ТОЧНОМУ (после нормализации) имени — None, если
     товара нет или совпадений 2+ (неоднозначность, владелец 22.09: «при

@@ -57,14 +57,13 @@ const withContracts = ref(true)
 
 async function doExport(selectedKeys: string[]) {
   if (!props.subsidyId) throw new Error('Субсидия не выбрана')
-  const token = localStorage.getItem('auth_token')
   const params = new URLSearchParams()
   params.set('columns', selectedKeys.join(','))
   params.set('summary', withSummary.value ? '1' : '0')
   params.set('by_order', withByOrder.value ? '1' : '0')
   params.set('contracts', withContracts.value ? '1' : '0')
   const response = await fetch(`/api/subsidies/${props.subsidyId}/plan-graph/export?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {},
   })
   if (!response.ok) {
     let msg = `Ошибка экспорта (HTTP ${response.status})`

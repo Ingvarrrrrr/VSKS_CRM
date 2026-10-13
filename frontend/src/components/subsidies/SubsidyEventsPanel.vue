@@ -255,9 +255,8 @@ async function saveEditEvent() {
 
 async function downloadReport(subsidyId: number) {
   try {
-    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || ''
     const resp = await fetch(`/api/reports/subsidy/${subsidyId}/xlsx`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     if (!resp.ok) throw new Error(`Ошибка ${resp.status}`)
     const blob = await resp.blob()

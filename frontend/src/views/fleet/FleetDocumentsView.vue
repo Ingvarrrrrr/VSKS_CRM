@@ -796,7 +796,6 @@ async function deleteDoc() {
 
 async function downloadFile(id: number) {
   try {
-    const token = localStorage.getItem('auth_token')
     const url = `/api/fleet-documents/${id}/file`
     const a = document.createElement('a')
     a.href = url

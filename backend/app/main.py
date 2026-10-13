@@ -29,8 +29,16 @@ from app.models.entity_change import EntityChange, EntityFieldSeen  # ensure ent
 from app.startup import lifespan
 from app.errors import register_error_handlers
 from app.routes import register_routes
+from app.auth.csrf_protection import CsrfProtectionMiddleware
 
 app = FastAPI(title="VSKS CRM API", version="1.0.0", lifespan=lifespan)
+
+# JWT теперь в httpOnly-cookie (gala_session, app/auth/session_cookie.py) —
+# браузер шлёт её на любой запрос к нашему домену сам, в т.ч. с чужой
+# страницы. CSRF-проверка (app/auth/csrf_protection.py) обязана стоять
+# раньше роутеров — add_middleware оборачивает в порядке LIFO, значит её
+# добавляем ПОСЛЕ add_correlation_id, чтобы correlation_id уже был на 403.
+app.add_middleware(CsrfProtectionMiddleware)
 
 
 @app.middleware("http")

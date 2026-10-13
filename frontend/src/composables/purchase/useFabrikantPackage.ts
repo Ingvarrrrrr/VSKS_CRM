@@ -24,9 +24,8 @@ export function useFabrikantPackage(
     if (!purchaseId.value) return
     docLoading.value = 'fabrikant_package'
     try {
-      const token = localStorage.getItem('auth_token')
       const res = await fetch(`/api/purchases/${purchaseId.value}/fabrikant-package`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       })
       if (!res.ok) {
         const err = await res.json().catch(() => null)
@@ -91,10 +90,9 @@ export function useFabrikantPackage(
       fd.append('file', file)
       fd.append('file_type', fabrikantPendingFt.value)
       fd.append('doc_format', docFormat)
-      const token = localStorage.getItem('auth_token')
       const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
         body: fd,
       })
       if (!res.ok) {

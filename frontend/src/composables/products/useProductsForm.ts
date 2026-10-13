@@ -158,10 +158,9 @@ export function useProductsForm(options: {
       if (photoFile.value) {
         const fd = new FormData()
         fd.append('file', photoFile.value)
-        const token = localStorage.getItem('auth_token')
         const res = await fetch(`/api/products/${savedId}/photo`, {
           method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: {},
           body: fd,
         })
         if (!res.ok) showSnack('Товар сохранён, но фото не загрузилось', 'warning')

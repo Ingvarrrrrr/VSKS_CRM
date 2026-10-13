@@ -252,12 +252,11 @@ function removeWidget(i: string) {
 
 async function exportExcel() {
   try {
-    const token = localStorage.getItem('auth_token')
     const resp = await fetch('/api/analytics/export.xlsx', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...({}),
       },
       body: JSON.stringify({
         config: { kind: 'dashboard', widgets: widgets.value, parameters: parameters.value },
@@ -280,12 +279,11 @@ async function exportExcel() {
 
 async function exportPdf() {
   try {
-    const token = localStorage.getItem('auth_token')
     const resp = await fetch('/api/analytics/export.pdf', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...({}),
       },
       body: JSON.stringify({
         config: { kind: 'dashboard', widgets: widgets.value, parameters: parameters.value },

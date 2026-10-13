@@ -518,13 +518,12 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     try {
       const fd = new FormData()
       fd.append('file', feoImport.file)
-      const token = localStorage.getItem('auth_token')
       // Чтение файла ничего не пишет в БД (см. докстринг эндпоинта) — можно
       // один раз тихо повторить при обрыве сети (Правило №6: тот же хелпер
       // и то же сообщение «Нет связи с сервером», что у apiFetch, см. api.ts).
       const res = await fetchWithNetworkRetry(() => fetch('/api/feo-categories/import-preview', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
         body: fd,
       }), { retryable: true, suppressErrorDialog: true })
       if (!res.ok) {
@@ -671,14 +670,13 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       if (Object.keys(_itemTypeDecisions).length) {
         fd.append('item_type_decisions', JSON.stringify(_itemTypeDecisions))
       }
-      const token = localStorage.getItem('auth_token')
       // dryRun (предпросмотр/«Пересчитать») ничего не пишет в БД — безопасен
       // для одного тихого повтора при обрыве сети; настоящий импорт (dryRun
       // false) — без повтора, чтобы не задвоить запись (Правило №6, тот же
       // хелпер/сообщение, что у apiFetch, см. api.ts).
       const res = await fetchWithNetworkRetry(() => fetch('/api/feo-categories/import-mapped', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
         body: fd,
       }), { retryable: dryRun, suppressErrorDialog: true })
       if (!res.ok) {

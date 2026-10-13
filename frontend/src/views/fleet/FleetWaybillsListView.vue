@@ -558,9 +558,8 @@ function openWaybill(item: WaybillRow) {
 async function downloadDocx(id: number, number: string) {
   downloadingId.value = id
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/trips/${id}/waybill.docx`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const blob = await res.blob()

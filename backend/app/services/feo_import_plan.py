@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.models.feo_category import FeoCategory
 from app.services.feo_import_common import ZERO, format_rows, level_label, fmt as _fmt
+from app.services.feo_import_duplicates import get_planned_items_for_category, invalidate_planned_items_cache
 from app.services.subsidy_budget import compute_budget_map
 from app.services import feo_history
 
@@ -160,12 +161,16 @@ async def apply_collected_plan(state) -> None:
             # (TRIM+LOWER) — повторная загрузка того же файла обязана найти и
             # обновить именно её, а не плодить дубли.
             _name_norm = (_plan_name or "").strip().lower()
-            _existing_items = (await db.execute(
-                select(FeoPlannedItem).where(
-                    FeoPlannedItem.feo_category_id == _cat_id,
-                    FeoPlannedItem.is_active == True,  # noqa: E712
-                )
-            )).scalars().all()
+            # Ускорение импорта (задача владельца 12.10.2026, профиль стенда:
+            # 1780 SQL-запросов на 487 строк — N+1 построчно): читаем из
+            # пачки, прогретой `preload_planned_items_by_category` в
+            # feo_import_core.py (Правило №6 — тот же источник, что и у
+            # finalize_lvl5_items/_matching_items в feo_import_duplicates.py),
+            # фильтр is_active==True — тот же, что раньше был в SQL, просто в
+            # Python (is_active — python bool на уже загруженном объекте).
+            _existing_items = [
+                it for it in await get_planned_items_for_category(state, _cat_id) if it.is_active
+            ]
             _match_item = next(
                 (it for it in _existing_items if (it.name or "").strip().lower() == _name_norm),
                 None,
@@ -248,6 +253,12 @@ async def apply_collected_plan(state) -> None:
                     _pi = FeoPlannedItem(**_pi_kwargs)
                     db.add(_pi)
                     await db.flush()
+                    # Ревью 12.10.2026 — см. docstring invalidate_planned_items_cache
+                    # в feo_import_duplicates.py: эта категория (по построению
+                    # ветки — не в lvl5_leaves) не трогалась finalize_lvl5_items,
+                    # но сброс здесь на будущее защищает от тихой порчи, если
+                    # порядок вызовов когда-нибудь изменится.
+                    invalidate_planned_items_cache(state, _cat_id)
                     created += 1
                     created_details.append({"row": _plan_row, "name": _plan_name, "reason": "плановая позиция из плана строки"})
                     if state.import_run_id is not None:

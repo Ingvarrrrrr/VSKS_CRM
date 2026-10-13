@@ -225,9 +225,8 @@ async function loadVehicle() {
   const id = localStorage.getItem('driver_selected_vehicle_id')
   if (!id) return
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/vehicles/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
     if (res.ok) {
       vehicle.value = await res.json()
@@ -276,7 +275,6 @@ async function submitIncident() {
 
   submitting.value = true
   try {
-    const token = localStorage.getItem('auth_token')
 
     const body = {
       vehicle_id: vehicleId,
@@ -293,7 +291,6 @@ async function submitIncident() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(body),
     })

@@ -32,10 +32,10 @@ PD_CONSENT_DOCUMENTS: tuple[str, ...] = (
     "consent",
 )
 
-PD_CONSENT_VERSION: str = "consent:1.0+privacy:1.1"
+PD_CONSENT_VERSION: str = "consent:1.1+privacy:1.2"
 
 PORUCHENIE_DOCUMENTS: tuple[str, ...] = (
     "poruchenie",
 )
 
-PORUCHENIE_VERSION: str = "poruchenie:1.0"
+PORUCHENIE_VERSION: str = "poruchenie:1.1"

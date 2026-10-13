@@ -203,7 +203,10 @@ async def test_old_token_rejected_new_token_works_after_reset(client, confirmed_
         "username": confirmed_user.username, "password": "BrandNewPass9",
     })
     assert r.status_code == 200, r.text
-    new_token = r.json()["access_token"]
+    # access_token больше не в теле ответа (2026-10-13, перенос JWT в httpOnly-
+    # cookie gala_session) — тот же токен достаём из Set-Cookie ответа.
+    new_token = r.cookies.get("gala_session")
+    assert new_token
     assert _decode(new_token)["tv"] == 1
 
     r = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {new_token}"})
@@ -245,7 +248,10 @@ async def test_switch_org_preserves_token_version(client, confirmed_user, test_o
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200, r.text
-    new_token = r.json()["access_token"]
+    # access_token больше не в теле ответа switch-org (2026-10-13) — cookie
+    # gala_session несёт новый токен (set_session_cookie в routers/auth.py).
+    new_token = r.cookies.get("gala_session")
+    assert new_token
     assert _decode(new_token)["tv"] == 1
 
     r = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {new_token}"})

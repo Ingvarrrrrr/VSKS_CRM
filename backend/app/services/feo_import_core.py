@@ -53,7 +53,7 @@ from app.services.feo_import_apply import apply_rows, create_version_snapshot
 from app.services.feo_import_comments import apply_feo_comments
 from app.services.feo_import_budget_conflicts import CATSUM_KEY_PREFIX
 from app.services.feo_import_budget_conflicts import KEY_PREFIX as BUDGET_KEY_PREFIX
-from app.services.feo_import_duplicates import finalize_lvl5_items
+from app.services.feo_import_duplicates import finalize_lvl5_items, preload_planned_items_by_category
 from app.services.feo_import_item_types import ITEM_TYPE_DECISION_VALUES
 from app.services.feo_import_gate import assert_write_gate, collect_affected_subsidies
 from app.services.feo_import_plan import apply_collected_plan
@@ -248,6 +248,16 @@ class FeoImportState:
     # normalize_product_name(item_name) -> Product|None — кеш поиска товара
     # каталога по точному имени на весь импорт (feo_import_item_types.py).
     item_type_product_cache: dict = field(default_factory=dict)
+
+    # --- Ускорение импорта (задача владельца 12.10.2026, профиль стенда:
+    # 1780 SQL-запросов на 487 строк — N+1 построчно) --- cat_id -> [FeoPlannedItem,
+    # ...] — прогревается ОДНИМ запросом `preload_planned_items_by_category`
+    # (feo_import_duplicates.py) ПОСЛЕ apply_rows, читают `_matching_items`
+    # (feo_import_duplicates.py, сопоставление дублей Ур.5) и
+    # `apply_collected_plan` (feo_import_plan.py, «план строки» на листе без
+    # своих позиций) через общий `get_planned_items_for_category` — Правило
+    # №6, один источник вместо построчного запроса в каждом из двух мест.
+    planned_items_by_category: dict = field(default_factory=dict)
 
     # --- Задача владельца 22.09: колонка «Комментарий» шаблона — уходит в
     # ленту комментариев (feo_comments), не в notes (см. app/services/
@@ -536,6 +546,13 @@ async def _do_feo_import(
     await assert_write_gate(state)
     await create_version_snapshot(state)
     await apply_rows(state)
+    # Ускорение импорта (задача владельца 12.10.2026) — один batch-запрос
+    # вместо построчного (см. docstring preload_planned_items_by_category в
+    # feo_import_duplicates.py); ВЫЗЫВАЕТСЯ ЗДЕСЬ, ПОСЛЕ apply_rows (все
+    # leaf.id из pending_lvl5_items уже реальные — find_or_create_category
+    # всегда делает flush) и ДО finalize_lvl5_items/apply_collected_plan —
+    # оба читают прогретый кеш через get_planned_items_for_category.
+    await preload_planned_items_by_category(state)
     await finalize_lvl5_items(state)
     # Владелец, 22.09: комментарии из файла — ПОСЛЕ finalize_lvl5_items (там
     # плановые позиции получают реальный id, record_item_id заполняет

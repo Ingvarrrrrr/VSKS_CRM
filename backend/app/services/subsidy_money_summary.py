@@ -229,12 +229,19 @@ async def _plan_floor_added_by_subsidy(
 
 async def subsidy_money_summary(
     db: AsyncSession, subsidy_ids: list[int], *, tree: Optional[dict] = None,
+    budgets: Optional[dict] = None,
 ) -> dict[int, dict]:
     """`tree` — опционально уже посчитанный compute_feo_plan_tree(db,
     subsidy_ids) ЭТОГО ЖЕ вызова (ускорение 06.10.2026 — см. комментарий у
     _tree ниже; dashboard_charts.py передаёт сюда свой _shared_feo_tree, когда
     он уже построен для ?type_split=true, вместо второй сборки). Без
     аргумента — строит сама, поведение прежнее.
+
+    `budgets` — опционально уже посчитанный calculate_budgets_bulk(db,
+    subsidy_ids) ЭТОГО ЖЕ вызова (ускорение 2026-10-12, координатор:
+    dashboard_charts.py уже строит budgets сам для subsidy_stats и звал эту
+    функцию без него — calculate_budgets_bulk пересчитывался второй раз на
+    тот же subsidy_ids). Без аргумента — строит сама, поведение прежнее.
 
     {subsidy_id: {
         "budget": float,                      # эффективный бюджет субсидии (дерево ФЭО, фолбэк — ручное значение)
@@ -284,7 +291,7 @@ async def subsidy_money_summary(
         from app.services.feo_plan_tree import compute_feo_plan_tree as _compute_feo_plan_tree
         _tree = await _compute_feo_plan_tree(db, subsidy_ids)
 
-    calc_budget_map = await calculate_budgets_bulk(db, subsidy_ids)
+    calc_budget_map = budgets if budgets is not None else await calculate_budgets_bulk(db, subsidy_ids)
     committed_map = await subsidy_committed_totals(db, subsidy_ids, tree=_tree)
     plan_floor_map = await _plan_floor_added_by_subsidy(db, subsidy_ids, tree=_tree)
 

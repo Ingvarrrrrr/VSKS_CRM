@@ -7,13 +7,13 @@ import router from './router'
 import { vResizableColumns } from './directives/resizable-columns'
 import { initSwUpdate, initChunkLoadRecovery } from './composables/useSwUpdate'
 import VDialogWithClose from './components/global/VDialogWithClose.vue'
+import { migrateLegacyToken } from './composables/useLegacyTokenMigration'
 
 const app = createApp(App)
 const pinia = createPinia()
 
 app.use(pinia)      // MUST be before app.use(router) so router guards can use the store
 app.use(vuetify)
-app.use(router)
 // vue3-apexcharts больше не регистрируется глобально (весило в главном чанке
 // для всех страниц, включая те без графиков) — компонент <apexchart> теперь
 // подключается локально через defineAsyncComponent в каждом виджете, где
@@ -29,7 +29,14 @@ app.directive('resizable-columns', vResizableColumns)
 // VDialog, который Vuetify зарегистрировал первым.
 app.component('VDialog', VDialogWithClose)
 
-app.mount('#app')
+// 2026-10-13: перенос JWT в httpOnly-cookie — пока не доиграна миграция
+// старого localStorage('auth_token') (POST /api/auth/session-from-token),
+// router-гварды не должны решать «не вошёл» по пустому gala_auth. app.use(router)
+// и mount() — ПОСЛЕ await, иначе первая навигация гонится с migrateLegacyToken().
+migrateLegacyToken().finally(() => {
+  app.use(router)
+  app.mount('#app')
+})
 
 // 2026-09-16: обработчик устаревших ленивых чанков нужен ВСЕГДА, даже на
 // localhost — это не про SW-кэш, а про Vue Router `() => import(...)` не

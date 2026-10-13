@@ -594,12 +594,11 @@ function triggerTasksImport() {
   // Предлагаем скачать шаблон или загрузить файл через confirm
   const choice = confirm('Нажмите OK, чтобы скачать шаблон Excel.\nНажмите Отмена, чтобы загрузить файл с задачами.')
   if (choice) {
-    const token = localStorage.getItem('auth_token')
     const a = document.createElement('a')
     a.href = '/api/tasks/import-template.xlsx'
     // Передаём токен через запрос — используем fetch+blob
     fetch('/api/tasks/import-template.xlsx', {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     }).then(r => r.blob()).then(blob => {
       a.href = URL.createObjectURL(blob)
       a.download = 'Шаблон_импорта_задач.xlsx'
@@ -619,10 +618,9 @@ async function handleTasksImportFile(e: Event) {
   try {
     const fd = new FormData()
     fd.append('file', file)
-    const token = localStorage.getItem('auth_token')
     const res = await fetch('/api/tasks/import.xlsx', {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
       body: fd,
     })
     const data = await res.json()

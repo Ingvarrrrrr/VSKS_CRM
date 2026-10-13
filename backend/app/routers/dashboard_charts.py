@@ -54,6 +54,15 @@ from app.routers.dashboard_redistributable_drill import router as redistributabl
 # Расшифровка плашки «Оплачено больше, чем поставлено» (владелец, 07.10.2026,
 # прод id=74 «ЛНР») — тот же приём подключения под-роутера.
 from app.routers.dashboard_paid_over_delivered_drill import router as paid_over_delivered_drill_router
+# Ускорение (координатор, 2026-10-12, прод-жалоба «/charts 7-15с, uvicorn не
+# отвечает другим запросам»): compute_feo_plan_tree (feo_plan_tree.py)
+# строилось дважды за один этот запрос по всем видимым субсидиям —
+# _calculate_feo_planned_tree_bulk и subsidy_money_summary не передавали
+# друг другу уже посчитанное дерево. Правило №6 —
+# НЕ вторая формула, прозрачный request-scoped кэш вокруг той же функции (см.
+# докстринг app.services.feo_plan_tree_cache); декоратор не трогает тело
+# обработчика ниже (минимальный дифф в большом файле).
+from app.services.feo_plan_tree_cache import with_feo_plan_tree_cache
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 router.include_router(type_drill_router)
@@ -63,6 +72,7 @@ router.include_router(paid_over_delivered_drill_router)
 
 
 @router.get("/charts")
+@with_feo_plan_tree_cache
 async def dashboard_charts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -269,8 +279,11 @@ async def dashboard_charts(
     planned_tree_map = await _calculate_feo_planned_tree_bulk(db, sid_list, tree=_shared_feo_tree)
     # Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
     # потолку субсидии» — батчем на весь список (см. app/services/feo_plan.py
-    # calculate_ceiling_forecasts_bulk).
-    ceiling_forecasts = await calculate_ceiling_forecasts_bulk(db, sid_list)
+    # calculate_ceiling_forecasts_bulk). budgets=budgets — уже посчитанный
+    # calculate_budgets_bulk чуть выше (ускорение 2026-10-12, координатор:
+    # calculate_ceiling_forecasts_bulk внутри себя звала ту же функцию
+    # заново на тот же sid_list, Правило №6).
+    ceiling_forecasts = await calculate_ceiling_forecasts_bulk(db, sid_list, budgets=budgets)
     sub_objs = {}
     if subsidy_rows:
         sub_objs = {
@@ -376,7 +389,9 @@ async def dashboard_charts(
     # денег субсидии (разные экраны/формулы).
     from app.services.subsidy_money_summary import subsidy_money_summary as _money_summary_fn
     from app.services.purchase_economy import purchase_economy_by_subsidy as _economy_by_subsidy_fn
-    money_summary_map = await _money_summary_fn(db, sid_list, tree=_shared_feo_tree)
+    # budgets=budgets — та же экономия, что и у ceiling_forecasts выше: эта
+    # функция сама звала calculate_budgets_bulk заново на тот же sid_list.
+    money_summary_map = await _money_summary_fn(db, sid_list, tree=_shared_feo_tree, budgets=budgets)
     economy_by_subsidy_map = await _economy_by_subsidy_fn(db, sid_list)
     # Карточка «Оплачено» (владелец, 05.10.2026) — ДВЕ величины: «по отметке
     # сотрудников» и «подтверждено выпиской» (+ товары/услуги). ПРАВИЛО №6 —

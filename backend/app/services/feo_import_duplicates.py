@@ -287,7 +287,87 @@ def _describe_group(key: str, name: str, rows: list) -> dict:
     }
 
 
-async def _matching_items(db, leaf_id: int, name: str) -> list:
+async def preload_planned_items_by_category(state) -> None:
+    """Ускорение импорта (задача владельца 12.10.2026, профиль стенда: 1780
+    SQL-запросов на 487 строк — N+1 по плановым позициям категории, см.
+    `get_planned_items_for_category` ниже): ОДИН SELECT по ВСЕМ категориям,
+    которым в этом импорте понадобятся их текущие плановые позиции —
+    сопоставление дублей Ур.5 (`finalize_lvl5_items`, ниже) и «план строки» на
+    листе без своих позиций (`feo_import_plan.py::apply_collected_plan`) —
+    вместо одного SELECT на КАЖДУЮ категорию отдельно. Правило №6 — тот же
+    результат (та же выборка, что раньше делал построчный запрос), источник
+    данных просто один для обоих мест. Вызывается ОДИН раз из
+    feo_import_core.py, ПОСЛЕ `apply_rows` (все leaf.id из pending_lvl5_items
+    уже реальные — `find_or_create_category` всегда делает `db.flush()`) и ДО
+    `finalize_lvl5_items`/`apply_collected_plan`."""
+    cache = state.planned_items_by_category
+    cat_ids = {
+        rows[0]["leaf"].id
+        for rows in state.pending_lvl5_items.values()
+        if rows and rows[0].get("leaf") is not None and rows[0]["leaf"].id is not None
+    }
+    cat_ids |= {cid for cid in state.collected_plan.keys() if cid is not None}
+    cat_ids -= set(cache.keys())
+    if not cat_ids:
+        return
+    all_rows = (await state.db.execute(
+        select(FeoPlannedItem).where(FeoPlannedItem.feo_category_id.in_(cat_ids))
+    )).scalars().all()
+    by_cat: dict[int, list] = {cid: [] for cid in cat_ids}
+    for it in all_rows:
+        by_cat.setdefault(it.feo_category_id, []).append(it)
+    cache.update(by_cat)
+
+
+def invalidate_planned_items_cache(state, cat_id: int | None) -> None:
+    """Сбросить прогретый кеш `state.planned_items_by_category` по ОДНОЙ
+    категории (ревью 12.10.2026: раньше каждый SELECT внутри `_matching_items`/
+    `apply_collected_plan` делал autoflush и видел позиции, уже `db.add`'нутые
+    раньше в этом же импорте — пачка-кеш этого не умеет, нужен явный сброс при
+    любой записи, меняющей набор позиций категории).
+
+    Инвалидация выбрана вместо ручного "дописывания" нового объекта в список
+    кеша (альтернатива, которую тоже рассматривали): дописывание легко сделать
+    незаметно неверным (забыть на одном из путей, положить не тот объект,
+    задвоить при повторном вызове) и ошибка тогда тихо испортит данные.
+    Инвалидация ломается ровно одним способом — забыли вызвать — и тогда
+    деградирует максимум до прежнего (до этой оптимизации) поведения: лишний
+    SELECT при следующем чтении этой категории, НИКОГДА не неверные данные
+    (следующий `get_planned_items_for_category` для нее сходит в БД заново,
+    увидит уже сделанные `db.add`/`db.flush`/raw UPDATE/DELETE так же, как
+    видел бы прежний автофлешащийся SELECT).
+
+    Вызывается ПОСЛЕ каждой записи, меняющей список FeoPlannedItem категории,
+    во ВСЕХ местах импорта ФЭО (Правило №6 — единственная функция сброса, не
+    точечные del по месту): `_upsert_one` ниже (новая позиция), `apply_collected_plan`
+    (feo_import_plan.py, новая позиция «план строки» листа) и `remap_and_prune`
+    (feo_import_remap.py — `_relink_feo_category` переносит/удаляет позиции
+    raw UPDATE/DELETE при переезде узла, `fc._purge_feo_categories` удаляет
+    позиции удаляемых узлов каскадом). cat_id=None — no-op (categories без id
+    не бывает в кеше)."""
+    if cat_id is None:
+        return
+    state.planned_items_by_category.pop(cat_id, None)
+
+
+async def get_planned_items_for_category(state, cat_id: int) -> list:
+    """Плановые позиции категории — из прогретого пачкой
+    `state.planned_items_by_category` (`preload_planned_items_by_category`
+    выше, зовётся из feo_import_core.py), иначе разовый запрос как раньше
+    (безопасный fallback — например, вызов этого модуля в обход
+    feo_import_core.py, напрямую из теста). Единственное место чтения этого
+    кеша (Правило №6) — `_matching_items` ниже и `apply_collected_plan` в
+    feo_import_plan.py читают отсюда, а не второй раз обращаются к БД по
+    одному и тому же cat_id."""
+    cache = state.planned_items_by_category
+    if cat_id not in cache:
+        cache[cat_id] = (await state.db.execute(
+            select(FeoPlannedItem).where(FeoPlannedItem.feo_category_id == cat_id)
+        )).scalars().all()
+    return cache[cat_id]
+
+
+async def _matching_items(state, leaf_id: int, name: str) -> list:
     """Единственное место сопоставления существующей плановой позиции с
     именем строки файла — ПОЛНОЕ совпадение после нормализации (Правило №6;
     раньше здесь было точное строковое равенство `FeoPlannedItem.name ==
@@ -295,9 +375,7 @@ async def _matching_items(db, leaf_id: int, name: str) -> list:
     расхождение с тем, как имена сравниваются при группировке дублей). Без
     фильтра по is_active — так же, как и раньше: неактивная позиция того же
     имени тоже должна быть найдена и обновлена, а не задвоена."""
-    rows = (await db.execute(
-        select(FeoPlannedItem).where(FeoPlannedItem.feo_category_id == leaf_id)
-    )).scalars().all()
+    rows = await get_planned_items_for_category(state, leaf_id)
     target = norm(name)
     return sorted((it for it in rows if norm(it.name or "") == target), key=lambda it: it.id)
 
@@ -364,6 +442,12 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         pi = FeoPlannedItem(**_fpi_kwargs)
         db.add(pi)
         await db.flush()
+        # Ревью 12.10.2026 — см. docstring invalidate_planned_items_cache
+        # выше: новая позиция этого листа должна быть видна СЛЕДУЮЩЕМУ
+        # вызову get_planned_items_for_category для него же (например, вторая
+        # группа дублей того же листа, обрабатываемая позже в этом же цикле
+        # finalize_lvl5_items).
+        invalidate_planned_items_cache(state, leaf.id)
         state.created += 1
         reason = extra_reason or f"плановая позиция ({level_label(5)})"
         state.created_details.append({"row": row_num, "name": name, "reason": reason})
@@ -437,7 +521,7 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
 
 async def _upsert_merge(state, leaf, rows: list, key: str) -> None:
     merged = _combine_rows(rows)
-    matches = await _matching_items(state.db, leaf.id, merged["name"])
+    matches = await _matching_items(state, leaf.id, merged["name"])
     _rows_str = format_rows([r["row"] for r in rows])
     if merged["unit_price"] is not None:
         _price_part = "цена за единицу одинакова у всех строк"
@@ -502,7 +586,7 @@ async def _upsert_keep_separate(state, leaf, rows: list) -> None:
     этой группы были вручную переставлены/удалены — сознательное упрощение,
     вне сценариев владельца из задания."""
     name = rows[0]["name"]
-    matches = await _matching_items(state.db, leaf.id, name)
+    matches = await _matching_items(state, leaf.id, name)
     for i, row_data in enumerate(rows):
         m = matches[i:i + 1]
         item = await _upsert_one(state, leaf, row_data, extra_reason=None, matches=m)
@@ -522,7 +606,7 @@ async def finalize_lvl5_items(state) -> None:
         name = rows[0]["name"]
 
         if len(rows) == 1:
-            matches = await _matching_items(state.db, leaf.id, name)
+            matches = await _matching_items(state, leaf.id, name)
             item = await _upsert_one(state, leaf, rows[0], extra_reason=None, matches=matches)
             record_item_id(state, rows[0]["row"], item.id)
             continue

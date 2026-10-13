@@ -32,7 +32,7 @@ from app.services.feo_import_budget_conflicts import (
     apply_category_sum_conflicts,
     register_budget_write,
 )
-from app.services.feo_import_item_types import resolve_item_type_for_row
+from app.services.feo_import_item_types import preload_catalog_products, resolve_item_type_for_row
 from app.services.feo_import_missing_level import detect_missing_level_hints
 from app.services.feo_import_leaf_item_count import count_self_declared_rows_by_path
 from app.services.plan_need_level import NEED_LEVEL_LABELS, NEED_LEVEL_LIKELY
@@ -335,6 +335,23 @@ async def apply_rows(state) -> None:
         bool(_v) and not str(_v).startswith("←")
         for _v in (get_cell(_r, c_lvl5) for _r in rows)
     )
+
+    # Ускорение импорта (задача владельца 12.10.2026, профиль стенда: 1780
+    # SQL-запросов на 487 строк — N+1 по товару каталога, см. docstring
+    # preload_catalog_products в feo_import_item_types.py): один batch-запрос
+    # по ВСЕМ именам, которые МОГУТ понадобиться `resolve_item_type_for_row`
+    # ниже (она ищет товар либо по `cat.name` — самый глубокий заполненный
+    # уровень строки, либо по `lvl5_name` — обе группы значений лежат в этих
+    # же четырёх колонках файла). Прогревает только кеш — сама логика решения
+    # (включая правило неоднозначности) не меняется, промах просто ведёт к
+    # разовому запросу как раньше.
+    _candidate_item_names = {
+        _v for _v in (
+            get_cell(_r, _c) for _r in rows for _c in (c_lvl2, c_lvl3, c_lvl4, c_lvl5) if _c is not None
+        )
+        if _v and not _v.startswith("←")
+    }
+    await preload_catalog_products(state, _candidate_item_names)
 
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)

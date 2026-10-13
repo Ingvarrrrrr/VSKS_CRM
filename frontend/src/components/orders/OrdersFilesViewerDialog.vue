@@ -79,9 +79,8 @@ function fileTypeLabel(t?: string): string {
   return FILE_TYPE_LABELS_QV[t || ''] || t || 'Прочее'
 }
 async function openFile(f: QuickFile) {
-  const token = localStorage.getItem('auth_token')
   const res = await fetch(`/api/purchases/${state.purchaseId}/files/${f.id}/download`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {},
   })
   if (!res.ok) { return }
   const blob = await res.blob()

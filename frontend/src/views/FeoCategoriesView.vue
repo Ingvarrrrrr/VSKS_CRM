@@ -878,9 +878,8 @@ function closeFeoImport() {
 
 async function exportToExcel() {
   if (!selectedId.value) return
-  const token = localStorage.getItem('auth_token')
   const res = await fetch(`/api/feo-categories/export?subsidy_id=${selectedId.value}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: {},
   })
   if (!res.ok) { showSnack('Ошибка экспорта', 'error'); return }
   const blob = await res.blob()
@@ -897,9 +896,8 @@ async function exportToExcel() {
 }
 
 async function downloadFeoTemplate() {
-  const token = localStorage.getItem('auth_token')
   const res = await fetch('/api/feo-categories/import/template', {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: {},
   })
   if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
   const blob = await res.blob()
@@ -914,10 +912,9 @@ async function doFeoImport() {
   try {
     const fd = new FormData()
     fd.append('file', feoImport.file)
-    const token = localStorage.getItem('auth_token')
     const res = await fetch('/api/feo-categories/import', {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
       body: fd,
     })
     if (!res.ok) {

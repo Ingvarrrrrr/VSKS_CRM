@@ -13,9 +13,8 @@ export function useVehicleListTemplate(options: { onError: (err: any) => void })
   async function downloadTemplate() {
     loadingTemplate.value = true
     try {
-      const token = localStorage.getItem('auth_token')
       const res = await fetch('/api/vehicles/import-template', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
       })
       if (!res.ok) {
         let detail = `HTTP ${res.status}`

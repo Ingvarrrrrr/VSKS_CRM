@@ -397,10 +397,9 @@ const tabDropZone = ref<InstanceType<typeof FileDropZone> | null>(null)
 async function openReceiptFile(purchaseId: number | null, receiptId: number, kind: 'pdf' | 'png') {
   if (!purchaseId) return
   try {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/purchases/${purchaseId}/receipts/${receiptId}/${kind}`, {
       credentials: 'include',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     })
     if (!res.ok) return
     const blob = await res.blob()

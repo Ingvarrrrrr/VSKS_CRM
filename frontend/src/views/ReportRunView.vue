@@ -148,12 +148,11 @@ async function exportExcel() {
     return
   }
   try {
-    const token = localStorage.getItem('auth_token')
     const resp = await fetch('/api/analytics/export.xlsx', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...({}),
       },
       body: JSON.stringify({ config: configJson.value, name: configName.value || 'Отчёт' }),
     })
@@ -177,12 +176,11 @@ async function exportPdf() {
     return
   }
   try {
-    const token = localStorage.getItem('auth_token')
     const resp = await fetch('/api/analytics/export.pdf', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...({}),
       },
       body: JSON.stringify({ config: configJson.value, name: configName.value || 'Отчёт' }),
     })

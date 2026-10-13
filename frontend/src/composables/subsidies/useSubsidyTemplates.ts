@@ -173,13 +173,12 @@ export function useSubsidyTemplates(ctx?: SubsidyDetailContext) {
   async function onTemplateFileSelected(event: Event) {
     const file = (event.target as HTMLInputElement).files?.[0]
     if (!file || !templateSubsidy.value || !uploadingDocType.value) return
-    const token = localStorage.getItem('auth_token')
     const fd = new FormData()
     fd.append('file', file)
     try {
       const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/templates/${uploadingDocType.value}`, {
         method: 'PUT',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
         body: fd,
       })
       if (!res.ok) {
@@ -199,9 +198,8 @@ export function useSubsidyTemplates(ctx?: SubsidyDetailContext) {
 
   async function downloadSubsidyTemplate(docType: string) {
     if (!templateSubsidy.value) return
-    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/templates/${docType}/download?t=${Date.now()}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     })
     if (!res.ok) { showSnack('Ошибка скачивания', 'error'); return }
     const blob = await res.blob()
@@ -226,9 +224,8 @@ export function useSubsidyTemplates(ctx?: SubsidyDetailContext) {
   }
 
   async function downloadMarkupGuide() {
-    const token = localStorage.getItem('auth_token')
     const res = await fetch('/api/documents/template-guide', {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     })
     if (!res.ok) { showSnack('Ошибка скачивания руководства', 'error'); return }
     const blob = await res.blob()

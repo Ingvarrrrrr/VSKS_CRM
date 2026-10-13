@@ -303,9 +303,8 @@ ${itemLines || '— (товары не указаны)'}
   async function downloadKpXlsx() {
     if (!purchaseId.value) return
     try {
-      const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || ''
       const resp = await fetch(`/api/documents/purchases/${purchaseId.value}/kp-xlsx`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: {}
       })
       if (!resp.ok) throw new Error('error')
       const blob = await resp.blob()

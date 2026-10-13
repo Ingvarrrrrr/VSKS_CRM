@@ -17,6 +17,7 @@ feo_import_core.py) — все строки путей материализую�
 """
 from app.models.feo_category import FeoCategory
 from app.routers import feo_categories as fc
+from app.services.feo_import_duplicates import invalidate_planned_items_cache
 from app.services.feo_import_snapshot import full_path
 from app.services.feo_import_snapshot import subtree_ids as _subtree_ids_of
 from app.services import feo_history
@@ -83,6 +84,14 @@ async def remap_and_prune(state) -> None:
                     source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id,
                     record_history=state.import_run_id is not None,
                 )
+                # Ревью 12.10.2026 — _relink_feo_category переносит/удаляет
+                # FeoPlannedItem старого узла raw UPDATE/DELETE (минуя ORM-сессию
+                # и наш кеш целиком); на сегодня planned_items_by_category уже
+                # не читается на этом шаге (apply_collected_plan отработал раньше),
+                # но сброс здесь защищает от тихой порчи при будущей перестановке
+                # порядка этапов (Правило №6 — invalidate_planned_items_cache).
+                invalidate_planned_items_cache(state, _old_id)
+                invalidate_planned_items_cache(state, _new_cat.id)
                 relinked_count += sum(_counts.values())
                 remap_applied.append({
                     "old_path": _old_path,
@@ -137,6 +146,10 @@ async def remap_and_prune(state) -> None:
                     source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id,
                     record_history=state.import_run_id is not None,
                 )
+                # Ревью 12.10.2026 — узлы удалены каскадом вместе со своими
+                # FeoPlannedItem; тот же защитный сброс, что и у relink выше.
+                for _sid in subtree:
+                    invalidate_planned_items_cache(state, _sid)
                 deleted_count += len(subtree)
                 already_deleted.update(subtree)
 

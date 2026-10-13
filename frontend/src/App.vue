@@ -56,7 +56,7 @@
     <v-btn
       v-if="isAuthenticated && route.path !== '/chat'"
       icon
-      style="position: fixed; bottom: 90px; right: 24px; z-index: 999"
+      style="position: fixed; bottom: var(--gala-fab-bottom-base); right: var(--gala-fab-right); z-index: var(--gala-fab-zindex)"
       color="primary"
       size="default"
       :to="'/chat'"
@@ -214,6 +214,38 @@ onUnmounted(() => {
    0 и проверить вёрстку под нотч нельзя — с переменной её можно подставить в тесте. */
 :root {
   --gala-safe-top: env(safe-area-inset-top, 0px);
+}
+
+/* Стек плавающих кнопок (чат + «+» создания заявки, WishesView.vue) —
+   владелец (чек-лист С16, 2026-10-14): «+» был крупнее кнопки мессенджера и
+   стоял не в одну колонку с ней. Единый источник геометрии (ПРАВИЛО №6):
+   обе кнопки читают эти переменные, а не свои хардкод-числа — чат остаётся
+   на месте (--gala-fab-bottom-base не менялась на desktop: было inline
+   "bottom:90px"), «+» вычисляется от той же базы минус свой размер и зазор
+   (90 - 48 - 12 = 30px), так что смена размера/отступа чата автоматически
+   сдвигает «+». --gala-fab-size: 48px — реальная высота v-btn icon
+   size="default" в Vuetify 3 (замерено в браузере, не 40px по наивному
+   предположению). На mobile база поднята над нижним меню (AppBar.vue
+   .mobile-bottom-nav, 60px + safe-area): +72px даёт «+» зазор 12px над
+   таб-баром (нижней кнопке стека) — проверено замером getBoundingClientRect
+   на 390×844, см. e2e/zz-wishes-new-fab-c16.spec.ts.
+   z-index 1060 > cookie-banner (1050, CookieBanner.vue) — до выбора cookie
+   баннер лежит поверх нижней части экрана и на 1440×900 реально закрывает
+   нижнюю кнопку стека («+», z-index был 999 < 1050) — замечено при приёмке
+   чек-листа С16. Выше install-баннера (1100) не поднимаем специально: тот
+   и так закрывает cookie-баннер целиком, а FAB-стек с install-баннером
+   не пересекается по месту. */
+:root {
+  --gala-fab-right: 24px;
+  --gala-fab-size: 48px;
+  --gala-fab-gap: 12px;
+  --gala-fab-bottom-base: 90px;
+  --gala-fab-zindex: 1060;
+}
+@media (max-width: 959.98px) {
+  :root {
+    --gala-fab-bottom-base: calc(60px + env(safe-area-inset-bottom, 0px) + 72px);
+  }
 }
 
 /* iOS safe-area: к layout-отступу под app-bar добавляем высоту статус-бара,

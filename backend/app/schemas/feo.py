@@ -134,9 +134,12 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     # либо явно есть, либо запрос не про синхронизацию по имени).
     product_kind_synced: bool = False
     product_name: Optional[str] = None
-    # Состав объединённой позиции (план merged-item-parts.md) — read-only,
-    # заполняется только импортом плана (feo_import_duplicates.py); не на
-    # FeoPlannedItemCreate — ручного редактирования состава в GALA нет.
+    # Состав объединённой позиции (план merged-item-parts.md) — read-only
+    # для этой схемы (не на FeoPlannedItemCreate, PUT /{id} его не трогает),
+    # заполняется ЦЕЛИКОМ импортом плана (feo_import_duplicates.py). Правка
+    # ОДНОЙ части (кол-во/цена/сумма, часть без закупки) — отдельный узкий
+    # эндпоинт PATCH /feo-planned-items/{id}/parts/{key}, см.
+    # app.services.feo_planned_item_parts_edit (задача владельца, 13.10.2026).
     parts: list[dict] = []
     # Номер строки файла загрузки плана (правка 12.10.2026, план
     # lazy-swimming-hollerith.md п.4г) — «строка N файла» вместо нумерации

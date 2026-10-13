@@ -218,6 +218,11 @@
        «резерв»/«не распределено» — один экземпляр на дерево, см. docstring
        FeoRowDrillDialog.vue/useFeoRowDrill.ts. -->
   <FeoRowDrillDialog />
+
+  <!-- Правка части объединённой позиции (владелец, 13.10.2026) — один
+       экземпляр на дерево, тот же приём, что и FeoRowDrillDialog.vue выше;
+       открывает FeoLevel5Panel.vue (карандаш у строки «Как запланировано»). -->
+  <FeoPlannedItemPartEditDialog />
 </template>
 
 <script setup lang="ts">
@@ -239,6 +244,7 @@ import FeoReqItemsRows from './FeoReqItemsRows.vue'
 import FeoByPurchasesRows from './FeoByPurchasesRows.vue'
 import RevisionTotalsHeader from './RevisionTotalsHeader.vue'
 import FeoRowDrillDialog from './FeoRowDrillDialog.vue'
+import FeoPlannedItemPartEditDialog from './FeoPlannedItemPartEditDialog.vue'
 import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
 import { useRevisionChangedFilter } from '@/composables/subsidies/useRevisionChangedFilter'
 

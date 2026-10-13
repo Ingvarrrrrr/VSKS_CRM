@@ -15,6 +15,7 @@ import { formatPlanResidual, type PlanResidualDisplay } from '@/utils/numberForm
 import { formatMoney } from '@/utils/formatMoney'
 import type { ToastType } from '@/composables/useToast'
 import { feoPlanRowSummary, feoPlanRowQtyLabel } from './feoPlanRowSummary'
+import { pendingForRow, consumedForRow, residualForRow } from './feoPlanPending'
 
 /** Готовый набор подписей строки для FeoPlannedItemRow.vue — построен ОДИН раз
  *  (rowDisplayProps ниже), чтобы разметка dense-меню и развёрнутого списка не
@@ -130,12 +131,11 @@ export function useFeoPlannedRows(deps: UseFeoPlannedRowsDeps) {
   // FeoPlannedItem у этого kind; у plan_position/feo_article своей плановой позиции нет,
   // поэтому pendingFor для них всегда 0 и consumedFor/residualFor равны серверным числам).
   function pendingFor(row: FeoPlanPosition): number {
-    if (row.kind !== 'planned_item') return 0
-    return props.pendingByPlannedItem?.[row.id] || 0
+    return pendingForRow(row, props.pendingByPlannedItem)
   }
 
   function consumedFor(row: FeoPlanPosition): number {
-    return row.consumed + pendingFor(row)
+    return consumedForRow(row, props.pendingByPlannedItem)
   }
 
   // Расшифровка «Кто расходует план» — сами позиции ЭТОЙ формы, дающие pendingFor(row)
@@ -149,7 +149,7 @@ export function useFeoPlannedRows(deps: UseFeoPlannedRowsDeps) {
     // row.residual с сервера уже = planned_amount − consumed (backend/app/routers/
     // feo_categories.py::spendable_remaining, без клампинга) — вычитаем pendingFor
     // отдельно, а не пересчитываем через planned_amount (может быть null у legacy строк).
-    return row.residual - pendingFor(row)
+    return residualForRow(row, props.pendingByPlannedItem)
   }
 
   // Единый источник числа И цвета для «остаток/превышение» строки (владелец,

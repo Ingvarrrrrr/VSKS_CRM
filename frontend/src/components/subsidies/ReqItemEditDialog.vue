@@ -46,6 +46,8 @@
           :loading="plannedLoading"
           :prefill="planPrefill"
           :purchase-id="state.purchaseId"
+          :pending-by-planned-item="pendingByPlannedItem"
+          :pending-items-by-planned-item="pendingItemsByPlannedItem"
           @update:model-value="onPlanSelect"
           @planned-item-created="reloadPlanned"
           @planned-item-deleted="reloadPlanned"
@@ -142,6 +144,34 @@ function onPlanSelect(val: FeoPlanSelection | null) {
 const planAmount = computed(() =>
   (Number(state.form.quantity) || 0) * (Number(state.form.unit_price) || 0)
 )
+
+// Дефект (владелец, прод, 13.10.2026): у включённой плановой позиции строка
+// показывала «выбрано 0 · остаток = весь план», хотя сумма ЭТОЙ редактируемой
+// позиции (planAmount) её и занимает. plannedResiduals грузится с
+// excludePurchaseId=state.purchaseId (см. useFeoPlannedResiduals выше) — своя
+// закупка уже исключена из row.consumed/row.residual на сервере, поэтому её
+// нужно прибавить обратно РОВНО ОДИН раз, тем же механизмом «занято сейчас в
+// этой форме», что и у форм со списком строк (useItemsFeo.ts::
+// pendingByPlannedItem) — здесь форма с ОДНОЙ строкой, карта из одного ключа.
+// Выключили переключатель (planSelection.value === null) — карта пустая,
+// «выбрано» возвращается к 0 (ПРАВИЛО №6, единый расчёт в
+// useFeoPlannedRows.ts::pendingFor/consumedFor/residualFor, второй формулы
+// здесь не пишем).
+const pendingByPlannedItem = computed((): Record<number, number> | null => {
+  if (!planSelection.value || planSelection.value.kind !== 'planned_item') return null
+  return { [planSelection.value.id]: planAmount.value }
+})
+const pendingItemsByPlannedItem = computed((): Record<number, { name: string; quantity: number | null; unit: string | null; amount: number }[]> | null => {
+  if (!planSelection.value || planSelection.value.kind !== 'planned_item') return null
+  return {
+    [planSelection.value.id]: [{
+      name: state.form.item_name || 'без названия',
+      quantity: state.form.quantity,
+      unit: state.form.unit || null,
+      amount: planAmount.value,
+    }],
+  }
+})
 const planPrefill = computed(() => ({
   name: state.form.item_name,
   quantity: state.form.quantity,

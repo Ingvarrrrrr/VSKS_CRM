@@ -578,7 +578,18 @@
                         <td style="padding:4px 8px"></td>
                         <td style="padding:4px 8px;color:#94a3b8;font-size:11px">—</td>
                         <td style="padding:4px 8px;text-align:center;color:#94a3b8;font-size:10px">запланировано</td>
-                        <td style="padding:2px"></td>
+                        <td style="padding:2px">
+                          <!-- Правка части позиции (владелец, 13.10.2026) — только
+                               у частей БЕЗ закупки (эта ветка kind==='planned_only'
+                               и есть «без закупки»); часть с закупкой не рисует
+                               карандаш вовсе — редактирование только тут, backend
+                               (update_planned_item_part) отдельно это тоже
+                               проверяет и не доверяет одному фронту. -->
+                          <v-btn icon="mdi-pencil" variant="text" density="compact" size="x-small" color="blue"
+                            title="Редактировать часть позиции"
+                            @click.stop="partEditDialog.openEditPlannedItemPart(planned.id, node.id, planned.name, row.part)"
+                          />
+                        </td>
                       </tr>
                       <template v-else>
                       <!-- Локальный алиас `actual` = row.actual (v-for по
@@ -817,11 +828,16 @@ import { useFeoLevel5ItemType } from '@/composables/subsidies/useFeoLevel5ItemTy
 import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
 import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
 import RevisionCellBadge from './RevisionCellBadge.vue'
+// Правка части объединённой позиции (владелец, 13.10.2026) — singleton-состояние,
+// диалог сам смонтирован ОДИН раз в FeoTreeTable.vue (см. её докстринг и
+// FeoPlannedItemPartEditDialog.vue), здесь — только открытие по клику на карандаш.
+import { useFeoPlannedItemPartEditDialog } from '@/composables/subsidies/useFeoPlannedItemPartEditDialog'
 
 const props = defineProps<{ node: FeoNode }>()
 const node = props.node
 
 const ctx = useSubsidyDetailCtx()
+const partEditDialog = useFeoPlannedItemPartEditDialog(ctx)
 // Волна 3B, доп. пробел: «Было | Станет» у строк плановых позиций (кол-во/
 // цена/сумма) — тот же приём, что и в FeoTreeRow.vue (revPair ниже), только
 // kind='item' и liveValue берутся из полей planned.* (а не из ctx.feoXxxFor).

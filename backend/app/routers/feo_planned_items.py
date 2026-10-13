@@ -43,6 +43,8 @@ from app.services.feo_planned_item_amount import backfill_unit_price_on_quantity
 # feo_comments.py и test_planned_item_monthly_period.py) — feo_item_write.py
 # импортирует их лениво (внутри функций), во избежание цикл. импорта.
 from app.services import feo_item_write
+from app.services import feo_planned_item_parts_edit
+from app.services.feo_planned_item_parts_edit import FeoPlannedItemPartUpdate
 
 
 def _apply_payment_fields(item: FeoPlannedItem, data: FeoPlannedItemCreate) -> None:
@@ -349,6 +351,53 @@ async def update_planned_item(
     # Тело правки (дифф полей, перенос категории, синхронизация каталога,
     # журнал ФЭО, авто-версия плана) — app.services.feo_item_write (Правило №6).
     item = await feo_item_write.update_planned_item(db, current_user, item, data)
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+@router.patch("/{item_id}/parts/{part_key}", response_model=FeoPlannedItemOut)
+async def update_planned_item_part(
+    item_id: int,
+    part_key: str,
+    data: FeoPlannedItemPartUpdate,
+    db: AsyncSession = Depends(get_db),
+    # Права — ТЕ ЖЕ, что у PUT /{item_id} выше (требование владельца, задача
+    # «Редактировать часть позиции»): вкладка feo_categories, не новая матрица.
+    current_user=Depends(require_tab('feo_categories')),
+):
+    """Правка ОДНОЙ части объединённой плановой позиции (владелец, 13.10.2026,
+    «План закупок» → «План vs факт» → строка «Как запланировано»): кол-во,
+    цена за единицу, сумма части. Часть, по которой уже есть закупка, —
+    редактирование недоступно (409, см. app.services.feo_planned_item_parts_edit).
+    part.key не меняется — привязки закупок к частям переживают правку.
+
+    Тело (поиск части, проверка «не закуплена», Σ частей ≤ план позиции,
+    журнал ФЭО) — app.services.feo_planned_item_parts_edit (Правило №6, та же
+    единственная точка записи FeoPlannedItem.parts для правки одной части,
+    отдельно от _build_parts — сборки ВСЕГО состава при загрузке плана)."""
+    item = (await db.execute(
+        select(FeoPlannedItem).where(FeoPlannedItem.id == item_id)
+    )).scalar_one_or_none()
+    if not item:
+        raise HTTPException(404, "Плановая позиция не найдена")
+
+    # Тот же гейт корректировки утверждённой субсидии, что и у PUT выше —
+    # правка состава позиции — тоже правка субсидии.
+    _gate_subsidy_id = (await db.execute(
+        select(FeoCategory.subsidy_id).where(FeoCategory.id == item.feo_category_id)
+    )).scalar_one_or_none()
+    from app.services.subsidy_revision_guard import assert_direct_edit
+    await assert_direct_edit(db, current_user, _gate_subsidy_id)
+
+    try:
+        item = await feo_planned_item_parts_edit.update_planned_item_part(
+            db, current_user, item, part_key, data,
+        )
+    except feo_planned_item_parts_edit.PartNotFound as exc:
+        raise HTTPException(404, str(exc))
+    except feo_planned_item_parts_edit.PartEditForbidden as exc:
+        raise HTTPException(409, str(exc))
     await db.commit()
     await db.refresh(item)
     return item

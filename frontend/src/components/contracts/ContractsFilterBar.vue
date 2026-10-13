@@ -26,6 +26,11 @@
             @click="emit('clear-column-filters')"
           />
         </v-chip>
+        <!-- owner-жалоба: счётчик «N из M» не совпадал с пустой таблицей —
+             было непонятно, что строки прячет фильтр в заголовке колонки. -->
+        <span v-if="hiddenByColumnFilters > 0" class="text-caption text-medium-emphasis ml-1">
+          скрыто фильтрами колонок: {{ hiddenByColumnFilters }}
+        </span>
       </div>
       <div class="d-flex flex-wrap gap-2">
 
@@ -129,6 +134,7 @@ defineProps<{
   filteredSum: number
   hasFilters: boolean
   cfgActiveFilterCount: number
+  hiddenByColumnFilters: number
 }>()
 
 const emit = defineEmits<{

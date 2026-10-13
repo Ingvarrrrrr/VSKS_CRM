@@ -20,8 +20,16 @@ export function useContractsFilters(options: {
   matchesColumnFilters: (row: any) => boolean
   localSort: { value: { key: string; order: 'asc' | 'desc' } | null }
   loadAllPurchases: () => Promise<void>
+  // Фильтры колонок (ColumnHeaderMenu, useColumnConfig('contracts')) — один
+  // источник истины для «активны ли фильтры» и «сбросить всё» (ПРАВИЛО №6):
+  // этот composable их не хранит, только читает счётчик и дёргает сброс.
+  cfgActiveFilterCount: { value: number }
+  cfgClearAllFilters: () => void
 }) {
-  const { contracts, subsidies, contractors, purchasesByContract, expandedPurchases, expanded, matchesColumnFilters, localSort, loadAllPurchases } = options
+  const {
+    contracts, subsidies, contractors, purchasesByContract, expandedPurchases, expanded,
+    matchesColumnFilters, localSort, loadAllPurchases, cfgActiveFilterCount, cfgClearAllFilters,
+  } = options
 
   // Локальный поиск по реестру договоров (независим от глобального поиска в шапке —
   // владелец отказался от режима «по странице» у глобального поиска 2026-09-03,
@@ -38,14 +46,18 @@ export function useContractsFilters(options: {
   const fDateFrom   = ref('')
   const fDateTo     = ref('')
 
+  // «Сбросить все» видна и действует, если активен хоть один фильтр —
+  // включая фильтры колонок (owner-жалоба: кнопка их не трогала).
   const hasFilters = computed(() =>
     fSubsidy.value.length > 0 || fType.value.length > 0 || fMethod.value.length > 0 ||
-    fStatus.value.length > 0 || fContractor.value.length > 0 || !!fProduct.value || !!fDateFrom.value || !!fDateTo.value
+    fStatus.value.length > 0 || fContractor.value.length > 0 || !!fProduct.value || !!fDateFrom.value || !!fDateTo.value ||
+    cfgActiveFilterCount.value > 0
   )
 
   const clearFilters = () => {
     fSubsidy.value = []; fType.value = []; fMethod.value = []
     fStatus.value = []; fContractor.value = []; fProduct.value = ''; fDateFrom.value = ''; fDateTo.value = ''
+    cfgClearAllFilters()
   }
 
   // ── Dropdown items: only values present in contracts ──────────────────────
@@ -173,6 +185,12 @@ export function useContractsFilters(options: {
     return list.map(c => ({ ...c, _rownum: map.get(String(c.id)) ?? '' }))
   })
 
+  // Сколько строк прячут фильтры КОЛОНОК (поверх основных фильтров выше) —
+  // owner-жалоба: счётчик «N из M» и сумма считались по filtered, а таблица
+  // показывала меньше строк из-за сохранённого фильтра в заголовке колонки,
+  // и было не видно, куда делись записи. Разница — подсказка у чипа «Фильтры N».
+  const hiddenByColumnFilters = computed(() => filtered.value.length - filteredWithRowNum.value.length)
+
   // Наивная сумма строк реестра (голый Contract.max_amount) — используется
   // при произвольной комбинации фильтров, где единого бэкенд-правила нет
   // (тип/метод/контрагент/даты режут список договоров так, как карточка
@@ -181,8 +199,10 @@ export function useContractsFilters(options: {
   // Договоры для субсидии X» — та же сущность, что карточка «Заключено
   // договоров» на странице субсидии, поэтому дальше подменяется официальным
   // итогом с бэкенда (ПРАВИЛО №6 — один источник, см. ниже).
+  // Считаем по filteredWithRowNum (те же строки, что видит владелец в
+  // таблице/карточках) — иначе сумма включает строки, скрытые фильтром колонки.
   const rawFilteredSum = computed(() =>
-    filtered.value.reduce((acc, c) => acc + (c.max_amount ? Number(c.max_amount) : 0), 0)
+    filteredWithRowNum.value.reduce((acc, c) => acc + (c.max_amount ? Number(c.max_amount) : 0), 0)
   )
 
   // Официальный итог «Заключено договоров» по одной субсидии — тот же расчёт,
@@ -191,10 +211,13 @@ export function useContractsFilters(options: {
   // (SubsidyKpiCards.vue). Подменяет rawFilteredSum, только когда фильтр
   // сужен РОВНО до одной субсидии и больше ничего не фильтрует — иначе
   // «итог вкладки» перестаёт быть равен «итогу субсидии» по определению.
+  // Фильтр колонки тоже должен быть выключен — иначе «итог субсидии» с бэкенда
+  // не совпадёт с суммой строк, реально видимых в таблице.
   const isSingleSubsidyOnlyFilter = computed(() =>
     fSubsidy.value.length === 1 &&
     fType.value.length === 0 && fMethod.value.length === 0 && fStatus.value.length === 0 &&
-    fContractor.value.length === 0 && !fProduct.value && !fDateFrom.value && !fDateTo.value && !search.value.trim()
+    fContractor.value.length === 0 && !fProduct.value && !fDateFrom.value && !fDateTo.value && !search.value.trim() &&
+    cfgActiveFilterCount.value === 0
   )
   const officialSubsidyTotal = ref<number | null>(null)
   let officialTotalReqId = 0
@@ -226,6 +249,6 @@ export function useContractsFilters(options: {
     hasFilters, clearFilters,
     usedSubsidies, usedContractors, usedContractTypes, usedPurchaseMethods,
     matchesSearch, productMatchContractIds,
-    filtered, filteredWithRowNum, filteredSum,
+    filtered, filteredWithRowNum, filteredSum, hiddenByColumnFilters,
   }
 }

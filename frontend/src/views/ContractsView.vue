@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="pa-4">
     <ContractsToolbar
-      :filtered-count="filtered.length"
+      :filtered-count="filteredWithRowNum.length"
       :total-count="contracts.length"
       :is-admin="isAdmin"
       :dup-loading="dupLoading"
@@ -33,6 +33,7 @@
       :filtered-sum="filteredSum"
       :has-filters="hasFilters"
       :cfg-active-filter-count="cfgActiveFilterCount"
+      :hidden-by-column-filters="hiddenByColumnFilters"
       @clear-filters="clearFilters"
       @clear-column-filters="cfgClearAllFilters()"
     />
@@ -280,10 +281,11 @@ const {
   fSubsidy, fType, fMethod, fContractor, fProduct, fDateFrom, fDateTo,
   hasFilters, clearFilters,
   usedSubsidies, usedContractors, usedContractTypes, usedPurchaseMethods,
-  filtered, filteredWithRowNum, filteredSum,
+  filtered, filteredWithRowNum, filteredSum, hiddenByColumnFilters,
 } = useContractsFilters({
   contracts, subsidies, contractors, purchasesByContract, expandedPurchases, expanded,
   matchesColumnFilters, localSort, loadAllPurchases,
+  cfgActiveFilterCount, cfgClearAllFilters,
 })
 
 const {
@@ -348,11 +350,19 @@ const { mobile, viewMode, effectiveView, page: cardsPage, totalPages: cardsTotal
 })
 
 onMounted(async () => {
-  // Читаем ?subsidy_id из URL и выставляем фильтр
+  // Читаем ?subsidy_id из URL (переход из окна удаления субсидии «есть
+  // договоры») и выставляем фильтр. Сохранённые фильтры колонок/поиск от
+  // прошлого захода на страницу могли прятать часть договоров субсидии
+  // (owner-жалоба: «11 из 323», таблица пустая) — сбрасываем их, чтобы были
+  // видны ВСЕ договоры субсидии. Без ?subsidy_id ничего не трогаем.
   const qSub = route.query.subsidy_id
   if (qSub) {
     const id = Number(qSub)
-    if (!Number.isNaN(id)) fSubsidy.value = [id]
+    if (!Number.isNaN(id)) {
+      fSubsidy.value = [id]
+      cfgClearAllFilters()
+      search.value = ''
+    }
   }
   // Phase 27.1.7: auto-enrich pending contracts on view load (idempotent, fire-and-forget)
   try {

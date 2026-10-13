@@ -587,6 +587,31 @@ async def compute_feo_plan_tree(
     leaf_item_committed_amt, committed_plan_by_kind = await leaf_items_committed_contribution(
         db, list(by_id.keys()), payroll_category_ids=_payroll_ids
     )
+    # Задача владельца (13.10.2026, правка после замечания координатора) —
+    # «перерасход/экономия по заказам ПО ПОЗИЦИИ, не по сумме категории»:
+    # категория «Форменная одежда» раньше считала own_overspend/own_economy
+    # как net (max(0, план_узла − Σ файла)/обратно) — перерасход «Повседневного
+    # костюма» (+230 900) гасился экономией «Шапки» (−3 600) в сумме узла,
+    # хотя владелец хочет видеть ОБЕ стороны по позициям отдельно. ЕДИНАЯ
+    # точка (ПРАВИЛО №6) — committed_amounts.planned_item_order_diffs (та же
+    # per-item contribution, что leaf_items_committed_contribution суммирует
+    # выше для plan_manual) — own_order_overspend_by_cat/own_order_economy_by_cat
+    # ниже — Σ по позициям КАЖДОЙ категории отдельно (не Σ категории минус Σ
+    # категории). Используется ТОЛЬКО для plan_source='planned_items' (см.
+    # leaf/group-ветки _visit) — 'manual_sum' по-прежнему net-формулой
+    # own_plan_manual_for_calc/own_items_raw (там own-план НЕ читает
+    # per-item contribution вообще, см. _manual_plan_for).
+    from app.services.committed_amounts import planned_item_order_diffs
+    _item_order_diffs = await planned_item_order_diffs(db, list(by_id.keys()))
+    own_order_overspend_by_cat: dict[int, float] = {}
+    own_order_economy_by_cat: dict[int, float] = {}
+    for _diff_info in _item_order_diffs.values():
+        _diff_cid = _diff_info["feo_category_id"]
+        _diff = _diff_info["diff"]
+        if _diff > 0.005:
+            own_order_overspend_by_cat[_diff_cid] = own_order_overspend_by_cat.get(_diff_cid, 0.0) + _diff
+        elif _diff < -0.005:
+            own_order_economy_by_cat[_diff_cid] = own_order_economy_by_cat.get(_diff_cid, 0.0) - _diff
     # Задача 2 (владелец, 04.10.2026) — own-часть «незаконтрактованного остатка
     # плана», разбитая по need_level (nice_to_have — см. её докстринг,
     # committed_amounts.leaf_items_not_committed_by_need_level, ПРАВИЛО №6:
@@ -1266,16 +1291,25 @@ async def compute_feo_plan_tree(
             plan_items_raw = leaf_item_amt.get(cat_id, 0.0)
             # Задача владельца (13.10.2026, «перерасход по заказам» — зеркало
             # «экономии по заказам» выше, ПРАВИЛО №6: НЕ вторая формула
-            # замещения, просто разложение plan_items_raw/plan_manual на две
-            # неотрицательные стороны одной и той же разницы). Тождество
-            # plan_items_raw + order_overspend − order_economy == plan_manual
-            # держится identично на любом узле (x = max(x,0) − max(-x,0),
-            # x = plan_manual − plan_items_raw) — см. тест
-            # test_feo_plan_tree_order_overspend.py. ⚠️ НЕ влияет на plan/
-            # plan_manual/display/excess_* — те читаются как и раньше, эти два
-            # поля только РАСКЛАДЫВАЮТ уже посчитанную разницу для UI.
-            order_overspend = max(0.0, plan_manual - plan_items_raw)
-            order_economy = max(0.0, plan_items_raw - plan_manual)
+            # замещения, просто разложение diff'ов позиций на две
+            # неотрицательные стороны). Правка после замечания координатора
+            # (13.10.2026, «Форменная одежда» — перерасход/экономия считаются
+            # ПО ПОЗИЦИИ, см. own_order_overspend_by_cat/own_order_economy_by_cat
+            # выше, planned_item_order_diffs) — ТОЛЬКО для plan_source=
+            # 'planned_items' (умолчание); 'manual_sum' per-item contribution
+            # не использует вовсе (см. _manual_plan_for) — там own-формула
+            # остаётся net (x=max(x,0)−max(-x,0), x=plan_manual−plan_items_raw),
+            # тождество plan_items_raw+order_overspend−order_economy==plan_manual
+            # держится в обоих случаях — см. test_feo_plan_tree_order_overspend.py
+            # и её докстринг у planned_item_order_diffs (ПРАВИЛО №6). ⚠️ НЕ
+            # влияет на plan/plan_manual/display/excess_* — эти поля только
+            # РАСКЛАДЫВАЮТ уже посчитанную разницу для UI.
+            if (r.plan_source or "planned_items") != "manual_sum":
+                order_overspend = own_order_overspend_by_cat.get(cat_id, 0.0)
+                order_economy = own_order_economy_by_cat.get(cat_id, 0.0)
+            else:
+                order_overspend = max(0.0, plan_manual - plan_items_raw)
+                order_economy = max(0.0, plan_items_raw - plan_manual)
             if qty == 0.0:
                 # planned_quantity категории не задано (план введён позициями,
                 # не полями листа) — без этого fallback'а qty_plan/display_quantity
@@ -1387,12 +1421,18 @@ async def compute_feo_plan_tree(
             plan_items_raw = children_plan_items_raw + own_items_raw
             # Задача владельца (13.10.2026) — «перерасход по заказам», rollup
             # зеркалит plan_items_raw/plan_manual выше (ПРАВИЛО №6, см.
-            # комментарий у листа): own-часть на СОБСТВЕННЫХ (own_items_raw/
-            # own_plan_manual_for_calc) величинах узла, рекурсия — Σ готовых
+            # комментарий у листа). Правка после замечания координатора — ПО
+            # ПОЗИЦИИ (own_order_overspend_by_cat/own_order_economy_by_cat,
+            # planned_item_order_diffs), не net своих величин узла — ТОЛЬКО
+            # для plan_source='planned_items'; рекурсия — Σ готовых
             # order_overspend/order_economy детей (та же схема, что и
             # children_plan_manual/children_plan_items_raw выше).
-            own_order_overspend = max(0.0, own_plan_manual_for_calc - own_items_raw)
-            own_order_economy = max(0.0, own_items_raw - own_plan_manual_for_calc)
+            if (r.plan_source or "planned_items") != "manual_sum":
+                own_order_overspend = own_order_overspend_by_cat.get(cat_id, 0.0)
+                own_order_economy = own_order_economy_by_cat.get(cat_id, 0.0)
+            else:
+                own_order_overspend = max(0.0, own_plan_manual_for_calc - own_items_raw)
+                own_order_economy = max(0.0, own_items_raw - own_plan_manual_for_calc)
             children_order_overspend = sum(c["order_overspend"] for c in child_nodes)
             children_order_economy = sum(c["order_economy"] for c in child_nodes)
             order_overspend = own_order_overspend + children_order_overspend

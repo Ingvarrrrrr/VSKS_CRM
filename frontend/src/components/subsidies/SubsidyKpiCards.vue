@@ -81,10 +81,16 @@
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_plan_schedule) }}</div>
             <div class="kpi-label">Запланировано</div>
-            <!-- Задача владельца (13.10.2026) — «в т.ч. перерасход по заказам +X»,
-                 см. subsidyOrderOverspendTotal (Правило №6, готовое поле дерева). -->
-            <div v-if="subsidyOrderOverspendTotal > 0.005" class="kpi-sub-note text-caption text-medium-emphasis">
-              в т.ч. перерасход по заказам +{{ formatCurrency(subsidyOrderOverspendTotal) }}
+            <!-- Задача владельца (13.10.2026, дополнено по замечанию координатора) —
+                 «в т.ч. перерасход по заказам +X · экономия −Y», кликабельная —
+                 клик открывает OrderSubstitutionDialog (см. subsidyOrderOverspendTotal/
+                 subsidyOrderEconomyTotal, Правило №6, готовые поля дерева). -->
+            <div v-if="subsidyOrderOverspendTotal > 0.005 || subsidyOrderEconomyTotal > 0.005"
+              class="kpi-sub-note kpi-sub-note-clickable text-caption text-medium-emphasis"
+              @click.stop="orderSubstitutionDialogVisible = true">
+              <template v-if="subsidyOrderOverspendTotal > 0.005">в т.ч. перерасход по заказам +{{ formatCurrency(subsidyOrderOverspendTotal) }}</template>
+              <template v-if="subsidyOrderOverspendTotal > 0.005 && subsidyOrderEconomyTotal > 0.005"> · </template>
+              <template v-if="subsidyOrderEconomyTotal > 0.005">экономия −{{ formatCurrency(subsidyOrderEconomyTotal) }}</template>
             </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('plan_schedule')">
@@ -509,6 +515,16 @@
     @close="paidOverDeliveredDrillVisible = false"
     @row-click="(id) => { paidOverDeliveredDrillVisible = false; ctx.router.push(`/orders/${id}/edit`) }"
   />
+
+  <!-- Задача владельца (13.10.2026) — окно «Перерасход/экономия по заказам»
+       по клику на подпись карточки «Запланировано» (см. subsidyOrderOverspendTotal/
+       subsidyOrderEconomyTotal выше), без category-фильтра — вся субсидия. -->
+  <OrderSubstitutionDialog
+    :visible="orderSubstitutionDialogVisible"
+    :subsidy-id="ctx.selectedId.value"
+    @close="orderSubstitutionDialogVisible = false"
+    @open-purchase="(id) => { orderSubstitutionDialogVisible = false; ctx.router.push(`/orders/${id}/edit`) }"
+  />
 </template>
 
 <script setup lang="ts">
@@ -543,6 +559,7 @@ import SubsidyMoneyCards from '@/components/subsidies/SubsidyMoneyCards.vue'
 import ContractsDrillDialog from '@/components/subsidies/ContractsDrillDialog.vue'
 import FeoCardDrillDialog, { type FeoCardDrillCard } from '@/components/subsidies/FeoCardDrillDialog.vue'
 import PaidOverDeliveredDrillDialog from '@/components/subsidies/PaidOverDeliveredDrillDialog.vue'
+import OrderSubstitutionDialog from '@/components/subsidies/OrderSubstitutionDialog.vue'
 import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
 import ExcessDrilldownBar from '@/components/subsidies/ExcessDrilldownBar.vue'
 import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
@@ -657,6 +674,14 @@ const subsidyOrderOverspendTotal = computed(() => {
   const byCat = ctx.planTreeByCat.value as Record<number, any>
   return ctx.feoTree.value.reduce((sum, root) => sum + Number(byCat[root.id]?.order_overspend || 0), 0)
 })
+// Правка 13.10.2026 (замечание координатора) — рядом с перерасходом теперь
+// видна и экономия в той же подписи («+X · экономия −Y»), та же схема rollup
+// корней (order_economy — готовое поле дерева, ПРАВИЛО №6).
+const subsidyOrderEconomyTotal = computed(() => {
+  const byCat = ctx.planTreeByCat.value as Record<number, any>
+  return ctx.feoTree.value.reduce((sum, root) => sum + Number(byCat[root.id]?.order_economy || 0), 0)
+})
+const orderSubstitutionDialogVisible = ref(false)
 
 const kpiSubAnim_budget            = useAnimatedNumber(kpiSubTarget_budget,           800)
 const kpiSubAnim_plan_schedule     = useAnimatedNumber(kpiSubTarget_plan_schedule,    800)
@@ -856,6 +881,14 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
   line-height: 1.3;
   white-space: normal;
   word-break: break-word;
+}
+.kpi-sub-note-clickable {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.kpi-sub-note-clickable:hover {
+  color: inherit;
+  opacity: 0.8;
 }
 .kpi-split-row {
   display: flex;

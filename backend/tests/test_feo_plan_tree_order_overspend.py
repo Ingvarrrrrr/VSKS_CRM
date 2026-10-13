@@ -71,6 +71,35 @@ async def test_owner_example_economy_still_zero_overspend(db_session, test_org):
 
 
 @pytest.mark.asyncio
+async def test_two_items_same_category_no_netting(db_session, test_org):
+    """Правка после замечания координатора (13.10.2026) — боевой пример
+    «Форменная одежда»: ОДНА категория, ДВЕ плановые позиции — «Повседневный
+    костюм» (план 586 000, заказ 816 900, перерасход 230 900) и «Шапка»
+    (план 106 500, заказ 102 900, экономия 3 600). ДО правки own_overspend/
+    own_economy считались net по узлу (max(0, план_узла−Σ файла)) — экономия
+    Шапки ГАСИЛА перерасход Костюма в сумме узла (227 300 вместо 230 900).
+    Теперь — Σ ПО ПОЗИЦИЯМ отдельно: order_overspend=230 900 (только Костюм),
+    order_economy=3 600 (только Шапка), обе стороны видны одновременно."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=2_000_000)
+    leaf = await _make_category(db_session, subsidy.id, name="Форменная одежда", budget=2_000_000)
+
+    fpi_suit = await _make_planned_item(db_session, leaf.id, "Повседневный костюм", 1, 586_000)
+    await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi_suit.id, quantity=1, contract_price=816_900)
+
+    fpi_hat = await _make_planned_item(db_session, leaf.id, "Шапка", 1, 106_500)
+    await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi_hat.id, quantity=1, contract_price=102_900)
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[leaf.id]
+
+    assert node["plan_items_raw"] == pytest.approx(586_000.0 + 106_500.0, abs=0.01)
+    assert node["order_overspend"] == pytest.approx(230_900.0, abs=0.01)  # НЕ 227 300 (netted)
+    assert node["order_economy"] == pytest.approx(3_600.0, abs=0.01)
+    assert node["plan_manual"] == pytest.approx(816_900.0 + 102_900.0, abs=0.01)
+    _assert_identity(node)
+
+
+@pytest.mark.asyncio
 async def test_rollup_to_group_node(db_session, test_org):
     """Группа (узел с детьми) — order_overspend/order_economy это Σ по
     поддереву (own + rollup детей), та же схема, что и у plan_items_raw/

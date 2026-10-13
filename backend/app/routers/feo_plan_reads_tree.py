@@ -304,6 +304,29 @@ async def get_feo_plan_tree(
     return result
 
 
+@router.get("/order-substitution-rows")
+async def get_order_substitution_rows(
+    subsidy_id: int = Query(...),
+    category_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Задача владельца (13.10.2026) — строки окна «Перерасход/экономия по
+    заказам» (OrderSubstitutionDialog.vue): клик по подписи «в т.ч. перерасход
+    по заказам +X · экономия −Y» на карточке «Запланировано»
+    (SubsidyKpiCards.vue, без category_id — вся субсидия) или по подписи
+    категории дерева (FeoCategoryEconomyNote.vue, с category_id — она +
+    поддерево). ЕДИНАЯ точка (ПРАВИЛО №6) —
+    app.services.feo_order_diff.order_substitution_rows, та же
+    committed_amounts.planned_item_order_diffs, что суммирует
+    compute_feo_plan_tree в order_overspend/order_economy узла — overspend_total/
+    economy_total здесь ОБЯЗАНЫ совпадать с Σ order_overspend/order_economy
+    корневых узлов дерева (без category_id) или узла category_id (с ним)."""
+    from app.services.feo_order_diff import order_substitution_rows
+
+    return await order_substitution_rows(db, subsidy_id, category_id)
+
+
 @router.get("/plan-positions")
 async def get_plan_positions(
     subsidy_id: int = Query(...),

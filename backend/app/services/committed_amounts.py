@@ -380,6 +380,7 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
         select(
             FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.item_type,
             FeoPlannedItem.amount, FeoPlannedItem.quantity, FeoPlannedItem.payment_mode,
+            FeoPlannedItem.name,
         )
         .where(FeoPlannedItem.feo_category_id.in_(category_ids))
         .where(FeoPlannedItem.is_active.is_(True))
@@ -398,7 +399,8 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
     eff_types = await resolve_effective_item_types(db, rows)
 
     for r in rows:
-        contribution = float(r.amount or 0)
+        raw_amount = float(r.amount or 0)
+        contribution = raw_amount
         if (r.payment_mode or "one_time") == "one_time" and float(r.quantity or 0) > 0:
             _committed = committed_map.get(r.id) or {"amount": 0.0, "quantity": 0.0}
             if _committed["quantity"] >= float(r.quantity):
@@ -407,8 +409,49 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
             "amount": contribution,
             "feo_category_id": r.feo_category_id,
             "item_type_effective": eff_types.get(r.id),
+            # Задача владельца (13.10.2026) — «перерасход/экономия по заказам
+            # ПО ПОЗИЦИИ, не по сумме категории» (см. planned_item_order_diffs
+            # ниже, ПРАВИЛО №6 — те же raw_amount/contribution, что уже
+            # вычислены в этой же функции, вторая формула не пишется).
+            "raw_amount": raw_amount,
+            "name": r.name,
         }
     return result
+
+
+async def planned_item_order_diffs(db: AsyncSession, category_ids: list[int]) -> dict[int, dict]:
+    """{feo_planned_item_id: {feo_category_id, name, amount (план из файла —
+    r.amount), contribution (план после замены «заказ/договор вместо плана»),
+    diff (contribution − amount)}} — задача владельца (13.10.2026): «перерасход/
+    экономия по заказам считаются ПО ПОЗИЦИИ, а не по сумме категории» (повод —
+    категория «Форменная одежда»: перерасход «Повседневного костюма» и
+    экономия «Шапки» внутри ОДНОЙ категории гасили друг друга в сетевой сумме
+    узла, +276 050,04 вместо +279 650,04 владельца).
+
+    ЕДИНАЯ точка (ПРАВИЛО №6) — поверх planned_item_contributions (эта же
+    функция выше, raw_amount/amount уже посчитаны ею, вторая формула
+    замещения не пишется): diff>0 — позиция ПОДОРОЖАЛА (заказ/договор дороже
+    плана позиции, целиком набравшей количество) — вклад в order_overspend
+    узла категории; diff<0 — позиция ПОДЕШЕВЕЛА — вклад в order_economy (как
+    положительная величина, -diff). Вызывающий код (compute_feo_plan_tree —
+    батчево на ВСЕ категории субсидии, и app.services.feo_order_diff —
+    построчно для окна «Перерасход/экономия по заказам») суммирует/фильтрует
+    ЭТИ ЖЕ diff, тождество plan_items_raw + order_overspend − order_economy ==
+    plan_manual держится потому, что для режима plan_source='planned_items'
+    узла Σ contribution его собственных позиций ЕСТЬ его plan_manual (см.
+    leaf_items_committed_contribution/_manual_plan_for в feo_plan_tree.py) —
+    Σ(raw+diff) = raw_total + Σdiff = items_total + overspend − economy."""
+    contributions = await planned_item_contributions(db, category_ids)
+    return {
+        item_id: {
+            "feo_category_id": info["feo_category_id"],
+            "name": info["name"],
+            "amount": info["raw_amount"],
+            "contribution": info["amount"],
+            "diff": info["amount"] - info["raw_amount"],
+        }
+        for item_id, info in contributions.items()
+    }
 
 
 async def leaf_items_committed_contribution(

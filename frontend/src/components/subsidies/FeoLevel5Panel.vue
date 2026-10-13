@@ -155,16 +155,6 @@
                       </template>
                       <span>Позиция целиком в согласованной закупке — выбрать нельзя</span>
                     </v-tooltip>
-                    <!-- Задача владельца, п.11 волны 3 (2026-09-13): «нужна нумерация, иначе
-                         неудобно искать, где что находится и после чего, когда запланировано
-                         несколько сотен позиций». Номер — позиция в ТЕКУЩЕМ видимом порядке
-                         (тот же sort_order.nulls_last(), id, что и в списке — см.
-                         displayPlannedRowsFor/pIdx), не id из базы. Префикс перед названием, а
-                         не отдельная колонка — таблица и так плотно упакована (7+ управляющих
-                         кнопок в последней колонке, узкие ширины из feoResize), новая колонка
-                         сдвинула бы все border/colspan расчёты по всему файлу без выигрыша:
-                         номер и так стоит прямо перед именем, там же, где его ищут глазами. -->
-                    <span class="feo-plan-num text-medium-emphasis" title="Порядковый номер в текущем порядке списка">{{ pIdx + 1 }}.</span>
                     <v-btn
                       :icon="ctx.expandedPlannedItems.value.has(planned.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
                       variant="text" density="compact" size="x-small" color="teal"
@@ -202,6 +192,13 @@
                     <v-chip v-if="!planned.isManual && planned.need_level === 'nice_to_have'" size="x-small" color="deep-orange" variant="tonal" style="font-size:9px;height:16px"
                       :title="NEED_LEVEL_LABELS.nice_to_have"
                     >{{ NEED_LEVEL_SHORT_LABELS.nice_to_have }}</v-chip>
+                  </div>
+                  <!-- Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4г): вместо
+                       нумерации «2.»/«4.» (убрана выше) — мелкая подпись «строка N файла»,
+                       когда позиция заведена загрузкой плана (source_row задан). Позиции,
+                       созданные в GALA вручную, подписи не имеют (source_row=null). -->
+                  <div v-if="!planned.isManual && planned.source_row != null" class="feo-plan-note text-medium-emphasis">
+                    строка {{ planned.source_row }} файла
                   </div>
                   <div v-if="planned.isManual" class="feo-plan-note text-medium-emphasis">
                     <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />ручной план ФЭО — подробного деления в ФЭО не было
@@ -439,29 +436,6 @@
                       </div>
                     </template>
                   </template>
-                  <!-- Состав объединённой позиции (владелец, 12.10.2026, план
-                       merged-item-parts.md) — «Gaz A22R35…» 4 строки файла плана =
-                       4 ОТДЕЛЬНЫЕ закупки внутри одной позиции. Показано ВСЕГДА,
-                       когда у позиции есть parts (развёрнуто или нет — закупка
-                       целиком уже видна выше, здесь — её разбивка по частям),
-                       закупки каждой части — через feo_plan_part_key (ПРАВИЛО №6,
-                       те же данные comparisonData, без второго запроса). -->
-                  <div v-if="planned.parts?.length" class="feo-plan-parts">
-                    <div v-for="part in planned.parts" :key="part.key" class="feo-plan-part-row">
-                      <span class="feo-plan-part-row__label">стр. {{ part.row ?? '—' }} — {{ formatCurrency(part.amount) }}</span>
-                      <template v-if="feoLevel5.purchasesForPlanPart(node.id, planned.id, part.key).length">
-                        <a
-                          v-for="p in feoLevel5.purchasesForPlanPart(node.id, planned.id, part.key)"
-                          :key="`part-${part.key}-${p.purchase_id}`"
-                          href="javascript:void(0)"
-                          class="feo-purchase-link ml-1"
-                          :title="`Перейти в закупку ${p.registry_number || ('#' + p.purchase_id)}`"
-                          @click.stop="ctx.router.push(`/orders/${p.purchase_id}`)"
-                        >{{ p.registry_number || (p.purchase_number != null ? `№ ${p.purchase_number}` : `#${p.purchase_id}`) }}</a>
-                      </template>
-                      <span v-else class="text-caption text-medium-emphasis ml-1">нет закупки</span>
-                    </div>
-                  </div>
                 </td>
                 <td :style="feoResize.resizeStyle('residual')"></td>
                 <td style="width:112px;min-width:112px;max-width:112px;padding:2px;text-align:center">
@@ -527,6 +501,56 @@
                   </template>
                 </td>
               </tr>
+              <!-- Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4г): части
+                   объединённой позиции («Gaz A22R35…» — 4 строки файла плана = 4
+                   ОТДЕЛЬНЫЕ закупки внутри одной позиции) — отдельными под-строками
+                   СРАЗУ под позицией, а не втиснуты в ячейку «Стадия закупки»
+                   (убрано выше). Своя цена/кол-во/сумма части (planned.parts уже
+                   несёт qty/unit/unit_price/amount) и своя стадия закупки — через
+                   feo_plan_part_key (feoLevel5.purchasesForPlanPart, ПРАВИЛО №6, те
+                   же данные comparisonData, без второго запроса). Показаны ВСЕГДА
+                   (не только при развороте — закупка целиком уже видна в основной
+                   строке, здесь её разбивка по частям). -->
+              <template v-if="planned.parts?.length && !isPlannedRowHidden(planned)">
+              <tr v-for="part in planned.parts" :key="`part-${planned.id}-${part.key}`"
+                class="feo-plan-part-sub-row"
+              >
+                <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node) + 20}px` }]" style="padding:2px 8px;color:#64748b">
+                  <span class="text-caption">часть — {{ part.unit ? `${parseFloat(String(part.qty ?? 0))} ${part.unit}` : '' }}</span>
+                  <div v-if="part.row != null" class="feo-plan-note text-medium-emphasis">строка {{ part.row }} файла</div>
+                </td>
+                <td :style="feoResize.resizeStyle('budget')" style="padding:2px 8px;text-align:right;color:#64748b">
+                  <span v-if="part.unit_price != null" class="text-caption">{{ formatCurrency(Number(part.unit_price)) }}</span>
+                </td>
+                <td :style="feoResize.resizeStyle('qty')" style="padding:2px 8px;text-align:right;color:#64748b">
+                  <span v-if="part.qty != null" class="text-caption">{{ parseFloat(String(part.qty)) }} {{ part.unit || '' }}</span>
+                </td>
+                <td :style="feoResize.resizeStyle('planned')" style="padding:2px 8px;text-align:right;color:#64748b">
+                  <span v-if="part.amount != null" class="text-caption">{{ formatCurrency(part.amount) }}</span>
+                </td>
+                <td style="width:86px;min-width:86px"></td>
+                <td :style="feoResize.resizeStyle('spent')" style="padding:2px 8px;vertical-align:top">
+                  <template v-if="feoLevel5.purchasesForPlanPart(node.id, planned.id, part.key).length">
+                    <div
+                      v-for="p in feoLevel5.purchasesForPlanPart(node.id, planned.id, part.key)"
+                      :key="`part-${part.key}-${p.purchase_id}`"
+                      class="feo-stage-list-row"
+                    >
+                      <a
+                        href="javascript:void(0)"
+                        class="feo-purchase-link"
+                        :title="`Перейти в закупку ${p.registry_number || ('#' + p.purchase_id)}`"
+                        @click.stop="ctx.router.push(`/orders/${p.purchase_id}`)"
+                      >{{ p.registry_number || (p.purchase_number != null ? `№ ${p.purchase_number}` : `#${p.purchase_id}`) }}</a>
+                      <span class="feo-stage-list-row__status" :style="{ color: purchaseStatusColor(p.purchase_status) }">{{ purchaseStatusLabel(p.purchase_status) }}</span>
+                    </div>
+                  </template>
+                  <span v-else class="text-caption text-medium-emphasis">нет закупки</span>
+                </td>
+                <td :style="feoResize.resizeStyle('residual')"></td>
+                <td style="width:112px;min-width:112px;max-width:112px"></td>
+              </tr>
+              </template>
               <!-- Ветка комментариев плановой позиции (владелец, Волна 4, п.16) —
                    раскрывающийся блок под строкой, не колонка (см. докстринг задачи
                    про плотную таблицу). Тот же переиспользуемый FeoCommentThread.vue,
@@ -1003,14 +1027,6 @@ const typeSubtotals = computed(() => {
 </script>
 
 <style scoped>
-/* Номер позиции в текущем видимом порядке списка (п.11 волны 3) — префикс
-   перед названием, не отдельная колонка (см. комментарий у v-for в шаблоне). */
-.feo-plan-num {
-  flex: 0 0 auto;
-  min-width: 16px;
-  font-size: 10px;
-  text-align: right;
-}
 
 /* Шильдики происхождения/статуса позиции (владелец, Волна 5, 2026-09-14):
    ДЕФЕКТ — на скриншоте владельца текст обрезан до огрызков («пла», «по (»,
@@ -1100,24 +1116,17 @@ const typeSubtotals = computed(() => {
   font-weight: 600;
   flex-shrink: 0;
 }
-/* Состав объединённой позиции (план merged-item-parts.md, владелец 12.10.2026). */
-.feo-plan-parts {
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px dashed rgba(147, 51, 234, 0.3);
+/* Состав объединённой позиции (план merged-item-parts.md, владелец 12.10.2026) —
+   правка 12.10.2026 (lazy-swimming-hollerith.md п.4г): части теперь отдельными
+   под-строками таблицы (<tr class="feo-plan-part-sub-row">), не втиснуты в
+   ячейку «Стадия закупки» — лёгкий фиолетовый фон отличает их от основной
+   строки позиции. */
+.feo-plan-part-sub-row {
+  background: rgba(147, 51, 234, 0.04);
+  border-bottom: 1px solid #E5E7EB;
 }
-.feo-plan-part-row {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  font-size: 10px;
-  line-height: 1.6;
-  white-space: nowrap;
-  overflow: hidden;
-  color: #7E22CE;
-}
-.feo-plan-part-row__label {
-  flex-shrink: 0;
+.feo-plan-part-sub-row td {
+  border-top: none;
 }
 
 /* Раздел C0 (план ancient-prancing-music.md, 2026-09-21): подытоги товары/

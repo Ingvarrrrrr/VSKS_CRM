@@ -403,6 +403,8 @@
         <span v-if="ctx.feoResidualNoteFor(node)!.residual < -0.005" style="color:#EF4444;font-weight:700">больше плана на {{ formatCurrency(-ctx.feoResidualNoteFor(node)!.residual) }}</span>
         <span v-else>свободно {{ formatCurrency(ctx.feoResidualNoteFor(node)!.residual) }}</span>
         · перераспределить {{ formatCurrency(ctx.feoResidualNoteFor(node)!.redistributable) }}<span v-if="ctx.feoResidualNoteFor(node)!.redistributableFallback"> (из плана без договоров)</span>
+        <!-- Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — см. FeoCategoryEconomyNote.vue. -->
+        <FeoCategoryEconomyNote :node="node" />
         <div v-if="ctx.feoResidualNoteFor(node)!.residual < -0.005" style="font-size:11px;white-space:normal;margin-top:2px">
           <v-btn v-if="!ctx.comparisonData.value[node.id]"
             size="x-small" variant="text" color="orange-darken-3"
@@ -449,6 +451,7 @@
         <span v-if="ctx.feoPlanConsumedNoteFor(node)!.residual < -0.005" style="color:#EF4444;font-weight:700">больше плана на {{ formatCurrency(-ctx.feoPlanConsumedNoteFor(node)!.residual) }}</span>
         <span v-else>свободно {{ formatCurrency(ctx.feoPlanConsumedNoteFor(node)!.residual) }}</span>
         · перераспределить {{ formatCurrency(ctx.feoPlanConsumedNoteFor(node)!.redistributable) }}<span v-if="ctx.feoPlanConsumedNoteFor(node)!.redistributableFallback"> (из плана без договоров)</span>
+        <FeoCategoryEconomyNote :node="node" />
       </div>
       <!-- Прогноз «цена выше плановой» — ТОЛЬКО у конечной категории. -->
       <div v-if="!node.hasChildren && ctx.feoForecastWarningFor(node)"
@@ -937,6 +940,7 @@ import { formatCurrency } from '@/composables/subsidies/format'
 import { useFeoComments } from '@/composables/subsidies/useFeoComments'
 import { usePlanToRequest, RESIDUAL_SELECTION_TOOLTIP } from '@/composables/subsidies/usePlanToRequest'
 import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCollapse'
+import FeoCategoryEconomyNote from '@/components/subsidies/FeoCategoryEconomyNote.vue'
 import { useToast } from '@/composables/useToast'
 import type { FeoNode } from '@/composables/subsidies/types'
 import FeoCommentThread from './FeoCommentThread.vue'

@@ -76,6 +76,18 @@ class Wish(Base):
     # закупки форма ещё не задана — см. миграцию a4c6e8g0i2k4.
     contract_form = Column(String(50), nullable=True)
 
+    # Договор заявки — необязательный (владелец, 12.10.2026, план
+    # lazy-swimming-hollerith.md, п.2): «должна быть возможность выбрать
+    # Договор, к которому относится заявка; человек может знать, за счёт
+    # какого договора будет покупка». В форме предлагаются только РАМОЧНЫЕ
+    # договоры (Contract.contract_type framework_cumulative/
+    # framework_with_amount) — фильтрация в GET /contracts/, не здесь. При
+    # конвертации в закупку переезжает в Purchase.contract_id (см.
+    # app/services/wish_distribution.py, app/routers/wish_convert.py), не
+    # перетирая уже заданный договор закупки. Согласующий может сменить его
+    # при согласовании через PATCH /{wish_id}/execution (wish_transitions.py).
+    contract_id = Column(Integer, ForeignKey("contracts.id", ondelete="SET NULL"), nullable=True)
+
     # Остановка заявки (владелец, 2026-08-13): «Останавливать могут все» —
     # заявка не удаляется, а исчезает из плана закупок и перестаёт считаться в
     # ФЭО. Обратной операции (возобновление) нет — владелец её не просил.
@@ -106,6 +118,7 @@ class Wish(Base):
     tz_waived_by_user = relationship("User", foreign_keys=[tz_waived_by_user_id], lazy="selectin")
     purchase = relationship("Purchase", foreign_keys=[purchase_id])
     contractor = relationship("Contractor", foreign_keys=[contractor_id], lazy="selectin")
+    contract = relationship("Contract", foreign_keys=[contract_id], lazy="selectin")
     subsidy = relationship("Subsidy", lazy="selectin")
     event = relationship("Event", foreign_keys=[event_id], lazy="selectin")
     # Жалоба владельца (2026-09-16, заявка №67): без order_by Postgres отдаёт

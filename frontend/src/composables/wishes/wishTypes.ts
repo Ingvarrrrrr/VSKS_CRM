@@ -108,6 +108,14 @@ export interface Wish {
   contractor_id?: number | null
   contractor_name?: string | null
   contractor_display_name?: string | null
+  // Договор заявки — необязательный (владелец, 12.10.2026, план
+  // lazy-swimming-hollerith.md, п.2). contract_number/contract_type/
+  // contract_contractor_name — готовые для показа поля, считает backend
+  // (app.services.wish_serializers._enrich), только чтение.
+  contract_id?: number | null
+  contract_number?: string | null
+  contract_type?: string | null
+  contract_contractor_name?: string | null
   // Владелец, 2026-08-19: тумблер вернули — режим «одна на всех» / «каждой позиции своя»,
   // NOT NULL колонка бэкенда (см. backend/app/schemas/wishes.py::WishOut.feo_per_item).
   feo_per_item?: boolean

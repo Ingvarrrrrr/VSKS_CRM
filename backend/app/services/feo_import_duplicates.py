@@ -241,6 +241,11 @@ def _combine_rows(rows: list) -> dict:
     merged["feo_unit_price"] = totals["feo_unit_price"]
     merged["feo_amount"] = totals["feo_amount"]
     merged["row"] = rows[-1]["row"]
+    # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4г): source_row
+    # объединённой позиции — номер ПЕРВОЙ строки группы (детали частей несут
+    # свои номера в parts[].row, см. _build_parts) — решение: первая строка
+    # группы читается владельцем как «где эта позиция началась в файле».
+    merged["source_row"] = rows[0]["row"]
     merged["_prices_differ"] = totals["prices_differ"]
     merged["parts"] = _build_parts(rows)
     return merged
@@ -349,6 +354,13 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         # обычной (не объединённой — item_data без "parts") позиции.
         if hasattr(FeoPlannedItem, "parts"):
             _fpi_kwargs["parts"] = item_data.get("parts") or []
+        # Правка 12.10.2026 (п.4г): номер строки файла — «строка N файла» у
+        # позиции (FeoLevel5Panel.vue), вместо нумерации «2.»/«4.». У
+        # объединённой позиции item_data["source_row"] уже задан (первая
+        # строка группы, см. _combine_rows); у обычной — совпадает с её
+        # собственной строкой (item_data["row"]).
+        if hasattr(FeoPlannedItem, "source_row"):
+            _fpi_kwargs["source_row"] = item_data.get("source_row", row_num)
         pi = FeoPlannedItem(**_fpi_kwargs)
         db.add(pi)
         await db.flush()
@@ -365,6 +377,7 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
     _tracked = (
         "quantity", "unit", "amount", "item_type", "is_feo_breakdown", "is_internal_plan",
         "unit_price", "feo_quantity", "feo_unit_price", "feo_amount", "need_level", "parts",
+        "source_row",
     )
     _old_vals = {f: getattr(existing_item, f, None) for f in _tracked}
     ch2 = False
@@ -399,6 +412,12 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
     # сохранённым и ch2 не взведётся.
     if item_data.get("parts") is not None and hasattr(existing_item, "parts") and (existing_item.parts or []) != item_data["parts"]:
         existing_item.parts = item_data["parts"]; ch2 = True
+    # Правка 12.10.2026 (п.4г): source_row — та же строка/первая строка
+    # группы (см. _combine_rows/_upsert_one выше), по умолчанию item_data["row"]
+    # для обычной (не объединённой) позиции.
+    _new_source_row = item_data.get("source_row", row_num)
+    if hasattr(existing_item, "source_row") and existing_item.source_row != _new_source_row:
+        existing_item.source_row = _new_source_row; ch2 = True
     if ch2:
         state.updated += 1
         reason = extra_reason or "обновлена позиция — значения перезаписаны из файла"

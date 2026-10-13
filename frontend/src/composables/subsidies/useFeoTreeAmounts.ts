@@ -434,6 +434,26 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return { planned, consumed, residual: planned - consumed, redistributable, redistributableFallback: !hasRedistributable }
   }
 
+  // Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б): «план из файла
+  // N · экономия по заказам M» у строки категории — читает ГОТОВЫЕ
+  // plan_items_raw (Σ amount позиций БЕЗ замещения «заказ вместо плана») и
+  // plan_manual (та же сумма, но для plan_source='planned_items' УЖЕ С
+  // замещением — см. compute_feo_plan_tree._manual_plan_for/
+  // leaf_items_committed_contribution) из того же planTreeByCat, что и
+  // feoResidualNoteFor/feoPlanConsumedNoteFor выше — вторую формулу замещения
+  // здесь не считаем (ПРАВИЛО №6). ВАЖНО: пара здесь — именно
+  // plan_items_raw/plan_manual, НЕ plan_manual/plan (plan_manual для этого
+  // узла на практике часто уже РАВЕН plan — замещение произошло раньше, на
+  // уровне самого plan_manual, см. backend-докстринг).
+  function feoOrderEconomyNoteFor(node: FeoNode): { planFromFile: number; economy: number } | null {
+    const t = planTreeByCat.value[node.id]
+    if (!t || t.plan_items_raw == null || t.plan_manual == null) return null
+    const planFromFile = Number(t.plan_items_raw)
+    const economy = planFromFile - Number(t.plan_manual)
+    if (economy <= 0.005) return null
+    return { planFromFile, economy }
+  }
+
   function feoForecastWarningFor(node: FeoNode): { forecast: number; forecastOver: number; planManual: number } | null {
     const v = plannedPurchaseForecast.value[node.id]
     if (!v || !(v.forecast_over > 0)) return null
@@ -665,7 +685,7 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     feoQtyDisplayRaw, feoQtyDisplayFor, mergedQtyDiff,
     feoAmtFor, feoPlannedTotalFor, feoPlannedRequestsFor, feoPlannedConsumedFor, feoInPlanScheduleFor,
     feoPlannedOverFor, feoPlannedDisplayRaw, feoPlannedDisplayFor,
-    feoResidualNoteFor, feoPlanConsumedNoteFor, feoForecastWarningFor, isAutoAmtNode,
+    feoResidualNoteFor, feoPlanConsumedNoteFor, feoOrderEconomyNoteFor, feoForecastWarningFor, isAutoAmtNode,
     isManualPosLeaf, hasOwnPlannedAmountFor, feoOwnDirectionPlanFor,
     feoChildrenPlanManualFor, feoChildrenWithPlanCountFor, mergedManualPriority,
     setMatchedReqFns,

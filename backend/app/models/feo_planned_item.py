@@ -161,6 +161,17 @@ class FeoPlannedItem(Base):
     # план, раздел «Не делаем»).
     parts = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 
+    # Номер строки файла загрузки плана (владелец, 12.10.2026, план
+    # lazy-swimming-hollerith.md п.4г): «строка N файла» вместо нумерации
+    # «2.»/«4.» у позиции в таблице. У объединённой позиции — номер ПЕРВОЙ
+    # строки группы (у частей — свои номера в parts[].row). NULL — позиция
+    # заведена в GALA вручную, либо подписи сняты кнопкой «Убрать номера
+    # строк файла» (ADMIN_ROLES+, app/routers/feo_planned_items.py). Пишет
+    # ТОЛЬКО загрузка плана (feo_import_duplicates.py::_upsert_one) —
+    # ПРАВИЛО №6, второе место записи не заводим. См. миграцию
+    # s4t6v8x0z2b4_feo_planned_item_source_row.py.
+    source_row = Column(Integer, nullable=True)
+
     feo_category = relationship(
         "FeoCategory",
         backref=backref("planned_items", cascade="all, delete-orphan", passive_deletes=True),

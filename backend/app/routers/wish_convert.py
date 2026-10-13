@@ -166,6 +166,21 @@ async def convert_wish(
             # не проверяется отдельно здесь.
             if getattr(wish, 'contract_form', None) and not ep.contract_form:
                 ep.contract_form = wish.contract_form
+            # Договор заявки (владелец, 12.10.2026, план lazy-swimming-hollerith.md,
+            # п.2) — тот же принцип «не перетирать уже заданное», что у
+            # контрагента/формы договора выше. Переносим purchase_contract_type
+            # из самого договора (не из тела запроса) и назначаем framework_seq
+            # существующим механизмом (app.routers.purchase_budget._assign_framework_seq),
+            # второй не заводим.
+            if getattr(wish, 'contract_id', None) and not ep.contract_id:
+                from app.models.contract import Contract as _WcContract
+                from app.routers.purchase_budget import _assign_framework_seq as _wc_assign_framework_seq
+                _wc_contract = await db.get(_WcContract, wish.contract_id)
+                if _wc_contract:
+                    ep.contract_id = _wc_contract.id
+                    if not ep.purchase_contract_type:
+                        ep.purchase_contract_type = _wc_contract.contract_type
+                    await _wc_assign_framework_seq(ep, db)
         wish.status = "converted"
         wish.approved_by = wish.approved_by or current_user.id
         wish.purchase_id = wish.purchase_id or existing[0].id
@@ -366,9 +381,25 @@ async def convert_wish(
         # тем же принципом, что и контрагент выше. Purchase свежесозданный,
         # поэтому «не перетирать уже заданное» выполняется автоматически.
         contract_form=getattr(wish, 'contract_form', None),
+        # Договор заявки (владелец, 12.10.2026) — переезжает в закупку тем же
+        # принципом; purchase_contract_type берём из самого договора ниже
+        # (после await db.get), а не из тела запроса.
+        contract_id=getattr(wish, 'contract_id', None),
     )
     db.add(p)
     await db.flush()  # get p.id
+
+    # Договор заявки (владелец, 12.10.2026): закупка становится заказом этого
+    # рамочного договора существующим механизмом framework_seq — тот же
+    # помощник, что и везде (app.routers.purchase_budget._assign_framework_seq),
+    # не вторая копия нумерации (ПРАВИЛО №6).
+    if p.contract_id:
+        from app.models.contract import Contract as _WcContract2
+        from app.routers.purchase_budget import _assign_framework_seq as _wc_assign_framework_seq2
+        _wc_contract2 = await db.get(_WcContract2, p.contract_id)
+        if _wc_contract2:
+            p.purchase_contract_type = _wc_contract2.contract_type
+            await _wc_assign_framework_seq2(p, db)
 
     # Контрагент заявки — на каждую позицию (см. аналогичный резолв в
     # _distribute_wish_to_purchases выше). Если контрагента в справочнике ещё

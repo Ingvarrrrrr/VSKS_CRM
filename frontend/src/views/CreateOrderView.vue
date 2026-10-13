@@ -222,7 +222,7 @@
                         <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ item.raw.name }}</span>
                       </template>
                       <template #subtitle>
-                        <span v-if="item.raw.inn" class="text-caption">ИНН: {{ item.raw.inn }}</span>
+                        <span v-if="contractorPickerSubtitle(item.raw)" class="text-caption">{{ contractorPickerSubtitle(item.raw) }}</span>
                       </template>
                     </v-list-item>
                   </template>
@@ -1998,6 +1998,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { contractorPickerSubtitle } from '@/composables/contractors/contractorsTypes'
 import { ACTIONS } from '@/constants/permissionActions'
 import { ADMIN_ROLES, MANAGER_ROLES } from '@/constants/roles'
 import { useContractorsStore } from '@/stores/contractors'
@@ -2392,7 +2393,7 @@ const STATUS_COLOR: Record<string, string> = Object.fromEntries(
 const SUBSTATUS_OPTIONS = ['tz_forming', 'kp_collecting', 'on_platform', 'contractor_negotiations', 'contract_signing']
   .map(value => ({ value, title: purchaseSubstatusLabel(value) }))
 interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number; budget?: number | null }
-interface Contractor { id: number; name: string; inn?: string }
+interface Contractor { id: number; name: string; inn?: string; org_type?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null; org_inn?: string | null }
 interface Product {
   id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string

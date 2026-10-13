@@ -329,6 +329,28 @@
                     data-field="contract_form"
                   />
                 </v-col>
+                <!-- Договор (владелец, 12.10.2026, план lazy-swimming-hollerith.md, п.2):
+                     необязательный выбор рамочного договора заявки. При переводе в
+                     закупку переезжает существующим механизмом (contract_id +
+                     framework_seq), не перетирая уже заданный договор закупки. -->
+                <v-col cols="12" md="6" data-field="contract_id">
+                  <v-autocomplete
+                    v-model="wishForm.contract_id"
+                    :items="wishContractDisplayOptions"
+                    :item-title="(c: any) => `${c.number}${c.contractor_name ? ' · ' + c.contractor_name : ''}`"
+                    item-value="id"
+                    label="Договор (рамочный)"
+                    variant="outlined"
+                    density="compact"
+                    clearable
+                    :loading="wishContractLoading"
+                    :readonly="!isWishEditable && !canDecideWish"
+                    :hint="!isWishEditable && canDecideWish ? 'Вы согласующий — можете изменить договор, если не согласны с выбором автора' : 'Необязательно. Только рамочные договоры — сначала этой субсидии и контрагента заявки'"
+                    :persistent-hint="!isWishEditable && canDecideWish"
+                    no-data-text="Рамочных договоров не найдено"
+                    @update:model-value="(val: number | null) => { if (!isWishEditable && canDecideWish) saveContractId(val) }"
+                  />
+                </v-col>
                 <v-col cols="12" md="6">
                   <div class="text-caption font-weight-medium mb-1">Дата поставки</div>
                   <!-- Мобильный фикс (владелец, 2026-09-04): .mobile-toggle-wrap тянет тумблер
@@ -1739,6 +1761,7 @@ const {
   wishFeoSelected, wishFeoPerItemDisableDialog, wishFeoPerItemDisableCount,
   onWishFeoPerItemChange, cancelWishFeoPerItemDisable, confirmWishFeoPerItemDisable,
   orgUsers, resolveUserPosition, wishContractorInitial, onWishContractorSelect, onContractorNameInput,
+  wishContractOptions, wishContractLoading, wishContractInitial,
   wishFeoLeaves, wishFeoTreeNodes, wishNodeAmounts, pickWishUnallocated,
   wishPlannedResiduals, onWishPlannedItemCreated,
   wishFeoStale, wishItemsMissingFeoCategory, wishFeoCategoryMissing, wishFeoCategoryMissingTooltip,
@@ -1772,7 +1795,7 @@ const topApproverCandidatesNoDataText = computed(() => {
   return 'Нет сотрудников с правом корректировать субсидию — обратитесь к администратору'
 })
 
-const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId } = autosave
+const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId, saveContractId } = autosave
 
 // Владелец (2026-09-30): заголовок диалога — суффикс по статусу заявки, а не
 // всегда «редактирование» (диалог открывался тем же заголовком и для
@@ -1834,6 +1857,17 @@ const contractFormLabel = computed(() => {
   const v = (wishForm.value as any)?.contract_form
   if (!v) return null
   return contractFormOptions.find(o => o.value === v)?.title || v
+})
+
+// Договор заявки (владелец, 12.10.2026): выбранный договор может пока не
+// попасть в загруженный список (видимость/ещё не пришёл ответ) — добиваем
+// список синтетическим пунктом из wishContractInitial, чтобы автокомплит
+// показывал номер/контрагента, а не голый id.
+const wishContractDisplayOptions = computed(() => {
+  const base = wishContractOptions.value
+  const sel = wishContractInitial.value
+  if (sel && !base.some((c: any) => c.id === sel.id)) return [sel, ...base]
+  return base
 })
 
 // Нижняя закреплённая панель телефона (режим согласующего) — «Одобрить…»

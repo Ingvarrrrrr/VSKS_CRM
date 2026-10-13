@@ -45,6 +45,12 @@
           <div class="text-caption text-medium-emphasis">Форма договора</div>
           <div class="text-body-2">{{ contractFormLabel }}</div>
         </v-col>
+        <!-- Договор заявки (владелец, 12.10.2026) — только показ; сменить его
+             согласующий может в основной форме (поле «Договор (рамочный)»). -->
+        <v-col v-if="(wish as any).contract_number" cols="6">
+          <div class="text-caption text-medium-emphasis">Договор</div>
+          <div class="text-body-2">{{ (wish as any).contract_number }}{{ (wish as any).contract_contractor_name ? ' · ' + (wish as any).contract_contractor_name : '' }}</div>
+        </v-col>
         <v-col v-if="wish.priority" cols="6">
           <div class="text-caption text-medium-emphasis">Приоритет</div>
           <div class="text-body-2">{{ priorityLabel[wish.priority] || wish.priority }}</div>

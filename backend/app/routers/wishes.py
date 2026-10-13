@@ -15,6 +15,7 @@ from app.models.wish_member import WishMember
 from app.schemas.wishes import WishCreate, WishUpdate, WishOut
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.contract import Contract
 from app.services.item_contractor import set_item_contractor
 from app.services.item_amounts import line_total, apply_item_amounts, effective_vat_on_top, effective_vat_rate
 from app.services.item_forms import item_form_for_wish_item
@@ -117,6 +118,10 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
             selectinload(Wish.contractor),
             selectinload(Wish.rejected_by_user),
             selectinload(Wish.tz_waived_by_user),
+            # Договор заявки (владелец, 12.10.2026) — вложенный contractor
+            # договора нужен карточке (_enrich: contract_contractor_name),
+            # лениво его трогать в async-коде нельзя.
+            selectinload(Wish.contract).selectinload(Contract.contractor),
         )
         .where(Wish.id == wish_id)
     )
@@ -318,6 +323,8 @@ async def create_wish(
         # contract_form (владелец, 2026-09-15) — источник item_form_for_wish
         # ниже, тот же принцип, что и у Purchase.contract_form.
         contract_form=body.contract_form,
+        # Договор заявки — необязательный (владелец, 12.10.2026). См. Wish.contract_id.
+        contract_id=body.contract_id,
     )
     db.add(wish)
     await db.flush()
@@ -567,6 +574,14 @@ async def update_wish(
     # ветку одной, не заводим отдельную только под null.
     if 'vat_applicable' in body.model_fields_set:
         wish.vat_applicable = body.vat_applicable
+
+    # Договор заявки — необязательное поле (владелец, 12.10.2026), тот же
+    # нюанс частичного обновления, что у contractor_id/vat_applicable выше:
+    # общий exclude_none-дамп молча выкидывает contract_id=None, когда человек
+    # явно снимает выбранный договор — model_fields_set отличает «пришёл
+    # null» от «ключа не было».
+    if 'contract_id' in body.model_fields_set:
+        wish.contract_id = body.contract_id
 
     # Владелец (01.10, прод: закупка РЕЕ-2026-00975/заявка №98, инцидент см.
     # ПРАВИЛО №6): шапка (subsidy_id/feo_category_id/event_id) заявки-компаньона

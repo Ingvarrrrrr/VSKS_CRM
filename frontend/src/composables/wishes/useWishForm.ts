@@ -175,7 +175,46 @@ export function useWishForm(deps: {
     // источник спец-полей позиций («Проживание»/«Перевозки автобусом»/«Питание»)
     // ДО конвертации в закупку. См. composables/items/useItemForm.ts.
     contract_form: null as string | null,
+    // Договор заявки — необязательный (владелец, 12.10.2026, план
+    // lazy-swimming-hollerith.md, п.2). В списке только РАМОЧНЫЕ договоры (см.
+    // FRAMEWORK_CONTRACT_TYPES/loadWishFrameworkContracts ниже). При переводе
+    // заявки в закупку переезжает в Purchase.contract_id (wish_convert.py/
+    // wish_distribution.py), закупка становится заказом этого договора
+    // существующим механизмом framework_seq.
+    contract_id: null as number | null,
   })
+
+  // Договор заявки — только рамочные типы, тот же набор, что
+  // app/routers/purchase_budget.py::FRAMEWORK_TYPES на бэкенде.
+  const FRAMEWORK_CONTRACT_TYPES = ['framework_cumulative', 'framework_with_amount']
+  const wishContractOptions = ref<any[]>([])
+  const wishContractLoading = ref(false)
+  // Предзаполнение автокомплита договора при открытии карточки — тот же
+  // приём, что у wishContractorInitial выше: показываем номер/контрагента из
+  // уже загруженной карточки заявки (_enrich на бэкенде), не дожидаясь
+  // отдельного запроса списка договоров.
+  const wishContractInitial = computed(() => {
+    const id = wishForm.value.contract_id
+    if (!id) return null
+    const num = (editingWish.value as any)?.contract_number
+    const ctr = (editingWish.value as any)?.contract_contractor_name
+    const title = num ? `${num}${ctr ? ' · ' + ctr : ''}` : `Договор #${id}`
+    return { id, number: num || title, contractor_name: ctr || '' }
+  })
+  async function loadWishFrameworkContracts() {
+    wishContractLoading.value = true
+    try {
+      const params = new URLSearchParams()
+      if (wishForm.value.subsidy_id) params.set('prefer_subsidy_id', String(wishForm.value.subsidy_id))
+      if (wishForm.value.contractor_id) params.set('contractor_id', String(wishForm.value.contractor_id))
+      const all = await apiFetch<any[]>(`/contracts/?${params}`)
+      wishContractOptions.value = (all || []).filter(c => FRAMEWORK_CONTRACT_TYPES.includes(c.contract_type))
+    } catch {
+      wishContractOptions.value = []
+    } finally {
+      wishContractLoading.value = false
+    }
+  }
 
   // Название субсидии для «ствола» дерева ФЭО (FeoTreeSelect rootLabel).
   const selectedSubsidyName = computed((): string | null =>
@@ -570,6 +609,13 @@ export function useWishForm(deps: {
   })
 
   watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid) }, { immediate: true })
+  // Договор заявки: «сначала договоры этой субсидии и выбранного контрагента»
+  // (владелец, 12.10.2026) — тот же бэкенд-приём ранжирования (prefer_subsidy_id),
+  // что уже используется в useFrameworkContracts.ts для закупок. Перезагружаем
+  // список при смене субсидии/контрагента, пока карточка открыта.
+  watch([() => wishForm.value.subsidy_id, () => wishForm.value.contractor_id], () => {
+    if (wishDialog.value) loadWishFrameworkContracts()
+  })
 
   const totalNmck = computed(() =>
     wishForm.value.items.reduce((sum, i) => sum + (i.total_price || 0), 0)
@@ -661,9 +707,11 @@ export function useWishForm(deps: {
       contractor_name: '',
       feo_per_item: false,
       contract_form: null,
+      contract_id: null,
     }
     wishFeoSelected.value = null
     wishDateMode.value = 'common'
+    wishContractOptions.value = []
   }
 
   function openCreateDialog() {
@@ -673,6 +721,7 @@ export function useWishForm(deps: {
     resetForm()
     undoRedoWish.clear() // Phase 31-07: fresh stack per dialog open
     wishDialog.value = true
+    loadWishFrameworkContracts()
   }
 
   async function openEditDialog(wish: Wish, hooks?: OpenEditHooks) {
@@ -702,6 +751,8 @@ export function useWishForm(deps: {
     wishForm.value.contractor_name = (wish as any).contractor_name || ''
     wishForm.value.feo_per_item = (wish as any).feo_per_item ?? false
     wishForm.value.contract_form = (wish as any).contract_form ?? null
+    wishForm.value.contract_id = (wish as any).contract_id ?? null
+    loadWishFrameworkContracts()
 
     wishFeoSelected.value = wish.feo_category_id ?? null
 
@@ -1184,6 +1235,7 @@ export function useWishForm(deps: {
     onWishFeoPerItemChange, cancelWishFeoPerItemDisable, confirmWishFeoPerItemDisable,
     orgMembers, loadOrgMembers, orgUsers, resolveUserPosition,
     wishContractorInitial, onWishContractorSelect, onContractorNameInput,
+    wishContractOptions, wishContractLoading, wishContractInitial, loadWishFrameworkContracts,
     wishFeoLeaves, wishFeoNodes, wishFeoTreeNodes, wishFeoTreeRawNodes, wishNodeAmounts,
     collectFeoDescendantIds, wishFeoBranchHasPlannedItems,
     wishPlannedResiduals, wishPlannedByCategory, reloadWishPlanned, onWishPlannedItemCreated,

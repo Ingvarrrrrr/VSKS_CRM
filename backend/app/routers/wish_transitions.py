@@ -419,6 +419,14 @@ async def patch_wish_execution(
     # W2: assigned_to меняется без сброса цепочки согласования
     if body.assigned_to is not None:
         wish.assigned_to = body.assigned_to
+    # Договор заявки (владелец, 12.10.2026, план lazy-swimming-hollerith.md,
+    # п.2, правка 🟡): согласующий (тот же круг прав, что прошёл проверку
+    # этого эндпоинта выше — assignee/цепочка/менеджер+) может сменить договор
+    # заявки при согласовании. model_fields_set — чтобы явное снятие договора
+    # (null) отличалось от «поле не прислали» (как у остальных полей этого
+    # патча выше).
+    if 'contract_id' in body.model_fields_set:
+        wish.contract_id = body.contract_id
 
     # W2 (2026-09-30): шапка (subsidy_id/feo_category_id/event_id), которую
     # согласующий только что поправил выше, — для компаньона авансового

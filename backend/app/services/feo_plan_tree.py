@@ -1256,6 +1256,14 @@ async def compute_feo_plan_tree(
             qty = float(r.planned_quantity) if r.planned_quantity is not None else 0.0
             amt = float(r.planned_amount) if r.planned_amount is not None else 0.0
             manual_plan_entered, plan_manual, excess_plan_over_manual, excess_plan_items, _ = _manual_plan_for(cat_id, r)
+            # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — «план из
+            # файла» (владелец): Σ amount активных FeoPlannedItem узла БЕЗ
+            # замещения «заказ вместо плана» (в отличие от plan_manual выше,
+            # который для plan_source='planned_items' УЖЕ содержит замещение —
+            # см. _manual_plan_for, leaf_items_committed_contribution). Разница
+            # plan_items_raw − plan_manual = «экономия по заказам» узла, видна
+            # в FeoCategoryEconomyNote.vue (useFeoTreeAmounts.feoOrderEconomyNoteFor).
+            plan_items_raw = leaf_item_amt.get(cat_id, 0.0)
             if qty == 0.0:
                 # planned_quantity категории не задано (план введён позициями,
                 # не полями листа) — без этого fallback'а qty_plan/display_quantity
@@ -1303,6 +1311,9 @@ async def compute_feo_plan_tree(
             child_nodes = [_visit(c) for c in kids]
             children_plan = sum(c["plan"] for c in child_nodes)
             children_plan_manual = sum(c["plan_manual"] for c in child_nodes)
+            # Правка 12.10.2026 (п.4б) — rollup «план из файла» (см. комментарий
+            # у leaf-ветки выше, ПРАВИЛО №6 — тот же приём, что и children_plan_manual).
+            children_plan_items_raw = sum(c["plan_items_raw"] for c in child_nodes)
             children_ordered = sum(c["ordered"] for c in child_nodes)
             children_ordered_qty = sum(c["ordered_quantity"] for c in child_nodes)
             children_over = sum(c["over"] for c in child_nodes)
@@ -1358,6 +1369,10 @@ async def compute_feo_plan_tree(
             plan_floor_added = own_plan_floor_added + children_plan_floor_added
 
             plan_manual = children_plan_manual + own_plan_manual_for_calc
+            # Правка 12.10.2026 (п.4б) — own_items_raw: та же Σ amount
+            # активных FeoPlannedItem УЗЛА (без замещения), что и у листа.
+            own_items_raw = leaf_item_amt.get(cat_id, 0.0)
+            plan_items_raw = children_plan_items_raw + own_items_raw
             ordered = own_ordered + children_ordered
             ordered_qty = own_ordered_qty + children_ordered_qty
             over = own_over + children_over
@@ -1605,6 +1620,9 @@ async def compute_feo_plan_tree(
             "subsidy_id": r.subsidy_id,
             "parent_id": r.parent_id,
             "plan_manual": plan_manual,
+            # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — см.
+            # комментарий у leaf/group-веток выше.
+            "plan_items_raw": plan_items_raw,
             "ordered": ordered,
             "ordered_quantity": ordered_qty,
             "ordered_qty": ordered_qty,

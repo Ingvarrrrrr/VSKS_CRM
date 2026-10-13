@@ -114,6 +114,9 @@ async def get_feo_plan_tree(
     result: dict = {
         cat_id: {
             "plan_manual": node["plan_manual"],
+            # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — «план
+            # из файла» (владелец) — см. compute_feo_plan_tree.
+            "plan_items_raw": node["plan_items_raw"],
             "ordered_qty": node["ordered_qty"],
             "ordered_sum": node["ordered_sum"],
             "over": node["over"],
@@ -580,6 +583,12 @@ async def get_plan_positions(
                         {**part, "purchases": fpi_part_purchases.get(it.id, {}).get(part["key"], [])}
                         for part in (it.parts or [])
                     ],
+                    # Правка 12.10.2026 (план lazy-swimming-hollerith.md п.4г):
+                    # номер строки файла загрузки плана — «строка N файла» у
+                    # позиции (FeoLevel5Panel.vue), вместо нумерации «2.»/«4.».
+                    # None — позиция заведена в GALA вручную либо подписи
+                    # сняты кнопкой «Убрать номера строк файла».
+                    "source_row": it.source_row,
                     "consumed": consumed,
                     "consumed_quantity": consumed_qty,
                     "residual": planned_total - consumed,

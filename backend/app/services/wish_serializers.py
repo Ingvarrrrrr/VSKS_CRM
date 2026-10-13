@@ -57,6 +57,16 @@ def _enrich(w: Wish) -> WishOut:
     _wc = _item_contractor(w, contractor=getattr(w, 'contractor', None))
     if _wc["contractor_name"]:
         d.contractor_display_name = _wc["contractor_name"]
+    # Договор заявки (владелец, 12.10.2026) — номер/тип/контрагент договора для
+    # карточки заявки, w.contract — relationship lazy="selectin" (см.
+    # models/wish.py), уже подгружена без доп. запроса.
+    _contract = getattr(w, 'contract', None)
+    if _contract:
+        d.contract_number = _contract.number
+        d.contract_type = _contract.contract_type
+        _cc = getattr(_contract, 'contractor', None)
+        if _cc:
+            d.contract_contractor_name = _cc.name
     return d
 
 

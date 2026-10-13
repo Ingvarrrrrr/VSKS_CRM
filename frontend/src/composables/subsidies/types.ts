@@ -341,6 +341,12 @@ export interface FeoPlannedItem {
   // feo_import_duplicates.py). [] у обычной позиции — FeoLevel5Panel.vue не
   // рисует раскрытие на части.
   parts?: { key: string; row: number | null; qty: number | null; unit: string | null; unit_price: number | null; amount: number | null }[]
+  // Номер строки файла загрузки плана (правка 12.10.2026, план
+  // lazy-swimming-hollerith.md п.4г) — «строка N файла» вместо нумерации
+  // «2.»/«4.» у позиции (см. backend FeoPlannedItem.source_row). null —
+  // позиция заведена в GALA вручную либо подписи сняты кнопкой «Убрать
+  // номера строк файла».
+  source_row?: number | null
 }
 
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
@@ -502,6 +508,11 @@ export interface PlanTreeEntry {
   display: number; display_quantity: number
   excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
   plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
+  // Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — «план из
+  // файла» (владелец): Σ amount активных плановых позиций узла+поддерева
+  // БЕЗ замещения «заказ вместо плана» (plan_manual для plan_source=
+  // 'planned_items' это замещение УЖЕ содержит, см. compute_feo_plan_tree).
+  plan_items_raw?: number
   qty_plan?: number
   plan?: number; fact?: number; fact_quantity?: number
   excess_fact_over_plan?: number; excess_fact_pending?: boolean; excess_fact_approved?: boolean

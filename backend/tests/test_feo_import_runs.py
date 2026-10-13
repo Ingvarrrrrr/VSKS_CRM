@@ -54,14 +54,13 @@ async def _make_run(db_session, subsidy_id, **kwargs):
 
 
 @pytest.mark.asyncio
-async def test_list_import_runs_returns_newest_first(db_session, client, test_org, test_user, auth_headers, make_role_permission):
-    await make_role_permission(role="employee", key="feo_categories", granted=True)
+async def test_list_import_runs_returns_newest_first(db_session, client, test_org, test_admin_user, admin_headers, make_role_permission):
     subsidy, cat, item = await _make_subsidy_category_item(db_session, test_org)
 
     run1 = await _make_run(db_session, subsidy.id, filename="first.xlsx")
     run2 = await _make_run(db_session, subsidy.id, filename="second.xlsx")
 
-    resp = await client.get(f"/api/feo-categories/import-runs?subsidy_id={subsidy.id}", headers=auth_headers)
+    resp = await client.get(f"/api/feo-categories/import-runs?subsidy_id={subsidy.id}", headers=admin_headers)
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["total"] == 2
@@ -81,10 +80,38 @@ async def test_list_import_runs_forbidden_without_access(db_session, client, tes
 
 
 @pytest.mark.asyncio
-async def test_get_run_changes_returns_names_not_bare_ids(db_session, client, test_org, test_user, auth_headers, make_role_permission):
+async def test_list_import_runs_forbidden_for_employee_even_with_tab_access(
+    db_session, client, test_org, test_user, auth_headers, make_role_permission,
+):
+    """Корректировки GALA 12.10, п.5: журнал загрузок — только администраторам,
+    даже если сотруднику явно выдана галочка доступа к вкладке ФЭО (feo_categories).
+    Галочка открывает дерево ФЭО, не журнал загрузок."""
+    await make_role_permission(role="employee", key="feo_categories", granted=True)
+    subsidy, cat, item = await _make_subsidy_category_item(db_session, test_org)
+    await _make_run(db_session, subsidy.id)
+
+    resp = await client.get(f"/api/feo-categories/import-runs?subsidy_id={subsidy.id}", headers=auth_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_import_runs_ok_for_org_admin(
+    db_session, client, test_org, test_admin_user, admin_headers, make_role_permission,
+):
+    """Администратор (org_admin и выше) видит журнал — при наличии видимости
+    субсидии по вкладке feo_categories (тот же гейт видимости, что и у дерева
+    ФЭО) + роль admin-уровня (наша новая проверка)."""
+    subsidy, cat, item = await _make_subsidy_category_item(db_session, test_org)
+    await _make_run(db_session, subsidy.id)
+
+    resp = await client.get(f"/api/feo-categories/import-runs?subsidy_id={subsidy.id}", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_get_run_changes_returns_names_not_bare_ids(db_session, client, test_org, test_admin_user, admin_headers, make_role_permission):
     """Владелец требует называть сущности именами — GET .../changes должен
     отдавать entity_name, а не только entity_id."""
-    await make_role_permission(role="employee", key="feo_categories", granted=True)
     subsidy, cat, item = await _make_subsidy_category_item(db_session, test_org)
     run = await _make_run(db_session, subsidy.id)
 
@@ -93,7 +120,7 @@ async def test_get_run_changes_returns_names_not_bare_ids(db_session, client, te
         source=feo_history.SOURCE_IMPORT, source_ref=run.id,
     )
 
-    resp = await client.get(f"/api/feo-categories/import-runs/{run.id}/changes", headers=auth_headers)
+    resp = await client.get(f"/api/feo-categories/import-runs/{run.id}/changes", headers=admin_headers)
     assert resp.status_code == 200, resp.text
     rows = resp.json()
     assert len(rows) == 1
@@ -110,12 +137,11 @@ async def test_get_run_changes_404_for_unknown_run(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_get_single_run(db_session, client, test_org, auth_headers, make_role_permission):
-    await make_role_permission(role="employee", key="feo_categories", granted=True)
+async def test_get_single_run(db_session, client, test_org, test_admin_user, admin_headers, make_role_permission):
     subsidy, cat, item = await _make_subsidy_category_item(db_session, test_org)
     run = await _make_run(db_session, subsidy.id, filename="detail.xlsx", user_name="Петров П.П.")
 
-    resp = await client.get(f"/api/feo-categories/import-runs/{run.id}", headers=auth_headers)
+    resp = await client.get(f"/api/feo-categories/import-runs/{run.id}", headers=admin_headers)
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["filename"] == "detail.xlsx"

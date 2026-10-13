@@ -45,6 +45,11 @@ from app.services.historical_fact_import.plan_diff_warnings import (
 from app.services.historical_fact_import.plan_parts import (
     resolve_row_plan_part, part_by_key, build_part_excess_warning,
 )
+# Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б): «экономия видна»
+# при импорте факта — та же формула замещения плана заказом, что у дерева
+# ФЭО (ПРАВИЛО №6, см. docstring economy_preview.py).
+from app.services.historical_fact_import.economy_preview import build_order_substitution_economy
+from app.services.feo_plan_fact import planned_item_consumption
 
 
 def _row_ranges_only(rows: list) -> str:
@@ -225,6 +230,12 @@ async def build_preview(
         if v.get("feo_planned_item_id"):
             violations_by_fpi.setdefault(v["feo_planned_item_id"], []).append(v)
 
+    # Правка 12.10.2026 (п.4б): «уже заказано» по каждой плановой позиции,
+    # на которую может сматчиться строка файла — ОДИН батчевый запрос
+    # (planned_item_consumption, ПРАВИЛО №6, тот же источник used/used_qty,
+    # что residuals/plan-positions), а не поход в БД на каждую строку.
+    consumption_by_item = await planned_item_consumption(db, list(catalog_by_id.keys()))
+
     out_rows = []
     totals_contract = Decimal(0)
     totals_paid = Decimal(0)
@@ -238,6 +249,10 @@ async def build_preview(
     breakdown_by_status: dict[str, dict] = {}
     breakdown_existing = {"rows": 0, "paid": Decimal(0)}
     breakdown_skip_by_reason: dict[str, dict] = {}
+    # Правка 12.10.2026 (п.4б): «экономия видна» — строки, экономия (не
+    # Decimal float) собирается в этом же цикле (ПРАВИЛО №6, не второй расчёт).
+    economy_rows: list[dict] = []
+    economy_total = Decimal(0)
     # Часть объединённой позиции (план merged-item-parts.md) — какие key уже
     # отданы более ранним строкам ЭТОГО прогона (на позицию), чтобы 4 строки
     # «Gaz A22R35» получили 4 РАЗНЫЕ части, а не одну и ту же дважды.
@@ -564,6 +579,36 @@ async def build_preview(
             # existing_updates — состояния взаимоисключающие).
             existing_purchase = None
 
+        # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б): «экономия
+        # видна» — ТОЛЬКО для строк, что реально создадут закупку (не skip) и
+        # только для ОБЫЧНОЙ (не объединённой — match["plan_parts"]) позиции:
+        # у объединённой план замещается по составу parts, не этой формулой
+        # одного узла (отдельная задача). Формула — build_order_substitution_
+        # economy (economy_preview.py, ПРАВИЛО №6, та же _order_substituted_
+        # plan, что и дерево ФЭО).
+        if not skip and match.get("planned_item_id") is not None and not match.get("plan_parts"):
+            _econ_entry = catalog_by_id.get(match["planned_item_id"])
+            if _econ_entry is not None:
+                _cons = consumption_by_item.get(match["planned_item_id"]) or {"used": 0.0, "used_qty": 0.0}
+                _row_qty = row["fact"]["qty"] if row["fact"]["qty"] is not None else row["plan"]["qty"]
+                economy_info = build_order_substitution_economy(
+                    planned_qty=_econ_entry.get("quantity"),
+                    planned_amount=_econ_entry.get("amount"),
+                    already_ordered_qty=_cons.get("used_qty", 0.0),
+                    already_ordered_sum=_cons.get("used", 0.0),
+                    row_qty=_row_qty,
+                    row_amount=contract_amount_for_row,
+                    planned_item_name=_econ_entry.get("name") or row["name"],
+                )
+                if economy_info:
+                    warnings.append(economy_info["message"])
+                    economy_total += economy_info["amount"]
+                    economy_rows.append({
+                        "row": row["row"],
+                        "name": _econ_entry.get("name") or row["name"],
+                        "amount": float(economy_info["amount"]),
+                    })
+
         status_key = status_info["target_status"] or "none"
         status_bucket = breakdown_by_status.setdefault(status_key, {
             "included": {"rows": 0, "contract_amount": Decimal(0), "contract_amount_raw": Decimal(0), "paid": Decimal(0)},
@@ -871,6 +916,15 @@ async def build_preview(
                 "fact_amount": float(paid_status_without_paid_amount),
                 "rows": paid_status_without_paid_rows,
                 "rows_text": _row_ranges_only(sorted(r["row"] for r in paid_status_without_paid_rows)),
+            },
+            # Правка 12.10.2026 (п.4б): «Экономия по позициям: N поз., сумма»
+            # на шаге итогов мастера (FactImportStepConfirm.vue, по образцу
+            # paid_status_without_paid выше, ПРАВИЛО №6 — те же данные, что и
+            # у предупреждения строки, не вторая формула).
+            "economy": {
+                "count": len(economy_rows),
+                "amount": float(economy_total),
+                "rows": economy_rows,
             },
         },
         "warnings": top_warnings,

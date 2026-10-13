@@ -86,7 +86,7 @@
           <template #item="{ item, props }">
             <v-list-item v-bind="props">
               <template #subtitle>
-                <span v-if="item.raw.inn" class="text-caption">ИНН: {{ item.raw.inn }}</span>
+                <span v-if="contractorPickerSubtitle(item.raw)" class="text-caption">{{ contractorPickerSubtitle(item.raw) }}</span>
               </template>
             </v-list-item>
           </template>
@@ -108,6 +108,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
+import { contractorPickerSubtitle } from '@/composables/contractors/contractorsTypes'
 
 const frameworkOpen = defineModel<boolean>('frameworkOpen', { default: false })
 const newFrameworkOpen = defineModel<boolean>('newFrameworkOpen', { default: false })
@@ -119,7 +120,7 @@ const props = defineProps<{
   selectedFrameworkContract: { id: number } | null
   newFrameworkForm: { number: string; date: string; contractor_id: number | null; subject: string; max_amount: number | null }
   newFrameworkSaving: boolean
-  contractors: { id: number; name: string; inn?: string }[]
+  contractors: { id: number; name: string; inn?: string; org_type?: string }[]
   contractorFilter: (value: string, query: string, item?: any) => boolean
   contractorsNoDataText: string
 }>()

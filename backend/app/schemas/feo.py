@@ -138,6 +138,11 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     # заполняется только импортом плана (feo_import_duplicates.py); не на
     # FeoPlannedItemCreate — ручного редактирования состава в GALA нет.
     parts: list[dict] = []
+    # Номер строки файла загрузки плана (правка 12.10.2026, план
+    # lazy-swimming-hollerith.md п.4г) — «строка N файла» вместо нумерации
+    # у позиции; read-only, пишет только загрузка плана (feo_import_
+    # duplicates.py) либо обнуляет кнопка «Убрать номера строк файла».
+    source_row: Optional[int] = None
     model_config = {"from_attributes": True}
 
 

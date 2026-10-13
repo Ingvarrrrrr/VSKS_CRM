@@ -214,6 +214,9 @@ class WishCreate(BaseModel):
     # 2026-09-15) — источник для item_form_for_wish/спец-полей позиций
     # («Проживание»/«Перевозки автобусом»/«Питание»). См. Wish.contract_form.
     contract_form: Optional[str] = None
+    # Договор заявки — необязательный (владелец, 12.10.2026): см. Wish.contract_id.
+    # Фронт предлагает только рамочные договоры (GET /contracts/?contract_type=...).
+    contract_id: Optional[int] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
     @field_validator('title')
@@ -272,6 +275,11 @@ class WishUpdate(BaseModel):
     # как и остальные поля формы заявки выше — общий model_dump(exclude_none=True)
     # в update_wish трактует отсутствующий/null ключ как «не менять».
     contract_form: Optional[str] = None
+    # Договор заявки — см. WishCreate.contract_id. Optional[...] = None, как и
+    # contractor_id выше — update_wish обрабатывает очистку точечно через
+    # body.model_fields_set (общий exclude_none-дамп не отличил бы явный null
+    # от «ключ не прислали»).
+    contract_id: Optional[int] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
     @field_validator('title')
@@ -318,6 +326,12 @@ class WishExecutionPatch(BaseModel):
     # feo_category_id/items).
     subsidy_id: Optional[int] = None
     assigned_to: Optional[int] = None
+    # Договор заявки (владелец, 12.10.2026, план lazy-swimming-hollerith.md,
+    # п.2, правка 🟡): согласующий может сменить договор заявки при
+    # согласовании — то же поле, что в форме автора (Wish.contract_id), тот же
+    # принцип точечной очистки через model_fields_set, что и у остальных
+    # полей этого патча (см. patch_wish_execution).
+    contract_id: Optional[int] = None
     # Построчные ФЭО-правки согласующего (см. WishItemFeoPatch) — отдельно от
     # WishUpdate.items (тот меняет состав, доступен только автору/участнику).
     items: Optional[List[WishItemFeoPatch]] = None
@@ -382,6 +396,14 @@ class WishOut(BaseModel):
     # Источник для item_form_for_wish() и спец-полей позиций на фронте
     # (PurchaseItemsEditor :contract-form) до конвертации в закупку.
     contract_form: Optional[str] = None
+    # Договор заявки — необязательный (владелец, 12.10.2026). contract_number/
+    # contract_type_label/contract_contractor_name — готовые для карточки поля
+    # (см. _enrich в app.services.wish_serializers), фронту не нужно резолвить
+    # сам Contract по contract_id отдельным запросом.
+    contract_id: Optional[int] = None
+    contract_number: Optional[str] = None
+    contract_type: Optional[str] = None
+    contract_contractor_name: Optional[str] = None
     event_id: Optional[int] = None
     event_name: Optional[str] = None
     assigned_to: Optional[int] = None

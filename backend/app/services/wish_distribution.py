@@ -733,6 +733,13 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             # что и у контрагента выше. Purchase свежесозданный — «не перетирать
             # уже заданное» выполняется автоматически.
             contract_form=getattr(wish, 'contract_form', None),
+            # Договор заявки (владелец, 12.10.2026, план lazy-swimming-hollerith.md,
+            # п.2) — переезжает в закупку тем же принципом, что контрагент/форма
+            # договора выше. Purchase свежесозданный, поэтому «не перетирать уже
+            # заданное» выполняется автоматически. purchase_contract_type
+            # проставляется из самого договора ниже, framework_seq — существующим
+            # механизмом (app.routers.purchase_budget._assign_framework_seq).
+            contract_id=getattr(wish, 'contract_id', None),
             # Владелец (30.09): «Без ТЗ» — решение согласующего заявки
             # (Wish.tz_not_required/tz_waived_by_user_id, проставляется в
             # wish_transitions.py::approve_wish и wish_approvals.py::decide)
@@ -749,6 +756,18 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         db.add(p)
         await db.flush()  # get p.id
         created_purchase_ids.append(p.id)
+
+        # Договор заявки (владелец, 12.10.2026) — закупка становится заказом
+        # этого рамочного договора существующим механизмом framework_seq, не
+        # вторая копия нумерации (ПРАВИЛО №6). Срабатывает на каждую из N
+        # закупок группы (split=True) — каждая получает свой порядковый номер.
+        if p.contract_id:
+            from app.models.contract import Contract as _WdContract
+            from app.routers.purchase_budget import _assign_framework_seq as _wd_assign_framework_seq
+            _wd_contract = await db.get(_WdContract, p.contract_id)
+            if _wd_contract:
+                p.purchase_contract_type = _wd_contract.contract_type
+                await _wd_assign_framework_seq(p, db)
 
         for wi in items_in_col:
             pi = PurchaseItem(

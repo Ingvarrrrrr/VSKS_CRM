@@ -455,6 +455,37 @@ async def delete_planned_item(
     return {"ok": True}
 
 
+@router.post("/clear-source-rows")
+async def clear_source_rows_endpoint(
+    subsidy_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """«Убрать номера строк файла» (владелец, 12.10.2026, план
+    lazy-swimming-hollerith.md п.4г) — кнопка у плана субсидии: обнуляет
+    FeoPlannedItem.source_row у ВСЕХ позиций субсидии и parts[].row у каждой
+    части объединённой позиции (parts[].key НЕ трогается — привязки закупок
+    к частям переживают эту операцию). Подтверждение — на самой странице
+    (фронт), не браузерный confirm(). Права и сама операция — ЕДИНСТВЕННАЯ
+    точка app.services.feo_planned_item_clear_source_rows (ПРАВИЛО №6, второй
+    гейт/формула здесь не заводятся)."""
+    from app.services.feo_planned_item_clear_source_rows import (
+        ClearSourceRowsForbidden, assert_can_clear_source_rows, clear_source_rows,
+    )
+
+    subsidy = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if subsidy is None:
+        raise HTTPException(404, "Субсидия не найдена")
+    try:
+        await assert_can_clear_source_rows(current_user, db, subsidy_id)
+    except ClearSourceRowsForbidden as exc:
+        raise HTTPException(403, str(exc))
+
+    result = await clear_source_rows(db, subsidy_id)
+    await db.commit()
+    return result
+
+
 # Re-export для обратной совместимости внешних потребителей (Правило №5, резка
 # feo_planned_items.py, сессия 2026-09-08): map_purchase_item_to_planned и
 # _WISH_STATUS_LABELS физически переехали в роутеры-соседи ниже, но

@@ -90,11 +90,12 @@
             <RevisionDraftBar v-if="subsidyRevision" :revision="subsidyRevision" :overlay="revisionOverlay" />
           </div>
 
-          <!-- Журнал загрузок ФЭО (волна 3, 26.09) — «кто загрузил файл
-               импорта и что он перезаписал», рядом с деревом ФЭО. -->
-          <FeoImportRunsPanel :subsidy-id="selectedId" />
-
           <SubsidyEventsPanel ref="eventsPanelRef" :subsidy-id="selectedId" />
+
+          <!-- Журнал загрузок ФЭО (волна 3, 26.09) — «кто загрузил файл
+               импорта и что он перезаписал». Корректировки GALA 12.10, п.5:
+               ниже «Мероприятий», видна только администраторам. -->
+          <FeoImportRunsPanel :subsidy-id="selectedId" />
         </div>
 
       </template>
@@ -1185,6 +1186,7 @@ const subsidyDetailCtx = {
   feoPlannedDisplayFor: feoTreeAmounts.feoPlannedDisplayFor,
   feoResidualNoteFor: feoTreeAmounts.feoResidualNoteFor,
   feoPlanConsumedNoteFor: feoTreeAmounts.feoPlanConsumedNoteFor,
+  feoOrderEconomyNoteFor: feoTreeAmounts.feoOrderEconomyNoteFor,
   feoForecastWarningFor: feoTreeAmounts.feoForecastWarningFor,
   isAutoAmtNode: feoTreeAmounts.isAutoAmtNode,
   isManualPosLeaf: feoTreeAmounts.isManualPosLeaf,

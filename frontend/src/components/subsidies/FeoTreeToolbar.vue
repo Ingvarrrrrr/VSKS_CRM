@@ -280,6 +280,33 @@
     />
   </div>
 
+  <!-- «Убрать номера строк файла» (владелец, 12.10.2026, план
+       lazy-swimming-hollerith.md п.4г) — обнуляет подписи «строка N файла»
+       у ВСЕХ плановых позиций субсидии (FeoLevel5Panel.vue). Подтверждение —
+       на странице (раскрывающаяся плашка), не browser confirm(). Видна
+       только администратору организации и выше — тот же canSaveVersion,
+       что и у «Приравнять ФЭО к плану»/«Сохранить редакцию» выше (ПРАВИЛО
+       №6, второй гейт роли не заводим). -->
+  <div v-if="canSaveVersion" class="feo-clear-source-rows-bar">
+    <template v-if="!clearSourceRowsConfirming">
+      <v-btn size="x-small" variant="text" color="blue-grey" prepend-icon="mdi-label-off-outline"
+        @click="clearSourceRowsConfirming = true"
+      >Убрать номера строк файла</v-btn>
+    </template>
+    <template v-else>
+      <span class="text-caption text-medium-emphasis">
+        У всех плановых позиций субсидии исчезнут подписи «строка N файла» (закупки,
+        привязанные к частям объединённых позиций, не затрагиваются). Продолжить?
+      </span>
+      <v-btn size="x-small" variant="flat" color="error" class="ml-2" :loading="clearSourceRowsLoading"
+        @click="confirmClearSourceRows"
+      >Да, убрать</v-btn>
+      <v-btn size="x-small" variant="text" class="ml-1" :disabled="clearSourceRowsLoading"
+        @click="clearSourceRowsConfirming = false"
+      >Отмена</v-btn>
+    </template>
+  </div>
+
   <!-- Подсказка режима выбора (владелец, лист 2 №7) — одной строкой под тулбаром,
        пока активен режим создания заявки из плана. -->
   <div v-if="planToRequest.active.value" class="plan-to-request-hint">
@@ -305,6 +332,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useRegistryExport } from '@/composables/useRegistryExport'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
@@ -390,6 +418,32 @@ function showSnack(text: string, color: ToastType = 'success') {
 const userRoleRaw = localStorage.getItem('user_role') || ''
 const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'account_owner'].includes(userRoleRaw))
 
+// «Убрать номера строк файла» (12.10.2026, план lazy-swimming-hollerith.md
+// п.4г) — подтверждение на странице (раскрывающаяся плашка), не browser
+// confirm(). После успеха — страница ФЭО перечитывается заново (ctx.loadFeo),
+// чтобы подписи «строка N файла» у FeoLevel5Panel.vue пропали без ручного
+// обновления каждой открытой панели по отдельности.
+const clearSourceRowsConfirming = ref(false)
+const clearSourceRowsLoading = ref(false)
+async function confirmClearSourceRows() {
+  const subsidyId = ctx.selectedId.value
+  if (subsidyId == null) return
+  clearSourceRowsLoading.value = true
+  try {
+    const res = await apiFetch<{ cleared_items: number; cleared_parts: number }>(
+      `/feo-planned-items/clear-source-rows?subsidy_id=${subsidyId}`,
+      { method: 'POST' },
+    )
+    showSnack(`Номера строк файла убраны у ${res.cleared_items} позиций`, 'success')
+    clearSourceRowsConfirming.value = false
+    await ctx.loadFeo(subsidyId)
+  } catch (e: any) {
+    showSnack(e?.payload?.detail || e?.message || 'Не удалось убрать номера строк файла', 'error')
+  } finally {
+    clearSourceRowsLoading.value = false
+  }
+}
+
 const { openVersionHistory, openExportVersionsDialog, openSaveVersionDialog } = usePlanGraphVersions(ctx)
 const { feoImport } = useFeoImport(ctx)
 const { openWizard: openFactImportWizard, loadRuns: loadFactImportRuns, factImport: factImportState } = useFactImport()
@@ -467,6 +521,13 @@ async function uploadTemplate(file: File) {
 </script>
 
 <style scoped>
+.feo-clear-source-rows-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 2px 0;
+}
 .plan-to-request-hint {
   display: flex;
   align-items: center;

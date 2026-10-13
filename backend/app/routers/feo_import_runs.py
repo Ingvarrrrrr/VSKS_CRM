@@ -101,12 +101,32 @@ def _iso(dt) -> Optional[str]:
 async def _check_subsidy_read_access(subsidy_id: int, current_user: User, db: AsyncSession) -> None:
     """Дублирует докстринг _check_feo_history_read_access (entity_changes.py):
     ЧТЕНИЕ, не правило права ПИСАТЬ — переиспользует ту же видимость субсидий,
-    что и остальные ФЭО-эндпоинты чтения."""
+    что и остальные ФЭО-эндпоинты чтения.
+
+    Корректировки GALA 12.10, п.5: журнал загрузок ФЭО видят только
+    администраторы и выше, НЕЗАВИСИМО от галочки доступа к вкладке
+    "ФЭО"/feo_categories (это право даёт доступ к дереву ФЭО, не к журналу
+    загрузок — файл с чувствительным "кто что перезаписал" должен быть уже
+    отдельно виден только управляющим орги). Проверка — ADMIN_ROLES через
+    has_role_via_hierarchy (ПРАВИЛО №6, единственный механизм иерархии ролей
+    в проекте, второй не заводим), org_id=субсидии — UOA-админ засчитывается
+    только для своей организации."""
+    from app.auth.jwt import ADMIN_ROLES, has_role_via_hierarchy
     from app.auth.visibility import get_visible_subsidy_ids
+    from app.models.subsidy import Subsidy
 
     visible = await get_visible_subsidy_ids(current_user, db, "feo_categories")
     if visible is not None and subsidy_id not in visible:
         raise HTTPException(status_code=403, detail="Нет доступа к ФЭО этой субсидии")
+
+    subsidy_org_id = (await db.execute(
+        select(Subsidy.org_id).where(Subsidy.id == subsidy_id)
+    )).scalar_one_or_none()
+    if not await has_role_via_hierarchy(current_user, db, *ADMIN_ROLES, org_id=subsidy_org_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Журнал загрузок ФЭО виден только администраторам организации",
+        )
 
 
 @router.get("/import-runs", response_model=FeoImportRunListOut)

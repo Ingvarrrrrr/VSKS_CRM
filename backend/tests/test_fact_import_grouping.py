@@ -33,8 +33,40 @@ def test_group_by_supplier_only_without_purchase_no():
     assert len(groups) == 1  # нормализация имени поставщика схлопывает разное написание
 
 
-def test_group_by_category_when_no_supplier():
+def test_no_supplier_no_purchase_no_each_row_own_group():
+    """Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4а): без
+    поставщика и без «№ Закупки» каждая строка — ОТДЕЛЬНАЯ закупка, даже если
+    все они одной категории ФЭО (раньше group_by_category слепляла их в одну
+    закупку — боевой пример «ДНР 3»: УАЗ/Gaz/Haval одной категории «Ремонт
+    ТС» стали одной закупкой РЕЕ-2026-03465 со статусом «Поставлено»)."""
     rows = [_item(1, category_id=10), _item(2, category_id=10), _item(3, category_id=20)]
+    groups = grouping_mod.build_groups(rows)
+    assert len(groups) == 3
+    sizes = sorted(len(g["rows"]) for g in groups)
+    assert sizes == [1, 1, 1]
+
+
+def test_uaz_gaz_haval_three_separate_purchases():
+    """Тест на боевой сценарий владельца: строки 19 УАЗ (Заказано), 20 Gaz
+    (Поставлено), 21 Haval (Заказано) одной категории ФЭО — три РАЗНЫЕ
+    закупки со своими статусами, не одна со статусом «Поставлено»."""
+    rows = [
+        _item(19, status_raw="Заказано", category_id=10),
+        _item(20, status_raw="Поставлено", category_id=10),
+        _item(21, status_raw="Заказано", category_id=10),
+    ]
+    groups = grouping_mod.build_groups(rows)
+    assert len(groups) == 3
+    by_row = {g["rows"][0]: g for g in groups}
+    assert by_row[19]["status"] == "ordered"
+    assert by_row[20]["status"] == "delivered"
+    assert by_row[21]["status"] == "ordered"
+
+
+def test_group_by_purchase_no_only_without_supplier():
+    """Поставщика нет, но «№ Закупки» совпадает — строки всё равно одна
+    закупка (новая ветка default_group_key, не затронутая правкой п.4а)."""
+    rows = [_item(1, purchase_no="77"), _item(2, purchase_no="77"), _item(3, purchase_no="88")]
     groups = grouping_mod.build_groups(rows)
     assert len(groups) == 2
     sizes = sorted(len(g["rows"]) for g in groups)

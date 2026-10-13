@@ -27,7 +27,7 @@
             <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ item.raw.name }}</span>
           </template>
           <template #subtitle>
-            <span v-if="item.raw.inn" class="text-caption">ИНН: {{ item.raw.inn }}</span>
+            <span v-if="contractorPickerSubtitle(item.raw)" class="text-caption">{{ contractorPickerSubtitle(item.raw) }}</span>
           </template>
         </v-list-item>
       </template>
@@ -48,8 +48,9 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useContractorsStore } from '@/stores/contractors'
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { contractorPickerSubtitle } from '@/composables/contractors/contractorsTypes'
 
-interface Contractor { id: number; name: string; inn?: string }
+interface Contractor { id: number; name: string; inn?: string; org_type?: string }
 
 const props = withDefaults(defineProps<{
   modelValue: number | null

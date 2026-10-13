@@ -261,11 +261,32 @@ export function useWishItemsFeoAutosave(deps: {
     }
   }
 
+  // Договор заявки (владелец, 12.10.2026, план lazy-swimming-hollerith.md,
+  // п.2, правка 🟡): согласующий меняет «Договор (рамочный)» в том же месте
+  // и тем же каналом, что «Мероприятие»/«Субсидия» выше (saveEventId/
+  // saveSubsidyId) — точечный PATCH /execution, второй механизм не заводим.
+  // Серверный гейт прав — тот же, что уже проверен в patch_wish_execution
+  // (assignee/цепочка согласующих/менеджер+, см. wish_transitions.py).
+  async function saveContractId(val: number | null) {
+    if (!editingWishId.value) return
+    try {
+      await apiFetch(`/wishes/${editingWishId.value}/execution`, {
+        method: 'PATCH',
+        body: JSON.stringify({ contract_id: val }),
+      })
+      if (editingWish.value) (editingWish.value as any).contract_id = val
+      showSnack('Договор заявки обновлён')
+      await reloadActiveTab()
+    } catch (e: any) {
+      showSnack(`Ошибка: ${e?.payload?.message || e?.message || 'не удалось сохранить'}`, 'error')
+    }
+  }
+
   return {
     wishItemsFeoSnapshot, snapshotWishItemsFeo, wishItemsFeoDirtyList, wishItemsFeoDirty,
     feoAutosavePending, feoAutosaveSaving, feoAutosaveApplicable, wishFeoHeaderDirty,
     scheduleFeoAutosave, runFeoAutosave, flushFeoAutosave,
-    savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId,
+    savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId, saveContractId,
   }
 }
 

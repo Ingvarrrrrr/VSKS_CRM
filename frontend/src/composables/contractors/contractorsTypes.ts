@@ -41,6 +41,21 @@ export interface ContractorWithStats {
   signatory_position?: string
 }
 
+/** Корректировки GALA 12.10, п.3: подпись контрагента в выпадающих списках
+ * выбора (ContractorPicker.vue, CreateOrderView.vue, FrameworkDialogs.vue —
+ * раньше каждый дублировал свой инлайн-шаблон `<template #subtitle>` только
+ * с ИНН) — «ИП · ИНН 616501044877» вместо голого «ИНН: …». ЕДИНСТВЕННОЕ
+ * место этой формулы (ПРАВИЛО №6): второй текст в другом компоненте не
+ * писать, импортировать отсюда. org_type — как в v-select формы организации
+ * (ContractorEditDialog.vue: 'Юр.лицо'/'ИП'/'Самозанятый'/'Физ.лицо').
+ */
+export function contractorPickerSubtitle(c: { inn?: string | null; org_type?: string | null }): string {
+  const parts: string[] = []
+  if (c.org_type) parts.push(c.org_type)
+  if (c.inn) parts.push(`ИНН: ${c.inn}`)
+  return parts.join(' · ')
+}
+
 export interface ContractorTargetField {
   value: string
   title: string

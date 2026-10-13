@@ -1,14 +1,17 @@
 <template>
-  <div v-if="subsidyId" class="feo-import-runs-panel mt-4">
-    <div class="d-flex align-center mb-2">
+  <div v-if="subsidyId && isAdminLevel" class="feo-import-runs-panel mt-4">
+    <div class="d-flex align-center mb-2" style="cursor:pointer" @click="toggleCollapsed">
+      <v-icon :icon="collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down'" size="18" class="mr-1" />
       <v-icon icon="mdi-file-upload-outline" size="18" class="mr-2" />
       <span class="text-subtitle-2">Журнал загрузок ФЭО</span>
       <v-btn
+        v-if="!collapsed"
         size="x-small" variant="text" icon="mdi-refresh" class="ml-auto"
-        :loading="loading" @click="load"
+        :loading="loading" @click.stop="load"
       />
     </div>
 
+    <template v-if="!collapsed">
     <div v-if="loading && !runs.length" class="d-flex align-center py-3">
       <v-progress-circular indeterminate size="20" width="2" color="primary" class="mr-2" />
       <span class="text-caption text-medium-emphasis">Загрузка журнала…</span>
@@ -95,6 +98,7 @@
     <div v-if="total > runs.length" class="d-flex justify-center mt-2">
       <v-btn size="small" variant="text" :loading="loading" @click="loadMore">Показать ещё</v-btn>
     </div>
+    </template>
   </div>
 </template>
 
@@ -104,11 +108,41 @@
 // app/routers/feo_import_runs.py (подключён как под-роутер feo_categories.py,
 // путь /api/feo-categories/import-runs — НЕ /api/feo-import-runs, см. докстринг
 // роутера про запрет трогать routes.py).
-import { ref, watch } from 'vue'
+//
+// Корректировки GALA 12.10, п.5: панель видят только администраторы (ADMIN_ROLES
+// из @/constants/roles — тот же единственный список, что и у SubsidyEventsPanel.vue,
+// ПРАВИЛО №6, второй список ролей не завести) — на сервере тот же гейт отдельно
+// (app/routers/feo_import_runs.py::_check_subsidy_read_access, ADMIN_ROLES через
+// has_role_via_hierarchy). Сворачивается, по умолчанию свёрнута — состояние в
+// localStorage (per-браузер, не критично при недоступности/приватном режиме —
+// try/catch, тихий фоллбэк на "свёрнуто").
+import { ref, watch, onMounted } from 'vue'
 import { apiFetch } from '@/api'
 import { feoHistoryFieldLabel } from '@/constants/feoHistoryFieldLabels'
+import { ADMIN_ROLES } from '@/constants/roles'
 
 const props = defineProps<{ subsidyId: number | null | undefined }>()
+
+const userRoleRaw = localStorage.getItem('user_role') || ''
+const isAdminLevel = ADMIN_ROLES.includes(userRoleRaw as typeof ADMIN_ROLES[number])
+
+const COLLAPSE_KEY = 'feo_import_runs_panel_collapsed'
+function readCollapsed(): boolean {
+  try {
+    const v = localStorage.getItem(COLLAPSE_KEY)
+    return v === null ? true : v === '1'
+  } catch {
+    return true
+  }
+}
+const collapsed = ref(readCollapsed())
+function toggleCollapsed() {
+  collapsed.value = !collapsed.value
+  try {
+    localStorage.setItem(COLLAPSE_KEY, collapsed.value ? '1' : '0')
+  } catch { /* приватный режим/квота — не критично, свёрнутость просто не запомнится */ }
+  if (!collapsed.value && !runs.value.length) load()
+}
 
 interface RunOut {
   id: number
@@ -232,7 +266,17 @@ async function toggle(runId: number) {
   }
 }
 
-watch(() => props.subsidyId, load, { immediate: true })
+// По умолчанию панель свёрнута — не грузим журнал, пока её не раскрыли
+// (toggleCollapsed зовёт load() сам). При смене субсидии сбрасываем кэш
+// и подгружаем заново только если панель уже раскрыта.
+watch(() => props.subsidyId, () => {
+  runs.value = []
+  total.value = 0
+  expanded.value = new Set()
+  changesByRun.value = new Map()
+  if (!collapsed.value) load()
+})
+onMounted(() => { if (!collapsed.value) load() })
 </script>
 
 <style scoped>

@@ -8,7 +8,7 @@
       </v-card-title>
       <v-card-text>
         <div class="text-caption text-medium-emphasis mb-3">
-          Сообщение будет отправлено каждому сотруднику индивидуально в Telegram
+          Сообщение будет отправлено каждому сотруднику индивидуально в {{ authStore.telegramEnabled ? 'Telegram/MAX' : 'MAX' }}
         </div>
         <v-radio-group v-model="scope" class="mb-3">
           <v-radio value="department" label="Отдел" />
@@ -39,6 +39,9 @@
 
 <script setup lang="ts">
 import { useDisplay } from 'vuetify'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
 
 const open = defineModel<boolean>({ default: false })
 const scope = defineModel<string>('scope', { default: 'organization' })

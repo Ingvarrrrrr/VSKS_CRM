@@ -44,6 +44,8 @@ async def get_me(
     """
     out = UserOut.model_validate(current_user)
     out.has_license_scan = bool(current_user.license_scan)
+    from app.config import settings as _settings_me
+    out.telegram_enabled = _settings_me.TELEGRAM_ENABLED
     # Rule #6: единственный резолвер должности — org_id из запроса (активная
     # орг), иначе единственное/первое членство, иначе legacy User.position.
     from app.services.user_position import resolve_user_position, bulk_load_memberships

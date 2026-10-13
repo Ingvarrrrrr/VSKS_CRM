@@ -65,7 +65,10 @@
           label="Рабочий телефон" variant="outlined" density="compact" class="mb-3"
           prepend-inner-icon="mdi-phone-classic" placeholder="8-999-999-99-99"
         />
-        <v-text-field v-model="dialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
+        <!-- 152-ФЗ (владелец, 2026-10-14): Telegram выключен — поле скрыто, пока
+             settings.TELEGRAM_ENABLED=False (флаг из GET /api/users/me, authStore).
+             Существующие сохранённые telegram_id в БД НЕ трогаем. -->
+        <v-text-field v-if="authStore.telegramEnabled" v-model="dialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
           prepend-inner-icon="mdi-send" placeholder="123456789"
           hint="Числовой ID — узнать: написать @userinfobot в Telegram" persistent-hint />
         <v-text-field v-model="dialog.max_chat_id" label="MAX (VK) Chat ID" variant="outlined" density="compact" class="mb-3"
@@ -403,6 +406,9 @@ import UserPlatformCredentialsSection from '@/components/UserPlatformCredentials
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
 import { AVATARS, driverLicenseExpiryDays, driverMedicalExpiryDays } from '@/composables/staff/staffLabels'
 import type { OrgEntry } from '@/composables/staff/staffTypes'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
 
 const props = defineProps<{
   dialog: any

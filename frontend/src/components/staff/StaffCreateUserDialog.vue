@@ -37,7 +37,9 @@
           label="Рабочий телефон" variant="outlined" density="compact" class="mb-3"
           prepend-inner-icon="mdi-phone-classic" placeholder="8-999-999-99-99"
         />
-        <v-text-field v-model="dialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
+        <!-- 152-ФЗ (владелец, 2026-10-14): Telegram выключен — поле скрыто, пока
+             settings.TELEGRAM_ENABLED=False (флаг из GET /api/users/me, authStore). -->
+        <v-text-field v-if="authStore.telegramEnabled" v-model="dialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
           prepend-inner-icon="mdi-send" placeholder="123456789"
           hint="Числовой ID чата Telegram (узнать: написать боту @userinfobot)" persistent-hint />
         <v-text-field v-model="dialog.max_chat_id" label="MAX (VK) Chat ID" variant="outlined" density="compact" class="mb-3"
@@ -99,6 +101,9 @@
 import { ref } from 'vue'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
 import { AVATARS } from '@/composables/staff/staffLabels'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
 
 defineProps<{
   dialog: {

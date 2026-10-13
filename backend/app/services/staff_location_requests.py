@@ -98,13 +98,17 @@ async def _send_telegram_location_request(chat_id: str, text: str) -> dict:
     payload независимо от того, ушла ли реальная отправка (TELEGRAM_BOT_TOKEN
     пуст в dev-окружении — см. app/notifications.py — тогда это чистая сборка
     payload без сети, что и используется для проверки формата сообщения)."""
+    from app.config import settings
     from app.notifications import TELEGRAM_BOT_TOKEN, TELEGRAM_API
     payload = build_telegram_location_request_payload(chat_id, text)
     log.info(
         "staff_location_request: telegram payload собран (chat_id=%s, keyboard=request_location)",
         chat_id,
     )
-    if TELEGRAM_BOT_TOKEN and chat_id:
+    # 152-ФЗ (владелец, 2026-10-14): Telegram выключен — payload всё равно
+    # собирается (для dev-проверки формата, см. docstring), но реальная
+    # отправка через единственный выключатель settings.TELEGRAM_ENABLED.
+    if settings.TELEGRAM_ENABLED and TELEGRAM_BOT_TOKEN and chat_id:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN), json=payload)
@@ -149,9 +153,13 @@ async def create_request(db: AsyncSession, requester: User, target: User) -> Sta
     статусом 'sent' — возвращает его, не плодя дубли и не спамя повторной
     отправкой (тот же приём, что StaffShift.start_shift).
     """
+    from app.config import settings
     from app.services.push_sender import has_subscription, send_push_notifications
 
-    tg = getattr(target, "telegram_id", None)
+    # 152-ФЗ (владелец, 2026-10-14): Telegram выключен — telegram_id сотрудника
+    # НЕ считается доступным каналом (иначе запрос "создаётся" и тихо никуда
+    # не уходит, если это был единственный канал).
+    tg = getattr(target, "telegram_id", None) if settings.TELEGRAM_ENABLED else None
     mx = getattr(target, "max_chat_id", None)
     has_push = await has_subscription(db, target.id)
     if not has_push and not tg and not mx:
@@ -223,7 +231,7 @@ async def create_request(db: AsyncSession, requester: User, target: User) -> Sta
             f"сообщением — автоматическая кнопка отправки геопозиции для MAX "
             f"в системе пока не подключена."
         )
-        if tg:
+        if tg:  # tg уже None, когда settings.TELEGRAM_ENABLED=False (см. выше)
             await _send_telegram_location_request(str(tg), text_tg)
             channels.append("telegram")
         if mx:

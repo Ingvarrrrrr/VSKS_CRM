@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = "noreply@vsks.ru"
     BASE_URL: str = "https://galaa.ru"
+    # 152-ФЗ (решение владельца, 2026-10-14): Telegram — иностранная компания,
+    # передача ПДн (ФИО в текстах уведомлений) через неё требует уведомления
+    # РКН о трансграничной передаче (ст. 12), которого нет. Полностью выключено
+    # до отдельного решения владельца. Единственный источник истины для ВСЕХ
+    # мест отправки/приёма Telegram — см. app/notifications.py, app/routers/
+    # telegram_webhook.py, app/services/staff_location_requests.py (Правило №6:
+    # один выключатель, не плодить свои флаги в каждом файле).
+    TELEGRAM_ENABLED: bool = False
 
 try:
     settings = Settings()

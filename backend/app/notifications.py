@@ -15,6 +15,12 @@ MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN", "")
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 MAX_API = "https://botapi.max.ru/messages/send?access_token={token}"
 
+# 152-ФЗ (владелец, 2026-10-14): Telegram полностью выключен — см. причину
+# и единственный источник истины settings.TELEGRAM_ENABLED в app/config.py.
+# Одна строка в лог на процесс (не на каждое сообщение).
+if not settings.TELEGRAM_ENABLED:
+    logger.info("Telegram notifications disabled (settings.TELEGRAM_ENABLED=False) — все отправки в Telegram тихо пропускаются, MAX/push/e-mail работают как прежде")
+
 
 async def _save_tg_mapping(chat_id: str, message_id: int, task_id: int) -> None:
     """Save telegram message_id → task_id mapping to DB."""
@@ -103,6 +109,8 @@ def _consent_keyboard(task_id: int) -> dict:
 async def _send_telegram(chat_id: str, text: str, task_id: int = None,
                           button_url: str = None, button_label: str = None,
                           reply_markup_override: dict = None) -> None:
+    if not settings.TELEGRAM_ENABLED:
+        return
     if not TELEGRAM_BOT_TOKEN:
         logger.debug("Telegram send skipped: no token")
         return

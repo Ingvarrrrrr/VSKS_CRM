@@ -33,6 +33,7 @@
                   title="Push-уведомления"
                 />
                 <v-icon
+                  v-if="authStore.telegramEnabled"
                   size="16" :color="row.has_telegram ? 'blue' : 'grey'"
                   icon="mdi-telegram"
                   :style="{ opacity: row.has_telegram ? 1 : 0.3 }"
@@ -104,6 +105,9 @@ import { ref, watch } from 'vue'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { formatRelativeTime } from '@/utils/relativeTime'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
 
 interface LocationRequest {
   id: number

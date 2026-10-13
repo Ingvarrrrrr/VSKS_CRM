@@ -213,9 +213,12 @@ async def list_roster(
     # Telegram/MAX (задание п.5 — "дойдёт ли запрос"), одним batch-запросом.
     push_user_ids = await get_user_ids_with_subscription(db, user_ids)
 
+    from app.config import settings as _settings_roster
     out = []
     for u in users:
-        tg = bool(getattr(u, "telegram_id", None))
+        # 152-ФЗ (владелец, 2026-10-14): Telegram выключен — не показываем его
+        # диспетчеру как доступный канал (единый источник истины — create_request).
+        tg = bool(getattr(u, "telegram_id", None)) and _settings_roster.TELEGRAM_ENABLED
         mx = bool(getattr(u, "max_chat_id", None))
         push = u.id in push_user_ids
         req = latest_by_user.get(u.id)

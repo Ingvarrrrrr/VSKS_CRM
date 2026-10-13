@@ -3,6 +3,7 @@ import asyncio
 import logging
 import httpx
 from sqlalchemy import select
+from app.config import settings
 from app.database import async_session
 from app.models.user import User
 from app.models.task_comment import TaskComment
@@ -27,6 +28,10 @@ async def telegram_webhook_endpoint(request: Request) -> dict:
     _process_update. Безопасно даже если Telegram НИКОГДА не настроен слать
     сюда обновления — тогда этот путь просто не вызывается извне.
     """
+    if not settings.TELEGRAM_ENABLED:
+        # 152-ФЗ (владелец, 2026-10-14): Telegram выключен — отвечаем 200 без
+        # обработки, не читая/не разбирая тело (может содержать ПДн отправителя).
+        return {"ok": True}
     update = await request.json()
     await _process_update(update)
     return {"ok": True}
@@ -39,7 +44,7 @@ _purchase_msg_map: dict[tuple, int] = {}
 
 
 async def _answer_cq(callback_query_id: str, text: str) -> None:
-    if not TELEGRAM_BOT_TOKEN:
+    if not settings.TELEGRAM_ENABLED or not TELEGRAM_BOT_TOKEN:
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
     try:
@@ -51,7 +56,7 @@ async def _answer_cq(callback_query_id: str, text: str) -> None:
 
 async def _send_force_reply(chat_id: str, prompt: str, task_id: int = None, purchase_id: int = None) -> None:
     """Send a ForceReply message so user can reply without using Telegram's native Reply."""
-    if not TELEGRAM_BOT_TOKEN:
+    if not settings.TELEGRAM_ENABLED or not TELEGRAM_BOT_TOKEN:
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
@@ -77,7 +82,7 @@ async def _send_plain(chat_id: str, text: str, remove_keyboard: bool = False) ->
     """Простое сообщение-подтверждение, опционально убирающее reply-клавиатуру
     (задание: после ответа на запрос местоположения клавиатуру нужно убрать —
     Telegram Bot API ReplyKeyboardRemove)."""
-    if not TELEGRAM_BOT_TOKEN or not chat_id:
+    if not settings.TELEGRAM_ENABLED or not TELEGRAM_BOT_TOKEN or not chat_id:
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload: dict = {"chat_id": chat_id, "text": text}
@@ -443,6 +448,9 @@ async def _process_update(update: dict) -> None:
 async def _poll_loop():
     """Long-polling loop for Telegram updates."""
     global _last_update_id
+    if not settings.TELEGRAM_ENABLED:
+        logger.info("Telegram polling disabled (settings.TELEGRAM_ENABLED=False)")
+        return
     if not TELEGRAM_BOT_TOKEN:
         logger.info("TELEGRAM_BOT_TOKEN not set, polling disabled")
         return

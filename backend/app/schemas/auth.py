@@ -135,6 +135,11 @@ class UserOut(BaseModel):
     fleet_role: Optional[str] = None
     has_license_scan: bool = False
     permissions: Optional[PermissionsOut] = None
+    # 152-ФЗ (владелец, 2026-10-14): единственный источник истины —
+    # settings.TELEGRAM_ENABLED (app/config.py); фронт читает отсюда
+    # (GET /api/users/me), чтобы скрыть Telegram-варианты в UI, не заводя
+    # отдельный эндпоинт. Выставляется в users_me.py::get_me.
+    telegram_enabled: bool = False
 
     @classmethod
     def from_orm_with_signature(cls, user):

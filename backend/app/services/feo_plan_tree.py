@@ -1002,6 +1002,28 @@ async def compute_feo_plan_tree(
         _feo_by_kind_memo[cat_id] = val
         return val
 
+    # Задача владельца «Б, продолжение» (13.10.2026, окно «Свободно —
+    # товары/услуги», план из переписки с координатором) — подпись «из чего
+    # бюджет вида» для направления, где ФЭО задано ОДНОЙ суммой на группу
+    # (явный budget узла, разделённый по ДОЛЯМ плана — см. ветку
+    # split_amount_by_kind_pool выше), а не разбито по видам построчно
+    # (own_feo_by_kind). ПРАВИЛО №6 — не считаем доли заново: отдаём ТОТ ЖЕ
+    # пул (_plan_items_pool_by_kind) и ТОТ ЖЕ budget, которые split_amount_
+    # by_kind_pool уже использовал внутри _feo_by_kind выше; проценты/текст —
+    # дело фронта (FeoCardDrillDialog.vue), здесь — только исходные числа.
+    # None — у узла нет СВОЕЙ явной суммы ФЭО (budget не задан, или узел —
+    # payroll-категория со своим budget, где долей по видам нет вообще, см.
+    # ветку payroll выше) — подписи в этом случае не будет (решение владельца:
+    # «если ФЭО задано по видам явно — подписи нет» тоже покрывается тем же
+    # None, см. ветку own_feo_by_kind без raw budget).
+    def _feo_split_explicit_info(cat_id: int) -> Optional[dict]:
+        r = by_id[cat_id]
+        _raw_b = normalize_feo_category_budget(r.budget)
+        if _raw_b is None or cat_id in _payroll_ids:
+            return None
+        _pool = _plan_items_pool_by_kind(cat_id)
+        return {"budget": float(_raw_b), "pool": {k: float(v) for k, v in _pool.items()}}
+
     # ── Раздел E1 продолжение (исправление 2026-09-21, ПРАВИЛО №6) ──────────
     # Инвариант владельца: plan_goods+plan_services+plan_unspecified узла
     # ОБЯЗАН совпадать с node['display'] этого же узла (та самая величина,
@@ -1717,6 +1739,12 @@ async def compute_feo_plan_tree(
             "feo_services": feo_services,
             "feo_payroll": feo_payroll,
             "feo_unspecified": feo_unspecified,
+            # Задача «Б, продолжение» (13.10.2026) — None, если у узла нет
+            # своей явной суммы ФЭО; иначе {"budget", "pool"} — см. докстринг
+            # _feo_split_explicit_info выше. FeoCardDrillDialog.vue читает это
+            # поле у строк-направлений окна «Свободно — товары/услуги», чтобы
+            # показать «из чего бюджет вида», не пересчитывая долю заново.
+            "feo_split_explicit": _feo_split_explicit_info(cat_id),
             "fact_goods": fact_goods,
             "fact_services": fact_services,
             "fact_payroll": fact_payroll,

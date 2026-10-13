@@ -585,6 +585,12 @@ async def card_drill_rows(
                 "budget_amount": budget_amt,
                 "planned_amount": planned_amt,
                 "amount": free_amt,
+                # Задача владельца «Б, продолжение» (13.10.2026) — «из чего
+                # бюджет вида», когда ФЭО этого направления задано ОДНОЙ
+                # суммой на группу (не разбито по видам построчно). ПРАВИЛО
+                # №6 — читаем готовое поле узла (compute_feo_plan_tree::
+                # _feo_split_explicit_info), не считаем долю второй раз.
+                "feo_split_explicit": nodes[cid].get("feo_split_explicit"),
                 "items": [
                     {
                         "planned_item_id": it.id,

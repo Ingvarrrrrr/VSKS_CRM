@@ -388,9 +388,14 @@
           {{ ctx.feoRemainingWithPurchasesNote(node) }}
         </div>
       </div>
+      <!-- Клик раскрывает ветки до виновника(ов) и ведёт туда стрелкой — тот
+           же механизм «где превышение» (useExcessDrilldown.ts), что и чипы
+           превышения по типу (задача владельца «А», ДНР5 id 97, 13.10.2026):
+           второй механизм поиска/раскрытия/скролла не заводим. -->
       <div v-if="!ctx.feoIsOverBudget(node) && ctx.feoHasOverspentDescendant(node)"
-        class="feo-plan-note" style="color:#EF4444"
+        class="feo-plan-note feo-plan-note--link" style="color:#EF4444;cursor:pointer"
         :title="ctx.feoOverspentDescendantTitle(node)"
+        @click="excessDrilldown.activate('total', { direction: 'over' })"
       >
         {{ ctx.feoOverspentDescendantText(node) }}
       </div>

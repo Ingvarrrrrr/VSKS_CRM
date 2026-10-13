@@ -5,11 +5,13 @@ from types import SimpleNamespace
 
 from app.services.item_type_split import (
     KIND_GOODS,
+    KIND_PAYROLL,
     KIND_SERVICES,
     KIND_UNSPECIFIED,
     TypeShares,
     kind_of,
     purchase_type_shares,
+    split_amount_by_kind_pool,
     split_amount_by_shares,
     sum_by_kind,
 )
@@ -83,6 +85,44 @@ class TestSplitAmountByShares:
         goods, services, unspecified = split_amount_by_shares(Decimal("0.01"), shares)
         assert goods + services + unspecified == Decimal("0.01")
         assert goods == Decimal("0.01")  # остаток целиком в самой большой доле
+
+
+class TestSplitAmountByKindPool:
+    """Задача владельца «Б» (ДНР5, id 97, 13.10.2026): позиции плана БЕЗ типа
+    (unspecified) обязаны получить СВОЮ долю бюджета, а не быть молча
+    размазаны между goods/services (старый баг — делитель игнорировал
+    unspecified)."""
+
+    def test_unspecified_pool_gets_its_own_share_not_smeared_into_goods_services(self):
+        # Пример ДНР5: budget 27 853 805.62, план без типа 112 820 — это НЕ 0,
+        # должно забрать свою долю, не раствориться в goods/services.
+        pool = {KIND_GOODS: 19_044_120.67, KIND_SERVICES: 8_696_864.95, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: 112_820.0}
+        budget = Decimal("27853805.62")
+        result = split_amount_by_kind_pool(budget, pool)
+        assert result[KIND_UNSPECIFIED] > Decimal("0")
+        # Инвариант — сумма четырёх корзин РОВНО равна budget.
+        assert sum(result.values()) == budget.quantize(Decimal("0.01"))
+        # Доля unspecified в бюджете ≈ доле unspecified в пуле (в пределах копейки).
+        total_pool = sum(pool.values())
+        expected_unspecified = budget * Decimal(str(pool[KIND_UNSPECIFIED])) / Decimal(str(total_pool))
+        assert abs(result[KIND_UNSPECIFIED] - expected_unspecified) < Decimal("1")
+
+    def test_sums_exactly_to_amount_with_mixed_pool(self):
+        pool = {KIND_GOODS: 100.0, KIND_SERVICES: 200.0, KIND_PAYROLL: 50.0, KIND_UNSPECIFIED: 25.0}
+        result = split_amount_by_kind_pool(Decimal("375.37"), pool)
+        assert sum(result.values()) == Decimal("375.37")
+
+    def test_empty_pool_goes_entirely_to_unspecified(self):
+        pool = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: 0.0}
+        result = split_amount_by_kind_pool(Decimal("500.00"), pool)
+        assert result == {KIND_GOODS: Decimal("0"), KIND_SERVICES: Decimal("0"), KIND_PAYROLL: Decimal("0"), KIND_UNSPECIFIED: Decimal("500.00")}
+
+    def test_pool_without_unspecified_behaves_as_before(self):
+        pool = {KIND_GOODS: 300.0, KIND_SERVICES: 100.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: 0.0}
+        result = split_amount_by_kind_pool(Decimal("400.00"), pool)
+        assert result[KIND_UNSPECIFIED] == Decimal("0")
+        assert result[KIND_GOODS] == Decimal("300.00")
+        assert result[KIND_SERVICES] == Decimal("100.00")
 
 
 class TestSumByKind:

@@ -161,6 +161,18 @@
                     {{ r.amount < -0.5 ? 'превышение ' : 'свободно ' }}{{ formatCurrency(Math.abs(r.amount)) }}
                   </td>
                 </tr>
+                <!-- Задача владельца «Б, продолжение» (13.10.2026) — «из чего
+                     бюджет вида», когда ФЭО направления задано ОДНОЙ суммой
+                     на группу (не разбито по видам построчно). Только для
+                     kind=goods/services (владелец: окно «Свободно —
+                     товары/услуги»); если ФЭО задано по видам явно —
+                     splitCaption(r) вернёт null (см. её докстринг) — строки нет. -->
+                <tr v-if="splitCaption(r)">
+                  <td colspan="4" class="px-4 pb-2" style="border-top:none">
+                    <div class="text-caption text-medium-emphasis">{{ splitCaption(r)!.mainText }}</div>
+                    <div v-if="splitCaption(r)!.unspecifiedText" class="text-caption text-medium-emphasis">{{ splitCaption(r)!.unspecifiedText }}</div>
+                  </td>
+                </tr>
                 <tr v-if="r.amount < -0.5 && r.items.length && expanded.has('dir-' + r.feo_category_id)">
                   <td colspan="4" class="pa-0" style="border-top:none">
                     <div class="pa-3" style="background: rgba(146, 64, 14, 0.03)">
@@ -330,6 +342,13 @@ interface DirectionRow extends BudgetFreeRow {
   // Превышение внесено одной загрузкой — виновника честно не называем
   // (см. докстринг файла и excess_culprit_order.py).
   excess_batch_note?: ExcessBatchNote | null
+  // Задача владельца «Б, продолжение» (13.10.2026) — «из чего бюджет вида»,
+  // когда ФЭО направления задано ОДНОЙ суммой на группу (budget узла), а не
+  // разбито по видам построчно. null — ФЭО этого направления либо не
+  // задано явной суммой узла, либо уже разбито по видам своими строками
+  // (compute_feo_plan_tree::_feo_split_explicit_info, backend/app/services/
+  // feo_plan_tree.py) — подписи в этом случае нет (решение владельца).
+  feo_split_explicit?: { budget: number; pool: { goods: number; services: number; payroll: number; unspecified: number } } | null
 }
 
 const props = defineProps<{
@@ -374,6 +393,35 @@ const CARD_LABELS: Record<FeoCardDrillCard, string> = {
 }
 const kindTitle = computed(() => props.kind === 'all' ? 'всё' : KIND_LABELS[props.kind])
 const title = computed(() => `${CARD_LABELS[props.card]} — ${kindTitle.value}`)
+
+// Задача владельца «Б, продолжение» (13.10.2026) — «из чего бюджет вида» в
+// окне «Свободно — товары/услуги»: направление, где ФЭО задано ОДНОЙ суммой
+// на группу (budget узла), делится по ДОЛЯМ плана того же пула, которым
+// backend УЖЕ поделил этот budget (split_amount_by_kind_pool,
+// feo_plan_tree.py::_feo_by_kind) — r.feo_split_explicit несёт именно budget
+// и pool, которыми реально посчитан r.budget_amount (ПРАВИЛО №6 — доля здесь
+// читается из тех же чисел, вторая формула не считается). null —
+// у направления ФЭО нет своей явной суммы узла, либо оно уже разбито по
+// видам построчно (own_feo_by_kind) — подписи нет (решение владельца).
+const GENITIVE_KIND_WORD: Record<'goods' | 'services', string> = { goods: 'товаров', services: 'услуг' }
+function splitCaption(r: DirectionRow): { mainText: string; unspecifiedText: string | null } | null {
+  const info = r.feo_split_explicit
+  if (!info || (props.kind !== 'goods' && props.kind !== 'services')) return null
+  const totalPool = info.pool.goods + info.pool.services + info.pool.payroll + info.pool.unspecified
+  if (totalPool <= 0.005) return null
+  const kindShare = info.pool[props.kind] / totalPool
+  const pct = (kindShare * 100).toFixed(2).replace('.', ',')
+  const mainText = `сумма ФЭО группы ${formatCurrency(info.budget)} × доля ${GENITIVE_KIND_WORD[props.kind]} в плане ${pct} %`
+  const unspecifiedPool = info.pool.unspecified
+  let unspecifiedText: string | null = null
+  if (unspecifiedPool > 0.005) {
+    const unspecifiedShare = unspecifiedPool / totalPool
+    const unspecifiedPct = (unspecifiedShare * 100).toFixed(2).replace('.', ',')
+    const unspecifiedBudget = info.budget * unspecifiedShare
+    unspecifiedText = `без типа: план ${formatCurrency(unspecifiedPool)} (доля ${unspecifiedPct} %, бюджет ${formatCurrency(unspecifiedBudget)})`
+  }
+  return { mainText, unspecifiedText }
+}
 
 function lastSegment(path: string): string {
   if (!path) return ''
@@ -563,14 +611,31 @@ async function saveItemType(row: PlannedRow, newType: 'товар' | 'услуг
 // заводим второй механизм экспорта/серверную ручку). Выгружает ПО КАЖДОМУ
 // раскрытому направлению строки той таблицы, что сейчас показана
 // (виновники или полный состав, в зависимости от showFull) — один лист.
+// ИСПРАВЛЕНИЕ (задача владельца «В», ДНР5 id 97, 13.10.2026): раньше фильтр
+// экспорта требовал expanded.value.has('dir-'+id) — экспорт зависел от того,
+// что человек УЖЕ раскрыл руками на экране, и тихо пропускал направления с
+// реальным превышением, которые просто не были раскрыты (owner жалоба:
+// «нет раскрытых направлений» при живых данных). r.items у directionRows уже
+// загружены для ВСЕХ направлений (не лениво по клику раскрытия, см. выше) —
+// отбор строк для экспорта больше не зависит от состояния expanded вовсе,
+// экспорт сам берёт ВСЕ направления с превышением (r.amount < -0.5 &&
+// r.items.length) из уже загруженного дерева. Раскрытие на экране — побочный
+// эффект (expandExportedDirections ниже), чтобы то, что выгрузили, было
+// видно и в диалоге, а не вторая причина отбора.
 const xlsxLoading = ref(false)
+function expandExportedDirections(ids: (number | null)[]) {
+  const next = new Set(expanded.value)
+  for (const id of ids) next.add('dir-' + id)
+  expanded.value = next
+}
 async function exportXlsx() {
   xlsxLoading.value = true
   try {
     const XLSX = await import('xlsx')
+    const overBudgetRows = directionRows.value.filter(r => r.amount < -0.5 && r.items.length)
+    expandExportedDirections(overBudgetRows.map(r => r.feo_category_id))
     const out: Record<string, any>[] = []
-    for (const r of directionRows.value) {
-      if (!(r.amount < -0.5 && r.items.length && expanded.value.has('dir-' + r.feo_category_id))) continue
+    for (const r of overBudgetRows) {
       if (showFull.value.has(r.feo_category_id as number)) {
         for (const it of r.items) {
           out.push({
@@ -623,7 +688,7 @@ async function exportXlsx() {
       }
     }
     if (out.length === 0) {
-      toast.error('Нет раскрытых направлений с превышением — раскройте направление перед экспортом')
+      toast.error('Нет направлений с превышением — нечего экспортировать')
       return
     }
     const ws = XLSX.utils.json_to_sheet(out)

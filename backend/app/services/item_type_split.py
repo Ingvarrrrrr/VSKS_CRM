@@ -165,23 +165,33 @@ def split_amount_by_kind_pool(amount, pool: Dict[str, float]) -> Dict[str, Decim
     payroll (используется при распределении явного FeoCategory.budget по
     типам его плановых позиций без собственной typed-разбивки ФЭО, план
     .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2, см.
-    feo_plan_tree.py::_feo_by_kind). unspecified получает 0, если хоть одна
-    типизированная (goods/services/payroll) доля не нулевая — остаток
-    округления уходит в самую большую типизированную часть; если все
-    типизированные доли нулевые — вся сумма целиком в unspecified (как и
-    раньше, старое поведение split_amount_by_shares на 2 типа)."""
+    feo_plan_tree.py::_feo_by_kind).
+
+    ИСПРАВЛЕНИЕ (задача владельца «Б», ДНР5 id 97, 13.10.2026): раньше доля
+    считалась ТОЛЬКО от typed_total=goods+services+payroll — позиции пула
+    БЕЗ типа (pool[unspecified]) в знаменатель не входили вовсе, то есть их
+    вес молча перераспределялся между goods/services/payroll (на ДНР5 112 820
+    плана «без типа» размазывались в goods/services, раздувая оба и делая
+    «Бюджет ФЭО (товары)/(услуги)» ложно заниженным/искажённым — «свободно»
+    в карточках «Свободно — товары/услуги» на эту же сумму съезжало). Теперь
+    доля считается от ВСЕГО пула (goods+services+payroll+unspecified) —
+    unspecified получает СВОЮ пропорциональную часть amount, а не 0;
+    единственный случай KIND_UNSPECIFIED=amount целиком — когда пул пуст
+    (весь план направления не несёт ни одной типизированной позиции).
+    Инвариант Σ(goods+services+payroll+unspecified)==amount сохраняется —
+    остаток округления уходит в самую большую корзину (любую из четырёх, не
+    только типизированную, как было раньше)."""
     amt = Decimal(str(amount)) if amount is not None else Decimal(0)
     target = amt.quantize(_CENT, rounding=ROUND_HALF_UP)
-    typed_keys = (KIND_GOODS, KIND_SERVICES, KIND_PAYROLL)
-    typed_total = sum(Decimal(str(pool.get(k, 0.0) or 0.0)) for k in typed_keys)
-    if typed_total <= Decimal("0.005"):
+    all_keys = (KIND_GOODS, KIND_SERVICES, KIND_PAYROLL, KIND_UNSPECIFIED)
+    total_pool = sum(Decimal(str(pool.get(k, 0.0) or 0.0)) for k in all_keys)
+    if total_pool <= Decimal("0.005"):
         return {KIND_GOODS: Decimal(0), KIND_SERVICES: Decimal(0), KIND_PAYROLL: Decimal(0), KIND_UNSPECIFIED: target}
-    raw = {k: amt * (Decimal(str(pool.get(k, 0.0) or 0.0)) / typed_total) for k in typed_keys}
+    raw = {k: amt * (Decimal(str(pool.get(k, 0.0) or 0.0)) / total_pool) for k in all_keys}
     rounded = {k: v.quantize(_CENT, rounding=ROUND_HALF_UP) for k, v in raw.items()}
-    rounded[KIND_UNSPECIFIED] = Decimal(0)
     diff = target - sum(rounded.values())
     if diff != 0:
-        biggest = max(typed_keys, key=lambda k: rounded[k])
+        biggest = max(all_keys, key=lambda k: rounded[k])
         rounded[biggest] += diff
     return rounded
 

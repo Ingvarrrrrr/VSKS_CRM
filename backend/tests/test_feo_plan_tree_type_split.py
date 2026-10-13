@@ -306,11 +306,14 @@ async def test_explicit_budget_without_type_split_goes_all_goods(db_session, tes
 
 @pytest.mark.asyncio
 async def test_explicit_budget_split_proportionally_mixed_types(db_session, test_org):
-    """Смешанная категория (план 60к товары / 40к услуги = 60/40) с явным
-    budget=1 000 000 без собственной typed-разбивки ФЭО -> budget делится
-    60/40 по долям плановых сумм товаров/услуг (работа считается услугой);
-    позиция без типа в пуле — не учитывается в доле, но инвариант суммы
-    (goods+services+unspecified == budget) держится точно до копейки."""
+    """Смешанная категория (план 60к товары / 30к услуги / 10к работа->услуга
+    / 5к без типа = 105к пула) с явным budget=1 000 000 без собственной
+    typed-разбивки ФЭО -> budget делится ПО ДОЛЯМ ВСЕГО пула, включая
+    позицию без типа (ИСПРАВЛЕНИЕ задачи владельца «Б», ДНР5 id 97,
+    13.10.2026 — раньше позиция без типа в знаменатель не входила, и её 5к
+    молча размазывались в goods/services). 60/105, 40/105, 5/105 — доли
+    goods/services/unspecified; инвариант суммы (goods+services+unspecified
+    == budget) держится точно до копейки."""
     subsidy = await _make_subsidy(db_session, test_org.id)
     cat = await _make_category(db_session, subsidy.id, name="Статья — смешанная", budget=Decimal("1000000"))
     await _make_planned_item(db_session, cat.id, "Товар", 60_000, item_type="товар")
@@ -321,11 +324,57 @@ async def test_explicit_budget_split_proportionally_mixed_types(db_session, test
     tree = await compute_feo_plan_tree(db_session, [subsidy.id])
     node = tree[cat.id]
 
-    assert node["feo_goods"] == pytest.approx(600_000.0), "60к из 100к типизированного плана = 60%"
-    assert node["feo_services"] == pytest.approx(400_000.0), "40к (услуга+работа) из 100к = 40%"
-    assert node["feo_unspecified"] == pytest.approx(0.0)
+    assert node["feo_goods"] == pytest.approx(1_000_000.0 * 60_000 / 105_000, abs=1), "60к из 105к всего пула"
+    assert node["feo_services"] == pytest.approx(1_000_000.0 * 40_000 / 105_000, abs=1), "40к (услуга+работа) из 105к"
+    assert node["feo_unspecified"] == pytest.approx(1_000_000.0 * 5_000 / 105_000, abs=1), "5к без типа получает свою долю, не 0"
     total = node["feo_goods"] + node["feo_services"] + node["feo_unspecified"]
     assert total == pytest.approx(1_000_000.0), "инвариант: сумма частей == budget, до копейки"
+
+
+@pytest.mark.asyncio
+async def test_feo_split_explicit_exposes_budget_and_pool_for_owner_caption(db_session, test_org):
+    """Задача владельца «Б, продолжение» (13.10.2026) — окно «Свободно —
+    товары/услуги» должно показать «из чего бюджет вида» (сумма ФЭО группы ×
+    доля вида в плане, плюс строка «без типа»). node['feo_split_explicit']
+    обязан нести ТЕ ЖЕ budget и pool, которыми _feo_by_kind реально поделил
+    budget (ПРАВИЛО №6 — фронт не считает долю второй раз)."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_category(db_session, subsidy.id, name="Статья — ДНР5-подобная", budget=Decimal("1000000"))
+    await _make_planned_item(db_session, cat.id, "Товар", 600_000, item_type="товар")
+    await _make_planned_item(db_session, cat.id, "Услуга", 300_000, item_type="услуга")
+    await _make_planned_item(db_session, cat.id, "Без типа", 100_000, item_type=None)
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[cat.id]
+
+    info = node["feo_split_explicit"]
+    assert info is not None
+    assert info["budget"] == pytest.approx(1_000_000.0)
+    assert info["pool"]["goods"] == pytest.approx(600_000.0)
+    assert info["pool"]["services"] == pytest.approx(300_000.0)
+    assert info["pool"]["unspecified"] == pytest.approx(100_000.0)
+    total_pool = sum(info["pool"].values())
+    assert total_pool == pytest.approx(1_000_000.0)
+    # Доля товаров/услуг/без типа из ЭТОГО же pool обязана дать то же число,
+    # что node['feo_goods']/['feo_services']/['feo_unspecified'] (сверка, что
+    # подпись и реальный расчёт используют одни и те же числа).
+    assert info["budget"] * info["pool"]["goods"] / total_pool == pytest.approx(node["feo_goods"])
+    assert info["budget"] * info["pool"]["services"] / total_pool == pytest.approx(node["feo_services"])
+    assert info["budget"] * info["pool"]["unspecified"] / total_pool == pytest.approx(node["feo_unspecified"])
+
+
+@pytest.mark.asyncio
+async def test_feo_split_explicit_is_none_when_no_own_budget(db_session, test_org):
+    """Узел БЕЗ своей явной суммы ФЭО (budget=None) — подписи «из чего
+    бюджет» не может быть вообще (нечего делить своей долей) — None, не 0/
+    пустой словарь, чтобы фронт отличал «нет данных» от «доля 0%»."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_category(db_session, subsidy.id, name="Статья — без своего ФЭО", budget=None)
+    await _make_planned_item(db_session, cat.id, "Товар", 100_000, item_type="товар")
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[cat.id]
+    assert node["feo_split_explicit"] is None
 
 
 @pytest.mark.asyncio

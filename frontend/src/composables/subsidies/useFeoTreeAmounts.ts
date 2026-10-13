@@ -228,7 +228,15 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   }
 
   function feoFinDiff(node: FeoNode): number {
-    return feoDisplayedFor(node) - feoPlannedDisplayFor(node)
+    const raw = feoDisplayedFor(node) - feoPlannedDisplayFor(node)
+    // Та же правка «А»: у узла БЕЗ своего budget feoDisplayedFor — не
+    // настоящий лимит, отрицательный raw здесь не было бы превышением на
+    // сервере (см. feoIsOverBudget/feoServerExcessFor выше) — не даём строке
+    // «надо убрать X, чтобы уложиться в ФЭО» показаться на таком узле. Оценка
+    // «можно добавить ещё» (raw>0) безопасна и остаётся как была — это не
+    // сигнал превышения.
+    if (raw < 0 && !feoBudgetIsSet(node)) return 0
+    return raw
   }
 
   function feoRemainingWithPurchasesNote(node: FeoNode): string | null {
@@ -240,8 +248,30 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return `с учётом уже размещённых закупок (${fmtLocal(note.consumed)}) до потолка ФЭО реально остаётся ${fmtLocal(remaining)}`
   }
 
+  // ИСПРАВЛЕНИЕ (задача владельца «А», ДНР5 id 97, 13.10.2026): раньше
+  // превышение узла считалось ВТОРОЙ формулой на клиенте — feoDisplayedFor(node)
+  // (для узла БЕЗ своего budget это Σ feoEffectiveFor(детей)) минус
+  // feoPlannedDisplayFor(node) (а это Σ плана детей ПЛЮС собственные плановые
+  // позиции узла, см. plan_manual). У узла без собственного budget «лимит»
+  // feoDisplayedFor — не настоящий лимит (нечем ограничивать, сервер его тоже
+  // не считает превышением, см. ниже), а собственные позиции узла в нём не
+  // участвуют — расхождение этих двух величин ложно читалось как превышение
+  // (на «Расходы на приобретение основных средств» — 805 187,92 Σ подкатегорий
+  // против 813 379,41 плана с Чайником/Термопотом → ложные 8 191,49).
+  // Правило №6 — единственный источник «превысил ли узел лимит ФЭО» теперь
+  // СЕРВЕР: backend/app/services/feo_plan_tree.py::compute_feo_plan_tree пишет
+  // excess_over_feo/excess_amount узла РОВНО когда у узла задан СВОЙ budget
+  // (budget is not None) и (plan_manual+over) превышает его — у узла без
+  // своего budget это поле всегда 0, «не с чем сравнивать» (докстринг там же).
+  // Второй формулы здесь больше нет.
+  function feoServerExcessFor(node: FeoNode): number {
+    const t = planTreeByCat.value[node.id] as any
+    if (!t) return 0
+    return Number(t.excess_over_feo ?? t.excess_amount ?? 0)
+  }
+
   function feoIsOverBudget(node: FeoNode): boolean {
-    return feoDisplayedFor(node) > 0 && feoFinDiff(node) < -0.005
+    return feoServerExcessFor(node) > 0.005
   }
 
   function feoChildrenBudgetDiff(node: FeoNode): number {
@@ -250,18 +280,27 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return manualChildFeoSum(node) - node.budget
   }
 
-  // Для каждого узла — потомки (любой глубины), у которых feoIsOverBudget === true.
-  interface FeoOverspentInfo { names: string[]; count: number }
+  // Для каждого узла — потомки (любой глубины), у которых feoIsOverBudget ===
+  // true (теперь — серверный excess_over_feo/excess_amount, см. его докстринг
+  // выше), плюс сумма их превышения (задача владельца «А» — текст с суммой:
+  // «подкатегория «…» превышает ФЭО на X ₽»).
+  interface FeoOverspentInfo { names: string[]; count: number; totalExcess: number }
   const feoOverspentDescendantMap = computed<Map<number, FeoOverspentInfo>>(() => {
     const map = new Map<number, FeoOverspentInfo>()
-    function walk(node: FeoNode): string[] {
+    function walk(node: FeoNode): { names: string[]; totalExcess: number } {
       let names: string[] = []
+      let totalExcess = 0
       for (const child of node.children) {
-        if (feoIsOverBudget(child)) names.push(child.name)
-        names = names.concat(walk(child))
+        if (feoIsOverBudget(child)) {
+          names.push(child.name)
+          totalExcess += feoServerExcessFor(child)
+        }
+        const sub = walk(child)
+        names = names.concat(sub.names)
+        totalExcess += sub.totalExcess
       }
-      map.set(node.id, { names, count: names.length })
-      return names
+      map.set(node.id, { names, count: names.length, totalExcess })
+      return { names, totalExcess }
     }
     for (const root of feoTree.value) walk(root)
     return map
@@ -274,8 +313,8 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   function feoOverspentDescendantText(node: FeoNode): string {
     const info = feoOverspentDescendantMap.value.get(node.id)
     if (!info || info.count === 0) return ''
-    if (info.count === 1) return `подкатегория «${info.names[0]}» превышает лимит`
-    return 'одна из подкатегорий превышает лимит'
+    if (info.count === 1) return `подкатегория «${info.names[0]}» превышает ФЭО на ${fmtLocal(info.totalExcess)}`
+    return `${info.count} подкатегорий превышают ФЭО, всего на ${fmtLocal(info.totalExcess)}`
   }
 
   function feoOverspentDescendantTitle(node: FeoNode): string {
@@ -284,7 +323,7 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     const shown = info.names.slice(0, 3)
     const suffix = info.count > 3 ? ` и ещё ${info.count - 3}` : ''
     const verb = info.count === 1 ? 'Превышает' : 'Превышают'
-    return `${verb} лимит ФЭО: ${shown.join(', ')}${suffix}`
+    return `${verb} ФЭО на ${fmtLocal(info.totalExcess)}: ${shown.join(', ')}${suffix}. Клик — показать на дереве.`
   }
 
   // ── Плановое количество ───────────────────────────
@@ -688,7 +727,7 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
 
   return {
     residualBase,
-    feoBudgetFor, feoEffectiveFor, manualChildFeoSum, hasManualChildFeo, isAutoNode, feoRollup,
+    feoBudgetFor, feoEffectiveFor, feoServerExcessFor, manualChildFeoSum, hasManualChildFeo, isAutoNode, feoRollup,
     feoPurchasedFor, feoFactFor, feoResidualBaseFor, feoResidualFor, feoDisplayedFor, feoFinDiff,
     feoRemainingWithPurchasesNote, feoIsOverBudget, feoChildrenBudgetDiff,
     feoOverspentDescendantMap, feoHasOverspentDescendant, feoOverspentDescendantText, feoOverspentDescendantTitle,

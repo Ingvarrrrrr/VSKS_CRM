@@ -552,6 +552,13 @@ export interface PlanTreeEntry {
   plan_goods?: number; plan_services?: number; plan_unspecified?: number
   feo_goods?: number; feo_services?: number; feo_unspecified?: number
   fact_goods?: number; fact_services?: number; fact_unspecified?: number
+  // Задача владельца «Б, продолжение» (13.10.2026) — null, если у узла нет
+  // своей явной суммы ФЭО (или своя typed-разбивка уже есть по строкам);
+  // иначе budget узла + пул плана по видам (goods/services/payroll/
+  // unspecified), которым backend (_feo_by_kind/split_amount_by_kind_pool,
+  // feo_plan_tree.py) РЕАЛЬНО поделил этот budget — подпись «из чего бюджет
+  // вида» в FeoCardDrillDialog.vue читает проценты отсюда, не считает заново.
+  feo_split_explicit?: { budget: number; pool: { goods: number; services: number; payroll: number; unspecified: number } } | null
   // Решение владельца (02.10.2026): «Оплачено (по отметке)» — Σ(payment_amount +
   // payment_amount_declared), «Подтверждено выпиской» — Σ payment_amount — см.
   // backend/app/services/feo_plan_payments.py.

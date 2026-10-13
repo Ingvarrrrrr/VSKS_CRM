@@ -8,6 +8,7 @@ app/services/feo_import_engine.py до разрезания на этапы, П�
 from decimal import Decimal
 
 from app.models.feo_category import FeoCategory
+from app.services.feo_payroll import is_payroll_name
 from app.services.plan_need_level import NEED_LEVEL_LABELS, NEED_LEVEL_LIKELY, NEED_LEVELS
 from app.utils.text import normalize_feo_name
 
@@ -25,7 +26,19 @@ async def find_or_create_category(db, cat_cache: dict, subsidy_id: int, parent_i
     key = (subsidy_id, parent_id, name.lower().strip())
     if key in cat_cache:
         return cat_cache[key], False
-    cat = FeoCategory(name=name, subsidy_id=subsidy_id, parent_id=parent_id, level=level, is_active=True)
+    # БАГ ДНР5 id 97 (найден 13.10.2026, план expense-kinds.md): миграция
+    # e3f5g7h9i1j3 разово проставила is_payroll по имени для СУЩЕСТВОВАВШИХ
+    # на 07.10 категорий, а её докстринг обещал, что дальше новые статьи
+    # метит импорт — но ЭТА функция (единственное место, где импорт создаёт
+    # FeoCategory, см. докстринг выше) is_payroll вообще не трогала, поэтому
+    # статья «ФОТ и иные выплаты персоналу», созданная импортом ПОСЛЕ
+    # бэкфилла, осталась is_payroll=false и вся её сумма падала в unspecified.
+    # is_payroll_name — тот же единственный источник правила (ПРАВИЛО №6,
+    # app.services.feo_payroll), что и у миграции и у ручного переключателя.
+    cat = FeoCategory(
+        name=name, subsidy_id=subsidy_id, parent_id=parent_id, level=level,
+        is_active=True, is_payroll=is_payroll_name(name),
+    )
     db.add(cat)
     await db.flush()
     cat_cache[key] = cat

@@ -261,6 +261,15 @@ export interface FactImportBreakdown {
   skipped_by_reason: FactImportBreakdownSkipReason[]
 }
 
+// Правка 12.10.2026 (п.4б)/13.10.2026 — «экономия»/«перерасход по заказам»
+// (ТА ЖЕ единая точка _order_substituted_plan на бэкенде, ПРАВИЛО №6): обе
+// секции totals одной формы — счётчик позиций/строк, сумма, сами строки.
+export interface FactImportOrderSubstitutionBucket {
+  count: number
+  amount: number
+  rows: { row: number; name: string; amount: number }[]
+}
+
 export interface FactImportTotals {
   rows: number
   purchases: number
@@ -271,6 +280,8 @@ export interface FactImportTotals {
   breakdown: FactImportBreakdown
   paid_not_delivered: FactImportPaidNotDelivered
   paid_status_without_paid: FactImportPaidStatusWithoutPaid
+  economy: FactImportOrderSubstitutionBucket
+  overspend: FactImportOrderSubstitutionBucket
 }
 
 // 🟢 Задача B — одна СУЩЕСТВУЮЩАЯ закупка, которую этот прогон обновит по

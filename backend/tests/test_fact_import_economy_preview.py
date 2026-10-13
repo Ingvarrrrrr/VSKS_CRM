@@ -4,7 +4,10 @@
 """
 from decimal import Decimal
 
-from app.services.historical_fact_import.economy_preview import build_order_substitution_economy
+from app.services.historical_fact_import.economy_preview import (
+    build_order_substitution_economy,
+    build_order_substitution_overspend,
+)
 from app.services.feo_plan_common import _order_substituted_plan
 
 
@@ -60,6 +63,73 @@ def test_no_economy_when_order_not_cheaper_than_plan():
         planned_item_name="x",
     )
     assert r is None
+
+
+def test_overspend_suit_example_matches_owner_text():
+    """Боевой пример владельца: план позиции «Повседневный костюм» 586 000,00,
+    заказано/договор одной строкой 816 900,00 — перерасход 230 900,00, новый
+    план = сумме договора (та же замещающая формула, что и для экономии)."""
+    r = build_order_substitution_overspend(
+        planned_qty=1, planned_amount=586000,
+        already_ordered_qty=0, already_ordered_sum=0,
+        row_qty=1, row_amount=816900,
+        planned_item_name="Повседневный костюм",
+    )
+    assert r is not None
+    assert r["amount"] == Decimal("230900.00")
+    assert r["new_plan"] == Decimal("816900.00")
+    assert "230 900,00" in r["message"]
+    assert "Повседневный костюм" in r["message"]
+    assert "586 000,00" in r["message"]
+    assert "816 900,00" in r["message"]
+    assert "перерасход по заказам" in r["message"]
+
+
+def test_no_overspend_when_quantity_not_fully_covered():
+    """Та же развилка, что и у экономии — частичный заказ не замещает план,
+    перерасход не поднимается раньше времени."""
+    r = build_order_substitution_overspend(
+        planned_qty=2, planned_amount=50000,
+        already_ordered_qty=0, already_ordered_sum=0,
+        row_qty=1, row_amount=40000,
+        planned_item_name="x",
+    )
+    assert r is None
+
+
+def test_no_overspend_when_already_fully_ordered_before_this_row():
+    r = build_order_substitution_overspend(
+        planned_qty=1, planned_amount=586000,
+        already_ordered_qty=1, already_ordered_sum=816900,
+        row_qty=1, row_amount=500,
+        planned_item_name="x",
+    )
+    assert r is None
+
+
+def test_no_overspend_when_order_not_more_expensive_than_plan():
+    """Заказ дешевле или равен плану — это область economy, не overspend."""
+    r = build_order_substitution_overspend(
+        planned_qty=1, planned_amount=10000,
+        already_ordered_qty=0, already_ordered_sum=0,
+        row_qty=1, row_amount=8000,
+        planned_item_name="x",
+    )
+    assert r is None
+
+
+def test_overspend_matches_tree_formula_directly():
+    """ПРАВИЛО №6 — new_plan здесь тоже совпадает с _order_substituted_plan."""
+    planned_qty, planned_amount = 1, 586000.0
+    ordered_qty, ordered_sum = 1, 816900.0
+    expected_plan = Decimal(str(_order_substituted_plan(planned_qty, ordered_sum, ordered_qty, planned_amount)))
+    r = build_order_substitution_overspend(
+        planned_qty=planned_qty, planned_amount=planned_amount,
+        already_ordered_qty=0, already_ordered_sum=0,
+        row_qty=ordered_qty, row_amount=ordered_sum,
+        planned_item_name="x",
+    )
+    assert r["new_plan"] == expected_plan.quantize(Decimal("0.01"))
 
 
 def test_matches_tree_formula_directly():

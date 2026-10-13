@@ -1264,6 +1264,18 @@ async def compute_feo_plan_tree(
             # plan_items_raw − plan_manual = «экономия по заказам» узла, видна
             # в FeoCategoryEconomyNote.vue (useFeoTreeAmounts.feoOrderEconomyNoteFor).
             plan_items_raw = leaf_item_amt.get(cat_id, 0.0)
+            # Задача владельца (13.10.2026, «перерасход по заказам» — зеркало
+            # «экономии по заказам» выше, ПРАВИЛО №6: НЕ вторая формула
+            # замещения, просто разложение plan_items_raw/plan_manual на две
+            # неотрицательные стороны одной и той же разницы). Тождество
+            # plan_items_raw + order_overspend − order_economy == plan_manual
+            # держится identично на любом узле (x = max(x,0) − max(-x,0),
+            # x = plan_manual − plan_items_raw) — см. тест
+            # test_feo_plan_tree_order_overspend.py. ⚠️ НЕ влияет на plan/
+            # plan_manual/display/excess_* — те читаются как и раньше, эти два
+            # поля только РАСКЛАДЫВАЮТ уже посчитанную разницу для UI.
+            order_overspend = max(0.0, plan_manual - plan_items_raw)
+            order_economy = max(0.0, plan_items_raw - plan_manual)
             if qty == 0.0:
                 # planned_quantity категории не задано (план введён позициями,
                 # не полями листа) — без этого fallback'а qty_plan/display_quantity
@@ -1373,6 +1385,18 @@ async def compute_feo_plan_tree(
             # активных FeoPlannedItem УЗЛА (без замещения), что и у листа.
             own_items_raw = leaf_item_amt.get(cat_id, 0.0)
             plan_items_raw = children_plan_items_raw + own_items_raw
+            # Задача владельца (13.10.2026) — «перерасход по заказам», rollup
+            # зеркалит plan_items_raw/plan_manual выше (ПРАВИЛО №6, см.
+            # комментарий у листа): own-часть на СОБСТВЕННЫХ (own_items_raw/
+            # own_plan_manual_for_calc) величинах узла, рекурсия — Σ готовых
+            # order_overspend/order_economy детей (та же схема, что и
+            # children_plan_manual/children_plan_items_raw выше).
+            own_order_overspend = max(0.0, own_plan_manual_for_calc - own_items_raw)
+            own_order_economy = max(0.0, own_items_raw - own_plan_manual_for_calc)
+            children_order_overspend = sum(c["order_overspend"] for c in child_nodes)
+            children_order_economy = sum(c["order_economy"] for c in child_nodes)
+            order_overspend = own_order_overspend + children_order_overspend
+            order_economy = own_order_economy + children_order_economy
             ordered = own_ordered + children_ordered
             ordered_qty = own_ordered_qty + children_ordered_qty
             over = own_over + children_over
@@ -1623,6 +1647,12 @@ async def compute_feo_plan_tree(
             # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — см.
             # комментарий у leaf/group-веток выше.
             "plan_items_raw": plan_items_raw,
+            # Задача владельца (13.10.2026) — «перерасход по заказам» рядом с
+            # «экономией по заказам»: plan_items_raw + order_overspend −
+            # order_economy == plan_manual на КАЖДОМ узле (см. комментарий у
+            # leaf/group-веток выше). Не меняет plan/plan_manual/display/excess_*.
+            "order_overspend": order_overspend,
+            "order_economy": order_economy,
             "ordered": ordered,
             "ordered_quantity": ordered_qty,
             "ordered_qty": ordered_qty,

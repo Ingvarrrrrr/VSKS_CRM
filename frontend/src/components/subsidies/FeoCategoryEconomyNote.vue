@@ -1,20 +1,29 @@
 <template>
   <div v-if="note" class="feo-order-economy-note text-medium-emphasis">
     <a href="#" style="color:inherit;text-decoration:underline dotted" @click.prevent="toggle">
-      план из файла {{ formatCurrency(note.planFromFile) }} · экономия по заказам {{ formatCurrency(note.economy) }}
+      план из файла {{ formatCurrency(note.planFromFile) }}
+      <template v-if="note.overspend > 0.005"> · перерасход по заказам +{{ formatCurrency(note.overspend) }}</template>
+      <template v-if="note.economy > 0.005"> · экономия по заказам {{ formatCurrency(note.economy) }}</template>
     </a>
     <div v-if="expanded" class="feo-order-economy-breakdown">
       <template v-if="loading">
         <span class="text-caption">загрузка позиций…</span>
       </template>
-      <template v-else-if="savedItems.length">
-        <div v-for="it in savedItems" :key="it.id" class="text-caption">
+      <template v-else>
+        <!-- Задача владельца (13.10.2026) — перерасход расшифровывается ТЕМИ ЖЕ
+             savings-строками сравнения (GET /feo-planned-items/comparison), что и
+             экономия ниже — savings там УЖЕ может быть отрицательным (заказ/договор
+             дороже плана позиции), просто раньше фронт показывал только savings>0
+             (ПРАВИЛО №6: не вторая формула, знак savings меняем только для подписи). -->
+        <div v-for="it in overspentItems" :key="'over-' + it.id" class="text-caption feo-order-overspend-item">
+          «{{ it.name }}» — план {{ formatCurrency(it.amount ?? 0) }}, заказано/договор
+          {{ formatCurrency((it.amount ?? 0) - (it.savings ?? 0)) }}, перерасход +{{ formatCurrency(-(it.savings ?? 0)) }}
+        </div>
+        <div v-for="it in savedItems" :key="'econ-' + it.id" class="text-caption">
           «{{ it.name }}» — план {{ formatCurrency(it.amount ?? 0) }}, заказано
           {{ formatCurrency((it.amount ?? 0) - (it.savings ?? 0)) }}, экономия {{ formatCurrency(it.savings ?? 0) }}
         </div>
-      </template>
-      <template v-else>
-        <span class="text-caption">нет своих позиций с экономией в этой категории (возможно, экономия — у подкатегорий)</span>
+        <span v-if="!savedItems.length && !overspentItems.length" class="text-caption">нет своих позиций с экономией/перерасходом в этой категории (возможно — у подкатегорий)</span>
       </template>
     </div>
   </div>
@@ -51,6 +60,15 @@ const savedItems = computed(() => {
   return data.planned.filter(p => p.closed && (p.savings ?? 0) > 0.005)
 })
 
+// Задача владельца (13.10.2026) — расшифровка «перерасход по заказам»: те же
+// savings-строки, но отрицательные (savings < 0 ⇒ committed дороже плана
+// позиции, см. docstring get_comparison в feo_planned_items_reports.py).
+const overspentItems = computed(() => {
+  const data = ctx.comparisonData.value[props.node.id]
+  if (!data) return []
+  return data.planned.filter(p => p.closed && (p.savings ?? 0) < -0.005)
+})
+
 async function toggle() {
   expanded.value = !expanded.value
   if (expanded.value && !ctx.comparisonData.value[props.node.id]) {
@@ -69,6 +87,9 @@ async function toggle() {
   font-size: 10px;
   line-height: 1.4;
   margin-top: 2px;
+}
+.feo-order-overspend-item {
+  color: rgb(185, 28, 28);
 }
 .feo-order-economy-breakdown {
   margin-top: 2px;

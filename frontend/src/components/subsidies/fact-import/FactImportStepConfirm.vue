@@ -106,6 +106,37 @@
     </v-expansion-panels>
   </v-alert>
 
+  <!-- Задача владельца (13.10.2026) — зеркало блока «Экономия по позициям»
+       выше, для перерасхода (totals.overspend, build_order_substitution_
+       overspend, ПРАВИЛО №6 — второй расчёт не заводим). -->
+  <v-alert
+    v-if="totals && totals.overspend.count > 0"
+    type="warning"
+    variant="tonal"
+    density="compact"
+    class="mb-3"
+    icon="mdi-alert-outline"
+  >
+    <div>
+      Перерасход по позициям: {{ totals.overspend.count }} поз., +{{ fmt(totals.overspend.amount) }} —
+      разница пойдёт в «Запланировано» как перерасход по заказам.
+    </div>
+    <v-expansion-panels class="mt-2" variant="accordion">
+      <v-expansion-panel>
+        <v-expansion-panel-title class="text-caption">
+          Показать позиции ({{ totals.overspend.count }})
+        </v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <ul class="mb-0 pl-4">
+            <li v-for="r in totals.overspend.rows" :key="r.row">
+              Строка {{ r.row }}{{ r.name ? `, «${r.name}»` : '' }} — перерасход +{{ fmt(r.amount) }}
+            </li>
+          </ul>
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+    </v-expansion-panels>
+  </v-alert>
+
   <v-row dense v-if="totals">
     <v-col cols="12" sm="6" md="3">
       <v-card variant="outlined"><v-card-text>

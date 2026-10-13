@@ -523,6 +523,11 @@ export interface PlanTreeEntry {
   // БЕЗ замещения «заказ вместо плана» (plan_manual для plan_source=
   // 'planned_items' это замещение УЖЕ содержит, см. compute_feo_plan_tree).
   plan_items_raw?: number
+  // Задача владельца (13.10.2026) — «перерасход по заказам», зеркало
+  // plan_items_raw выше (ПРАВИЛО №6): plan_items_raw + order_overspend −
+  // order_economy == plan_manual, не влияет на plan/display/excess_*.
+  order_overspend?: number
+  order_economy?: number
   qty_plan?: number
   plan?: number; fact?: number; fact_quantity?: number
   excess_fact_over_plan?: number; excess_fact_pending?: boolean; excess_fact_approved?: boolean

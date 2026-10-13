@@ -445,13 +445,24 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   // plan_items_raw/plan_manual, НЕ plan_manual/plan (plan_manual для этого
   // узла на практике часто уже РАВЕН plan — замещение произошло раньше, на
   // уровне самого plan_manual, см. backend-докстринг).
-  function feoOrderEconomyNoteFor(node: FeoNode): { planFromFile: number; economy: number } | null {
+  // Задача владельца (13.10.2026) — рядом с «экономией» теперь и
+  // «перерасход по заказам», раздельно по сторонам одной и той же разницы
+  // (ПРАВИЛО №6: читает ГОТОВЫЕ order_overspend/order_economy узла из
+  // compute_feo_plan_tree, вторая формула не считается — см. её докстринг,
+  // тождество plan_items_raw + order_overspend − order_economy == plan_manual).
+  // economy/overspend взаимоисключающие на одном узле (ровно одна из двух
+  // сторон разницы ненулевая), но ОБА читаются из готовых полей, не
+  // пересчитываются из planFromFile/plan_manual напрямую — на узле с детьми
+  // Σ по поддереву может содержать И экономию одних позиций, И перерасход
+  // других одновременно (rollup, см. group-ветку _visit).
+  function feoOrderEconomyNoteFor(node: FeoNode): { planFromFile: number; economy: number; overspend: number } | null {
     const t = planTreeByCat.value[node.id]
     if (!t || t.plan_items_raw == null || t.plan_manual == null) return null
     const planFromFile = Number(t.plan_items_raw)
-    const economy = planFromFile - Number(t.plan_manual)
-    if (economy <= 0.005) return null
-    return { planFromFile, economy }
+    const economy = Number((t as any).order_economy ?? Math.max(0, planFromFile - Number(t.plan_manual)))
+    const overspend = Number((t as any).order_overspend ?? Math.max(0, Number(t.plan_manual) - planFromFile))
+    if (economy <= 0.005 && overspend <= 0.005) return null
+    return { planFromFile, economy, overspend }
   }
 
   function feoForecastWarningFor(node: FeoNode): { forecast: number; forecastOver: number; planManual: number } | null {

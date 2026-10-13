@@ -48,7 +48,10 @@ from app.services.historical_fact_import.plan_parts import (
 # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б): «экономия видна»
 # при импорте факта — та же формула замещения плана заказом, что у дерева
 # ФЭО (ПРАВИЛО №6, см. docstring economy_preview.py).
-from app.services.historical_fact_import.economy_preview import build_order_substitution_economy
+from app.services.historical_fact_import.economy_preview import (
+    build_order_substitution_economy,
+    build_order_substitution_overspend,
+)
 from app.services.feo_plan_fact import planned_item_consumption
 
 
@@ -253,6 +256,11 @@ async def build_preview(
     # Decimal float) собирается в этом же цикле (ПРАВИЛО №6, не второй расчёт).
     economy_rows: list[dict] = []
     economy_total = Decimal(0)
+    # Задача владельца (13.10.2026) — зеркало economy_rows/economy_total выше,
+    # для «перерасхода по заказам» (build_order_substitution_overspend,
+    # economy_preview.py, ПРАВИЛО №6 — та же единая точка, тот же цикл).
+    overspend_rows: list[dict] = []
+    overspend_total = Decimal(0)
     # Часть объединённой позиции (план merged-item-parts.md) — какие key уже
     # отданы более ранним строкам ЭТОГО прогона (на позицию), чтобы 4 строки
     # «Gaz A22R35» получили 4 РАЗНЫЕ части, а не одну и ту же дважды.
@@ -652,6 +660,27 @@ async def build_preview(
                         "name": _econ_entry.get("name") or row["name"],
                         "amount": float(economy_info["amount"]),
                     })
+                # Задача владельца (13.10.2026) — зеркало экономии выше: та же
+                # строка/позиция, та же единая точка _order_substituted_plan,
+                # просто ищем перерасход (build_order_substitution_overspend,
+                # economy_preview.py, ПРАВИЛО №6).
+                overspend_info = build_order_substitution_overspend(
+                    planned_qty=_econ_entry.get("quantity"),
+                    planned_amount=_econ_entry.get("amount"),
+                    already_ordered_qty=_cons.get("used_qty", 0.0),
+                    already_ordered_sum=_cons.get("used", 0.0),
+                    row_qty=_row_qty,
+                    row_amount=contract_amount_for_row,
+                    planned_item_name=_econ_entry.get("name") or row["name"],
+                )
+                if overspend_info:
+                    warnings.append(overspend_info["message"])
+                    overspend_total += overspend_info["amount"]
+                    overspend_rows.append({
+                        "row": row["row"],
+                        "name": _econ_entry.get("name") or row["name"],
+                        "amount": float(overspend_info["amount"]),
+                    })
 
         status_key = status_info["target_status"] or "none"
         status_bucket = breakdown_by_status.setdefault(status_key, {
@@ -969,6 +998,14 @@ async def build_preview(
                 "count": len(economy_rows),
                 "amount": float(economy_total),
                 "rows": economy_rows,
+            },
+            # Задача владельца (13.10.2026) — «Перерасход по позициям: N поз.,
+            # сумма» на шаге итогов (FactImportStepConfirm.vue), зеркало economy
+            # выше (ПРАВИЛО №6 — те же данные цикла, не вторая формула).
+            "overspend": {
+                "count": len(overspend_rows),
+                "amount": float(overspend_total),
+                "rows": overspend_rows,
             },
         },
         "warnings": top_warnings,

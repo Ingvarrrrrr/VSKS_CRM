@@ -73,3 +73,50 @@ def build_order_substitution_economy(
         "разница вернётся в свободные деньги категории"
     )
     return {"message": message, "amount": economy, "new_plan": new_plan}
+
+
+def build_order_substitution_overspend(
+    *,
+    planned_qty: Optional[float],
+    planned_amount: Optional[float],
+    already_ordered_qty: float,
+    already_ordered_sum: float,
+    row_qty: Optional[float],
+    row_amount: Optional[float],
+    planned_item_name: str,
+) -> Optional[dict]:
+    """Зеркало build_order_substitution_economy (владелец, задача 13.10.2026,
+    «перерасход показывать так же, как экономию») — ОДНА И ТА ЖЕ точка
+    _order_substituted_plan (ПРАВИЛО №6, второй формулы нет), только
+    противоположный знак разницы: когда количество позиции набрано ЦЕЛИКОМ
+    ЭТОЙ строкой И договор/заказ ДОРОЖЕ плана позиции, план позиции молча
+    вырастет (заменится суммой заказа) — здесь это становится явным
+    предупреждением «Перерасход …», а не тихим ростом «Запланировано».
+
+    None — нет нового перерасхода от ЭТОЙ строки. Иначе {message, amount,
+    new_plan} — amount/new_plan это Decimal, округлённые до копеек."""
+    if not planned_qty or planned_qty <= 0:
+        return None
+    if already_ordered_qty >= planned_qty:
+        return None  # уже набрано ДО этой строки — не её заслуга
+    if not row_qty or row_qty <= 0:
+        return None
+
+    new_ordered_qty = already_ordered_qty + float(row_qty)
+    if new_ordered_qty < planned_qty:
+        return None  # эта строка не доводит количество позиции до плана целиком
+
+    new_ordered_sum = already_ordered_sum + float(row_amount or 0)
+    plan_manual = Decimal(str(planned_amount or 0))
+    new_plan = Decimal(str(_order_substituted_plan(
+        planned_qty, new_ordered_sum, new_ordered_qty, float(plan_manual),
+    ))).quantize(_CENTS)
+    overspend = (new_plan - plan_manual).quantize(_CENTS)
+    if overspend <= 0:
+        return None
+
+    message = (
+        f"Перерасход {_rub(overspend)}: план позиции «{planned_item_name}» {_rub(plan_manual)}, "
+        f"договор {_rub(new_plan)} — разница пойдёт в «Запланировано» как перерасход по заказам"
+    )
+    return {"message": message, "amount": overspend, "new_plan": new_plan}

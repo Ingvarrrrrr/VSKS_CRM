@@ -81,6 +81,11 @@
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_plan_schedule) }}</div>
             <div class="kpi-label">Запланировано</div>
+            <!-- Задача владельца (13.10.2026) — «в т.ч. перерасход по заказам +X»,
+                 см. subsidyOrderOverspendTotal (Правило №6, готовое поле дерева). -->
+            <div v-if="subsidyOrderOverspendTotal > 0.005" class="kpi-sub-note text-caption text-medium-emphasis">
+              в т.ч. перерасход по заказам +{{ formatCurrency(subsidyOrderOverspendTotal) }}
+            </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('plan_schedule')">
                 <div v-for="row in splitRowsFor('plan_schedule')" :key="row.kind" class="kpi-split-row kpi-split-row-clickable"
@@ -639,6 +644,19 @@ const monthlyFutureToYearEnd = computed(() => ctx.selectedSubsidy.value?.monthly
 // координатором — см. комментарий у места использования выше): дочерние
 // заказы рамочных договоров в статусе 'contracted', НЕ is_monthly_payment-график.
 const contractedNotOrdered = computed(() => ctx.selectedSubsidy.value?.contracted_not_ordered ?? 0)
+
+// Задача владельца (13.10.2026) — «в т.ч. перерасход по заказам +X» у карточки
+// «Запланировано»: X = Σ ГОТОВОГО order_overspend корневых узлов дерева ФЭО
+// (compute_feo_plan_tree, ПРАВИЛО №6 — order_overspend уже rollup по
+// узлу+поддереву, вторая формула здесь не считается). Число «Запланировано»
+// (kpiSubTarget_plan_schedule/ctx.selectedPlannedTotal) НЕ меняется — подпись
+// только объясняет, какая часть уже показанной суммы — не из планового файла,
+// а подставлена из заказа/договора дороже плана (зеркало feoOrderEconomyNoteFor
+// на уровне узла дерева, см. useFeoTreeAmounts.ts).
+const subsidyOrderOverspendTotal = computed(() => {
+  const byCat = ctx.planTreeByCat.value as Record<number, any>
+  return ctx.feoTree.value.reduce((sum, root) => sum + Number(byCat[root.id]?.order_overspend || 0), 0)
+})
 
 const kpiSubAnim_budget            = useAnimatedNumber(kpiSubTarget_budget,           800)
 const kpiSubAnim_plan_schedule     = useAnimatedNumber(kpiSubTarget_plan_schedule,    800)

@@ -117,6 +117,12 @@ async def get_feo_plan_tree(
             # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — «план
             # из файла» (владелец) — см. compute_feo_plan_tree.
             "plan_items_raw": node["plan_items_raw"],
+            # Задача владельца (13.10.2026) — «перерасход по заказам» рядом с
+            # «экономией по заказам» (см. compute_feo_plan_tree): plan_items_raw +
+            # order_overspend − order_economy == plan_manual, не влияет на
+            # plan/display/excess_*.
+            "order_overspend": node["order_overspend"],
+            "order_economy": node["order_economy"],
             "ordered_qty": node["ordered_qty"],
             "ordered_sum": node["ordered_sum"],
             "over": node["over"],

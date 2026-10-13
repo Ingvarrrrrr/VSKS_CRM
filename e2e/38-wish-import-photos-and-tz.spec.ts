@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { login } from './helpers';
+import { login, apiLoginToken } from './helpers';
 
 /**
  * Владелец (2026-09-16), два требования:
@@ -134,7 +134,7 @@ test('импорт xlsx в заявку подтягивает фото из к�
   expect(stat.size).toBeGreaterThan(1000);
 
   // ── Удалить тестовую заявку ───────────────────────────────────────────────
-  const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+  const token = await apiLoginToken(page.request);
   const delResp = await page.request.delete(`http://localhost:8079/api/wishes/${wishId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });

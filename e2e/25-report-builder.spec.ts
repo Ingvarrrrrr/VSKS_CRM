@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, dismissOrgPicker } from './helpers';
+import { login, dismissOrgPicker, apiLoginToken } from './helpers';
 
 const BASE_URL = process.env.BASE_URL || 'http://85.239.53.155';
 
@@ -65,11 +65,7 @@ test.describe('Phase 25 — Report Builder smoke', () => {
   // ----------------------------------------------------------------- API TESTS
 
   test('25-02 GET /api/analytics/fields отдаёт >= 60 полей', async ({ request }) => {
-    const loginResp = await request.post(`${BASE_URL}/api/auth/login`, {
-      data: { username: 'admin', password: 'admin123' },
-    });
-    expect(loginResp.ok()).toBeTruthy();
-    const { access_token } = await loginResp.json();
+    const access_token = await apiLoginToken(request);
 
     const resp = await request.get(`${BASE_URL}/api/analytics/fields`, {
       headers: { Authorization: `Bearer ${access_token}` },
@@ -83,10 +79,7 @@ test.describe('Phase 25 — Report Builder smoke', () => {
   });
 
   test('25-03 POST /api/analytics/query возвращает rows (list)', async ({ request }) => {
-    const loginResp = await request.post(`${BASE_URL}/api/auth/login`, {
-      data: { username: 'admin', password: 'admin123' },
-    });
-    const { access_token } = await loginResp.json();
+    const access_token = await apiLoginToken(request);
 
     const resp = await request.post(`${BASE_URL}/api/analytics/query`, {
       headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
@@ -104,10 +97,7 @@ test.describe('Phase 25 — Report Builder smoke', () => {
   });
 
   test('25-03b POST /api/analytics/query pivot возвращает totals', async ({ request }) => {
-    const loginResp = await request.post(`${BASE_URL}/api/auth/login`, {
-      data: { username: 'admin', password: 'admin123' },
-    });
-    const { access_token } = await loginResp.json();
+    const access_token = await apiLoginToken(request);
 
     const resp = await request.post(`${BASE_URL}/api/analytics/query`, {
       headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
@@ -126,10 +116,7 @@ test.describe('Phase 25 — Report Builder smoke', () => {
   });
 
   test('25-04 GET /api/report-configs не падает', async ({ request }) => {
-    const loginResp = await request.post(`${BASE_URL}/api/auth/login`, {
-      data: { username: 'admin', password: 'admin123' },
-    });
-    const { access_token } = await loginResp.json();
+    const access_token = await apiLoginToken(request);
 
     const resp = await request.get(`${BASE_URL}/api/report-configs/?kind=list`, {
       headers: { Authorization: `Bearer ${access_token}` },
@@ -140,10 +127,7 @@ test.describe('Phase 25 — Report Builder smoke', () => {
   });
 
   test('25-08 Excel-экспорт возвращает .xlsx (binary)', async ({ request }) => {
-    const loginResp = await request.post(`${BASE_URL}/api/auth/login`, {
-      data: { username: 'admin', password: 'admin123' },
-    });
-    const { access_token } = await loginResp.json();
+    const access_token = await apiLoginToken(request);
 
     const resp = await request.post(`${BASE_URL}/api/analytics/export.xlsx`, {
       headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
@@ -164,10 +148,7 @@ test.describe('Phase 25 — Report Builder smoke', () => {
   });
 
   test('25-09 PDF-экспорт возвращает .pdf (PDF header)', async ({ request }) => {
-    const loginResp = await request.post(`${BASE_URL}/api/auth/login`, {
-      data: { username: 'admin', password: 'admin123' },
-    });
-    const { access_token } = await loginResp.json();
+    const access_token = await apiLoginToken(request);
 
     const resp = await request.post(`${BASE_URL}/api/analytics/export.pdf`, {
       headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },

@@ -1,4 +1,4 @@
-import { Page, expect } from '@playwright/test';
+import { Page, APIRequestContext, expect } from '@playwright/test';
 
 /**
  * Dismiss the global org picker ("Выберите организации") if it pops up after
@@ -67,6 +67,78 @@ export async function login(page: Page) {
   await page.waitForLoadState('networkidle');
   await waitForOverlays(page);
   await dismissOrgPicker(page);
+}
+
+/**
+ * POST /api/auth/login and return the JWT — единственное место, где тесты
+ * достают токен для Bearer-авторизации в прямых API-запросах (ПРАВИЛО №6).
+ *
+ * С 2026-10-13 /api/auth/login больше не кладёт JWT в тело ответа
+ * (`access_token` там всегда null — токен живёт только в httpOnly-cookie
+ * `gala_session`, см. backend/app/auth/session_cookie.py). Токен достаём из
+ * заголовка Set-Cookie (может быть несколько Set-Cookie — читаем через
+ * headersArray(), а не headers(), который схлопывает дубликаты), с fallback
+ * на body.access_token на случай будущего/иного окружения, где тело всё же
+ * его отдаёт.
+ *
+ * Origin-заголовок ставим ЯВНО и всегда: если вызывающий тест уже делал UI
+ * login(page) на этом же page/context, браузерный cookie jar уже несёт
+ * gala_session, и CSRF-мидлварь (backend/app/auth/csrf_protection.py) для
+ * ЛЮБОГО unsafe-метода с такой cookie требует совпадающий Origin/Referer —
+ * даже для самого /auth/login. Без заголовка такой повторный вызов (apiLoginToken
+ * через page.request после login(page)) падает 403 "неизвестный источник
+ * запроса". APIRequestContext сам Origin не шлёт — ставим его вручную.
+ */
+export async function apiLoginToken(
+  request: APIRequestContext,
+  username = 'admin',
+  password = 'admin123',
+): Promise<string> {
+  const origin = process.env.BASE_URL || 'http://localhost:80';
+  const resp = await request.post('/api/auth/login', {
+    data: { username, password },
+    headers: { Origin: origin },
+  });
+  if (!resp.ok()) {
+    throw new Error(`apiLoginToken: POST /api/auth/login вернул ${resp.status()} для ${username}`);
+  }
+  const setCookieHeaders = resp.headersArray().filter(h => h.name.toLowerCase() === 'set-cookie');
+  for (const h of setCookieHeaders) {
+    const match = h.value.match(/gala_session=([^;]+)/);
+    if (match) return decodeURIComponent(match[1]);
+  }
+  const body = await resp.json().catch(() => ({} as any));
+  if (body?.access_token) return body.access_token as string;
+  throw new Error('apiLoginToken: JWT не найден ни в Set-Cookie gala_session, ни в body.access_token');
+}
+
+/**
+ * Кладёт готовый JWT в сессию страницы так же, как это делает реальный логин:
+ * cookie `gala_session` (бэкенд читает только её — см. session_cookie.py) +
+ * флаг `gala_auth=1` в localStorage (фронт проверяет только его, см.
+ * frontend/src/composables/useAuthFlag.ts — сам JWT с 2026-10-13 из JS не
+ * читается). Нужно вызывать ДО первого page.goto(), иначе addInitScript не
+ * успеет выставить флаг до загрузки роутер-гварда.
+ */
+export async function applySessionToken(page: Page, token: string, baseURL?: string): Promise<void> {
+  const url = baseURL || (page.context() as any)._options?.baseURL || 'http://localhost:8079';
+  await page.context().addCookies([{ name: 'gala_session', value: token, url }]);
+  await page.addInitScript(() => {
+    try { localStorage.setItem('gala_auth', '1'); } catch {}
+  });
+}
+
+/**
+ * Логин без UI-формы: получает JWT через apiLoginToken и сразу раскладывает
+ * его как реальную сессию (cookie + флаг) через applySessionToken. Для
+ * тестов, которым раньше было достаточно localStorage.setItem('auth_token', ...)
+ * перед первым goto. Возвращает токен — пригодится для прямых Bearer-запросов
+ * в том же тесте.
+ */
+export async function loginViaApi(page: Page, username = 'admin', password = 'admin123'): Promise<string> {
+  const token = await apiLoginToken(page.request, username, password);
+  await applySessionToken(page, token);
+  return token;
 }
 
 /** Collect console errors during a callback */

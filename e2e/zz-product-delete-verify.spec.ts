@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { apiLoginToken } from './helpers';
 // Разовая приёмка 2026-09-29: удаление товара из каталога.
 // Жалоба владельца — DELETE /api/products/4280 падал 500 (ForeignKeyViolationError,
 // товар стоял в позиции закупки РЕЕ-2026-00921). Проверяем два сценария:
@@ -27,7 +28,7 @@ test('удаление товара, занятого в закупках/зая
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1600, height: 1000 });
   await login(page);
-  const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+  const token = await apiLoginToken(request);
   expect(token).toBeTruthy();
 
   // Находим через API товар, реально стоящий в позициях закупок (тот же
@@ -76,7 +77,7 @@ test('удаление неиспользуемого товара — прох�
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 1600, height: 1000 });
   await login(page);
-  const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+  const token = await apiLoginToken(request);
 
   const suffix = Date.now();
   const productResp = await request.post(`${baseURL}/api/products/`, {

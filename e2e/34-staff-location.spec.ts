@@ -1,6 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { execSync } from 'child_process';
-import { login, waitForOverlays } from './helpers';
+import { login, waitForOverlays, apiLoginToken } from './helpers';
 
 // e2e/helpers.ts::dismissOrgPicker ищет диалог по тексту 'Выбрать организации',
 // а реальный заголовок в AppBar.vue — «Выберите организации» (другая
@@ -216,7 +216,7 @@ test.describe.serial('Отслеживание местоположения со
     await selectOrgVsks(page);
 
     // Временный сотрудник без права staff.location.view (manager/employee — explicit False в сиде прав)
-    const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+    const token = await apiLoginToken(request);
     const suffix = Date.now();
     const createRes = await request.post('/api/users/', {
       headers: { Authorization: `Bearer ${token}` },
@@ -249,7 +249,7 @@ test.describe.serial('Отслеживание местоположения со
       await empPage.waitForURL(url => !url.pathname.includes('/login'), { timeout: 15_000 });
       await empPage.waitForLoadState('networkidle');
 
-      const empToken = await empPage.evaluate(() => localStorage.getItem('auth_token'));
+      const empToken = await apiLoginToken(request, `tmp_geo_noperm_${suffix}`, 'TempPass123!');
 
       // API: 403 напрямую
       const apiRes = await request.get('/api/staff-location/on-shift', {

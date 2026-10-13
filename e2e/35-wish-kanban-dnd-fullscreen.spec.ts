@@ -13,18 +13,9 @@
  * надёжнее UI-заведения заявки/закупки) + управление самим канбаном через UI.
  */
 import { test, expect, APIRequestContext, Page } from '@playwright/test';
-import { login, dismissOrgPicker } from './helpers';
+import { login, dismissOrgPicker, apiLoginToken } from './helpers';
 
 const API_BASE = 'http://localhost:8079/api';
-
-async function apiLogin(request: APIRequestContext): Promise<string> {
-  const res = await request.post(`${API_BASE}/auth/login`, {
-    data: { username: 'admin', password: 'admin123' },
-  });
-  expect(res.ok()).toBeTruthy();
-  const body = await res.json();
-  return body.access_token as string;
-}
 
 async function authed(request: APIRequestContext, token: string) {
   return { Authorization: `Bearer ${token}` };
@@ -37,7 +28,7 @@ test.describe('Канбан «Распределить и одобрить» (з
   let catB: string;
 
   test.beforeAll(async ({ request }) => {
-    token = await apiLogin(request);
+    token = await apiLoginToken(request);
     const headers = await authed(request, token);
 
     // Два товара из каталога с РАЗНЫМИ категориями — чтобы канбан сразу

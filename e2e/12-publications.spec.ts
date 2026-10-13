@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { login } from './helpers'
+import { login, apiLoginToken } from './helpers'
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost'
 
@@ -10,7 +10,7 @@ test.describe('Publications & Email', () => {
   test.beforeAll(async ({ browser }) => {
     const page = await browser.newPage()
     await login(page)
-    token = await page.evaluate(() => localStorage.getItem('auth_token') || '')
+    token = await apiLoginToken(page.request)
 
     // Получить первую закупку для тестов (trailing slash чтобы избежать 307 редиректа)
     const resp = await page.request.get(`${BASE_URL}/api/purchases/?limit=5`, {
@@ -25,7 +25,7 @@ test.describe('Publications & Email', () => {
 
   test('Фабрикант test mode: mock callback → status=published, chip виден в UI', async ({ page, request }) => {
     await login(page)
-    const tok = await page.evaluate(() => localStorage.getItem('auth_token') || '')
+    const tok = await apiLoginToken(request)
 
     // 1. Создать публикацию на Фабрикант (или получить существующую при 409)
     const pubResp = await request.post(`${BASE_URL}/api/publications/purchases/${purchaseId}`, {
@@ -77,7 +77,7 @@ test.describe('Publications & Email', () => {
 
   test('Росэлторг — нет токена: error_text виден в таблице публикаций', async ({ page, request }) => {
     await login(page)
-    const tok = await page.evaluate(() => localStorage.getItem('auth_token') || '')
+    const tok = await apiLoginToken(request)
 
     // 1. Создать публикацию на Росэлторг с procedure_type (или получить существующую при 409)
     const pubResp = await request.post(`${BASE_URL}/api/publications/purchases/${purchaseId}`, {
@@ -123,7 +123,7 @@ test.describe('Publications & Email', () => {
 
   test('Росэлторг API принимает procedure_type без ошибки валидации', async ({ request, page }) => {
     await login(page)
-    const tok = await page.evaluate(() => localStorage.getItem('auth_token') || '')
+    const tok = await apiLoginToken(request)
 
     // POST с procedure_type не должен возвращать 422
     const resp = await request.post(`${BASE_URL}/api/publications/purchases/${purchaseId}`, {
@@ -136,7 +136,7 @@ test.describe('Publications & Email', () => {
 
   test('SMTP test endpoint отвечает без 500 ошибки', async ({ request, page }) => {
     await login(page)
-    const tok = await page.evaluate(() => localStorage.getItem('auth_token') || '')
+    const tok = await apiLoginToken(request)
 
     // POST /api/settings/smtp/test
     // На сервере с настроенным SMTP → 200

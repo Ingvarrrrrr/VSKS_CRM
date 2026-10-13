@@ -5,6 +5,7 @@
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import { apiLoginToken } from './helpers';
 
 const SHOTS_DIR = path.resolve('.tmp_test/e2e_21jul');
 fs.mkdirSync(SHOTS_DIR, { recursive: true });
@@ -205,12 +206,18 @@ test.describe('Приёмка фиксов 21 июля', () => {
     await doLogin(page);
 
     // Создаём заявку через API (обходим UI-проблему с overlay при выборе субсидии)
-    // Используем localStorage.auth_token (JWT) для авторизации
-    const token = await page.evaluate(() => localStorage.getItem('auth_token') ?? '');
+    // JWT с 2026-10-13 не читается из localStorage (переехал в httpOnly-cookie
+    // gala_session) — достаём его отдельным API-логином через apiLoginToken.
+    let token = '';
+    try {
+      token = await apiLoginToken(page.request);
+    } catch {
+      token = '';
+    }
     console.log('  JWT token found:', token ? 'yes' : 'NO');
 
     if (!token) {
-      test.skip(true, 'JWT token не найден в localStorage');
+      test.skip(true, 'JWT token не найден');
       return;
     }
 

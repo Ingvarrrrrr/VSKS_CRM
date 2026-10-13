@@ -9,7 +9,7 @@
  * Remove test.skip() once the bundle hash has changed post-deploy.
  */
 import { test, expect } from '@playwright/test'
-import { login, dismissOrgPicker } from './helpers'
+import { login, dismissOrgPicker, apiLoginToken } from './helpers'
 
 const CONTRACTED_STATUSES = ['confirmed', 'contracted', 'delivered', 'paid']
 
@@ -109,14 +109,13 @@ test.describe('Phase 27.1 contract_items UI', () => {
   test('API smoke — GET /api/purchases/:id/contract-items returns 200', async ({ request }) => {
     // Try to find a purchase ID by logging in and listing purchases
     // This test doesn't need UI — tests the API directly
-    const loginResp = await request.post('/api/auth/token', {
-      form: { username: 'admin', password: 'admin123' },
-    })
-    if (!loginResp.ok()) {
+    let access_token: string
+    try {
+      access_token = await apiLoginToken(request)
+    } catch {
       test.skip(true, 'Cannot authenticate — skipping API smoke test')
       return
     }
-    const { access_token } = await loginResp.json()
     const purchasesResp = await request.get('/api/purchases/?limit=1', {
       headers: { Authorization: `Bearer ${access_token}` },
     })

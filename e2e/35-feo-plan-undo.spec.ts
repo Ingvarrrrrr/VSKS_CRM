@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { login } from './helpers';
+import { login, apiLoginToken } from './helpers';
 
 // QA стека отмены/повтора дерева плана (владелец, п.4 волны 4, 2026-09-13).
 // Использует РЕАЛЬНУЮ (прод-копию) субсидию Минтруд_2026 (id=45), категорию
@@ -15,7 +15,7 @@ const CHILD_CAT_ID = 974; // «Социально значимые меропр�
 let createdItemIds: number[] = [];
 
 async function apiCreatePlannedItem(page: Page, name: string, categoryId = PARENT_CAT_ID) {
-  const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+  const token = await apiLoginToken(page.request);
   const res = await page.request.post('/api/feo-planned-items/', {
     headers: { Authorization: `Bearer ${token}` },
     data: {
@@ -30,7 +30,7 @@ async function apiCreatePlannedItem(page: Page, name: string, categoryId = PAREN
 }
 
 async function apiDeleteIfExists(page: Page, id: number) {
-  const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+  const token = await apiLoginToken(page.request);
   await page.request.delete(`/api/feo-planned-items/${id}`, {
     headers: { Authorization: `Bearer ${token}` },
   }).catch(() => {});
@@ -39,7 +39,7 @@ async function apiDeleteIfExists(page: Page, id: number) {
 async function apiCleanupByName(page: Page, namePrefix: string) {
   // Подчистка «на всякий случай» — если тест упал где-то посередине и не все
   // id известны (напр. позиция пересоздана undo/redo с НОВЫМ id).
-  const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+  const token = await apiLoginToken(page.request);
   for (const catId of [PARENT_CAT_ID, CHILD_CAT_ID]) {
     const res = await page.request.get(`/api/feo-planned-items/comparison?feo_category_id=${catId}&subsidy_id=${SUBSIDY_ID}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -59,7 +59,7 @@ async function apiCleanupByName(page: Page, namePrefix: string) {
 // удалена самим тестом, напр. непреднамеренно оставшейся undo-записью) —
 // не ошибка.
 async function apiCleanupCategoriesByName(page: Page, namePrefix: string) {
-  const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+  const token = await apiLoginToken(page.request);
   const res = await page.request.get(`/api/feo-categories/?subsidy_id=${SUBSIDY_ID}`, {
     headers: { Authorization: `Bearer ${token}` },
   }).catch(() => null);

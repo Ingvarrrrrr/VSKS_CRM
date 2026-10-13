@@ -1,6 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { execSync } from 'child_process';
-import { dismissOrgPicker, waitForOverlays, collectApiErrors } from './helpers';
+import { dismissOrgPicker, waitForOverlays, collectApiErrors, apiLoginToken } from './helpers';
 
 // Приёмка: useWishApprovers.ts (decideApprover -> reloadActiveTab),
 // WishFormDialog.vue (reloadActiveTab передаётся, живой поллер тоже зовёт её),
@@ -143,7 +143,7 @@ test.describe('Согласование заявки — обновление с
     await expect(row).toBeVisible({ timeout: 15_000 });
 
     // Решить ЧЕРЕЗ API, не трогая страницу — список в браузере остаётся устаревшим.
-    const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+    const token = await apiLoginToken(page.request, 'qa_revision_executor', 'QaTest123!');
     const approvalId = psql(`select id from wish_approvals where wish_id=${WISH_2} and user_id=9550`);
     const decideResp = await page.request.post(`http://localhost:8079/api/wishes/${WISH_2}/approvers/${approvalId}/decide`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },

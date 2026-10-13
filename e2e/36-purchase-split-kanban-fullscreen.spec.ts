@@ -17,17 +17,9 @@
  * data-item-id — см. WishDistributionCard.vue), а не предполагается заранее.
  */
 import { test, expect, APIRequestContext } from '@playwright/test';
-import { login, dismissOrgPicker } from './helpers';
+import { login, dismissOrgPicker, apiLoginToken } from './helpers';
 
 const API_BASE = 'http://localhost:8079/api';
-
-async function apiLogin(request: APIRequestContext): Promise<string> {
-  const res = await request.post(`${API_BASE}/auth/login`, {
-    data: { username: 'admin', password: 'admin123' },
-  });
-  expect(res.ok()).toBeTruthy();
-  return (await res.json()).access_token as string;
-}
 
 test.describe('Канбан «Разбить закупку на несколько» — fullscreen, много столбцов', () => {
   let token: string;
@@ -35,7 +27,7 @@ test.describe('Канбан «Разбить закупку на несколь�
   let draggedItemId: number | null = null;
 
   test.beforeAll(async ({ request }) => {
-    token = await apiLogin(request);
+    token = await apiLoginToken(request);
     const headers = { Authorization: `Bearer ${token}` };
     const listRes = await request.get(`${API_BASE}/purchases/?limit=300`, { headers });
     expect(listRes.ok()).toBeTruthy();

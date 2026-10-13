@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
+import { applySessionToken } from './helpers';
 
 // Владелец (2026-09-16): «Я согласующий заявку — не могу одной кнопкой создать
 // всем позициям в заявке плановую позицию» — согласующий по иерархии
@@ -9,9 +10,11 @@ import { execSync } from 'child_process';
 // см. useWishForm.ts::canDecideWish).
 //
 // Логин — не формой (пароль пользователя 565 неизвестен), а прямой injection
-// JWT в localStorage (auth_token), как заведено для сессий без известных
-// паролей — токен получен `create_access_token({'sub': '565', 'org_id': 1})`
-// внутри backend-контейнера.
+// готового JWT в сессию через applySessionToken (cookie gala_session + флаг
+// gala_auth — с 2026-10-13 это единственное, что фронт/бэк проверяют, см.
+// e2e/helpers.ts), как заведено для сессий без известных паролей — токен
+// получен `create_access_token({'sub': '565', 'org_id': 1})` внутри
+// backend-контейнера.
 //
 // Заявка №21 «Приобретение правовой системы Гарант» (org_id=1, subsidy_id=7,
 // created_by=7, submitted, БЕЗ участников цепочки wish_approvals) — заведомо
@@ -37,10 +40,7 @@ test('менеджер вне цепочки видит и использует 
   const before = psql("select feo_planned_item_id from wish_items where wish_id=21 order by id limit 1");
   expect(before).toBe('');
 
-  await page.goto('/login');
-  await page.evaluate((token) => {
-    localStorage.setItem('auth_token', token);
-  }, TOKEN);
+  await applySessionToken(page, TOKEN);
   await page.goto('/wishes');
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1000);

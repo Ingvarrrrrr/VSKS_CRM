@@ -255,6 +255,7 @@
 // WishFormDialog.vue (через ref + defineExpose, единственно возможный способ
 // открыть карточку строкой из таблицы — см. комментарий в этом файле).
 import { computed, onMounted, ref, watch } from 'vue'
+import { usePageCache } from '@/composables/usePageCache'
 import { useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
@@ -543,6 +544,29 @@ onMounted(async () => {
       if (wish?.id) onOpenEdit(wish)
     } catch { /* невалидный id — игнорируем */ }
   }
+})
+
+// keep-alive (App.vue, 2026-10-13): возврат на уже открытые Заявки — тихо
+// перегружаем ту же вкладку, что уже активна (loadWishes/loadIncoming/
+// loadAllWishes не выставляют блокирующий v-if — то же, что и watch(activeTab)
+// чуть выше), плюс бейджи согласий.
+//
+// ОГРАНИЧЕНИЕ (знать при приёмке): открытый диалог заявки (WishFormDialog.vue)
+// не закрывается автоматически при уходе со страницы — useWishLive внутри
+// него продолжит опрашивать /wishes/{id}/approvers каждые 20с в фоне, пока
+// диалог не закроют вручную или вкладку не перезагрузят. Компонент не
+// экспонирует close()/isOpen наружу, а сам файл уже содержит несвязанные
+// незакоммиченные правки параллельной сессии (договор заявки, 12.10.2026) —
+// трогать его сейчас означало бы редактировать чужой diff. Короб для фикса:
+// добавить в WishFormDialog.vue defineExpose({ closeDialog: () => { wishDialog.value = false } })
+// и вызвать его здесь через onLeave, когда файл освободится.
+usePageCache({
+  refresh: () => {
+    if (activeTab.value === 'my') loadWishes()
+    else if (activeTab.value === 'incoming') loadIncoming()
+    else if (activeTab.value === 'all') loadAllWishes()
+    loadPendingWishConsents()
+  },
 })
 </script>
 

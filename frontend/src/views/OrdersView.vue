@@ -181,6 +181,7 @@ import { useAuthStore } from '@/stores/auth'
 import { ADMIN_ROLES } from '@/constants/roles'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { usePageCache } from '@/composables/usePageCache'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 import OrdersToolbar from '@/components/orders/OrdersToolbar.vue'
@@ -322,6 +323,19 @@ onMounted(async () => {
   loadDuplicateGroups()
   loadSubsidies(() => { globalSubsidyId.value = null })
   loadFilterPresets()
+})
+
+// keep-alive (App.vue, 2026-10-13): возврат на уже открытые Закупки — тихо
+// переподгружаем тем же набором функций, что onMounted (loading — обычный
+// Vuetify-прогресс таблицы/карточек, не прячет уже отрисованные строки).
+// applyFiltersFromQuery/suppressNextStatusReload здесь не нужны — это
+// одноразовая обработка ?status= при первом открытии страницы по ссылке.
+usePageCache({
+  refresh: () => {
+    loadOrders()
+    loadDuplicateGroups()
+    stageKpis.load()
+  },
 })
 </script>
 

@@ -24,9 +24,30 @@
           (no accidental re-use of state across routes), and the default
           transition mode lets enter/leave run in parallel so the new view
           becomes visible even if the old one is slow to tear down.
+
+          keep-alive (2026-10-13, план «мгновенный возврат на главные
+          страницы»): CACHED_PAGE_NAMES (composables/pageCache.ts) — пять
+          «главных» страниц (Сводная/Субсидии/Закупки/Заявки/Мои задачи) не
+          размонтируются при уходе, а деактивируются — повторный заход
+          показывает прежний DOM мгновенно, без нового запроса к серверу;
+          каждая страница сама тихо обновляет свои данные в onActivated (см.
+          composables/usePageCache.ts и useSubsidiesPageCache.ts). Остальные
+          страницы (формы, карточки — например CreateOrderView) в include не
+          входят и продолжают монтироваться с нуля каждый раз, как раньше.
+          :key="route.fullPath" на <component> ниже остаётся — он не мешает
+          keep-alive: Vue матчит кэш по имени компонента, а не по этому ключу,
+          ключ только гарантирует, что смена ПАРАМЕТРОВ route у ОДНОЙ и той же
+          некэшируемой страницы (например ?sid=) всё равно пересоздаёт её.
+          cacheScopeKey на самом <keep-alive> — иначе уровень: смена
+          пользователя (logout/login) или организации должна стереть ВЕСЬ
+          кэш целиком (оставшиеся экземпляры могли принадлежать другому
+          пользователю/org) — другой cacheScopeKey заставляет Vue пересоздать
+          сам <keep-alive> с нуля, не заботясь про include/exclude.
         -->
         <transition name="page">
-          <component :is="Component" :key="route.fullPath" />
+          <keep-alive :include="CACHED_PAGE_NAMES" :max="CACHED_PAGE_MAX" :key="cacheScopeKey">
+            <component :is="Component" :key="route.fullPath" />
+          </keep-alive>
         </transition>
       </router-view>
     </v-main>
@@ -80,6 +101,7 @@ import InstallPwaBanner from './components/InstallPwaBanner.vue'
 import FundingSourcesDialog from './components/subsidies/FundingSourcesDialog.vue'
 import CookieBanner from './components/legal/CookieBanner.vue'
 import { useAuthStore } from './stores/auth'
+import { CACHED_PAGE_NAMES, CACHED_PAGE_MAX } from './composables/pageCache'
 import { isLoggedIn, setLoggedIn, clearLoggedIn } from './composables/useAuthFlag'
 
 const route = useRoute()
@@ -107,6 +129,25 @@ const showAppBar = computed(() =>
   && !PUBLIC_ROUTES.includes(route.path)
   && !route.path.startsWith('/m/')
 )
+
+// keep-alive cache scope (2026-10-13): id пользователя + активная
+// организация, из localStorage (та же пара ключей, что уже читает
+// authStore.loadPermissions выше). Смена ключа заставляет <keep-alive>
+// пересоздаться целиком — весь кэш пяти главных страниц сбрасывается, чтобы
+// следующий пользователь (или та же учётка после смены организации) не
+// увидел чужой/устаревший экран на миг до фонового обновления.
+// localStorage не реактивен сам по себе — значение пересчитывается при
+// каждой навигации (route.fullPath как зависимость), а logout (router.push
+// '/login') и switchOrgSingle (window.location.reload()) — оба пути, которыми
+// меняются user_id/active_org_id, — проходят через навигацию/полный reload,
+// так что пересчёт успевает случиться до того, как закэшированная страница
+// снова станет видимой.
+const cacheScopeKey = computed(() => {
+  void route.fullPath
+  const userId = localStorage.getItem('user_id') || ''
+  const orgId = localStorage.getItem('active_org_id') || localStorage.getItem('user_org_id') || ''
+  return `${userId}:${orgId}`
+})
 
 // Restore theme preference + init global table resize
 onMounted(async () => {

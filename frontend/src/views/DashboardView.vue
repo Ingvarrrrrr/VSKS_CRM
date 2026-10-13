@@ -269,7 +269,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { GridLayout, GridItem } from 'grid-layout-plus'
@@ -314,6 +314,7 @@ import { useGoodsServicesWidget } from '@/composables/dashboard/useGoodsServices
 import { useMonthlyContractsWidget } from '@/composables/dashboard/useMonthlyContractsWidget'
 import { useAnalyticsTab, A_STATUS_LABELS, A_STATUS_COLORS, A_METHOD_LABELS, A_METHOD_COLORS, A_MONTH_NAMES } from '@/composables/dashboard/useAnalyticsTab'
 import { useFinancialPlanWidget, STATUS_LABELS_FINPLAN } from '@/composables/dashboard/useFinancialPlanWidget'
+import { usePageCache } from '@/composables/usePageCache'
 
 const router = useRouter()
 const { mobile } = useDisplay()
@@ -488,6 +489,25 @@ onMounted(() => {
     loadAnalytics()
   }
 })
+
+// keep-alive (App.vue, 2026-10-13): при возврате на уже открытую Сводную —
+// тихо дёргаем ТЕ ЖЕ функции загрузки, что и onMounted (ни loadAll(), ни
+// loadFinplan() не выставляют блокирующий v-if поверх контента — `loading`/
+// `analyticsLoading` только проп внутрь дочерних виджетов, см. комментарии
+// там, так что контент не моргает). После того как данные подъехали —
+// window resize: ApexCharts-виджеты, пока были скрыты keep-alive'ом
+// (display:none), не знали новых размеров контейнера и рисовались бы по
+// старым, пока что-то не триггерит их собственный resize-наблюдатель.
+async function refreshDashboard() {
+  await Promise.all([
+    loadAll(),
+    loadFinplan(),
+    activeTab.value === 'analytics' ? loadAnalytics() : Promise.resolve(),
+  ])
+  await nextTick()
+  window.dispatchEvent(new Event('resize'))
+}
+usePageCache({ refresh: refreshDashboard })
 </script>
 
 <style>

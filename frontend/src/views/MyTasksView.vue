@@ -258,6 +258,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useRegistryExport } from '@/composables/useRegistryExport'
+import { usePageCache } from '@/composables/usePageCache'
 
 const { mobile } = useDisplay()
 import { useAuthStore } from '@/stores/auth'
@@ -786,6 +787,22 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   if (_pollInterval) clearInterval(_pollInterval)
+})
+
+// keep-alive (App.vue, 2026-10-13): страница остаётся смонтированной, пока
+// спрятана за другой — без этого _pollInterval продолжал бы бить
+// pollTasks() каждые 30с даже когда человек смотрит другую страницу.
+// onLeave останавливает его тем же clearInterval, что и onUnmounted выше;
+// onReturn поднимает заново и сразу тихо обновляет список (pollTasks сам
+// ничего не прячет за спиннером — см. его реализацию выше).
+usePageCache({
+  refresh: pollTasks,
+  onLeave: () => {
+    if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null }
+  },
+  onReturn: () => {
+    if (!_pollInterval) _pollInterval = setInterval(pollTasks, 30_000)
+  },
 })
 </script>
 

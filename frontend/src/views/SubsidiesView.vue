@@ -215,6 +215,7 @@ import { useSubsidyRevision } from '@/composables/subsidies/useSubsidyRevision'
 import { provideRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
 import RevisionDraftBar from '@/components/subsidies/RevisionDraftBar.vue'
 import { useFeoUndoStack, handleFeoUndoKeydown } from '@/composables/subsidies/useFeoUndoStack'
+import { useSubsidiesPageCache } from '@/composables/useSubsidiesPageCache'
 import { useFeoReqItems } from '@/composables/subsidies/useFeoReqItems'
 import { useFeoTreeSearch } from '@/composables/subsidies/useFeoTreeSearch'
 import { captureScroll } from '@/composables/subsidies/usePreserveScroll'
@@ -1352,5 +1353,14 @@ onMounted(() => {
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', handleFeoUndoKeydown)
+})
+
+// keep-alive (App.vue, 2026-10-13) — вся логика в composables/useSubsidiesPageCache.ts.
+useSubsidiesPageCache({
+  keydownHandler: handleFeoUndoKeydown,
+  refresh: () => {
+    if (allSubsidies.value.length) silentRefreshSubsidies(); else loadAll()
+    if (selectedId.value) loadFeo(selectedId.value)
+  },
 })
 </script>

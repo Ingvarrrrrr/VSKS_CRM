@@ -5,6 +5,21 @@ import { isLoggedIn } from '@/composables/useAuthFlag'
 export const totalUnread = ref(0)
 export const wsConnected = ref(false)
 
+// Сайдбар-бейджи (ПРАВИЛО №6, 2026-10-13): раньше AppBar.vue держал СВОЙ
+// loadBadges()+setInterval(60s) на /api/tasks/badges параллельно с
+// pollBadgeCount() здесь же (тоже 60s, тот же эндпоинт) — два независимых
+// опроса одного показателя. Единый источник — этот модуль: badgePollTimer
+// ниже (через initChat(), которую AppBar.vue уже вызывает один раз в своём
+// onMounted) обновляет и totalUnread (чат, WS-приоритет), и эти шесть
+// счётчиков сайдбара. AppBar.vue импортирует их напрямую, своего интервала
+// больше не держит.
+export const badgeNewTasks = ref(0)
+export const badgeTaskChanges = ref(0)
+export const badgeNewPurchases = ref(0)
+export const badgePurchaseChanges = ref(0)
+export const badgeWishesApproval = ref(0)
+export const badgeWishesNew = ref(0)
+
 // Cache of room participant counts (populated by ChatView/ChatEmbed on room load)
 export const roomParticipantCounts = ref<Record<number, number>>({})
 
@@ -43,16 +58,33 @@ function updateAppBadge(count: number) {
 }
 
 async function pollBadgeCount() {
-  // Fallback: fetch unread count via REST when WS is down
-  if (wsConnected.value) return
   if (!isLoggedIn()) return
   try {
-    const res = await fetch('/api/tasks/badges')
+    // org_id — тот же параметр, что раньше передавал только AppBar.vue
+    // loadBadges(); единый запрос должен быть org-scoped для всех
+    // потребителей, а не только для сайдбара.
+    const activeOrgId = localStorage.getItem('active_org_id')
+    const url = activeOrgId ? `/api/tasks/badges?org_id=${activeOrgId}` : '/api/tasks/badges'
+    const res = await fetch(url)
     if (res.ok) {
       const data = await res.json()
-      const count = data.chat_unread ?? 0
-      totalUnread.value = count
-      updateAppBadge(count)
+      // Сайдбар-бейджи обновляются всегда — по WS для них push'а нет
+      // (раньше это делал loadBadges() в AppBar.vue каждые 60с, тем же
+      // запросом; поведение не меняем, просто один опрос вместо двух).
+      badgeNewTasks.value = data.new_tasks || 0
+      badgeTaskChanges.value = data.task_changes || 0
+      badgeNewPurchases.value = data.new_purchases || 0
+      badgePurchaseChanges.value = data.purchase_changes || 0
+      badgeWishesApproval.value = data.wishes_approval || 0
+      badgeWishesNew.value = data.wishes_new || 0
+      // Чат — только пока WS не держит соединение (тот же fallback, что
+      // был здесь раньше): пока WS жив, totalUnread приходит push'ем и
+      // этот REST-снимок может быть устаревшим.
+      if (!wsConnected.value) {
+        const count = data.chat_unread ?? 0
+        totalUnread.value = count
+        updateAppBadge(count)
+      }
     }
   } catch {}
 }

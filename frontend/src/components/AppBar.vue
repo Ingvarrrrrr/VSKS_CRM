@@ -497,11 +497,20 @@ import ProfilePhotoUpload from './ProfilePhotoUpload.vue'
 import UserAvatar from './UserAvatar.vue'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { apiFetch, forceClearCacheAndReload } from '@/api'
-import { totalUnread, initChat, destroyChat } from '@/composables/useChat'
+// Бейджи сайдбара (ПРАВИЛО №6, 2026-10-13): раньше AppBar.vue держал свой
+// loadBadges()+setInterval на /api/tasks/badges параллельно с pollBadgeCount()
+// в useChat.ts — тот же эндпоинт опрашивался дважды. Теперь единственный
+// опрос живёт в useChat.ts (внутри initChat(), которую эта же функция
+// вызывает ниже в onMounted) — здесь просто читаем готовые реактивные refs.
+import {
+  totalUnread as badgeChatUnread, initChat, destroyChat,
+  badgeNewTasks, badgeTaskChanges, badgeNewPurchases, badgePurchaseChanges,
+  badgeWishesApproval, badgeWishesNew,
+} from '@/composables/useChat'
 import { myPendingApprovalsCount, initApprovalsBadge, destroyApprovalsBadge } from '@/composables/useApprovalsBadge'
 import { initStaffLocationTracking, destroyStaffLocationTracking } from '@/composables/useStaffLocationTracking'
 import { resetConsentGate } from '@/composables/useConsentGate'
-import { isLoggedIn, setLoggedIn, clearLoggedIn } from '@/composables/useAuthFlag'
+import { isLoggedIn, clearLoggedIn } from '@/composables/useAuthFlag'
 import ShiftToggleButton from '@/components/staff/ShiftToggleButton.vue'
 import { useAuthStore } from '../stores/auth'
 import { ROLE_LABELS } from '@/composables/staff/staffLabels'
@@ -550,30 +559,9 @@ const _allBottomNavItems = [
 const bottomNavItems = computed(() =>
   _allBottomNavItems.filter(item => authStore.hasTab(item.tab_key)).slice(0, 4)
 )
-// ── Sidebar badges ──
-const badgeNewTasks = ref(0)
-const badgeTaskChanges = ref(0)
-const badgeNewPurchases = ref(0)
-const badgePurchaseChanges = ref(0)
-const badgeChatUnread = ref(0)
-const badgeWishesApproval = ref(0)
-const badgeWishesNew = ref(0)
-let _badgeInterval: ReturnType<typeof setInterval> | null = null
-
-async function loadBadges() {
-  try {
-    const activeOrgId = localStorage.getItem('active_org_id')
-    const url = activeOrgId ? `/tasks/badges?org_id=${activeOrgId}` : '/tasks/badges'
-    const data = await apiFetch<any>(url)
-    badgeNewTasks.value = data.new_tasks || 0
-    badgeTaskChanges.value = data.task_changes || 0
-    badgeNewPurchases.value = data.new_purchases || 0
-    badgePurchaseChanges.value = data.purchase_changes || 0
-    badgeChatUnread.value = data.chat_unread || 0
-    badgeWishesApproval.value = data.wishes_approval || 0
-    badgeWishesNew.value = data.wishes_new || 0
-  } catch {}
-}
+// ── Sidebar badges ── значения приходят из useChat.ts (единый опрос
+// /api/tasks/badges — см. импорт выше и ПРАВИЛО №6), здесь больше нет ни
+// своих refs, ни своего интервала.
 
 const isDark = computed(() => vuetifyTheme.global.name.value === 'dark')
 function toggleTheme() {
@@ -1015,9 +1003,7 @@ onMounted(async () => {
   loadSubsidies()
   loadSignatureStatus()
   loadMyPhoto()
-  loadBadges()
-  _badgeInterval = setInterval(loadBadges, 60_000)  // refresh every 60s
-  initChat()  // start WS connection for chat badge updates
+  initChat()  // start WS connection + единый опрос бейджей (useChat.ts)
   initApprovalsBadge()  // счётчик «мои согласования» (закупки + заявки + превышения плана ФЭО)
   initStaffLocationTracking()  // отслеживание местоположения — продолжает идти, пока пользователь в системе
 
@@ -1032,13 +1018,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (_badgeInterval) { clearInterval(_badgeInterval); _badgeInterval = null }
   destroyChat()
   destroyApprovalsBadge()
 })
-
-// Keep badgeChatUnread in sync with totalUnread from WS events (real-time)
-watch(totalUnread, (val) => { badgeChatUnread.value = val })
 </script>
 
 <style scoped>

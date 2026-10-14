@@ -400,7 +400,7 @@ async def compute_feo_plan_tree(
     from app.services.item_type_split import (
         KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, KIND_PAYROLL, ALL_KINDS,
         kind_of, kind_of_by_category_id, empty_kind_dict,
-        collapse_kind_dict_to_payroll, split_amount_by_kind_pool,
+        collapse_kind_dict_to_payroll, split_amount_by_kind_pool, is_budget_aligned_to_plan,
     )
     # Четвёртая корзина «payroll» (владелец, 07.10.2026, план .planning/
     # quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2) — единственный резолвер
@@ -964,18 +964,70 @@ async def compute_feo_plan_tree(
             # 863 979,59 vs Σ строк 441 579,59 — старые/неполные breakdown-
             # строки при живом ручном budget), узел получил бы чужую сумму и
             # сломал бы инвариант Σ(goods+services+unspecified)==budget.
-            # own_feo_by_kind НЕ читается в этой ветке вообще (как и раньше) —
-            # budget всегда делится НА СЕБЯ, по ДОЛЯМ плановых позиций
-            # (бюджет без своей typed-разбивки, явной суммой НЕ размеченной
-            # по типу, — решение владельца 06.10.2026, субсидия ХО id 75).
-            # split_amount_by_kind_pool (ПРАВИЛО №6, item_type_split.py) —
-            # обобщение той же доли на 4 корзины, включая payroll (узел САМ
-            # не payroll в этой ветке, но может иметь payroll-подкатегорию
-            # БЕЗ своего budget, чьи позиции попали в пул — см. docstring
-            # split_amount_by_kind_pool).
+            # own_feo_by_kind НЕ читается в этой ветке вообще (как и раньше).
+            #
+            # РЕШЕНИЕ ВЛАДЕЛЬЦА (14.10.2026) ОТМЕНЯЕТ правило «доля плана»
+            # (06.10.2026, субсидия ХО id 75) для случая, когда budget узла —
+            # ПРОСТО СВОЯ сумма, не совпадающая с планом (пример — субсидия
+            # «ДНР_Правильная» id 98, статья «Прочие расходы»: владелец ввёл
+            # ФЭО 29 118 988,00 одной суммой, Σ плана той же статьи —
+            # 28 111 777,44 — это ДРУГОЕ число, не «план, просто без разбивки
+            # по типу»; владелец прямо: «я не приравнял плановую к ФЭО, я
+            # просто ввёл сумму — ты самовольно разбил, не надо»). Правило
+            # «доля плана» остаётся ТОЛЬКО когда budget узла ФАКТИЧЕСКИ РАВЕН
+            # Σ пула плановых позиций (до копейки, порог см.
+            # item_type_split.is_budget_aligned_to_plan) — тогда разбивка
+            # по типу = САМ пул (владелец «приравнял» ФЭО к плану, типы
+            # известны из плановых позиций один-в-один, split_amount_by_
+            # kind_pool на точном равенстве даёт тот же результат, что и
+            # простое копирование пула, см. её докстринг). Иначе — budget
+            # ЦЕЛИКОМ в unspecified, без всякого деления (ПРАВИЛО №6 —
+            # is_budget_aligned_to_plan единственное место, где решается
+            # «приравнено или своя сумма», второй такой проверки не заводить).
+            #
+            # ИСПРАВЛЕНИЕ (координатор, 14.10.2026, прод ФАДМ 2026_2 id 89,
+            # статья «Организация мероприятий»): ветка выше (до этого
+            # исправления) возвращала val БЕЗ детей вообще — но
+            # feo_card_drill.py::_own_contribution читает node['feo_{kind}']
+            # как КУМУЛЯТИВНОЕ значение по всему поддереву (own = node −
+            # Σ children, та же договорённость, что везде в файле — см.
+            # ветку else ниже, которая Σ детей добавляет). Подкатегория СО
+            # СВОИМ budget (own_budgets[kid] is not None) считается отдельно
+            # (не входит в _plan_items_pool_by_kind родителя, чтобы не
+            # задвоить) — но её _feo_by_kind(kid) ОБЯЗАН попасть в val
+            # родителя, иначе own-доля родителя (node[parent] − Σ node[kid])
+            # получает «отрицательный вклад» на величину ПОЛНОГО typed-ФЭО
+            # ребёнка (боевой замер: товары −1 502 840, услуги −1 998 925,60 —
+            # родитель их не нёс, а вычитались). Правило: typed-часть
+            # бюджетных ПРЯМЫХ подкатегорий входит в разбивку родителя КАК
+            # ЕСТЬ; остаток (budget − Σ по всем видам этих подкатегорий) идёт
+            # на СВОЙ пул родителя (own/небюджетные потомки) — «приравнено»
+            # теперь сравнивает остаток с Σ своего пула (та же единственная
+            # проверка is_budget_aligned_to_plan, ПРАВИЛО №6, только второй
+            # операнд budget — сам remainder, а не _raw_b).
             _pool = _plan_items_pool_by_kind(cat_id)
-            _split = split_amount_by_kind_pool(_raw_b, _pool)
-            val = {k: float(v) for k, v in _split.items()}
+            _budgeted_children_feo = empty_kind_dict()
+            for _kid in children_map.get(cat_id, []):
+                if normalize_feo_category_budget(by_id[_kid].budget) is None:
+                    continue
+                _kv = _feo_by_kind(_kid)
+                for k in ALL_KINDS:
+                    _budgeted_children_feo[k] += _kv[k]
+            _children_feo_sum = sum(_budgeted_children_feo.values())
+            _remainder = _raw_b - _children_feo_sum
+            if _remainder < -0.5:
+                # Данные противоречат (дети типизированной суммой уже
+                # перекрывают budget родителя) — честно не разбиваем вообще,
+                # как раньше (без кредита детям — это РЕДКИЙ, заведомо
+                # противоречивый случай, не боевая цель этого исправления).
+                val = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: float(_raw_b)}
+            else:
+                _remainder = max(_remainder, 0.0)
+                if is_budget_aligned_to_plan(_remainder, _pool):
+                    _own_split = {k: float(v) for k, v in split_amount_by_kind_pool(_remainder, _pool).items()}
+                else:
+                    _own_split = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: _remainder}
+                val = {k: _own_split[k] + _budgeted_children_feo[k] for k in ALL_KINDS}
         else:
             # ОТМЕНЕНО (владелец, 07.10.2026, план .planning/quick/2026-10-07-
             # dnr-feo-cards/PLAN.md шаг 1 — решение №3: «пока ФЭО не введено ни
@@ -1021,8 +1073,24 @@ async def compute_feo_plan_tree(
         _raw_b = normalize_feo_category_budget(r.budget)
         if _raw_b is None or cat_id in _payroll_ids:
             return None
+        # Координатор (14.10.2026, прод ФАДМ 2026_2 id 89) — у узла с
+        # бюджетными ПРЯМЫМИ подкатегориями формула val в _feo_by_kind сложнее
+        # «budget делится на свой пул» (сначала вычитается Σ typed-ФЭО этих
+        # подкатегорий, остаток делится на СВОЙ пул) — подпись «budget × доля
+        # пула» в этом случае была бы НЕВЕРНОЙ (формула другая). Пока дети с
+        # собственным budget есть — подписи не даём вовсе (None), не вторую
+        # формулу для caption заводить.
+        for _kid in children_map.get(cat_id, []):
+            if normalize_feo_category_budget(by_id[_kid].budget) is not None:
+                return None
         _pool = _plan_items_pool_by_kind(cat_id)
-        return {"budget": float(_raw_b), "pool": {k: float(v) for k, v in _pool.items()}}
+        # Решение владельца 14.10.2026 (см. ветку _feo_by_kind выше) — подпись
+        # «из чего бюджет вида» теперь существует ТОЛЬКО когда ФЭО приравнено
+        # к плану (is_budget_aligned_to_plan); «своя сумма» не делится вообще,
+        # значит и подписи-долям у неё нет — None вместо info с нулевым pool.
+        if not is_budget_aligned_to_plan(_raw_b, _pool):
+            return None
+        return {"budget": float(_raw_b), "pool": {k: float(v) for k, v in _pool.items()}, "aligned": True}
 
     # ── Раздел E1 продолжение (исправление 2026-09-21, ПРАВИЛО №6) ──────────
     # Инвариант владельца: plan_goods+plan_services+plan_unspecified узла

@@ -774,6 +774,18 @@ function splitRowsFor(stage: SplitStageKey): SplitRow[] | null {
   }
   const raw = rawSplitFor(stage)
   if (!raw) return null
+  // Задача владельца «B» (14.10.2026, субсидия «ДНР_Правильная» id 98) —
+  // карточка «Бюджет (ФЭО)»: когда своя сумма ФЭО НЕ приравнена к плану
+  // (feo_goods/feo_services/feo_payroll все ≈0 — backend теперь кладёт её
+  // ЦЕЛИКОМ в unspecified, см. feo_plan_tree.py::_feo_by_kind, решение
+  // владельца 14.10.2026), подстрок «товары/услуги/без типа» быть не должно
+  // вообще — только общий итог карточки (kpiValue выше уже показывает его).
+  // Раньше здесь всегда рисовались пустые «Товары 0 ₽ / Услуги 0 ₽», что и
+  // было жалобой («когда ввожу сумму — не надо самостоятельно показывать»).
+  if (stage === 'budget' && Math.abs(raw.goods) <= 0.5 && Math.abs(raw.services) <= 0.5
+    && Math.abs(raw.payroll ?? 0) <= 0.5) {
+    return []
+  }
   const rows: SplitRow[] = [
     { kind: 'goods', label: KIND_LABELS.goods, amount: raw.goods },
     { kind: 'services', label: KIND_LABELS.services, amount: raw.services },

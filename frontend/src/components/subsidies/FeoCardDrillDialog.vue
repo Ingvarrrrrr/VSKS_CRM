@@ -247,13 +247,50 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(r, idx) in categoryRows" :key="(r.feo_category_id ?? 'manual') + '-' + idx">
-                <td class="px-4 text-caption category-path-cell" :title="r.category_path">{{ lastSegment(r.category_path) || '—' }}</td>
-                <td class="px-4 text-caption">{{ r.kind_label }}</td>
-                <td class="text-right px-4 font-weight-medium" :class="r.amount < -0.5 ? 'text-error' : 'text-primary'">
-                  {{ formatCurrency(r.amount) }}
-                </td>
-              </tr>
+              <template v-for="(r, idx) in categoryRows" :key="(r.feo_category_id ?? 'manual') + '-' + idx">
+                <tr
+                  :class="{ 'feo-drill-folder-row': card === 'budget' && r.items && r.items.length }"
+                  @click="card === 'budget' && r.items && r.items.length ? toggleFolder('budget-row-' + idx) : null">
+                  <td class="px-4 py-2 text-caption category-path-cell" :title="r.category_path">
+                    <v-icon v-if="card === 'budget' && r.items && r.items.length" size="18" class="mr-1">
+                      {{ expanded.has('budget-row-' + idx) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
+                    </v-icon>
+                    {{ lastSegment(r.category_path) || '—' }}
+                  </td>
+                  <td class="px-4 text-caption">{{ r.kind_label }}</td>
+                  <td class="text-right px-4 font-weight-medium" :class="r.amount < -0.5 ? 'text-error' : 'text-primary'">
+                    {{ formatCurrency(r.amount) }}
+                  </td>
+                </tr>
+                <!-- Задача владельца «C» (14.10.2026) — состав строки: из каких
+                     плановых позиций (ФЭО приравнено к плану) или собственных
+                     строк ФЭО сложена эта сумма. -->
+                <tr v-if="card === 'budget' && r.items && r.items.length && expanded.has('budget-row-' + idx)">
+                  <td colspan="3" class="pa-0" style="border-top:none">
+                    <div class="pa-3" style="background: rgba(146, 64, 14, 0.03)">
+                      <div class="text-caption text-medium-emphasis mb-1">Состав ({{ r.items.length }}):</div>
+                      <v-table density="compact" style="background:transparent">
+                        <thead>
+                          <tr>
+                            <th class="px-2">Позиция</th>
+                            <th class="px-2">Категория</th>
+                            <th class="text-right px-2">Сумма</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="it in r.items" :key="it.planned_item_id">
+                            <td class="px-2 py-1 text-caption" style="max-width:280px; white-space:normal">
+                              {{ it.name || '—' }}<span v-if="it.source_row" class="text-medium-emphasis"> (стр. {{ it.source_row }})</span>
+                            </td>
+                            <td class="px-2 text-caption" style="max-width:220px; white-space:normal">{{ it.category_path || '—' }}</td>
+                            <td class="text-right px-2 text-caption">{{ formatCurrency(it.amount) }}</td>
+                          </tr>
+                        </tbody>
+                      </v-table>
+                    </div>
+                  </td>
+                </tr>
+              </template>
             </tbody>
             <tfoot>
               <tr>
@@ -299,12 +336,27 @@ const toast = useToast()
 
 export type FeoCardDrillCard = 'budget' | 'planned' | 'free'
 
+// Задача владельца «C» (14.10.2026, ДНР_Правильная id 98) — состав строки
+// карточки «Бюджет (ФЭО)»: откуда взялась её сумма — плановые позиции пула
+// (ФЭО приравнено к плану) либо собственные typed-строки ФЭО категории (см.
+// feo_card_drill.py::card_drill_rows, ветка card='budget', ПРАВИЛО №6 — один
+// расчёт состава на backend, здесь только отображение).
+interface BudgetCompositionItem {
+  // null — координатор (14.10.2026): строка-пояснение «ФЭО введено суммой,
+  // по типам не разбито» вместо плановой позиции (нет planned_item_id).
+  planned_item_id: number | null
+  name: string | null
+  amount: number
+  category_path: string
+  source_row: number | null
+}
 interface BudgetFreeRow {
   feo_category_id: number | null
   category_path: string
   kind: ItemTypeKind
   kind_label: string
   amount: number
+  items?: BudgetCompositionItem[]
 }
 interface PlannedRow extends BudgetFreeRow {
   planned_item_id: number | null

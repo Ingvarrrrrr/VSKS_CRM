@@ -120,21 +120,22 @@ class TestSubsidyTypeTotals:
         assert t["feo_goods"] + t["feo_services"] + t["feo_unspecified"] == pytest.approx(existing_budget)
         assert existing_budget == pytest.approx(90.0)
 
-    async def test_category_explicit_budget_splits_by_plan_item_type(self, db_session):
-        """Решение владельца (06.10.2026, субсидия ХО id 75): категория имеет
-        собственную явную budget (главнее compute_budget_map), а тип стоит
-        только у ЕЁ плановой позиции (не у отдельной typed-ФЭО-строки) — budget
-        распределяется по доле плановых позиций, а не падает целиком в
-        feo_unspecified. Единственная позиция типа «товар» -> весь budget
-        в feo_goods."""
+    async def test_category_explicit_budget_mismatched_with_plan_goes_unspecified(self, db_session):
+        """ОТМЕНЕНО решение владельца 06.10.2026 (субсидия ХО id 75, «budget
+        делится по доле плановых позиций, даже не совпадая с их суммой») —
+        владелец 14.10.2026 (субсидия «ДНР_Правильная» id 98): категория со
+        своей явной budget (500), НЕ совпадающей с Σ плана её позиций (100,
+        тип «товар») — своя сумма владельца, budget ЦЕЛИКОМ в feo_unspecified,
+        без деления по типу позиций (см. feo_plan_tree.py::_feo_by_kind,
+        is_budget_aligned_to_plan)."""
         subsidy = await _make_subsidy(db_session)
         cat = await _make_category(db_session, subsidy.id, budget=500)
         await _make_planned_item(db_session, cat.id, "товар", 100, feo_amount=90)
 
         totals = await subsidy_type_totals(db_session, [subsidy.id])
         t = totals[subsidy.id]
-        assert t["feo_goods"] == pytest.approx(500.0)
-        assert t["feo_unspecified"] == pytest.approx(0.0)
+        assert t["feo_goods"] == pytest.approx(0.0)
+        assert t["feo_unspecified"] == pytest.approx(500.0)
         existing_budget = (await calculate_budgets_bulk(db_session, [subsidy.id]))[subsidy.id]
         assert existing_budget == pytest.approx(500.0)
         assert t["feo_goods"] + t["feo_services"] + t["feo_unspecified"] == pytest.approx(existing_budget), (

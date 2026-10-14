@@ -26,6 +26,40 @@ async def _set_plan_changed_at(db_session, item, dt):
     await db_session.refresh(item)
 
 
+async def _own_feo_line(db_session, category_id, item_type, feo_amount):
+    """Строка ФЭО (own_feo_by_kind-ветка _feo_by_kind, НЕ явный
+    FeoCategory.budget) — задаёт «Бюджет (ФЭО)» направления через typed
+    is_feo_breakdown-строку, а не через категорию с budget. ИСПРАВЛЕНИЕ
+    (владелец 14.10.2026, ДНР_Правильная id 98): явный FeoCategory.budget,
+    НЕ совпадающий с Σ плана, теперь целиком уходит в unspecified (см.
+    feo_plan_tree.py::_feo_by_kind, ПРАВИЛО №6 — is_budget_aligned_to_plan) —
+    тесты этого файла про виновников превышения нужен НЕЗАВИСИМЫЙ от плана
+    источник «Бюджет (ФЭО) по типу» (так и бывает в бою — явная typed-строка
+    ФЭО), own_feo_by_kind-ветка этим решением не затронута вообще. amount=0 —
+    строка не прибавляет Σ плана (не искажает «превышение» теста);
+    created_at — далёкое прошлое, чтобы не попасть в «новейшие» при сортировке
+    полного состава (DESC)."""
+    import datetime as _dt
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    fpi = FeoPlannedItem(
+        feo_category_id=category_id, name="ФЭО (ввод)", quantity=Decimal("1"), unit="шт",
+        amount=Decimal("0"), item_type=item_type, is_feo_breakdown=True,
+        feo_amount=Decimal(str(feo_amount)), is_active=True,
+    )
+    db_session.add(fpi)
+    await db_session.commit()
+    await db_session.refresh(fpi)
+    # created_at И plan_changed_at — далёкое прошлое: виновника (culprits_
+    # after_crossing) выбирают по plan_changed_at, а не created_at (см. тесты
+    # ниже) — без явного plan_changed_at эта строка иначе получила бы "сейчас"
+    # (самую НОВУЮ), ломая весь порядок виновников amount=0 строки.
+    fpi.created_at = _dt.datetime(2020, 1, 1, 0, 0, 0)
+    fpi.plan_changed_at = _dt.datetime(2020, 1, 1, 0, 0, 0)
+    await db_session.commit()
+    return fpi
+
+
 async def _link_purchase(db_session, subsidy_id, feo_category_id, planned_item_id, purchase_number=1):
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
@@ -55,7 +89,8 @@ async def test_culprit_is_only_newest_item_covering_excess(db_session, test_org)
     import datetime as _dt
 
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
-    direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("1000"))
+    direction = await _make_category(db_session, subsidy.id, name="Направление")
+    await _own_feo_line(db_session, direction.id, "товар", 1000)
     article = await _make_category(db_session, subsidy.id, name="Статья", parent_id=direction.id)
 
     old = await _make_planned_item(db_session, article.id, "Старая позиция (600)", 1, 600)
@@ -81,8 +116,10 @@ async def test_culprit_is_only_newest_item_covering_excess(db_session, test_org)
     assert row["planned_amount"] == pytest.approx(1100.0)
     assert row["amount"] == pytest.approx(-100.0)
 
-    # Полный состав (для ссылки «Показать весь состав») — все 3 позиции, как и раньше.
-    assert len(row["items"]) == 3
+    # Полный состав (для ссылки «Показать весь состав») — 3 плановые позиции
+    # + 1 служебная строка own_feo_by_kind (см. _own_feo_line выше, amount=0,
+    # задаёт «Бюджет (ФЭО)» направления независимо от плана).
+    assert len(row["items"]) == 4
 
     # Виновник — ТОЛЬКО группа закупки 975 (новая позиция 200), не позиция
     # без закупки, несмотря на то, что created_at у неё самый свежий.
@@ -112,7 +149,8 @@ async def test_two_planned_items_one_purchase_single_group(db_session, test_org)
     import datetime as _dt
 
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
-    direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("1000"))
+    direction = await _make_category(db_session, subsidy.id, name="Направление")
+    await _own_feo_line(db_session, direction.id, "товар", 1000)
     article = await _make_category(db_session, subsidy.id, name="Статья", parent_id=direction.id)
 
     old = await _make_planned_item(db_session, article.id, "Старая позиция (600)", 1, 600)
@@ -154,7 +192,8 @@ async def test_no_excess_no_culprits(db_session, test_org):
     поведение строки не меняется (владелец: «для направления без превышения —
     как сейчас»)."""
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
-    direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("1000"))
+    direction = await _make_category(db_session, subsidy.id, name="Направление")
+    await _own_feo_line(db_session, direction.id, "товар", 1000)
     item = await _make_planned_item(db_session, direction.id, "Позиция", 1, 400)
     item.item_type = "товар"
     await db_session.commit()
@@ -174,7 +213,8 @@ async def test_batch_note_for_simultaneous_upload(db_session, test_org):
     import datetime as _dt
 
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
-    direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("1000"))
+    direction = await _make_category(db_session, subsidy.id, name="Направление")
+    await _own_feo_line(db_session, direction.id, "товар", 1000)
     article = await _make_category(db_session, subsidy.id, name="Статья", parent_id=direction.id)
 
     same_dt = _dt.datetime(2026, 10, 6, 12, 0, 0)
@@ -210,7 +250,8 @@ async def test_single_purchase_same_timestamp_is_whole_group_not_batch(db_sessio
     import datetime as _dt
 
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
-    direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("1000"))
+    direction = await _make_category(db_session, subsidy.id, name="Направление")
+    await _own_feo_line(db_session, direction.id, "товар", 1000)
     article = await _make_category(db_session, subsidy.id, name="Статья", parent_id=direction.id)
 
     old = await _make_planned_item(db_session, article.id, "Старая позиция (600)", 1, 600)
@@ -263,7 +304,8 @@ async def test_batch_across_multiple_purchases_same_timestamp(db_session, test_o
     from app.models.purchase_item import PurchaseItem
 
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
-    direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("1000"))
+    direction = await _make_category(db_session, subsidy.id, name="Направление")
+    await _own_feo_line(db_session, direction.id, "товар", 1000)
     article = await _make_category(db_session, subsidy.id, name="Статья", parent_id=direction.id)
 
     same_dt = _dt.datetime(2026, 10, 5, 9, 0, 0)

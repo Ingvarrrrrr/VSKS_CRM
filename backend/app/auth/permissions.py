@@ -356,6 +356,51 @@ async def assert_can_manage_user_access(
         )
 
 
+async def assert_target_in_owner_account(
+    current_user: User, target_user: User, db: AsyncSession
+) -> None:
+    """403 если target_user не относится к аккаунту current_user (account_owner).
+
+    Баг 2026-10-14: PATCH /api/users/{id} сравнивал user.org_id ==
+    current_user.org_id напрямую — но у account_owner в контуре аккаунта
+    может быть НЕСКОЛЬКО организаций (дерево Organization.root_org_id), а у
+    target_user может не быть org_id, совпадающего с primary-оргой owner'а,
+    хотя сотрудник числится в одной из дочерних организаций аккаунта (через
+    user.org_id или доп. допуск UserOrgAccess). Орги target: {target_user.org_id}
+    ∪ org_id из UserOrgAccess этого пользователя. Аккаунт owner считается
+    ЕДИНСТВЕННЫМ каноническим расчётом контура — visibility.compute_account_
+    contour_org_ids (Правило №6, не дублировать логику дерева организаций).
+
+    Намеренно НЕ через get_account_contour_org_ids(current_user, db): та
+    обёртка в первую очередь читает кэш current_user._contour_org_ids, а
+    jwt.get_current_user оставляет этот кэш ПУСТЫМ именно для account_owner
+    (роль и так обходит visibility-ограничения на остальных путях) — обёртка
+    вернула бы пустое множество для КАЖДОГО account_owner, а не настоящий
+    контур. Здесь контур нужен по-настоящему, поэтому считаем напрямую.
+
+    Если current_user не account_owner — no-op, вызывающий код сам решает,
+    когда её вызывать. Если у target нет ни одной орги — разрешить (сотрудник
+    без организации не считается чужим).
+    """
+    if current_user.role != "account_owner":
+        return
+    from app.auth.visibility import compute_account_contour_org_ids
+    target_org_ids: set[int] = set()
+    if target_user.org_id:
+        target_org_ids.add(target_user.org_id)
+    uoa_org_ids = (await db.execute(
+        select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == target_user.id)
+    )).scalars().all()
+    target_org_ids.update(int(x) for x in uoa_org_ids)
+    if not target_org_ids:
+        return
+    account_org_ids = await compute_account_contour_org_ids(db, current_user.org_id)
+    if not (target_org_ids & account_org_ids):
+        raise HTTPException(
+            403, "Сотрудник не относится к организациям вашего аккаунта"
+        )
+
+
 def assert_role_assignable(current_user: User, new_role: str) -> None:
     """403 если current_user не вправе НАЗНАЧИТЬ роль new_role кому-либо.
 

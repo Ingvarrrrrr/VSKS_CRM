@@ -46,6 +46,7 @@ from app.schemas.schemas import UserCreate, UserUpdate, UserOut
 from app.auth.permissions import (
     require_action, ensure_user_org_access,
     assert_can_manage_user_access, assert_role_assignable,
+    assert_target_in_owner_account,
 )
 from typing import List, Optional
 
@@ -314,8 +315,8 @@ async def update_user(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
-    if current_user.role == 'account_owner' and user.org_id != current_user.org_id:
-        raise HTTPException(403, "Нет доступа")
+    if current_user.role == 'account_owner':
+        await assert_target_in_owner_account(current_user, user, db)
 
     update_data = data.dict(exclude_unset=True)
 

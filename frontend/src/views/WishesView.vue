@@ -80,22 +80,38 @@
       </v-btn>
     </div>
 
-    <!-- Tabs (visible to all authenticated users) -->
-    <v-tabs v-model="activeTab" class="mb-4">
-      <v-tab value="my">Мои заявки</v-tab>
-      <v-tab value="incoming">
-        На согласование мне
-        <!-- Владелец (мобильные карточки, 2026-10-05): сколько заявок реально ждут
-             РЕШЕНИЯ ТЕКУЩЕГО пользователя (canDecideFromList — тот же предикат, что
-             у кнопок «Одобрить»/«Отклонить»), не просто «сколько submitted». Данные
-             входящих уже грузятся при входе в раздел (onMounted ниже), досрочной
-             подгрузки не требуется — см. отчёт исполнителя. -->
-        <v-chip v-if="incomingAwaitingCount" size="x-small" color="orange" variant="tonal" class="ml-2">
-          {{ incomingAwaitingCount }}
-        </v-chip>
-      </v-tab>
-      <v-tab v-if="ctx.isManagerOrAdmin.value" value="all">Заявки сотрудников</v-tab>
-    </v-tabs>
+    <!-- Tabs (visible to all authenticated users) + «Новая заявка» в той же строке
+         (владелец, чек-лист С16): открывает ТО ЖЕ окно, что и плавающий «+» ниже
+         (onCreate — один обработчик, второй механизм не заводим, ПРАВИЛО №6).
+         flex-wrap: на узких экранах кнопка переносится под вкладки, а не ломает
+         строку вкладок — у v-tabs свой горизонтальный скролл/стрелки при нехватке
+         места, их ширину не трогаем. -->
+    <div class="d-flex align-center flex-wrap mb-4" style="gap:12px">
+      <v-tabs v-model="activeTab">
+        <v-tab value="my">Мои заявки</v-tab>
+        <v-tab value="incoming">
+          На согласование мне
+          <!-- Владелец (мобильные карточки, 2026-10-05): сколько заявок реально ждут
+               РЕШЕНИЯ ТЕКУЩЕГО пользователя (canDecideFromList — тот же предикат, что
+               у кнопок «Одобрить»/«Отклонить»), не просто «сколько submitted». Данные
+               входящих уже грузятся при входе в раздел (onMounted ниже), досрочной
+               подгрузки не требуется — см. отчёт исполнителя. -->
+          <v-chip v-if="incomingAwaitingCount" size="x-small" color="orange" variant="tonal" class="ml-2">
+            {{ incomingAwaitingCount }}
+          </v-chip>
+        </v-tab>
+        <v-tab v-if="ctx.isManagerOrAdmin.value" value="all">Заявки сотрудников</v-tab>
+      </v-tabs>
+      <v-spacer />
+      <v-btn
+        v-if="activeTab === 'my'"
+        color="primary"
+        prepend-icon="mdi-plus"
+        @click="onCreate"
+      >
+        Новая заявка
+      </v-btn>
+    </div>
 
     <WishFilterPanel
       v-model:search-text="searchText"
@@ -141,13 +157,16 @@
         @download-excel="onDownloadExcel"
         @update:cards-page="v => cardsPage = v"
       />
-      <!-- FAB to create new wish -->
+      <!-- FAB to create new wish — владелец (чек-лист С16): тот же размер/форма,
+           что у кнопки мессенджера (App.vue), и в одну колонку с ней (общие
+           CSS-переменные --gala-fab-* из App.vue, ПРАВИЛО №6 — одна база
+           геометрии, а не свои числа тут). -->
       <v-btn
         icon="mdi-plus"
         color="primary"
-        size="large"
-        style="position:fixed;bottom:32px;right:32px;z-index:100"
-        elevation="4"
+        size="default"
+        style="position:fixed;bottom:calc(var(--gala-fab-bottom-base) - var(--gala-fab-size) - var(--gala-fab-gap));right:var(--gala-fab-right);z-index:var(--gala-fab-zindex)"
+        elevation="6"
         @click="onCreate"
       />
     </div>

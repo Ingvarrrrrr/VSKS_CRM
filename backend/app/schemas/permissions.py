@@ -46,5 +46,10 @@ class OverrideOut(BaseModel):
     granted: bool
     model_config = ConfigDict(from_attributes=True)
     changed_at: Optional[datetime] = None
+    # 2026-10-14 (владелец, all_orgs_access): org_id, ОТКУДА унаследована эта
+    # строка (своих overrides у запрошенной орги нет — показываем overrides
+    # основной организации). None — строка своя для запрошенной орги.
+    # Источник решения — app/auth/all_orgs_inheritance.inherited_overrides_source_org.
+    inherited_from_org_id: Optional[int] = None
 
 

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
-from app.models.permission import RolePermission, UserOrgPermissionOverride
+from app.models.permission import RolePermission
 from app.auth.jwt import get_current_user
 
 async def ensure_user_org_access(
@@ -168,22 +168,24 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
     )
     effective: set = {r.key for r in rp_rows.scalars()}
 
-    # Step 2: apply per-org overrides
+    # Step 2: apply per-org overrides.
+    # 2026-10-14 (владелец, all_orgs_access): если у пары (user, org_id) нет
+    # СВОИХ overrides — читаем overrides ОСНОВНОЙ орги вместо них (единый
+    # источник решения — all_orgs_inheritance.inherited_overrides_source_org,
+    # Правило №6). Своя роль (effective_role выше) наследованием НЕ
+    # затрагивается, наследуются только boolean-flip ключи.
     if org_id:
-        ov_rows = await db.execute(
-            select(UserOrgPermissionOverride).join(
-                UserOrgAccess,
-                UserOrgPermissionOverride.user_org_access_id == UserOrgAccess.id,
-            ).where(
-                UserOrgAccess.user_id == user.id,
-                UserOrgAccess.org_id == org_id,
-            )
-        )
-        for ov in ov_rows.scalars():
-            if ov.granted:
-                effective.add(ov.key)
+        from app.auth.all_orgs_inheritance import org_overrides_map, inherited_overrides_source_org
+        ov_map = await org_overrides_map(user.id, org_id, db)
+        if not ov_map:
+            source_org_id = await inherited_overrides_source_org(user, db, org_id)
+            if source_org_id is not None:
+                ov_map = await org_overrides_map(user.id, source_org_id, db)
+        for key, granted in ov_map.items():
+            if granted:
+                effective.add(key)
             else:
-                effective.discard(ov.key)
+                effective.discard(key)
 
     # Step 2b: union per-subsidy grant keys (поглощение по выданным субсидиям).
     # Применяется ДО потолка employee, чтобы admin.* из гранта тоже срезался.

@@ -196,6 +196,23 @@ def split_amount_by_kind_pool(amount, pool: Dict[str, float]) -> Dict[str, Decim
     return rounded
 
 
+def is_budget_aligned_to_plan(budget, pool: Dict[str, float]) -> bool:
+    """Решение владельца 14.10.2026 (субсидия «ДНР_Правильная» id 98, статья
+    «Прочие расходы») — ЕДИНСТВЕННОЕ место, где решается «ФЭО узла приравнено
+    к плану или это своя сумма» (ПРАВИЛО №6, не повторять проверку по месту).
+    budget — явная сумма ФЭО узла (FeoCategory.budget); pool — Σ плановых
+    позиций узла+поддерева по корзинам (_plan_items_pool_by_kind). Приравнено,
+    если budget совпадает с Σ пула до копейки (допуск 0,50 ₽ — тот же порог,
+    что и у остальных денежных сравнений «равно/не равно» в проекте, см.
+    excess-пороги 0.005 после округления до копеек — тут сравниваются суммы
+    ДО округления, порог чуть шире). Разница хоть на рубль — это УЖЕ не
+    «план без разбивки по типу», а самостоятельная сумма владельца, см.
+    feo_plan_tree.py::_feo_by_kind."""
+    _b = Decimal(str(budget)) if budget is not None else Decimal(0)
+    _pool_sum = sum(Decimal(str(pool.get(k, 0.0) or 0.0)) for k in ALL_KINDS)
+    return abs(_b - _pool_sum) <= Decimal("0.50")
+
+
 def sum_by_kind(rows: Iterable[Tuple[Optional[str], Optional[Decimal]]]) -> Dict[str, Decimal]:
     """{'goods': Σ, 'services': Σ, 'unspecified': Σ} по парам (item_type, amount) —
     для плановых позиций/строк ФЭО (используется расчётом контролей превышения

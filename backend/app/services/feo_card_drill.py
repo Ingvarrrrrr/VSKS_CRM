@@ -387,6 +387,68 @@ async def _load_categories(db: AsyncSession, subsidy_id: int) -> tuple[dict, dic
     return cats, children_map
 
 
+async def _load_category_own_budgets(db: AsyncSession, subsidy_id: int) -> dict:
+    """{cat_id: normalized budget or None} — нужно для раскрытия строки
+    карточки «Бюджет (ФЭО)» (задача владельца «C», 14.10.2026): тот же пул
+    категорий «cid + потомки БЕЗ своего budget», что
+    app.services.feo_plan_tree._plan_items_pool_by_kind считает внутри
+    compute_feo_plan_tree (ПРАВИЛО №6 — то же правило пула, просто этому
+    модулю нужны id категорий, а не готовые суммы)."""
+    from app.services.subsidy_budget import normalize_feo_category_budget
+
+    rows = (await db.execute(
+        select(FeoCategory.id, FeoCategory.budget).where(FeoCategory.subsidy_id == subsidy_id)
+    )).all()
+    return {r.id: normalize_feo_category_budget(r.budget) for r in rows}
+
+
+def _pool_category_ids(cid: int, children_map: dict, own_budgets: dict) -> set:
+    """cid + потомки без СВОЕГО явного budget (та же формула, что
+    feo_plan_tree.py::_plan_items_pool_by_kind — подкатегория со своим budget
+    получит собственное раскрытие отдельно, её позиции сюда не входят, иначе
+    задвоение, ПРАВИЛО №6)."""
+    out = {cid}
+    for kid in children_map.get(cid, []):
+        if own_budgets.get(kid) is not None:
+            continue
+        out |= _pool_category_ids(kid, children_map, own_budgets)
+    return out
+
+
+async def _own_feo_breakdown_items(db: AsyncSession, subsidy_id: int, cat_ids) -> dict:
+    """{(feo_category_id, kind): [FeoPlannedItem-строка, ...]} — активные
+    строки СО СВОИМ feo_amount (own, без рекурсии по поддереву), той же
+    классификацией, что compute_feo_plan_tree::own_feo_by_kind (ПРАВИЛО №6 —
+    та же формула «is_feo_breakdown/payroll → bucket», здесь просто нужны
+    сами строки, не только Σ, см. docstring own_feo_by_kind в feo_plan_tree.py
+    строка ~470). Нужно для раскрытия строки карточки «Бюджет (ФЭО)», когда
+    у категории НЕТ собственного явного budget узла (own_feo_by_kind-ветка
+    _feo_by_kind, не explicit-budget-ветка — см. feo_split_explicit=None в
+    этом случае ПО ДРУГОЙ причине, см. вызывающий код)."""
+    from app.services.feo_plan_tree import resolve_effective_item_types
+    from app.services.feo_payroll import payroll_category_ids
+    from app.services.item_type_split import kind_of_by_category_id
+
+    rows = (await db.execute(
+        select(
+            FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.name,
+            FeoPlannedItem.item_type, FeoPlannedItem.feo_amount, FeoPlannedItem.is_feo_breakdown,
+            FeoPlannedItem.source_row,
+        )
+        .where(FeoPlannedItem.feo_category_id.in_(list(cat_ids)))
+        .where(FeoPlannedItem.is_active.is_(True))
+        .where(FeoPlannedItem.feo_amount.isnot(None))
+    )).all()
+    eff_types = await resolve_effective_item_types(db, rows)
+    payroll_ids = await payroll_category_ids(db, [subsidy_id])
+    out: dict = {}
+    for r in rows:
+        bucket = kind_of_by_category_id(eff_types.get(r.id), r.feo_category_id, payroll_ids)
+        fd_bucket = bucket if (r.is_feo_breakdown or bucket == KIND_PAYROLL) else "unspecified"
+        out.setdefault((r.feo_category_id, fd_bucket), []).append(r)
+    return out
+
+
 def _descendant_ids(cid: int, children_map: dict) -> set:
     """cid и ВСЕ его потомки (DFS по children_map, уже ограниченному узлами
     этой субсидии) — нужно направлению (корню) card="free" по конкретной
@@ -419,7 +481,7 @@ async def _classify_items(db: AsyncSession, subsidy_id: int, cat_ids) -> tuple[l
         select(
             FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.name,
             FeoPlannedItem.item_type, FeoPlannedItem.quantity, FeoPlannedItem.amount,
-            FeoPlannedItem.created_at, FeoPlannedItem.plan_changed_at,
+            FeoPlannedItem.created_at, FeoPlannedItem.plan_changed_at, FeoPlannedItem.source_row,
         )
         .where(FeoPlannedItem.feo_category_id.in_(list(cat_ids)))
         .where(FeoPlannedItem.is_active.is_(True))
@@ -612,18 +674,82 @@ async def card_drill_rows(
 
     if card in (CARD_BUDGET, CARD_FREE):
         rows: list = []
+        # Задача владельца «C» (14.10.2026, субсидия «ДНР_Правильная» id 98) —
+        # у каждой строки карточки «Бюджет (ФЭО)» своё раскрытие «из чего
+        # сложена сумма»: ЛИБО плановые позиции пула (когда ФЭО узла
+        # приравнено к плану, node['feo_split_explicit'] не None — тот же
+        # пул, которым _feo_by_kind уже поделил budget, ПРАВИЛО №6), ЛИБО
+        # собственные typed-строки ФЭО категории (own_feo_by_kind-ветка, нет
+        # явного budget узла вовсе). Лишняя работа ТОЛЬКО для card='budget'
+        # (у 'free' уже есть своё раскрытие по направлениям выше).
+        own_budgets: dict = {}
+        plan_items_by_cat_kind: dict = {}
+        own_feo_items_by_cat_kind: dict = {}
+        if card == CARD_BUDGET:
+            own_budgets = await _load_category_own_budgets(db, subsidy_id)
+            _, plan_items_by_cat_kind = await _classify_items(db, subsidy_id, list(nodes.keys()))
+            own_feo_items_by_cat_kind = await _own_feo_breakdown_items(db, subsidy_id, list(nodes.keys()))
         for cid in nodes:
             for k in kinds:
                 own_amt = _own(cid, k)
                 if abs(own_amt) < _EPS:
                     continue
-                rows.append({
+                row = {
                     "feo_category_id": cid,
                     "category_path": _category_path(cid, cats),
                     "kind": k,
                     "kind_label": _KIND_LABELS.get(k, k),
                     "amount": own_amt,
-                })
+                }
+                if card == CARD_BUDGET:
+                    info = nodes[cid].get("feo_split_explicit")
+                    composition: list = []
+                    if info is not None:
+                        # ФЭО приравнено к плану — состав = плановые позиции
+                        # ТОГО ЖЕ пула (cid + потомки без своего budget), той
+                        # же корзины k.
+                        pool_ids = _pool_category_ids(cid, children_map, own_budgets)
+                        for pid in pool_ids:
+                            for it in plan_items_by_cat_kind.get((pid, k), []):
+                                composition.append({
+                                    "planned_item_id": it.id,
+                                    "name": it.name,
+                                    "amount": float(it.amount or 0.0),
+                                    "category_path": _category_path(pid, cats),
+                                    "source_row": it.source_row,
+                                })
+                    else:
+                        # Своя сумма ЕСТЬ, но не приравнена к плану (разбивки
+                        # нет вообще — лежит целиком в unspecified, см.
+                        # _feo_by_kind) ИЛИ budget узла не задан вовсе и
+                        # own_amt пришёл из собственных typed-строк ФЭО —
+                        # второй случай отличаем по наличию own-breakdown
+                        # строк (первый их просто не имеет).
+                        for it in own_feo_items_by_cat_kind.get((cid, k), []):
+                            composition.append({
+                                "planned_item_id": it.id,
+                                "name": it.name,
+                                "amount": float(it.feo_amount or 0.0),
+                                "category_path": _category_path(cid, cats),
+                                "source_row": it.source_row,
+                            })
+                    # Задача координатора «2» (14.10.2026) — строка «без типа»,
+                    # которая на деле целиком СВОЯ СУММА ФЭО статьи (own budget
+                    # задан, но не приравнен к плану, или пул пуст) — раньше
+                    # раскрывалась пустой (composition=[]), владелец хочет
+                    # видеть хоть что-то, а не «ничего». Один пункт-пояснение
+                    # (не вторая разбивка, ПРАВИЛО №6 — сумма строки, как и
+                    # была, это ввод владельца, не план/не позиции).
+                    if not composition and own_budgets.get(cid) is not None:
+                        composition.append({
+                            "planned_item_id": None,
+                            "name": f"ФЭО введено суммой на статье «{cats.get(cid, {}).get('name') or ''}», по типам не разбито",
+                            "amount": own_amt,
+                            "category_path": _category_path(cid, cats),
+                            "source_row": None,
+                        })
+                    row["items"] = composition
+                rows.append(row)
         reason = None
         if not rows:
             reason = (

@@ -229,7 +229,15 @@ async def test_free_card_by_kind_is_per_direction_with_items(db_session, test_or
     budget_amount/planned_amount — raw кумулятивные поля корня, amount —
     их разность, == той же сумме, что даёт general-формула (kind="all"
     декомпозиция). При превышении (amount<0) — items: позиции поддерева
-    этого kind, созданные позже — первыми (created_at DESC)."""
+    этого kind, созданные позже — первыми (created_at DESC).
+
+    ИЗМЕНЕНО (владелец 14.10.2026, отменяет 06.10.2026 «budget делится по
+    долям плана, даже если не совпадает») — budget направления (50 000) НЕ
+    совпадает с Σ плана (70 000, своя сумма владельца, не приравненная к
+    плану) -> feo_goods теперь 0 (budget целиком в unspecified, см.
+    feo_plan_tree.py::_feo_by_kind), budget_amount строки по goods = 0, а не
+    доля 50 000 — ВСЯ Σ плана этого типа становится «превышением», т.к. под
+    неё не выделено бюджета по типу вообще."""
     subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
     direction = await _make_category(db_session, subsidy.id, name="Направление", budget=Decimal("50000"))
     article = await _make_category(db_session, subsidy.id, name="Статья", parent_id=direction.id)
@@ -255,9 +263,9 @@ async def test_free_card_by_kind_is_per_direction_with_items(db_session, test_or
     assert len(result["rows"]) == 1
     row = result["rows"][0]
     assert row["feo_category_id"] == direction.id
-    assert row["budget_amount"] == pytest.approx(50_000.0)
+    assert row["budget_amount"] == pytest.approx(0.0), "budget не приравнен к плану -> feo_goods=0 (вся сумма в unspecified)"
     assert row["planned_amount"] == pytest.approx(70_000.0)
-    assert row["amount"] == pytest.approx(-20_000.0)
+    assert row["amount"] == pytest.approx(-70_000.0)
     assert row["amount"] == pytest.approx(row["budget_amount"] - row["planned_amount"])
     assert result["total"] == pytest.approx(row["amount"])
 

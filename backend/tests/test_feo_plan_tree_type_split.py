@@ -286,36 +286,85 @@ async def test_order_substituted_plan_reconciles_by_type(db_session, test_org):
 
 
 @pytest.mark.asyncio
-async def test_explicit_budget_without_type_split_goes_all_goods(db_session, test_org):
-    """Решение владельца (06.10.2026, субсидия ХО id 75) — категория с явным
-    FeoCategory.budget, БЕЗ своих is_feo_breakdown-строк, но все плановые
-    позиции одного типа («товар») -> весь budget уходит в feo_goods (не в
-    unspecified, как раньше)."""
+async def test_explicit_budget_mismatched_with_plan_goes_entirely_unspecified(db_session, test_org):
+    """ОТМЕНЕНО решение владельца 06.10.2026 (субсидия ХО id 75, «budget без
+    typed-разбивки делится по долям плана») — владелец 14.10.2026 (субсидия
+    «ДНР_Правильная» id 98, статья «Прочие расходы»): «я не приравнял
+    плановую к ФЭО, я просто ввёл сумму — ты самовольно разбил, не надо».
+    Категория с явным FeoCategory.budget, НЕ совпадающим с Σ плана её
+    позиций (300 000 ≠ 150 000, хоть все позиции одного типа) -> весь budget
+    ЦЕЛИКОМ в feo_unspecified, БЕЗ деления по типам; feo_split_explicit —
+    None (подписи «из чего бюджет вида» в этом случае нет вообще)."""
     subsidy = await _make_subsidy(db_session, test_org.id)
-    cat = await _make_category(db_session, subsidy.id, name="Статья — только товары", budget=Decimal("300000"))
+    cat = await _make_category(db_session, subsidy.id, name="Статья — своя сумма", budget=Decimal("300000"))
     await _make_planned_item(db_session, cat.id, "Ноутбук", 100_000, item_type="товар")
     await _make_planned_item(db_session, cat.id, "Принтер", 50_000, item_type="товар")
 
     tree = await compute_feo_plan_tree(db_session, [subsidy.id])
     node = tree[cat.id]
 
-    assert node["feo_goods"] == pytest.approx(300_000.0)
+    assert node["feo_goods"] == pytest.approx(0.0)
     assert node["feo_services"] == pytest.approx(0.0)
-    assert node["feo_unspecified"] == pytest.approx(0.0)
+    assert node["feo_unspecified"] == pytest.approx(300_000.0)
+    assert node["feo_split_explicit"] is None
 
 
 @pytest.mark.asyncio
-async def test_explicit_budget_split_proportionally_mixed_types(db_session, test_org):
-    """Смешанная категория (план 60к товары / 30к услуги / 10к работа->услуга
-    / 5к без типа = 105к пула) с явным budget=1 000 000 без собственной
-    typed-разбивки ФЭО -> budget делится ПО ДОЛЯМ ВСЕГО пула, включая
-    позицию без типа (ИСПРАВЛЕНИЕ задачи владельца «Б», ДНР5 id 97,
-    13.10.2026 — раньше позиция без типа в знаменатель не входила, и её 5к
-    молча размазывались в goods/services). 60/105, 40/105, 5/105 — доли
-    goods/services/unspecified; инвариант суммы (goods+services+unspecified
-    == budget) держится точно до копейки."""
+async def test_explicit_budget_mismatched_with_budgeted_typed_child_no_negative_contribution(db_session, test_org):
+    """ИСПРАВЛЕНИЕ (координатор, 14.10.2026, прод ФАДМ 2026_2 id 89, статья
+    «Организация мероприятий») — родитель со СВОЕЙ суммой ФЭО, НЕ приравненной
+    к своему плану (500 000, свой пул — план-позиция «Услуга родителя» 50 000,
+    остаток для своего пула = 500000-100000(ФЭО ребёнка)=400000 ≠ 50000, не
+    приравнено -> остаток целиком unspecified), ПЛЮС бюджетная typed-
+    подкатегория (своё ФЭО 100 000, приравнено к своему плану, goods) —
+    typed-часть ребёнка входит в разбивку родителя КАК ЕСТЬ (goods=100000),
+    остаток 400 000 -> unspecified; Σ видов узла == budget родителя (600000
+    не пишется явно — видно по budget=500000 родителя + 100000 ребёнка, но
+    node['feo_X'] родителя — ТОЛЬКО 500000, т.к. сумма по дереву состоит из
+    own(500000, не включает ребёнка в budget-поле, только в разбивку) — целевая
+    проверка здесь: own-доля родителя по КАЖДОМУ виду ≥ 0 (не отрицательна),
+    это и было боевым баг-репортом (товары -1 502 840 / услуги -1 998 925,60
+    на реальных данных)."""
     subsidy = await _make_subsidy(db_session, test_org.id)
-    cat = await _make_category(db_session, subsidy.id, name="Статья — смешанная", budget=Decimal("1000000"))
+    parent = await _make_category(db_session, subsidy.id, name="Организация мероприятий", budget=Decimal("500000"))
+    await _make_planned_item(db_session, parent.id, "Услуга родителя", 50_000, item_type="услуга")
+    child = await _make_category(
+        db_session, subsidy.id, parent_id=parent.id, name="Подкатегория — своё ФЭО (товары)", budget=Decimal("100000"),
+    )
+    await _make_planned_item(db_session, child.id, "Товар подкатегории", 100_000, item_type="товар")
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node_parent = tree[parent.id]
+    node_child = tree[child.id]
+
+    assert node_child["feo_goods"] == pytest.approx(100_000.0)
+    # Родитель: typed-часть ребёнка (100000 goods) входит как есть; остаток
+    # (500000-100000=400000) не совпадает со своим пулом (50000 услуг) ->
+    # остаток целиком unspecified.
+    assert node_parent["feo_goods"] == pytest.approx(100_000.0)
+    assert node_parent["feo_services"] == pytest.approx(0.0)
+    assert node_parent["feo_unspecified"] == pytest.approx(400_000.0)
+    total_parent = node_parent["feo_goods"] + node_parent["feo_services"] + node_parent["feo_payroll"] + node_parent["feo_unspecified"]
+    assert total_parent == pytest.approx(500_000.0), "инвариант: Σ видов узла == его явный budget"
+
+    # Цель координатора: own-доля родителя (node_parent − node_child по
+    # КАЖДОМУ виду, см. feo_card_drill.py::_own_contribution) НЕ отрицательна.
+    for k in ("feo_goods", "feo_services", "feo_payroll"):
+        own = node_parent[k] - node_child[k]
+        assert own >= -0.005, f"{k}: own-доля родителя отрицательна ({own})"
+
+
+@pytest.mark.asyncio
+async def test_explicit_budget_aligned_with_plan_splits_by_pool_shares(db_session, test_org):
+    """Решение владельца 14.10.2026 — правило «доля плана» ОСТАЁТСЯ, но
+    ТОЛЬКО когда budget узла РАВЕН Σ пула плановых позиций до копейки (узел
+    «приравнял» ФЭО к плану). Смешанная категория (план 60к товары / 30к
+    услуги / 10к работа->услуга / 5к без типа = 105к пула), budget == 105 000
+    (== Σ пула) -> split = САМ пул по корзинам (не пропорция от чужой суммы),
+    goods=60к, services=40к (услуга+работа), unspecified=5к — Σ частей ==
+    budget точно до копейки, feo_split_explicit несёт тот же pool/aligned."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_category(db_session, subsidy.id, name="Статья — приравнена к плану", budget=Decimal("105000"))
     await _make_planned_item(db_session, cat.id, "Товар", 60_000, item_type="товар")
     await _make_planned_item(db_session, cat.id, "Услуга", 30_000, item_type="услуга")
     await _make_planned_item(db_session, cat.id, "Работа", 10_000, item_type="работа")  # -> услуга
@@ -324,11 +373,13 @@ async def test_explicit_budget_split_proportionally_mixed_types(db_session, test
     tree = await compute_feo_plan_tree(db_session, [subsidy.id])
     node = tree[cat.id]
 
-    assert node["feo_goods"] == pytest.approx(1_000_000.0 * 60_000 / 105_000, abs=1), "60к из 105к всего пула"
-    assert node["feo_services"] == pytest.approx(1_000_000.0 * 40_000 / 105_000, abs=1), "40к (услуга+работа) из 105к"
-    assert node["feo_unspecified"] == pytest.approx(1_000_000.0 * 5_000 / 105_000, abs=1), "5к без типа получает свою долю, не 0"
+    assert node["feo_goods"] == pytest.approx(60_000.0)
+    assert node["feo_services"] == pytest.approx(40_000.0)
+    assert node["feo_unspecified"] == pytest.approx(5_000.0)
     total = node["feo_goods"] + node["feo_services"] + node["feo_unspecified"]
-    assert total == pytest.approx(1_000_000.0), "инвариант: сумма частей == budget, до копейки"
+    assert total == pytest.approx(105_000.0), "инвариант: сумма частей == budget, до копейки"
+    info = node["feo_split_explicit"]
+    assert info is not None and info.get("aligned") is True
 
 
 @pytest.mark.asyncio
@@ -381,12 +432,13 @@ async def test_feo_split_explicit_is_none_when_no_own_budget(db_session, test_or
 async def test_explicit_budget_outranks_own_breakdown_rows_even_if_they_disagree(db_session, test_org):
     """Категория с ОБОИМИ источниками — явный FeoCategory.budget И собственные
     is_feo_breakdown-строки с типом — budget узла ГЛАВНЕЕ (own_feo_by_kind в
-    этой ветке не читается вообще): делится НЕ Σ их feo_amount, а по ДОЛЯМ
-    плановых сумм (amount) тех же строк — budget (900к) != Σ feo_amount
-    строк (100к). Боевой кейс «ДНР» (id 61, кат. 4853 «Ремонт ТС»): budget
-    863 979,59, Σ is_feo_breakdown-строк 441 579,59 — если бы Σ строк
-    победила целиком, узел получил бы чужую (меньшую) сумму и инвариант
-    Σ(goods+services+unspecified)==budget сломался бы на живых данных."""
+    этой ветке не читается вообще, как и раньше). Боевой кейс «ДНР» (id 61,
+    кат. 4853 «Ремонт ТС»): budget 863 979,59, Σ is_feo_breakdown-строк
+    441 579,59 — РАСХОДЯТСЯ. Решение владельца 14.10.2026 (отменяет 06.10.2026
+    «делить по долям строк») — budget (900к) != Σ плановых сумм тех же строк
+    (100к) -> ТЕПЕРЬ целиком в unspecified (не делится по их долям), own
+    typed-строки ФЭО не играют роли, когда budget узла задан явно и не
+    совпадает с планом."""
     subsidy = await _make_subsidy(db_session, test_org.id)
     cat = await _make_category(db_session, subsidy.id, name="Статья — budget и неполные строки ФЭО", budget=Decimal("900000"))
     await _make_planned_item(
@@ -401,13 +453,11 @@ async def test_explicit_budget_outranks_own_breakdown_rows_even_if_they_disagree
     tree = await compute_feo_plan_tree(db_session, [subsidy.id])
     node = tree[cat.id]
 
-    # Пул долей — plan amount (70к/30к), не feo_amount Σ (тут совпадают по
-    # числу, но распределяются на ВЕСЬ budget 900к, а не на 100к строк).
-    assert node["feo_goods"] == pytest.approx(630_000.0), "900к * (70к/100к доли товара)"
-    assert node["feo_services"] == pytest.approx(270_000.0), "900к * (30к/100к доли услуги)"
-    assert node["feo_unspecified"] == pytest.approx(0.0)
+    assert node["feo_goods"] == pytest.approx(0.0)
+    assert node["feo_services"] == pytest.approx(0.0)
+    assert node["feo_unspecified"] == pytest.approx(900_000.0)
     total = node["feo_goods"] + node["feo_services"] + node["feo_unspecified"]
-    assert total == pytest.approx(900_000.0), "инвариант: сумма частей == budget узла, не Σ feo_amount строк"
+    assert total == pytest.approx(900_000.0), "инвариант: сумма частей == budget узла"
 
 
 @pytest.mark.asyncio
@@ -429,14 +479,20 @@ async def test_explicit_budget_without_items_stays_unspecified(db_session, test_
 @pytest.mark.asyncio
 async def test_explicit_budget_split_excludes_subcategory_with_own_budget(db_session, test_org):
     """Родитель с явным budget и плановыми позициями «товар» в подкатегории,
-    у которой СВОЙ явный budget — позиции подкатегории НЕ входят в пул
+    у которой СВОЙ явный budget — позиции подкатегории НЕ входят в ПУЛ
     родителя (владелец: «без двойного счёта по дереву»); подкатегория
-    получает собственный split по СВОИМ позициям."""
+    получает собственный split по СВОИМ позициям, И её typed-ФЭО (10 000,
+    goods) входит в разбивку родителя КАК ЕСТЬ (ИСПРАВЛЕНИЕ, координатор
+    14.10.2026, прод ФАДМ 2026_2 id 89 — иначе own-доля родителя в
+    feo_card_drill.py::_own_contribution получает отрицательный вклад на
+    typed-ФЭО ребёнка, см. docstring _feo_by_kind). Родительский budget
+    60 000 = остаток 50 000 (приравнен к своему пулу «услуга родителя») +
+    10 000 ребёнка."""
     subsidy = await _make_subsidy(db_session, test_org.id)
-    parent = await _make_category(db_session, subsidy.id, name="Родитель", budget=Decimal("200000"))
+    parent = await _make_category(db_session, subsidy.id, name="Родитель", budget=Decimal("60000"))
     await _make_planned_item(db_session, parent.id, "Услуга родителя", 50_000, item_type="услуга")
     child = await _make_category(
-        db_session, subsidy.id, parent_id=parent.id, name="Подкатегория со своим budget", budget=Decimal("900000"),
+        db_session, subsidy.id, parent_id=parent.id, name="Подкатегория со своим budget", budget=Decimal("10000"),
     )
     await _make_planned_item(db_session, child.id, "Товар подкатегории", 10_000, item_type="товар")
 
@@ -444,13 +500,19 @@ async def test_explicit_budget_split_excludes_subcategory_with_own_budget(db_ses
     node_parent = tree[parent.id]
     node_child = tree[child.id]
 
-    # Родитель: пул = только его собственная позиция (услуга), подкатегория
-    # со своим budget исключена из пула -> весь родительский budget в услуги.
-    assert node_parent["feo_goods"] == pytest.approx(0.0)
-    assert node_parent["feo_services"] == pytest.approx(200_000.0)
     # Подкатегория: свой budget, свой пул (товар) -> весь в товары.
-    assert node_child["feo_goods"] == pytest.approx(900_000.0)
+    assert node_child["feo_goods"] == pytest.approx(10_000.0)
     assert node_child["feo_services"] == pytest.approx(0.0)
+    # Родитель: остаток (60000-10000=50000) приравнен к своему пулу (услуга)
+    # -> 50000 в услуги, ПЛЮС typed-ФЭО ребёнка (10000 товары) как есть —
+    # node['feo_goods'] родителя КУМУЛЯТИВНО включает ребёнка (own-доля
+    # родителя в feo_card_drill.py не должна уйти в минус).
+    assert node_parent["feo_goods"] == pytest.approx(10_000.0)
+    assert node_parent["feo_services"] == pytest.approx(50_000.0)
+    own_parent_goods = node_parent["feo_goods"] - node_child["feo_goods"]
+    own_parent_services = node_parent["feo_services"] - node_child["feo_services"]
+    assert own_parent_goods == pytest.approx(0.0), "own-доля родителя по товарам НЕ отрицательна"
+    assert own_parent_services == pytest.approx(50_000.0)
 
 
 @pytest.mark.asyncio

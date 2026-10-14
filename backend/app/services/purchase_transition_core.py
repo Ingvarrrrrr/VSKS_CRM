@@ -31,14 +31,13 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
 from app.models.product import Product
-from app.models.product_price_history import ProductPriceHistory
 from app.services.feo_plan import assert_no_unapproved_excess
 from app.services.tz_excess_approval import assert_no_pending_tz_excess, collect_tz_over_plan_violations
 from app.services.tz_items import tz_required
 from app.services.type_excess_approval import (
     collect_type_excess_violations, register_type_excess_approvals,
 )
-from app.services.price_actualization import actualize_product_price
+from app.services.price_actualization import actualize_contract_item_prices
 from app.services.contract_items_materialize import copy_items_to_contract
 
 
@@ -387,35 +386,12 @@ async def apply_purchase_status_transition(
     if target_status == "contracted" and p.items:
         sub = await db.get(Subsidy, p.subsidy_id) if p.subsidy_id else None
         contract_org_id = sub.org_id if sub else None
-        for item in p.items:
-            if not item.product_id:
-                continue
-            product = await db.get(Product, item.product_id)
-            if not product:
-                continue
-            item_price = item.unit_price
-            product.contract_price = item_price
-            product.contract_number = p.contract_number
-            product.contract_date = p.contract_date
-            product.contract_org_id = contract_org_id
-            _dup_history = (await db.execute(
-                select(ProductPriceHistory.id).where(
-                    ProductPriceHistory.product_id == product.id,
-                    ProductPriceHistory.source == "contract",
-                    ProductPriceHistory.source_ref == p.contract_number,
-                    ProductPriceHistory.collected_at == p.contract_date,
-                ).limit(1)
-            )).scalar_one_or_none()
-            await actualize_product_price(
-                db, product,
-                price=item_price,
-                source="contract",
-                source_ref=p.contract_number,
-                contractor_id=getattr(p, "contractor_id", None),
-                collected_at=p.contract_date,
-                user=current_user,
-                write_history=_dup_history is None,
-            )
+        # Один писатель на оба пути («в работе → заключён» и загрузка факта
+        # договора, см. historical_fact_import.existing_update.
+        # materialize_contract) — actualize_contract_item_prices, ПРАВИЛО №6.
+        await actualize_contract_item_prices(
+            db, p, p.items, contract_org_id=contract_org_id, user=current_user,
+        )
 
     if target_status == "contracted":
         await ensure_contract_linked(p, db)

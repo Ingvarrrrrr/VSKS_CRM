@@ -386,6 +386,10 @@ async def import_items_excel(
             unit=unit,
             unit_price=unit_price,
             total_price=total_price,
+            # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md) —
+            # текст из файла в саму позицию, не в каталог (см. комментарий у
+            # _apply_import_to_existing_product в items_import_catalog.py).
+            tz_description=description,
         )
         db.add(item)
         added += 1

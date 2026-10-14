@@ -46,6 +46,7 @@ from app.schemas.schemas import UserCreate, UserUpdate, UserOut
 from app.auth.permissions import (
     require_action, ensure_user_org_access,
     assert_can_manage_user_access, assert_role_assignable,
+    assert_target_in_owner_account,
 )
 from typing import List, Optional
 
@@ -110,15 +111,12 @@ async def list_users(
                 target_org_ids.update(inn_org_ids)
     if explicit_assign_mode:
         from sqlalchemy import or_
-        from app.models.user_organization import UserOrganization
-
-        def _org_member_conds(target_list: list[int]) -> list:
-            member_q = select(UserOrganization.user_id).where(UserOrganization.org_id.in_(target_list))
-            conds = [User.org_id.in_(target_list), User.id.in_(member_q)]
-            from app.models.user_org_access import UserOrgAccess
-            uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(target_list))
-            conds.append(User.id.in_(uoa_q))
-            return conds
+        # Правило №6: «штат» орги — ОДНА формула (primary org_id ИЛИ членство
+        # user_organizations ИЛИ персональный user_org_access), вынесена в
+        # app.services.service_note_initiators._staff_conditions. Тот же
+        # расчёт используется для пула инициаторов служебной записки
+        # (initiator_candidate_ids) — вторая копия формулы не пишется.
+        from app.services.service_note_initiators import _staff_conditions as _org_member_conds
 
         if subsidy_id is not None:
             # СТРОГО по субсидии (для всех ролей, включая super): исполнителями и
@@ -314,8 +312,8 @@ async def update_user(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
-    if current_user.role == 'account_owner' and user.org_id != current_user.org_id:
-        raise HTTPException(403, "Нет доступа")
+    if current_user.role == 'account_owner':
+        await assert_target_in_owner_account(current_user, user, db)
 
     update_data = data.dict(exclude_unset=True)
 

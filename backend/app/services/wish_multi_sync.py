@@ -229,6 +229,12 @@ async def sync_multi_purchase_from_wish(wish, purchases: list, db: AsyncSession)
                     needed_date=_eff_date(wish, wi),
                     wish_item_id=wi.id,
                     vat_rate=getattr(wi, 'vat_rate', None),
+                    # Владелец (14.10.2026): переносится из WishItem, не выставляется
+                    # заново — см. app/services/feo_item_lock.py.
+                    from_plan=getattr(wi, 'from_plan', False),
+                    # Своё ТЗ позиции (план item-tz-description.md) — переносится как
+                    # и остальные поля позиции.
+                    tz_description=getattr(wi, 'tz_description', None),
                 )
                 set_item_contractor(new_pi, contractor=_wish_contractor_obj, name=getattr(wish, 'contractor_name', None))
                 db.add(new_pi)

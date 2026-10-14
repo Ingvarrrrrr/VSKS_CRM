@@ -49,6 +49,17 @@ class WishItem(Base):
     # «Проживание и питание» (mirrors purchase_items.item_form, миграция
     # w7x8y9z0a1b2) — выбор формы ЭТОЙ строки, см. комментарий там.
     item_form = Column(String(30), nullable=True)
+    # Позиция ЗАГРУЖЕНА из Плана закупок (mirrors purchase_items.from_plan,
+    # владелец 14.10.2026) — см. комментарий там. Ставится
+    # build_items_from_plan (plan_to_wish.py); при конвертации заявки в
+    # закупку переносится на PurchaseItem.from_plan (wish_convert.py).
+    from_plan = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    # Своё ТЗ (характеристики) ЭТОЙ позиции заявки (владелец, 14.10.2026, план
+    # item-tz-description.md) — NULL, если позиция использует ТЗ из каталога
+    # (product.description). «Действующее ТЗ позиции» — ОДНА функция-источник
+    # app.services.item_tz.effective_item_tz (ПРАВИЛО №6), не читать это поле
+    # напрямую в документах/выдаче.
+    tz_description = Column(Text, nullable=True)
 
     wish = relationship("Wish", back_populates="items")
     product = relationship("Product", foreign_keys=[product_id])

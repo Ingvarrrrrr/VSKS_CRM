@@ -1,6 +1,8 @@
 // Подтверждение перевода закупки в «Оплачено» по найденной в банковской
-// выписке оплате — согласующие субсидии видят запрос и подтверждают/отклоняют
-// его. Контракт бэкенда: GET /api/subsidies/{id}/paid-confirmations?status=pending,
+// выписке оплате — сотрудники с правом 'paid_confirmation.decide' (отдельная
+// галочка в правах, решение владельца 14.10.2026 — не «согласующие субсидии»,
+// та роль отдельная, для листа согласования закупок/плана) видят запрос и
+// подтверждают/отклоняют его. Контракт бэкенда: GET /api/subsidies/{id}/paid-confirmations?status=pending,
 // GET /api/purchases/{id}/paid-confirmation, POST /api/paid-confirmations/{id}/confirm,
 // POST /api/paid-confirmations/{id}/reject (body {comment}, обязателен),
 // POST /api/subsidies/{id}/paid-confirmations/check (body {ids}, ≤20).
@@ -84,7 +86,11 @@ export function usePaidConfirmations() {
     loading.value = true
     loadError.value = null
     try {
-      const res = await apiFetch<{ items: PaidConfirmation[] }>(
+      // can_decide: прод 14.10 — без права 'paid_confirmation.decide' бэкенд
+      // отдаёт 200 с пустым items (панель и так скрыта при items.length===0),
+      // а не 403; само поле пока не используется UI, но тип ответа должен его
+      // отражать.
+      const res = await apiFetch<{ items: PaidConfirmation[]; can_decide?: boolean }>(
         `/subsidies/${subsidyId}/paid-confirmations?status=pending`,
       )
       if (!guard.isCurrent(token)) return

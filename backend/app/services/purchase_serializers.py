@@ -14,6 +14,7 @@ from app.services.purchase_contractor_display import (
     display_contractor_name as _display_contractor_name,
     seller_display_for_advance as _seller_display_for_advance,
 )
+from app.services.item_tz import effective_item_tz as _effective_item_tz
 
 
 async def items_out_with_contractor_map(db, items) -> list:
@@ -59,6 +60,7 @@ def _item_to_out(
     return PurchaseItemOut(
         id=item.id,
         wish_item_id=getattr(item, 'wish_item_id', None),
+        from_plan=getattr(item, 'from_plan', False) or False,
         product_id=item.product_id,
         item_name=item.item_name,
         item_type=item.item_type,
@@ -100,6 +102,8 @@ def _item_to_out(
         product_photo_url=product_photo_url,
         product_description=product_description,
         product_description_44fz=product_description_44fz,
+        tz_description=getattr(item, 'tz_description', None),
+        effective_tz_description=_effective_item_tz(item, item.product if item.product else None),
         plan_residual=plan_residual,
         plan_planned_amount=plan_planned_amount,
         extra_attrs=getattr(item, 'extra_attrs', None) or {},

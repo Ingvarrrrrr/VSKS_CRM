@@ -21,7 +21,9 @@ from app.models.wish_item import WishItem
 
 
 @pytest.mark.asyncio
-async def test_delete_product_blocked_by_purchase_item(client, db_session, auth_headers):
+async def test_delete_product_blocked_by_purchase_item(client, db_session, admin_headers):
+    # DELETE каталога требует products.edit_catalog (Этап В, 14.10.2026) —
+    # org_admin получает его дефолтом (см. permission_seeds.py), employee нет.
     product = Product(name="Петля спасательная тест", category="Прочее", is_active=True)
     db_session.add(product)
     await db_session.flush()
@@ -37,7 +39,7 @@ async def test_delete_product_blocked_by_purchase_item(client, db_session, auth_
     db_session.add(item)
     await db_session.commit()
 
-    resp = await client.delete(f"/api/products/{product.id}", headers=auth_headers)
+    resp = await client.delete(f"/api/products/{product.id}", headers=admin_headers)
     assert resp.status_code == 409, resp.text
     detail = resp.json()["details"]
     assert resp.json()["code"] == "PRODUCT_HAS_DEPENDENTS"
@@ -51,7 +53,7 @@ async def test_delete_product_blocked_by_purchase_item(client, db_session, auth_
 
 
 @pytest.mark.asyncio
-async def test_delete_product_blocked_by_wish_item(client, db_session, test_org, test_user, auth_headers):
+async def test_delete_product_blocked_by_wish_item(client, db_session, test_org, test_user, admin_headers):
     product = Product(name="Товар в заявке тест", category="Прочее", is_active=True)
     db_session.add(product)
     await db_session.flush()
@@ -64,7 +66,7 @@ async def test_delete_product_blocked_by_wish_item(client, db_session, test_org,
     db_session.add(wish_item)
     await db_session.commit()
 
-    resp = await client.delete(f"/api/products/{product.id}", headers=auth_headers)
+    resp = await client.delete(f"/api/products/{product.id}", headers=admin_headers)
     assert resp.status_code == 409, resp.text
     detail = resp.json()["details"]
     assert resp.json()["code"] == "PRODUCT_HAS_DEPENDENTS"
@@ -72,7 +74,7 @@ async def test_delete_product_blocked_by_wish_item(client, db_session, test_org,
 
 
 @pytest.mark.asyncio
-async def test_delete_unused_product_succeeds_and_cleans_price_history(client, db_session, auth_headers):
+async def test_delete_unused_product_succeeds_and_cleans_price_history(client, db_session, admin_headers):
     product = Product(
         name="Неиспользуемый товар тест", category="Прочее", is_active=True,
         price=Decimal("500"), price_updated_at=datetime.utcnow(), price_source="manual",
@@ -84,7 +86,7 @@ async def test_delete_unused_product_succeeds_and_cleans_price_history(client, d
     await db_session.commit()
     product_id = product.id
 
-    resp = await client.delete(f"/api/products/{product_id}", headers=auth_headers)
+    resp = await client.delete(f"/api/products/{product_id}", headers=admin_headers)
     assert resp.status_code == 200, resp.text
 
     gone = (await db_session.execute(select(Product).where(Product.id == product_id))).scalar_one_or_none()

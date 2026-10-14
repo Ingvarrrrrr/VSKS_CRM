@@ -24,6 +24,11 @@ export interface ProductLike {
   has_photo?: boolean
   contract_price?: number | null
   description_44fz?: string
+  // Ед. изм. + упаковка (владелец, 14.10) — подсказка в подборе товара
+  // (ProductPickerDialog.vue), formatUnitWithPack: «упак. (10 шт.)».
+  unit?: string | null
+  pack_quantity?: number | string | null
+  pack_unit?: string | null
 }
 
 export interface PriceLink {
@@ -41,19 +46,4 @@ export interface ItemsDisplayRow {
   level?: 1 | 2   // 1 = category, 2 = type inside category
   count?: number
   sum?: number
-}
-
-// Mutable form object for the full product create/edit dialog. The parent owns
-// the reactive instance and passes it down; the child v-models its fields.
-export interface FullProductForm {
-  name: string
-  category: string
-  product_type: string
-  item_kind: string
-  price: number | null
-  description: string
-  photo_url: string
-  photo_link: string
-  is_active: boolean
-  priceLinks: PriceLink[]
 }

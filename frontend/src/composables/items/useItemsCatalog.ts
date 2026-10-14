@@ -1,15 +1,19 @@
 // useItemsCatalog — product catalogue: load/search/filter, per-row catalog
-// matching (product picker, inline match, full product create/edit dialog),
-// category/type grouping of the items list and the "add uncatalogued selected
-// items to catalog" bulk action. Extracted from PurchaseItemsEditor.vue
-// (monolith refactor, часть 2).
-import { ref, computed, reactive, watch, type Ref } from 'vue'
+// matching (product picker, inline match), category/type grouping of the
+// items list and the "add uncatalogued selected items to catalog" bulk
+// action. Extracted from PurchaseItemsEditor.vue (monolith refactor, часть 2).
+//
+// Создание/правка товара — ЕДИНОЕ окно (components/products/
+// ProductEditorDialog.vue, ПРАВИЛО №6, владелец 14.10): раньше здесь жила
+// урезанная копия (fullProductForm/openFullProduct/saveFullProduct) — убрана,
+// открытие окна теперь у владельца ref'а (PurchaseItemsEditor.vue) через
+// deps.openProductEditor.
+import { ref, computed, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { MatchCandidate } from '@/composables/useItemMatching'
-import type { PriceLink, ItemsDisplayRow } from '@/components/items/types'
+import type { ItemsDisplayRow } from '@/components/items/types'
 import type { ToastType } from '@/composables/useToast'
 import { productPhotoSrc } from '@/utils/productPhoto'
-import { describeApiError } from '@/utils/apiErrorMessage'
 
 // EditorItem/Product are structurally identical to the parent's; kept loose
 // here (same convention as ItemsTableFlat.vue) since the parent owns the real
@@ -37,10 +41,16 @@ export interface UseItemsCatalogDeps {
   applyMatchCandidate: (row: EditorItem, cand: MatchCandidate) => void
   clearMatchBinding: (row: EditorItem) => void
   clearItem: (idx: number) => void
+  // Открыть ЕДИНОЕ окно товара (components/products/ProductEditorDialog.vue,
+  // ПРАВИЛО №6) — владеет сама PurchaseItemsEditor.vue (там живёт ref на
+  // диалог и привязка выбранного товара к строке/set-product). Композабл
+  // только просит открыть его с предзаполнением, когда «Создать новый
+  // товар» нажали из пикера/инлайн-подбора.
+  openProductEditor: (idx: number, prefill?: string, productId?: number | null, prefillPrice?: number) => void
 }
 
 export function useItemsCatalog(deps: UseItemsCatalogDeps) {
-  const { props, localItems, selectedItemIdxs, emitUpdate, emit, showSnack, applyMatchCandidate, clearMatchBinding, clearItem } = deps
+  const { props, localItems, selectedItemIdxs, emitUpdate, emit, showSnack, applyMatchCandidate, clearMatchBinding, clearItem, openProductEditor } = deps
 
   const products = ref<Product[]>([])
   // Перф (владелец, 27.09.2026, «закупка грузится 10 сек»): GET /api/products/
@@ -187,37 +197,16 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   )
 
   // ── import-no-clutter: bulk-add несвязанных позиций в каталог ────────────────
+  // Сам процесс (открытие ЕДИНОГО окна товара по очереди) — отдельный файл
+  // composables/items/useBulkProductCreateQueue.ts (ПРАВИЛО №5/№6, владелец
+  // 14.10) — раньше здесь был один POST /products/bulk-from-purchase-items
+  // без общей формы (эндпоинт оставлен на бэкенде, фронт его больше не зовёт).
   const hasUncatalogedSelected = computed(() =>
     selectedItemIdxs.value.some(idx => !localItems.value[idx]?.product_id)
   )
   const uncatalogedSelectedCount = computed(() =>
     selectedItemIdxs.value.filter(idx => !localItems.value[idx]?.product_id).length
   )
-
-  const bulkAddCatalogLoading = ref(false)
-
-  async function bulkAddToCatalog() {
-    const uncatItems = selectedItemIdxs.value
-      .map(idx => localItems.value[idx])
-      .filter(it => it && !it.product_id && it.id)  // только сохранённые в БД (имеют id)
-    if (!uncatItems.length) {
-      showSnack('Выберите сохранённые позиции без привязки к каталогу', 'warning')
-      return
-    }
-    bulkAddCatalogLoading.value = true
-    try {
-      const res = await apiFetch<{ created: number; linked: number; errors: string[] }>(
-        '/products/bulk-from-purchase-items',
-        { method: 'POST', body: JSON.stringify({ purchase_item_ids: uncatItems.map(it => it.id) }) }
-      )
-      showSnack(`Добавлено в каталог: ${res.created + res.linked}`, 'success')
-      emit('reload-requested')
-    } catch (e: any) {
-      showSnack(e?.payload?.message || e?.message || 'Ошибка добавления в каталог', 'error')
-    } finally {
-      bulkAddCatalogLoading.value = false
-    }
-  }
 
   // ── Product selection ────────────────────────────────────────────────────────
 
@@ -302,12 +291,12 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     clearItem(idx)
   }
 
-  // Fall back to the full product dialog for "create new" from inline match.
+  // Fall back to the единое окно товара for "create new" from inline match.
   function onInlineMatchCreateNew(idx: number) {
     const row = idx >= 0 ? localItems.value[idx] : null
     const prefillName = row?.item_name || ''
     const price = row && row.unit_price != null && Number(row.unit_price) > 0 ? Number(row.unit_price) : undefined
-    openFullProduct(idx, prefillName, undefined, price)
+    openProductEditor(idx, prefillName, undefined, price)
   }
 
   // ── Product picker dialog ────────────────────────────────────────────────────
@@ -337,239 +326,17 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     const idx = productPickerIdx.value
     const row = idx >= 0 ? localItems.value[idx] : null
     const price = row && row.unit_price != null && Number(row.unit_price) > 0 ? Number(row.unit_price) : undefined
-    openFullProduct(idx, productPickerSearch.value, undefined, price)
-  }
-
-  // ── Full product dialog ───────────────────────────────────────────────────────
-
-  const fullProductDialog = ref(false)
-  const fullProductSaving = ref(false)
-  const fullProductIdx = ref(-1)
-  const fullProductEditingId = ref<number | null>(null)
-  const fullProductPhotoFile = ref<File | null>(null)
-  const fullProductPhotoFileList = ref<File[]>([])
-  const fullProductPhotoPreview = ref<string | null>(null)
-  const fullProductForm = reactive({
-    name: '' as string,
-    category: '',
-    product_type: '',
-    item_kind: 'товар' as string,
-    price: null as number | null,
-    description: '',
-    photo_url: '',
-    photo_link: '',
-    is_active: true,
-    priceLinks: [] as PriceLink[],
-  })
-
-  const fullProductNameSearch = ref('')
-  const fullProductNameSuggestions = computed(() => {
-    const q = (fullProductNameSearch.value || '').toLowerCase().trim()
-    if (q.length < 2) return []
-    return products.value
-      .filter(p => p.name.toLowerCase().includes(q))
-      .map(p => p.name)
-      .slice(0, 15)
-  })
-
-  const isFullProductDuplicate = computed(() => {
-    const q = (typeof fullProductForm.name === 'string' ? fullProductForm.name : '').toLowerCase().trim()
-    if (!q) return false
-    return products.value.some(p => p.name.toLowerCase().trim() === q)
-  })
-
-  const fullProductTypeOptions = computed(() => {
-    const types = products.value.map(p => p.product_type).filter(Boolean) as string[]
-    return [...new Set(types)].sort()
-  })
-
-  const fullProductCategoryOptions = computed(() => {
-    const cats = products.value.map(p => p.category).filter(Boolean) as string[]
-    return [...new Set(cats)].sort()
-  })
-
-  const fullAvgPrice = computed<number | null>(() => {
-    const prices = fullProductForm.priceLinks
-      .map(l => l.price)
-      .filter((p): p is number => p !== null && !isNaN(Number(p)) && Number(p) > 0)
-    if (!prices.length) return null
-    return Math.round(prices.reduce((s, p) => s + p, 0) / prices.length * 100) / 100
-  })
-
-  watch(fullAvgPrice, v => { if (v !== null) fullProductForm.price = v })
-
-  function onFullPhotoFileChange(files: File[] | File | null) {
-    const fileArr = Array.isArray(files) ? files : (files ? [files] : [])
-    const f = fileArr[0] ?? null
-    fullProductPhotoFile.value = f
-    fullProductPhotoPreview.value = f ? URL.createObjectURL(f) : null
-  }
-
-  function resetFullProductForm(prefill?: string) {
-    Object.assign(fullProductForm, {
-      name: prefill || '',
-      category: '',
-      product_type: '',
-      item_kind: 'товар',
-      price: null,
-      description: '',
-      photo_url: '',
-      photo_link: '',
-      is_active: true,
-      priceLinks: [],
-    })
-    fullProductPhotoFile.value = null
-    fullProductPhotoFileList.value = []
-    fullProductPhotoPreview.value = null
-  }
-
-  function openFullProduct(idx: number, prefill?: string, productId?: number | null, prefillPrice?: number) {
-    // Диалог проверяет дубликаты по имени и подсказывает категорию/тип/имя
-    // (fullProductNameSuggestions/isFullProductDuplicate/fullProductTypeOptions/
-    // fullProductCategoryOptions) — все читают products.value целиком.
-    void ensureFullCatalog()
-    fullProductIdx.value = idx
-    fullProductEditingId.value = null
-    resetFullProductForm(prefill)
-    if (!productId && prefillPrice != null && Number.isFinite(prefillPrice) && prefillPrice > 0) {
-      fullProductForm.price = prefillPrice
-    }
-    fullProductDialog.value = true
-
-    if (productId) {
-      // Try cache first, then refetch fresh data so any backend-only fields are loaded
-      const cached = products.value.find(p => p.id === productId)
-      if (cached) populateFullProductFromProduct(cached)
-      apiFetch<Product>(`/products/${productId}`)
-        .then(p => populateFullProductFromProduct(p))
-        .catch(() => { /* keep cached/prefill values */ })
-    }
-  }
-
-  function populateFullProductFromProduct(p: Product) {
-    fullProductEditingId.value = p.id
-    Object.assign(fullProductForm, {
-      name: p.name || '',
-      category: p.category || '',
-      product_type: p.product_type || '',
-      item_kind: (p as any).item_kind || 'товар',
-      price: p.price != null ? Number(p.price) : null,
-      description: p.description || '',
-      photo_url: p.photo_url || '',
-      photo_link: p.photo_link || '',
-      is_active: (p as any).is_active !== false,
-      priceLinks: Array.isArray((p as any).price_links)
-        ? (p as any).price_links.map((l: any) => ({ url: l.url || '', price: l.price ?? null }))
-        : [],
-    })
-    fullProductPhotoPreview.value = productPhotoSrc(p) || null
-  }
-
-  function openQuickProductEdit(item: EditorItem) {
-    const idx = localItems.value.indexOf(item)
-    const price = !item.product_id && item.unit_price != null && Number(item.unit_price) > 0 ? Number(item.unit_price) : undefined
-    openFullProduct(idx, item.item_name, item.product_id || undefined, price)
-  }
-
-  async function saveFullProduct() {
-    const nameStr = typeof fullProductForm.name === 'string' ? fullProductForm.name : (fullProductForm.name as any)?.name || ''
-    if (!nameStr.trim()) return
-    fullProductSaving.value = true
-    try {
-      const body: any = {
-        name: nameStr,
-        category: (fullProductForm.category || '').trim(),
-        product_type: fullProductForm.product_type || null,
-        item_kind: fullProductForm.item_kind || 'товар',
-        price: fullAvgPrice.value ?? fullProductForm.price ?? null,
-        description: fullProductForm.description || null,
-        photo_link: fullProductForm.photo_link || null,
-        is_active: fullProductForm.is_active,
-        price_links: fullProductForm.priceLinks.filter(l => l.url),
-      }
-      const isEdit = fullProductEditingId.value != null
-      let saved: Product
-      if (isEdit) {
-        saved = await apiFetch<Product>(`/products/${fullProductEditingId.value}`, { method: 'PUT', body })
-      } else {
-        try {
-          saved = await apiFetch<Product>('/products/', { method: 'POST', body })
-        } catch (err: any) {
-          // Backend detected a near-duplicate name → ask the user.
-          // FastAPI's HTTPException(detail={...}) is wrapped by api.ts: the original
-          // dict ends up at err.payload.message (apiFetch puts parsed.detail there).
-          const detail = err?.payload?.message
-          const existing = (err?.status === 409 && typeof detail === 'object' && detail?.code === 'duplicate_product')
-            ? detail.existing : null
-          if (existing) {
-            const msg = `Похожий товар уже есть в каталоге:\n«${existing.name}»\n\nИспользовать его (ОК) или всё равно создать новый (Отмена)?`
-            if (confirm(msg)) {
-              saved = existing
-            } else {
-              saved = await apiFetch<Product>('/products/?force=true', { method: 'POST', body })
-            }
-          } else {
-            throw err
-          }
-        }
-      }
-      // Upload photo if selected (works for both create and edit)
-      if (fullProductPhotoFile.value) {
-        const fd = new FormData()
-        fd.append('file', fullProductPhotoFile.value)
-        const res = await fetch(`/api/products/${saved.id}/photo`, {
-          method: 'POST',
-          headers: {},
-          body: fd,
-        })
-        if (res.ok) Object.assign(saved, await res.json())
-      }
-      products.value = await apiFetch<Product[]>('/products/')
-      if (fullProductIdx.value >= 0) {
-        onItemProductSelect(fullProductIdx.value, saved)
-        // 27.4-14: моментальная запись привязки в БД (без ожидания общего «Сохранить»),
-        // иначе после F5 product_id вернётся в null.
-        const linkItem = localItems.value[fullProductIdx.value]
-        if (props.purchaseId && (linkItem as any)?.id && saved.id) {
-          try {
-            await apiFetch(`/purchases/${props.purchaseId}/items/${(linkItem as any).id}/set-product`,
-              { method: 'POST', body: { product_id: saved.id } })
-          } catch (e) { console.warn('Failed to persist product_id link', e) }
-        }
-      }
-      emit('product-created', saved)
-      showSnack(isEdit ? `Товар "${saved.name}" обновлён` : `Товар "${saved.name}" добавлен в каталог`)
-      fullProductDialog.value = false
-      fullProductPhotoFile.value = null
-      fullProductPhotoFileList.value = []
-      fullProductPhotoPreview.value = null
-    } catch (err: any) {
-      // Не глотать причину generic-текстом (память проекта
-      // feedback_no_generic_error_snackbar) — общий хелпер, см. также
-      // useProductsForm.ts::save().
-      showSnack(
-        describeApiError(err, { fallback: 'Не удалось сохранить товар', prefix: 'Ошибка сохранения' }),
-        'error',
-      )
-    } finally {
-      fullProductSaving.value = false
-    }
+    openProductEditor(idx, productPickerSearch.value, undefined, price)
   }
 
   return {
     products, loadProducts, ensureFullCatalog, fullCatalogLoaded,
     itemsGroupBy, itemsFilterCats, itemsFilterTypes, productById, itemCategoryOf, itemTypeOf,
     itemCategoryOptions, itemTypeOptions, itemsFilterActive, itemsDisplayRows, visibleItemsCount,
-    hasUncatalogedSelected, uncatalogedSelectedCount, bulkAddCatalogLoading, bulkAddToCatalog,
+    hasUncatalogedSelected, uncatalogedSelectedCount,
     productFilter, productItemsFor, hasProducts, onItemProductSelect,
     onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
     productPickerDialog, productPickerSearch, productPickerIdx, productPickerResults,
     openProductPicker, selectFromPicker, createProductFromPicker,
-    fullProductDialog, fullProductSaving, fullProductIdx, fullProductEditingId,
-    fullProductPhotoFile, fullProductPhotoFileList, fullProductPhotoPreview, fullProductForm,
-    fullProductNameSearch, fullProductNameSuggestions, isFullProductDuplicate,
-    fullProductTypeOptions, fullProductCategoryOptions, fullAvgPrice,
-    onFullPhotoFileChange, resetFullProductForm, openFullProduct, populateFullProductFromProduct,
-    openQuickProductEdit, saveFullProduct,
   }
 }

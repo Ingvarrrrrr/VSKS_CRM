@@ -159,6 +159,12 @@
     @pick="onPickerPick"
     @create-new="onPickerCreateNew"
   />
+
+  <!-- «Создать новый товар…» из ручного поиска по каталогу — ЕДИНОЕ окно
+       товара (ProductEditorDialog.vue, ПРАВИЛО №6, владелец 14.10). Раньше
+       здесь была заглушка-подсказка («недоступно») — теперь товар
+       заводится прямо тут, без ухода в меню строки. -->
+  <ProductEditorDialog ref="productEditorRef" @saved="onProductEditorSaved" />
 </template>
 
 <script setup lang="ts">
@@ -171,20 +177,21 @@ import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import {
   usePlanToRequest, PRICE_MODE_LABELS, PRICE_MODE_ORDER,
   PLAN_TO_REQUEST_TARGET_LABELS, PLAN_TO_REQUEST_TARGET_ORDER,
-  type PlanToRequestRow as PlanToRequestRowState, type PlanToWishCandidate, type PriceMode,
+  type PlanToRequestRow as PlanToRequestRowState, type PriceMode,
   type PlanToRequestTarget,
 } from '@/composables/subsidies/usePlanToRequest'
 import { formatMoney } from '@/utils/formatMoney'
 import { productPhotoSrc } from '@/utils/productPhoto'
 import { apiFetch } from '@/api'
-import { useToast } from '@/composables/useToast'
 import ProductPickerDialog from '@/components/items/ProductPickerDialog.vue'
+import ProductEditorDialog from '@/components/products/ProductEditorDialog.vue'
+import { candidateFromProduct } from '@/composables/subsidies/usePlanToRequestProductCreate'
 import PlanToRequestRow from './PlanToRequestRow.vue'
 import type { ProductLike } from '@/components/items/types'
+import type { Product } from '@/composables/products/productsTypes'
 
 const ctx = useSubsidyDetailCtx()
 const planToRequest = usePlanToRequest()
-const toast = useToast()
 
 function removeRow(row: PlanToRequestRowState) {
   planToRequest.rows.value = planToRequest.rows.value.filter(r => r.plannedItemId !== row.plannedItemId)
@@ -196,6 +203,7 @@ const pickerSearch = ref('')
 const pickerResults = ref<ProductLike[]>([])
 const pickerTargetRow = ref<PlanToRequestRowState | null>(null)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+const productEditorRef = ref<InstanceType<typeof ProductEditorDialog> | null>(null)
 
 function openPickerFor(row: PlanToRequestRowState) {
   pickerTargetRow.value = row
@@ -224,30 +232,24 @@ async function runSearch(q: string) {
 
 function onPickerPick(p: ProductLike) {
   if (!pickerTargetRow.value) return
-  const cand: PlanToWishCandidate = {
-    product_id: p.id,
-    name: p.name,
-    price: p.price ?? null,
-    score: 1,
-    photo_url: productPhotoSrc(p) ?? null,
-    item_type: (p as any).item_kind ?? null,
-    category: p.category ?? null,
-    product_type: p.product_type ?? null,
-    unit: (p as any).unit ?? null,
-    price_updated_at: (p as any).price_updated_at ?? null,
-    price_source: (p as any).price_source ?? null,
-    price_freshness: (p as any).price_freshness ?? null,
-  }
-  planToRequest.pickCandidateForRow(pickerTargetRow.value, cand)
+  // candidateFromProduct — единственный маппинг Product → PlanToWishCandidate
+  // (ПРАВИЛО №6, usePlanToRequestProductCreate.ts), тот же, что и построчное
+  // «Добавить товар» (PlanToRequestRow.vue).
+  planToRequest.pickCandidateForRow(pickerTargetRow.value, candidateFromProduct(p as any))
   pickerOpen.value = false
 }
 
+// «Создать новый товар…» — ЕДИНОЕ окно товара (ProductEditorDialog.vue,
+// ПРАВИЛО №6, владелец 14.10). Раньше тут была заглушка-подсказка на
+// «Добавить товар» в меню строки — теперь товар заводится прямо из поиска.
 function onPickerCreateNew() {
-  // «Без товара» убрано (владелец, задача 2) — каждая строка обязана иметь
-  // товар, поэтому вместо этого пути указываем на «Добавить товар» в меню
-  // самой строки (PlanToRequestRow.vue, тот же ProductFormDialog/useProductsForm.ts,
-  // второй независимый экземпляр не заводим, Правило №6).
-  toast.addToast('Создание нового товара здесь недоступно — закройте поиск и выберите «Добавить товар» в меню этой строки, либо заведите товар в каталоге (Товары) и повторите поиск', 'info')
+  productEditorRef.value?.open({ name: pickerSearch.value })
+}
+
+function onProductEditorSaved(p: Product) {
+  if (!pickerTargetRow.value) return
+  planToRequest.pickCandidateForRow(pickerTargetRow.value, candidateFromProduct(p))
+  pickerOpen.value = false
 }
 
 // «показать» у «Без товара: N» (владелец, задача 2) — прокрутка к первой

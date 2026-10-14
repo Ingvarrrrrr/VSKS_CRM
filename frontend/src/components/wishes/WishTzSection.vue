@@ -40,6 +40,59 @@
       </div>
     </v-card-title>
     <v-card-text v-show="!collapsed" class="pa-0">
+      <!-- Своё ТЗ (характеристики) каждой позиции — план item-tz-description.md,
+           Этап Б (владелец, 14.10.2026). Правка здесь мутирует те же объекты
+           позиций, что держит форма заявки (props.items передаётся по ссылке из
+           wishForm.value.items) — автосейв формы подхватывает значение сам,
+           отдельного сохранения тут нет. Один хелпер (ПРАВИЛО №6) — см.
+           utils/itemTz.ts, тот же, что использует ItemsTableStages.vue. -->
+      <div class="px-4 pt-3 pb-1">
+        <div v-for="(item, idx) in visibleItems" :key="item.id ?? item._uid ?? idx" class="mb-3">
+          <div class="text-caption text-medium-emphasis mb-1">{{ item.item_name }}</div>
+          <v-textarea
+            v-model="item.tz_description"
+            density="compact" variant="outlined" hide-details
+            rows="2" max-rows="6" auto-grow
+            label="Характеристики (ТЗ) этой позиции"
+            :placeholder="item._description || 'Характеристики не заданы'"
+          />
+          <div class="d-flex align-center ga-2 mt-1">
+            <span v-if="isTzFromCatalog(item)" class="text-caption text-medium-emphasis">
+              показано из каталога товара
+            </span>
+            <v-btn
+              v-if="(item.tz_description || '').trim() && item._description"
+              size="x-small" variant="text" color="primary" density="compact"
+              prepend-icon="mdi-restore"
+              @click="resetTzToCatalog(item)"
+            >
+              вернуть из каталога
+            </v-btn>
+            <!-- «Предложить в каталог» (план item-tz-description.md, Этап В,
+                 п.4) — только если позиция привязана к товару каталога И своё
+                 ТЗ реально отличается от каталожного (tzTextsDiffer, ПРАВИЛО
+                 №6 — тот же критерий различия, что у окна сравнения импорта). -->
+            <v-btn
+              v-if="item.product_id && item.id && tzTextsDiffer(item.tz_description, item._description)"
+              size="x-small" variant="text" color="teal" density="compact"
+              prepend-icon="mdi-upload-outline"
+              @click="openProposeDialog(item)"
+            >
+              предложить в каталог
+            </v-btn>
+          </div>
+        </div>
+      </div>
+
+      <ProposeToCatalogDialog
+        v-if="proposeTarget"
+        v-model="proposeDialogShow"
+        :product-id="proposeTarget.product_id"
+        :catalog-value="proposeTarget._description || null"
+        :own-value="proposeTarget.tz_description || ''"
+        field="description"
+        :wish-item-id="proposeTarget.id"
+      />
       <!-- Строки ТЗ — только с сервера (GET /api/wishes/{id}/tz-rows), пока
            заявка не сохранена (нет wishId) — id ещё нет, показываем подсказку
            вместо локального пересчёта дублей (Правило №6). -->
@@ -74,7 +127,9 @@
 // items формы (WishFormDialog передаёт wishForm.items с уже проставленным id).
 import { computed, ref, watch } from 'vue'
 import TzRowsSection from '@/components/purchase/TzRowsSection.vue'
+import ProposeToCatalogDialog from '@/components/products/ProposeToCatalogDialog.vue'
 import type { TzRow } from '@/composables/purchase/useTzRows'
+import { isTzFromCatalog, resetTzToCatalog, effectiveTz, tzTextsDiffer } from '@/utils/itemTz'
 
 type EditorItem = any
 
@@ -115,6 +170,16 @@ watch(descriptionMode, _persistMode)
 // частый чистый watch(items, deep) гонял бы tz-rows на каждый ввод буквы.
 watch(() => props.items?.length, () => { tzRowsRef.value?.refresh() })
 
+// «Предложить в каталог» (Этап В, п.4) — один диалог на секцию, цель —
+// текущая позиция (ProposeToCatalogDialog сам шлёт POST .../description-proposals
+// и показывает тост по итогу — ПРАВИЛО №6, второй отправки здесь нет).
+const proposeDialogShow = ref(false)
+const proposeTarget = ref<EditorItem | null>(null)
+function openProposeDialog(item: EditorItem) {
+  proposeTarget.value = item
+  proposeDialogShow.value = true
+}
+
 function resolveLocalItem(row: TzRow): EditorItem | undefined {
   const list = props.items || []
   if (row.item_id != null) {
@@ -125,11 +190,14 @@ function resolveLocalItem(row: TzRow): EditorItem | undefined {
 }
 
 function activeDescription(item: EditorItem): string {
+  // Своё ТЗ позиции (tz_description) важнее каталожного — ОДНА формула
+  // (effectiveTz, ПРАВИЛО №6), план item-tz-description.md, Этап Б. Для
+  // позиций без каталожной привязки своё ТЗ всё равно может быть (импорт из
+  // файла) — проверяем его раньше подсказки «появится после привязки».
+  const d = effectiveTz(item, descriptionMode.value)
+  if (d) return d
   if (!item.product_id) return 'описание появится после привязки к каталогу'
-  const d = descriptionMode.value === '44fz'
-    ? (item._description_44fz || item._description)
-    : item._description
-  return d || 'нет описания'
+  return 'нет описания'
 }
 
 const downloading = ref(false)

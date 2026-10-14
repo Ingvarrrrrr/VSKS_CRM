@@ -70,13 +70,17 @@ export function useDocPickerDialogs(
   const pickerInitiatorId    = ref<number | null>(null)
   const docApproversInitiators = computed(() => docApprovers.value.filter(a => a.can_initiate))
 
-  // Список «за кого можно делать служебку»: сам + подчинённые (видимые через
-  // _get_visible_user_ids на бэке). Бизнес-правило: за другого человека делать
-  // СЗ может только его руководитель/тот кому он подчинён.
+  // Список «кого можно указать инициатором служебной записки» — «штат»
+  // организации субсидии, сокращённый по роли выбирающего (backend
+  // app/services/service_note_initiators.py::initiator_candidate_ids,
+  // правило владельца 14.10.2026). Без subsidyId — старое поведение
+  // (себя + видимых через _get_visible_user_ids), для мест, где субсидия
+  // ещё не выбрана.
   const actAsList = ref<OrgUserLike[]>([])
-  async function loadActAsUsers() {
+  async function loadActAsUsers(subsidyId?: number | string | null) {
     try {
-      const users = await apiFetch<any[]>('/users/i-can-act-for')
+      const qs = subsidyId ? `?subsidy_id=${subsidyId}` : ''
+      const users = await apiFetch<any[]>(`/users/i-can-act-for${qs}`)
       actAsList.value = users
         .filter(u => u.full_name)
         .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
@@ -100,25 +104,30 @@ export function useDocPickerDialogs(
     }
     pickerResponsibleName.value = prefillName
     try {
-      const [list] = await Promise.all([
-        apiFetch<DocApprover[]>(`/subsidies/${form.subsidy_id}/approvers`),
-        loadResponsiblePersonsList(),
-        orgUsersList.value.length ? Promise.resolve() : loadOrgUsers(),
-      ])
-      docApprovers.value = list
-      if (type === 'approval_sheet') {
-        pickerApproverIds.value = list.filter(a => a.is_default).map(a => a.id)
-      } else {
-        // Бизнес-правило: за другого человека делать СЗ может только тот, кому
-        // подчинён этот человек. Грузим scope «я + мои подчинённые».
-        await loadActAsUsers()
-        // Default: current logged-in user
-        if (currentUserId && actAsList.value.find(u => u.id === currentUserId)) {
+      if (type.startsWith('service_note')) {
+        // service_note: согласующие субсидии инициатору не нужны (служебка —
+        // до согласования) — approvers не запрашиваем/не ждём, только пул
+        // инициаторов (правило владельца, 14.10.2026, см. loadActAsUsers).
+        docApprovers.value = []
+        await Promise.all([
+          loadActAsUsers(form.subsidy_id),
+          orgUsersList.value.length ? Promise.resolve() : loadOrgUsers(),
+        ])
+        if (form.service_note_by && actAsList.value.find(u => u.id === form.service_note_by)) {
+          pickerInitiatorId.value = form.service_note_by
+        } else if (currentUserId && actAsList.value.find(u => u.id === currentUserId)) {
           pickerInitiatorId.value = currentUserId
         } else {
-          const def = list.find(a => a.can_initiate && a.is_default) || list.find(a => a.can_initiate)
-          pickerInitiatorId.value = def?.id ?? null
+          pickerInitiatorId.value = null
         }
+      } else {
+        const [list] = await Promise.all([
+          apiFetch<DocApprover[]>(`/subsidies/${form.subsidy_id}/approvers`),
+          loadResponsiblePersonsList(),
+          orgUsersList.value.length ? Promise.resolve() : loadOrgUsers(),
+        ])
+        docApprovers.value = list
+        pickerApproverIds.value = list.filter(a => a.is_default).map(a => a.id)
       }
     } catch {
       docApprovers.value = []

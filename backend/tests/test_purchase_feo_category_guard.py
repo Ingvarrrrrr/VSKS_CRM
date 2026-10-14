@@ -180,16 +180,24 @@ def test_purchase_without_wish_id_keeps_old_approval_behavior():
 # 2) _guard_item_feo_category_locked_from_plan — новый item-level хелпер
 # ---------------------------------------------------------------------------
 
-def _mk_item(feo_planned_item_id=None, wish_item_id=None, feo_category_id=None):
+def _mk_item(feo_planned_item_id=None, wish_item_id=None, feo_category_id=None, from_plan=False):
     return SimpleNamespace(
         feo_planned_item_id=feo_planned_item_id, wish_item_id=wish_item_id,
-        feo_category_id=feo_category_id,
+        feo_category_id=feo_category_id, from_plan=from_plan,
     )
 
 
+# Решение владельца 14.10.2026 (жалоба (а)): замок категории ФЭО срабатывает
+# ТОЛЬКО когда позиция реально ЗАГРУЖЕНА из плана (from_plan=True) — см.
+# app/services/feo_item_lock.py. Простое наличие feo_planned_item_id/
+# wish_item_id (ручная позиция, автозаведённая/выбранная человеком плановая)
+# больше НЕ блокирует — см. test_item_without_links_changes_freely ниже,
+# расширенный этим же набором случаев.
+
 def test_item_with_planned_item_blocks_category_change():
-    """(в) позиция с feo_planned_item_id -> смена feo_category_id -> 422."""
-    it = _mk_item(feo_planned_item_id=77, feo_category_id=1)
+    """(в) позиция ИЗ ПЛАНА (from_plan=True) с feo_planned_item_id -> смена
+    feo_category_id -> 422."""
+    it = _mk_item(feo_planned_item_id=77, feo_category_id=1, from_plan=True)
     with pytest.raises(HTTPException) as exc_info:
         pie._guard_item_feo_category_locked_from_plan(it, 2)
     assert exc_info.value.status_code == 422
@@ -199,24 +207,24 @@ def test_item_with_planned_item_blocks_category_change():
 
 
 def test_item_with_wish_item_id_blocks_category_change():
-    """Та же блокировка для позиции, пришедшей из заявки (wish_item_id),
-    даже без собственной feo_planned_item_id."""
-    it = _mk_item(wish_item_id=321, feo_category_id=1)
+    """Та же блокировка для позиции, пришедшей из заявки (wish_item_id) ИЗ
+    ПЛАНА (from_plan=True), даже без собственной feo_planned_item_id."""
+    it = _mk_item(wish_item_id=321, feo_category_id=1, from_plan=True)
     with pytest.raises(HTTPException) as exc_info:
         pie._guard_item_feo_category_locked_from_plan(it, 2)
     assert exc_info.value.detail["code"] == "ITEM_FEO_CATEGORY_LOCKED_FROM_PLAN"
 
 
 def test_item_with_planned_item_blocks_clear_feo_category():
-    """clear_feo_category тоже заблокирован для привязанной позиции."""
-    it = _mk_item(feo_planned_item_id=77, feo_category_id=1)
+    """clear_feo_category тоже заблокирован для позиции ИЗ ПЛАНА."""
+    it = _mk_item(feo_planned_item_id=77, feo_category_id=1, from_plan=True)
     with pytest.raises(HTTPException) as exc_info:
         pie._guard_item_feo_category_locked_from_plan(it, None, clearing=True)
     assert exc_info.value.detail["code"] == "ITEM_FEO_CATEGORY_LOCKED_FROM_PLAN"
 
 
 def test_item_with_planned_item_same_category_is_idempotent_noop():
-    it = _mk_item(feo_planned_item_id=77, feo_category_id=1)
+    it = _mk_item(feo_planned_item_id=77, feo_category_id=1, from_plan=True)
     pie._guard_item_feo_category_locked_from_plan(it, 1)  # не бросает
 
 
@@ -225,6 +233,21 @@ def test_item_without_links_changes_freely():
     it = _mk_item(feo_planned_item_id=None, wish_item_id=None, feo_category_id=1)
     pie._guard_item_feo_category_locked_from_plan(it, 2)  # не бросает
     pie._guard_item_feo_category_locked_from_plan(it, None, clearing=True)  # не бросает
+
+
+def test_item_manual_with_planned_item_link_changes_freely():
+    """Жалоба (а), 14.10.2026: РУЧНАЯ позиция с привязкой к плановой (авто-
+    заведённой или выбранной человеком), но from_plan=False (НЕ загружена из
+    плана) — категория меняется свободно, замок не срабатывает."""
+    it = _mk_item(feo_planned_item_id=77, feo_category_id=1, from_plan=False)
+    pie._guard_item_feo_category_locked_from_plan(it, 2)  # не бросает
+    pie._guard_item_feo_category_locked_from_plan(it, None, clearing=True)  # не бросает
+
+
+def test_item_manual_with_wish_item_id_changes_freely():
+    """То же для wish_item_id без from_plan (жалоба (а))."""
+    it = _mk_item(wish_item_id=321, feo_category_id=1, from_plan=False)
+    pie._guard_item_feo_category_locked_from_plan(it, 2)  # не бросает
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +278,7 @@ def _mk_real_item(id_=200, purchase_id=100, **kw):
     base = dict(
         id=id_, purchase_id=purchase_id, wish_item_id=None, feo_category_id=None,
         feo_planned_item_id=None, item_name="Футболка поло", over_plan=False,
-        quantity=10, unit="шт.", unit_price=500, total_price=5000,
+        quantity=10, unit="шт.", unit_price=500, total_price=5000, from_plan=False,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -268,7 +291,7 @@ def _mk_real_purchase(id_=100, **kw):
 
 
 def test_patch_endpoint_rejects_category_change_for_planned_item():
-    it = _mk_real_item(feo_planned_item_id=77, feo_category_id=1)
+    it = _mk_real_item(feo_planned_item_id=77, feo_category_id=1, from_plan=True)
     p = _mk_real_purchase()
     db = _FakeItemsDB(it, p)
     body = pie._ItemPatchBody(feo_category_id=2)
@@ -284,7 +307,7 @@ def test_patch_endpoint_rejects_category_change_for_planned_item():
 
 
 def test_patch_endpoint_rejects_category_change_for_wish_item():
-    it = _mk_real_item(wish_item_id=321, feo_category_id=1)
+    it = _mk_real_item(wish_item_id=321, feo_category_id=1, from_plan=True)
     p = _mk_real_purchase()
     db = _FakeItemsDB(it, p)
     body = pie._ItemPatchBody(feo_category_id=2)
@@ -309,10 +332,14 @@ def test_patch_endpoint_rejects_category_change_for_wish_item():
 from app.schemas.purchases import PurchaseItemCreate
 
 
-def _mk_put_item(feo_planned_item_id=None, feo_category_id=None, **kw):
+def _mk_put_item(feo_planned_item_id=None, feo_category_id=None, from_plan=True, **kw):
+    # from_plan=True по умолчанию в этом хелпере — большинство существующих
+    # тестов ниже проверяют именно гейт «загружено из плана» (решение
+    # владельца 14.10.2026); для ручной позиции передавайте from_plan=False.
     return PurchaseItemCreate(
         item_name="Футболка поло", quantity=10, unit_price=500, total_price=5000,
         feo_planned_item_id=feo_planned_item_id, feo_category_id=feo_category_id,
+        from_plan=from_plan,
         **kw,
     )
 
@@ -355,6 +382,17 @@ def test_put_items_allows_when_item_category_matches_planned_item_category():
 
     asyncio.run(pie.assert_items_feo_category_matches_planned_items(items_data, db))  # не бросает
     assert db.execute_calls == 1
+
+
+def test_put_items_manual_item_with_planned_item_category_mismatch_is_allowed():
+    """Жалоба (а), 14.10.2026: РУЧНАЯ позиция (from_plan=False) с привязкой к
+    плановой позиции другой категории — гейт не срабатывает вообще (не лезет
+    в БД), категория меняется свободно на PUT."""
+    items_data = [_mk_put_item(feo_planned_item_id=77, feo_category_id=2, from_plan=False)]
+    db = _FakeFpiRowsDB(rows=[(77, 1)])
+
+    asyncio.run(pie.assert_items_feo_category_matches_planned_items(items_data, db))  # не бросает
+    assert db.execute_calls == 0
 
 
 def test_put_items_with_no_planned_item_links_skips_db_entirely():

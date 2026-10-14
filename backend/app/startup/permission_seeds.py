@@ -448,6 +448,45 @@ async def _plan_excess_decide_action():
         logging.getLogger(__name__).warning(f"plan_excess.decide action seed skipped (non-fatal): {e}")
 
 
+async def _paid_confirmation_decide_action():
+    # Решение владельца (14.10.2026): право подтверждать/отклонять «оплату,
+    # найденную в выписке» (app/routers/purchase_paid_confirmations.py) —
+    # ОТДЕЛЬНАЯ галочка в правах сотрудника, НЕ «согласующие субсидии» (та
+    # сущность — только для листа согласования закупок/плана, см.
+    # app.models.subsidy_approver.SubsidyApprover и app.routers.purchase_
+    # approvals). По образцу _plan_excess_decide_action (ПРАВИЛО №6: тот же
+    # способ выдачи и проверки — has_org_key с этим ключом, вторая логика
+    # не пишется). Дефолт: superadmin/account_owner=TRUE (SaaS-обход, как и
+    # везде); admin/org_admin/manager/employee=FALSE — выдаётся поимённо.
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'paid_confirmation.decide'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Подтверждать оплату, найденную в выписке',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', False), ('org_admin', False),
+                ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"paid_confirmation.decide action seed skipped (non-fatal): {e}")
+
+
 async def _staff_directory_tab():
     # Phase 18: idempotent seed для tab 'staff_directory' (все роли аккаунта;
     # account_owner добавлен 2026-09-15 — список отставал от появления роли)
@@ -637,6 +676,49 @@ async def _subsidy_correct_action():
         logging.getLogger(__name__).warning(f"subsidy.correct action seed skipped (non-fatal): {e}")
 
 
+async def _products_edit_catalog_action():
+    # Защита общего каталога товаров (Этап В, план item-tz-description.md,
+    # владелец 14.10.2026): «каталог правят только с галочкой «Редактировать
+    # каталог товаров»» — каталог общий для всего приложения (Product.org_id
+    # всегда NULL), плохое описание одного не должно портить его всем.
+    # Проверяется в app/services/product_catalog_guard.py (та же механика,
+    # что у require_action — _has_key_in_any_org, ПРАВИЛО №6) на PUT/PATCH/
+    # DELETE /api/products/{id} и на применении catalog-импорта к
+    # СУЩЕСТВУЮЩЕМУ товару (app/services/products_import_apply.py). Создание
+    # НОВОГО товара (POST, автосоздание из импорта позиций) НЕ гейтится —
+    # решение владельца, «плохое ТЗ одного не должно испортить всем» не
+    # относится к заведению нового товара. Дефолт: superadmin/account_owner/
+    # admin/org_admin=TRUE (роли, которые уже могут управлять каталогом);
+    # manager/employee=FALSE — выдаётся точечно, если нужно.
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'products.edit_catalog'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Редактировать каталог товаров (общий, не привязан к организации)',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', True), ('org_admin', True),
+                ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"products.edit_catalog action seed skipped (non-fatal): {e}")
+
+
 async def _account_owner_all_rights():
     # Владелец (2026-10-06): «Владелец аккаунта может всё. Он один в аккаунте,
     # может быть передан, но он один». На проде у роли account_owner стояли
@@ -695,4 +777,6 @@ async def run():
     await _purchase_tz_waive_action()
     await _advance_payment_decision_action()
     await _subsidy_correct_action()
+    await _paid_confirmation_decide_action()
+    await _products_edit_catalog_action()
     await _account_owner_all_rights()

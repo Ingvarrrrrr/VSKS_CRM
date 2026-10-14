@@ -14,6 +14,24 @@
       @update:view-mode="viewMode = $event"
     />
 
+    <!-- Предложения правок каталога (Этап В, план item-tz-description.md,
+         владелец 14.10.2026, п.3) — видят и решают только сотрудники с
+         products.edit_catalog; кнопка заметная, со счётчиком ожидающих. -->
+    <div v-if="canEditCatalog" class="mb-4">
+      <v-btn
+        variant="tonal" color="primary" prepend-icon="mdi-file-edit-outline"
+        @click="proposalsDialogShow = true"
+      >
+        Предложения правок
+        <v-chip v-if="pendingProposalsCount" size="small" color="warning" class="ml-2">{{ pendingProposalsCount }}</v-chip>
+      </v-btn>
+    </div>
+
+    <ProductDescriptionProposals
+      v-model="proposalsDialogShow"
+      @changed="loadPendingProposalsCount"
+    />
+
     <ProductsFilterBar
       v-model:search="search"
       v-model:filter-type="filterType"
@@ -79,6 +97,8 @@
       v-model:name-search="nameSearch"
       :mobile="mobile"
       :editing-id="editingId"
+      :can-edit-catalog="canEditCatalog"
+      :empty-at-open="emptyAtOpen"
       :edit-meta="editMeta"
       :form="form"
       :name-suggestions="nameSuggestions"
@@ -93,9 +113,15 @@
       :downloading-photo="downloadingPhoto"
       :deleting-photo="deletingPhoto"
       :saving="saving"
+      :duplicate-dialog="duplicateDialog"
+      :duplicate-existing="duplicateExisting"
       @save="save"
       @clear-photo="clearUploadedPhoto"
       @download-photo="downloadSinglePhoto"
+      @confirm-use-existing="confirmUseExisting"
+      @confirm-create-new="confirmCreateNew"
+      @cancel-duplicate="cancelDuplicate"
+      @price-synced="syncPriceFromHistory($event.price)"
       @photo-file-change="onPhotoFileChange"
     />
 
@@ -187,8 +213,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { apiFetch } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
 
 import ProductsToolbar from '@/components/products/ProductsToolbar.vue'
 import ProductsFilterBar from '@/components/products/ProductsFilterBar.vue'
@@ -204,6 +233,7 @@ import ProductsDownloadPhotosDialog from '@/components/products/ProductsDownload
 import ProductsColumnConfigDialog from '@/components/products/ProductsColumnConfigDialog.vue'
 import ProductsDedupDialog from '@/components/products/ProductsDedupDialog.vue'
 import ProductsActualizeDialog from '@/components/products/ProductsActualizeDialog.vue'
+import ProductDescriptionProposals from '@/components/products/ProductDescriptionProposals.vue'
 
 import { useProductsData } from '@/composables/products/useProductsData'
 import { useProductsColumns, ALL_COLUMNS } from '@/composables/products/useProductsColumns'
@@ -219,6 +249,24 @@ import { useProductsActualize } from '@/composables/products/useProductsActualiz
 const userRole = localStorage.getItem('user_role') || ''
 const isSuperadmin = userRole === 'superadmin'
 const isAdmin = userRole === 'admin' || userRole === 'superadmin'
+
+// Защита каталога (Этап В, план item-tz-description.md, владелец 14.10.2026) —
+// единственная проверка права здесь (ПРАВИЛО №6): тот же механизм
+// authStore.hasAction(), что и в FeoCategoriesView.vue (ACTIONS.FEO_CATEGORY_EDIT).
+const authStore = useAuthStore()
+const canEditCatalog = computed(() => authStore.hasAction(ACTIONS.PRODUCTS_EDIT_CATALOG!))
+
+const proposalsDialogShow = ref(false)
+const pendingProposalsCount = ref(0)
+async function loadPendingProposalsCount() {
+  if (!canEditCatalog.value) { pendingProposalsCount.value = 0; return }
+  try {
+    const rows = await apiFetch<any[]>('/products/description-proposals?status=pending')
+    pendingProposalsCount.value = rows.length
+  } catch {
+    // Счётчик необязателен — список внутри диалога всё равно подтянется сам.
+  }
+}
 
 const toast = useToast()
 const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
@@ -240,12 +288,14 @@ const {
 const {
   saving, dialog, editingId,
   photoFile, photoFileList, photoPreview,
-  form, photoCacheBuster, editMeta,
+  form, photoCacheBuster, editMeta, emptyAtOpen,
   nameSearch, nameSuggestions, isDuplicateName,
   avgPrice,
   onPhotoFileChange,
   openCreate, openEdit, save, toggleSharing,
   downloadingPhoto, deletingPhoto, clearUploadedPhoto, downloadSinglePhoto,
+  duplicateDialog, duplicateExisting, confirmUseExisting, confirmCreateNew, cancelDuplicate,
+  syncPriceFromHistory,
 } = useProductsForm({ products, load, showSnack })
 
 const {
@@ -276,5 +326,5 @@ const {
   priceSourceOptions, actualizeDialog, actualizeForm, openActualizeDialog, saveActualization,
 } = useProductsActualize({ products, showSnack })
 
-onMounted(() => { load() })
+onMounted(() => { load(); loadPendingProposalsCount() })
 </script>

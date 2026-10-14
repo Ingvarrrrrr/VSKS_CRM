@@ -9,7 +9,7 @@
 Starlette матчит их на литерал маршрута GET /{user_id} раньше, чем на эти,
 и FastAPI падает 422 при попытке привести "assignable-ids" и т.п. к int.
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ from app.database import get_db
 from app.models.user import User
 from app.auth.jwt import get_current_user
 from app.schemas.schemas import UserOut
-from typing import List
+from typing import List, Optional
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -112,11 +112,38 @@ async def list_users_in_my_orgs(
 async def list_users_i_can_act_for(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    subsidy_id: Optional[int] = Query(
+        None,
+        description=(
+            "Пул инициаторов служебной записки по субсидии (Правило владельца, "
+            "14.10.2026) — см. app.services.service_note_initiators."
+            "initiator_candidate_ids. Без параметра — старое поведение "
+            "(себя + видимых через _get_visible_user_ids)."
+        ),
+    ),
 ):
-    """Возвращает себя + всех видимых через _get_visible_user_ids (подчинённые
-    по иерархии + начальник отдела/орг). Используется для picker'а инициатора
-    служебной записки: за другого человека делать СЗ может только тот, кому
-    он подчинён. См. бизнес-правило в documents.py:generate_document."""
+    """Пул кандидатов на роль инициатора служебной записки.
+
+    С subsidy_id — initiator_candidate_ids(db, current_user, subsidy): «штат»
+    организации субсидии, сокращённый по роли выбирающего (см. докстринг
+    того модуля). Без subsidy_id — прежнее поведение: себя + всех видимых
+    через _get_visible_user_ids (подчинённые по иерархии + начальник
+    отдела/орг) — используется там, где субсидия ещё не известна."""
+    if subsidy_id is not None:
+        from app.models.subsidy import Subsidy
+        subsidy = await db.get(Subsidy, subsidy_id)
+        if subsidy is None:
+            raise HTTPException(404, "Субсидия не найдена")
+        from app.services.service_note_initiators import initiator_candidate_ids
+        candidates = await initiator_candidate_ids(db, current_user, subsidy)
+        if not candidates:
+            return []
+        q_cand = select(User).where(User.id.in_(candidates)).order_by(User.full_name)
+        if current_user.role != "superadmin":
+            q_cand = q_cand.where(User.role != "superadmin")
+        res = await db.execute(q_cand)
+        return res.scalars().all()
+
     from app.routers.task_visibility import _get_visible_user_ids
     visible = await _get_visible_user_ids(current_user, db)
     if visible is None:

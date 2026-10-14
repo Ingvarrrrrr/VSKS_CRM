@@ -49,6 +49,15 @@ RU_REGIONS: dict[str, tuple[str, str]] = {
 
 assert len(RU_REGIONS) == 89, f"Ожидалось 89 субъектов РФ, получено {len(RU_REGIONS)}"
 
+# name -> (lat, lon) координаты регионального центра (столицы субъекта) —
+# для расчёта «ближайший регион с данными» (app/services/region_distance.py).
+# Те же данные — единственное место, второй копии координат не заводить.
+REGION_CAPITALS: dict[str, tuple[float, float]] = {
+    item["name"]: (item["lat"], item["lon"])
+    for item in _RU_REGIONS_DATA
+    if "lat" in item and "lon" in item
+}
+
 
 def okato11(prefix: str) -> str:
     """ОКАТО субъекта → 11-значный код (WSDL okatoCode: \\d{11})."""
@@ -151,6 +160,27 @@ _REGION_INDEX: dict[str, str] = {_normalize(k): k for k in RU_REGIONS}
 for _alias_norm, _canonical in _ALIASES.items():
     if _alias_norm not in _REGION_INDEX:
         _REGION_INDEX[_alias_norm] = _canonical
+
+# Публичный алиас — переиспользуется services/region_from_text.py (поиск
+# субъекта в произвольном тексте адреса) и services/region_distance.py.
+# НЕ копия: та же структура, что строится выше для get_region_info().
+REGION_INDEX: dict[str, str] = _REGION_INDEX
+
+
+def canonical_region_name(region_name: str | None) -> str | None:
+    """region_name (точное имя субъекта, алиас или вариант с иным тире/регистром)
+    → каноническое имя из RU_REGIONS, либо None, если не распознан.
+
+    Используется при нормализации Purchase.delivery_region и любого другого
+    свободного текста региона — единственная функция такой нормализации
+    (ПРАВИЛО №6; get_region_info() выше — про ОКАТО/округ, этот хелпер — про
+    само каноническое имя, обе читают один и тот же _REGION_INDEX)."""
+    if not region_name:
+        return None
+    name = region_name.strip()
+    if name in RU_REGIONS:
+        return name
+    return _REGION_INDEX.get(_normalize(name))
 
 
 def get_region_info(region_name: str | None) -> dict | None:

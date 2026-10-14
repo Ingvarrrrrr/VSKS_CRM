@@ -18,6 +18,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.contract import Contract
 from app.services.item_contractor import set_item_contractor
 from app.services.item_amounts import line_total, apply_item_amounts, effective_vat_on_top, effective_vat_rate
+from app.services.feo_item_lock import assert_item_price_not_locked
 from app.services.item_forms import item_form_for_wish_item
 # _move_or_detach_planned_item/_deactivate_if_orphaned нужны только update_wish
 # (ниже) — остальные хелперы автозаведения плана (_auto_assign_planned_items/
@@ -273,6 +274,7 @@ async def copy_wish(
             quantity=it.quantity,
             unit=it.unit,
             country_origin=it.country_origin,
+            tz_description=getattr(it, 'tz_description', None),
         ))
 
     await db.commit()
@@ -366,6 +368,14 @@ async def create_wish(
                 needed_date=_as_date(item_data.get('needed_date')),  # W2
                 vat_rate=item_data.get('vat_rate'),
                 vat_on_top=item_data.get('vat_on_top'),
+                # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md) —
+                # см. app/services/item_tz.py.
+                tz_description=item_data.get('tz_description'),
+                # Владелец (14.10.2026): позиция ЗАГРУЖЕНА из Плана закупок —
+                # ставится ТОЛЬКО app.services.plan_to_wish.build_items_from_plan
+                # (ПРАВИЛО №6); ручное создание заявки его не присылает (dict.get
+                # по умолчанию False). См. app/services/feo_item_lock.py.
+                from_plan=item_data.get('from_plan', False),
             )
             _row_item_form_wish_create = item_form_for_wish_item(wish, wi)
             if _row_item_form_wish_create:
@@ -642,6 +652,13 @@ async def update_wish(
                     needed_date=_as_date(item_data.get('needed_date')),  # W2
                     vat_rate=item_data.get('vat_rate'),
                     vat_on_top=item_data.get('vat_on_top'),
+                    # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md).
+                    tz_description=item_data.get('tz_description'),
+                    # Владелец (14.10.2026): round-trip того же значения, что
+                    # вернул GET (черновик удаляется и пересобирается целиком —
+                    # нет id для сопоставления со старой строкой, как и в
+                    # update_purchase; см. app/services/feo_item_lock.py).
+                    from_plan=item_data.get('from_plan', False),
                 )
                 # Задача 3 (владелец, 2026-09-20): при пересборе черновика payload
                 # может прислать РАССОГЛАСОВАННУЮ пару feo_planned_item_id/
@@ -680,7 +697,16 @@ async def update_wish(
                 _vat_on_top_row_set = 'vat_on_top' in item_data
                 if 'item_name' in item_data:
                     wi.item_name = item_data['item_name']
+                if 'tz_description' in item_data:
+                    wi.tz_description = item_data['tz_description']
                 if _price_set:
+                    # Владелец (14.10.2026), решение (в): замок цены у
+                    # from_plan-позиции — та же проверка, что у PATCH/PUT
+                    # закупки (ПРАВИЛО №6, app/services/feo_item_lock.py::
+                    # assert_item_price_not_locked), не копия условия. wi —
+                    # ЖИВАЯ строка (update in-place по id, не пересоздана),
+                    # wi.unit_price здесь ещё старое значение из БД.
+                    assert_item_price_not_locked(wi, item_data['unit_price'])
                     wi.unit_price = item_data['unit_price']
                 if _qty_set:
                     wi.quantity = item_data['quantity']

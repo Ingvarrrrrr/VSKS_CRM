@@ -33,12 +33,11 @@
            рядом с сохранением). -->
       <div v-if="allOrgsAccessLocal" class="text-caption" style="color:#e65100">
         <v-icon size="13" color="warning" class="mr-1">mdi-content-copy</v-icon>
-        Доступ ко всем организациям включён, но вкладки и действия ниже по
-        умолчанию сохраняются <strong>только для выбранной организации</strong>,
-        даже при этом включённом доступе. Чтобы применить настройки сразу ко
-        всем организациям охвата — включите галочку «Применить ко всем
-        организациям» рядом с сохранением. Роль в каждой организации
-        настраивается отдельно.
+        Сотрудник увидит данные всех организаций аккаунта с настройками своей
+        основной организации. Где для организации заданы свои настройки —
+        действуют они. Чтобы задать настройки сразу для всех организаций
+        охвата явно — включите галочку «Применить ко всем организациям» рядом
+        с сохранением. Роль в каждой организации настраивается отдельно.
       </div>
       <div v-else class="text-caption text-medium-emphasis">
         Выключено — права по вкладкам и критичным действиям ниже личные для
@@ -102,6 +101,18 @@
       <div v-else-if="manageBlockedReason" class="text-caption mb-2" style="color:#b71c1c">
         <v-icon size="13" color="error" class="mr-1">mdi-lock-outline</v-icon>
         {{ manageBlockedReason }}
+      </div>
+
+      <!-- Владелец продукта, 2026-10-14: своих настроек в выбранной орге нет —
+           GET /overrides вернул строки основной организации, помеченные
+           inherited_from_org_id (см. backend/app/auth/all_orgs_inheritance.py).
+           Показываем это явно, чтобы не выглядело так, будто у орги просто
+           «ничего не настроено» (пусто = роль по умолчанию). -->
+      <div v-if="inheritedFromOrgId" class="text-caption mb-2" style="color:#1565c0">
+        <v-icon size="13" color="primary" class="mr-1">mdi-source-branch</v-icon>
+        Своих настроек в этой организации нет — действуют настройки основной
+        организации «{{ inheritedFromOrgName }}». Изменение любой галочки
+        создаст отдельные настройки для этой организации.
       </div>
 
       <!-- Владелец, 2026-09-02: раньше вкладки и действия рисовались двумя
@@ -313,6 +324,12 @@ const tabs = ref<{ tab_key: string; title: string }[]>([])
 const actions = ref<{ action_key: string; description: string }[]>([])
 const roleDefaults = ref<Record<string, Set<string>>>({})
 const overrides = ref<Record<string, boolean>>({})
+// Владелец продукта, 2026-10-14: org_id основной организации, ОТКУДА
+// унаследованы overrides выбранной организации (своих настроек у неё нет) —
+// null, если показанные overrides свои. Источник — поле inherited_from_org_id
+// в ответе GET /overrides (app/auth/all_orgs_inheritance.py — единственное
+// место решения, Правило №6).
+const inheritedFromOrgId = ref<number | null>(null)
 const orgRoles = ref<Record<number, string | null>>({})
 // Роль ТЕКУЩЕГО (редактирующего) пользователя per-org — нужна, чтобы сравнить
 // его ранг с рангом редактируемого и вперёд отключить переключатели, если
@@ -467,6 +484,15 @@ const orgOptions = computed(() => {
 const selectedOrgLabel = computed(() =>
   orgOptions.value.find(o => o.value === selectedOrgId.value)?.label ?? ''
 )
+
+// Название основной организации, из которой унаследованы overrides (ищем по
+// общему каталогу организаций, не по orgOptions — она может быть вне списка
+// orgAccessList, переданного этому компоненту).
+const inheritedFromOrgName = computed(() => {
+  if (!inheritedFromOrgId.value) return ''
+  return orgCatalog.value.find(o => o.id === inheritedFromOrgId.value)?.name
+    ?? `#${inheritedFromOrgId.value}`
+})
 
 const allOrgsAccessLocal = ref<boolean>(!!props.allOrgsAccess)
 const allOrgsAccessSaving = ref(false)
@@ -699,9 +725,14 @@ async function loadForOrg() {
     const ov: Record<string, boolean> = {}
     for (const row of list) ov[row.key] = row.granted
     overrides.value = ov
+    // Все строки инвариантно помечены одним и тем же inherited_from_org_id
+    // (или все — null) — см. backend list_overrides: своё/унаследованное не
+    // смешивается в одном ответе.
+    inheritedFromOrgId.value = list.find(row => row.inherited_from_org_id)?.inherited_from_org_id ?? null
   } catch (e) {
     console.warn('[UserPermissionsSection] loadForOrg failed', e)
     overrides.value = {}
+    inheritedFromOrgId.value = null
   } finally {
     loading.value = false
   }
@@ -709,6 +740,7 @@ async function loadForOrg() {
 
 function onOrgChange() {
   overrides.value = {}
+  inheritedFromOrgId.value = null
   // Владелец, 2026-09-02: «применить ко всем» — намеренно НЕ переживает смену
   // выбранной организации, чтобы случайно не разнести правку на чужой охват.
   applyToAllOrgs.value = false
@@ -722,6 +754,10 @@ let timer: ReturnType<typeof setTimeout> | null = null
 async function toggle(key: string, granted: boolean) {
   if (isLocked(key)) return  // defensive — disabled checkbox should already prevent this
   overrides.value = { ...overrides.value, [key]: granted }
+  // Бэкенд при первой правке копирует унаследованные overrides в эту орг
+  // ПЕРЕД применением (_apply_overrides_for_org) — после сохранения у орги
+  // уже СВОИ настройки, баннер больше не актуален.
+  inheritedFromOrgId.value = null
   pending[key] = granted
   if (timer) clearTimeout(timer)
   timer = setTimeout(flush, 300)
@@ -786,6 +822,7 @@ onMounted(async () => {
 // Re-fetch overrides when userId changes (dialog re-used for different users)
 watch(() => props.userId, async () => {
   overrides.value = {}
+  inheritedFromOrgId.value = null
   orgRoles.value = {}
   selectedOrgId.value = props.orgAccessList[0]?.org_id ?? null
   applyToAllOrgs.value = false  // не переносим «применить ко всем» на другого пользователя
@@ -813,6 +850,7 @@ watch(
     if (next === selectedOrgId.value) return
     selectedOrgId.value = next
     overrides.value = {}
+    inheritedFromOrgId.value = null
     if (next) loadForOrg()
   },
   { deep: true }

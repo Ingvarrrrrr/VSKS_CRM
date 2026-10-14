@@ -44,6 +44,11 @@ class ProductCreate(BaseModel):
     category: Optional[str] = None
     product_type: Optional[str] = None
     unit: Optional[str] = None  # Единица измерения (владелец, 2026-09-01)
+    # Упаковка (владелец, 14.10): валидны только когда unit — упаковочная
+    # единица (app.services.units.is_pack_unit); иначе роутер принудительно
+    # очищает оба поля (routers/products.py::_apply_pack_fields_rule).
+    pack_quantity: Optional[Decimal] = None
+    pack_unit: Optional[str] = None
     item_kind: Optional[str] = "товар"  # "товар" / "услуга" / "работа" (app.services.item_types.ITEM_TYPES, ПРАВИЛО №6)
     is_reusable: Optional[bool] = True
     photo_url: Optional[str] = None
@@ -97,7 +102,26 @@ class ProductOut(ProductCreate):
     avg_price: Optional[Decimal] = None
     avg_price_basis: Optional[int] = None
     avg_price_stale: Optional[bool] = None
+    # Часть 2 плана clever-bouncing-lantern.md (14.10) — на каком уровне
+    # лестницы нашлись данные (см. compute_price_stats): 'region_batch' |
+    # 'region' | 'nearest_batch' | 'nearest' | 'batch' | 'all'; region_used —
+    # регион, по которому фактически посчитано (может быть «ближайшим», не
+    # регионом организации); batch — партия ('1-9' и т.п.) или None.
+    avg_price_level: Optional[str] = None
+    avg_price_region: Optional[str] = None
+    avg_price_batch: Optional[str] = None
     model_config = {"from_attributes": True}
+
+    @model_validator(mode='after')
+    def _sync_purchase_category_ids(self):
+        # ПРАВИЛО №6: один источник истины — relationship purchase_categories.
+        # purchase_category_ids раньше наследовался из ProductCreate с дефолтом
+        # [] и в ответах API не заполнялся из БД, из-за чего GET всегда отдавал
+        # [] даже после сохранённых категорий (товар 5461, баг владельца
+        # "категория закупки не сохраняется" — на самом деле не читалась).
+        # Пересчитываем всегда, чтобы ответ не мог расходиться с БД.
+        self.purchase_category_ids = [c.id for c in self.purchase_categories]
+        return self
 
     @model_validator(mode='before')
     @classmethod

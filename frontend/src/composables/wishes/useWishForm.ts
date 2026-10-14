@@ -221,6 +221,15 @@ export function useWishForm(deps: {
     ctx.subsidies.value.find(s => s.id === wishForm.value.subsidy_id)?.name ?? null
   )
 
+  // Организация субсидии заявки — для подсказки «Средняя цена» у позиции (план
+  // clever-bouncing-lantern.md, Часть 2, п.7): регион считается по МЕСТУ ПОСТАВКИ
+  // этой организации, не по владельцу формы. Тот же computed, что
+  // CreateOrderView.vue::currentSubsidyOrgId у закупки (Правило №6 — subsidy.org_id
+  // уже приходит в списке субсидий, второй запрос не делаем).
+  const selectedSubsidyOrgId = computed((): number | null =>
+    ctx.subsidies.value.find(s => s.id === wishForm.value.subsidy_id)?.org_id ?? null
+  )
+
   const eventsForSubsidy = computed(() => {
     const filtered = wishForm.value.subsidy_id
       ? ctx.events.value.filter(e => e.subsidy_id === wishForm.value.subsidy_id && (e.is_active !== false))
@@ -833,6 +842,13 @@ export function useWishForm(deps: {
           // форму (проживание/питание) выбрал пользователь для строки.
           item_form: i.item_form ?? null,
           purchase_match: i.purchase_match ?? null,
+          // Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md,
+          // Этап Б) — ЕДИНСТВЕННЫЙ источник, который реально сохраняется на
+          // сервер (см. buildWishPayload ниже — это поле не вырезается из
+          // payload). Пусто ⇒ действует каталожное (см. _description — тогда
+          // оно равно i.description, т.к. WishItemOut.description уже
+          // effective_item_tz, см. wish_serializers.py).
+          tz_description: i.tz_description ?? null,
           // productPhotoSrc (ПРАВИЛО №6) — прямо из полей позиции, отданных
           // GET /wishes/{id} (has_photo/photo_url/photo_link), без похода за
           // самим товаром в каталог.
@@ -843,6 +859,8 @@ export function useWishForm(deps: {
           // (app/services/wish_serializers.py::_attach_item_product_snapshot,
           // поля description/description_44fz) — раньше бралось из полного
           // каталога, теперь без похода за каталогом; читает WishTzSection.vue.
+          // ТОЛЬКО подсказка «из каталога» (см. tz_description выше) — сама НЕ
+          // сохраняется (вырезается из payload ниже, как и раньше).
           _description: i.description ?? undefined,
           _description_44fz: i.description_44fz ?? undefined,
           _price_meta: i.product_id != null ? {
@@ -1230,7 +1248,7 @@ export function useWishForm(deps: {
     applyCommonDateToAllItems, wishFormRef, wishSubmitBtnRef,
     validationArrowsActive, validationArrowFrom, validationArrowTargets, dismissValidationArrows,
     pointArrowsTo, showValidationArrows,
-    saving, serverFieldErrors, wishForm, selectedSubsidyName, eventsForSubsidy,
+    saving, serverFieldErrors, wishForm, selectedSubsidyName, selectedSubsidyOrgId, eventsForSubsidy,
     wishFeoSelected, wishFeoPerItemDisableDialog, wishFeoPerItemDisableCount,
     onWishFeoPerItemChange, cancelWishFeoPerItemDisable, confirmWishFeoPerItemDisable,
     orgMembers, loadOrgMembers, orgUsers, resolveUserPosition,

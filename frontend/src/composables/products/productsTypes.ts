@@ -13,6 +13,11 @@ export interface PurchaseCategory { id: number; name: string; sort_order: number
 export interface Product {
   id: number; name: string; category?: string; product_type?: string; item_kind?: string
   unit?: string | null  // Единица измерения (владелец, 2026-09-01)
+  // Упаковка (владелец, 14.10) — валидны только при упаковочной unit (см.
+  // utils/units.ts::isPackUnit); backend принудительно очищает оба поля при
+  // смене unit на неупаковочный.
+  pack_quantity?: number | string | null
+  pack_unit?: string | null
   price?: number; description?: string; description_44fz?: string; photo_url?: string
   photo_link?: string; clarification_link?: string
   is_active: boolean; is_reusable?: boolean; feo_category_id?: number
@@ -40,6 +45,12 @@ export interface Product {
   avg_price?: number | null
   avg_price_basis?: number
   avg_price_stale?: boolean
+  // Часть 2 плана clever-bouncing-lantern.md (14.10) — средняя теперь считается
+  // по лестнице уровней регион/партия (см. utils/avgPrice.ts::formatAvgPriceLabel,
+  // Правило №6 — единственный форматтер читает эти три поля).
+  avg_price_level?: string | null
+  avg_price_region?: string | null
+  avg_price_batch?: string | null
 }
 
 // Форма 409 при удалении товара (backend/app/services/product_delete_impact.py,

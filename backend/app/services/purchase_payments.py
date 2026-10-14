@@ -233,7 +233,11 @@ async def recompute_purchase_payments(db: AsyncSession, purchase_id: int) -> Pur
 async def _request_paid_confirmation(db: AsyncSession, p: Purchase) -> None:
     """Завести запрос подтверждения «Оплачено», если его ещё нет (не больше
     одной pending-записи на закупку — частичный уникальный индекс модели) и
-    уведомить согласующих субсидии. Статус закупки НЕ меняет — только после
+    уведомить тех, у кого есть право 'paid_confirmation.decide' по этой
+    субсидии (решение владельца 14.10.2026 — адресаты определяются ТЕМ ЖЕ
+    способом, каким решение проверяется на confirm/reject, см.
+    app.routers.purchase_paid_confirmations._can_decide, ПРАВИЛО №6: не
+    вторая формула «кто согласующий»). Статус закупки НЕ меняет — только после
     явного confirm (app/routers/purchase_paid_confirmations.py). Ошибка
     доставки уведомления не должна ронять сохранение платежа — см. try/except
     ниже (тот же паттерн, что app/services/purchase_transition_core.py)."""
@@ -263,19 +267,16 @@ async def _request_paid_confirmation(db: AsyncSession, p: Purchase) -> None:
         from app.services.sandbox_guard import purchase_is_sandbox
         if await purchase_is_sandbox(db, p):
             return
-        from app.models.subsidy_approver import SubsidyApprover
-        from app.models.user import User
         from app.notifications import notify_purchase_paid_confirmation_requested
         from app.services.notify_after_commit import queue_after_commit
+        from app.services.authorized_approvers import list_users_with_org_key
+        from app.models.subsidy import Subsidy
 
-        approver_ids = (await db.execute(
-            select(SubsidyApprover.user_id).where(
-                SubsidyApprover.subsidy_id == p.subsidy_id,
-                SubsidyApprover.user_id.isnot(None),
-            )
-        )).scalars().all()
-        for uid in {uid for uid in approver_ids if uid}:
-            user = await db.get(User, uid)
+        subsidy = await db.get(Subsidy, p.subsidy_id)
+        decide_users = await list_users_with_org_key(
+            db, subsidy.org_id, 'paid_confirmation.decide', subsidy_id=p.subsidy_id,
+        ) if subsidy else []
+        for user in decide_users:
             if user:
                 # QA-находка (05.10.2026): recompute_purchase_payments вызывается
                 # ВНУТРИ более широких транзакций, которые коммитят в конце —

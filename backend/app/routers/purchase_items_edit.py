@@ -23,6 +23,7 @@ from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_ove
 from app.services.feo_plan_common import composite_group_metrics
 from app.services.plan_autoassign import auto_assign_planned_items, move_or_detach_planned_item, deactivate_if_orphaned
 from app.services.plan_graph_versions import _create_plan_graph_version
+from app.services.feo_item_lock import is_item_feo_locked, assert_item_price_not_locked
 from app.services.item_contractor import set_item_contractor
 from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_amounts import apply_item_amounts, line_total, effective_vat_on_top, effective_vat_rate
@@ -31,15 +32,23 @@ from app.routers.purchases import _has_purchase_write_access, _recalc_purchase_t
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
 
-# Владелец (2026-09-20): «когда закупка создаётся из заявки — у неё нельзя
-# менять категорию ФЭО; из какой взяли, в такой и должна находиться; менять —
-# в плане и согласовывать до формирования закупки». Тот же принцип на уровне
-# ОДНОЙ позиции закупки (см. _guard_feo_category_change_after_approval в
-# purchases.py — та же формулировка задачи, но на уровне шапки закупки):
-# позиция, привязанная к плановой позиции (feo_planned_item_id) ИЛИ пришедшая
-# из заявки (wish_item_id), — её категория ФЭО зафиксирована планом. Менять
+# Владелец (2026-09-20, сужено 14.10.2026 — жалобы (а)-(г)): «когда закупка
+# создаётся из заявки — у неё нельзя менять категорию ФЭО; из какой взяли, в
+# такой и должна находиться; менять — в плане и согласовывать до формирования
+# закупки». Тот же принцип на уровне ОДНОЙ позиции закупки (см.
+# _guard_feo_category_change_after_approval в purchases.py — та же
+# формулировка задачи, но на уровне шапки закупки): позиция, ЗАГРУЖЕННАЯ из
+# плана (PurchaseItem.from_plan — см. app/services/feo_item_lock.py,
+# единственный читатель), — её категория ФЭО зафиксирована планом. Менять
 # можно только в плане закупок, до формирования закупки. Жёсткий замок — БЕЗ
 # суперадмин-обхода (владелец хочет именно так; см. отчёт).
+#
+# Владелец (14.10.2026, жалоба (а)): простая привязка feo_planned_item_id/
+# wish_item_id у РУЧНОЙ позиции (auto_assign_planned_items завела свежую
+# авто-плановую, или человек сам выбрал существующую плановую позицию в
+# диалоге «Редактировать позицию») — это НЕ «из плана», категория такой
+# позиции остаётся редактируемой (жалоба (г): при смене категории привязка
+# просто снимается — см. патч ниже, обычная ветка _category_changing).
 #
 # ПРАВИЛО №6: единственное место, где рождается текст/код этой ошибки — обе
 # проверки ниже (точечный PATCH одной позиции и PUT с полной заменой items)
@@ -66,7 +75,7 @@ def _guard_item_feo_category_locked_from_plan(
     new_feo_category_id: Optional[int],
     clearing: bool = False,
 ) -> None:
-    if it.feo_planned_item_id is None and it.wish_item_id is None:
+    if not is_item_feo_locked(it):
         return
     if clearing or (new_feo_category_id is not None and new_feo_category_id != it.feo_category_id):
         _raise_item_feo_category_locked()
@@ -84,7 +93,16 @@ def _guard_item_feo_category_locked_from_plan(
 # категорией, — тот же обход замка, что и точечный PATCH выше блокирует.
 # Один SELECT по всем feo_planned_item_id входящих позиций (без N+1).
 async def assert_items_feo_category_matches_planned_items(items_data, db: AsyncSession) -> None:
-    _fpi_ids = {i.feo_planned_item_id for i in items_data if i.feo_planned_item_id is not None}
+    # Владелец (14.10.2026, жалоба (а)): замок проверяется ТОЛЬКО для позиций,
+    # реально ЗАГРУЖЕННЫХ из плана (from_plan=True) — см. feo_item_lock.py.
+    # Ручная позиция с привязкой к плановой (автозаведённой или выбранной
+    # человеком) на PUT'е свободно переезжает в другую категорию (привязка
+    # снимается обычной веткой _category_changing/move_or_detach_planned_item,
+    # не этим гейтом).
+    _fpi_ids = {
+        i.feo_planned_item_id for i in items_data
+        if i.feo_planned_item_id is not None and getattr(i, "from_plan", False)
+    }
     if not _fpi_ids:
         return
     from app.models.feo_planned_item import FeoPlannedItem
@@ -93,6 +111,8 @@ async def assert_items_feo_category_matches_planned_items(items_data, db: AsyncS
     )).all()
     _fpi_cat_map = {row[0]: row[1] for row in _rows}
     for _i in items_data:
+        if not getattr(_i, "from_plan", False):
+            continue
         if _i.feo_planned_item_id is None or _i.feo_category_id is None:
             continue
         _plan_cat_id = _fpi_cat_map.get(_i.feo_planned_item_id)
@@ -134,6 +154,11 @@ async def set_item_product(
 
 class _ItemPatchBody(BaseModel):
     item_name: Optional[str] = None
+    # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md) —
+    # None здесь значит «не прислали» (см. model_fields_set ниже), не «очистить»;
+    # явный null тоже различим через model_fields_set — та же схема, что и у
+    # extra_attrs/item_form в этом же эндпоинте.
+    tz_description: Optional[str] = None
     quantity: Optional[Decimal] = None
     unit: Optional[str] = None
     unit_price: Optional[Decimal] = None
@@ -216,6 +241,12 @@ async def patch_purchase_item(
     _price_set = "unit_price" in body.model_fields_set
     _unit_set = "unit" in body.model_fields_set
     _vat_on_top_set = "vat_on_top" in body.model_fields_set
+    # Владелец (14.10.2026, решение (в)): у позиции, ЗАГРУЖЕННОЙ из плана
+    # (from_plan), цена всегда плановая — выбор товара каталога её не
+    # перебивает, и правка цены вручную запрещена (409, не молчаливый откат).
+    # admin_override не обходит этот гейт — цену правят в самом плане закупок.
+    if _price_set:
+        assert_item_price_not_locked(it, body.unit_price)
     _wants_tz_change = _qty_set or _price_set or _vat_on_top_set
     if _wants_tz_change and p.status in TZ_FROZEN_STATUSES:
         if body.admin_override and current_user.role in ADMIN_ROLES:
@@ -545,6 +576,8 @@ async def patch_purchase_item(
         if not name:
             raise HTTPException(422, "Название позиции не может быть пустым")
         it.item_name = name
+    if "tz_description" in body.model_fields_set:
+        it.tz_description = body.tz_description
     _extra_attrs_set = "extra_attrs" in body.model_fields_set
     _item_form_set = "item_form" in body.model_fields_set
     if _qty_set:
@@ -669,6 +702,7 @@ async def patch_purchase_item(
     await db.commit()
     return {
         "ok": True, "item_id": it.id, "item_name": it.item_name,
+        "tz_description": it.tz_description,
         "quantity": float(it.quantity or 0), "unit": it.unit,
         "unit_price": float(it.unit_price or 0), "total_price": float(it.total_price or 0),
         "vat_on_top": it.vat_on_top,
@@ -995,6 +1029,10 @@ async def split_purchase_item(
     _src_planned_unit_price = it.planned_unit_price
     _src_extra_attrs = it.extra_attrs or {}
     _src_item_form = it.item_form
+    # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md) —
+    # части разбивки — те же позиции, с тем же названием/товаром, поэтому
+    # наследуют то же ТЗ, что и исходная строка.
+    _src_tz_description = it.tz_description
 
     # Часть 1 — мутируем исходную строку: id, история (EntityChange), wish_item_id
     # и прочие ссылки сохраняются (правило: «исходная строка сохраняется»).
@@ -1046,6 +1084,7 @@ async def split_purchase_item(
             # over_plan наследуется от исходной позиции — см. комментарий у
             # _check_rows выше (находка QA 2026-08-18).
             over_plan=bool(it.over_plan),
+            tz_description=_src_tz_description,
         )
         # ПРАВИЛО №6 (группа D5, QA round 2): единственный писатель —
         # item_contractor.set_item_contractor (не голый contractor_id=.../

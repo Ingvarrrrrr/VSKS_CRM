@@ -261,6 +261,25 @@
             variant="outlined" density="compact" class="mb-2"
             :readonly="!!editOrgItem.contractor_id"
           />
+          <!-- Регион организации (план clever-bouncing-lantern.md, Часть 2, п.9,
+               14.10) — read-only, проставляется backend'ом из юр. адреса выше
+               (org_region_from_address.py). Без адреса/региона — предупреждение:
+               без него не считается средняя цена по региону у позиций заявок/
+               закупок этой организации (см. AvgPriceHint.vue). -->
+          <v-alert
+            v-if="editOrgItem.id && !editOrgItem.region"
+            type="warning" density="compact" variant="tonal" class="mb-3"
+            icon="mdi-map-marker-alert-outline"
+          >
+            <span class="text-caption">Укажите юридический адрес — по нему считаются средние цены по региону.</span>
+          </v-alert>
+          <v-alert
+            v-else-if="editOrgItem.region"
+            type="info" density="compact" variant="tonal" class="mb-3"
+            icon="mdi-map-marker-outline"
+          >
+            <span class="text-caption">Регион: {{ editOrgItem.region }}</span>
+          </v-alert>
           <v-text-field
             v-model="editOrgItem.signatory_position" label="Должность подписанта"
             variant="outlined" density="compact" class="mb-2"
@@ -374,6 +393,11 @@ interface Org {
   created_at: string
   user_count: number
   contractor_id?: number | null
+  // Регион организации (владелец, план clever-bouncing-lantern.md, Часть 2, 🟡
+  // правка 1, 14.10) — проставляется САМ из юр. адреса (backend/app/services/
+  // org_region_from_address.py), read-only на фронте. Нужен для средней цены по
+  // региону в редакторе позиций заявки/закупки (см. utils/avgPrice.ts).
+  region?: string | null
 }
 
 const EGRUL_FIELDS = [
@@ -438,6 +462,7 @@ const editOrgItem = ref({
   signatory_position: '',
   contractor_id: null as number | null,
   root_org_id: null as number | null,
+  region: null as string | null,
 })
 const egrulLoading = ref(false)
 const egrulMessage = ref('')
@@ -539,6 +564,7 @@ function openCreateOrg() {
     signatory_position: '',
     contractor_id: null,
     root_org_id: null,
+    region: null,
   }
   egrulMessage.value = ''
   editOrgDialog.value = true
@@ -560,6 +586,7 @@ async function openEditOrg(org: Org) {
     signatory_position: (org as any).signatory_position || '',
     contractor_id: org.contractor_id ?? null,
     root_org_id: null,
+    region: org.region ?? null,
   }
   egrulMessage.value = ''
   editOrgDialog.value = true

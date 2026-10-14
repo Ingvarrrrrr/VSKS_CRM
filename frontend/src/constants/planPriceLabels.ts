@@ -12,3 +12,8 @@
 // FeoPlannedItemsSelect.vue, ItemsTableFlat/Stages/CardsView.vue. Держать
 // формулировку одной константой, чтобы тексты не разъезжались по местам.
 export const UNIT_PRICE_NOT_FIXED_HINT = 'Цена за единицу не зафиксирована'
+
+// Владелец (14.10.2026, решение (в)): цена позиции, ЗАГРУЖЕННОЙ из Плана
+// закупок, — всегда плановая; поле «Цена за ед.» становится readonly (см.
+// ItemsTableFlat.vue/isItemFeoCategoryLocked), её меняют в самом плане.
+export const PLAN_PRICE_LOCKED_HINT = 'Плановая цена — из Плана закупок, меняется в плане закупок'

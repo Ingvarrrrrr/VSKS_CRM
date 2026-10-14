@@ -607,8 +607,11 @@ async def notify_subsidy_revision_decided(revision, subsidy, author_user, decide
 async def notify_purchase_paid_confirmation_requested(purchase, approver_user, confirmation) -> None:
     """Оплата найдена в казначейской выписке, закупка «Доставлено» — вместо
     молчаливого перевода в paid (владелец, 04.10.2026, план
-    2026-10-04-fadm-statement) согласующий субсидии подтверждает/отклоняет.
-    По образцу notify_plan_excess_approval_step."""
+    2026-10-04-fadm-statement) подтверждает/отклоняет сотрудник с правом
+    'paid_confirmation.decide' (отдельная галочка, решение владельца
+    14.10.2026 — адресаты берутся через app.services.authorized_approvers.
+    list_users_with_org_key, см. app.services.purchase_payments.
+    _request_paid_confirmation). По образцу notify_plan_excess_approval_step."""
     subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")
     amount = _money(confirmation.amount_confirmed) if confirmation.amount_confirmed is not None else "—"
     text = (

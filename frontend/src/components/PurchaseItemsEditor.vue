@@ -97,8 +97,7 @@
           v-if="selectedItemIdxs.length > 0 && hasUncatalogedSelected && !props.readonly"
           size="small" variant="tonal" color="teal"
           prepend-icon="mdi-database-plus"
-          :loading="bulkAddCatalogLoading"
-          @click="bulkAddToCatalog">
+          @click="startBulkAddToCatalog">
           Добавить в каталог ({{ uncatalogedSelectedCount }})
         </v-btn>
         <slot name="toolbar-actions" />
@@ -344,6 +343,8 @@
           :format-number="formatNumber"
           :parse-number="parseNumber"
           :contractor-filter="contractorFilter"
+          :avg-price-for="avgPriceFor"
+          @apply-avg-price="applyAvgPrice"
           @toggle-select-all="toggleSelectAll"
           @toggle-item-select="toggleItemSelect"
           @toggle-expand="toggleExpand"
@@ -432,6 +433,8 @@
           :parse-number="parseNumber"
           :contractor-filter="contractorFilter"
           :product-photo-src="productPhotoSrc"
+          :avg-price-for="avgPriceFor"
+          @apply-avg-price="applyAvgPrice"
           @toggle-select-all="toggleSelectAll"
           @toggle-item-select="toggleItemSelect"
           @inline-match-pick="onInlineMatchPick"
@@ -512,6 +515,8 @@
           :parse-number="parseNumber"
           :contractor-filter="contractorFilter"
           :product-photo-src="productPhotoSrc"
+          :avg-price-for="avgPriceFor"
+          @apply-avg-price="applyAvgPrice"
           @toggle-select-all="toggleSelectAll"
           @toggle-item-select="toggleItemSelect"
           @inline-match-pick="onInlineMatchPick"
@@ -568,6 +573,8 @@
         :parse-number="parseNumber"
         :contractor-filter="contractorFilter"
         :product-photo-src="productPhotoSrc"
+        :avg-price-for="avgPriceFor"
+        @apply-avg-price="applyAvgPrice"
         @toggle-select-all="toggleSelectAll"
         @toggle-item-select="toggleItemSelect"
         @inline-match-pick="onInlineMatchPick"
@@ -601,6 +608,8 @@
         :format-number="formatNumber"
         :parse-number="parseNumber"
         :contractor-filter="contractorFilter"
+        :avg-price-for="avgPriceFor"
+        @apply-avg-price="applyAvgPrice"
         @toggle-select-all="toggleSelectAll"
         @toggle-item-select="toggleItemSelect"
         @inline-match-pick="onInlineMatchPick"
@@ -622,7 +631,7 @@
       </v-btn>
       <v-btn v-if="props.supportsFullProductDialog && !isFoodForm"
         variant="outlined" prepend-icon="mdi-package-variant-plus" size="small" color="primary"
-        @click="openFullProduct(-1)">
+        @click="openProductEditor(-1)">
         Добавить товар в каталог
       </v-btn>
     </div>
@@ -639,26 +648,19 @@
       @create-new="createProductFromPicker"
     />
 
-    <!-- ===== Full product card dialog (Layer 2: extracted) ===== -->
-    <FullProductDialog
+    <!-- ===== Единое окно товара (ProductEditorDialog.vue, ПРАВИЛО №6,
+         владелец 14.10) — заменяет урезанную копию FullProductDialog.vue.
+         Открывается программно (ref + .open()), сама форма/валидация/
+         дубликаты — в ProductFormDialog.vue + useProductsForm.ts, как на
+         странице «Товары». ===== -->
+    <ProductEditorDialog
       v-if="props.supportsFullProductDialog"
-      v-model="fullProductDialog"
-      :form="fullProductForm"
-      :editing-id="fullProductEditingId"
-      :saving="fullProductSaving"
-      :supports-photo-upload="props.supportsPhotoUpload"
-      :name-search="fullProductNameSearch"
-      :name-suggestions="fullProductNameSuggestions"
-      :is-duplicate="isFullProductDuplicate"
-      :type-options="fullProductTypeOptions"
-      :category-options="fullProductCategoryOptions"
-      :avg-price="fullAvgPrice"
-      :photo-preview="fullProductPhotoPreview"
-      :photo-file-list="fullProductPhotoFileList"
-      :has-photo-file="!!fullProductPhotoFile"
-      @update:name-search="(v) => fullProductNameSearch = v"
-      @photo-file-change="onFullPhotoFileChange"
-      @save="saveFullProduct"
+      ref="productEditorRef"
+      :queue-label="bulkQueue.queueLabel.value"
+      :show-skip="bulkQueue.active.value"
+      @saved="onProductEditorSaved"
+      @skip="onProductEditorSkip"
+      @closed="onProductEditorClosed"
     />
 
     <!-- ===== Items import dialog (Excel 2-step + Smart import) — Layer 2: extracted ===== -->
@@ -678,6 +680,8 @@
       :smart-import-columns="smartImportColumns"
       :smart-import-result="smartImportResult"
       :smart-import-loading="smartImportLoading"
+      :import-total-in-file="importTotalInFile"
+      :import-truncated="importTruncated"
       :column-mapping-applied="columnMappingApplied"
       :crm-mapping-fields="CRM_MAPPING_FIELDS"
       :crm-field-select-items="crmFieldSelectItems"
@@ -732,6 +736,15 @@
       v-model="sumMismatchShow"
       :warnings="sumMismatchWarnings"
       @confirm="onSumMismatchConfirm"
+    />
+
+    <!-- ===== Окно сравнения ТЗ при импорте (план item-tz-description.md, Этап Б) ===== -->
+    <ItemTzCompareDialog
+      v-if="tzCompareShow"
+      v-model="tzCompareShow"
+      :rows="tzCompareRows"
+      @confirm="onTzCompareConfirm"
+      @cancel="onTzCompareCancel"
     />
 
     <!-- ===== P1-B: Single Product Repick Dialog ===== -->
@@ -848,8 +861,10 @@ import DuplicateMergeDialog from '@/components/DuplicateMergeDialog.vue'
 import SumMismatchDialog from '@/components/items/SumMismatchDialog.vue'
 import SingleProductPickerDialog from '@/components/SingleProductPickerDialog.vue'
 import ProductPickerDialog from '@/components/items/ProductPickerDialog.vue'
-import FullProductDialog from '@/components/items/FullProductDialog.vue'
+import ProductEditorDialog from '@/components/products/ProductEditorDialog.vue'
+import { useBulkProductCreateQueue } from '@/composables/items/useBulkProductCreateQueue'
 import ItemsImportWizard from '@/components/items/ItemsImportWizard.vue'
+import ItemTzCompareDialog from '@/components/items/ItemTzCompareDialog.vue'
 import ContractorQuickCreate from '@/components/items/ContractorQuickCreate.vue'
 import ItemsTableFlat from '@/components/items/ItemsTableFlat.vue'
 import ItemsCardsView from '@/components/items/ItemsCardsView.vue'
@@ -871,7 +886,8 @@ import {
   copyContractToDelivery as apiCopyContractToDelivery,
 } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
-import { formatNumber, parseNumber, fmtRub } from '@/utils/numberFormat'
+import { formatNumber, parseNumber, fmtRub, moneyFieldOnBlur } from '@/utils/numberFormat'
+import { useAvgPrice } from '@/composables/useAvgPrice'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
@@ -940,6 +956,12 @@ interface EditorItem {
   final_unit_price?: number | null
   final_total?: number | null
   feo_planned_item_id?: number | null
+  wish_item_id?: number | null  // W1: hard link к исходной позиции заявки
+  // Позиция ЗАГРУЖЕНА из Плана закупок (владелец, 14.10.2026) — ТОЛЬКО этот
+  // признак блокирует категорию/цену, не просто наличие wish_item_id/
+  // feo_planned_item_id (см. utils/feoItemLock.ts, жалоба (а)). Только
+  // читается — с фронта не патчится.
+  from_plan?: boolean | null
   feo_category_id?: number | null  // FCAT-F1: per-item привязка к leaf FeoCategory
   feo_node_id?: number | null      // UI-only: позиция каскада ФЭО (любой узел, не только лист)
   // F-PLAN2: true — сумма позиции НЕ расходует план элемента ФЭО (сверх плана);
@@ -952,6 +974,11 @@ interface EditorItem {
   accepted_name?: string | null
   accepted_quantity?: number | null
   accepted_unit?: string | null
+  // Своё ТЗ (характеристики) этой позиции — план item-tz-description.md,
+  // Этап Б (владелец, 14.10.2026). НЕ UI-only — реально сохраняется, см.
+  // CreateOrderView.vue::save() (не входит в список полей, вырезаемых перед
+  // отправкой) и app/schemas/purchases.py::PurchaseItemCreate.tz_description.
+  tz_description?: string | null
   // UI-local state (stripped by parent before save):
   _selectedProduct?: Product | null
   _photo_url?: string
@@ -1153,6 +1180,13 @@ const props = withDefaults(defineProps<{
   // валидация мягкая, как раньше; для остальных — тот же гейт, что у кнопки
   // «Сохранить»), а false означает «не сохранено, копирование прерываем».
   ensureItemsSaved?: () => Promise<boolean> | boolean | Promise<void> | void
+  // Подсказка «Средняя цена» у поля «Цена ед.» (план clever-bouncing-lantern.md,
+  // Часть 2, п.7) — организация, для которой считается регион (место поставки
+  // ЭТОЙ заявки/закупки, не юр.адрес владельца формы). CreateOrderView.vue
+  // передаёт org_id субсидии закупки, WishFormDialog.vue — org_id субсидии
+  // заявки. null/не передан → подсказка не показывается (useAvgPrice ниже
+  // просто не планирует запрос без org_id и без партии).
+  orgId?: number | null
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
@@ -1194,6 +1228,7 @@ const props = withDefaults(defineProps<{
   feoExcessAmount: null,
   feoExcessCategoryId: null,
   contractForm: null,
+  orgId: null,
 })
 
 // Владелец (2026-09-03): «обычному пользователю не надо знать, сколько денег
@@ -1888,6 +1923,35 @@ watch(localItems, (items) => {
   })
 }, { immediate: true })
 
+// Подсказка «Средняя цена» у поля «Цена ед.» (план clever-bouncing-lantern.md,
+// Часть 2, п.7) — ОДИН экземпляр useAvgPrice на весь редактор (ПРАВИЛО №6),
+// прокидывается вниз в ItemsTableStages/Flat/Wish/CardsView как avgPriceFor().
+// Пересчёт планируется (с дебаунсом, см. useAvgPrice.ts) при смене состава
+// позиций/количеств/организации — не на каждую клавишу цены.
+const avgPrice = useAvgPrice()
+watch(
+  [localItems, () => props.orgId],
+  ([items]) => {
+    avgPrice.schedule(
+      items.map(it => ({ productId: it.product_id ?? null, quantity: it.quantity ?? null })),
+      props.orgId,
+    )
+  },
+  { deep: true, immediate: true },
+)
+function avgPriceFor(item: EditorItem) {
+  return avgPrice.statsFor((item as any)?.product_id ?? null)
+}
+function applyAvgPrice(idx: number) {
+  const item = localItems.value[idx]
+  if (!item) return
+  const stats = avgPriceFor(item)
+  if (stats?.avg_price == null) return
+  ;(item as any).unit_price = stats.avg_price
+  moneyFieldOnBlur(item, 'unit_price')
+  calcItemTotal(idx)
+}
+
 function rematchContractItem(contractIdx: number, newSourceItemId: number | null) {
   const ci = localContractItems.value[contractIdx]
   if (!ci) return
@@ -2014,23 +2078,101 @@ const { applyCandidate: applyMatchCandidate, clearBinding: clearMatchBinding } =
 // product dialog), category/type grouping, bulk-add-to-catalog — composable,
 // see composables/items/useItemsCatalog.ts.
 const {
-  loadProducts, productById,
+  loadProducts, productById, onItemProductSelect,
   itemsGroupBy, itemsFilterCats, itemsFilterTypes,
   itemCategoryOptions, itemTypeOptions, itemsFilterActive, itemsDisplayRows, visibleItemsCount,
   hasUncatalogedSelected, uncatalogedSelectedCount, bulkAddCatalogLoading, bulkAddToCatalog,
   onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
   productPickerDialog, productPickerSearch, productPickerResults,
   openProductPicker, selectFromPicker, createProductFromPicker,
-  fullProductDialog, fullProductSaving, fullProductEditingId,
-  fullProductPhotoFile, fullProductPhotoFileList, fullProductPhotoPreview, fullProductForm,
-  fullProductNameSearch, fullProductNameSuggestions, isFullProductDuplicate,
-  fullProductTypeOptions, fullProductCategoryOptions, fullAvgPrice,
-  onFullPhotoFileChange, openFullProduct,
-  openQuickProductEdit, saveFullProduct,
 } = useItemsCatalog({
   props, localItems, selectedItemIdxs, emitUpdate, emit, showSnack,
   applyMatchCandidate, clearMatchBinding, clearItem,
+  openProductEditor: (idx, prefill, productId, prefillPrice) => openProductEditor(idx, prefill, productId, prefillPrice),
 })
+
+// ===== Единое окно товара (ProductEditorDialog.vue, ПРАВИЛО №6) =====
+// Раньше здесь жила своя урезанная копия (fullProductForm/openFullProduct/
+// saveFullProduct внутри useItemsCatalog.ts) — убрана, этот компонент теперь
+// только держит ref на диалог и привязывает сохранённый товар к строке/
+// set-product (моментально, без ожидания общего «Сохранить» — 27.4-14).
+const productEditorRef = ref<InstanceType<typeof ProductEditorDialog> | null>(null)
+// -1 — «Добавить товар в каталог» снизу/из пикера без привязки к строке.
+const productEditorIdx = ref(-1)
+
+function openProductEditor(idx: number, prefill?: string, productId?: number | null, prefillPrice?: number) {
+  productEditorIdx.value = idx
+  productEditorRef.value?.open({ productId: productId ?? null, name: prefill, price: prefillPrice })
+}
+
+function openQuickProductEdit(item: EditorItem) {
+  const idx = localItems.value.indexOf(item)
+  const price = !item.product_id && item.unit_price != null && Number(item.unit_price) > 0 ? Number(item.unit_price) : undefined
+  openProductEditor(idx, item.item_name, item.product_id || undefined, price)
+}
+
+async function onProductEditorSaved(saved: Product) {
+  // Массовое «Добавить в каталог» — очередь сама привязывает товар к ТЕКУЩЕЙ
+  // позиции очереди и решает, открывать ли следующую (useBulkProductCreateQueue.ts).
+  if (bulkQueue.active.value) {
+    const next = await bulkQueue.onSaved(saved)
+    if (next) openProductEditor(next.idx, next.name, undefined, next.price ?? undefined)
+    emit('product-created', saved)
+    return
+  }
+  const idx = productEditorIdx.value
+  if (idx >= 0) {
+    onItemProductSelect(idx, saved)
+    // 27.4-14: моментальная запись привязки в БД (без ожидания общего
+    // «Сохранить»), иначе после F5 product_id вернётся в null.
+    const linkItem = localItems.value[idx]
+    if (props.purchaseId && (linkItem as any)?.id && saved.id) {
+      try {
+        await apiFetch(`/purchases/${props.purchaseId}/items/${(linkItem as any).id}/set-product`,
+          { method: 'POST', body: { product_id: saved.id } })
+      } catch (e) { console.warn('Failed to persist product_id link', e) }
+    }
+  }
+  emit('product-created', saved)
+}
+
+// ===== Массовое «Добавить в каталог» (владелец, 14.10) =====
+// Очередь — composables/items/useBulkProductCreateQueue.ts (ПРАВИЛО №5/№6):
+// то же единое окно товара, по одной позиции за раз, вместо прежнего одного
+// POST /products/bulk-from-purchase-items без общей формы.
+const bulkQueue = useBulkProductCreateQueue({
+  purchaseId: props.purchaseId,
+  onItemProductSelect,
+  showSnack,
+})
+
+function startBulkAddToCatalog() {
+  const items = selectedItemIdxs.value
+    .map(idx => ({ idx, it: localItems.value[idx] }))
+    .filter(({ it }) => it && !it.product_id && (it as any).id)
+    .map(({ idx, it }) => ({
+      idx,
+      name: it.item_name || '',
+      unit: it.unit || null,
+      price: it.unit_price != null && Number(it.unit_price) > 0 ? Number(it.unit_price) : null,
+      rowId: (it as any).id ?? null,
+    }))
+  if (!items.length) {
+    showSnack('Выберите сохранённые позиции без привязки к каталогу', 'warning')
+    return
+  }
+  const first = bulkQueue.start(items)
+  if (first) openProductEditor(first.idx, first.name, undefined, first.price ?? undefined)
+}
+
+function onProductEditorSkip() {
+  const next = bulkQueue.onSkip()
+  if (next) openProductEditor(next.idx, next.name, undefined, next.price ?? undefined)
+}
+
+function onProductEditorClosed() {
+  bulkQueue.onClosed()
+}
 
 // Excel/Smart import + product-match review + duplicate-merge + P1-B repick
 // dialog (composable) — see composables/items/useItemsImport.ts. Presentational
@@ -2051,6 +2193,8 @@ const {
   dupMergeShow, dupMergeGroups, onDupMergeConfirm,
   sumMismatchShow, sumMismatchWarnings, onSumMismatchConfirm,
   repickDialog, openRepickDialog, onRepickPick,
+  importTotalInFile, importTruncated,
+  tzCompareShow, tzCompareRows, onTzCompareConfirm, onTzCompareCancel,
 } = useItemsImport({
   props: propsForItemDefaults, localItems, localContractItems, contractItemImportMode,
   emitUpdate, emitContractItemsUpdate, emit, showSnack, nextUid, applyMatchCandidate,
@@ -2282,7 +2426,8 @@ const bulkMatch = useFeoPlannedBulkMatch({
 })
 
 // import-no-clutter: bulk-add несвязанных позиций в каталог
-// hasUncatalogedSelected..saveFullProduct — composables/items/useItemsCatalog.ts
+// hasUncatalogedSelected/uncatalogedSelectedCount/bulkAddCatalogLoading/
+// bulkAddToCatalog — composables/items/useItemsCatalog.ts
 
 
 // SN-UX: formatNumber / parseNumber now imported from @/utils/numberFormat

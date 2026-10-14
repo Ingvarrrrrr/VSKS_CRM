@@ -20,6 +20,11 @@ from app.database import get_db
 from app.models.product import Product
 from app.models.user import User
 from app.schemas.schemas import ProductOut
+from app.services.product_catalog_guard import (
+    assert_can_edit_catalog,
+    can_edit_catalog,
+    CATALOG_EDIT_DENIED_MESSAGE,
+)
 from app.services.product_photo_fetch import (
     REASON_LABELS,
     PhotoFetchError,
@@ -75,7 +80,7 @@ async def serve_product_photo_bytea(
 async def delete_product_photo(
     product_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Clear the stored photo bytea + metadata + legacy local photo_url.
 
@@ -85,6 +90,10 @@ async def delete_product_photo(
     product = await db.get(Product, product_id)
     if not product:
         raise HTTPException(404, "Товар не найден")
+    # Защита каталога (план clever-bouncing-lantern.md, Часть 1, 14.10.2026):
+    # удалить уже загруженное фото — только с products.edit_catalog (ПРАВИЛО
+    # №6, та же единая проверка, что и у PUT/PATCH/DELETE товара).
+    await assert_can_edit_catalog(current_user, db)
     product.photo_data = None
     product.photo_mime = None
     product.photo_size = None
@@ -210,6 +219,11 @@ async def download_single_photo(
     product = result.scalar_one_or_none()
     if not product:
         raise HTTPException(404, "Товар не найден")
+    # Защита каталога (план clever-bouncing-lantern.md, Часть 1, 14.10.2026):
+    # заменить УЖЕ ЗАГРУЖЕННОЕ фото скачиванием — только с галочкой; если
+    # фото ещё нет — заполнение пустого, доступно всем (ПРАВИЛО №6).
+    if product.photo_data is not None and not await can_edit_catalog(current_user, db):
+        raise HTTPException(403, CATALOG_EDIT_DENIED_MESSAGE)
     src = _pick_external_url(product)
     if not src:
         raise HTTPException(400, "Нет внешней ссылки для скачивания")
@@ -235,6 +249,11 @@ async def upload_product_photo(
     product = result.scalar_one_or_none()
     if not product:
         raise HTTPException(404, "Product not found")
+    # Защита каталога (план clever-bouncing-lantern.md, Часть 1, 14.10.2026):
+    # заменить УЖЕ ЗАГРУЖЕННОЕ фото — только с галочкой; загрузить фото
+    # впервые (пусто) — заполнение пустого, доступно всем (ПРАВИЛО №6).
+    if product.photo_data is not None and not await can_edit_catalog(current_user, db):
+        raise HTTPException(403, CATALOG_EDIT_DENIED_MESSAGE)
     if file.content_type not in ALLOWED_IMAGE_MIME:
         raise HTTPException(400, f"Недопустимый тип файла: {file.content_type}")
     raw = await file.read()

@@ -38,7 +38,6 @@ from app.database import get_db
 from app.auth.jwt import get_current_user
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
-from app.models.subsidy_approver import SubsidyApprover
 # Reuse formatters from documents.py — avoids duplicating money/date formatting logic
 from app.routers.documents import (
     _fmt_date, _fmt_money, _fmt_quantity,
@@ -52,6 +51,7 @@ from app.routers.documents import (
 # файле жила урезанная копия-дубль (_resolve_local_product_photo), умевшая
 # только локальный /api/products/photos/<file> и не знавшая про photo_data.
 from app.services.documents.stages_template_engine import make_photo_resolver
+from app.services.item_tz import effective_item_tz
 # Правило №6 — единственный резолвер пути к шаблону документа (субсидийный
 # override → глобальный → DOC_TYPE_FALLBACK_FILES). До 2026-09-17 здесь жила
 # урезанная копия-дубль (PRIMARY_FILE/FALLBACK_FILE ниже), которая не умела
@@ -110,74 +110,19 @@ async def generate_wish_service_note(
         )
 
     # ── Load initiator if provided ──────────────────────────────────────────
-    # Бизнес-правило: за другого человека делать СЗ может только тот, кому
-    # подчинён этот человек (тот же scope что _get_visible_user_ids для задач).
-    # Самого себя — всегда можно.
-    initiator = None
-    if initiator_id and initiator_id != getattr(current_user, "id", None):
-        from app.routers.task_visibility import _get_visible_user_ids
-        visible = await _get_visible_user_ids(current_user, db)
-        if visible is not None and initiator_id not in visible:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "INITIATOR_FORBIDDEN",
-                    "message": (
-                        "Указанный инициатор вам не подчинён. Сделать служебную "
-                        "записку за другого человека может только его руководитель."
-                    ),
-                },
-            )
-    if initiator_id:
-        res = await db.execute(
-            select(SubsidyApprover)
-            .where(SubsidyApprover.user_id == initiator_id)
-            .options(selectinload(SubsidyApprover.user))
-            .order_by(SubsidyApprover.id)
-            .limit(1)
-        )
-        initiator = res.scalar_one_or_none()
-        if initiator is None:
-            from app.models.user import User as UserModel
-            from types import SimpleNamespace
-            u = (
-                await db.execute(select(UserModel).where(UserModel.id == initiator_id))
-            ).scalar_one_or_none()
-            if u:
-                # Rule #6: не читаем u.position напрямую — единственный резолвер
-                # должности (org-aware, с legacy fallback внутри) уже здесь.
-                initiator = SimpleNamespace(
-                    full_name=u.full_name or u.username,
-                    role_name=await _resolve_user_position_for_wish(
-                        u, db, getattr(w.subsidy, "org_id", None) if w.subsidy else None
-                    ),
-                    user=u,
-                )
-
-        # Membership-check: инициатор должен состоять в организации, к которой
-        # привязана субсидия заявки.
-        subsidy_org_id = getattr(w.subsidy, "org_id", None) if w.subsidy else None
-        init_user = initiator.user if (initiator and getattr(initiator, "user", None)) else None
-        if subsidy_org_id and init_user:
-            from app.models.user_organization import UserOrganization
-            mem = (await db.execute(
-                select(UserOrganization.id).where(
-                    UserOrganization.user_id == init_user.id,
-                    UserOrganization.org_id == subsidy_org_id,
-                ).limit(1)
-            )).first()
-            if not mem and getattr(init_user, "org_id", None) != subsidy_org_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "INITIATOR_NOT_IN_ORG",
-                        "message": (
-                            "Инициатор не состоит в организации, к которой "
-                            "привязана субсидия заявки. Выберите сотрудника "
-                            "этой организации."
-                        ),
-                    },
-                )
+    # Правило №6 (14.10.2026): резолв инициатора — ЕДИНЫЙ resolve_initiator
+    # (app.services.documents.stages_relations), та же проверка
+    # initiator_candidate_ids («штат» орг субсидии + роль выбирающего), что и
+    # для служебки закупки в documents.py::generate_document. Раньше здесь
+    # жила дословная копия (см. git history) с другой — устаревшей —
+    # проверкой «подчинён» и отдельной membership-проверкой.
+    #
+    # customer_org здесь не загружается отдельно (у заявки нет Purchase/
+    # customer_org объекта, который резолвит load_customer) — resolve_initiator
+    # использует его только для имени организации в тексте 403; передаём None,
+    # сообщение в этом случае просто не называет орг по имени.
+    from app.services.documents.stages_relations import resolve_initiator
+    initiator = await resolve_initiator(db, current_user, initiator_id, w.subsidy, None)
 
     # ── Build DocxTemplate object (needed early for InlineImage) ────────────
     try:
@@ -194,7 +139,10 @@ async def generate_wish_service_note(
         items_list.append({
             "num": idx,
             "name": it.item_name or "",
-            "description": (it.product.description if it.product else "") or "",
+            # ПРАВИЛО №6: «действующее ТЗ позиции» — ОДНА функция-источник
+            # (app.services.item_tz.effective_item_tz, владелец 14.10.2026) —
+            # tz_description позиции, если непустое, иначе ТЗ каталога.
+            "description": effective_item_tz(it, it.product) or "",
             "type": it.item_type or "",
             "quantity": _fmt_quantity(it.quantity),
             "unit": it.unit or "",

@@ -14,6 +14,8 @@ import type { SumMismatchWarning, SumMismatchChoice } from '@/components/items/S
 import { applySumMismatchChoice } from '@/utils/qtyPriceCheck'
 import { uploadHttpErrorMessage } from '@/constants/uploadLimits'
 import type { ToastType } from '@/composables/useToast'
+import { tzTextsDiffer } from '@/utils/itemTz'
+import type { TzCompareRow } from '@/components/items/ItemTzCompareDialog.vue'
 
 // EditorItem is structurally identical to the parent's; kept loose here (same
 // convention as ItemsTableFlat.vue/ItemsCardsView.vue) since the parent owns
@@ -85,6 +87,11 @@ export function useItemsImport(deps: UseItemsImportDeps) {
   const ignoredColumns = ref<number[]>([])
   const dragOverTarget = ref<string | null>(null)
   const importError = ref('')
+  // Лимит 200 (владелец, 14.10.2026, план item-tz-description.md, п.4/Этап Б) —
+  // ОДНА пара флагов для ЛЮБОГО пути импорта (xlsx/mapped/smart, nopid/pid);
+  // backend отдаёт total_in_file/truncated — см. app/services/items_import_limits.py.
+  const importTotalInFile = ref<number | null>(null)
+  const importTruncated = ref(false)
 
   const TARGET_FIELDS = [
     { value: 'item_name',     title: 'Наименование',    required: true },
@@ -361,31 +368,76 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     return item
   }
 
-  function _mappedColParams(): URLSearchParams {
+  const _MAPPED_COL_PARAM_NAMES: Record<string, string> = {
+    item_name:     'col_item_name',
+    description:   'col_description',
+    quantity:      'col_quantity',
+    unit_price:    'col_unit_price',
+    total_price:   'col_total_price',
+    unit:          'col_unit',
+    row_num:       'col_row_num',
+    vat_rate:      'col_vat_rate',
+    vat_amount:    'col_vat_amount',
+    total_with_vat: 'col_total_with_vat',
+    category:      'col_category',
+    product_type:  'col_product_type',
+  }
+
+  /** Строит query-параметры col_* / header_row_offset / sheet_name из произвольного
+   * маппинга поле→индекс столбца — общий билдер для ручного режима (dragMapping)
+   * и smart-превью (autoDetectMapping/applyServerAutoMapping), чтобы не заводить
+   * вторую копию paramMap (Правило №6). */
+  function _buildMappedColParams(
+    mapping: Record<string, number | null | undefined>,
+    headerRowOffset: number,
+    sheetName?: string,
+  ): URLSearchParams {
     const params = new URLSearchParams()
-    if (importSelectedSheet.value) params.set('sheet_name', importSelectedSheet.value)
-    const headerRowOffset = currentSheetData.value?.header_row_offset ?? 0
+    if (sheetName) params.set('sheet_name', sheetName)
     if (headerRowOffset > 0) params.set('header_row_offset', String(headerRowOffset))
-    const paramMap: Record<string, string> = {
-      item_name:     'col_item_name',
-      description:   'col_description',
-      quantity:      'col_quantity',
-      unit_price:    'col_unit_price',
-      total_price:   'col_total_price',
-      unit:          'col_unit',
-      row_num:       'col_row_num',
-      vat_rate:      'col_vat_rate',
-      vat_amount:    'col_vat_amount',
-      total_with_vat: 'col_total_with_vat',
-      category:      'col_category',
-      product_type:  'col_product_type',
-    }
-    for (const [field, colIdx] of Object.entries(dragMapping.value)) {
-      if (colIdx !== null && colIdx !== undefined && paramMap[field]) {
-        params.set(paramMap[field], String(colIdx))
+    for (const [field, colIdx] of Object.entries(mapping)) {
+      if (colIdx !== null && colIdx !== undefined && _MAPPED_COL_PARAM_NAMES[field]) {
+        params.set(_MAPPED_COL_PARAM_NAMES[field], String(colIdx))
       }
     }
     return params
+  }
+
+  function _mappedColParams(): URLSearchParams {
+    const headerRowOffset = currentSheetData.value?.header_row_offset ?? 0
+    return _buildMappedColParams(dragMapping.value, headerRowOffset, importSelectedSheet.value)
+  }
+
+  /** POST /api/purchases/items/import-mapped-nopid — вызов, общий для ручного
+   * маппинга (doMappedImport, wish/no-pid ветка) и для smart-превью DOCX/PDF/HTML
+   * без purchaseId (doSmartPreview). Раньше smart-превью читал только sample
+   * (5 строк) из import-preview и терял первую позицию лишним slice — реальные
+   * ПОЛНЫЕ строки даёт только этот эндпоинт (Правило №6 — один механизм чтения
+   * всех строк файла, не плодим второй сэмпл-парсер). */
+  async function _fetchMappedImportNoPid(
+    file: File,
+    mapping: Record<string, number | null | undefined>,
+    headerRowOffset: number,
+    sheetName?: string,
+  ): Promise<{ items: any[]; added: number; warnings: SumMismatchWarning[]; debug?: any; total_in_file?: number; truncated?: boolean }> {
+    const params = _buildMappedColParams(mapping, headerRowOffset, sheetName)
+    const fd = new FormData()
+    fd.append('file', file)
+    // Только чтение файла (ничего не пишет в БД на этапе заявки) — безопасно
+    // для одного тихого повтора при обрыве сети (Правило №6, тот же хелпер/
+    // сообщение, что у apiFetch, владелец 29.09, см. api.ts).
+    const resp = await fetchWithNetworkRetry(() => fetch(`/api/purchases/items/import-mapped-nopid?${params}`, {
+      method: 'POST',
+      headers: {} as HeadersInit,
+      body: fd,
+    }), { retryable: true, suppressErrorDialog: true })
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '')
+      let detail = `Ошибка ${resp.status}`
+      try { detail = JSON.parse(errText).detail || detail } catch { /* */ }
+      throw new Error(detail)
+    }
+    return resp.json()
   }
 
   /** Один вызов /{pid}/items/import-mapped — confirm=false для предпросмотра
@@ -398,12 +450,17 @@ export function useItemsImport(deps: UseItemsImportDeps) {
    * sum_mismatch, а не по числу категорий субсидии). Теперь всё уходит в
    * то же тело FormData, что и файл (backend принимает форму/query
    * одинаково — см. app/services/request_params.py). */
-  async function _requestMappedImportPid(confirm: boolean, resolutions?: Record<number, SumMismatchChoice>) {
+  async function _requestMappedImportPid(
+    confirm: boolean,
+    resolutions?: Record<number, SumMismatchChoice>,
+    tzChoices?: Record<string, 'catalog' | 'file'>,
+  ) {
     const fd = new FormData()
     fd.append('file', itemsImportFile.value as File)
     const params = _mappedColParams()
     params.set('confirm', String(confirm))
     if (resolutions) params.set('resolutions', JSON.stringify(resolutions))
+    if (tzChoices && Object.keys(tzChoices).length) params.set('tz_choices', JSON.stringify(tzChoices))
     for (const [k, v] of params.entries()) fd.append(k, v)
     // confirm=false — предпросмотр расхождений сумм, ничего не пишет,
     // безопасен для одного тихого повтора при обрыве сети; confirm=true —
@@ -458,13 +515,18 @@ export function useItemsImport(deps: UseItemsImportDeps) {
         // вызов уходит сразу же (тот же UX в один клик, что и раньше).
         const preview = await _requestMappedImportPid(false)
         const warnings: SumMismatchWarning[] = preview.warnings || []
+        // Окно сравнения ТЗ (план item-tz-description.md, Этап Б) — preview
+        // уже отдаёт description (файл) и catalog_description (каталог)
+        // раздельно (ПРАВИЛО №6, та же проверка tzTextsDiffer, что и у
+        // остальных путей импорта); собираем выбор ДО confirm=true.
+        const tzChoices = await resolveTzChoicesForPreviewRows(preview.preview || [])
         if (warnings.length > 0) {
           sumMismatchWarnings.value = warnings
           sumMismatchShow.value = true
           _pendingSumMismatchResolve = async (resolutions) => {
             itemsImportLoading.value = true
             try {
-              const finalData = await _requestMappedImportPid(true, resolutions)
+              const finalData = await _requestMappedImportPid(true, resolutions, tzChoices)
               _handleMappedImportPidResult(finalData)
             } catch (e: any) {
               importError.value = e?.message ?? 'Ошибка импорта'
@@ -476,37 +538,33 @@ export function useItemsImport(deps: UseItemsImportDeps) {
           }
           return
         }
-        const finalData = await _requestMappedImportPid(true)
+        const finalData = await _requestMappedImportPid(true, undefined, tzChoices)
         _handleMappedImportPidResult(finalData)
       } else {
-        // Wish / no-pid context — вызов backend import-mapped-nopid
+        // Wish / no-pid context — вызов backend import-mapped-nopid (общий
+        // хелпер _fetchMappedImportNoPid — тот же, что использует smart-превью
+        // DOCX/PDF/HTML ниже, Правило №6).
         const sheet = importPreviewData.value?.sheets?.find((s: any) => s.name === importSelectedSheet.value)
           ?? importPreviewData.value?.sheets?.[0]
         if (!sheet) { showSnack('Нет данных превью', 'error'); return }
-        const fdNoPid = new FormData()
-        fdNoPid.append('file', itemsImportFile.value as File)
-        const paramsNoPid = _mappedColParams()
-        // Реальная запись (без confirm-фазы) — без повтора, но сетевая
-        // ошибка всё равно переводится в человеческое сообщение (Правило №6).
-        const respNoPid = await fetchWithNetworkRetry(() => fetch(`/api/purchases/items/import-mapped-nopid?${paramsNoPid}`, {
-          method: 'POST',
-          headers: {} as HeadersInit,
-          body: fdNoPid,
-        }), { retryable: false, suppressErrorDialog: true })
-        if (!respNoPid.ok) {
-          const errText = await respNoPid.text().catch(() => '')
-          let detail = `Ошибка ${respNoPid.status}`
-          try { detail = JSON.parse(errText).detail || detail } catch { /* */ }
-          throw new Error(detail)
-        }
-        const dataNoPid = await respNoPid.json()
+        const headerRowOffsetNoPid = currentSheetData.value?.header_row_offset ?? 0
+        const dataNoPid = await _fetchMappedImportNoPid(
+          itemsImportFile.value as File, dragMapping.value, headerRowOffsetNoPid, importSelectedSheet.value
+        )
         const backendItems: any[] = dataNoPid.items || []
         const warnings: SumMismatchWarning[] = dataNoPid.warnings || []
+        importTotalInFile.value = dataNoPid.total_in_file ?? null
+        importTruncated.value = !!dataNoPid.truncated
         // Владелец (2026-09-16): «для позиций из каталога должны подтягиваться
         // картинки» — backend (import-mapped-nopid) теперь сам сопоставляет
         // товар по точному имени и отдаёт product_id/photo_url/description/unit
         // от найденного товара; кладём их в строку тем же полем (_photo_url),
         // каким фото-колонка редактора уже пользуется при импорте в закупку.
+        // Своё ТЗ (из файла) и каталожная подсказка — РАЗДЕЛЬНО (план
+        // item-tz-description.md, Этап Б, владелец 14.10.2026): bi.description —
+        // текст из файла (кандидат на own tz_description), bi.catalog_description —
+        // описание сматченного товара каталога (hint). Окно сравнения
+        // (maybeResolveTzCompare в commitNewItems ниже) решает окончательно.
         const buildNewItems = () => backendItems.map((bi) => ({
           _uid: nextUid(),
           _row: bi.row,
@@ -519,16 +577,19 @@ export function useItemsImport(deps: UseItemsImportDeps) {
           total_price: bi.total_price ?? 0,
           country_origin: 'РФ',
           _photo_url: bi.photo_url ?? undefined,
-          _description: bi.description || '',
+          tz_description: (bi.description || '').toString().trim() || null,
+          _description: bi.catalog_description || undefined,
           _category: bi.category || '',
           _product_type: bi.product_type || '',
         } as EditorItem))
         const commitNewItems = (newItems: EditorItem[]) => {
-          localItems.value = [...localItems.value, ...newItems]
-          emitUpdate()
-          itemsImportResult.value = { imported: newItems.length, added: newItems.length }
-          importStep.value = 3
-          showSnack(`Добавлено позиций: ${newItems.length}`)
+          maybeResolveTzCompare(newItems, (finalItems) => {
+            localItems.value = [...localItems.value, ...finalItems]
+            emitUpdate()
+            itemsImportResult.value = { imported: finalItems.length, added: finalItems.length }
+            importStep.value = 3
+            showSnack(`Добавлено позиций: ${finalItems.length}`)
+          })
         }
         if (warnings.length > 0) {
           sumMismatchWarnings.value = warnings
@@ -648,6 +709,117 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     const cb = _pendingSumMismatchResolve
     _pendingSumMismatchResolve = null
     cb?.(resolutions)
+  }
+
+  // ── Своё ТЗ при импорте: окно сравнения с каталогом (план item-tz-description.md,
+  // Этап Б, владелец 14.10.2026). Backend (Этап А) отдаёт description (текст из
+  // файла) и catalog_description (описание сматченного товара) РАЗДЕЛЬНО —
+  // maybeResolveTzCompare — ЕДИНАЯ точка, которая решает, нужно ли спросить
+  // пользователя, ПЕРЕД тем как позиции попадут в localItems (ПРАВИЛО №6: один
+  // механизм на все пути импорта, не три копии). Показывается, только если есть
+  // хоть одна строка с различием (tzTextsDiffer, utils/itemTz.ts); по умолчанию
+  // выбор "из файла" (владелец, п.3 плана). ──
+  const tzCompareShow = ref(false)
+  const tzCompareRows = ref<TzCompareRow[]>([])
+  let _pendingTzCompareItems: EditorItem[] = []
+  let _pendingTzCompareCommit: ((items: EditorItem[]) => void) | null = null
+
+  function maybeResolveTzCompare(newItems: EditorItem[], commitFn: (items: EditorItem[]) => void) {
+    const rows: TzCompareRow[] = []
+    newItems.forEach((it, idx) => {
+      const catalogText = (it._description || '').toString().trim()
+      const fileText = (it.tz_description || '').toString().trim()
+      if (catalogText && fileText && tzTextsDiffer(catalogText, fileText)) {
+        rows.push({ idx, itemName: it.item_name || '', catalogText, fileText, choice: 'file' })
+      }
+    })
+    if (!rows.length) { commitFn(newItems); return }
+    _tzCompareMode = 'items'
+    tzCompareRows.value = rows
+    _pendingTzCompareItems = newItems
+    _pendingTzCompareCommit = commitFn
+    tzCompareShow.value = true
+  }
+
+  function onTzCompareConfirm(resolved: TzCompareRow[]) {
+    tzCompareShow.value = false
+    if (_tzCompareMode === 'rows') {
+      _resolveTzChoicesFromDialog(resolved)
+      return
+    }
+    for (const r of resolved) {
+      const item = _pendingTzCompareItems[r.idx]
+      if (!item) continue
+      // 'catalog' — очищаем своё ТЗ, дальше действует каталожное (resetTzToCatalog
+      // формула, см. utils/itemTz.ts); 'file' — оставляем как есть (tz_description
+      // уже = текст из файла, см. maybeResolveTzCompare выше).
+      if (r.choice === 'catalog') item.tz_description = null
+    }
+    const items = _pendingTzCompareItems
+    const commit = _pendingTzCompareCommit
+    _pendingTzCompareItems = []
+    _pendingTzCompareCommit = null
+    commit?.(items)
+  }
+
+  function onTzCompareCancel() {
+    tzCompareShow.value = false
+    if (_tzCompareMode === 'rows') {
+      // Отмена сравнения (не всего импорта — confirm=true ещё не отправлен):
+      // продолжаем с дефолтом «из файла» по всем строкам (владелец, п.3 плана —
+      // то же поведение, как если бы строк с расхождением не было вовсе).
+      _resolveTzChoicesFromDialog([])
+      return
+    }
+    _pendingTzCompareItems = []
+    _pendingTzCompareCommit = null
+  }
+
+  // ── Своё ТЗ при импорте — вариант для путей, которые шлют confirm=true
+  // ПРЯМО на сервер (doSmartImport/doMappedImport, purchase-контекст: файл
+  // парсится заново на backend, клиентских EditorItem ещё нет). Тот же диалог
+  // и тот же критерий tzTextsDiffer, что у maybeResolveTzCompare выше
+  // (ПРАВИЛО №6 — один компонент/одна проверка, другой способ применения
+  // результата: Record<row_num, 'catalog'|'file'> уходит в tz_choices тела
+  // запроса, backend/app/services/items_import_tz_choice.py::resolve_tz_description
+  // решает окончательно). ──
+  let _tzCompareMode: 'items' | 'rows' = 'items'
+  let _pendingTzChoicesRowNums: number[] = []
+  let _pendingTzChoicesResolve: ((choices: Record<string, 'catalog' | 'file'>) => void) | null = null
+
+  function _resolveTzChoicesFromDialog(resolved: TzCompareRow[]) {
+    const choices: Record<string, 'catalog' | 'file'> = {}
+    for (const r of resolved) {
+      const rowNum = _pendingTzChoicesRowNums[r.idx]
+      if (rowNum != null) choices[String(rowNum)] = r.choice
+    }
+    const resolve = _pendingTzChoicesResolve
+    _pendingTzChoicesResolve = null
+    _pendingTzChoicesRowNums = []
+    resolve?.(choices)
+  }
+
+  function resolveTzChoicesForPreviewRows(
+    rows: Array<{ row?: number | null; item_name?: string | null; description?: string | null; catalog_description?: string | null }>,
+  ): Promise<Record<string, 'catalog' | 'file'>> {
+    const compareRows: TzCompareRow[] = []
+    const rowNums: number[] = []
+    for (const r of (rows || [])) {
+      const catalogText = (r.catalog_description || '').toString().trim()
+      const fileText = (r.description || '').toString().trim()
+      if (r.row != null && catalogText && fileText && tzTextsDiffer(catalogText, fileText)) {
+        compareRows.push({ idx: compareRows.length, itemName: r.item_name || '', catalogText, fileText, choice: 'file' })
+        rowNums.push(r.row)
+      }
+    }
+    if (!compareRows.length) return Promise.resolve({})
+    return new Promise((resolve) => {
+      _tzCompareMode = 'rows'
+      _pendingTzChoicesRowNums = rowNums
+      _pendingTzChoicesResolve = resolve
+      tzCompareRows.value = compareRows
+      tzCompareShow.value = true
+    })
   }
 
   // ── P1-B: Single product repick dialog ───────────────────────────────────────
@@ -787,6 +959,8 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       smartImportLoading.value = true
       smartImportPreview.value = null
       smartImportResult.value = null
+      importTotalInFile.value = null
+      importTruncated.value = false
       try {
         const fd = new FormData()
         fd.append('file', smartImportFile.value)
@@ -807,32 +981,39 @@ export function useItemsImport(deps: UseItemsImportDeps) {
           // /import-smart-nopid возвращает уже распарсенные позиции — без sample-slice
           smartImportPreview.value = data.preview || []
           smartImportColumns.value = ['item_name', 'quantity', 'unit', 'unit_price', 'total_price']
+          importTotalInFile.value = data.total_in_file ?? null
+          importTruncated.value = !!data.truncated
           _handleSmartPreviewWarnings(data.warnings)
           if (!smartImportPreview.value.length) showSnack('Позиции не распознаны', 'warning')
         } else {
-          // legacy path для PDF/DOCX/HTML — sample 5 строк
+          // PDF/DOCX/HTML: import-preview здесь используется ТОЛЬКО для заголовков
+          // и автоопределения маппинга (sample — не более 5 строк, см. backend
+          // purchase_items_import.py). Раньше превью строилось прямо из этого
+          // sample — максимум 5 строк, и ещё одна терялась лишним
+          // slice(headerOffset + 1), хотя sample уже начинается ПОСЛЕ строки
+          // заголовка. Все строки файла теперь берутся через тот же
+          // import-mapped-nopid, что и ручной маппинг (_fetchMappedImportNoPid,
+          // Правило №6 — один механизм чтения строк, не два).
           const firstSheet = data.sheets?.[0]
           if (!firstSheet) { showSnack('Позиции не распознаны', 'warning'); return }
           const detectedMapping = firstSheet.is_upd && firstSheet.auto_mapping
             ? applyServerAutoMapping(firstSheet.auto_mapping)
             : autoDetectMapping(firstSheet.headers || [])
+          if (detectedMapping['item_name'] === null || detectedMapping['item_name'] === undefined) {
+            showSnack('Позиции не распознаны', 'warning')
+            return
+          }
           const headerOffset = firstSheet.header_row_offset ?? 0
-          const dataRows = (firstSheet.sample as any[][]).slice(headerOffset + 1)
-          const preview = dataRows
-            .filter(row => {
-              const nameIdx = detectedMapping['item_name']
-              return nameIdx !== null && nameIdx !== undefined && String(row[nameIdx] ?? '').trim()
-            })
-            .map(row => {
-              const item: Record<string, any> = {}
-              for (const [field, idx] of Object.entries(detectedMapping)) {
-                if (idx !== null && idx !== undefined) item[field] = row[idx]
-              }
-              return item
-            })
-          smartImportPreview.value = preview
+          const mappedData = await _fetchMappedImportNoPid(
+            smartImportFile.value, detectedMapping, headerOffset, firstSheet.name
+          )
+          const items: any[] = mappedData.items || []
+          _handleSmartPreviewWarnings(mappedData.warnings)
+          smartImportPreview.value = items
           smartImportColumns.value = Object.keys(detectedMapping).filter(k => detectedMapping[k] !== null)
-          if (!preview.length) showSnack('Позиции не распознаны', 'warning')
+          importTotalInFile.value = mappedData.total_in_file ?? null
+          importTruncated.value = !!mappedData.truncated
+          if (!items.length) showSnack('Позиции не распознаны', 'warning')
         }
       } catch (e: any) {
         showSnack(e.message || 'Ошибка распознавания', 'error')
@@ -846,6 +1027,8 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     smartImportLoading.value = true
     smartImportPreview.value = null
     smartImportResult.value = null
+    importTotalInFile.value = null
+    importTruncated.value = false
     try {
       const fd = new FormData()
       fd.append('file', smartImportFile.value)
@@ -868,6 +1051,8 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       }
       smartImportPreview.value = data.preview || []
       smartImportColumns.value = data.columns_found || []
+      importTotalInFile.value = data.total_in_file ?? null
+      importTruncated.value = !!data.truncated
       _handleSmartPreviewWarnings(data.warnings)
       if (data.warning) showSnack(data.warning, 'warning')
       if (!smartImportPreview.value.length) showSnack('Позиции не распознаны', 'warning')
@@ -943,7 +1128,20 @@ export function useItemsImport(deps: UseItemsImportDeps) {
         country_origin: props.defaultCountry,
         _selectedProduct: null,
         _photo_url: hasExact ? (row.photo_url ?? undefined) : (hasCatalog ? (cand!.photo_url ?? undefined) : undefined),
-        _description: hasExact ? (row.description ?? undefined) : (hasCatalog ? (cand!.description ?? undefined) : undefined),
+        // Своё ТЗ (из файла) и каталожная подсказка — РАЗДЕЛЬНО (план
+        // item-tz-description.md, Этап Б, владелец 14.10.2026): row.description —
+        // текст из файла (own tz_description, кандидат до окна сравнения — см.
+        // maybeResolveTzCompare в commitPreviewItems ниже), row.catalog_description —
+        // описание товара, найденного backend точным совпадением (exact-match,
+        // см. purchase_items_import_smart.py/_mapped.py); если строка привязана
+        // к каталогу через fuzzy-диалог (/products/match) — каталожная подсказка
+        // берётся из выбранного кандидата (cand.description), backend её не знал.
+        tz_description: (row.description || '').toString().trim() || null,
+        _description: hasExact
+          ? (row.catalog_description || undefined)
+          : (hasCatalog && cand ? (cand.description ?? undefined) : undefined),
+        _category: row.category || undefined,
+        _product_type: row.product_type || undefined,
         _description_44fz: undefined,
         _price_meta: hasCatalog ? {
           price_updated_at: cand!.price_updated_at ?? null,
@@ -996,13 +1194,16 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       return
     }
 
-    // No duplicates — commit immediately
-    localItems.value.push(...newItems)
-    emitUpdate()
-    const matchedCount = resolved.filter(r => r.product_id != null).length
-    smartImportResult.value = { added: newItems.length, matched_catalog: matchedCount, unmatched: newItems.length - matchedCount }
-    showSnack(`${newItems.length} позиций добавлены в список.`, 'info')
-    itemsImportDialog.value = false
+    // No duplicates — commit immediately (после окна сравнения ТЗ, если нужно —
+    // maybeResolveTzCompare сама решает, показывать ли его, см. docstring выше).
+    maybeResolveTzCompare(newItems, (finalItems) => {
+      localItems.value.push(...finalItems)
+      emitUpdate()
+      const matchedCount = resolved.filter(r => r.product_id != null).length
+      smartImportResult.value = { added: finalItems.length, matched_catalog: matchedCount, unmatched: finalItems.length - matchedCount }
+      showSnack(`${finalItems.length} позиций добавлены в список.`, 'info')
+      itemsImportDialog.value = false
+    })
   }
 
   /** Handler for DuplicateMergeDialog @confirm */
@@ -1041,13 +1242,17 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       // subsequent items in the same group are dropped
     }
 
-    localItems.value.push(...finalItems)
-    emitUpdate()
-    const matchedCount = (window as any).__pendingImportMatchedCount ?? 0
-    delete (window as any).__pendingImportMatchedCount
-    smartImportResult.value = { added: finalItems.length, matched_catalog: matchedCount, unmatched: finalItems.length - matchedCount }
-    showSnack(`${finalItems.length} позиций добавлены в список.`, 'info')
     _pendingMergeItems = []
+    // Окно сравнения ТЗ (если нужно) — ПОСЛЕ решения дублей, тем же единым
+    // гейтом maybeResolveTzCompare, что и остальные пути импорта (ПРАВИЛО №6).
+    maybeResolveTzCompare(finalItems, (items) => {
+      localItems.value.push(...items)
+      emitUpdate()
+      const matchedCount = (window as any).__pendingImportMatchedCount ?? 0
+      delete (window as any).__pendingImportMatchedCount
+      smartImportResult.value = { added: items.length, matched_catalog: matchedCount, unmatched: items.length - matchedCount }
+      showSnack(`${items.length} позиций добавлены в список.`, 'info')
+    })
   }
 
   /** Handler for ProductMatchReviewDialog @confirm event */
@@ -1119,6 +1324,12 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     if (!smartImportFile.value || !props.purchaseId) return
     smartImportLoading.value = true
     try {
+      // Окно сравнения ТЗ (план item-tz-description.md, Этап Б) — preview
+      // (smartImportPreview.value, уже загруженный doSmartPreview) отдаёт
+      // description/catalog_description раздельно; собираем выбор каталог/
+      // файл ДО confirm=true (ПРАВИЛО №6 — тот же критерий/диалог, что и
+      // остальные пути импорта, см. resolveTzChoicesForPreviewRows выше).
+      const tzChoices = await resolveTzChoicesForPreviewRows(smartImportPreview.value || [])
       const fd = new FormData()
       fd.append('file', smartImportFile.value)
       fd.append('confirm', 'true')
@@ -1131,6 +1342,9 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       // файлом (см. комментарий у _requestMappedImportPid выше).
       if (Object.keys(_smartPidResolutions).length) {
         fd.append('resolutions', JSON.stringify(_smartPidResolutions))
+      }
+      if (Object.keys(tzChoices).length) {
+        fd.append('tz_choices', JSON.stringify(tzChoices))
       }
       const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart`, {
         method: 'POST',
@@ -1183,7 +1397,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     // Excel import
     itemsImportDialog, isSmartMode, itemsImportFile, itemsImportLoading, itemsImportResult,
     importStep, importPreviewData, importSelectedSheet, dragMapping, ignoredColumns,
-    dragOverTarget, importError, TARGET_FIELDS,
+    dragOverTarget, importError, TARGET_FIELDS, importTotalInFile, importTruncated,
     currentSheetData, currentSheetHeaders, mappingHasName, unmappedCount,
     isMapped, isIgnored, isTargetFilled, getColumnLabel, getSamples,
     onDragStart, onDropToTarget, onDropToUnresolved, unmapTarget, ignoreColumn,
@@ -1203,5 +1417,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     sumMismatchShow, sumMismatchWarnings, onSumMismatchConfirm,
     // P1-B repick
     repickDialog, openRepickDialog, onRepickPick,
+    // Своё ТЗ при импорте — окно сравнения с каталогом (план item-tz-description.md, Этап Б)
+    tzCompareShow, tzCompareRows, onTzCompareConfirm, onTzCompareCancel,
   }
 }

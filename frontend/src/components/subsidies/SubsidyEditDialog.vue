@@ -24,8 +24,8 @@
           <v-col cols="12" md="6">
             <v-text-field
               v-model="form.basis_doc_number"
-              label="Номер документа-основания"
-              hint="№ соглашения о субсидии (например, 831-2025-ВСКС). Используется для авто-связки банковских платежей."
+              label="Номер соглашения о субсидии"
+              hint="Напр. 831-2025-ВСКС. Используется для авто-связки банковских платежей. Переменная шаблона {{subsidy_agreement_number}}"
               persistent-hint
               variant="outlined" density="compact"
             />
@@ -33,8 +33,10 @@
           <v-col cols="12" md="6">
             <v-text-field
               v-model="form.basis_doc_date"
-              label="Дата документа-основания"
+              label="Дата соглашения о субсидии"
               type="date"
+              hint="Переменная шаблона {{subsidy_agreement_date}}"
+              persistent-hint
               variant="outlined" density="compact"
             />
           </v-col>
@@ -85,8 +87,8 @@
           <v-col cols="12" md="6">
             <v-text-field
               v-model="editForm.basis_doc_number"
-              label="Номер документа-основания"
-              hint="№ соглашения о субсидии (например, 831-2025-ВСКС). Используется для авто-связки банковских платежей."
+              label="Номер соглашения о субсидии"
+              hint="Напр. 831-2025-ВСКС. Используется для авто-связки банковских платежей. Переменная шаблона {{subsidy_agreement_number}}"
               persistent-hint
               variant="outlined" density="compact"
             />
@@ -94,8 +96,10 @@
           <v-col cols="12" md="6">
             <v-text-field
               v-model="editForm.basis_doc_date"
-              label="Дата документа-основания"
+              label="Дата соглашения о субсидии"
               type="date"
+              hint="Переменная шаблона {{subsidy_agreement_date}}"
+              persistent-hint
               variant="outlined" density="compact"
             />
           </v-col>

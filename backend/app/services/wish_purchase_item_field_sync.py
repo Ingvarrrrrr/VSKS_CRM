@@ -78,6 +78,9 @@ def sync_purchase_item_fields_from_wish_item(pi: PurchaseItem, wi: WishItem, wis
 
     pi.item_name = wi.item_name
     pi.item_type = wi.item_type or pi.item_type
+    # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md) —
+    # следует за остальными текстовыми полями позиции при пересогласовании.
+    pi.tz_description = getattr(wi, 'tz_description', None)
     pi.unit = wi.unit
     pi.country_origin = wi.country_origin
     pi.feo_category_id = wi.feo_category_id

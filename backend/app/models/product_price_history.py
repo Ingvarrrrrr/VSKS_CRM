@@ -24,3 +24,17 @@ class ProductPriceHistory(Base):
     note = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # Средняя по региону и партии (clever-bouncing-lantern.md, Часть 2):
+    # region — субъект РФ МЕСТА ПОСТАВКИ (Purchase.delivery_region,
+    # нормализован app.services.ru_regions.canonical_region_name), НЕ юр.
+    # адрес организации — нет места поставки → region=NULL, точка идёт только
+    # в расчёт без фильтра. quantity/unit — количество и единица позиции
+    # закупки на момент фиксации точки (для фильтра по партии и по единице
+    # товара). purchase_item_id — ссылка на конкретную позицию: пишется один
+    # раз (уникальный индекс ix_product_price_history_purchase_item_id_unique,
+    # WHERE purchase_item_id IS NOT NULL) — защита от повторной записи той же
+    # позиции при повторном запуске досчёта/перехода статуса.
+    region = Column(String(100), nullable=True)
+    quantity = Column(Numeric(15, 4), nullable=True)
+    unit = Column(String(50), nullable=True)
+    purchase_item_id = Column(Integer, ForeignKey("purchase_items.id", ondelete="SET NULL"), nullable=True)

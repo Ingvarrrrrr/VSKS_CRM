@@ -248,14 +248,23 @@
 
             <!-- Цена ед. -->
             <v-col cols="6" sm="4">
-              <v-text-field
-                :model-value="moneyFieldDisplay(item, 'unit_price')"
-                density="compact" variant="outlined" label="Цена ед., ₽" hide-details
-                :disabled="readonly"
-                :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
-                @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
-                  @blur="moneyFieldOnBlur(item, 'unit_price')"
-              />
+              <!-- Владелец (14.10.2026), решение (в): цена позиции, ЗАГРУЖЕННОЙ
+                   из плана (from_plan), — плановая, здесь тоже readonly с тем же
+                   текстом/условием, что в ItemsTableFlat.vue/ItemsTableStages.vue
+                   (isItemFeoCategoryLocked, ПРАВИЛО №6 — не копия условия). -->
+              <v-tooltip :disabled="!isItemFeoCategoryLocked(item)" :text="PLAN_PRICE_LOCKED_HINT" location="top" max-width="280">
+                <template #activator="{ props: tip }">
+                  <v-text-field
+                    v-bind="tip"
+                    :model-value="moneyFieldDisplay(item, 'unit_price')"
+                    density="compact" variant="outlined" label="Цена ед., ₽" hide-details
+                    :disabled="readonly || isItemFeoCategoryLocked(item)"
+                    :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
+                    @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
+                    @blur="moneyFieldOnBlur(item, 'unit_price')"
+                  />
+                </template>
+              </v-tooltip>
               <div v-if="planForItem?.(item)?.unit_price != null" class="text-caption plan-hint"
                 :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
                 план: {{ formatMoneyInput(planForItem!(item)!.unit_price) }} ₽
@@ -264,6 +273,7 @@
                 {{ UNIT_PRICE_NOT_FIXED_HINT }}
               </div>
               <PriceFreshnessStamp :price-meta="item._price_meta" />
+              <AvgPriceHint v-if="item.product_id" :stats="avgPriceFor?.(item) ?? null" :readonly="readonly" @apply="emit('apply-avg-price', idx)" />
             </v-col>
             </template>
 
@@ -409,13 +419,15 @@ import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
+import AvgPriceHint from '@/components/items/AvgPriceHint.vue'
+import type { AvgPriceStats } from '@/utils/avgPrice'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { formatPlanResidual, formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur } from '@/utils/numberFormat'
-import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import { UNIT_PRICE_NOT_FIXED_HINT, PLAN_PRICE_LOCKED_HINT } from '@/constants/planPriceLabels'
 import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
@@ -530,6 +542,8 @@ const props = defineProps<{
   formatNumber: (v: number | null | undefined) => string
   parseNumber: (v: string) => number | null
   contractorFilter: (value: string, query: string, item?: any) => boolean
+  // См. ItemsTableStages.vue::avgPriceFor — тот же проп, тот же источник (Правило №6).
+  avgPriceFor?: (item: EditorItem) => AvgPriceStats | null
   productPhotoSrc?: (p: ProductLike | null | undefined) => string | undefined
   // Optional grouped/filtered render order (see ItemsDisplayRow). When absent,
   // cards render in natural items[] order exactly as before.
@@ -630,6 +644,7 @@ const emit = defineEmits<{
   'items-changed': []
   'planned-item-created': []
   'planned-item-deleted': []
+  'apply-avg-price': [idx: number]
 }>()
 </script>
 

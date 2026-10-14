@@ -24,7 +24,7 @@ S = re.DOTALL
 
 PATCHED_FILES = ("contract_tz.docx", "service_note.docx", "service_note_advance.docx",
                   "service_note_delivery.docx", "service_note_payment.docx",
-                  "service_note_procurement.docx")
+                  "service_note_procurement.docx", "contract.docx")
 
 # Ревью 2026-10-05: «contract.docx — 129 тегов, 0 подсказок; contract_tz.docx
 # — 50, 0; tech_spec_request/tech_spec_contract — живые doc_type
@@ -136,13 +136,148 @@ def _make_service_note_rules():
 
 SERVICE_NOTE_RULES = _make_service_note_rules()
 
+
+def _make_contract_offbuild_rules():
+    """contract.docx — вне SOURCES, преамбула уже была переведена на jinja-
+    теги раньше (не литерал ВСКС, как в contract_tz.docx), поэтому OFF_01..05
+    здесь не подходят. Дефект (владелец, 14.10.2026): «в лице …» печатало
+    должность в именительном падеже, хотя ФИО рядом уже стояло в родительном
+    (`customer_signatory_name_genitive`/`contractor_signatory_name_genitive`)
+    — должность не была переведена на `_genitive` вместе с ФИО. Те же теги
+    `customer_signatory_position`/`contractor_signatory_position` ВНЕ «в
+    лице» (строка подписи «E-mail: ...{{customer_signatory_position}}____»)
+    трогать не нужно — там именительный падеж верен, как и в C40/CP14
+    (rules_common.py/rules_fabrikant.py) — поэтому шаблон ловит ТОЛЬКО
+    точную фразу «в лице {{...position}} {{...name_genitive}}».
+    """
+    rules = []
+    rules.append((
+        "OFF_06_customer_signatory_position_genitive",
+        re.compile(
+            r"в лице \{\{customer_signatory_position\}\} \{\{customer_signatory_name_genitive\}\}",
+            S,
+        ),
+        "в лице {{customer_signatory_position_genitive}} {{customer_signatory_name_genitive}}",
+    ))
+    rules.append((
+        "OFF_07_contractor_signatory_position_genitive",
+        re.compile(
+            r"в лице \{\{contractor_signatory_position\}\} \{\{contractor_signatory_name_genitive\}\}",
+            S,
+        ),
+        "в лице {{contractor_signatory_position_genitive}} {{contractor_signatory_name_genitive}}",
+    ))
+    return rules
+
+
+CONTRACT_RULES = _make_contract_offbuild_rules()
+
+
 _RULES_BY_FILE = {
     "service_note.docx": SERVICE_NOTE_RULES,
     "service_note_advance.docx": SERVICE_NOTE_RULES,
     "service_note_delivery.docx": SERVICE_NOTE_RULES,
     "service_note_payment.docx": SERVICE_NOTE_RULES,
     "service_note_procurement.docx": SERVICE_NOTE_RULES,
+    "contract.docx": CONTRACT_RULES,
 }
+
+
+def _fix_service_note_delivery_tr_placement(root) -> int:
+    """
+    service_note_delivery.docx: TemplateSyntaxError: Encountered unknown tag
+    'tr' на ЛЮБОМ render(), включая пустой контекст (обход 14.10.2026 —
+    зафиксировано в test_template_vars_all_defined.py::_SKIP_FILES, причина
+    там указана неверно: сам текст тега цифрой-в-цифру правильный,
+    «{%tr for item in items %}» без пробела, как в tech_spec_request.docx /
+    approval_sheet.docx / fabrikant_application_form.docx / contract_tz.docx /
+    contract_repair_framework.docx — все пятеро рендерятся штатно).
+
+    Настоящая причина — СТРУКТУРНАЯ, не опечатка в тексте: тег-строка лежит
+    как обычный <w:p> ПЕРЕД <w:tbl> (для «for») и ПОСЛЕ </w:tbl> (для
+    «endfor»), а не ВНУТРИ <w:tr> таблицы. docxtpl узнаёт {%tr/{%tr endfor%}
+    только когда это содержимое целой строки таблицы — его regex в
+    docxtpl/template.py буквально ищет
+    `<w:tr ...>...{%tr ... %}...</w:tr>` и заменяет НА bare `{% ... %}`,
+    чтобы Jinja2 увидел нормальный `{% for %}`/`{% endfor %}`. Тег вне
+    <w:tr> этой подстановки не получает и попадает в Jinja2 как литеральный
+    неизвестный тег «tr» — отсюда ошибка независимо от пробелов.
+
+    Фикс переносит текст тегов в НОВЫЕ строки таблицы (прямо перед/после
+    строки данных {{item.num}}/.../{{item.total_price}}) тем же механизмом
+    клонирования строки, которым contract_repair_framework.docx решает
+    точно такую же задачу (rules_common.py::_make_tag_row — ПРАВИЛО №6,
+    переиспользуем, а не копируем вторую реализацию), и удаляет исходные
+    параграфы-обёртки снаружи таблицы, чтобы их буквальный текст не остался
+    дублем в документе.
+
+    Идемпотентно: после первого прогона внутри таблицы уже стоят
+    for/endfor-строки, а внешних параграфов с таким текстом больше нет —
+    повторный вызов не находит, что переносить, и не меняет файл (sha256
+    стабилен для --check).
+    """
+    from backend.templates.build import docxedit
+    from backend.templates.build.rules_common import _make_tag_row
+
+    ns = {"w": W}
+    FOR_TEXT = "{%tr for item in items %}"
+    ENDFOR_TEXT = "{%tr endfor %}"
+
+    for_p = None
+    endfor_p = None
+    for p in root.findall(".//w:p", ns):
+        # Пропускаем параграфы, которые уже находятся внутри строки таблицы
+        # (<w:tr>) — они там, где и должны быть, трогать не нужно.
+        if p.xpath("ancestor::w:tr", namespaces=ns):
+            continue
+        text = docxedit.para_text(p).strip()
+        if text == FOR_TEXT:
+            for_p = p
+        elif text == ENDFOR_TEXT:
+            endfor_p = p
+
+    if for_p is None and endfor_p is None:
+        return 0  # уже перенесено (повторный --install) или структура другая
+
+    if for_p is None or endfor_p is None:
+        raise RuntimeError(
+            "service_note_delivery.docx: найден только один из тегов "
+            f"for_p={for_p is not None} endfor_p={endfor_p is not None} — "
+            "структура документа изменилась непредсказуемо, автофикс "
+            "остановлен, чтобы не испортить файл дальше."
+        )
+
+    # Таблица идёт сразу за параграфом for_p в теле документа.
+    body = for_p.getparent()
+    idx = list(body).index(for_p)
+    tbl = None
+    for sibling in list(body)[idx:]:
+        if sibling.tag == f"{{{W}}}tbl":
+            tbl = sibling
+            break
+    if tbl is None:
+        raise RuntimeError("service_note_delivery.docx: <w:tbl> не найден после тега for")
+
+    rows = tbl.findall("w:tr", ns)
+    data_row = None
+    for row in rows:
+        cells_text = "".join(docxedit.para_text(p2) for p2 in row.findall(".//w:p", ns))
+        if "{{item." in cells_text:
+            data_row = row
+            break
+    if data_row is None:
+        raise RuntimeError("service_note_delivery.docx: строка данных {{item.*}} не найдена в таблице")
+
+    for_row = _make_tag_row(data_row, FOR_TEXT)
+    tbl.insert(list(tbl).index(data_row), for_row)
+
+    endfor_row = _make_tag_row(data_row, ENDFOR_TEXT)
+    tbl.insert(list(tbl).index(data_row) + 1, endfor_row)
+
+    for_p.getparent().remove(for_p)
+    endfor_p.getparent().remove(endfor_p)
+
+    return 1
 
 
 def patch_file(path: pathlib.Path) -> dict[str, int]:
@@ -159,6 +294,11 @@ def patch_file(path: pathlib.Path) -> dict[str, int]:
     docxedit.normalize(root)
     ns = {"w": W}
     counts: dict[str, int] = {}
+
+    if path.name == "service_note_delivery.docx":
+        n_moved = _fix_service_note_delivery_tr_placement(root)
+        if n_moved:
+            counts["SND_01_tr_rows_moved_into_table"] = n_moved
 
     for p in root.findall(".//w:p", ns):
         for rule_id, pattern, repl in rules:

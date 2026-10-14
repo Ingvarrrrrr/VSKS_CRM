@@ -1,4 +1,5 @@
 import difflib
+from types import SimpleNamespace
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy import select, func, delete, or_
 from sqlalchemy.orm import selectinload
@@ -45,6 +46,7 @@ from app.services import acceptance_docs as _acc_docs
 # relink_contract_items восстанавливает связь после пересоздания, см. docstring
 # в app/services/contract_item_link.py — там же полный диагноз.
 from app.services.contract_item_link import relink_contract_items, build_purchase_item_id_map
+from app.services.feo_item_lock import assert_item_price_not_locked
 from app.product_matcher import find_matching_product
 from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_amounts import apply_item_amounts
@@ -1034,16 +1036,17 @@ async def update_purchase(
         _ocid = _oi.feo_category_id or p.feo_category_id
         if _ocid:
             old_item_cat_amounts[_ocid] = old_item_cat_amounts.get(_ocid, Decimal("0")) + Decimal(str(_oi.total_price or 0))
-    # Авансовый (владелец, 30.09.2026): PUT удаляет и пересоздаёт ВСЕ
-    # PurchaseItem (см. delete(PurchaseItem) ниже) — снимок плановых позиций,
-    # на которые ссылались СТАРЫЕ строки, нужен ДО удаления, чтобы после
-    # пересоздания деактивировать (см. plan_autoassign.deactivate_if_orphaned)
-    # те, что больше никем не используются — позиция ушла из авансового
-    # отчёта, её собственная авто-плановая позиция не должна оставаться в
-    # плане призраком (см. app/services/advance_auto_plan.py).
-    _old_advance_fpi_ids: set[int] = set()
-    if data.purchase_method == 'advance':
-        _old_advance_fpi_ids = {i.feo_planned_item_id for i in p.items if i.feo_planned_item_id is not None}
+    # Владелец (30.09.2026 — авансовый; расширено 14.10.2026, задача 3, «уборка
+    # фантомов в ЛЮБОЙ закупке»): PUT удаляет и пересоздаёт ВСЕ PurchaseItem
+    # (см. delete(PurchaseItem) ниже) — снимок плановых позиций, на которые
+    # ссылались СТАРЫЕ строки, нужен ДО удаления, чтобы после пересоздания
+    # деактивировать (см. plan_autoassign.deactivate_if_orphaned) те, что
+    # больше никем не используются — позиция ушла из закупки (любой, не
+    # только авансовой), её авто-плановая позиция не должна оставаться в
+    # плане призраком (см. app/services/advance_auto_plan.py — для авансовых,
+    # и обычное auto_assign_planned_items/move_or_detach_planned_item — для
+    # остальных).
+    _old_advance_fpi_ids: set[int] = {i.feo_planned_item_id for i in p.items if i.feo_planned_item_id is not None}
     # Phase 31: capture old values for diff-tracking BEFORE any mutation
     _old_purchase_values = {f: getattr(p, f, None) for f in PURCHASE_TRACKED_FIELDS}
     # Employees/managers can save any purchase they have access to (org-level access checked at list level)
@@ -1366,6 +1369,16 @@ async def update_purchase(
         (it.id, it.item_name, it.quantity, it.unit_price)
         for it in sorted(p.items, key=lambda x: x.id)
     ]
+    # Владелец (14.10.2026): from_plan — НЕ патчится с фронта (ПРАВИЛО памяти
+    # «новое поле — три места»), PUT восстанавливает его из СТАРОЙ строки по
+    # той же карте id_map, что уже чинит ContractItem.source_item_id ниже
+    # (build_purchase_item_id_map, ПРАВИЛО №6 — второй матчер не заводим).
+    # Позиции без сопоставления (действительно новые) остаются с дефолтом
+    # False, заданным схемой PurchaseItemCreate.
+    _old_from_plan_by_id: dict[int, bool] = {it.id: bool(it.from_plan) for it in p.items}
+    # Для гейта цены (см. _assert_from_plan_items_price_unchanged ниже) —
+    # старая цена той же строки, по тому же id_map.
+    _old_price_by_id: dict[int, object] = {it.id: it.unit_price for it in p.items}
 
     # item-forms-accommodation-transport.md: p.contract_form уже обновлён setattr-
     # циклом выше (payload_dict), значит item_form_for_purchase_item(p, item)
@@ -1406,7 +1419,14 @@ async def update_purchase(
                     # которого /products/match затем отдавал его обратно как
                     # item_type (см. app/routers/products_match.py).
                     item_kind=normalize_item_type(d.get("item_type")) or "товар",
-                    price=d.get("unit_price"),
+                    # price НЕ пишем (решение владельца 14.10): цена позиции
+                    # закупки — это цена ЭТОЙ закупки (purchase_items.unit_price),
+                    # в каталог не переносится. См. ПРАВИЛО №6,
+                    # app/services/items_import_catalog.py и
+                    # app/services/purchase_create_core.py — тот же принцип (это
+                    # вторая копия того же блока создания товара "на лету", см.
+                    # отчёт по задаче 14.10 — не сведена в одну функцию в рамках
+                    # этой правки, чтобы не трогать update_purchase сверх минимума).
                     org_id=org_id_for_match,
                 )
                 db.add(new_prod)
@@ -1486,6 +1506,27 @@ async def update_purchase(
             "relink_contract_items: восстановлено %d связей source_item_id для закупки #%s (update_purchase)",
             _relinked_count, pid,
         )
+    # Владелец (14.10.2026): from_plan СТАРОЙ строки побеждает то, что пришло
+    # с клиентом (см. _old_from_plan_by_id выше) — тот же id_map, второй
+    # матчер не заводим. Несопоставленные (действительно новые) позиции
+    # остаются со значением из payload (дефолт False у новых).
+    _flushed_by_id = {fi.id: fi for fi in _flushed_items}
+    for _old_id, _new_id in _purchase_item_id_map.items():
+        if _old_id in _old_from_plan_by_id:
+            _new_item_fp = _flushed_by_id.get(_new_id)
+            if _new_item_fp is not None:
+                _new_item_fp.from_plan = _old_from_plan_by_id[_old_id]
+                # Владелец (14.10.2026), решение (в): замок цены у from_plan-
+                # позиции действует и на PUT (полную замену позиций), не
+                # только на PATCH — одна функция-проверка (ПРАВИЛО №6,
+                # app/services/feo_item_lock.py::assert_item_price_not_locked),
+                # не копия условия. Сравниваем со СТАРОЙ ценой этой же строки
+                # (id_map), не с текущим (уже перезаписанным) unit_price.
+                if _old_from_plan_by_id[_old_id]:
+                    assert_item_price_not_locked(
+                        SimpleNamespace(from_plan=True, unit_price=_old_price_by_id[_old_id]),
+                        _new_item_fp.unit_price,
+                    )
 
     for idx, pi in enumerate(_flushed_items):
         if pi.feo_planned_item_id is not None:
@@ -1595,13 +1636,16 @@ async def update_purchase(
             for _pi, _wi in zip(_created_items_put, _new_wish_items_put):
                 _pi.wish_item_id = _wi.id
 
-    # Авансовый (владелец, 30.09.2026): позиции, удалённые этим PUT'ом (не
-    # попавшие в новый items_data), больше не ссылаются на свои старые
-    # авто-плановые позиции (_old_advance_fpi_ids, снят ДО delete(PurchaseItem)
-    # выше) — деактивируем осиротевшие (deactivate_if_orphaned сама проверяет
-    # auto_created и отсутствие ЛЮБЫХ ссылок, включая только что пересобранные
-    # WishItems компаньона выше), иначе они остаются в плане призраками.
-    if _is_advance_update and _old_advance_fpi_ids:
+    # Владелец (30.09.2026 — авансовый; расширено 14.10.2026, задача 3): позиции,
+    # удалённые этим PUT'ом (не попавшие в новый items_data), больше не
+    # ссылаются на свои старые плановые позиции (_old_advance_fpi_ids, снят ДО
+    # delete(PurchaseItem) выше) — деактивируем осиротевшие (deactivate_if_orphaned
+    # сама проверяет auto_created и отсутствие ЛЮБЫХ ссылок, включая только что
+    # пересобранные WishItems компаньона выше), иначе они остаются в плане
+    # призраками. Раньше — только для авансовых (_is_advance_update); теперь для
+    # ЛЮБОЙ закупки (жалоба (б)) — второй механизм уборки не заводим, тот же
+    # deactivate_if_orphaned.
+    if _old_advance_fpi_ids:
         _new_advance_fpi_ids = {i.feo_planned_item_id for i in _flushed_items if i.feo_planned_item_id is not None}
         _removed_advance_fpi_ids = _old_advance_fpi_ids - _new_advance_fpi_ids
         if _removed_advance_fpi_ids:

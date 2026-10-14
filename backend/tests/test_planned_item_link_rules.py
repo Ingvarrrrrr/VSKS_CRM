@@ -178,7 +178,16 @@ def _mk_purchase_item(**kw):
                 feo_planned_item_id=None, item_name="Футболка поло", over_plan=False,
                 quantity=Decimal("10"), unit="шт.", unit_price=Decimal("500"),
                 total_price=Decimal("5000"), planned_quantity=None, planned_unit_price=None,
-                planned_total=None)
+                planned_total=None,
+                # vat_on_top/vat_rate/item_form/extra_attrs/from_plan — читает
+                # patch_purchase_item (app/routers/purchase_items_edit.py) даже когда
+                # эти поля не меняются в теле запроса (effective_vat_on_top/
+                # effective_vat_rate вызываются безусловно). from_plan=False —
+                # ручная позиция, замок (feo_item_lock.is_item_feo_locked) не
+                # действует (тест проверяет совсем другое правило — совпадение
+                # категорий с плановой).
+                vat_on_top=None, vat_rate=None, item_form=None, extra_attrs=None,
+                from_plan=False, tz_description=None)
     base.update(kw)
     return SimpleNamespace(**base)
 

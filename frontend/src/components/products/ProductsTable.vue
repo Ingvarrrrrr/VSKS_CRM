@@ -72,6 +72,11 @@
           <span v-else class="text-medium-emphasis">—</span>
         </template>
 
+        <!-- Ед. изм. (владелец, 14.10) — formatUnitWithPack: «упак. (10 шт.)» -->
+        <template #item.unit="{ item }">
+          <span :class="item.unit ? '' : 'text-medium-emphasis'">{{ formatUnitWithPack(item) }}</span>
+        </template>
+
         <!-- Price -->
         <template #item.price="{ item }">
           <div v-if="item.price" class="font-weight-medium text-blue-darken-2">
@@ -92,13 +97,16 @@
           </v-tooltip>
         </template>
 
-        <!-- Средняя цена за 60 дней (решение владельца 2026-09-16, п.3) —
-             читаем avg_price/avg_price_basis/avg_price_stale из Out, второго
-             запроса на строку не делаем (Правило №6, тот же принцип, что и у
-             price_freshness выше). -->
+        <!-- Средняя цена (решение владельца 2026-09-16, п.3; лестница уровней
+             регион/партия — план clever-bouncing-lantern.md, Часть 2, п.6-7,
+             14.10) — читаем avg_price/avg_price_level/avg_price_region/
+             avg_price_batch из Out, второго запроса на строку не делаем
+             (Правило №6, тот же принцип, что и у price_freshness выше).
+             Подпись — ОДИН форматтер utils/avgPrice.ts (Правило №6), тот же,
+             что у подсказки в редакторе позиций заявки/закупки. -->
         <template #item.avg_price="{ item }">
           <template v-if="item.avg_price != null">
-            <v-tooltip :text="'на основании ' + avgPriceBasisText(item.avg_price_basis || 0) + ' за 60 дней'" location="top">
+            <v-tooltip :text="avgPriceTooltipText(item)" location="top">
               <template #activator="{ props: tip }">
                 <div v-bind="tip" class="font-weight-medium" :class="item.avg_price_stale ? PRICE_STALE_CLASS : ''">
                   {{ Number(item.avg_price).toLocaleString('ru-RU') }} ₽
@@ -257,11 +265,27 @@ import {
   freshnessTooltip,
 } from '@/composables/usePriceFreshness'
 import { onMounted, nextTick } from 'vue'
-import { typeColor, isDomesticCountry, avgPriceBasisText } from '@/composables/products/productsTypes'
+import { typeColor, isDomesticCountry } from '@/composables/products/productsTypes'
 import type { Product } from '@/composables/products/productsTypes'
+import { formatAvgPriceLabel } from '@/utils/avgPrice'
 import { useProductsScroll } from '@/composables/products/useProductsScroll'
 import ProductsBulkActionBar from './ProductsBulkActionBar.vue'
 import { productPhotoSrc } from '@/utils/productPhoto'
+import { formatUnitWithPack } from '@/utils/units'
+
+// Подпись тултипа «Средняя» — читает уже посчитанные backend'ом avg_price_level/
+// avg_price_region/avg_price_batch через единственный форматтер (Правило №6, см.
+// AvgPriceHint.vue в редакторе позиций — та же функция, та же лестница уровней).
+function avgPriceTooltipText(item: Product): string {
+  return formatAvgPriceLabel({
+    avg_price: item.avg_price ?? null,
+    basis_count: item.avg_price_basis || 0,
+    stale: !!item.avg_price_stale,
+    level: item.avg_price_level,
+    region_used: item.avg_price_region,
+    batch: item.avg_price_batch,
+  })
+}
 
 defineProps<{
   headers: any[]

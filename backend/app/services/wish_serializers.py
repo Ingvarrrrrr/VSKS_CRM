@@ -26,6 +26,7 @@ from app.services.text_match import normalize as _normalize_name
 from app.services.item_contractor import item_contractor as _item_contractor
 from app.services.price_freshness import load_context as _load_freshness_context
 from app.services.product_snapshot import build_product_snapshot as _build_product_snapshot
+from app.services.item_tz import effective_item_tz, effective_item_tz_44fz
 
 
 def _enrich(w: Wish) -> WishOut:
@@ -245,6 +246,11 @@ async def _attach_item_product_snapshot(wish: Wish, enriched: WishOut, db: Async
             all_product_ids.add(candidates[0])
 
     if not all_product_ids:
+        # ПРАВИЛО №6: даже без товара каталога действующее ТЗ позиции может
+        # быть своим (WishItem.tz_description, импорт из файла) — та же
+        # формула effective_item_tz, что и ниже, просто без снимка продукта.
+        for w_item, out_item in zip(wish_items, enriched.items):
+            out_item.description = effective_item_tz(w_item, None)
         return
 
     products_rows = (await db.execute(
@@ -260,14 +266,19 @@ async def _attach_item_product_snapshot(wish: Wish, enriched: WishOut, db: Async
             continue
         product = products_by_id.get(product_id)
         if product is None:
+            out_item.description = effective_item_tz(w_item, None)
             continue
         snap = _build_product_snapshot(product, freshness_ctx)
         out_item.product_id = product_id
         out_item.has_photo = snap["has_photo"]
         out_item.photo_url = snap["photo_url"]
         out_item.photo_link = snap["photo_link"]
-        out_item.description = snap["description"]
-        out_item.description_44fz = snap["description_44fz"]
+        # ПРАВИЛО №6: «действующее ТЗ позиции» — ОДНА функция-источник
+        # (app.services.item_tz.effective_item_tz, владелец 14.10.2026) —
+        # tz_description позиции, если непустое, иначе каталожное описание
+        # (snap["description"] осталось бы просто product.description).
+        out_item.description = effective_item_tz(w_item, product)
+        out_item.description_44fz = effective_item_tz_44fz(w_item, product)
         out_item.price_updated_at = snap["price_updated_at"]
         out_item.price_source = snap["price_source"]
         out_item.price_source_ref = snap["price_source_ref"]

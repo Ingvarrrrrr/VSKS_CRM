@@ -27,6 +27,9 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.product import Product
 from app.services.price_actualization import actualize_product_price
 from app.services.product_unit import backfill_product_unit
+from app.services.text_case import capitalize_first
+from app.services.units import is_pack_unit
+from app.services.product_description_history import set_product_description
 
 
 def _cell(row, col_idx: dict, field: str):
@@ -109,6 +112,7 @@ async def apply_products_import(
     purchase_id: Optional[int] = None,
     dry_run: bool = False,
     first_row_num: int = 2,
+    editor_can_edit_catalog: bool = True,
 ) -> dict:
     """data_rows — строки данных БЕЗ строки заголовка. col_idx —
     {field: индекс колонки в data_rows} (name/description/category/
@@ -121,6 +125,13 @@ async def apply_products_import(
     dry_run=True — цикл выполняется по-настоящему (включая flush, чтобы
     поймать реальные ошибки БД), но транзакция откатывается перед выходом:
     ничего не сохраняется, product_ids не возвращаются.
+
+    editor_can_edit_catalog — есть ли у current_user право
+    products.edit_catalog (считает вызывающий роутер один раз через
+    app.services.product_catalog_guard.can_edit_catalog, Этап В, 14.10.2026).
+    Без этого права строка импорта всё равно создаёт/обновляет товар по
+    остальным полям, но описание СУЩЕСТВУЮЩЕГО товара не трогает (новый
+    товар получает описание из файла всегда — создание не закрывается).
 
     Возвращает {created, updated, skipped, errors, product_ids,
     rows: [{row, action, name, reason}]}, action ∈
@@ -209,6 +220,16 @@ async def apply_products_import(
                     except Exception:
                         pass
 
+                # Упаковка (владелец, 14.10) — валидна только при упаковочном
+                # unit (app.services.units.is_pack_unit), иначе игнорируем
+                # данные колонок (та же защита, что и в routers/products.py::
+                # normalize_pack_fields, ПРАВИЛО №6 — одно правило).
+                pack_quantity_val = None
+                pack_unit_val = None
+                if is_pack_unit(unit_raw):
+                    pack_quantity_val = _to_dec(_cell(row, col_idx, "pack_quantity"))
+                    pack_unit_val = _cell(row, col_idx, "pack_unit")
+
                 if dedup_key in existing_by_key:
                     ep = existing_by_key[dedup_key]
                     if price and ep.price != price:
@@ -227,12 +248,28 @@ async def apply_products_import(
                             setattr(ep, attr, val)
 
                     # Категория: «Прочее» — дефолт, считаем пустым; заполненную в БД не трогаем (БД главнее)
-                    cat_val = _cell(row, col_idx, "category")
+                    # Капитализация первой буквы (ПРАВИЛО №6, app.services.text_case)
+                    # — та же функция, что и у справочника purchase_categories/
+                    # роутера products.py, не плодит "мебель"/"Мебель".
+                    cat_val = capitalize_first(_cell(row, col_idx, "category"))
                     if cat_val and (not ep.category or ep.category == "Прочее"):
                         ep.category = cat_val
                     _fill("product_type", _cell(row, col_idx, "product_type"))
                     _fill("photo_link", _cell(row, col_idx, "photo_link"))
-                    _fill("description", desc_val)
+                    # Защита каталога (Этап В, план item-tz-description.md,
+                    # 14.10.2026, ПРАВИЛО №6): описание СУЩЕСТВУЮЩЕГО товара
+                    # меняется ТОЛЬКО через set_product_description (история
+                    # + право products.edit_catalog) — и только если у
+                    # запускающего импорт это право есть. Без права строка
+                    # всё равно создаётся/обновляется по остальным полям,
+                    # просто описание каталога не трогаем (не плодим второй,
+                    # молчаливый писатель рядом с PUT/PATCH).
+                    if editor_can_edit_catalog and desc_val and not ep.description:
+                        await set_product_description(
+                            db, ep, "description", desc_val, current_user, source="edit",
+                        )
+                    _fill("pack_quantity", pack_quantity_val)
+                    _fill("pack_unit", pack_unit_val)
 
                     ep.import_note = _import_note
                     ep.updated_at = _dt.utcnow()
@@ -259,9 +296,11 @@ async def apply_products_import(
                 p = Product(
                     name=name,
                     description=desc_val,
-                    category=_cell(row, col_idx, "category") or "Прочее",
+                    category=capitalize_first(_cell(row, col_idx, "category")) or "Прочее",
                     product_type=_cell(row, col_idx, "product_type"),
                     unit=(unit_raw or "").strip() or None,  # брэнд-новый товар — истории покупок ещё нет
+                    pack_quantity=pack_quantity_val,
+                    pack_unit=pack_unit_val,
                     # price НЕ задаём здесь напрямую (ПРАВИЛО №6 — единственный
                     # писатель product.price это actualize_product_price, см.
                     # пост-flush проход ниже, `pending_new_price`) — иначе

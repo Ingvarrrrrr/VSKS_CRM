@@ -57,6 +57,7 @@
               </td>
               <td>
                 <div class="font-weight-medium">{{ p.name }}</div>
+                <div v-if="p.unit" class="text-caption text-medium-emphasis">{{ formatUnitWithPack(p) }}</div>
                 <div v-if="p.description" class="text-caption text-medium-emphasis"
                   style="max-width:340px;white-space:normal;line-height:1.3">
                   {{ p.description.slice(0, 90) }}{{ p.description.length > 90 ? '…' : '' }}
@@ -89,6 +90,7 @@
 <script setup lang="ts">
 import type { ProductLike } from '@/components/items/types'
 import { useDisplay } from 'vuetify'
+import { formatUnitWithPack } from '@/utils/units'
 
 const { mobile } = useDisplay()
 

@@ -523,6 +523,14 @@ async def build_items_from_plan(
             "total_price": total_price,
             "feo_category_id": cat.id,
             "feo_planned_item_id": planned.id,
+            # Владелец (14.10.2026): позиция ЗАГРУЖЕНА из Плана закупок — ЕДИНСТВЕННОЕ
+            # место, где рождается эта пометка для обоих путей, читающих item_dicts
+            # (create_wish_from_plan ниже и app.services.plan_to_purchase, ПРАВИЛО №6).
+            # См. app/services/feo_item_lock.py — замок категории ФЭО и решение
+            # владельца (в): цена этой позиции всегда плановая, выбор товара её не
+            # перебивает (см. unit_price выше — уже посчитана плановой/каталожной по
+            # price_source, здесь просто фиксируем происхождение строки).
+            "from_plan": True,
         })
 
         if price_fallback:

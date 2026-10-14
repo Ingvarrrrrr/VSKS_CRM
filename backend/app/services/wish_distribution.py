@@ -287,6 +287,12 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
                 wish_item_id=wi.id,
                 vat_rate=getattr(wi, 'vat_rate', None),
                 vat_on_top=getattr(wi, 'vat_on_top', None),
+                # Владелец (14.10.2026): переносится из WishItem, не выставляется
+                # заново — см. app/services/feo_item_lock.py.
+                from_plan=getattr(wi, 'from_plan', False),
+                # Своё ТЗ позиции (план item-tz-description.md) — переносится как и
+                # остальные поля позиции.
+                tz_description=getattr(wi, 'tz_description', None),
             )
             # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
             set_item_contractor(new_pi, contractor=_wish_contractor_obj, name=getattr(wish, 'contractor_name', None))
@@ -796,6 +802,12 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 wish_item_id=wi.id,  # W1: hard link to source WishItem
                 vat_rate=getattr(wi, 'vat_rate', None),
                 vat_on_top=getattr(wi, 'vat_on_top', None),
+                # Владелец (14.10.2026): переносится из WishItem, не выставляется
+                # заново — см. app/services/feo_item_lock.py.
+                from_plan=getattr(wi, 'from_plan', False),
+                # Своё ТЗ позиции (план item-tz-description.md) — переносится как и
+                # остальные поля позиции.
+                tz_description=getattr(wi, 'tz_description', None),
             )
             # Контрагент заявки — на каждую позицию (см. резолв _wish_contractor_obj
             # выше). ПРАВИЛО №6 (группа D5): единственный писатель —

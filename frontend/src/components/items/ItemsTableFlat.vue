@@ -145,14 +145,18 @@
               hide-details class="my-1" :disabled="readonly" />
           </td>
           <td>
-            <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
+            <v-tooltip
+              :disabled="!(tzFrozen || isItemFeoCategoryLocked(item)) || readonly"
+              :text="isItemFeoCategoryLocked(item) ? PLAN_PRICE_LOCKED_HINT : tzFrozenTooltip"
+              location="top" max-width="280"
+            >
               <template #activator="{ props: tip }">
                 <v-text-field
                   v-bind="tip"
                   :model-value="moneyFieldDisplay(item, 'unit_price')"
                   density="compact" variant="outlined" hide-details class="my-1"
                   :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
-                  :disabled="tzDisabled"
+                  :disabled="tzDisabled || isItemFeoCategoryLocked(item)"
                   @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
                   @blur="moneyFieldOnBlur(item, 'unit_price')"
                 />
@@ -166,6 +170,7 @@
               {{ UNIT_PRICE_NOT_FIXED_HINT }}
             </div>
             <PriceFreshnessStamp :price-meta="item._price_meta" />
+            <AvgPriceHint v-if="item.product_id" :stats="avgPriceFor?.(item) ?? null" :readonly="tzDisabled" @apply="emit('apply-avg-price', idx)" />
           </td>
           </template>
           <td>
@@ -448,13 +453,15 @@ import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
+import AvgPriceHint from '@/components/items/AvgPriceHint.vue'
+import type { AvgPriceStats } from '@/utils/avgPrice'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import { formatPlanResidual, formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur } from '@/utils/numberFormat'
-import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import { UNIT_PRICE_NOT_FIXED_HINT, PLAN_PRICE_LOCKED_HINT } from '@/constants/planPriceLabels'
 import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 // item-forms-accommodation-transport.md: при спец-форме позиции («Проживание»/
 // «Перевозки автобусом») колонки Кол-во/Ед./Цена заменяются полями формы —
@@ -599,6 +606,8 @@ const props = defineProps<{
   formatNumber: (v: number | null | undefined) => string
   parseNumber: (v: string) => number | null
   contractorFilter: (value: string, query: string, item?: any) => boolean
+  // См. ItemsTableStages.vue::avgPriceFor — тот же проп, тот же источник (Правило №6).
+  avgPriceFor?: (item: EditorItem) => AvgPriceStats | null
   productPhotoSrc?: (p: ProductLike | null | undefined) => string | undefined
   // Optional grouped/filtered render order (see ItemsDisplayRow). When absent,
   // rows render in natural items[] order exactly as before.
@@ -714,6 +723,7 @@ const emit = defineEmits<{
   'items-changed': []
   'planned-item-created': []
   'planned-item-deleted': []
+  'apply-avg-price': [idx: number]
 }>()
 </script>
 

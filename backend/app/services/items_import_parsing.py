@@ -755,6 +755,15 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
         'unit_price': ['цена за ед', 'цена ед', 'цена/ед', 'цена', 'unit price', 'стоимость ед'],
         'unit': ['ед.из', 'ед. изм', 'едизм', 'единиц', 'unit'],
         'total_price': ['сумма', 'итого', 'стоимость', 'total'],
+        # Колонка характеристик/ТЗ (владелец, 14.10.2026, план item-tz-description.md):
+        # «Прил4 ТЗ (Видео).docx» — при импорте ТЗ характеристики из файла
+        # терялись, Excel «умный» импорт эту колонку вовсе не искал. Те же
+        # ключи, что и во фронте autoDetectMapping (Правило №6). 'описан' уже
+        # занято item_name выше (первый МАТЧ колонки выигрывает за поле, но
+        # порядок полей здесь не создаёт конфликт — ни один из ключей ниже не
+        # встречается в заголовках item_name/item_type/unit/unit_price/
+        # total_price/quantity, проверено).
+        'description': ['характерист', 'тз', 'спецификац', 'specification'],
     }
 
     try:
@@ -869,6 +878,14 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
         unit = unit_raw or 'шт'
         type_val = _get_cell(row, 'item_type')
         item_type = TYPE_MAP.get(str(type_val).lower().strip() if type_val else '', 'товар')
+        # Своё ТЗ (характеристики) из колонки файла (владелец, 14.10.2026, план
+        # item-tz-description.md) — текст ИЗ ФАЙЛА, caller (роутер импорта)
+        # отдаёт его отдельно от каталожного описания ("catalog_description").
+        desc_val = _get_cell(row, 'description')
+        description = None
+        if desc_val is not None:
+            description = str(desc_val).strip().replace('\r', ' ')
+            description = _re.sub(r'\n+', '\n', description).strip() or None
         preview.append({
             'row': row_num,
             'item_name': name,
@@ -878,5 +895,6 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
             'unit_raw': unit_raw,
             'unit_price': float(unit_price) if unit_price else None,
             'total_price': float(total_price) if total_price else None,
+            'description': description,
         })
     return preview, columns_found, warnings

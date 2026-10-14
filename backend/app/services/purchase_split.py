@@ -52,6 +52,10 @@ ITEM_COPY_FIELDS = [
     "product_id", "item_name", "item_type", "quantity", "unit", "unit_price",
     "total_price", "final_unit_price", "final_total",
     "planned_quantity", "planned_unit_price", "planned_total",
+    # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md) —
+    # копия закупки обязана унести собственное ТЗ исходной позиции, иначе
+    # разбивка закупки на несколько молча теряет импортированный текст.
+    "tz_description",
     "country_origin", "feo_planned_item_id", "feo_category_id",
     "match_confirmed", "contractor_id", "contractor_inn", "contractor_name",
     "vat_rate", "vat_amount", "total_with_vat", "vat_on_top",

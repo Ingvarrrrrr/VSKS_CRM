@@ -76,6 +76,32 @@ async def _make_user(db_session, org_id, role="employee"):
     return user, headers
 
 
+async def _grant_paid_confirmation_decide(db_session, user, org_id) -> None:
+    """Выдаёт право 'paid_confirmation.decide' поимённо — тот же механизм
+    (UserOrgAccess + UserOrgPermissionOverride), каким тесты plan_excess
+    (test_plan_excess_type_kinds.py::_make_approver) выдают 'plan_excess.decide'
+    (ПРАВИЛО №6 — не второй способ выдачи прав в тестах). Решение владельца
+    14.10.2026: SubsidyApprover САМ ПО СЕБЕ больше НЕ даёт право решать по
+    подтверждениям оплаты — нужна эта отдельная галочка."""
+    from app.models.user_org_access import UserOrgAccess
+    from app.models.permission import UserOrgPermissionOverride
+
+    uoa = (await db_session.execute(
+        select(UserOrgAccess).where(
+            UserOrgAccess.user_id == user.id, UserOrgAccess.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if uoa is None:
+        uoa = UserOrgAccess(user_id=user.id, org_id=org_id, role=user.role or "employee")
+        db_session.add(uoa)
+        await db_session.commit()
+        await db_session.refresh(uoa)
+    db_session.add(UserOrgPermissionOverride(
+        user_org_access_id=uoa.id, key="paid_confirmation.decide", granted=True,
+    ))
+    await db_session.commit()
+
+
 # ---------------------------------------------------------------------------
 # Test 1 — строка выписки видна ДВУМ субсидиям с общим номером соглашения
 # ---------------------------------------------------------------------------
@@ -296,11 +322,7 @@ async def test_recompute_without_subsidy_not_delivered_does_not_auto_pay(db_sess
 async def test_confirm_transitions_to_paid_and_logs_event(db_session, client, test_org, contractor):
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     p = Purchase(
         item_name="Товар", status="delivered", subsidy_id=sub.id,
@@ -356,11 +378,7 @@ async def test_confirm_transitions_to_paid_and_logs_event(db_session, client, te
 async def test_contracted_purchase_pending_then_confirm_walks_to_paid(db_session, client, test_org, contractor):
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     import datetime
     p = Purchase(
@@ -424,11 +442,7 @@ async def test_contracted_purchase_pending_then_confirm_walks_to_paid(db_session
 async def test_confirm_blocked_without_acceptance_docs(db_session, client, test_org, contractor):
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     import datetime
     p = Purchase(
@@ -496,11 +510,7 @@ async def test_confirm_blocked_without_acceptance_docs(db_session, client, test_
 async def test_reject_unlinks_payments_and_keeps_status(db_session, client, test_org, contractor):
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     p = Purchase(
         item_name="Товар", status="delivered", subsidy_id=sub.id,
@@ -577,11 +587,7 @@ async def test_rejected_pair_not_reselected_auto_but_manual_attach_allowed(
 ):
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     p = Purchase(
         item_name="Товар", status="delivered", subsidy_id=sub.id,
@@ -648,13 +654,13 @@ async def test_rejected_pair_not_reselected_auto_but_manual_attach_allowed(
 
 
 # ---------------------------------------------------------------------------
-# Test 6 — чужой пользователь (не согласующий субсидии) → 403
+# Test 6 — чужой пользователь (без права 'paid_confirmation.decide') → 403
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_confirm_forbidden_for_non_approver(db_session, client, test_org, contractor, test_user, auth_headers):
     sub = await _make_subsidy(db_session, test_org.id)
-    # test_user существует (fixture), но НЕ входит в SubsidyApprover этой субсидии.
+    # test_user существует (fixture), но не имеет права 'paid_confirmation.decide'.
     p = Purchase(
         item_name="Товар", status="delivered", subsidy_id=sub.id,
         contractor_id=contractor.id, contract_price=Decimal("10000.00"),
@@ -675,6 +681,122 @@ async def test_confirm_forbidden_for_non_approver(db_session, client, test_org, 
     assert p.status == "delivered"
     await db_session.refresh(conf)
     assert conf.status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# Test 6b — решение владельца 14.10.2026: роль «согласующий субсидии»
+# (SubsidyApprover) САМА ПО СЕБЕ больше НЕ даёт право решать по
+# подтверждениям оплаты — список пустой/can_decide=false, confirm 403. С
+# отдельной галочкой 'paid_confirmation.decide' тот же пользователь решает.
+# account_owner решает без галочки и без записи SubsidyApprover (bypass).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_subsidy_approver_without_checkbox_cannot_decide(db_session, client, test_org, contractor):
+    sub = await _make_subsidy(db_session, test_org.id)
+    approver_user, approver_headers = await _make_user(db_session, test_org.id)
+    # Согласующий субсидии (лист согласования закупок/плана) — но БЕЗ галочки
+    # 'paid_confirmation.decide'.
+    db_session.add(SubsidyApprover(
+        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
+        user_id=approver_user.id,
+    ))
+    await db_session.commit()
+
+    p = Purchase(
+        item_name="Товар", status="delivered", subsidy_id=sub.id,
+        contractor_id=contractor.id, contract_price=Decimal("10000.00"),
+    )
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    import datetime
+    pay = Payment(
+        purchase_id=p.id, document_number="ПП-6B1", payment_date=datetime.date(2026, 5, 1),
+        amount=Decimal("10000.00"), matched_confirmed=True,
+        payment_source="statement", confirmed_by_statement=True,
+    )
+    db_session.add(pay)
+    await db_session.commit()
+    # recompute (не создание PurchasePaidConfirmation вручную) синхронизирует
+    # Purchase.payment_amount/payment_date/document_number из Payment — без
+    # этого шаг 'paid' падает 409 «заполните номер/дату/сумму платежа» (то же,
+    # что test_confirm_transitions_to_paid_and_logs_event делает выше).
+    await recompute_purchase_payments(db_session, p.id)
+    await db_session.commit()
+
+    conf = (await db_session.execute(
+        select(PurchasePaidConfirmation).where(PurchasePaidConfirmation.purchase_id == p.id)
+    )).scalar_one()
+
+    list_resp = await client.get(
+        f"/api/subsidies/{sub.id}/paid-confirmations?status=pending", headers=approver_headers,
+    )
+    assert list_resp.status_code == 200, list_resp.text
+    assert list_resp.json()["items"] == []
+    assert list_resp.json()["can_decide"] is False
+
+    confirm_resp = await client.post(f"/api/paid-confirmations/{conf.id}/confirm", headers=approver_headers)
+    assert confirm_resp.status_code == 403, confirm_resp.text
+
+    # Теперь выдаём галочку — тот же согласующий субсидии решает.
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
+
+    list_resp2 = await client.get(
+        f"/api/subsidies/{sub.id}/paid-confirmations?status=pending", headers=approver_headers,
+    )
+    assert list_resp2.status_code == 200, list_resp2.text
+    assert len(list_resp2.json()["items"]) == 1
+    assert list_resp2.json()["can_decide"] is True
+
+    confirm_resp2 = await client.post(f"/api/paid-confirmations/{conf.id}/confirm", headers=approver_headers)
+    assert confirm_resp2.status_code == 200, confirm_resp2.text
+    await db_session.refresh(p)
+    assert p.status == "paid"
+
+
+@pytest.mark.asyncio
+async def test_account_owner_can_decide_without_checkbox(db_session, client, test_org, contractor):
+    """account_owner — bypass (_SAAS_BYPASS_ROLES), без галочки и без
+    записи SubsidyApprover."""
+    sub = await _make_subsidy(db_session, test_org.id)
+    owner_user, owner_headers = await _make_user(db_session, test_org.id, role="account_owner")
+
+    p = Purchase(
+        item_name="Товар", status="delivered", subsidy_id=sub.id,
+        contractor_id=contractor.id, contract_price=Decimal("10000.00"),
+    )
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    import datetime
+    pay = Payment(
+        purchase_id=p.id, document_number="ПП-AO1", payment_date=datetime.date(2026, 5, 1),
+        amount=Decimal("10000.00"), matched_confirmed=True,
+        payment_source="statement", confirmed_by_statement=True,
+    )
+    db_session.add(pay)
+    await db_session.commit()
+    await recompute_purchase_payments(db_session, p.id)
+    await db_session.commit()
+
+    conf = (await db_session.execute(
+        select(PurchasePaidConfirmation).where(PurchasePaidConfirmation.purchase_id == p.id)
+    )).scalar_one()
+
+    list_resp = await client.get(
+        f"/api/subsidies/{sub.id}/paid-confirmations?status=pending", headers=owner_headers,
+    )
+    assert list_resp.status_code == 200, list_resp.text
+    assert len(list_resp.json()["items"]) == 1
+    assert list_resp.json()["can_decide"] is True
+
+    confirm_resp = await client.post(f"/api/paid-confirmations/{conf.id}/confirm", headers=owner_headers)
+    assert confirm_resp.status_code == 200, confirm_resp.text
+    await db_session.refresh(p)
+    assert p.status == "paid"
 
 
 # ---------------------------------------------------------------------------
@@ -731,11 +853,7 @@ async def _make_tz_over_plan_purchase(db_session, sub, contractor, *, planned_am
 async def test_confirm_not_blocked_by_plan_excess_and_warning_filled(db_session, client, test_org, contractor):
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     item_total = Decimal("20000.00")
     p = await _make_tz_over_plan_purchase(
@@ -830,11 +948,7 @@ async def test_paid_confirmation_notify_deferred_until_commit(db_session, test_o
 
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, _ = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     p = Purchase(
         item_name="Товар", status="delivered", subsidy_id=sub.id,
@@ -915,11 +1029,7 @@ async def test_list_does_not_simulate_confirm_chain(db_session, client, test_org
 
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     # Без закрывающих документов — confirm/симуляция упёрлась бы в 'delivered'
     # (как в test_confirm_blocked_without_acceptance_docs), ровно поэтому
@@ -954,17 +1064,66 @@ async def test_list_does_not_simulate_confirm_chain(db_session, client, test_org
 
 
 @pytest.mark.asyncio
+async def test_list_hides_pending_for_non_approver_without_403(db_session, client, test_org, contractor):
+    """Прод 14.10: PaidConfirmationsPanel.vue грузит этот список САМА при
+    открытии любой субсидии (watch immediate:true), не по нажатию — админ
+    организации без права 'paid_confirmation.decide' получал 403 просто за
+    открытие вкладки «Субсидии», хотя панель и так скрыта при пустом списке.
+    Решение владельца: без права — 200 с пустым items и can_decide=false,
+    без обращения к таблице подтверждений. Сотрудник с правом по той же
+    организации продолжает видеть свою pending-строку и can_decide=true.
+    POST confirm по-прежнему 403 без права (см.
+    test_confirm_forbidden_for_non_approver)."""
+    sub = await _make_subsidy(db_session, test_org.id)
+    approver_user, approver_headers = await _make_user(db_session, test_org.id)
+    non_approver_user, non_approver_headers = await _make_user(db_session, test_org.id, role="org_admin")
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
+
+    p = Purchase(
+        item_name="Товар", status="delivered", subsidy_id=sub.id,
+        contractor_id=contractor.id, contract_price=Decimal("10000.00"),
+    )
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    conf = PurchasePaidConfirmation(purchase_id=p.id, subsidy_id=sub.id, amount_confirmed=Decimal("10000.00"))
+    db_session.add(conf)
+    await db_session.commit()
+
+    # org_admin без права 'paid_confirmation.decide' — 200, пустой
+    # список, can_decide=false, НЕ 403.
+    resp = await client.get(
+        f"/api/subsidies/{sub.id}/paid-confirmations?status=pending", headers=non_approver_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["items"] == []
+    assert body["can_decide"] is False
+
+    # Сотрудник с правом видит свою строку и can_decide=true.
+    resp2 = await client.get(
+        f"/api/subsidies/{sub.id}/paid-confirmations?status=pending", headers=approver_headers,
+    )
+    assert resp2.status_code == 200, resp2.text
+    body2 = resp2.json()
+    assert len(body2["items"]) == 1
+    assert body2["items"][0]["id"] == conf.id
+    assert body2["can_decide"] is True
+
+    # Без права confirm по-прежнему запрещён 403-м.
+    resp3 = await client.post(f"/api/paid-confirmations/{conf.id}/confirm", headers=non_approver_headers)
+    assert resp3.status_code == 403, resp3.text
+
+
+@pytest.mark.asyncio
 async def test_check_endpoint_returns_same_blocked_reason_as_old_list(db_session, client, test_org, contractor):
     """/check на pending-строке без закрывающих документов обязан отдать тот
     же blocked_reason, что раньше (до перф-доработки) отдавал список —
     см. test_confirm_blocked_without_acceptance_docs."""
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     import datetime
     p = Purchase(
@@ -1009,11 +1168,7 @@ async def test_check_endpoint_returns_same_blocked_reason_as_old_list(db_session
 async def test_check_endpoint_limit_422(db_session, client, test_org, contractor):
     sub = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     resp = await client.post(
         f"/api/subsidies/{sub.id}/paid-confirmations/check",
@@ -1029,15 +1184,10 @@ async def test_check_endpoint_ignores_other_subsidy_ids(db_session, client, test
     sub_a = await _make_subsidy(db_session, test_org.id)
     sub_b = await _make_subsidy(db_session, test_org.id)
     approver_user, approver_headers = await _make_user(db_session, test_org.id)
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub_a.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    db_session.add(SubsidyApprover(
-        subsidy_id=sub_b.id, role_name="Директор", full_name=approver_user.full_name,
-        user_id=approver_user.id,
-    ))
-    await db_session.commit()
+    # Галочка орг-уровня — действует на обе субсидии организации, не нужно
+    # выдавать её на каждую субсидию отдельно (в отличие от прежнего
+    # SubsidyApprover-подхода, где требовалась запись на каждую субсидию).
+    await _grant_paid_confirmation_decide(db_session, approver_user, test_org.id)
 
     import datetime
     p_b = Purchase(

@@ -52,6 +52,7 @@ def wish_item_kwargs_from_purchase_item(d: dict) -> dict[str, Any]:
         feo_planned_item_match_confirmed=bool(d.get('match_confirmed', False)),
         over_plan=bool(d.get('over_plan', False)),
         extra_attrs=d.get('extra_attrs') or {},
+        tz_description=d.get('tz_description'),
     )
 
 

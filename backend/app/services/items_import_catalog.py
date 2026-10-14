@@ -9,6 +9,16 @@ rows) but have no HTTP-layer concerns of their own — used by the legacy excel
 import (purchase_items_import.py), the mapped import
 (purchase_items_import_mapped.py) and the smart import
 (purchase_items_import_smart.py) endpoints.
+
+ПРАВИЛО ВЛАДЕЛЬЦА (14.10.2026): цена позиции из загружаемого файла (план
+закупок / ТЗ закупки / позиции закупки) — это цена ЭТОЙ субсидии/закупки, она
+живёт в самой позиции (purchase_items.unit_price / плановой позиции). В
+Product.price / ProductPriceHistory эта цена НЕ пишется — отменяет прежнее
+поведение _apply_import_to_existing_product и _upsert_product_to_catalog
+(писали через actualize_product_price(source='import')). Обратное
+направление (подстановка цены каталога в позицию, если позиция цены не
+принесла) не трогается — см. ниже по файлу "if not unit_price and
+matched.price".
 """
 from datetime import datetime
 from decimal import Decimal
@@ -19,15 +29,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.product import Product
 from app.models.purchase_item import PurchaseItem
 from app.auth.jwt import get_single_org_id
-from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
 from app.services.item_amounts import line_total
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.product_unit import backfill_product_unit
 from app.services.product_catalog_match import (
-    find_exact_product, index_products_by_name, normalize_product_name,
+    find_exact_product, index_products_by_name,
 )
-from app.services.price_actualization import actualize_product_price
 from app.services.qty_price_check import resolve_qty_price_choice
+from app.services.items_import_tz_choice import match_catalog_product, resolve_tz_description
 
 # ---------------------------------------------------------------------------
 # Product-catalog upsert helper
@@ -48,41 +57,34 @@ async def _apply_import_to_existing_product(
     каждому роутеру (Правило №6).
 
     Правила конфликтов:
-    - цена: если файл её принёс — актуализируется ЧЕРЕЗ
-      app.services.price_actualization.actualize_product_price (source='import'),
-      которая обновляет product.price И добавляет строку в
-      product_price_history — НЕ молча перезаписывает текущую цену (владелец:
-      «добавляет ещё одну запись по цене к уже имеющимся, чтобы правильнее
-      считалась средняя»);
-    - описание/категория/вид: БД главнее — из файла берём только если в БД
-      пусто (для категории дефолт «Прочее» тоже считается пустым);
+    - цена: НЕ пишем в каталог (решение владельца, 14.10.2026 — отменяет
+      прежнее поведение, описанное здесь раньше: «добавляет ещё одну запись
+      по цене к уже имеющимся, чтобы правильнее считалась средняя»). Цена из
+      загружаемого файла (план закупок / ТЗ закупки / позиции закупки) —
+      цена ЭТОЙ закупки/субсидии, она живёт в самой позиции
+      (purchase_items.unit_price / плановой позиции), в products.price и
+      product_price_history НЕ попадает. unit_price здесь принимается и
+      игнорируется для совместимости вызывающего кода (preview-импорт шлёт
+      цену по каждой строке независимо от того, матчится товар или нет);
+    - описание: НЕ пишем в каталог СУЩЕСТВУЮЩЕГО товара вообще — ни поверх
+      заполненного, ни в пустое (решение владельца, 14.10.2026, план
+      item-tz-description.md: «плохое ТЗ одного не должно испортить всем» —
+      каталог общий для всего приложения, org_id=NULL). Текст из файла идёт
+      в CВОЁ поле позиции (WishItem.tz_description / PurchaseItem.tz_description,
+      см. app/services/item_tz.py), не в Product.description. Параметр
+      `description` здесь принимается и ИГНОРИРУЕТСЯ для совместимости
+      вызывающего кода (роутеры импорта продолжают передавать его по старой
+      сигнатуре) — отменяет прежнее поведение «дополняет, если в БД пусто».
+      Новый товар, заводимый ЭТИМ ЖЕ импортом (_upsert_product_to_catalog,
+      ветка "не найден"), — другое дело, у него описания в БД ещё вообще нет,
+      получить его из файла не запрещено (см. там же ниже по файлу);
+    - категория/вид: БД главнее — из файла берём только если в БД пусто (для
+      категории дефолт «Прочее» тоже считается пустым);
     - import_note: кто/как/когда загрузил — перезаписывается свежим импортом;
     - ед. измерения (владелец, 2026-09-01): БД главнее — уже заполненную не
       трогаем; иначе берём из САМОГО импорта, см. app/services/product_unit.py.
     """
     from datetime import datetime as _dt
-    if unit_price:
-        try:
-            new_price = Decimal(str(unit_price))
-        except Exception:
-            new_price = None
-        if new_price:
-            # collected_at (владелец, 2026-09-20, фикс «все цены старше 60
-            # дней»/«прочерк в Дате»): ТЗ-импорт не несёт отдельной колонки
-            # «дата цены» (в отличие от products_import_apply.py) — дата
-            # актуализации = момент импорта. Без явного collected_at
-            # actualize_product_price оставляет ProductPriceHistory.collected_at
-            # NULL, и compute_price_stats/price_freshness такую строку не видят.
-            await actualize_product_price(
-                db, existing,
-                price=new_price,
-                source="import",
-                source_ref=import_note,
-                collected_at=_dt.utcnow(),
-                user=user,
-            )
-    if description and not (existing.description or "").strip():
-        existing.description = description
     if category and (not existing.category or existing.category == 'Прочее'):
         existing.category = category
     if product_type and not existing.product_type:
@@ -125,33 +127,21 @@ async def _upsert_product_to_catalog(
         product_type=product_type or item_type or "товар",
         item_kind=item_type or "товар",
         unit=(unit or "").strip() or None,  # брэнд-новый товар — истории покупок ещё нет
-        # price НЕ задаём здесь напрямую (ПРАВИЛО №6 — единственный писатель
-        # product.price это actualize_product_price, см. ниже) — иначе у
-        # только что созданного товара цена есть, а price_updated_at/строка в
-        # product_price_history — нет (владелец, 2026-09-20: «все цены старше
-        # 60 дней», «на основании 1 цены», прочерки в «Дате» — были у товаров,
-        # заведённых этой веткой).
+        # price НЕ задаём (решение владельца 14.10.2026 — цена позиции
+        # загружаемого файла в каталог не пишется, см. докстринг модуля выше).
         is_active=True,
         import_note=import_note,
         updated_at=_dt.utcnow() if import_note else None,
         updated_by=updated_by if import_note else None,
     )
     db.add(p)
-    await db.flush()  # нужен p.id для ProductPriceHistory.product_id (NOT NULL)
-    if unit_price:
-        try:
-            new_price = Decimal(str(unit_price))
-        except Exception:
-            new_price = None
-        if new_price:
-            await actualize_product_price(
-                db, p,
-                price=new_price,
-                source="import",
-                source_ref=import_note,
-                collected_at=_dt.utcnow(),
-                user=user,
-            )
+    await db.flush()  # нужен p.id (используется вызывающим кодом ниже по стеку)
+    # price НЕ пишем (решение владельца 14.10.2026, отменяет прежнее поведение
+    # этого места — раньше здесь была actualize_product_price(source='import'),
+    # заводившая товар сразу с ценой строки импорта). unit_price у нового
+    # товара каталога остаётся None — так же, как при создании товара "на
+    # лету" из позиции закупки (app/services/purchase_create_core.py,
+    # app/routers/purchases.py::update_purchase).
     return p.id
 
 async def _save_smart_preview_to_purchase(
@@ -163,6 +153,7 @@ async def _save_smart_preview_to_purchase(
     skip_catalog: bool = False,
     resolutions: dict | None = None,
     vat_on_top: bool = False,
+    tz_choices: dict | None = None,
 ) -> dict:
     """Сохраняет preview-строки в БД как PurchaseItem'ы.
     Переиспользуется как из xlsx-ветки, так и (потенциально) из markitdown-ветки.
@@ -173,6 +164,12 @@ async def _save_smart_preview_to_purchase(
     владелец, 2026-09-14; см. app/services/qty_price_check.py). row_num —
     значение row_data['row'], выставленное парсером (номер строки файла), не
     порядковый индекс превью.
+
+    tz_choices: {row_num(str): 'catalog'|'file'} — выбор владельца в окне
+    сравнения ТЗ (план item-tz-description.md, 14.10.2026): "catalog" →
+    tz_description=NULL (действующее ТЗ подтянется из каталога, см.
+    app/services/item_tz.py); иначе/по умолчанию — текст из файла (см.
+    app/services/items_import_tz_choice.py::resolve_tz_description).
 
     vat_on_top (задача «НДС сверху», 02.10.2026) — True, когда импорт
     распознал файл как УПД (_legacy_detect_best_table::is_upd, цена без
@@ -224,18 +221,12 @@ async def _save_smart_preview_to_purchase(
             # 1) exact match (fast path) — normalize_product_name (Правило №6,
             # см. product_catalog_match.py): обрезка + схлопывание пробелов + lower()
             _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
-            matched = product_by_name.get(normalize_product_name(item_name))
-            if not matched:
-                # 2) fuzzy fallback
-                best_score = 0.0
-                best_candidate = None
-                for _key, _p in product_by_name.items():
-                    _s = _fuzzy_score(item_name, _p.name if hasattr(_p, 'name') else _key)
-                    if _s > best_score:
-                        best_score = _s
-                        best_candidate = _p
-                if best_score >= _SCORE_AUTO and best_candidate is not None:
-                    matched = best_candidate
+            # Exact + fuzzy — match_catalog_product (Правило №6, см.
+            # app/services/items_import_tz_choice.py): та же функция, которой
+            # preview-ветки роутеров строят "catalog_description" — чтобы
+            # окно сравнения показывало ровно тот товар, который здесь же и
+            # сматчится при сохранении.
+            matched = match_catalog_product(item_name, product_by_name)
             if matched:
                 product_id = matched.id
                 matched_catalog += 1
@@ -268,6 +259,13 @@ async def _save_smart_preview_to_purchase(
             quantity=qty, unit=row_data["unit"],
             unit_price=unit_price, total_price=total_price,
             vat_rate=row_data.get("vat_rate") if vat_on_top else None,
+            # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md) —
+            # текст характеристик ИЗ ФАЙЛА (row_data["description"], см.
+            # app/services/items_import_parsing.py::_smart_import_xlsx_direct) —
+            # НИКОГДА не в каталог, только в саму позицию закупки. Выбор
+            # владельца в окне сравнения (tz_choices) может переключить на
+            # NULL → возьмётся каталожное (resolve_tz_description, Правило №6).
+            tz_description=resolve_tz_description(row_data.get("description"), row_data.get("row"), tz_choices),
         ))
         added += 1
     await db.commit()

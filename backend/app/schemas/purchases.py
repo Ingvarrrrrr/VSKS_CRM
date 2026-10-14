@@ -72,18 +72,40 @@ class PurchaseItemCreate(BaseModel):
     # бы его из payload (тот же баг, что уже был с receipt_id — см. комментарий
     # выше). Заявки/закупки, созданные вручную, часть не выбирают (None).
     feo_plan_part_key: Optional[str] = None
+    # Прямая связь на исходную позицию заявки (mirrors PurchaseItem.wish_item_id,
+    # владелец 2026-09-20) — ОБЯЗАНА быть и на входной схеме (не только на
+    # PurchaseItemOut): PUT /api/purchases/{id} удаляет и пересоздаёт ВСЕ
+    # позиции из items_data (PurchaseItemCreate) — без поля здесь связь молча
+    # терялась бы при каждом сохранении закупки через полный PUT (фронт шлёт
+    # то же значение, что получил в GET, — обычный round-trip).
+    wish_item_id: Optional[int] = None
+    # Позиция ЗАГРУЖЕНА из Плана закупок (владелец, 14.10.2026) — см.
+    # app/models/purchase_item.py и app/services/feo_item_lock.py. На входе
+    # нужен для того же round-trip, что и wish_item_id выше (PUT пересоздаёт
+    # позиции целиком), НО не доверяем клиенту как источнику истины: PUT
+    # перезатирает это поле значением СТАРОЙ строки по сопоставлению id (см.
+    # app/routers/purchases.py::update_purchase, build_purchase_item_id_map) —
+    # клиентское значение здесь используется только для НОВЫХ позиций (нет
+    # старой строки для сопоставления), где оно по умолчанию False.
+    from_plan: bool = False
+    # Своё ТЗ (характеристики) ЭТОЙ позиции закупки (владелец, 14.10.2026, план
+    # item-tz-description.md) — NULL значит «действует ТЗ каталога» (см.
+    # app/services/item_tz.py::effective_item_tz, ПРАВИЛО №6). На входной схеме
+    # тоже нужно (round-trip PUT пересоздаёт позиции целиком, тот же приём,
+    # что и wish_item_id/from_plan выше).
+    tz_description: Optional[str] = None
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int
-    # Владелец (2026-09-20, доп. к задаче 2): прямая связь на исходную позицию
-    # заявки (mirrors PurchaseItem.wish_item_id) — фронт по её наличию делает
-    # категорию позиции readonly (состав/категория идут из заявки/плана, не
-    # правятся напрямую в закупке для позиций с живой связью).
-    wish_item_id: Optional[int] = None
     product_name: Optional[str] = None
     product_photo_url: Optional[str] = None
     product_description: Optional[str] = None
     product_description_44fz: Optional[str] = None
+    # «Действующее ТЗ позиции» (tz_description, если непустое, иначе
+    # product_description) — effective_item_tz, та же функция, что и у
+    # документов/WishItemOut.description. Отдаётся отдельно, чтобы фронт не
+    # пересчитывал формулу у себя (ПРАВИЛО №6).
+    effective_tz_description: Optional[str] = None
     # receipt_id теперь объявлен один раз на PurchaseItemCreate (ПРАВИЛО №6,
     # прод-инцидент РЕЕ-2026-00962) — здесь наследуется, вторая копия убрана.
     # Владелец (план crystalline-soaring-heron.md, п.4): остаток плановой позиции

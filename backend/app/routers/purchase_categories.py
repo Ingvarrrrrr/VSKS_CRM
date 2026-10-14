@@ -22,6 +22,7 @@ from app.auth.jwt import get_current_user
 from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.purchase_category import PurchaseCategory, product_purchase_categories
+from app.services.text_case import capitalize_first
 
 router = APIRouter(prefix="/api/purchase-categories", tags=["purchase-categories"])
 
@@ -66,7 +67,7 @@ async def create_purchase_category(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_tab("products")),
 ):
-    name = body.name.strip()
+    name = capitalize_first(body.name) or ""
     if not name:
         raise HTTPException(422, "Название категории не может быть пустым")
     existing = (await db.execute(
@@ -94,7 +95,7 @@ async def update_purchase_category(
         raise HTTPException(404, "Категория закупки не найдена")
 
     if body.name is not None:
-        name = body.name.strip()
+        name = capitalize_first(body.name) or ""
         if not name:
             raise HTTPException(422, "Название категории не может быть пустым")
         dup = (await db.execute(

@@ -22,7 +22,7 @@ from .doc_types import (
 )
 from .contract_terms import warranty_period_text as _warranty_period_text
 from .contexts import (
-    _signatory_split, _build_contract_items_context, _format_service_term,
+    _build_contract_items_context, _format_service_term,
     _require_tz_duplicates_resolved_for_doc,
 )
 from .formatting import (
@@ -31,8 +31,6 @@ from .formatting import (
     _fmt_money_plain,
     _fmt_quantity,
     _clean_id,
-    _signatory_position,
-    _fio_to_initials_prefix,
     _rubles_to_words,
 )
 # build_tz_rows/_require_tz_duplicates_resolved_for_doc — единственный источник
@@ -42,7 +40,8 @@ from app.services.item_amounts import vat_included_amount as _vat_included_amoun
 # Правило №6 — единственный резолвер пути к шаблону (субсидийный override →
 # глобальный → DOC_TYPE_FALLBACK_FILES). Раньше здесь жили две копии-дубли
 # той же логики приоритета (ниже — tech_spec_request и цикл рендера пакета).
-from .templates import _resolve_vat_exemption_basis, _vat_exemption_missing_hint, _resolve_doc_template_path
+from .templates import _resolve_vat_exemption_basis, _vat_exemption_missing_hint, _resolve_doc_template_path, _purchase_method_label
+from .doc_types import _PURCHASE_METHOD_LABELS
 from .morphology import _to_gen_fio, _inflect_phrase_genitive
 from .docx_post import _strip_tech_spec_legend
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
@@ -53,6 +52,9 @@ from .contexts_extra import (
     add_prepayment_context,
     add_day_words_context,
     contractor_org_type_for_docs,
+    add_subsidy_agreement_context,
+    add_contractor_signatory_context,
+    add_customer_context,
 )
 from app.services.contractor_pii import contractor_pii_doc_fields, user_can_view_contractor_pii
 
@@ -120,12 +122,9 @@ async def render_fabrikant_package_files(
             ctr_r = await db.execute(select(_CtrC).where(_CtrC.id == customer_org.contractor_id))
             customer_ctr = ctr_r.scalar_one_or_none()
 
-    # Правило №6: единый источник реквизитов Заказчика — org_requisites()
-    # (Contractor, если org.contractor_id задан и найден; иначе deprecated
-    # колонки Organization). См. app/routers/documents.py — тот же паттерн.
-    from app.services.org_requisites import org_requisites
-    _cust_req = org_requisites(customer_org, customer_ctr) if customer_org else {}
-
+    # Правило №6: реквизиты Заказчика (customer_*) не читаем здесь черновиком —
+    # единственный расчёт в add_customer_context (contexts_extra.py), он сам
+    # вызывает org_requisites() и перекрывает контекст ниже по функции.
     event = None
     if p.event_id:
         ev_r = await db.execute(select(Event).where(Event.id == p.event_id))
@@ -282,38 +281,15 @@ async def render_fabrikant_package_files(
 
     cd_day, cd_month, cd_year = _cd_parts()
 
-    def _g2(*sources, default=""):
-        for s in sources:
-            if s:
-                return s
-        return default
-
-    cust_signatory_full_z = _cust_req.get('signatory') or ""
-    _cust_z_last = _cust_req.get('signatory_last_name') or None
-    _cust_z_first = _cust_req.get('signatory_first_name') or None
-    _cust_z_middle = _cust_req.get('signatory_middle_name') or None
-    _cust_z_position = _cust_req.get('signatory_position') or None
-    cust_sig_z = _signatory_split(
-        cust_signatory_full_z,
-        last=_cust_z_last, first=_cust_z_first, middle=_cust_z_middle, position=_cust_z_position,
-    )
-    cust_signatory_basis_z = _g2(
-        customer_ctr.signatory_basis if customer_ctr else None,
-        "Устава",
-    )
     c = p.contractor
     # Владелец (05.10.2026, план «Шаблоны договоров», п.5): правка реквизитов
     # исполнителя на уровне субсидии перекрывает карточку контрагента — тот
     # же единственный источник, что и в generate.py (ПРАВИЛО №6).
     _contractor_override_z = await load_contractor_override(db, p.subsidy_id, p.contractor_id)
     c = merge_contractor_override(c, _contractor_override_z)
-    ctr_sig_z = _signatory_split(
-        c.signatory if c else "",
-        last=getattr(c, 'signatory_last_name', None) if c else None,
-        first=getattr(c, 'signatory_first_name', None) if c else None,
-        middle=getattr(c, 'signatory_middle_name', None) if c else None,
-        position=getattr(c, 'signatory_position', None) if c else None,
-    )
+    # contractor_signatory_* не черновим здесь — единственный расчёт в
+    # add_contractor_signatory_context (contexts_extra.py), перекрывает
+    # контекст ниже по функции (ПРАВИЛО №6).
 
     # Fabrikant notice_number — platform_number (номер процедуры на ЭТП),
     # откат на external_id (наш internal requestId), если ещё не проставлен
@@ -369,7 +345,13 @@ async def render_fabrikant_package_files(
     context = {
         "purchase_number": p.purchase_number or "",
         "registry_number": p.registry_number or "",
-        "purchase_method": {"single": "Единственный поставщик", "competitive": "Конкурсная процедура"}.get(p.purchase_method or "", p.purchase_method or ""),
+        # Единый справочник подписей (ПРАВИЛО №6) — contexts_build.py использует
+        # тот же _PURCHASE_METHOD_LABELS; раньше тут была своя копия словаря
+        # без варианта "framework"/"advance_report".
+        "purchase_method": _PURCHASE_METHOD_LABELS.get(p.purchase_method or "", p.purchase_method or ""),
+        # Конкретная форма конкурентной процедуры — тот же расчёт, что в
+        # contexts_build.py (ПРАВИЛО №6), см. templates._purchase_method_label.
+        "purchase_method_label": _purchase_method_label(p),
         "subject": p.subject or "",
         "status": p.status or "",
         "responsible_person": resolved_responsible,
@@ -377,7 +359,8 @@ async def render_fabrikant_package_files(
         "subsidy_name": subsidy.name if subsidy else "",
         "subsidy_year": subsidy.year if subsidy else "",
         "subsidy_budget": _fmt_money(subsidy.budget) if subsidy else "",
-        "subsidy_agreement_number": (subsidy.agreement_number or "") if subsidy else "",
+        # subsidy_agreement_number/date — не черновим здесь, единственный
+        # расчёт в add_subsidy_agreement_context ниже (ПРАВИЛО №6).
         "contractor_name": (c.name or "") if c else "",
         "contractor_inn": _clean_id(c.inn) if c else "",
         "contractor_kpp": _clean_id(c.kpp) if c else "",
@@ -391,11 +374,9 @@ async def render_fabrikant_package_files(
         "contractor_bank_name": (c.bank_name or "") if c else "",
         "contractor_bik": (c.bik or "") if c else "",
         "contractor_correspondent_account": (c.correspondent_account or "") if c else "",
-        "contractor_signatory_position": _signatory_position(c.signatory) if c else "",
-        "contractor_signatory_name": ctr_sig_z["name_full"],
-        "contractor_signatory_name_genitive": ctr_sig_z["name_genitive"],
-        "contractor_signatory_initials": ctr_sig_z["name_initials"],
-        "contractor_ogrnip": (c.ogrn or "") if (c and (c.org_type or "").lower().startswith("ип")) else "",
+        # contractor_signatory_position/_name/_genitive/_initials/_ogrnip — не
+        # черновим здесь, единственный расчёт в add_contractor_signatory_context
+        # ниже (ПРАВИЛО №6).
         "contractor_full_name": (c.full_name or c.name or "") if c else "",
         "contractor_short_name": (c.name or "") if c else "",
         "feo_category_name": p.feo_category.name if p.feo_category else "",
@@ -473,32 +454,8 @@ async def render_fabrikant_package_files(
         "left_receipts": [],
         "right_receipts": [],
         "receipts_table": "",
-        # Customer (Organisation)
-        "customer_name": _g2(customer_org.name if customer_org else None, customer_ctr.name if customer_ctr else None),
-        "customer_full_name": _g2(_cust_req.get('full_name'), customer_ctr.name if customer_ctr else None, customer_org.name if customer_org else None),
-        "customer_short_name": _g2(customer_org.name if customer_org else None, customer_ctr.name if customer_ctr else None),
-        "customer_address": _g2(_cust_req.get('address')),
-        "customer_postal_address": _g2(customer_ctr.postal_address if customer_ctr else None, _cust_req.get('address')),
-        "customer_inn": _clean_id(_g2(_cust_req.get('inn'))),
-        "customer_kpp": _clean_id(_g2(_cust_req.get('kpp'))),
-        "customer_ogrn": _g2(_cust_req.get('ogrn')),
-        "customer_bank_name": _g2(customer_ctr.bank_name if customer_ctr else None),
-        "customer_settlement_account": _g2(customer_ctr.settlement_account if customer_ctr else None),
-        "customer_correspondent_account": _g2(customer_ctr.correspondent_account if customer_ctr else None),
-        "customer_bik": _g2(customer_ctr.bik if customer_ctr else None),
-        # Лицевой счёт Заказчика
-        "customer_personal_account": _g2(customer_ctr.personal_account if customer_ctr else None),
-        "customer_phone": _g2(customer_ctr.phone if customer_ctr else None),
-        "customer_email": _g2(customer_ctr.email if customer_ctr else None),
-        "customer_signatory": cust_signatory_full_z,
-        "customer_signatory_position": cust_sig_z["position"],
-        "customer_signatory_name": cust_sig_z["name_full"],
-        "customer_signatory_name_genitive": cust_sig_z["name_genitive"],
-        "customer_signatory_initials": cust_sig_z["name_initials"],
-        # Инициалы впереди: «Е.В. Козеев» (для строки подписи)
-        "customer_signatory_name_initials": _fio_to_initials_prefix(cust_sig_z["name_full"]),
-        "customer_signatory_basis": cust_signatory_basis_z,
-        "contract_city": (customer_org.contract_city or "Москва") if customer_org else "Москва",
+        # Customer (Organisation) — customer_*/contract_city не черновим
+        # здесь, единственный расчёт в add_customer_context ниже (ПРАВИЛО №6).
         # Fabrikant-specific
         "notice_number": _notice_number,
         "payment_term_days": p.payment_term_days if (p.payment_term_days is not None) else 10,
@@ -506,7 +463,6 @@ async def render_fabrikant_package_files(
         # Phase 28 keys (best-effort)
         "subsidy_grantor_name": (subsidy.grantor_name or "").strip() if subsidy else "",
         "subsidy_ministry_name": (subsidy.ministry_name or "").strip() if subsidy else "",
-        "subsidy_agreement_date": "",
         "advance_amount": _fmt_money(p.advance_amount) if p.advance_amount else "",
         "acceptance_term_days": p.acceptance_term_days if p.acceptance_term_days is not None else 5,
         "penalty_rate": str(p.penalty_rate) if p.penalty_rate is not None else "0.1",
@@ -540,6 +496,12 @@ async def render_fabrikant_package_files(
     # is_prepayment/prepayment_date — единый расчёт, см. ПРАВИЛО №6 выше.
     add_prepayment_context(context, p)
     add_day_words_context(context, p)
+    # Номер/дата соглашения о субсидии, подписанты Заказчика и Исполнителя
+    # (с *_position_genitive) — единый расчёт (ПРАВИЛО №6), перекрывает
+    # черновые значения выше в этом же литерале context = {...}.
+    add_subsidy_agreement_context(context, subsidy)
+    add_contractor_signatory_context(context, c)
+    add_customer_context(context, customer_org, customer_ctr)
     context["initiator_name_gen"] = ""
     context["initiator_position_gen"] = ""
     context["responsible_name_gen"] = _to_gen_fio(resolved_responsible)

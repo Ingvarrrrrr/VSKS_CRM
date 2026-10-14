@@ -2,8 +2,12 @@
   <div>
     <div class="text-subtitle-2 mb-2">Цены</div>
 
-    <div v-if="!productId" class="text-caption text-medium-emphasis">
-      Сохраните товар, чтобы вести историю цен.
+    <!-- Пункт 2 (владелец, 14.10): товар ещё НЕ сохранён — цены копятся
+         черновиком (pendingPrices) и уходят на сервер вместе с товаром
+         (useProductsForm.ts::flushPendingPrices), форма «Добавить цену» ниже
+         работает и без productId. -->
+    <div v-if="!productId" class="text-caption text-medium-emphasis mb-2">
+      Цена сохранится вместе с товаром.
     </div>
 
     <template v-else>
@@ -22,8 +26,9 @@
       </div>
 
       <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2" />
+    </template>
 
-      <div v-if="rows.length" class="pph-table-wrap mb-3">
+    <div v-if="rows.length" class="pph-table-wrap mb-3">
         <v-table density="compact">
           <thead>
             <tr>
@@ -46,14 +51,14 @@
                   v-if="r.canDelete"
                   icon="mdi-delete-outline" variant="text" size="x-small" color="error"
                   :loading="deletingId === r.id"
-                  @click="removeEntry(r.id as number)"
+                  @click="r.isDraft ? removeDraft(r.draftIndex!) : removeEntry(r.id as number)"
                 />
               </td>
             </tr>
           </tbody>
         </v-table>
       </div>
-      <div v-else-if="!loading" class="text-caption text-medium-emphasis mb-3">Записей нет.</div>
+    <div v-else-if="!loading" class="text-caption text-medium-emphasis mb-3">Записей нет.</div>
 
       <!-- Добавить цену -->
       <div class="pph-add-form">
@@ -86,7 +91,6 @@
           Добавить цену
         </v-btn>
       </div>
-    </template>
   </div>
 </template>
 
@@ -99,6 +103,7 @@
 import { computed, watch } from 'vue'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import { useProductPriceHistory } from '@/composables/products/useProductPriceHistory'
+import type { DraftPriceEntry } from '@/composables/products/useProductPriceHistory'
 import { avgPriceBasisText, priceSourceLabel } from '@/composables/products/productsTypes'
 import type { PriceLink } from '@/composables/products/productsTypes'
 import { useToast, type ToastType } from '@/composables/useToast'
@@ -108,11 +113,31 @@ const props = defineProps<{
   legacyPriceLinks: PriceLink[]
 }>()
 
+// Пункт 2 (владелец, 14.10): черновые цены ещё НЕ сохранённого товара —
+// владеет массивом useProductsForm.ts (form.pendingPrices), этот компонент
+// только читает/мутирует через v-model (без второго места хранения).
+const pendingPrices = defineModel<DraftPriceEntry[]>('pendingPrices', { default: () => [] })
+
 const toast = useToast()
 const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
-const { entries, stats, loading, saving, deletingId, form, load, addEntry, removeEntry } =
-  useProductPriceHistory({ showSnack })
+// Пункт 8 (владелец, 14.10) — форма товара (useProductsForm.ts через
+// ProductFormDialog.vue) должна узнать о новой цене сразу после add/remove,
+// иначе её «Сохранить» перетирает цену обратно старым значением.
+const emit = defineEmits<{ (e: 'product-refreshed', p: { price: number | null }): void }>()
+
+const { entries, stats, loading, saving, deletingId, form, load, addEntry, removeEntry, hasPendingEntry, commitPendingEntry } =
+  useProductPriceHistory({
+    showSnack,
+    onProductRefreshed: (p) => emit('product-refreshed', p),
+    onDraftAdd: (entry) => { pendingPrices.value = [...pendingPrices.value, entry] },
+  })
+
+function removeDraft(i: number) {
+  pendingPrices.value = pendingPrices.value.filter((_, idx) => idx !== i)
+}
+
+defineExpose({ hasPendingEntry, commitPendingEntry })
 
 watch(() => props.productId, (id) => { load(id) }, { immediate: true })
 
@@ -142,6 +167,8 @@ interface DisplayRow {
   source_ref: string | null
   linkUrl: string | null
   canDelete: boolean
+  isDraft?: boolean
+  draftIndex?: number
 }
 
 function isUrl(v: string | null | undefined): boolean {
@@ -173,8 +200,24 @@ const rows = computed<DisplayRow[]>(() => {
       linkUrl: l.url,
       canDelete: false,
     }))
-  // Свежие сверху — legacy без даты в конце.
+  // Черновики несохранённого товара (пункт 2, владелец 14.10) — сверху,
+  // явно помечены пометкой «сохранится вместе с товаром».
+  const drafts: DisplayRow[] = pendingPrices.value.map((d, i) => ({
+    id: `draft-${i}`,
+    key: `draft-${i}`,
+    collected_at: d.collected_at || null,
+    price: d.price,
+    sourceLabel: `${priceSourceLabel(d.source, d.source_ref)} — сохранится вместе с товаром`,
+    contractor_name: null,
+    source_ref: isUrl(d.source_ref) ? null : (d.source_ref || null),
+    linkUrl: isUrl(d.source_ref) ? d.source_ref : null,
+    canDelete: true,
+    isDraft: true,
+    draftIndex: i,
+  }))
+  // Свежие сверху — черновики, затем история, legacy без даты в конце.
   return [
+    ...drafts,
     ...real.slice().sort((a, b) => (b.collected_at || '').localeCompare(a.collected_at || '')),
     ...legacy,
   ]

@@ -115,21 +115,29 @@ async def resolve_approvers(db: AsyncSession, p: Purchase, pid: int, doc_type: s
 async def resolve_initiator(db: AsyncSession, current_user, initiator_id: Optional[int],
                              subsidy: Optional[Subsidy], customer_org):
     # Load initiator if requested (frontend always sends User.id, not SubsidyApprover.id).
-    # Бизнес-правило: за другого человека делать СЗ может только тот, кому
-    # подчинён этот человек (видим через _get_visible_user_ids — тот же scope,
-    # что для постановки задач). Самого себя — всегда можно.
+    # Правило владельца (14.10.2026, Правило №6 — единственная проверка,
+    # заменяет и старую «подчинён» и отдельную membership-проверку ниже):
+    # initiator_id должен входить в initiator_candidate_ids(current_user, subsidy)
+    # — «штат» организации субсидии, сокращённый по роли выбирающего (см.
+    # app.services.service_note_initiators). Проверяется ВКЛЮЧАЯ случай
+    # initiator_id == current_user.id: если сам выбирающий не в штате, он не
+    # может указать инициатором даже себя (правило владельца — явно это
+    # требует, в отличие от старой версии, где «себя — всегда можно»).
     initiator = None
-    if initiator_id and initiator_id != getattr(current_user, "id", None):
-        from app.routers.task_visibility import _get_visible_user_ids
-        visible = await _get_visible_user_ids(current_user, db)
-        if visible is not None and initiator_id not in visible:
+    if initiator_id:
+        from app.services.service_note_initiators import initiator_candidate_ids
+        candidates = await initiator_candidate_ids(db, current_user, subsidy)
+        if initiator_id not in candidates:
+            org_name = getattr(customer_org, "name", "") if customer_org else ""
             raise HTTPException(
                 status_code=403,
                 detail={
                     "code": "INITIATOR_FORBIDDEN",
                     "message": (
-                        "Указанный инициатор вам не подчинён. Сделать служебную "
-                        "записку за другого человека может только его руководитель."
+                        f"Инициатором можно указать только сотрудника организации"
+                        + (f" «{org_name}»" if org_name else "")
+                        + ": администратор — любого, остальные — себя и своих "
+                        "подчинённых."
                     ),
                 },
             )
@@ -165,34 +173,10 @@ async def resolve_initiator(db: AsyncSession, current_user, initiator_id: Option
                     user=u,
                 )
 
-        # Membership-check: инициатор должен состоять в организации, к которой
-        # привязана субсидия закупки. Без этого должность/отдел не определены,
-        # СЗ от имени постороннего сотрудника недопустима.
-        subsidy_org_id = getattr(subsidy, "org_id", None) if subsidy else None
-        init_user = initiator.user if (initiator and getattr(initiator, "user", None)) else None
-        if subsidy_org_id and init_user:
-            from app.models.user_organization import UserOrganization
-            mem = (await db.execute(
-                select(UserOrganization.id).where(
-                    UserOrganization.user_id == init_user.id,
-                    UserOrganization.org_id == subsidy_org_id,
-                ).limit(1)
-            )).first()
-            # Legacy fallback — User.org_id (primary)
-            if not mem and getattr(init_user, "org_id", None) != subsidy_org_id:
-                org_name = getattr(customer_org, "name", "") if customer_org else ""
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "INITIATOR_NOT_IN_ORG",
-                        "message": (
-                            f"Инициатор не состоит в организации"
-                            + (f" «{org_name}»" if org_name else "")
-                            + ", к которой привязана субсидия закупки. Выберите "
-                            "сотрудника этой организации."
-                        ),
-                    },
-                )
+        # Membership-check убран (Правило №6, 14.10.2026): покрыт единой
+        # проверкой initiator_candidate_ids выше — она уже требует членства
+        # инициатора в «штате» организации субсидии (org_staff_user_ids),
+        # второй отдельный механизм не нужен.
     return initiator
 
 

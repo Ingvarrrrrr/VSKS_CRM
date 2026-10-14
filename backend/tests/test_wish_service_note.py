@@ -131,21 +131,21 @@ async def test_service_note_404_for_missing_wish(client, auth_headers):
 
 @_SKIP_NO_TEMPLATE
 @pytest.mark.asyncio
-async def test_service_note_with_initiator_id(client, db_session, superadmin_headers, test_org, test_user):
-    """GET with initiator_id=9999999 (non-existent approver) still returns 200.
+async def test_service_note_with_initiator_id(client, db_session, superadmin_headers, superadmin_user, test_org, test_user):
+    """GET with initiator_id pointing at a user who has no SubsidyApprover row
+    still returns 200 — falls back to a virtual approver built from User.
 
-    Endpoint gracefully falls back to creator name when initiator not found.
-
-    Fix (2026-09): a later business rule (see wish_documents.py, "за другого
-    человека делать СЗ может только тот, кому подчинён этот человек") now
-    403s with INITIATOR_FORBIDDEN for any initiator_id outside the caller's
-    visible-users set — an ordinary employee (auth_headers, no subordinates)
-    can never reach the "approver id doesn't exist" fallback this test is
-    actually about. superadmin_headers has SaaS-wide visibility
-    (_get_visible_user_ids returns None for superadmin/account_owner — no
-    user filter), so the request passes the ownership gate and exercises the
-    real thing under test: graceful fallback when initiator_id doesn't
-    resolve to any user.
+    Updated (14.10.2026, Правило владельца — см. app.services.
+    service_note_initiators.initiator_candidate_ids): инициатор теперь
+    должен входить в «штат» организации субсидии (или фолбэк — только сам
+    вызывающий, если у заявки нет субсидии/орги). Эта заявка без субсидии
+    (subsidy_id не задан) → кандидат только сам вызывающий, поэтому
+    initiator_id=9999999 (несуществующий пользователь) больше НЕ может
+    пройти проверку ни для кого, включая superadmin — INITIATOR_FORBIDDEN
+    раньше, чем дело дойдёт до резолва SubsidyApprover/User. Тест теперь
+    передаёт initiator_id = сам вызывающий (superadmin), у которого
+    заведомо нет строки SubsidyApprover — это и есть сценарий, который тест
+    проверяет: резолв через виртуальный approver из User, а не 404/500.
     """
     w = Wish(
         org_id=test_org.id,
@@ -166,13 +166,14 @@ async def test_service_note_with_initiator_id(client, db_session, superadmin_hea
     await db_session.commit()
     await db_session.refresh(w)
 
-    # Non-existent initiator_id — should not crash, fallback to creator name
+    # initiator_id = сам вызывающий (superadmin) — нет SubsidyApprover-строки
+    # для него, резолв должен упасть на виртуальный approver из User, не упасть.
     resp = await client.get(
-        f"/api/wishes/{w.id}/documents/service_note?initiator_id=9999999",
+        f"/api/wishes/{w.id}/documents/service_note?initiator_id={superadmin_user.id}",
         headers=superadmin_headers,
     )
 
-    assert resp.status_code == 200, f"Expected 200 with unknown initiator_id, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 200, f"Expected 200 with initiator_id=self, got {resp.status_code}: {resp.text}"
     ct = resp.headers.get("content-type", "")
     assert "wordprocessingml" in ct, f"Expected .docx content-type, got: {ct!r}"
     assert len(resp.content) > 1000, (

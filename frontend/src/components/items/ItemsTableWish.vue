@@ -132,14 +132,23 @@
               hide-details class="my-1" :disabled="readonly" />
           </td>
           <td>
-            <v-text-field
-              :model-value="moneyFieldDisplay(item, 'unit_price')"
-              density="compact" variant="outlined" hide-details class="my-1"
-              :disabled="readonly"
-              @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
+            <!-- Владелец (14.10.2026), решение (в): позиция заявки, ЗАГРУЖЕННАЯ
+                 из плана (from_plan) — цена плановая, тот же предикат/текст, что
+                 в ItemsTableFlat.vue/ItemsTableStages.vue (ПРАВИЛО №6). -->
+            <v-tooltip :disabled="!isItemFeoCategoryLocked(item)" :text="PLAN_PRICE_LOCKED_HINT" location="top" max-width="280">
+              <template #activator="{ props: tip }">
+                <v-text-field
+                  v-bind="tip"
+                  :model-value="moneyFieldDisplay(item, 'unit_price')"
+                  density="compact" variant="outlined" hide-details class="my-1"
+                  :disabled="readonly || isItemFeoCategoryLocked(item)"
+                  @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
                   @blur="moneyFieldOnBlur(item, 'unit_price')"
-            />
+                />
+              </template>
+            </v-tooltip>
             <PriceFreshnessStamp :price-meta="item._price_meta" />
+            <AvgPriceHint v-if="item.product_id" :stats="avgPriceFor?.(item) ?? null" :readonly="readonly" @apply="emit('apply-avg-price', idx)" />
           </td>
           </template>
           <td>
@@ -195,6 +204,8 @@
 import { computed } from 'vue'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
+import AvgPriceHint from '@/components/items/AvgPriceHint.vue'
+import type { AvgPriceStats } from '@/utils/avgPrice'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { Contractor } from '@/components/items/types'
 // item-forms-accommodation-transport.md: Wish.contract_form существует
@@ -206,6 +217,7 @@ import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import { isItemFeoCategoryLocked } from '@/utils/feoItemLock'
+import { PLAN_PRICE_LOCKED_HINT } from '@/constants/planPriceLabels'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import { formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur } from '@/utils/numberFormat'
 
@@ -232,6 +244,8 @@ const props = defineProps<{
   formatNumber: (v: number | null | undefined) => string
   parseNumber: (v: string) => number | null
   contractorFilter: (value: string, query: string, item?: any) => boolean
+  // См. ItemsTableStages.vue::avgPriceFor — тот же проп, тот же источник (Правило №6).
+  avgPriceFor?: (item: EditorItem) => AvgPriceStats | null
   // Только для read-only ItemFeoCategoryChip (резолв имени/пути категории) — сама
   // таблица per-item категорию не редактирует, дерево сюда не заводим.
   feoNodes?: FeoNode[]
@@ -251,6 +265,7 @@ const emit = defineEmits<{
   'contractor-search-input': [idx: number, search: string]
   'item-contractor-select': [idx: number, val: Contractor | null]
   'open-contractor-quick-create': [idx: number]
+  'apply-avg-price': [idx: number]
 }>()
 </script>
 

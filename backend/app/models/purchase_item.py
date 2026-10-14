@@ -53,6 +53,18 @@ class PurchaseItem(Base):
     # закупки, созданные вручную, часть не выбирают (см. план, «Не делаем»).
     feo_plan_part_key = Column(String(32), nullable=True)
     wish_item_id = Column(Integer, ForeignKey("wish_items.id", ondelete="SET NULL"), nullable=True)  # W1: hard link to source WishItem
+    # Позиция ЗАГРУЖЕНА из Плана закупок (владелец, 14.10.2026, жалобы (а)-(г)) —
+    # НЕ то же самое, что «есть привязка к плановой позиции» (feo_planned_item_id/
+    # wish_item_id появляются и у РУЧНЫХ позиций через auto_assign_planned_items/
+    # явный выбор человеком). Ставится ТОЛЬКО там, где позиция рождается из
+    # плана: app/services/plan_to_wish.py::build_items_from_plan (общий источник
+    # для «в заявку» и «сразу в авансовый», см. app/services/plan_to_purchase.py),
+    # и переносится (не выставляется заново) при конвертации заявки в закупку
+    # (app/routers/wish_convert.py) и при пересборке компаньона авансового
+    # (app/routers/purchases.py). НЕ патчится с фронта — см.
+    # app/services/feo_item_lock.py (единственный читатель замка ФЭО) и
+    # отсутствие поля в _ItemPatchBody/PATCHABLE_FIELDS.
+    from_plan = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
     # false — позиция расходует план своего конечного элемента ФЭО; true — «сверх плана»,
     # прибавляется к плановой сумме (не вычитается из исходного лимита элемента).
     over_plan = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
@@ -80,6 +92,14 @@ class PurchaseItem(Base):
     # override, переживает закрытие/переоткрытие диалога и перезагрузку страницы.
     # Тот же приём, что WishItem.target_column_key — см. app/models/wish_item.py.
     split_column_key = Column(String(200), nullable=True)
+    # Своё ТЗ (характеристики) ЭТОЙ позиции закупки (владелец, 14.10.2026, план
+    # item-tz-description.md) — NULL, если позиция использует ТЗ из каталога
+    # (product.description). Пишется импортом файла в закупку (строка файла
+    # НИКОГДА больше не трогает описание уже существующего товара каталога —
+    # см. app/services/items_import_catalog.py). «Действующее ТЗ позиции» —
+    # ОДНА функция-источник app.services.item_tz.effective_item_tz (ПРАВИЛО
+    # №6), не читать это поле напрямую в документах/выдаче.
+    tz_description = Column(Text, nullable=True)
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")

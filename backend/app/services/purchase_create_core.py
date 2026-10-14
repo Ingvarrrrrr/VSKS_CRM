@@ -156,7 +156,10 @@ async def insert_purchase_with_items(
                     # которого /products/match затем отдавал его обратно как
                     # item_type (см. app/routers/products_match.py).
                     item_kind=normalize_item_type(d.get("item_type")) or "товар",
-                    price=d.get("unit_price"),
+                    # price НЕ пишем (решение владельца 14.10): цена позиции
+                    # закупки — это цена ЭТОЙ закупки (purchase_items.unit_price),
+                    # в каталог не переносится. См. ПРАВИЛО №6,
+                    # app/services/items_import_catalog.py — тот же принцип.
                     org_id=org_id_for_match,
                 )
                 db.add(new_prod)

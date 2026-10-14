@@ -65,6 +65,11 @@ async def create_purchase_from_plan(
             feo_category_id=d["feo_category_id"],
             feo_planned_item_id=d["feo_planned_item_id"],
             match_confirmed=True,
+            # Владелец (14.10.2026): позиция ЗАГРУЖЕНА из Плана закупок — ставится
+            # build_items_from_plan (ПРАВИЛО №6, см. app/services/plan_to_wish.py и
+            # app/services/feo_item_lock.py), здесь просто переносится в создаваемую
+            # закупку.
+            from_plan=d.get("from_plan", False),
         )
         for d in item_dicts
     ]

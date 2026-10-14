@@ -153,14 +153,49 @@ async def list_overrides(
         )
     )
     uoa_obj = uoa.scalar_one_or_none()
-    if uoa_obj is None:
-        return []
-    res = await db.execute(
-        select(UserOrgPermissionOverride).where(
-            UserOrgPermissionOverride.user_org_access_id == uoa_obj.id
+    own_rows: List[UserOrgPermissionOverride] = []
+    if uoa_obj is not None:
+        res = await db.execute(
+            select(UserOrgPermissionOverride).where(
+                UserOrgPermissionOverride.user_org_access_id == uoa_obj.id
+            )
         )
-    )
-    return res.scalars().all()
+        own_rows = res.scalars().all()
+    if own_rows:
+        return own_rows
+
+    # 2026-10-14 (владелец продукта): своих overrides в этой орге нет —
+    # если действует «Доступ ко всем организациям аккаунта», показать
+    # overrides ОСНОВНОЙ орги, пометив каждую строку inherited_from_org_id
+    # (единый источник решения — all_orgs_inheritance, Правило №6).
+    user_obj = await db.get(User, user_id)
+    if user_obj is not None:
+        from app.auth.all_orgs_inheritance import inherited_overrides_source_org
+        source_org_id = await inherited_overrides_source_org(user_obj, db, org_id)
+        if source_org_id is not None:
+            src_uoa = await db.execute(
+                select(UserOrgAccess).where(
+                    UserOrgAccess.user_id == user_id,
+                    UserOrgAccess.org_id == source_org_id,
+                )
+            )
+            src_uoa_obj = src_uoa.scalar_one_or_none()
+            if src_uoa_obj is not None:
+                src_rows = (await db.execute(
+                    select(UserOrgPermissionOverride).where(
+                        UserOrgPermissionOverride.user_org_access_id == src_uoa_obj.id
+                    )
+                )).scalars().all()
+                return [
+                    OverrideOut(
+                        key=r.key,
+                        granted=r.granted,
+                        changed_at=getattr(r, "changed_at", None),
+                        inherited_from_org_id=source_org_id,
+                    )
+                    for r in src_rows
+                ]
+    return []
 
 
 async def _apply_overrides_for_org(
@@ -177,11 +212,31 @@ async def _apply_overrides_for_org(
         )
     )
     uoa_obj = uoa.scalar_one_or_none()
+    user_obj = await db.get(User, user_id)
     if uoa_obj is None:
-        user_obj = await db.get(User, user_id)
         role = user_obj.role if user_obj else None
         uoa_id = await ensure_user_org_access(user_id, org_id, role, db)
         uoa_obj = await db.get(UserOrgAccess, uoa_id)
+
+    # 2026-10-14 (владелец продукта): если у этой орги своих overrides нет, а
+    # all_orgs_access охватывает её — СНАЧАЛА копируем overrides ОСНОВНОЙ орги
+    # в эту, и только ПОТОМ применяем правку. Без этого снятие одной галочки
+    # (напр. purchases=false) в орге без своих настроек создало бы ЕДИНСТВЕННЫЙ
+    # override в ней — и остальные унаследованные ключи (напр. subsidies=true)
+    # молча пропали бы вместо того чтобы остаться унаследованными.
+    # Единый источник решения — all_orgs_inheritance (Правило №6).
+    if user_obj is not None:
+        from app.auth.all_orgs_inheritance import inherited_overrides_source_org, org_overrides_map
+        source_org_id = await inherited_overrides_source_org(user_obj, db, org_id)
+        if source_org_id is not None:
+            inherited = await org_overrides_map(user_id, source_org_id, db)
+            for key, granted in inherited.items():
+                db.add(UserOrgPermissionOverride(
+                    user_org_access_id=uoa_obj.id,
+                    key=key,
+                    granted=granted,
+                ))
+            await db.flush()
 
     for upd in updates:
         res = await db.execute(

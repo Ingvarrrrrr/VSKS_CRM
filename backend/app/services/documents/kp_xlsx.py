@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.services.item_tz import effective_item_tz
 
 
 async def build_kp_xlsx(pid: int, db: AsyncSession) -> StreamingResponse:
@@ -63,9 +64,9 @@ async def build_kp_xlsx(pid: int, db: AsyncSession) -> StreamingResponse:
     items = [i for i in (p.items or []) if i.item_name and i.item_name.strip()]
     for idx, item in enumerate(items, start=1):
         row = idx + 1
-        description = ""
-        if item.product:
-            description = item.product.description or ""
+        # ПРАВИЛО №6: effective_item_tz (владелец 14.10.2026) — tz_description
+        # позиции, если непустое, иначе ТЗ каталога.
+        description = effective_item_tz(item, item.product) or ""
 
         full_name = item.item_name or ""
         if description:

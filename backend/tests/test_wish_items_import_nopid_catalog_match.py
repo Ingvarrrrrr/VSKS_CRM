@@ -12,9 +12,14 @@ purchase_id ещё) возвращали распарсенные строки �
 Фикс: обе nopid-ветки теперь делают ТОЧНОЕ (не fuzzy) сопоставление по
 нормализованному имени через find_products_by_normalized_names
 (app/services/product_catalog_match.py — единая точка входа, Правило №6,
-никакого второго матчера) и отдают по строке product_id/photo_url/description/
-unit НАЙДЕННОГО товара. Каталог при этом НЕ меняется — заявка ещё может быть
-не одобрена (то же правило, что владелец сформулировал 2026-09-04).
+никакого второго матчера) и отдают по строке product_id/photo_url/
+catalog_description/unit НАЙДЕННОГО товара. Каталог при этом НЕ меняется —
+заявка ещё может быть не одобрена (то же правило, что владелец сформулировал
+2026-09-04).
+
+Обновлено 14.10.2026 (план item-tz-description.md): "description" теперь —
+текст ИЗ ФАЙЛА (своё ТЗ позиции), каталожное описание отдаётся отдельно как
+"catalog_description" — больше не затирает/не дополняет файловое значение.
 
 Гоняется по одному узлу (см. project_pytest_asyncio_loop_flake в памяти
 проекта). Тестовые данные — внутри db_session/client outer-transaction
@@ -80,7 +85,10 @@ async def test_mapped_nopid_fills_product_id_and_photo_for_catalog_item(client, 
     matched = items[catalog_name]
     assert matched["product_id"] == p.id
     assert matched["photo_url"] == "https://example.com/photo.jpg"
-    assert matched["description"] == "Штатное описание из ТЗ"
+    assert matched["catalog_description"] == "Штатное описание из ТЗ"
+    # Файл не прислал колонку "Описание" — своё ТЗ позиции отсутствует,
+    # каталожное описание в него не подставляется (раздельные поля).
+    assert matched.get("description") is None
 
     unmatched = items[other_name]
     assert unmatched["product_id"] is None
@@ -124,9 +132,12 @@ async def test_smart_nopid_fills_product_id_and_photo_for_catalog_item(client, a
     matched = preview[catalog_name]
     assert matched["product_id"] == p.id
     # У товара нет ни photo_url, ни фото в bytea — эффективный URL пуст, но
-    # описание/ед.изм. из каталога должны быть подтянуты.
+    # описание/ед.изм. из каталога должны быть подтянуты (как catalog_description,
+    # не затирая файловое "description" — файл здесь колонку характеристик не
+    # присылал, поэтому description пуст).
     assert matched["photo_url"] is None
-    assert matched["description"] == "Сетевой коммутатор 24 порта"
+    assert matched["catalog_description"] == "Сетевой коммутатор 24 порта"
+    assert matched.get("description") is None
     assert matched["unit"] == "шт"
 
     unmatched = preview[other_name]

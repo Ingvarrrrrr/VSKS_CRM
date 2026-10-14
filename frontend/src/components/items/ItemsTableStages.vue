@@ -101,20 +101,25 @@
               </v-tooltip>
             </td>
             <td @click.stop>
-              <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
+              <v-tooltip
+                :disabled="!(tzFrozen || isItemFeoCategoryLocked(item)) || readonly"
+                :text="isItemFeoCategoryLocked(item) ? PLAN_PRICE_LOCKED_HINT : tzFrozenTooltip"
+                location="top" max-width="280"
+              >
                 <template #activator="{ props: tip }">
                   <v-text-field
                     v-bind="tip"
                     :model-value="moneyFieldDisplay(item, 'unit_price')"
                     density="compact" variant="outlined" hide-details class="my-1 summary-num-input"
                     :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
-                    :disabled="tzDisabled"
+                    :disabled="tzDisabled || isItemFeoCategoryLocked(item)"
                     @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
                     @blur="moneyFieldOnBlur(item, 'unit_price')"
                   />
                 </template>
               </v-tooltip>
               <PriceFreshnessStamp :price-meta="item._price_meta" />
+              <AvgPriceHint v-if="item.product_id" :stats="avgPriceFor?.(item) ?? null" :readonly="tzDisabled" @apply="emit('apply-avg-price', idx)" />
             </td>
             </template>
             <td class="font-weight-medium" style="font-size:12px;white-space:nowrap">
@@ -273,14 +278,18 @@
                         hide-details class="my-1" :disabled="readonly" />
                     </td>
                     <td>
-                      <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
+                      <v-tooltip
+                        :disabled="!(tzFrozen || isItemFeoCategoryLocked(item)) || readonly"
+                        :text="isItemFeoCategoryLocked(item) ? PLAN_PRICE_LOCKED_HINT : tzFrozenTooltip"
+                        location="top" max-width="280"
+                      >
                         <template #activator="{ props: tip }">
                           <v-text-field
                             v-bind="tip"
                             :model-value="moneyFieldDisplay(item, 'unit_price')"
                             density="compact" variant="outlined" hide-details class="my-1"
                             :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
-                            :disabled="tzDisabled"
+                            :disabled="tzDisabled || isItemFeoCategoryLocked(item)"
                             @update:model-value="(v: string) => { item.unit_price = moneyFieldOnInput(item, 'unit_price', v) as any; emit('calc-item-total', idx) }"
                             @blur="moneyFieldOnBlur(item, 'unit_price')"
                           />
@@ -485,6 +494,52 @@
                       </div>
                     </td>
                   </tr>
+                  <!-- Своё ТЗ позиции (характеристики) — план item-tz-description.md, Этап Б
+                       (владелец, 14.10.2026). Полнота строка, как и stage-attrs-row выше:
+                       own (item.tz_description) — то, что реально сохраняется на сервер,
+                       item._description — каталожная подсказка (effectiveTz/isTzFromCatalog,
+                       ПРАВИЛО №6, см. utils/itemTz.ts). -->
+                  <tr class="stage-tz-row stage-tzdesc-row">
+                    <td></td>
+                    <td :colspan="(showVatColumnsInExpandRow ? 9 : 7) - 1">
+                      <div class="d-flex flex-column ga-1 py-1" style="max-width:720px">
+                        <v-textarea
+                          v-model="item.tz_description"
+                          density="compact" variant="outlined" hide-details
+                          rows="2" max-rows="6" auto-grow
+                          label="Характеристики (ТЗ) этой позиции"
+                          :placeholder="item._description || 'Характеристики не заданы'"
+                          :disabled="readonly"
+                        />
+                        <div class="d-flex align-center ga-2">
+                          <span v-if="isTzFromCatalog(item)" class="text-caption text-medium-emphasis">
+                            показано из каталога товара
+                          </span>
+                          <v-btn
+                            v-if="(item.tz_description || '').trim() && item._description"
+                            size="x-small" variant="text" color="primary" density="compact"
+                            prepend-icon="mdi-restore"
+                            :disabled="readonly"
+                            @click="resetTzToCatalog(item)"
+                          >
+                            вернуть из каталога
+                          </v-btn>
+                          <!-- «Предложить в каталог» (план item-tz-description.md,
+                               Этап В, п.4) — тот же критерий различия
+                               (tzTextsDiffer), что у WishTzSection.vue (ПРАВИЛО №6). -->
+                          <v-btn
+                            v-if="item.product_id && item.id && tzTextsDiffer(item.tz_description, item._description)"
+                            size="x-small" variant="text" color="teal" density="compact"
+                            prepend-icon="mdi-upload-outline"
+                            :disabled="readonly"
+                            @click="openProposeDialog(item)"
+                          >
+                            предложить в каталог
+                          </v-btn>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
                   <!-- Договор sub-row -->
                   <tr class="stage-contract-row">
                     <td><v-chip color="success" size="x-small" variant="tonal">Договор</v-chip></td>
@@ -684,20 +739,35 @@
         Экономия: {{ contractSavings.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽ ({{ contractSavingsPercent }}%)
       </v-chip>
     </div>
+
+    <!-- «Предложить в каталог» (план item-tz-description.md, Этап В, п.4) —
+         один диалог на таблицу, та же карточка, что и в WishTzSection.vue
+         (ПРАВИЛО №6, ProposeToCatalogDialog сам шлёт предложение и тост). -->
+    <ProposeToCatalogDialog
+      v-if="proposeTarget"
+      v-model="proposeDialogShow"
+      :product-id="(proposeTarget as any).product_id"
+      :catalog-value="(proposeTarget as any)._description || null"
+      :own-value="(proposeTarget as any).tz_description || ''"
+      field="description"
+      :purchase-item-id="(proposeTarget as any).id"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
+import AvgPriceHint from '@/components/items/AvgPriceHint.vue'
+import type { AvgPriceStats } from '@/utils/avgPrice'
 import type { Contractor } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { formatPlanResidual, formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur, parseNumber as parseNumberUtil } from '@/utils/numberFormat'
-import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import { UNIT_PRICE_NOT_FIXED_HINT, PLAN_PRICE_LOCKED_HINT } from '@/constants/planPriceLabels'
 import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 // item-forms-accommodation-transport.md: спец-форма позиции — ItemRowFormSwitch.vue
 // (переключатель формы строки + ItemFormFields внутри) заменяет колонки Кол-во/
@@ -711,9 +781,22 @@ import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 import { formatExtraAttrsSummary } from '@/utils/itemAmounts'
 import { vatOnTopToTriState, triStateToVatOnTop } from '@/composables/useVatCalc'
 import { itemFormDescriptor } from '@/composables/items/useItemForm'
+// Своё ТЗ позиции (план item-tz-description.md, Этап Б) — ЕДИНЫЙ хелпер
+// (ПРАВИЛО №6), см. docstring utils/itemTz.ts.
+import { isTzFromCatalog, resetTzToCatalog, tzTextsDiffer } from '@/utils/itemTz'
+import ProposeToCatalogDialog from '@/components/products/ProposeToCatalogDialog.vue'
 
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }
+
+// «Предложить в каталог» (Этап В, п.4) — один диалог на таблицу, цель —
+// текущая строка (см. шаблон выше).
+const proposeDialogShow = ref(false)
+const proposeTarget = ref<EditorItem | null>(null)
+function openProposeDialog(item: EditorItem) {
+  proposeTarget.value = item
+  proposeDialogShow.value = true
+}
 
 const props = defineProps<{
   items: EditorItem[]
@@ -837,6 +920,10 @@ const props = defineProps<{
   formatNumber: (v: number | null | undefined) => string
   parseNumber: (v: string) => number | null
   contractorFilter: (value: string, query: string, item?: any) => boolean
+  // Подсказка «Средняя цена» у поля «Цена ед.» (план clever-bouncing-lantern.md,
+  // Часть 2, п.7) — считает PurchaseItemsEditor.vue::avgPriceFor через один
+  // useAvgPrice на весь редактор (Правило №6), здесь только отображение.
+  avgPriceFor?: (item: EditorItem) => AvgPriceStats | null
 }>()
 
 // Шаг 2 «план ≠ факт»: кол-во/цена ТЗ недоступны для правки, если закупка уже
@@ -999,6 +1086,7 @@ const emit = defineEmits<{
   'update-contract-field': [idx: number, field: string, val: unknown]
   'contract-vat-change': [idx: number, val: any]
   'update-accepted-field': [idx: number, field: 'accepted_name' | 'accepted_quantity' | 'accepted_unit', val: unknown]
+  'apply-avg-price': [idx: number]
 }>()
 </script>
 

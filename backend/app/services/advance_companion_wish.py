@@ -49,6 +49,7 @@ def _purchase_item_to_dict(pi: PurchaseItem) -> dict:
         match_confirmed=bool(pi.match_confirmed),
         over_plan=bool(pi.over_plan),
         extra_attrs=pi.extra_attrs or {},
+        tz_description=getattr(pi, 'tz_description', None),
     )
 
 

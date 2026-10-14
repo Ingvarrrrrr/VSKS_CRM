@@ -19,6 +19,7 @@ from app.models.user import User
 from app.services.import_preview_sheets import detect_header_row, read_preview_sheets, read_full_sheet_rows
 from app.services.products_import_map import suggest_products_column_mapping, suggest_products_column_mapping_with_hints
 from app.services.products_import_apply import apply_products_import
+from app.services.product_catalog_guard import can_edit_catalog
 
 try:
     from openpyxl import Workbook, load_workbook
@@ -72,6 +73,7 @@ async def download_products_template(
     ws.title = "Товары"
     headers = [
         "Наименование", "Описание", "Категория", "Вид", "Ед. изм.",
+        "Кол-во в упаковке", "Ед. изм. в упаковке",
         "Цена", "Дата цены", "Ссылка 1", "Цена ссылки 1", "Ссылка 2", "Цена ссылки 2", "Ссылка 3", "Цена ссылки 3",
         "Фото (URL)", "Многоразовое", "Активен", "Категория ФЭО",
     ]
@@ -83,10 +85,17 @@ async def download_products_template(
         cell.alignment = Alignment(horizontal="center", vertical="center")
     ws.append([
         "Компьютер Dell", "Core i5, 16GB RAM", "Оргтехника", "Рабочая станция", "шт",
+        "", "",
         "85000", "01.09.2026", "https://market.yandex.ru/...", "83000", "https://dns-shop.ru/...", "87000", "", "",
         "", "да", "да", "Техническое оснащение",
     ])
-    for i, w in enumerate([30, 30, 20, 20, 10, 12, 14, 35, 14, 35, 14, 35, 14, 30, 12, 10, 30], 1):
+    ws.append([
+        "Бумага А4 (упаковка)", "80 г/м², 500 листов", "Расходники", "Бумага", "упак.",
+        "10", "шт.",
+        "450", "01.09.2026", "", "", "", "", "", "",
+        "", "да", "да", "",
+    ])
+    for i, w in enumerate([30, 30, 20, 20, 10, 16, 16, 12, 14, 35, 14, 35, 14, 35, 14, 30, 12, 10, 30], 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
     buf = BytesIO(); wb.save(buf); buf.seek(0)
@@ -144,6 +153,7 @@ async def import_products_from_excel(
         db, rows[1:], col_idx,
         filename=file.filename or "", current_user=current_user,
         purchase_id=purchase_id, dry_run=False, first_row_num=2,
+        editor_can_edit_catalog=await can_edit_catalog(current_user, db),
     )
     recognized = {field: raw_headers[idx] for field, idx in col_idx.items() if idx < len(raw_headers)}
     return {**result, "headers_found": recognized, "headers_raw": raw_headers[:20]}
@@ -191,6 +201,8 @@ async def products_import_mapped(
     col_feo_category_name: int = Query(-1),
     col_quantity: int = Query(-1),
     col_unit: int = Query(-1),
+    col_pack_quantity: int = Query(-1, description="Индекс столбца «Кол-во в упаковке» (владелец, 14.10)"),
+    col_pack_unit: int = Query(-1, description="Индекс столбца «Ед. изм. в упаковке» (владелец, 14.10)"),
     col_link_url_1: int = Query(-1), col_link_price_1: int = Query(-1),
     col_link_url_2: int = Query(-1), col_link_price_2: int = Query(-1),
     col_link_url_3: int = Query(-1), col_link_price_3: int = Query(-1),
@@ -226,6 +238,7 @@ async def products_import_mapped(
         "product_type": col_product_type, "price": col_price, "price_date": col_price_date, "photo_link": col_photo_link,
         "is_reusable": col_is_reusable, "is_active": col_is_active,
         "feo_category_name": col_feo_category_name, "quantity": col_quantity, "unit": col_unit,
+        "pack_quantity": col_pack_quantity, "pack_unit": col_pack_unit,
         "link_url_1": col_link_url_1, "link_price_1": col_link_price_1,
         "link_url_2": col_link_url_2, "link_price_2": col_link_price_2,
         "link_url_3": col_link_url_3, "link_price_3": col_link_price_3,
@@ -237,6 +250,7 @@ async def products_import_mapped(
         filename=file.filename or "", current_user=current_user,
         purchase_id=purchase_id, dry_run=dry_run,
         first_row_num=header_row_offset + 2,
+        editor_can_edit_catalog=await can_edit_catalog(current_user, db),
     )
 
 

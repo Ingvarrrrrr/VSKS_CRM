@@ -82,24 +82,43 @@ def _signatory_position(signatory: str) -> str:
 
 
 # Phase 23: helpers for signatory formatting — used by both paths of _signatory_split
+# _fio_to_genitive (грубая эвристика) удалена 14.10.2026 (ПРАВИЛО №6) — склонение
+# ФИО подписанта теперь только через petrovich, см.
+# app.services.documents.morphology._to_gen_fio, импортируется в contexts.py
+# под тем же именем _fio_to_genitive.
 
-def _fio_to_genitive(name_full: str) -> str:
-    """Rough genitive form of a full name: Козеев Евгений Викторович → Козеева Евгения Викторовича."""
-    def _word(w: str) -> str:
-        if w.endswith("ич"):  # Иванович → Ивановича
-            return w + "а"
-        if w.endswith("ий"):  # Евгений → Евгения
-            return w[:-2] + "ия"
-        if w.endswith("ья"):  # Илья → Ильи
-            return w[:-2] + "ьи"
-        if w.endswith("а") and len(w) > 2:
-            return w[:-1] + "ы"
-        # Last consonant cluster: add -а
-        vowels = set("аеёиоуыьъэюяАЕЁИОУЫЭЮЯ")
-        if w and w[-1] not in vowels and w[-1] not in "ьъ":
-            return w + "а"
-        return w  # fallback: as-is
-    return " ".join(_word(w) for w in name_full.split()) if name_full else name_full
+
+# Нормализация регистра должности подписанта — ЕДИНСТВЕННОЕ место (ПРАВИЛО №6).
+# Владелец (14.10.2026): ЕГРЮЛ отдаёт должность руководителя заглавными
+# («ПРЕЗИДЕНТ», «ГЕНЕРАЛЬНЫЙ ДИРЕКТОР») — печатать её в договоре в таком виде
+# нельзя, нужно «Президент», «Генеральный директор». Применяется ОДИН раз —
+# в contexts.py::_signatory_split (structured- и legacy-путь) и к
+# contractor_signatory_position в contexts_extra.py::add_contractor_signatory_context
+# (там должность пересчитывается отдельно от _signatory_split — см. комментарий
+# там же), падёжное склонение (_to_gen_phrase) считается уже от нормализованной
+# строки, второй раз регистр не трогаем.
+def _normalize_signatory_position(position: str | None) -> str:
+    """«ПРЕЗИДЕНТ» → «Президент», «ГЕНЕРАЛЬНЫЙ ДИРЕКТОР» → «Генеральный директор».
+
+    Если должность НЕ целиком заглавными буквами (например, «ИП Иванов» или
+    уже нормальный «Директор») — возвращается как есть (после удаления
+    хвостового двоеточия/пробелов): так аббревиатуры (ИП, ООО) внутри обычной
+    должности не ломаются, потому что к ним эта функция вообще не применяется
+    (решение о регистре принимается по ВСЕЙ строке, а не по слову).
+    """
+    if not position:
+        return ""
+    s = str(position).strip().rstrip(":").strip()
+    if not s:
+        return ""
+    letters = [ch for ch in s if ch.isalpha()]
+    if not letters or not all(ch.isupper() for ch in letters):
+        return s
+    words = [w for w in s.split() if w]
+    out = []
+    for i, w in enumerate(words):
+        out.append(w[0].upper() + w[1:].lower() if i == 0 else w.lower())
+    return " ".join(out)
 
 
 # B-dedup: формат ФИО → инициалы (используется для «Ответственного исполнителя»).

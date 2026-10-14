@@ -1,0 +1,118 @@
+"""Кто может быть инициатором служебной записки (Правило владельца, 14.10.2026).
+
+Единственное место (Правило №6), где считаются:
+  - org_staff_user_ids   — «штат» организации: кто физически числится в ней
+    (primary User.org_id, членство user_organizations, персональный
+    user_org_access). ТОТ ЖЕ расчёт, что ветка `org_id` в GET /users/
+    (app/routers/users.py::list_users) — вынесен сюда, list_users теперь
+    вызывает _staff_conditions напрямую, вторая формула не заводится.
+  - initiator_candidate_ids — кого текущий пользователь вправе указать
+    инициатором служебной записки по конкретной субсидии.
+
+Правило владельца (дословно, 14.10.2026):
+  «Штат» = сотрудники организации субсидии (subsidy.org_id) — тот же расчёт,
+  что ветка org_id в GET /users/. НЕ включать людей с персональным доступом
+  к субсидии (user_subsidy_access) и сотрудников орг-контрагента. Вне штата
+  нельзя выбрать НИКОГО, даже подчинённого.
+
+  Кто выбирает (эффективная роль в орг субсидии через
+  app.auth.permissions._resolve_role_for_org):
+    - account_owner, superadmin → любой из штата;
+    - admin («Администратор аккаунта») → любой из штата, ЕСЛИ орг субсидии
+      входит в контур его аккаунта (app.auth.visibility.
+      compute_account_contour_org_ids);
+    - org_admin ЭТОЙ организации (эффективная роль в subsidy.org_id ==
+      org_admin) → любой из штата;
+    - manager, employee (и org_admin другой организации — т.е. эффективная
+      роль здесь ниже) → сам + подчинённые (app.routers.task_visibility.
+      _get_visible_user_ids; None → SaaS-wide, трактуется как «весь штат»)
+      ∩ штат.
+  Если выбирающий сам не в штате — себя выбрать не может (пересечение пустое).
+
+Используется: backend/app/routers/users_access.py (/i-can-act-for?subsidy_id=)
+и backend/app/services/documents/stages_relations.py::resolve_initiator —
+единый источник, не дублируется в wish_documents.py (тот импортирует
+resolve_initiator оттуда же).
+"""
+from typing import Optional
+
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _staff_conditions(org_ids):
+    """SQL-условия (НЕ выполняются здесь) — «штат» одной или нескольких орг:
+    primary User.org_id ИЛИ членство в user_organizations ИЛИ персональный
+    user_org_access. Делит одну формулу между users.py::list_users (параметр
+    org_id, в т.ч. список орг по субсидии+контрагенту+ИНН-дублям) и
+    org_staff_user_ids ниже — Правило №6, вторая формула не пишется.
+    """
+    from app.models.user import User
+    from app.models.user_organization import UserOrganization
+    from app.models.user_org_access import UserOrgAccess
+
+    ids = [org_ids] if isinstance(org_ids, int) else list(org_ids)
+    member_q = select(UserOrganization.user_id).where(UserOrganization.org_id.in_(ids))
+    uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(ids))
+    return [User.org_id.in_(ids), User.id.in_(member_q), User.id.in_(uoa_q)]
+
+
+async def org_staff_user_ids(db: AsyncSession, org_id: int) -> set[int]:
+    """«Штат» организации org_id как множество user_id (см. _staff_conditions)."""
+    from app.models.user import User
+
+    if not org_id:
+        return set()
+    rows = (await db.execute(
+        select(User.id).where(or_(*_staff_conditions(org_id)))
+    )).scalars().all()
+    return {int(x) for x in rows}
+
+
+async def initiator_candidate_ids(db: AsyncSession, current_user, subsidy) -> set[int]:
+    """Кого current_user вправе указать инициатором служебной записки по subsidy.
+
+    Фолбэк: у субсидии нет org_id (отсутствует привязка к организации) —
+    штата как такового не существует, безопасный минимум — только сам
+    current_user (иначе служебку нельзя было бы напечатать вовсе).
+    """
+    org_id = getattr(subsidy, "org_id", None) if subsidy else None
+    if not org_id:
+        return {current_user.id}
+
+    staff = await org_staff_user_ids(db, org_id)
+
+    if current_user.role in ("superadmin", "account_owner"):
+        return staff
+
+    # admin («Администратор аккаунта») — весь штат, если орг субсидии в контуре
+    # его аккаунта.
+    if current_user.role == "admin":
+        from app.auth.visibility import compute_account_contour_org_ids
+        contour = await compute_account_contour_org_ids(db, current_user.org_id)
+        if org_id in contour:
+            return staff
+
+    # org_admin ИМЕННО этой организации — ИЛИ персональный UOA-грант уровня
+    # admin/account_owner именно в этой орге (Доправка 14.10.2026: человек
+    # глобально employee/manager, но user_org_access этой орги даёт роль
+    # 'admin'/'account_owner' — _resolve_role_for_org подберёт её как более
+    # высокую через combine_role_rank, и это ДОЛЖНО открывать весь штат, как
+    # обычному admin/org_admin). Условие `current_user.role != "admin"`
+    # отсекает глобального admin ВНЕ контура своего аккаунта (ветка выше):
+    # для него effective_role тоже окажется 'admin' (из глобальной роли, не
+    # из UOA), а это тот самый случай, которому весь штат не положен.
+    from app.auth.permissions import _resolve_role_for_org
+    effective_role = await _resolve_role_for_org(current_user, db, org_id)
+    if effective_role in ("account_owner", "admin", "org_admin") and current_user.role != "admin":
+        return staff
+
+    # Остальные (manager/employee/org_admin другой орг) — сам + подчинённые,
+    # пересечённые со штатом. Вне штата выбирающий не может выбрать даже себя.
+    from app.routers.task_visibility import _get_visible_user_ids
+    visible = await _get_visible_user_ids(current_user, db)
+    if visible is None:
+        return staff
+    visible = set(visible)
+    visible.add(current_user.id)
+    return visible & staff

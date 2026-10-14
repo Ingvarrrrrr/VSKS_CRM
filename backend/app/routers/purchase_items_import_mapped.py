@@ -26,7 +26,6 @@ from app.models.product import Product
 from app.services.item_amounts import line_total
 from app.auth.jwt import get_current_user, get_single_org_id
 from app.models.user import User
-from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.product_catalog_match import (
     index_products_by_name, normalize_product_name,
@@ -34,9 +33,11 @@ from app.services.product_catalog_match import (
 )
 from app.services.items_import_parsing import _extract_html_tables, _read_excel_rows
 from app.services.items_import_catalog import _upsert_product_to_catalog, _apply_import_to_existing_product
+from app.services.items_import_limits import apply_import_preview_limit
 from app.utils.numbers import to_decimal
 from app.services.qty_price_check import check_qty_price_sum, resolve_qty_price_choice
 from app.services.request_params import merge_form_over_query
+from app.services.items_import_tz_choice import match_catalog_product, resolve_tz_description
 import json as _json
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-items-import"])
@@ -259,28 +260,38 @@ async def import_items_mapped_nopid(
     # Точное сопоставление с каталогом — ТОЛЬКО чтение, ничего не пишем
     # (заявка/закупка ещё не существует). Один батч-запрос на все имена
     # (find_products_by_normalized_names, product_catalog_match.py).
+    # ПРАВИЛО №6 (владелец, 14.10.2026, план item-tz-description.md): "description"
+    # — ТЕКСТ ИЗ ФАЙЛА, больше не затирается/дополняется каталожным — тот
+    # отдаётся отдельно как "catalog_description" (окно сравнения на фронте,
+    # Этап Б, решает что показать/сохранить).
     _names = [it['item_name'] for it in items_out if it['item_name']]
     if _names:
         _matched_by_name = await find_products_by_normalized_names(db, _names)
         for it in items_out:
             _prod = _matched_by_name.get(normalize_product_name(it['item_name']))
+            it['catalog_description'] = (_prod.description or None) if _prod else None
             if not _prod:
                 continue
             it['product_id'] = _prod.id
             it['photo_url'] = effective_photo_url(_prod)
-            if _prod.description and not it['description']:
-                it['description'] = _prod.description
             if _prod.unit:
                 it['unit'] = _prod.unit
+    else:
+        for it in items_out:
+            it['catalog_description'] = None
 
     try:
         await db.commit()
     except Exception:
         await db.rollback()
 
+    # Лимит 200 (владелец, 14.10.2026) — ОДНА константа на все пути импорта.
+    _limited_items, _total_in_file, _truncated = apply_import_preview_limit(items_out)
     return {
-        "items": items_out,
-        "added": len(items_out),
+        "items": _limited_items,
+        "added": len(_limited_items),
+        "total_in_file": _total_in_file,
+        "truncated": _truncated,
         "warnings": warnings,
         "debug": {
             "total_rows_after_header": len(data_iter),
@@ -311,6 +322,7 @@ async def import_items_mapped(
     header_row_offset: int = Query(0, description="Сколько строк пропустить до заголовка (авто-определено при preview)"),
     confirm: bool = Query(default=False, description="false — только предпросмотр с предупреждениями, ничего не пишет в БД; true — реальный импорт"),
     resolutions: Optional[str] = Query(default=None, description='JSON {"<row_num>": "recalc_sum"|"recalc_price"|"keep"} — выбор пользователя по строкам с sum_mismatch'),
+    tz_choices: Optional[str] = Query(default=None, description='JSON {"<row_num>": "catalog"|"file"} — выбор ТЗ по строке в окне сравнения, по умолчанию "file"'),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -340,7 +352,7 @@ async def import_items_mapped(
             col_vat=col_vat, col_unit=col_unit, col_row_num=col_row_num, col_vat_rate=col_vat_rate,
             col_vat_amount=col_vat_amount, col_total_with_vat=col_total_with_vat, col_category=col_category,
             col_product_type=col_product_type, header_row_offset=header_row_offset, confirm=confirm,
-            resolutions=resolutions,
+            resolutions=resolutions, tz_choices=tz_choices,
         ),
         bool_fields=frozenset({"confirm"}),
         int_fields=frozenset({
@@ -366,6 +378,11 @@ async def import_items_mapped(
     header_row_offset = _p["header_row_offset"]
     confirm = _p["confirm"]
     resolutions = _p["resolutions"]
+    tz_choices = _p["tz_choices"]
+    try:
+        tz_choices_map: dict[str, str] = _json.loads(tz_choices) if tz_choices else {}
+    except Exception:
+        tz_choices_map = {}
 
     if col_item_name < 0:
         raise HTTPException(400, "Не указан столбец Наименование")
@@ -533,14 +550,38 @@ async def import_items_mapped(
             preview_items.append({
                 'row': row_num,
                 'item_name': item_name[:500],
+                # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md):
+                # текст характеристик ИЗ ФАЙЛА (колонка col_description) — ОТДЕЛЬНО
+                # от "catalog_description" (ниже, из найденного товара каталога),
+                # чтобы окно сравнения могло показать оба.
+                'description': _cell(row, col_description) if col_description >= 0 else None,
                 'quantity': float(quantity) if quantity else None,
                 'unit_price': float(unit_price) if unit_price else None,
                 'total_price': float(total_price) if total_price else None,
             })
+        # Каталожное описание — ТЕМ ЖЕ матчером (exact+fuzzy), которым confirm=true
+        # сматчит эти же строки при сохранении (Правило №6, см.
+        # app/services/items_import_tz_choice.py::match_catalog_product).
+        if preview_items:
+            _org_id_preview = get_single_org_id(current_user)
+            _prod_q_preview = select(Product)
+            if _org_id_preview:
+                _prod_q_preview = _prod_q_preview.where(
+                    (Product.org_id == _org_id_preview) | (Product.org_id.is_(None))
+                )
+            _products_preview = (await db.execute(_prod_q_preview)).scalars().all()
+            _product_by_name_preview = index_products_by_name(_products_preview)
+            for _it in preview_items:
+                _matched_preview = match_catalog_product(_it['item_name'], _product_by_name_preview)
+                _it['catalog_description'] = (_matched_preview.description or None) if _matched_preview else None
+        # Лимит 200 (владелец, 14.10.2026) — ОДНА константа на все пути импорта.
+        _limited_preview_items, _total_in_file_mp, _truncated_mp = apply_import_preview_limit(preview_items)
         return {
-            "preview": preview_items,
+            "preview": _limited_preview_items,
             "warnings": preview_warnings,
-            "total_rows": len(preview_items),
+            "total_rows": len(_limited_preview_items),
+            "total_in_file": _total_in_file_mp,
+            "truncated": _truncated_mp,
             "debug": {
                 "total_rows_after_header": len(data_iter),
                 "skipped_empty_name": _prev_skipped_empty,
@@ -639,21 +680,9 @@ async def import_items_mapped(
             row_category = _cell(row, col_category) if (col_category is not None and col_category >= 0) else None
             row_product_type = _cell(row, col_product_type) if (col_product_type is not None and col_product_type >= 0) else None
 
-            # Auto-match or create in catalog
-            # 1) exact match (fast path) — normalize_product_name (Правило №6):
-            # обрезка пробелов по краям + схлопывание внутренних + lower().
-            matched_product = product_by_name.get(normalize_product_name(item_name))
-            if not matched_product:
-                # 2) fuzzy fallback — find best candidate above SCORE_AUTO threshold
-                best_score = 0.0
-                best_candidate = None
-                for _key, _p in product_by_name.items():
-                    _s = _fuzzy_score(item_name, _p.name if hasattr(_p, 'name') else _key)
-                    if _s > best_score:
-                        best_score = _s
-                        best_candidate = _p
-                if best_score >= _SCORE_AUTO and best_candidate is not None:
-                    matched_product = best_candidate
+            # Auto-match or create in catalog — exact+fuzzy, ОДНА функция с
+            # preview-веткой выше (Правило №6, match_catalog_product).
+            matched_product = match_catalog_product(item_name, product_by_name)
             if matched_product:
                 product_id = matched_product.id
                 matched_catalog += 1
@@ -694,6 +723,13 @@ async def import_items_mapped(
                 vat_rate=vat_rate_val or vat_str,
                 vat_amount=vat_amount_val,
                 total_with_vat=total_with_vat_val,
+                # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md) —
+                # текст из файла (колонка «Описание»/характеристики, + суффикс НДС,
+                # см. выше) — в саму позицию, НЕ в каталог (см. комментарий у
+                # _apply_import_to_existing_product в items_import_catalog.py).
+                # tz_choices (окно сравнения) может переключить на NULL →
+                # возьмётся каталожное (resolve_tz_description, Правило №6).
+                tz_description=resolve_tz_description(description, row_idx, tz_choices_map),
             )
             db.add(item)
             added += 1

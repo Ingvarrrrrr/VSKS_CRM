@@ -13,7 +13,7 @@ from datetime import date
 from app.models.purchase import Purchase
 from app.services.documents.doc_types import _BASIS_LABELS, _PURCHASE_METHOD_LABELS
 from app.services.documents.formatting import (
-    _fmt_date, _clean_id, _fmt_money, _fmt_money_plain, _rubles_to_words, _signatory_position,
+    _fmt_date, _clean_id, _fmt_money, _fmt_money_plain, _rubles_to_words,
 )
 from app.services.documents.templates import _purchase_method_label
 from app.services.documents.contexts import (
@@ -40,6 +40,16 @@ def build_base_context_part1(
     contract_amount_val = amounts["contract_amount_val"]
 
     context = {
+        # doc_kind — короткий суффикс doc_type ("advance"/"delivery"/
+        # "payment"/"procurement") для {% if doc_kind == '...' %} в общем
+        # семействе шаблонов service_note_*.docx (единственный расчёт,
+        # ПРАВИЛО №6 — найден обходом шаблонов 14.10.2026: переменная была
+        # в разметке четырёх шаблонов, но никогда не попадала в контекст).
+        "doc_kind": (
+            doc_type[len("service_note_"):]
+            if doc_type and doc_type.startswith("service_note_")
+            else ""
+        ),
         # Закупка
         "purchase_number": p.purchase_number or "",
         "registry_number": p.registry_number or "",
@@ -193,7 +203,11 @@ async def build_base_context_part2(
         # Phase 27.2-08: краткое название = поле "Краткое наименование *" из карточки контрагента
         # напрямую (Contractor.name), без вытаскивания из кавычек.
         "contractor_short_name": (c.name or "") if c else "",
-        "contractor_signatory_position": _signatory_position(c.signatory) if c else "",
+        # contractor_signatory_position — не черновим здесь: единственный
+        # расчёт в add_contractor_signatory_context (contexts_extra.py,
+        # ПРАВИЛО №6), вызывается в generate.py ПОСЛЕ build_base_context_part2
+        # и до render_template — ключ попадает в контекст до рендера без
+        # второй копии формулы.
         # Предмет (сервисное имя)
         "service_name": p.subject or "",
         "service_name_gen": _inflect_phrase_genitive(p.subject or ""),

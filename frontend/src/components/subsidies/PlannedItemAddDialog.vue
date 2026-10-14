@@ -56,6 +56,11 @@
           @create-new="onPlannedCreateNewProduct"
           @clear="p.onPlannedItemProductClear"
         />
+        <!-- «Создать новый товар…» — ЕДИНОЕ окно товара (ProductEditorDialog.vue,
+             ПРАВИЛО №6, владелец 14.10). Раньше тут был свой POST /products/ с
+             category='Прочее' мимо общей формы — убран, товар теперь заводится
+             с теми же полями, что и на странице «Товары». -->
+        <ProductEditorDialog ref="productEditorRef" @saved="onPlannedProductEditorSaved" />
         <!-- Раскладка (владелец, п.15б, 13.10.2026): Наименование (и товар) →
              галочки происхождения (каждая раскрывает СВОИ кол-во/ед.изм./цена/
              сумма) → общий блок «Тип платежа» → остальное (тип позиции,
@@ -229,8 +234,10 @@
 // openCreatePlannedFromActual, вызываемые деревом ФЭО и FeoCategoryDialog.vue
 // через ctx) — в usePlannedItems.ts (singleton, общий с остальными тремя
 // диалогами панели «план vs факт»).
+import { ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
+import ProductEditorDialog from '@/components/products/ProductEditorDialog.vue'
 import { ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
 import { NEED_LEVEL_OPTIONS } from '@/utils/planNeedLevel'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
@@ -238,9 +245,8 @@ import { usePlannedItems } from '@/composables/subsidies/usePlannedItems'
 import { formatCurrency } from '@/composables/subsidies/format'
 import FeoPlannedDuplicateDialog from '@/components/items/feo-planned/FeoPlannedDuplicateDialog.vue'
 import FeoPlannedOriginFields from '@/components/items/feo-planned/FeoPlannedOriginFields.vue'
-import { apiFetch } from '@/api'
-import { useToast } from '@/composables/useToast'
 import type { MatchCandidate } from '@/composables/useItemMatching'
+import type { Product } from '@/composables/products/productsTypes'
 
 const { mobile } = useDisplay()
 const p = usePlannedItems(useSubsidyDetailCtx())
@@ -250,52 +256,31 @@ function fmtMoney(v: number | null | undefined): string {
   return v == null ? '—' : formatCurrency(v)
 }
 
-// Владелец (волна 3, п.19, 2026-09-13): «Создать новый товар…» из
-// InlineProductMatch теперь виден в этом диалоге (см. шаблон выше) — по клику
-// заводим товар в общем каталоге products (POST /products/, тот же эндпоинт,
-// что и остальной каталог — второй способ создания товара не пишем, Правило
-// №6) и сразу применяем его тем же путём, что и обычный выбор из подсказок
-// (p.onPlannedItemProductPick из useFeoPlannedItemAddDialog.ts) — подставит
-// имя/цену/фото и подтянет unit/price через product-hint, как при обычном
-// pick. category='Прочее' — тот же дефолт, что и у Product.category в БД
-// (backend/app/models/product.py) и у остальных мест автосоздания товара без
-// явной категории (items_import_catalog.py, products_import_apply.py) — не
-// придумываем новый дефолт. Бэкенд сам находит похожий товар (POST /products/
-// уже проверяет дубликаты threshold=0.7) и возвращает 409 — в этом случае
-// используем найденный существующий товар вместо создания почти-дубля.
-const toast = useToast()
-async function onPlannedCreateNewProduct() {
+// Владелец (волна 3, п.19, 2026-09-13; переделано 14.10): «Создать новый
+// товар…» из InlineProductMatch — ЕДИНОЕ окно товара (ProductEditorDialog.vue,
+// ПРАВИЛО №6), те же поля, что и на странице «Товары», а не свой POST
+// /products/ с category='Прочее' мимо общей формы и обработки дубликатов.
+// После сохранения товар применяется тем же путём, что и обычный выбор из
+// подсказок (p.onPlannedItemProductPick из useFeoPlannedItemAddDialog.ts) —
+// подставит имя/цену/фото и подтянет unit/price через product-hint.
+const productEditorRef = ref<InstanceType<typeof ProductEditorDialog> | null>(null)
+
+function onPlannedCreateNewProduct() {
   const name = (p.plannedItemForm.value.name || '').trim()
-  if (!name) return
-  try {
-    let created: any
-    try {
-      created = await apiFetch<any>('/products/', {
-        method: 'POST',
-        body: {
-          name,
-          category: 'Прочее',
-          unit: p.plannedItemForm.value.unit || null,
-          price: p.plannedItemForm.value.unitPrice ?? null,
-        },
-      })
-    } catch (err: any) {
-      const details = err?.payload?.details
-      const existing = (err?.status === 409 && details && typeof details === 'object' && details.code === 'duplicate_product')
-        ? details.existing : null
-      if (!existing) throw err
-      created = existing
-      toast.info(`Похожий товар уже есть в каталоге — использован «${existing.name}»`)
-    }
-    p.onPlannedItemProductPick({
-      product_id: created.id,
-      name: created.name || name,
-      price: created.price != null ? Number(created.price) : null,
-      score: 1,
-      photo_url: created.photo_url ?? null,
-    } as MatchCandidate)
-  } catch (e: any) {
-    toast.error(e?.payload?.message || e?.detail || e?.message || 'Не удалось создать товар')
-  }
+  productEditorRef.value?.open({
+    name,
+    unit: p.plannedItemForm.value.unit || null,
+    price: p.plannedItemForm.value.unitPrice ?? null,
+  })
+}
+
+function onPlannedProductEditorSaved(created: Product) {
+  p.onPlannedItemProductPick({
+    product_id: created.id,
+    name: created.name,
+    price: created.price != null ? Number(created.price) : null,
+    score: 1,
+    photo_url: created.photo_url ?? null,
+  } as MatchCandidate)
 }
 </script>

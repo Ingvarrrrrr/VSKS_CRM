@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.purchase import Purchase
-from app.services.documents.formatting import _fmt_date, _clean_id, _fio_to_initials_prefix
+from app.services.documents.formatting import _fmt_date, _clean_id, _fio_to_initials_prefix, _signatory_position, _normalize_signatory_position
 from app.services.documents.morphology import _to_gen_fio, _to_gen_phrase, _inflect_phrase_genitive
 from app.services.documents.contexts import _signatory_split
 from app.services.documents.contract_terms import warranty_period_text
@@ -44,11 +44,8 @@ def add_phase28_context(context: dict, subsidy, c, p: Purchase, can_view_pii: bo
         # Phase 28: grantor_name / ministry_name берём из новых полей модели Subsidy
         context["subsidy_grantor_name"] = (subsidy.grantor_name or "").strip() if subsidy else ""
         context["subsidy_ministry_name"] = (subsidy.ministry_name or "").strip() if subsidy else ""
-        # agreement_date: новое поле отсутствует в модели — используем basis_doc_date
-        _subsidy_agreement_date_obj = (
-            subsidy.basis_doc_date if subsidy and subsidy.basis_doc_date else None
-        )
-        context["subsidy_agreement_date"] = _fmt_date(_subsidy_agreement_date_obj) if _subsidy_agreement_date_obj else ""
+        # subsidy_agreement_number/date — см. add_subsidy_agreement_context
+        # (ПРАВИЛО №6, вызывается из add_misc_purchase_context ниже по generate.py).
 
         # Реквизиты физ.лица (ГПХ) — читаем из контрагента, с PII-гейтом
         context.update(contractor_pii_doc_fields(c, can_view_pii, _fmt_date))
@@ -176,6 +173,7 @@ def add_customer_context(context: dict, customer_org, customer_ctr) -> None:
         # Подписант Заказчика
         "customer_signatory":                cust_signatory_full,
         "customer_signatory_position":       cust_sig["position"],
+        "customer_signatory_position_genitive": _to_gen_phrase(cust_sig["position"]),
         "customer_signatory_name":           cust_sig["name_full"],
         "customer_signatory_name_genitive":  cust_sig["name_genitive"],
         "customer_signatory_initials":       cust_sig["name_initials"],
@@ -212,9 +210,28 @@ async def add_fabrikant_context(context: dict, db: AsyncSession, p: Purchase) ->
     context["notice_number"] = _notice_number
 
 
+def add_subsidy_agreement_context(context: dict, subsidy) -> None:
+    """Номер и дата соглашения о субсидии — единственный расчёт (ПРАВИЛО №6),
+    вызывается из add_misc_purchase_context (основная генерация) и
+    fabrikant_package.py, вторую копию не заводить.
+
+    Владелец (14.10.2026): в карточке субсидии вводится только
+    Subsidy.basis_doc_number/basis_doc_date («Номер документа-основания») —
+    отдельного поля для номера/даты соглашения в UI нет. Subsidy.agreement_number
+    остаётся как устаревший fallback (поля ввода для него нет, но колонка
+    в БД может быть заполнена старыми данными/импортом).
+    """
+    context["subsidy_agreement_number"] = (
+        (subsidy.basis_doc_number or subsidy.agreement_number or "") if subsidy else ""
+    )
+    context["subsidy_agreement_date"] = (
+        _fmt_date(subsidy.basis_doc_date) if (subsidy and subsidy.basis_doc_date) else ""
+    )
+
+
 def add_misc_purchase_context(context: dict, p: Purchase, subsidy) -> None:
-    # subsidy_agreement_number — из Subsidy.agreement_number
-    context["subsidy_agreement_number"] = (subsidy.agreement_number or "") if subsidy else ""
+    # subsidy_agreement_number/date — см. add_subsidy_agreement_context выше.
+    add_subsidy_agreement_context(context, subsidy)
 
     # payment_term_days — из Purchase.payment_term_days; fallback 10
     context["payment_term_days"] = p.payment_term_days if (p.payment_term_days is not None) else 10
@@ -315,10 +332,24 @@ def add_contractor_signatory_context(context: dict, c) -> None:
         middle=getattr(c, 'signatory_middle_name', None) if c else None,
         position=getattr(c, 'signatory_position', None) if c else None,
     )
+    # Владелец (14.10.2026): должность подписанта Исполнителя — из заполненного
+    # Contractor.signatory_position, если есть; угадывание по строке signatory
+    # (_signatory_position, по умолчанию «Директор») — только фолбэк, когда
+    # поле не заполнено. Раньше угадывание побеждало всегда даже при
+    # заполненном signatory_position (contexts_build.py/fabrikant_package.py —
+    # обе копии читали только эвристику).
+    _ctr_signatory_position = _normalize_signatory_position(
+        getattr(c, 'signatory_position', None) or _signatory_position(c.signatory) if c else ""
+    )
     context.update({
         "contractor_signatory_name":          ctr_sig["name_full"],
         "contractor_signatory_name_genitive": ctr_sig["name_genitive"],
         "contractor_signatory_initials":      ctr_sig["name_initials"],
+        # Инициалы впереди: «П.П. Сидоров» — тот же приём, что и для Заказчика
+        # (customer_signatory_name_initials), см. add_customer_context выше.
+        "contractor_signatory_name_initials": _fio_to_initials_prefix(ctr_sig["name_full"]),
+        "contractor_signatory_position":          _ctr_signatory_position,
+        "contractor_signatory_position_genitive": _to_gen_phrase(_ctr_signatory_position),
         "contractor_ogrnip":                  (c.ogrn or "") if (c and (c.org_type or "").lower().startswith("ип")) else "",
         # contractor_full_name — полное официальное название (fallback на name)
         "contractor_full_name":               (c.full_name or c.name or "") if c else "",

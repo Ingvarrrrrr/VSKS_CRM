@@ -55,7 +55,7 @@ def _make_rules():
             S,
         ),
         "и {{ customer_full_name }} ({{ customer_short_name }}), "
-        "в лице {{ customer_signatory_position }} {{ customer_signatory_name }}, "
+        "в лице {{ customer_signatory_position_genitive }} {{ customer_signatory_name_genitive }}, "
         "действующего на основании {{ customer_signatory_basis }}",
     ))
 
@@ -196,7 +196,7 @@ def _make_rules():
             r"действующего на основании Устава,\s*с одной стороны,\s*и",
             S,
         ),
-        "в лице {{ customer_signatory_position }} {{ customer_signatory_name }}, "
+        "в лице {{ customer_signatory_position_genitive }} {{ customer_signatory_name_genitive }}, "
         "действующего на основании {{ customer_signatory_basis }}, с одной стороны, и",
     ))
 
@@ -208,7 +208,7 @@ def _make_rules():
             r"действующего на основании Устава",
             S,
         ),
-        "в лице {{ customer_signatory_position }} {{ customer_signatory_name }}, "
+        "в лице {{ customer_signatory_position_genitive }} {{ customer_signatory_name_genitive }}, "
         "действующего на основании {{ customer_signatory_basis }}",
     ))
 
@@ -220,7 +220,7 @@ def _make_rules():
             r"действующего на основании Устава",
             S,
         ),
-        "в лице {{ customer_signatory_position }} {{ customer_signatory_name }}, "
+        "в лице {{ customer_signatory_position_genitive }} {{ customer_signatory_name_genitive }}, "
         "действующего на основании {{ customer_signatory_basis }}",
     ))
 
@@ -234,7 +234,7 @@ def _make_rules():
         ),
         "{{ contractor_full_name }} ({{ contractor_short_name }}), "
         "именуемое/ая в дальнейшем «Исполнитель», "
-        "в лице {{ contractor_signatory_position }} {{ contractor_signatory_name }}, "
+        "в лице {{ contractor_signatory_position_genitive }} {{ contractor_signatory_name_genitive }}, "
         "действующего на основании {{ contractor_signatory_basis }}, ",
     ))
 
@@ -248,7 +248,7 @@ def _make_rules():
         ),
         "{{ contractor_full_name }} ({{ contractor_short_name }}), "
         "именуемое/ая в дальнейшем «Поставщик», "
-        "в лице {{ contractor_signatory_position }} {{ contractor_signatory_name }}, "
+        "в лице {{ contractor_signatory_position_genitive }} {{ contractor_signatory_name_genitive }}, "
         "действующего на основании {{ contractor_signatory_basis }}, ",
     ))
 
@@ -1040,8 +1040,8 @@ def _make_rules():
             r"_+,\s*в лице\s*_+,\s*действующий на основании\s*_+\s*,\s*именуемый в дальнейшем «Исполнитель»",
             S,
         ),
-        "{{ contractor_full_name }}, в лице {{ contractor_signatory_position }} "
-        "{{ contractor_signatory_name }}, действующий на основании {{ contractor_signatory_basis }}, "
+        "{{ contractor_full_name }}, в лице {{ contractor_signatory_position_genitive }} "
+        "{{ contractor_signatory_name_genitive }}, действующий на основании {{ contractor_signatory_basis }}, "
         "именуемый в дальнейшем «Исполнитель»",
     ))
 

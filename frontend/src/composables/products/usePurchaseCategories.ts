@@ -22,7 +22,7 @@ async function load(force = false): Promise<void> {
   if (loaded.value && !force) return
   loading.value = true
   try {
-    categories.value = await apiFetch<PurchaseCategory[]>('/purchase-categories/')
+    categories.value = await apiFetch<PurchaseCategory[]>('/purchase-categories')
     loaded.value = true
   } catch {
     // Справочник недоступен (бэкенд ещё не выкатил ручку/сеть) — мультивыбор
@@ -34,7 +34,7 @@ async function load(force = false): Promise<void> {
 
 async function createCategory(name: string): Promise<MutationResult> {
   try {
-    const item = await apiFetch<PurchaseCategory>('/purchase-categories/', {
+    const item = await apiFetch<PurchaseCategory>('/purchase-categories', {
       method: 'POST',
       body: JSON.stringify({ name: name.trim(), is_active: true }),
     })

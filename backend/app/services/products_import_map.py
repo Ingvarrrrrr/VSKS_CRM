@@ -86,6 +86,11 @@ COLUMN_MAP = {
     "дата цены": "price_date",
     "цена на дату": "price_date",
     "дата обновления цены": "price_date",
+    # Упаковка (владелец, 14.10) — см. app/services/units.py::is_pack_unit.
+    "кол-во в упаковке": "pack_quantity",
+    "количество в упаковке": "pack_quantity",
+    "ед. изм. в упаковке": "pack_unit",
+    "единица в упаковке": "pack_unit",
 }
 
 _LINK_URL_RE = _re.compile(r"ссылка (\d+)$")

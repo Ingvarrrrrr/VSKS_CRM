@@ -126,7 +126,10 @@ export function useItemMatching() {
       price_freshness: cand.price_freshness ?? null,
     }
     if (cand.item_type) row.item_type = cand.item_type
-    if (row.unit_price == null) {
+    // Владелец (14.10.2026, решение (в)): у позиции из Плана закупок цена
+    // ВСЕГДА плановая — выбор товара каталога её не перебивает, даже если
+    // плановая цена по какой-то причине пуста (не подставляем цену каталога).
+    if (row.unit_price == null && !(row as any).from_plan) {
       const best = cand.contract_price ?? cand.price
       if (best != null) {
         row.unit_price = Number(best)

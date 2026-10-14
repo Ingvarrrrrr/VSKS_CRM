@@ -60,6 +60,7 @@
                 {{ p.is_active ? 'Активен' : 'Неактивен' }}
               </v-chip>
             </div>
+            <div v-if="p.unit" class="text-caption text-medium-emphasis">{{ formatUnitWithPack(p) }}</div>
             <div v-if="p.price" class="font-weight-medium text-blue-darken-2 text-body-2">
               {{ Number(p.price).toLocaleString('ru-RU') }} ₽
             </div>
@@ -111,6 +112,7 @@
 import { typeColor, avgPriceBasisText } from '@/composables/products/productsTypes'
 import type { Product } from '@/composables/products/productsTypes'
 import ProductsBulkActionBar from './ProductsBulkActionBar.vue'
+import { formatUnitWithPack } from '@/utils/units'
 
 defineProps<{
   items: Product[]

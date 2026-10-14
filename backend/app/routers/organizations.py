@@ -26,6 +26,7 @@ from app.services.legal_constants import (
 )
 from app.services.password_policy import validate_new_password
 from app.routers.contractors import apply_requisite_fields
+from app.services.org_region_from_address import maybe_set_org_region_from_address
 
 router = APIRouter(tags=["organizations"])
 
@@ -389,6 +390,7 @@ async def create_organization(
         contractor_id=data.contractor_id,
         color=data.color,
     )
+    maybe_set_org_region_from_address(org, data.address)
     db.add(org)
     await db.flush()  # get org.id so we can link a new Contractor back
     # Auto-link to Contractor by INN (or create minimal Contractor if missing)
@@ -523,6 +525,10 @@ async def update_organization(
         # Auto-link by INN if still unlinked (создаст/найдёт контрагента и привяжет —
         # только для org, у которой контрагента ещё нет)
         await _auto_link_contractor_by_inn(db, org, data)
+    # Регион организации из юр. адреса (данные могут быть и в org.address, и
+    # в контрагенте — data.address — это то, что реально пришло от пользователя
+    # в этом запросе, независимо от того, в какую колонку оно легло выше).
+    maybe_set_org_region_from_address(org, data.address)
     await db.commit()
     # Re-fetch with contractor eager-loaded
     res = await db.execute(

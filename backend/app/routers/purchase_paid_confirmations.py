@@ -1,12 +1,18 @@
-"""Подтверждение «Оплачено» согласующими субсидии (план 2026-10-04-fadm-statement, п.3,
+"""Подтверждение «Оплачено» по праву 'paid_confirmation.decide' (план 2026-10-04-fadm-statement, п.3,
 доработка после приёмки 04.10: статусы contracted/ordered/delivered, не только delivered).
 
 Вместо молчаливого автоперевода закупки в paid (см.
 app/services/purchase_payments.py::recompute_purchase_payments,
 PAID_CONFIRMATION_ELIGIBLE_STATUSES) при достижении порога оплаты заводится
-PurchasePaidConfirmation (pending). Согласующий субсидии
-(app/models/subsidy_approver.py::SubsidyApprover, достаточно одного) либо
-superadmin/account_owner подтверждает — закупка переходит в paid ШТАТНЫМ
+PurchasePaidConfirmation (pending). Решает ТОЛЬКО сотрудник с отдельной
+галочкой в правах 'paid_confirmation.decide' (app.auth.permissions.has_org_key,
+сид app.startup.permission_seeds.py::_paid_confirmation_decide_action) либо
+superadmin/account_owner (bypass). Согласующий субсидии (app/models/
+subsidy_approver.py::SubsidyApprover) САМ ПО СЕБЕ это право больше НЕ даёт —
+решение владельца 14.10.2026: та сущность осталась только для листа
+согласования закупок/плана (app/routers/purchase_approvals.py), подтверждение
+оплаты из выписки — отдельная ответственность. Подтверждает — закупка
+переходит в paid ШТАТНЫМ
 переходом (app/services/purchase_transition_core.py), ПОШАГОВО через каждый
 промежуточный статус (contracted→ordered→delivered→paid), если нужно: функция
 не умеет прыгать через гейты нескольких статусов разом. Каждый шаг пишет
@@ -48,16 +54,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.auth.jwt import get_current_user
+from app.auth.permissions import has_org_key
 from app.models.contractor import Contractor
 from app.models.payment import Payment
 from app.models.purchase import Purchase
 from app.models.purchase_paid_confirmation import PurchasePaidConfirmation
 from app.models.subsidy import Subsidy
-from app.models.subsidy_approver import SubsidyApprover
 
 router = APIRouter(tags=["purchase-paid-confirmations"])
 
 _SAAS_BYPASS_ROLES = ("superadmin", "account_owner")
+
+# ПРАВИЛО №6 — один текст 403/объяснения блокировки на весь модуль (и
+# фронт её показывает как есть, см. describeApiError в usePaidConfirmations.ts).
+PAID_CONFIRMATION_DECIDE_DENIED_MESSAGE = (
+    "Подтвердить или отклонить оплату может только сотрудник с галочкой "
+    "«Подтверждать оплату, найденную в выписке» в правах (её выдаёт владелец аккаунта)"
+)
 
 
 async def _get_subsidy_or_404(sid: int, db: AsyncSession) -> Subsidy:
@@ -67,26 +80,29 @@ async def _get_subsidy_or_404(sid: int, db: AsyncSession) -> Subsidy:
     return s
 
 
-async def _is_subsidy_approver(db: AsyncSession, subsidy_id: int, user_id: int) -> bool:
-    row = (await db.execute(
-        select(SubsidyApprover.id).where(
-            SubsidyApprover.subsidy_id == subsidy_id,
-            SubsidyApprover.user_id == user_id,
-        ).limit(1)
-    )).scalar_one_or_none()
-    return row is not None
+async def _can_decide(current_user, db: AsyncSession, subsidy_id: int, org_id: Optional[int] = None) -> bool:
+    """Единственное место, где считается право решать по подтверждениям оплаты
+    (ПРАВИЛО №6) — bypass-роль ИЛИ галочка 'paid_confirmation.decide'
+    (has_org_key, та же проверка, что все остальные action-права в проекте;
+    см. app.startup.permission_seeds.py::_paid_confirmation_decide_action).
+    Решение владельца 14.10.2026: роль «согласующий субсидии»
+    (app.models.subsidy_approver.SubsidyApprover) САМА ПО СЕБЕ этого права
+    больше не даёт — это отдельная ответственность от листа согласования. И
+    gate (_assert_can_decide, 403 на confirm/reject), и список (который вместо
+    403 отдаёт пустой список без права — см. list_subsidy_paid_confirmations)
+    читают отсюда, не считают заново."""
+    if current_user.role in _SAAS_BYPASS_ROLES:
+        return True
+    if org_id is None:
+        subsidy = await db.get(Subsidy, subsidy_id)
+        org_id = subsidy.org_id if subsidy else None
+    return await has_org_key(current_user, db, org_id, 'paid_confirmation.decide', subsidy_id=subsidy_id)
 
 
 async def _assert_can_decide(current_user, db: AsyncSession, subsidy_id: int) -> None:
-    if current_user.role in _SAAS_BYPASS_ROLES:
+    if await _can_decide(current_user, db, subsidy_id):
         return
-    if await _is_subsidy_approver(db, subsidy_id, current_user.id):
-        return
-    raise HTTPException(
-        403,
-        "Подтвердить или отклонить оплату может только согласующий этой субсидии "
-        "(см. вкладку «Субсидии» → «Согласующие») либо владелец аккаунта",
-    )
+    raise HTTPException(403, PAID_CONFIRMATION_DECIDE_DENIED_MESSAGE)
 
 
 # Тексты гейтов превышения (feo_plan_excess.py/tz_excess_approval.py) уже
@@ -185,7 +201,7 @@ async def _simulate_confirm_chain(
     превышение плана — то не блокирует нигде, см. apply_purchase_status_
     transition.skip_plan_excess_gates); ВТОРОЕ: None или человекочитаемое,
     по-русски и с русским денежным форматом предупреждение о превышении,
-    которое БУДЕТ обойдено, если согласующий нажмёт confirm (см.
+    которое БУДЕТ обойдено, если решающий сотрудник нажмёт confirm (см.
     _format_plan_excess_warning)."""
     from app.routers.purchase_transitions import STATUS_LABELS
     from app.services.purchase_payments import PAID_CONFIRMATION_ELIGIBLE_STATUSES
@@ -370,15 +386,25 @@ async def list_subsidy_paid_confirmations(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(subsidy_id, db)
-    await _assert_can_decide(current_user, db, subsidy_id)
+    """Владелец (прод, 14.10): PaidConfirmationsPanel.vue грузит этот список
+    сама при открытии ЛЮБОЙ субсидии (watch(subsidyId, immediate:true)) — не
+    по нажатию. Админ организации без роли согласующего этой субсидии видел
+    403 просто за открытие вкладки «Субсидии», хотя панель и так скрыта при
+    пустом items. Решение владельца: без права 'paid_confirmation.decide' —
+    пустой список и can_decide=false без 403 и без обращения к таблице (сама
+    панель это скрывает); 404 на несуществующую субсидию — как и раньше.
+    confirm/reject и /check (purchase_paid_confirmations_check.py) НЕ
+    меняются — туда попадают только нажатием, там 403 уместен."""
+    subsidy = await _get_subsidy_or_404(subsidy_id, db)
+    if not await _can_decide(current_user, db, subsidy_id, org_id=subsidy.org_id):
+        return {"items": [], "can_decide": False}
 
     q = select(PurchasePaidConfirmation).where(PurchasePaidConfirmation.subsidy_id == subsidy_id)
     if status:
         q = q.where(PurchasePaidConfirmation.status == status)
     q = q.order_by(PurchasePaidConfirmation.requested_at.desc())
     rows = (await db.execute(q)).scalars().all()
-    return {"items": await _list_confirmation_dicts(db, rows)}
+    return {"items": await _list_confirmation_dicts(db, rows), "can_decide": True}
 
 
 @router.get("/api/purchases/{pid}/paid-confirmation")

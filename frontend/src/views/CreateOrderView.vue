@@ -379,7 +379,7 @@
             <v-col v-if="formMode === 'service_note_delivery'" cols="12" md="4">
               <v-autocomplete
                 v-model="form.service_note_by"
-                :items="orgUsersList"
+                :items="actAsList"
                 item-title="full_name"
                 item-value="id"
                 label="От кого"
@@ -387,7 +387,7 @@
                 density="compact"
                 clearable
                 hide-no-data
-                hint="Автор служебной записки (по умолчанию — вы)"
+                hint="Автор служебной записки — сотрудник организации субсидии, доступный вам как инициатор (по умолчанию — вы)"
                 persistent-hint
                 autocomplete="off"
               >
@@ -840,6 +840,7 @@
             :feo-excess-amount="purchaseData?.feo_excess_amount ?? null"
             :feo-excess-category-id="purchaseData?.feo_excess_category_id ?? null"
             :ensure-items-saved="ensureItemsSavedForCopy"
+            :org-id="currentSubsidyOrgId"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @update:vat-applicable="(v: boolean | null) => { form.vat_applicable = v }"
             @update:vat-rate="(v: number | null) => { form.vat_rate = v }"
@@ -2010,6 +2011,7 @@ import { useOrgConfig } from '@/composables/useOrgConfig'
 import { productPhotoSrc } from '@/utils/productPhoto'
 import { describeApiError } from '@/utils/apiErrorMessage'
 import { FEO_CATEGORY_LOCKED_HINT, isPurchaseFeoHeaderLocked } from '@/utils/feoItemLock'
+import { effectiveTz } from '@/utils/itemTz'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import PurchaseHeader from '@/components/purchase/PurchaseHeader.vue'
@@ -2427,6 +2429,11 @@ interface OrderItem {
   _uid?: string | number
   _description?: string
   _description_44fz?: string
+  // Своё ТЗ (характеристики) этой позиции закупки (владелец, 14.10.2026, план
+  // item-tz-description.md) — ЕДИНСТВЕННОЕ поле, которое реально сохраняется
+  // (см. save() ниже — не входит в список UI-only полей, вырезаемых из payload).
+  // Пусто ⇒ действует каталожное (_description выше, см. utils/itemTz.ts).
+  tz_description?: string | null
   // Владелец, 2026-08-29: штамп даты/источника актуализации цены — см. usePriceFreshness.ts.
   _price_meta?: {
     price_updated_at?: string | null
@@ -2897,8 +2904,10 @@ onUnmounted(() => {
 })
 
 function activeDescription(item: OrderItem): string | undefined {
-  if (form.description_mode === '44fz') return item._description_44fz || item._description
-  return item._description
+  // Своё ТЗ позиции (tz_description) важнее каталожного — ОДНА формула
+  // (effectiveTz, ПРАВИЛО №6, mirrors backend/app/services/item_tz.py), план
+  // item-tz-description.md, Этап Б.
+  return effectiveTz(item, form.description_mode === '44fz' ? '44fz' : 'exact') || undefined
 }
 
 interface EventItem { id: number; subsidy_id: number; name: string; is_active: boolean }
@@ -3029,8 +3038,11 @@ watch(() => form.subsidy_id, async (sid) => {
   } catch { /* silent */ }
 })
 
-// Смена субсидии меняет допустимый круг исполнителей/адресатов СЗ
-watch(() => form.subsidy_id, () => { loadOrgUsers() })
+// Смена субсидии меняет допустимый круг исполнителей/адресатов СЗ.
+// loadActAsUsers(subsidy_id) — тот же пул кандидатов на инициатора служебки,
+// что и в DocPickerDialogs (правило владельца, 14.10.2026): поле «От кого»
+// ниже (form.service_note_by) использует именно его, а не orgUsersList.
+watch(() => form.subsidy_id, () => { loadOrgUsers(); loadActAsUsers(form.subsidy_id) })
 
 // Phase 23: диалог «Доступные переменные»
 const showPlaceholdersDialog = ref(false)
@@ -3138,7 +3150,7 @@ const {
   // confirmDocDownload (тот же composable), view её напрямую не дёргает.
   confirmAcceptanceDocDownload,
   docPickerDialog, docPickerType, loadingDocApprovers, docApprovers, pickerApproverIds, pickerInitiatorId,
-  actAsList, openDocPicker, confirmDocDownload,
+  actAsList, loadActAsUsers, openDocPicker, confirmDocDownload,
 } = useDocPickerDialogs(
   form, purchaseId, acceptanceDocs, orgUsersList, loadOrgUsers, currentUserId,
   pickerResponsibleName, loadResponsiblePersonsList,
@@ -4158,6 +4170,7 @@ const loadRefs = async () => {
   allFeoCategories.value = feos
   allEvents.value = evts
   loadOrgUsers()
+  loadActAsUsers(form.subsidy_id)
   loadInitialContractors()
 }
 
@@ -4506,6 +4519,10 @@ const loadPurchase = async () => {
         // item-forms-accommodation-transport.md: без этого поля здесь «сохранить →
         // перезагрузить страницу» теряло бы значения формы («Проживание»/«Перевозки»).
         extra_attrs: i.extra_attrs || {},
+        // Своё ТЗ позиции — см. тип OrderItem.tz_description выше. NULL с
+        // сервера значит «действует каталожное» (PurchaseItemOut.tz_description,
+        // см. app/schemas/purchases.py).
+        tz_description: i.tz_description ?? null,
         _selectedProduct: prod ?? (i.item_name || null),
         _photo_url: productPhotoSrc(prod),
         _description: i.product_description || prod?.description || undefined,
@@ -4913,9 +4930,14 @@ onMounted(async () => {
     if (!form.assigned_user_id && currentUserId && formMode.value !== 'service_note_delivery') {
       form.assigned_user_id = currentUserId
     }
-    // SN-UX: для новой СЗ — автор = текущий пользователь, дата = сегодня (оба редактируемы)
+    // SN-UX: для новой СЗ — автор = текущий пользователь, дата = сегодня (оба
+    // редактируемы). Правило владельца (14.10.2026): подставляем себя только
+    // если сам текущий пользователь входит в actAsList (штат организации
+    // субсидии) — иначе дефолт оставляем пустым, пусть выбирают вручную.
     if (formMode.value === 'service_note_delivery') {
-      if (!form.service_note_by && currentUserId) form.service_note_by = currentUserId
+      if (!form.service_note_by && currentUserId && actAsList.value.find(u => u.id === currentUserId)) {
+        form.service_note_by = currentUserId
+      }
       if (!form.service_note_at) form.service_note_at = new Date().toISOString().slice(0, 10)
     }
     // 26-F4a: пустой плейсхолдер для закрывающего документа при создании

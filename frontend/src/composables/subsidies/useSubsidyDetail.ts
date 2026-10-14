@@ -208,6 +208,9 @@ export interface SubsidyDetailContext {
   feoPlannedDisplayFor: (node: FeoNode) => number
   feoResidualNoteFor: (node: FeoNode) => { planned: number; consumed: number; residual: number } | null
   feoPlanConsumedNoteFor: (node: FeoNode) => { planned: number; consumed: number; residual: number } | null
+  // Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — см. docstring
+  // в useFeoTreeAmounts.ts.
+  feoOrderEconomyNoteFor: (node: FeoNode) => { planFromFile: number; economy: number } | null
   feoForecastWarningFor: (node: FeoNode) => { forecast: number; forecastOver: number; planManual: number } | null
   isAutoAmtNode: (node: FeoNode) => boolean
   isManualPosLeaf: (node: FeoNode) => boolean

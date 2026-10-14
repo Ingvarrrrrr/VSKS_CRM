@@ -30,6 +30,7 @@ from app.auth.jwt import get_current_user, get_single_org_id
 from app.database import get_db
 from app.models.product import Product, DEFAULT_PRODUCT_CATEGORY
 from app.models.purchase_category import PurchaseCategory
+from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.schemas import ProductCreate, ProductOut
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
@@ -40,6 +41,15 @@ from app.services.product_delete_impact import (
     has_blocking_dependents,
     format_delete_block_message,
 )
+from app.services.text_case import capitalize_first
+from app.services.units import normalize_pack_fields
+from app.services.product_catalog_guard import (
+    assert_can_edit_catalog,
+    assert_can_apply_product_changes,
+    can_edit_catalog,
+    prices_differ,
+)
+from app.services.product_description_history import DESCRIPTION_FIELDS, set_product_description
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -61,18 +71,30 @@ async def _set_purchase_categories(db: AsyncSession, product: Product, category_
     product.purchase_categories = list(rows)
 
 
-async def _attach_price_stats(db: AsyncSession, products: list) -> None:
-    """Проставляет avg_price/avg_price_basis/avg_price_stale ОДНИМ запросом на
-    весь список (app.services.product_price_stats.compute_price_stats_bulk) —
-    не N+1. Используется и списком, и карточкой товара (список из одного)."""
+async def _attach_price_stats(
+    db: AsyncSession, products: list,
+    *, target_region: Optional[str] = None, quantity=None,
+) -> None:
+    """Проставляет avg_price/avg_price_basis/avg_price_stale (+avg_price_level/
+    avg_price_region/avg_price_batch) ОДНИМ запросом на весь список
+    (app.services.product_price_stats.compute_price_stats_bulk) — не N+1.
+    Используется и списком (с target_region/quantity — средняя по региону
+    и партии 1–9 текущей организации), и карточкой товара (список из одного,
+    без фильтра — старое поведение, план clever-bouncing-lantern.md касается
+    только списка «Товары»)."""
     ids = [p.id for p in products]
-    stats_by_id = await compute_price_stats_bulk(db, ids)
+    stats_by_id = await compute_price_stats_bulk(
+        db, ids, target_region=target_region, quantity=quantity,
+    )
     for p in products:
         stats = stats_by_id.get(p.id)
         if stats is not None:
             p.avg_price = stats.avg_price
             p.avg_price_basis = stats.basis_count
             p.avg_price_stale = stats.stale
+            p.avg_price_level = stats.level
+            p.avg_price_region = stats.region_used
+            p.avg_price_batch = stats.batch
 
 
 @router.get("/", response_model=List[ProductOut])
@@ -136,7 +158,16 @@ async def list_products(
     freshness_ctx = await load_freshness_context(db, org_id)
     for p in products:
         p.price_freshness = evaluate_freshness(p, freshness_ctx)
-    await _attach_price_stats(db, products)
+    # Список «Товары»: средняя для партии 1–9 по региону ТЕКУЩЕЙ организации
+    # пользователя (план clever-bouncing-lantern.md п.7) — тот же порядок
+    # поиска уровней, что и везде (compute_price_stats), нет данных по
+    # региону → функция сама откатится на более общий уровень/"all".
+    org_region = None
+    if org_id is not None:
+        org_region = (await db.execute(
+            select(Organization.region).where(Organization.id == org_id)
+        )).scalar_one_or_none()
+    await _attach_price_stats(db, products, target_region=org_region, quantity=1)
 
     return products
 
@@ -257,8 +288,11 @@ async def create_product(
     # Категория опциональна на входе (владелец, 2026-09-20: ручное добавление
     # товара без категории падало 422) — пусто/None подменяется дефолтом
     # модели, одна константа (app.models.product.DEFAULT_PRODUCT_CATEGORY).
-    if not (data.get("category") or "").strip():
-        data["category"] = DEFAULT_PRODUCT_CATEGORY
+    # Капитализация первой буквы (ПРАВИЛО №6, app.services.text_case) — та же
+    # функция, что и у справочника purchase_categories, чтобы не плодить
+    # дубли "мебель"/"Мебель".
+    data["category"] = capitalize_first(data.get("category")) or DEFAULT_PRODUCT_CATEGORY
+    normalize_pack_fields(data)  # пункт 1, 14.10: pack_* валидны только при упаковочном unit
     _apply_price_links(data, None)
     # price НЕ задаём здесь напрямую (ПРАВИЛО №6 — единственный писатель
     # product.price это actualize_product_price, см. ниже) — иначе у только
@@ -299,16 +333,70 @@ async def update_product(
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
     old_price = db_product.price
-    data = product.model_dump()
-    category_ids = data.pop("purchase_category_ids", None)
-    # Тот же фолбэк, что и в create_product (см. коммент там) — PUT тоже
-    # принимает полную ProductCreate-форму, пустая категория не должна ронять
-    # обновление 422/NOT NULL.
-    if not (data.get("category") or "").strip():
-        data["category"] = DEFAULT_PRODUCT_CATEGORY
+    # exclude_unset=True (владелец, 14.10: PUT из урезанных экранов — FullProductDialog
+    # и т.п. — присылает не все поля ProductCreate; раньше model_dump() без этого
+    # флага подставлял дефолты схемы на ОТСУТСТВУЮЩИЕ поля и затирал unit/
+    # description_44fz/photo_url/feo_category_id/clarification_link → None,
+    # purchase_category_ids=[] стирал категории закупки, country_origin
+    # перезаписывался на дефолтное "РФ"). Не присланное поле — не трогаем.
+    data = product.model_dump(exclude_unset=True)
+    # purchase_category_ids трогаем только если ключ прислан явно: отсутствие
+    # ключа (exclude_unset) не стирает категории, пустой список [] — очищает
+    # (явное действие пользователя).
+    category_ids = data.pop("purchase_category_ids", None) if "purchase_category_ids" in data else None
+    # Фолбэк на DEFAULT_PRODUCT_CATEGORY — только если category прислано
+    # пустым; если поле вовсе не прислано, не трогаем существующее значение.
+    if "category" in data:
+        data["category"] = capitalize_first(data.get("category")) or DEFAULT_PRODUCT_CATEGORY
+    normalize_pack_fields(data)  # пункт 1, 14.10: только если unit прислан явно
     had_links = bool(data.get("price_links"))
     _apply_price_links(data, db_product)
     new_price = data.get("price")
+
+    # Защита каталога (план clever-bouncing-lantern.md, Часть 1, владелец
+    # 14.10.2026): без products.edit_catalog разрешено только ЗАПОЛНЕНИЕ
+    # пустого поля (description/description_44fz/price) — остальные поля, и
+    # замена/стирание уже заполненного описания/цены, требуют галочки.
+    # changed_fields собирает только РЕАЛЬНО отличающиеся от текущих значения
+    # (PUT шлёт форму целиком — повторная отправка того же значения не
+    # считается правкой), единственная проверка — product_catalog_guard.py
+    # (ПРАВИЛО №6, вторую такую проверку не писать).
+    has_catalog_perm = await can_edit_catalog(current_user, db)
+    changed_fields: dict = {}
+    for field in DESCRIPTION_FIELDS:
+        if field in data:
+            old_val = (getattr(db_product, field, None) or "").strip()
+            new_val = (data[field] or "").strip() if data[field] is not None else ""
+            if old_val != new_val:
+                changed_fields[field] = data[field]
+    if "price" in data and prices_differ(old_price, data["price"]):
+        changed_fields["price"] = data["price"]
+    if category_ids is not None:
+        current_cat_ids = sorted(c.id for c in db_product.purchase_categories)
+        new_cat_ids = sorted({i for i in category_ids if i is not None})
+        if current_cat_ids != new_cat_ids:
+            changed_fields["purchase_category_ids"] = category_ids
+    # price/price_links — уже учтены выше отдельно (price_links влияет на
+    # price через _apply_price_links, не гейтится второй раз).
+    _skip_generic = set(DESCRIPTION_FIELDS) | {"price", "price_links"}
+    for key, value in data.items():
+        if key in _skip_generic:
+            continue
+        if getattr(db_product, key, None) != value:
+            changed_fields[key] = value
+    if not has_catalog_perm:
+        await assert_can_apply_product_changes(current_user, db, db_product, changed_fields)
+
+    # Описание — через единственную точку записи (история + «вернуть
+    # прежнее», Этап В, ПРАВИЛО №6): не setattr напрямую, исключаем из
+    # общего цикла ниже. source='fill_empty' — когда поле было пусто и
+    # заполнено сотрудником без галочки (Часть 1 плана, 14.10.2026).
+    for field in DESCRIPTION_FIELDS:
+        if field in data:
+            await set_product_description(
+                db, db_product, field, data.pop(field), current_user,
+                source="edit" if has_catalog_perm else "fill_empty",
+            )
     for key, value in data.items():
         setattr(db_product, key, value)
     await _set_purchase_categories(db, db_product, category_ids)
@@ -343,10 +431,58 @@ async def patch_product(
     db_product = result.scalar_one_or_none()
     if not db_product:
         raise HTTPException(404, "Product not found")
+    # Защита каталога (план clever-bouncing-lantern.md, Часть 1, 14.10.2026) —
+    # та же единая проверка по полю, что и в update_product выше (ПРАВИЛО
+    # №6): без галочки — только заполнение пустого description/
+    # description_44fz/price, остальные поля требуют products.edit_catalog.
+    has_catalog_perm = await can_edit_catalog(current_user, db)
+    changed_fields: dict = {}
+    for field in DESCRIPTION_FIELDS:
+        if field in data:
+            old_val = (getattr(db_product, field, None) or "").strip()
+            new_val = (data[field] or "").strip() if data[field] is not None else ""
+            if old_val != new_val:
+                changed_fields[field] = data[field]
+    if "unit" in data:
+        new_unit = (data["unit"] or "").strip() or None
+        if new_unit != db_product.unit:
+            changed_fields["unit"] = new_unit
+    if "category" in data:
+        cat_candidate = capitalize_first(data["category"]) or ""
+        if not cat_candidate:
+            raise HTTPException(422, "Категория не может быть пустой")
+        if cat_candidate != db_product.category:
+            changed_fields["category"] = cat_candidate
+    if "product_type" in data:
+        pt_candidate = (data["product_type"] or "").strip() or None
+        if pt_candidate != db_product.product_type:
+            changed_fields["product_type"] = pt_candidate
+    if "purchase_category_ids" in data:
+        current_cat_ids = sorted(c.id for c in db_product.purchase_categories)
+        new_cat_ids = sorted({i for i in data["purchase_category_ids"] if i is not None})
+        if current_cat_ids != new_cat_ids:
+            changed_fields["purchase_category_ids"] = data["purchase_category_ids"]
+    if "price" in data and prices_differ(db_product.price, data["price"]):
+        changed_fields["price"] = data["price"]
+    # price_links пересчитывает price автоматически ниже — уже учтено через
+    # "price" выше, вторую проверку для него не завязываем (см. комментарий
+    # в update_product).
+    if not has_catalog_perm:
+        await assert_can_apply_product_changes(current_user, db, db_product, changed_fields)
+
+    # Описание — та же единая точка записи, что и в PUT (на случай, если
+    # фронт когда-либо пришлёт description/description_44fz через PATCH;
+    # сейчас не присылает, но бесхозного писателя оставлять нельзя).
+    for field in DESCRIPTION_FIELDS:
+        if field in data:
+            await set_product_description(
+                db, db_product, field, data.pop(field), current_user,
+                source="edit" if has_catalog_perm else "fill_empty",
+            )
     if "unit" in data:
         db_product.unit = (data["unit"] or "").strip() or None
     if "category" in data:
-        cat = (data["category"] or "").strip()
+        cat = capitalize_first(data["category"]) or ""
         if not cat:
             raise HTTPException(422, "Категория не может быть пустой")
         db_product.category = cat
@@ -405,6 +541,9 @@ async def delete_product(
     db_product = result.scalar_one_or_none()
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
+    # Защита каталога (Этап В, план item-tz-description.md, 14.10.2026) —
+    # см. комментарий в update_product выше, та же единая проверка.
+    await assert_can_edit_catalog(current_user, db)
 
     # Pre-check FK references to avoid 500 ForeignKeyViolationError (боевой
     # инцидент 2026-09-29: DELETE /api/products/4280 падал 500, товар стоял в

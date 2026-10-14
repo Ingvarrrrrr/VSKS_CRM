@@ -63,9 +63,14 @@ async def test_exact_match_does_not_create_second_product(db_session):
 
 
 @pytest.mark.asyncio
-async def test_empty_field_filled_nonempty_not_overwritten(db_session):
-    """Пустое поле (описание) существующего товара дозаполняется из файла;
-    уже заполненное (категория) не затирается."""
+async def test_existing_product_description_never_written_by_import(db_session):
+    """Решение владельца, 14.10.2026 (план item-tz-description.md, отменяет
+    прежнее поведение этого теста, когда-то называвшегося
+    test_empty_field_filled_nonempty_not_overwritten): каталог товаров общий
+    для всего приложения — описание СУЩЕСТВУЮЩЕГО товара импорт больше не
+    трогает вообще (ни заполненное, ни пустое). Текст идёт в своё поле
+    позиции (tz_description), не в Product.description. Категория (уже
+    заполненная) по-прежнему не затирается."""
     p = Product(name=f"{_UNIQ} B", category="Электроника", description="", price=Decimal("0"))
     db_session.add(p)
     await db_session.commit()
@@ -77,15 +82,18 @@ async def test_empty_field_filled_nonempty_not_overwritten(db_session):
         category="Прочее",  # НЕ должно перетереть уже заполненную "Электроника"
     )
     await db_session.refresh(p)
-    assert p.description == "Описание из файла"
+    assert p.description == "", "описание существующего товара не должно меняться импортом"
     assert p.category == "Электроника"
 
 
 @pytest.mark.asyncio
-async def test_price_added_to_history_not_overwritten_silently(db_session):
-    """Совпадение по имени + цена из файла → НОВАЯ запись в
-    product_price_history (не молча перезаписанная текущая цена) — через
-    единую точку app.services.price_actualization.actualize_product_price."""
+async def test_import_price_does_not_touch_catalog(db_session):
+    """Решение владельца, 14.10.2026 (отменяет прежнее поведение этого теста,
+    когда-то называвшегося test_price_added_to_history_not_overwritten_silently):
+    цена позиции из загружаемого файла — это цена ЭТОЙ закупки/субсидии, она
+    живёт в самой позиции (purchase_items.unit_price), а не в каталоге.
+    Совпадение по имени + цена из файла → products.price И
+    product_price_history существующего товара НЕ меняются."""
     p = Product(name=f"{_UNIQ} C", category="Прочее", price=Decimal("100"))
     db_session.add(p)
     await db_session.commit()
@@ -93,14 +101,12 @@ async def test_price_added_to_history_not_overwritten_silently(db_session):
 
     await _upsert_product_to_catalog(db_session, f"{_UNIQ} C", "товар", Decimal("222"))
     await db_session.refresh(p)
-    assert p.price == Decimal("222")
+    assert p.price == Decimal("100"), "цена каталога не должна меняться ценой из импорта позиций"
 
     hist = (await db_session.execute(
         select(ProductPriceHistory).where(ProductPriceHistory.product_id == p.id)
     )).scalars().all()
-    assert len(hist) == 1
-    assert hist[0].price == Decimal("222")
-    assert hist[0].source == "import"
+    assert len(hist) == 0, "импорт позиций не должен добавлять строку истории цены каталога"
 
 
 @pytest.mark.asyncio
@@ -124,30 +130,25 @@ async def test_matching_prefers_product_with_description_among_duplicates(db_ses
 
 
 @pytest.mark.asyncio
-async def test_new_product_from_import_gets_price_updated_at_and_history_date(db_session):
-    """Владелец, 2026-09-20: цена, пришедшая импортом ТЗ, у НОВОГО товара
-    оставалась без даты («все цены старше 60 дней», «на основании 1 цены»,
-    прочерки в колонке «Дата») — Product(price=...) создавался напрямую, в
-    обход actualize_product_price. Теперь цена нового товара проходит через
-    ту же единую точку (post-flush, т.к. ProductPriceHistory.product_id
-    NOT NULL), что и для уже существующего — price_updated_at и
-    product_price_history.collected_at обязаны быть заполнены."""
+async def test_new_product_from_import_has_no_price(db_session):
+    """Решение владельца, 14.10.2026 (отменяет прежнее поведение этого теста,
+    когда-то называвшегося test_new_product_from_import_gets_price_updated_at_and_history_date,
+    написанного под правило 2026-09-20 — то правило снято): цена из загружаемого
+    файла принадлежит позиции закупки, не каталогу. Новый товар, заведённый
+    при импорте позиций, создаётся БЕЗ цены и без строки истории цены."""
     pid = await _upsert_product_to_catalog(
         db_session, f"{_UNIQ} F Новый из импорта", "товар", Decimal("777"),
         import_note="Смарт-импорт из файла, тест, 20.09.2026 00:00",
     )
     p = (await db_session.execute(select(Product).where(Product.id == pid))).scalar_one()
-    assert p.price == Decimal("777")
-    assert p.price_updated_at is not None, "новый товар из импорта остался без даты актуализации цены"
-    assert p.price_source == "import"
+    assert p.price is None, "новый товар из импорта позиций не должен получать цену строки"
+    assert p.price_updated_at is None
+    assert p.price_source is None
 
     hist = (await db_session.execute(
         select(ProductPriceHistory).where(ProductPriceHistory.product_id == pid)
     )).scalars().all()
-    assert len(hist) == 1
-    assert hist[0].price == Decimal("777")
-    assert hist[0].source == "import"
-    assert hist[0].collected_at is not None, "строка истории цены нового товара осталась без даты"
+    assert len(hist) == 0, "импорт позиций не должен создавать строку истории цены"
 
 
 @pytest.mark.asyncio

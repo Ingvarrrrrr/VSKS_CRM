@@ -29,6 +29,11 @@ from app.schemas.schemas import (
 )
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.price_actualization import actualize_product_price, VALID_PRICE_SOURCES
+from app.services.product_catalog_guard import (
+    can_edit_catalog,
+    prices_differ,
+    CATALOG_EDIT_DENIED_MESSAGE,
+)
 from app.services.product_price_stats import compute_price_stats
 
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -80,6 +85,18 @@ async def actualize_price(
     product = await db.get(Product, product_id)
     if not product:
         raise HTTPException(404, "Товар не найден")
+    # Защита каталога (план clever-bouncing-lantern.md, Часть 1, 14.10.2026):
+    # эндпоинт реально меняет Product.price (actualize_product_price —
+    # единственный писатель, ПРАВИЛО №6). Если у товара цены ещё нет — это
+    # заполнение пустого, доступно всем с вкладкой «Товары» (require_tab
+    # выше); если цена уже есть и значение реально меняется — только с
+    # products.edit_catalog, как и правка цены через PUT/PATCH.
+    if (
+        product.price is not None
+        and prices_differ(product.price, data.price)
+        and not await can_edit_catalog(current_user, db)
+    ):
+        raise HTTPException(403, CATALOG_EDIT_DENIED_MESSAGE)
     await actualize_product_price(
         db, product,
         price=data.price,
@@ -159,7 +176,18 @@ async def add_manual_price_history(
     через ЕДИНУЮ точку записи app.services.price_actualization.actualize_product_price
     (тот же писатель, что и /price-actualization; отдельный путь — под
     контракт карточки товара «список цен» фронта, схема источников уже
-    сужена до manual|kp|monitoring, см. MANUAL_PRICE_SOURCES)."""
+    сужена до manual|kp|monitoring, см. MANUAL_PRICE_SOURCES).
+
+    Защита каталога (план clever-bouncing-lantern.md, часть 1, п.2, 15.10):
+    этот эндпоинт раньше ВСЕГДА переставлял Product.price через
+    actualize_product_price — обход правила «менять «Цену» товара, у
+    которого цена уже есть, можно только с галочкой «Редактировать каталог
+    товаров»» (products_photos.py/products.py её уже соблюдают). Без
+    галочки — точка уходит ТОЛЬКО в историю (учитывается в средней,
+    update_product_price=False), Product.price не трогаем; если у товара
+    цены ещё нет — это заполнение пустого, можно всем с вкладкой «Товары»
+    (update_product_price=True, как и раньше). С галочкой — поведение не
+    меняется."""
     if data.source not in MANUAL_PRICE_SOURCES:
         raise HTTPException(422, {
             "code": "invalid_price_source",
@@ -172,6 +200,10 @@ async def add_manual_price_history(
     source_ref = data.source_ref or data.url
     collected_at = data.collected_at or _date.today().isoformat()
 
+    update_product_price = (
+        product.price is None or await can_edit_catalog(current_user, db)
+    )
+
     await actualize_product_price(
         db, product,
         price=data.price,
@@ -181,6 +213,7 @@ async def add_manual_price_history(
         collected_at=collected_at,
         note=data.note,
         user=current_user,
+        update_product_price=update_product_price,
     )
     await db.commit()
 

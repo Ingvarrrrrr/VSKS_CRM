@@ -297,7 +297,7 @@ def _rules_contract_project() -> list:
             r"в лице Председателя Совета\s+_+,\s*действующего на основании Устава",
             S,
         ),
-        "в лице {{ customer_signatory_position }} {{ customer_signatory_name }}, "
+        "в лице {{ customer_signatory_position_genitive }} {{ customer_signatory_name_genitive }}, "
         "действующего на основании {{ customer_signatory_basis }}",
     ))
 
@@ -310,7 +310,7 @@ def _rules_contract_project() -> list:
             S,
         ),
         "{{ contractor_full_name }}, именуемое в дальнейшем «Поставщик», "
-        "в лице {{ contractor_signatory_position }} {{ contractor_signatory_name }}, "
+        "в лице {{ contractor_signatory_position_genitive }} {{ contractor_signatory_name_genitive }}, "
         "действующего на основании {{ contractor_signatory_basis }}",
     ))
 

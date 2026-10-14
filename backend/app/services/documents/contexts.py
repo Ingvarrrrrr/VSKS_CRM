@@ -4,6 +4,7 @@
 вниз по иерархии модулей."""
 
 
+import re
 from decimal import Decimal
 from typing import Optional
 
@@ -19,19 +20,32 @@ from app.services.acceptance_docs import (
 from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_form_summary import item_form_summary, item_menu_lines
 from app.services.item_amounts import effective_vat_on_top as _effective_vat_on_top, document_unit_price as _document_unit_price
+from app.services.item_tz import effective_item_tz as _effective_item_tz, effective_item_tz_44fz as _effective_item_tz_44fz
 
 from .doc_types import CONTRACT_FAMILY_DOC_TYPES, FEO_PATH_UNRESOLVED_LABEL
 from .formatting import (
     _fmt_date,
     _fmt_money,
     _fmt_quantity,
-    _fio_to_genitive,
     _fio_to_initials,
+    _normalize_signatory_position,
 )
+# Склонение ФИО в родительный падеж — ОДИН расчёт (ПРАВИЛО №6): petrovich
+# через morphology._to_gen_fio, а не грубая эвристика formatting._fio_to_genitive
+# (удалена 14.10.2026 — владелец: «ФИО подписанта в родительном падеже»
+# печаталось неправильно эвристикой, особенно для женских имён и отчеств
+# на -ична/-овна).
+from .morphology import _to_gen_fio as _fio_to_genitive
 # build_tz_rows — единственный источник группировки/слияния дублей строк ТЗ
 # (Правило №6), преемник удалённой _merge_identical_items. См. докстринг
 # app.services.tz_items и _require_tz_duplicates_resolved_for_doc ниже.
 from app.services.tz_items import build_tz_rows
+
+
+# Инициалы вида "А.Б." или "a.b." — признак того, что в signatory_last_name
+# по ошибке попали инициалы вместо самой фамилии (см. комментарий в
+# _signatory_split ниже).
+_INITIALS_RE = re.compile(r"[A-ZА-ЯЁ]\.[A-ZА-ЯЁ]\.", re.IGNORECASE)
 
 
 # Phase 23: split "Президент Козеев Евгений Викторович" into structured parts
@@ -55,10 +69,59 @@ def _signatory_split(
         name_initials — "Козеев Е.В."
     """
     if last:
-        # Structured path — no heuristics needed
+        # Структурный путь — по умолчанию частям last/first/middle доверяем.
+        # Защита (14.10.2026, ВСКС id 2693, расширена 14.10.2026 — ВСКС id
+        # 2693 продолжение): у части контрагентов ФИО в этих полях сдвинуто.
+        # Было: сдвиг ловился только когда last оканчивается на ':' либо
+        # (без двоеточия/регистра) ЦЕЛИКОМ совпадает с должностью — не ловило
+        # случаи, когда должность из двух слов разъехалась по last/first:
+        #   last='ГЕНЕРАЛЬНЫЙ', first='ДИРЕКТОР:', middle='Цыганков Сергей
+        #   Михайлович' (4 контрагента на проде);
+        #   last='ПРЕДСЕДАТЕЛЬ', first='СОВЕТА:' — двоеточие попало в first,
+        #   не в last.
+        # Признак сдвига теперь: last ИЛИ first оканчивается на ':', ЛИБО
+        # должность (без регистра) НАЧИНАЕТСЯ с last (а не только равна ему
+        # целиком — покрывает двусловную должность), ЛИБО last — инициалы
+        # вида "А.Б." (last='В.Г.', first='Мельничук', middle='' — инициалы
+        # в фамилии вместо самой фамилии).
+        # Разбор ФИО из исходной строки signatory — тем же правилом, что уже
+        # работает для корректных записей (Юрченкова и т.п.): если в
+        # signatory есть ':' — ФИО после него; если инициалы в last без
+        # двоеточия — пересобрать last+first+middle надёжно нельзя (порядок
+        # слов неизвестен), поэтому берём signatory как есть, не выдумывая.
+        last_stripped = (last or "").strip()
+        first_stripped = (first or "").strip()
+        last_core_cf = last_stripped.rstrip(":").strip().casefold()
+        position_cf = (position or "").strip().casefold()
+        is_initials_last = bool(_INITIALS_RE.fullmatch(last_stripped))
+        looks_shifted = bool(last_stripped) and (
+            last_stripped.endswith(":")
+            or first_stripped.endswith(":")
+            or (position_cf and last_core_cf and position_cf.startswith(last_core_cf))
+            or is_initials_last
+        )
+        if looks_shifted and signatory and ":" in signatory:
+            pos_part, _, fio_part = signatory.partition(":")
+            fio_words = fio_part.strip().split()
+            if fio_words:
+                last = fio_words[0]
+                first = fio_words[1] if len(fio_words) >= 2 else None
+                middle = " ".join(fio_words[2:]) if len(fio_words) >= 3 else None
+                position = position or pos_part.strip()
+        elif looks_shifted and is_initials_last and signatory:
+            # Инициалы в фамилии без двоеточия в signatory — переставить
+            # last/first/middle в правильном порядке нельзя надёжно (не
+            # угадываем порядок слов), берём строку signatory целиком.
+            name_full = signatory
+            return {
+                "position": _normalize_signatory_position(position),
+                "name_full": name_full,
+                "name_genitive": _fio_to_genitive(name_full),
+                "name_initials": _fio_to_initials(name_full),
+            }
         name_full = _compose_fio(last, first, middle) or signatory or ""
         return {
-            "position": position or "",
+            "position": _normalize_signatory_position(position),
             "name_full": name_full,
             "name_genitive": _fio_to_genitive(name_full),
             "name_initials": _fio_to_initials(name_full),
@@ -87,7 +150,7 @@ def _signatory_split(
     name_full = " ".join(fio_words)
 
     return {
-        "position": resolved_position,
+        "position": _normalize_signatory_position(resolved_position),
         "name_full": name_full,
         "name_genitive": _fio_to_genitive(name_full),
         "name_initials": _fio_to_initials(name_full),
@@ -326,7 +389,10 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
         items_list.append({
             "num": idx,
             "name": ci.name or "",
-            "description": ((getattr(product, "description", None) if product else "") or ""),
+            # ПРАВИЛО №6: effective_item_tz (владелец 14.10.2026) — ci пока не
+            # несёт своего tz_description (ContractItem не входит в Этап А),
+            # getattr внутри хелпера безопасно вернёт None и упадёт на product.
+            "description": (_effective_item_tz(ci, product) or ""),
             "type": "",
             "item_kind": (getattr(product, "item_kind", None) if product else None) or "товар",
             "quantity": _fmt_quantity(ci.quantity),
@@ -379,9 +445,12 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
+            # ПРАВИЛО №6: effective_item_tz/effective_item_tz_44fz (владелец
+            # 14.10.2026) — item.tz_description (WishItem/PurchaseItem), если
+            # непустое, иначе ТЗ каталога в нужном режиме.
             "description": (
-                (item.product.description_44fz if description_mode == "44fz" else item.product.description)
-                if item.product else ""
+                _effective_item_tz_44fz(item, item.product) if description_mode == "44fz"
+                else _effective_item_tz(item, item.product)
             ) or "",
             "type": item.item_type or "",
             "item_kind": (item.product.item_kind if item.product else None) or "товар",

@@ -8,7 +8,7 @@
     icon="mdi-bank-check"
   >
     <div class="text-body-2 font-weight-medium mb-2">
-      Оплата найдена в выписке, ждёт подтверждения согласующего субсидии
+      Оплата найдена в выписке, ждёт подтверждения ответственного сотрудника
       <template v-if="confirmation.purchase.status_label"> · сейчас: {{ confirmation.purchase.status_label }}</template>
     </div>
     <v-alert v-if="confirmation.blocked_reason" type="warning" variant="tonal" density="compact" class="mb-2 text-caption">
@@ -52,7 +52,7 @@
   </v-alert>
 
   <div v-else-if="confirmation && confirmation.status === 'rejected'" class="text-caption text-medium-emphasis mb-3 pa-2 bg-grey-lighten-4 rounded">
-    Оплату отклонил {{ confirmation.decided_by || 'согласующий' }}, {{ fmtDate(confirmation.decided_at) }}: {{ confirmation.comment || '—' }}
+    Оплату отклонил {{ confirmation.decided_by || 'ответственный сотрудник' }}, {{ fmtDate(confirmation.decided_at) }}: {{ confirmation.comment || '—' }}
   </div>
 
   <v-dialog v-model="rejectDialog" max-width="480" persistent>
@@ -87,7 +87,10 @@
 
 <script setup lang="ts">
 // Плашка в карточке закупки (блок платежей) — «оплата найдена в выписке,
-// ждёт подтверждения согласующего субсидии». Задание владельца 04.10.2026.
+// ждёт подтверждения ответственного сотрудника». Задание владельца 04.10.2026,
+// право решать выделено в отдельную галочку 'paid_confirmation.decide'
+// решением владельца 14.10.2026 (не «согласующие субсидии» — та роль для
+// листа согласования закупок/плана).
 // Логика запросов — общий composable usePaidConfirmations.ts (ПРАВИЛО №6,
 // тот же, что PaidConfirmationsPanel.vue на странице «Субсидии»), не копия.
 import { ref, watch } from 'vue'
@@ -123,7 +126,7 @@ async function onConfirm() {
     await load()
     emit('changed')
   } catch (e: any) {
-    // 403 «не согласующий субсидии» — detail с бэкенда уже по-русски
+    // 403 «нет права подтверждать оплату» — detail с бэкенда уже по-русски
     toast.addToast(describeApiError(e, { fallback: 'Не удалось подтвердить оплату' }), 'error')
   } finally {
     acting.value = false

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
-from app.models.permission import RolePermission, UserOrgPermissionOverride
+from app.models.permission import RolePermission
 from app.auth.jwt import get_current_user
 
 async def ensure_user_org_access(
@@ -168,22 +168,24 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
     )
     effective: set = {r.key for r in rp_rows.scalars()}
 
-    # Step 2: apply per-org overrides
+    # Step 2: apply per-org overrides.
+    # 2026-10-14 (владелец, all_orgs_access): если у пары (user, org_id) нет
+    # СВОИХ overrides — читаем overrides ОСНОВНОЙ орги вместо них (единый
+    # источник решения — all_orgs_inheritance.inherited_overrides_source_org,
+    # Правило №6). Своя роль (effective_role выше) наследованием НЕ
+    # затрагивается, наследуются только boolean-flip ключи.
     if org_id:
-        ov_rows = await db.execute(
-            select(UserOrgPermissionOverride).join(
-                UserOrgAccess,
-                UserOrgPermissionOverride.user_org_access_id == UserOrgAccess.id,
-            ).where(
-                UserOrgAccess.user_id == user.id,
-                UserOrgAccess.org_id == org_id,
-            )
-        )
-        for ov in ov_rows.scalars():
-            if ov.granted:
-                effective.add(ov.key)
+        from app.auth.all_orgs_inheritance import org_overrides_map, inherited_overrides_source_org
+        ov_map = await org_overrides_map(user.id, org_id, db)
+        if not ov_map:
+            source_org_id = await inherited_overrides_source_org(user, db, org_id)
+            if source_org_id is not None:
+                ov_map = await org_overrides_map(user.id, source_org_id, db)
+        for key, granted in ov_map.items():
+            if granted:
+                effective.add(key)
             else:
-                effective.discard(ov.key)
+                effective.discard(key)
 
     # Step 2b: union per-subsidy grant keys (поглощение по выданным субсидиям).
     # Применяется ДО потолка employee, чтобы admin.* из гранта тоже срезался.
@@ -353,6 +355,51 @@ async def assert_can_manage_user_access(
             f"Недостаточно прав: настраивать допуски пользователя с ролью "
             f"«{target_label}» — эта роль равна вашей или выше. Обратитесь "
             "к владельцу аккаунта.",
+        )
+
+
+async def assert_target_in_owner_account(
+    current_user: User, target_user: User, db: AsyncSession
+) -> None:
+    """403 если target_user не относится к аккаунту current_user (account_owner).
+
+    Баг 2026-10-14: PATCH /api/users/{id} сравнивал user.org_id ==
+    current_user.org_id напрямую — но у account_owner в контуре аккаунта
+    может быть НЕСКОЛЬКО организаций (дерево Organization.root_org_id), а у
+    target_user может не быть org_id, совпадающего с primary-оргой owner'а,
+    хотя сотрудник числится в одной из дочерних организаций аккаунта (через
+    user.org_id или доп. допуск UserOrgAccess). Орги target: {target_user.org_id}
+    ∪ org_id из UserOrgAccess этого пользователя. Аккаунт owner считается
+    ЕДИНСТВЕННЫМ каноническим расчётом контура — visibility.compute_account_
+    contour_org_ids (Правило №6, не дублировать логику дерева организаций).
+
+    Намеренно НЕ через get_account_contour_org_ids(current_user, db): та
+    обёртка в первую очередь читает кэш current_user._contour_org_ids, а
+    jwt.get_current_user оставляет этот кэш ПУСТЫМ именно для account_owner
+    (роль и так обходит visibility-ограничения на остальных путях) — обёртка
+    вернула бы пустое множество для КАЖДОГО account_owner, а не настоящий
+    контур. Здесь контур нужен по-настоящему, поэтому считаем напрямую.
+
+    Если current_user не account_owner — no-op, вызывающий код сам решает,
+    когда её вызывать. Если у target нет ни одной орги — разрешить (сотрудник
+    без организации не считается чужим).
+    """
+    if current_user.role != "account_owner":
+        return
+    from app.auth.visibility import compute_account_contour_org_ids
+    target_org_ids: set[int] = set()
+    if target_user.org_id:
+        target_org_ids.add(target_user.org_id)
+    uoa_org_ids = (await db.execute(
+        select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == target_user.id)
+    )).scalars().all()
+    target_org_ids.update(int(x) for x in uoa_org_ids)
+    if not target_org_ids:
+        return
+    account_org_ids = await compute_account_contour_org_ids(db, current_user.org_id)
+    if not (target_org_ids & account_org_ids):
+        raise HTTPException(
+            403, "Сотрудник не относится к организациям вашего аккаунта"
         )
 
 

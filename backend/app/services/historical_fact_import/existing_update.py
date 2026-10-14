@@ -102,6 +102,7 @@ async def materialize_contract(db: AsyncSession, p: Purchase, *, force_temp_numb
     from app.services.contracts_linking import ensure_contract_linked
     from app.services.purchase_money_writer import recalc_purchase_money
     from app.services.temp_contract_number import generate_temp_contract_number
+    from app.services.price_actualization import actualize_contract_item_prices
 
     if force_temp_number or not p.contract_number:
         p.contract_number = await generate_temp_contract_number(p, db)
@@ -109,6 +110,22 @@ async def materialize_contract(db: AsyncSession, p: Purchase, *, force_temp_numb
     await copy_items_to_contract(db, p.id)
     await ensure_contract_linked(p, db)
     await recalc_purchase_money(db, p)
+    # Загрузка факта договора — тот же писатель цены/истории, что и обычный
+    # переход в «заключён договор» (app.services.purchase_transition_core):
+    # до этого колла позиции фактических закупок НЕ попадали в
+    # product_price_history и в Product.contract_price вовсе (план
+    # clever-bouncing-lantern.md: «подключить тот же писатель»).
+    # contract_org_id не передаём — путь факта не определяет его заново, чтобы
+    # не менять поведение за рамками этой задачи (как и раньше).
+    # p.items (lazy="selectin") не читаем прямым атрибутом — после recalc_
+    # purchase_money объект мог протухнуть, и ленивая подгрузка здесь падает
+    # с MissingGreenlet; явный SELECT безопасен в любом состоянии сессии.
+    from app.models.purchase_item import PurchaseItem as _PurchaseItem
+    from sqlalchemy import select as _select
+    items_for_pricing = (await db.execute(
+        _select(_PurchaseItem).where(_PurchaseItem.purchase_id == p.id)
+    )).scalars().all()
+    await actualize_contract_item_prices(db, p, items_for_pricing)
 
 
 async def apply_existing_updates(

@@ -12,12 +12,19 @@
         <div v-if="loadingDocApprovers" class="d-flex justify-center py-4">
           <v-progress-circular indeterminate color="teal" />
         </div>
-        <div v-else-if="!docApprovers.length" class="text-center text-medium-emphasis py-4">
+        <!-- service_note: инициатору согласующие не нужны (служебка — до
+             согласования), поэтому заглушка «не настроены согласующие»
+             (ПРАВИЛО владельца, 14.10.2026) показывается ТОЛЬКО для
+             approval_sheet — выбор инициатора должен быть доступен всегда. -->
+        <div v-else-if="!docPickerType.startsWith('service_note') && !docApprovers.length" class="text-center text-medium-emphasis py-4">
           Для этой субсидии не настроены согласующие.<br>
           Откройте страницу Субсидии → кнопка «Согласующие».
         </div>
-        <!-- service_note: autocomplete только из подчинённых + сам пользователь
-             (бизнес-правило: за другого может делать только его руководитель) -->
+        <!-- service_note: autocomplete по «штату» организации субсидии,
+             сокращённому по роли выбирающего (см. backend
+             app/services/service_note_initiators.py, правило владельца
+             14.10.2026): администратор/владелец — любой сотрудник, остальные
+             — сам + подчинённые, оба набора пересечены со штатом организации. -->
         <div v-else-if="docPickerType.startsWith('service_note')" class="mt-1">
           <v-autocomplete
             v-model="pickerInitiatorId"
@@ -29,9 +36,9 @@
             density="compact"
             clearable
             hide-details
-            :hint="'Доступны: вы и сотрудники, кому вы можете ставить задачи'"
+            :hint="'Доступны сотрудники организации субсидии, которых вы можете указать инициатором'"
             persistent-hint
-            :no-data-text="loadingDocApprovers ? 'Загрузка...' : 'Нет сотрудников'"
+            :no-data-text="loadingDocApprovers ? 'Загрузка...' : 'Нет сотрудников организации субсидии'"
           >
             <template #item="{ item, props }">
               <v-list-item v-bind="props">

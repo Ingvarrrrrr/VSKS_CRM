@@ -136,6 +136,9 @@ class WishItemOut(BaseModel):
     vat_rate: Optional[str] = None  # per-item НДС ставка (mirrors PurchaseItem.vat_rate)
     vat_on_top: Optional[bool] = None  # «НДС сверху» этой строки (mirrors PurchaseItem.vat_on_top)
     over_plan: bool = False  # false — расходует план элемента ФЭО; true — сверх плана (mirrors PurchaseItem.over_plan)
+    # Позиция ЗАГРУЖЕНА из Плана закупок (владелец, 14.10.2026, mirrors
+    # PurchaseItem.from_plan) — см. app/services/feo_item_lock.py.
+    from_plan: bool = False
     # item-forms-accommodation-transport.md: поля спец-формы (mirrors PurchaseItem.extra_attrs) —
     # заявка может завести их до конвертации, форма выводится из закупки, не из заявки.
     extra_attrs: dict = {}
@@ -159,6 +162,12 @@ class WishItemOut(BaseModel):
     # заявки пустело, когда фронт перестал грузить каталог целиком.
     description: Optional[str] = None
     description_44fz: Optional[str] = None
+    # Своё ТЗ (характеристики) ЭТОЙ позиции (владелец, 14.10.2026, план
+    # item-tz-description.md) — непустое значение здесь уже учтено в
+    # description выше (effective_item_tz, см. app/services/item_tz.py);
+    # отдаётся отдельно, чтобы редактор позиции мог различить «своё ТЗ» от
+    # «ТЗ каталога» (фронт Этапа Б).
+    tz_description: Optional[str] = None
     price_updated_at: Optional[datetime] = None
     price_source: Optional[str] = None
     price_source_ref: Optional[str] = None

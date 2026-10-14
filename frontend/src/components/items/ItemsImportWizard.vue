@@ -120,6 +120,9 @@
 
         <!-- Excel import: Step 3 - Result -->
         <template v-if="!state.isSmartMode && state.importStep === 3">
+          <v-alert v-if="importTruncated" type="warning" variant="tonal" density="compact" class="mb-2">
+            В файле {{ importTotalInFile }} позиций, загружены первые 200 — остальные загрузите вторым файлом.
+          </v-alert>
           <v-alert v-if="itemsImportResult" type="success" density="compact" class="mb-2">
             <div>Добавлено позиций: <strong>{{ (itemsImportResult as any).added ?? (itemsImportResult as any).imported }}</strong></div>
             <div v-if="(itemsImportResult as any).matched_catalog">Из каталога: {{ (itemsImportResult as any).matched_catalog }}</div>
@@ -157,12 +160,18 @@
             class="mb-3"
           />
 
+          <!-- Лимит 200 (владелец, 14.10.2026, план item-tz-description.md, п.4) —
+               общая плашка для ЛЮБОГО пути импорта (xlsx/mapped/smart). -->
+          <v-alert v-if="importTruncated" type="warning" variant="tonal" density="compact" class="mb-3">
+            В файле {{ importTotalInFile }} позиций, загружены первые 200 — остальные загрузите вторым файлом.
+          </v-alert>
+
           <!-- Preview table -->
           <template v-if="smartImportPreview && smartImportPreview.length">
             <div class="text-subtitle-2 mb-2">
               Распознано позиций: <strong>{{ smartImportPreview.length }}</strong>
               <span v-if="smartImportColumns?.length" class="ml-2 text-caption text-medium-emphasis">
-                (столбцы: {{ smartImportColumns.join(', ') }})
+                (столбцы: {{ smartImportColumns.map(columnLabel).join(', ') }})
               </span>
             </div>
 
@@ -298,6 +307,7 @@
 <script setup lang="ts">
 import FileDropZone from '@/components/FileDropZone.vue'
 import { MAX_UPLOAD_SIZE_MB } from '@/constants/uploadLimits'
+import { importColumnLabel as columnLabel } from '@/constants/importColumnLabels'
 import { useDisplay } from 'vuetify'
 
 const { mobile } = useDisplay()
@@ -338,6 +348,9 @@ defineProps<{
   smartImportColumns: string[] | null
   smartImportResult: { added: number; matched_catalog: number; unmatched: number } | null
   smartImportLoading: boolean
+  // Лимит 200 (план item-tz-description.md, п.4, владелец 14.10.2026).
+  importTotalInFile?: number | null
+  importTruncated?: boolean
   columnMappingApplied: boolean
   crmMappingFields: Record<string, string>
   crmFieldSelectItems: CrmFieldSelectItem[]

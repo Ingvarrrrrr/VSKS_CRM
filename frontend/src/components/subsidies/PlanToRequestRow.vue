@@ -139,34 +139,11 @@
         </v-list>
       </v-menu>
 
-      <!-- «Добавить товар» — тот же каталожный диалог/композабл, что и
-           страница «Товары» (Правило №6, useProductsForm.ts::onSaved). Товар
-           создаётся в общем каталоге (POST /products/) и сразу подставляется
-           в строку как выбранный кандидат. -->
-      <ProductFormDialog
-        v-model="productCreate.dialog.value"
-        v-model:name-search="productCreate.nameSearch.value"
-        :mobile="productCreate.mobile.value"
-        :editing-id="productCreate.editingId.value"
-        :edit-meta="productCreate.editMeta"
-        :form="productCreate.form"
-        :name-suggestions="productCreate.nameSuggestions.value"
-        :is-duplicate-name="productCreate.isDuplicateName.value"
-        :type-options="productCreate.typeOptions.value"
-        :category-options="productCreate.categoryOptions.value"
-        :avg-price="productCreate.avgPrice.value"
-        :photo-preview="productCreate.photoPreview.value"
-        :photo-file="productCreate.photoFile.value"
-        :photo-file-list="productCreate.photoFileList.value"
-        :photo-cache-buster="productCreate.photoCacheBuster.value"
-        :downloading-photo="productCreate.downloadingPhoto.value"
-        :deleting-photo="productCreate.deletingPhoto.value"
-        :saving="productCreate.saving.value"
-        @save="productCreate.save"
-        @clear-photo="productCreate.clearUploadedPhoto"
-        @download-photo="productCreate.downloadSinglePhoto"
-        @photo-file-change="productCreate.onPhotoFileChange"
-      />
+      <!-- «Добавить товар» — ЕДИНОЕ окно товара (ProductEditorDialog.vue,
+           ПРАВИЛО №6, владелец 14.10), то же, что и на странице «Товары».
+           Товар создаётся в общем каталоге (POST /products/) и сразу
+           подставляется в строку как выбранный кандидат. -->
+      <ProductEditorDialog ref="productEditorRef" @saved="onProductSaved" />
     </td>
 
     <!-- Цена за единицу — три именованных режима (владелец, задача 3): «Ввести
@@ -216,11 +193,12 @@
 // Строка диалога подбора товара для заявки из плана (PlanToRequestDialog.vue).
 // Вынесена отдельным компонентом — Правило №5 (модульность, диалог + все
 // строки в одном файле разрослись бы far за 400 строк).
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { formatMoney } from '@/utils/formatMoney'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
-import ProductFormDialog from '@/components/products/ProductFormDialog.vue'
-import { usePlanToRequestProductCreate } from '@/composables/subsidies/usePlanToRequestProductCreate'
+import ProductEditorDialog from '@/components/products/ProductEditorDialog.vue'
+import { candidateFromProduct } from '@/composables/subsidies/usePlanToRequestProductCreate'
+import type { Product } from '@/composables/products/productsTypes'
 import {
   PRICE_MODE_LABELS, PRICE_MODE_ORDER, priceModeDisabledReason,
   type PlanToRequestRow as PlanToRequestRowState, type PlanToWishCandidate, type PriceMode,
@@ -287,17 +265,19 @@ function pct(score: number): number {
   return Math.max(0, Math.min(100, Math.round(v)))
 }
 
-// «Добавить товар» — открывает каталожный диалог создания товара
-// (ProductFormDialog.vue через useProductsForm.ts, Правило №6) прямо из
-// строки, без ухода на страницу «Товары». Наименование/ед. изм. плановой
-// позиции предзаполняются; после сохранения товар подставляется как
-// выбранный кандидат строки (см. onCreated в usePlanToRequestProductCreate.ts).
-const productCreate = usePlanToRequestProductCreate((cand: PlanToWishCandidate) => {
-  emit('pick', cand)
-})
+// «Добавить товар» — открывает ЕДИНОЕ окно товара (ProductEditorDialog.vue,
+// ПРАВИЛО №6) прямо из строки, без ухода на страницу «Товары». Наименование/
+// ед. изм. плановой позиции предзаполняются; после сохранения товар
+// подставляется как выбранный кандидат строки — тот же маппинг Product →
+// PlanToWishCandidate, что и ручной поиск по каталогу (candidateFromProduct).
+const productEditorRef = ref<InstanceType<typeof ProductEditorDialog> | null>(null)
 
 function openAddProduct() {
-  productCreate.openCreateFor(row.name, row.unit)
+  productEditorRef.value?.open({ name: row.name, unit: row.unit })
+}
+
+function onProductSaved(p: Product) {
+  emit('pick', candidateFromProduct(p))
 }
 </script>
 

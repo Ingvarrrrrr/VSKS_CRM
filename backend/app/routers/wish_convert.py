@@ -430,6 +430,16 @@ async def convert_wish(
             wish_item_id=wi.id,  # W1: hard link to source WishItem
             vat_rate=getattr(wi, 'vat_rate', None),
             vat_on_top=getattr(wi, 'vat_on_top', None),  # «НДС сверху» строки (02.10.2026)
+            # Владелец (14.10.2026): from_plan ПЕРЕНОСИТСЯ из WishItem, а не
+            # выставляется заново — см. app/services/feo_item_lock.py. Заявка
+            # «из плана» (feo_planned_item_id уже расходует человеческий план —
+            # см. комментарий выше) имела from_plan=True на WishItem
+            # (app/services/plan_to_wish.py::build_items_from_plan); обычная
+            # заявка, где человек сам привязал позицию к плановой, — False.
+            from_plan=getattr(wi, 'from_plan', False),
+            # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md)
+            # переносится из WishItem так же, как остальные поля позиции.
+            tz_description=getattr(wi, 'tz_description', None),
         )
         # ПРАВИЛО №6 (группа D5, долг): единственный писатель контрагента
         # позиции — item_contractor.set_item_contractor (не голые contractor_id/

@@ -20,7 +20,7 @@ from decimal import Decimal
 
 from app.database import get_db
 from app.models.purchase import Purchase
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, get_single_org_id
 from app.routers.purchases import _has_purchase_write_access
 from app.models.user import User
 from app.services.item_amounts import line_total
@@ -32,10 +32,33 @@ from app.services.items_import_parsing import (
     _legacy_detect_best_table,
 )
 from app.services.items_import_catalog import _save_smart_preview_to_purchase
+from app.services.items_import_limits import apply_import_preview_limit
 from app.utils.numbers import to_decimal
 from app.services.qty_price_check import check_qty_price_sum
 from app.services.request_params import merge_form_over_query
+from app.services.product_catalog_match import index_products_by_name
+from app.services.items_import_tz_choice import match_catalog_product
+from app.models.product import Product
+from sqlalchemy import select
 import json as _json
+
+
+async def _annotate_catalog_description(db: AsyncSession, current_user: User, preview: list[dict]) -> None:
+    """Preview-ветки (pid): дополняет каждую строку preview `catalog_description`
+    — описанием НАЙДЕННОГО товара каталога, тем же матчером (exact+fuzzy), что
+    и confirm=true/_save_smart_preview_to_purchase (Правило №6, см.
+    app/services/items_import_tz_choice.py::match_catalog_product). "description"
+    строки (текст из файла) не трогается — только добавляет поле для окна
+    сравнения на фронте (план item-tz-description.md, 14.10.2026)."""
+    org_id = get_single_org_id(current_user)
+    prod_q = select(Product)
+    if org_id:
+        prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
+    products = (await db.execute(prod_q)).scalars().all()
+    product_by_name = index_products_by_name(products)
+    for row in preview:
+        matched = match_catalog_product(row.get("item_name") or "", product_by_name)
+        row["catalog_description"] = (matched.description or None) if matched else None
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +91,11 @@ async def import_items_smart_nopid(
     from app.services.product_catalog_match import (
         effective_photo_url, find_products_by_normalized_names, normalize_product_name,
     )
+    # ПРАВИЛО №6 (владелец, 14.10.2026, план item-tz-description.md): "description"
+    # здесь — ТЕКСТ ИЗ ФАЙЛА (колонка «Характеристики»/«ТЗ», см.
+    # _smart_import_xlsx_direct) — больше НЕ затирается каталожным описанием.
+    # Каталожное описание отдаётся ОТДЕЛЬНО как "catalog_description" — окно
+    # сравнения на фронте (Этап Б) решает, что показать/сохранить.
     _names = [r.get("item_name") for r in preview if r.get("item_name")]
     if _names:
         _matched_by_name = await find_products_by_normalized_names(db, _names)
@@ -75,18 +103,25 @@ async def import_items_smart_nopid(
             _prod = _matched_by_name.get(normalize_product_name(row.get("item_name")))
             row["product_id"] = _prod.id if _prod else None
             row["photo_url"] = effective_photo_url(_prod) if _prod else None
-            row["description"] = (_prod.description or None) if _prod else None
+            row["catalog_description"] = (_prod.description or None) if _prod else None
+            row.setdefault("description", None)
             if _prod and _prod.unit:
                 row["unit"] = _prod.unit
     else:
         for row in preview:
             row["product_id"] = None
             row["photo_url"] = None
-            row["description"] = None
+            row["catalog_description"] = None
+            row.setdefault("description", None)
 
+    # Лимит 200 (владелец, 14.10.2026): ОДНА константа на все пути импорта —
+    # см. app/services/items_import_limits.py.
+    _limited_preview, _total_in_file, _truncated = apply_import_preview_limit(preview)
     return {
-        "preview": preview[:200],
+        "preview": _limited_preview,
         "total_rows": len(preview),
+        "total_in_file": _total_in_file,
+        "truncated": _truncated,
         "file_type": "excel",
         "columns_found": columns,
         "warnings": warnings,
@@ -100,6 +135,7 @@ async def import_items_smart(
     confirm: bool = Query(default=False),
     skip_catalog: bool = Query(default=False, description="Не добавлять несматченные позиции в каталог"),
     resolutions: Optional[str] = Query(default=None, description='JSON {"<row_num>": "recalc_sum"|"recalc_price"|"keep"} — выбор пользователя по строкам с sum_mismatch'),
+    tz_choices: Optional[str] = Query(default=None, description='JSON {"<row_num>": "catalog"|"file"} — выбор ТЗ по строке в окне сравнения, по умолчанию "file"'),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -112,12 +148,17 @@ async def import_items_smart(
     совместимости со старым фронтом."""
     _p = await merge_form_over_query(
         request,
-        dict(confirm=confirm, skip_catalog=skip_catalog, resolutions=resolutions),
+        dict(confirm=confirm, skip_catalog=skip_catalog, resolutions=resolutions, tz_choices=tz_choices),
         bool_fields=frozenset({"confirm", "skip_catalog"}),
     )
     confirm = _p["confirm"]
     skip_catalog = _p["skip_catalog"]
     resolutions = _p["resolutions"]
+    tz_choices = _p["tz_choices"]
+    try:
+        tz_choices_map = _json.loads(tz_choices) if tz_choices else {}
+    except Exception:
+        tz_choices_map = {}
 
     purchase = await db.get(Purchase, pid)
     if not purchase:
@@ -230,9 +271,13 @@ async def import_items_smart(
             xlsx_preview, xlsx_columns, xlsx_warnings = [], [], []
         if xlsx_preview:
             if not confirm:
+                _limited_xlsx, _total_in_file_xlsx, _truncated_xlsx = apply_import_preview_limit(xlsx_preview)
+                await _annotate_catalog_description(db, current_user, _limited_xlsx)
                 return {
-                    "preview": xlsx_preview[:200],
+                    "preview": _limited_xlsx,
                     "total_rows": len(xlsx_preview),
+                    "total_in_file": _total_in_file_xlsx,
+                    "truncated": _truncated_xlsx,
                     "file_type": file_type,
                     "columns_found": xlsx_columns,
                     "warnings": xlsx_warnings,
@@ -244,6 +289,7 @@ async def import_items_smart(
             return await _save_smart_preview_to_purchase(
                 pid, xlsx_preview, purchase, db, current_user,
                 skip_catalog=skip_catalog, resolutions=resolutions_map,
+                tz_choices=tz_choices_map,
             )
         # Если direct-parser не нашёл строк — fallback на markitdown (ниже)
 
@@ -343,7 +389,13 @@ async def import_items_smart(
             "vat_rate": vat_rate_raw,
         }
 
+    # Лимит 200 (владелец, 14.10.2026): применяется к ИСХОДНЫМ строкам файла
+    # (data_rows), не к уже отфильтрованному preview — total_in_file обязан
+    # считать все строки файла, включая те, что _parse_row пропустит (junk/
+    # пустое имя), иначе число не совпадёт с тем, что человек видит в файле.
     data_rows = best_table[best_header_row + 1:]
+    _total_in_file_md = len(data_rows)
+    _truncated_md = _total_in_file_md > 200
     preview = [
         r for r in (
             _parse_row(row, best_header_row + 2 + i) for i, row in enumerate(data_rows[:200])
@@ -351,8 +403,10 @@ async def import_items_smart(
     ]
 
     if not confirm:
+        await _annotate_catalog_description(db, current_user, preview)
         return {
             "preview": preview, "total_rows": len(preview), "file_type": file_type,
+            "total_in_file": _total_in_file_md, "truncated": _truncated_md,
             "columns_found": list(best_col.keys()), "warnings": md_warnings,
         }
 
@@ -364,7 +418,7 @@ async def import_items_smart(
     return await _save_smart_preview_to_purchase(
         pid, preview, purchase, db, current_user,
         skip_catalog=skip_catalog, resolutions=resolutions_map,
-        vat_on_top=_is_upd,
+        vat_on_top=_is_upd, tz_choices=tz_choices_map,
     )
 
 # ---------------------------------------------------------------------------

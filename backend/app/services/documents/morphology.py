@@ -156,28 +156,60 @@ def _inflect_phrase_genitive(phrase: str) -> str:
     return "".join(out)
 
 
+def _is_patronymic(word: str) -> bool:
+    """Похоже ли слово на русское отчество (мужское/женское)."""
+    lower = word.lower().rstrip(',')
+    return lower.endswith(('вич', 'вна', 'чна', 'ична'))
+
+
 def _to_gen_fio(full_name: str) -> str:
-    """Склонить ФИО (Фамилия Имя Отчество) в родительный падеж через petrovich."""
-    petro_pack = _get_petro()
-    if not petro_pack or not full_name:
+    """Склонить ФИО в родительный падеж через petrovich.
+
+    ПРАВИЛО №6: единственное место склонения ФИО подписантов — используется
+    и для инициатора, и для ответственного, и для исполнителя в договоре.
+
+    Petrovich умеет склонять только классическое русское «Фамилия Имя
+    Отчество» (ровно 3 слова, третье — отчество) — опционально с «оглы»/
+    «кызы» 4-м словом. Любое иностранное имя (2 слова, 4+ слов без оглы/
+    кызы, запятые внутри и т.п.) petrovich склоняет наугад и теряет слова
+    (баг: «Дефассье Лоран, Луи, Клод» → «Дефассье Лоран, Луи,» — «Клод»
+    пропадал). Для таких случаев возвращаем ФИО как есть (без падежа),
+    только нормализуя пробелы — лучше неизменённое ФИО, чем потерянное
+    слово или выдуманное окончание.
+    """
+    if not full_name or not full_name.strip():
         return full_name
-    petro, Case, Gender = petro_pack
+    # Нормализация пробелов, слова — как в исходной строке (с запятыми, если были)
     parts = full_name.strip().split()
-    if not parts:
-        return full_name
+    normalized = ' '.join(parts)
+
+    petro_pack = _get_petro()
+    if not petro_pack:
+        return normalized
+
+    petro, Case, Gender = petro_pack
+
+    # Случай 1: ровно 3 слова, третье — отчество → классическое ФИО.
+    # Случай 2: 4 слова, четвёртое — «оглы»/«кызы» (тюркский патронимик,
+    # не склоняется) → склоняем первые три, 4-е оставляем как есть.
+    ogly_kyzy = {'оглы', 'кызы'}
+    if len(parts) == 3 and _is_patronymic(parts[2]):
+        fio_parts, suffix = parts, None
+    elif len(parts) == 4 and parts[3].lower() in ogly_kyzy:
+        fio_parts, suffix = parts[:3], parts[3]
+    else:
+        # Иностранное / неполное / с запятыми ФИО — не выдумываем падеж.
+        return normalized
+
     try:
-        gender = Gender.MALE
-        if len(parts) >= 3 and parts[2].endswith(('вна', 'чна')):
-            gender = Gender.FEMALE
-        elif len(parts) >= 3 and parts[2].endswith('вич'):
-            gender = Gender.MALE
-        result = []
-        if len(parts) >= 1:
-            result.append(petro.lastname(parts[0], Case.GENITIVE, gender))
-        if len(parts) >= 2:
-            result.append(petro.firstname(parts[1], Case.GENITIVE, gender))
-        if len(parts) >= 3:
-            result.append(petro.middlename(parts[2], Case.GENITIVE, gender))
+        gender = Gender.FEMALE if fio_parts[2].lower().endswith(('вна', 'чна', 'ична')) else Gender.MALE
+        result = [
+            petro.lastname(fio_parts[0], Case.GENITIVE, gender),
+            petro.firstname(fio_parts[1], Case.GENITIVE, gender),
+            petro.middlename(fio_parts[2], Case.GENITIVE, gender),
+        ]
+        if suffix:
+            result.append(suffix)
         return ' '.join(result)
     except Exception:
-        return _to_gen_phrase(full_name)
+        return normalized

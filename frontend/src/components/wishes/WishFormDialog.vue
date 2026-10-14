@@ -561,6 +561,7 @@
                   :feo-per-item="wishForm.feo_per_item"
                   :subsidy-id="wishForm.subsidy_id"
                   :subsidy-name="selectedSubsidyName"
+                  :org-id="selectedSubsidyOrgId"
                   :default-feo-category-id="wishFeoSelected"
                   :feo-planned-per-item="false"
                   :allow-per-item-plan="true"
@@ -1766,7 +1767,7 @@ const {
   convertedEditGateDialog, convertedEditGateReason,
   applyCommonDateToAllItems, wishFormRef, wishSubmitBtnRef,
   validationArrowsActive, validationArrowFrom, validationArrowTargets, dismissValidationArrows,
-  highlightMissingFeoCategory, saving, serverFieldErrors, wishForm, selectedSubsidyName, eventsForSubsidy,
+  highlightMissingFeoCategory, saving, serverFieldErrors, wishForm, selectedSubsidyName, selectedSubsidyOrgId, eventsForSubsidy,
   wishFeoSelected, wishFeoPerItemDisableDialog, wishFeoPerItemDisableCount,
   onWishFeoPerItemChange, cancelWishFeoPerItemDisable, confirmWishFeoPerItemDisable,
   orgUsers, resolveUserPosition, wishContractorInitial, onWishContractorSelect, onContractorNameInput,

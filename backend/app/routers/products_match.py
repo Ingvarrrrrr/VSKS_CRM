@@ -31,6 +31,7 @@ from app.services.product_matcher import bulk_match
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.product_snapshot import resolve_photo_url
 from app.services.item_types import normalize_item_type
+from app.services.product_catalog_guard import assert_can_edit_catalog
 
 _log = logging.getLogger(__name__)
 
@@ -229,7 +230,7 @@ async def deduplicate_products(
     threshold: float = 0.8,
     skip_ids: Optional[str] = None,  # CSV: дубликаты, которые пользователь снял с галочкой
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('products')),
+    current_user: User = Depends(require_tab('products')),
 ):
     """Удалить дубликаты товаров. Группировка через fuzzy-матчинг по имени
     (token-set + char-ratio, то же что и при импорте). Единый общий каталог.
@@ -237,7 +238,14 @@ async def deduplicate_products(
     `dry_run=true` — вернуть найденные группы без удаления (для preview UI).
     `threshold` — порог сходства (по умолчанию 0.8).
     `skip_ids` — CSV id'шников, которые пользователь снял с галочкой и НЕ хочет удалять.
-    """
+
+    Защита каталога (Этап В, план item-tz-description.md, 14.10.2026):
+    слияние/удаление СУЩЕСТВУЮЩИХ товаров каталога (не только dry_run=false —
+    сама же find/merge-операция решает судьбу чужих карточек) требует
+    products.edit_catalog, та же единственная проверка, что у PUT/PATCH/DELETE
+    товара (app/services/product_catalog_guard.py, Правило №6 — второй
+    механизм не заводим)."""
+    await assert_can_edit_catalog(current_user, db)
     from app.product_matcher import name_similarity, _normalize
     from collections import defaultdict
     from sqlalchemy import update as sa_update

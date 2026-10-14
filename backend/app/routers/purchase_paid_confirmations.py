@@ -77,10 +77,19 @@ async def _is_subsidy_approver(db: AsyncSession, subsidy_id: int, user_id: int) 
     return row is not None
 
 
-async def _assert_can_decide(current_user, db: AsyncSession, subsidy_id: int) -> None:
+async def _can_decide(current_user, db: AsyncSession, subsidy_id: int) -> bool:
+    """Единственное место, где считается право решать по подтверждениям оплаты
+    (ПРАВИЛО №6) — bypass-роль ИЛИ согласующий этой субсидии. И gate
+    (_assert_can_decide, 403 на confirm/reject), и список (который вместо 403
+    отдаёт пустой список не-согласующему — см. list_subsidy_paid_confirmations)
+    читают отсюда, не считают заново."""
     if current_user.role in _SAAS_BYPASS_ROLES:
-        return
-    if await _is_subsidy_approver(db, subsidy_id, current_user.id):
+        return True
+    return await _is_subsidy_approver(db, subsidy_id, current_user.id)
+
+
+async def _assert_can_decide(current_user, db: AsyncSession, subsidy_id: int) -> None:
+    if await _can_decide(current_user, db, subsidy_id):
         return
     raise HTTPException(
         403,
@@ -370,15 +379,25 @@ async def list_subsidy_paid_confirmations(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    """Владелец (прод, 14.10): PaidConfirmationsPanel.vue грузит этот список
+    сама при открытии ЛЮБОЙ субсидии (watch(subsidyId, immediate:true)) — не
+    по нажатию. Админ организации без роли согласующего этой субсидии видел
+    403 просто за открытие вкладки «Субсидии», хотя панель и так скрыта при
+    пустом items. Решение владельца: не согласующему — пустой список и
+    can_decide=false без 403 и без обращения к таблице (сама панель это
+    скрывает); 404 на несуществующую субсидию — как и раньше. confirm/reject
+    и /check (purchase_paid_confirmations_check.py) НЕ меняются — туда
+    согласующий попадает только нажатием, там 403 уместен."""
     await _get_subsidy_or_404(subsidy_id, db)
-    await _assert_can_decide(current_user, db, subsidy_id)
+    if not await _can_decide(current_user, db, subsidy_id):
+        return {"items": [], "can_decide": False}
 
     q = select(PurchasePaidConfirmation).where(PurchasePaidConfirmation.subsidy_id == subsidy_id)
     if status:
         q = q.where(PurchasePaidConfirmation.status == status)
     q = q.order_by(PurchasePaidConfirmation.requested_at.desc())
     rows = (await db.execute(q)).scalars().all()
-    return {"items": await _list_confirmation_dicts(db, rows)}
+    return {"items": await _list_confirmation_dicts(db, rows), "can_decide": True}
 
 
 @router.get("/api/purchases/{pid}/paid-confirmation")

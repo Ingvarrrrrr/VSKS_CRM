@@ -954,6 +954,63 @@ async def test_list_does_not_simulate_confirm_chain(db_session, client, test_org
 
 
 @pytest.mark.asyncio
+async def test_list_hides_pending_for_non_approver_without_403(db_session, client, test_org, contractor):
+    """Прод 14.10: PaidConfirmationsPanel.vue грузит этот список САМА при
+    открытии любой субсидии (watch immediate:true), не по нажатию — админ
+    организации, не входящий в SubsidyApprover, получал 403 просто за
+    открытие вкладки «Субсидии», хотя панель и так скрыта при пустом списке.
+    Решение владельца: не согласующему — 200 с пустым items и
+    can_decide=false, без обращения к таблице подтверждений. Согласующий по
+    той же субсидии продолжает видеть свою pending-строку и can_decide=true.
+    POST confirm по-прежнему 403 для не-согласующего (см.
+    test_confirm_forbidden_for_non_approver)."""
+    sub = await _make_subsidy(db_session, test_org.id)
+    approver_user, approver_headers = await _make_user(db_session, test_org.id)
+    non_approver_user, non_approver_headers = await _make_user(db_session, test_org.id, role="org_admin")
+    db_session.add(SubsidyApprover(
+        subsidy_id=sub.id, role_name="Директор", full_name=approver_user.full_name,
+        user_id=approver_user.id,
+    ))
+    await db_session.commit()
+
+    p = Purchase(
+        item_name="Товар", status="delivered", subsidy_id=sub.id,
+        contractor_id=contractor.id, contract_price=Decimal("10000.00"),
+    )
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    conf = PurchasePaidConfirmation(purchase_id=p.id, subsidy_id=sub.id, amount_confirmed=Decimal("10000.00"))
+    db_session.add(conf)
+    await db_session.commit()
+
+    # Не согласующий (org_admin без записи в SubsidyApprover) — 200, пустой
+    # список, can_decide=false, НЕ 403.
+    resp = await client.get(
+        f"/api/subsidies/{sub.id}/paid-confirmations?status=pending", headers=non_approver_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["items"] == []
+    assert body["can_decide"] is False
+
+    # Согласующий по той же субсидии видит свою строку и can_decide=true.
+    resp2 = await client.get(
+        f"/api/subsidies/{sub.id}/paid-confirmations?status=pending", headers=approver_headers,
+    )
+    assert resp2.status_code == 200, resp2.text
+    body2 = resp2.json()
+    assert len(body2["items"]) == 1
+    assert body2["items"][0]["id"] == conf.id
+    assert body2["can_decide"] is True
+
+    # Не согласующему confirm по-прежнему запрещён 403-м.
+    resp3 = await client.post(f"/api/paid-confirmations/{conf.id}/confirm", headers=non_approver_headers)
+    assert resp3.status_code == 403, resp3.text
+
+
+@pytest.mark.asyncio
 async def test_check_endpoint_returns_same_blocked_reason_as_old_list(db_session, client, test_org, contractor):
     """/check на pending-строке без закрывающих документов обязан отдать тот
     же blocked_reason, что раньше (до перф-доработки) отдавал список —

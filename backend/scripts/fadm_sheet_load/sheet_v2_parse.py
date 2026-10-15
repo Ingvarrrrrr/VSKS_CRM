@@ -344,6 +344,43 @@ def _row(raw: list[str], row_num: int) -> SheetRowV2:
     )
 
 
+_NO_DATA_MARKERS = {"", "нет данных"}
+
+
+def fill_missing_subject_item_name(rows: list[SheetRowV2]) -> None:
+    """Задание владельца 15.10.2026, п.6 — «Нет данных» в F (subject) / G
+    (item_name) листа заполняется из ДРУГИХ строк ТОЙ ЖЕ закупки D (первое
+    непустое не «Нет данных»); если во всей закупке нет ни одного непустого
+    значения — значение остаётся как было («Нет данных»/пусто). Мутирует
+    строки IN PLACE (SheetRowV2 — обычный, не frozen, dataclass) — единая
+    точка (ПРАВИЛО №6), вызывается один раз сразу после парсинга CSV, до
+    любой группировки/сборки, поэтому действует одинаково и на обычную
+    загрузку, и на `--rebuild-in-place`."""
+    by_purchase: dict[str, list[SheetRowV2]] = {}
+    for r in rows:
+        by_purchase.setdefault(r.purchase_no, []).append(r)
+    for group in by_purchase.values():
+        best_subject = next((r.subject for r in group if _norm(r.subject).lower() not in _NO_DATA_MARKERS), None)
+        best_item_name = next((r.item_name for r in group if _norm(r.item_name).lower() not in _NO_DATA_MARKERS), None)
+        for r in group:
+            if best_subject and _norm(r.subject).lower() in _NO_DATA_MARKERS:
+                r.subject = best_subject
+            if best_item_name and _norm(r.item_name).lower() in _NO_DATA_MARKERS:
+                r.item_name = best_item_name
+
+
+def natural_purchase_key(no: Optional[str]) -> tuple:
+    """Порядок номера закупки (D) или заказа (E) — ЧИСЛОМ, если номер состоит
+    только из цифр, иначе (нечисловые — в конец, по алфавиту) — задание
+    владельца 15.10.2026, п.2. ЕДИНАЯ функция (ПРАВИЛО №6) — используется и
+    для порядка закупок в группировке (group_rows_v2), и для порядка заказов
+    E внутри рамочной группы (sheet_v2_build.py::build_framework)."""
+    s = (no or "").strip()
+    if s.isdigit():
+        return (0, int(s), "")
+    return (1, 0, s)
+
+
 def parse_goodsservice_csv(path: str | Path) -> list[SheetRowV2]:
     path = Path(path)
     out: list[SheetRowV2] = []
@@ -356,6 +393,7 @@ def parse_goodsservice_csv(path: str | Path) -> list[SheetRowV2]:
             if not (raw[IDX_PURCHASE_NO] or "").strip():
                 continue
             out.append(_row(raw, i))
+    fill_missing_subject_item_name(out)
     return out
 
 
@@ -500,6 +538,11 @@ def group_rows_v2(rows: list[SheetRowV2]) -> tuple[list[PurchaseGroupV2], list[S
             group.rows.append(r)
 
     groups = [by_key[k] for k in order if by_key[k].rows or by_key[k].limit_row]
+    # Задание владельца 15.10.2026, п.2 — порядок СОЗДАНИЯ закупок по номеру
+    # закупки D (числом, нечисловые — в конец по алфавиту), см.
+    # natural_purchase_key выше. Сортировка стабильна — группы с одинаковым D
+    # (разные ИНН) сохраняют исходный порядок появления в листе.
+    groups.sort(key=lambda g: natural_purchase_key(g.purchase_no))
     return groups, plan_rows
 
 

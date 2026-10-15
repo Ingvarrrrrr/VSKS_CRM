@@ -54,7 +54,7 @@ from .feo_path_resolve import FeoTree, load_feo_tree, resolve_feo_path
 from .match import find_source_subsidy
 from .sheet_v2_parse import (
     FRAMEWORK_LIMIT_FROM_Y, KIND_FRAMEWORK_WITH_AMOUNT, PlanGroupV2, PurchaseGroupV2, SheetRowV2,
-    group_rows_v2, is_plan_only, need_level_for, plan_groups_v2, resolve_status, valid_inn,
+    group_rows_v2, is_plan_only, natural_purchase_key, need_level_for, plan_groups_v2, resolve_status, valid_inn,
 )
 from .sheet_v2_payments import (
     PendingPayment, attach_pending_payments, create_declared_payments_for_paid_rows,
@@ -522,7 +522,10 @@ async def build_framework(db: AsyncSession, subsidy: Subsidy, group: PurchaseGro
     for r in group.rows:
         order_rows.setdefault(r.order_no, []).append(r)
 
-    for order_no, rows in order_rows.items():
+    # Задание владельца 15.10.2026, п.2 — внутри закупки заказы создаются по
+    # номеру E (natural_purchase_key — та же функция, что сортирует закупки
+    # по D, ПРАВИЛО №6).
+    for order_no, rows in sorted(order_rows.items(), key=lambda kv: natural_purchase_key(kv[0])):
         main = rows[0]
         category_id = _resolve_feo_category(main, feo_tree, na_category_id, counters,
                                              label=f"{group.contractor} №{group.purchase_no}, заказ {order_no}")
@@ -694,47 +697,25 @@ async def create_subsidy(db: AsyncSession, source: Subsidy, name: str, budget: D
     return new_subsidy
 
 
-async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name: str, target_name: str,
-                        budget: Decimal, agreement_number: str, current_user, replace: bool) -> tuple[Subsidy, BuildCountersV2]:
-    source = await find_source_subsidy(db, source_name)
-
-    existing = await find_existing_target_subsidy(db, target_name, source.id)
-    if existing:
-        if not replace:
-            raise ValueError(
-                f"Субсидия {target_name!r} (copied_from_id={source.id}) уже существует "
-                f"(id={existing.id}) — передайте --replace."
-            )
-        await delete_target_subsidy(db, existing)
-
-    new_subsidy = await create_subsidy(db, source, target_name, budget, agreement_number)
-
-    tree = await copy_feo_tree(db, source.id, new_subsidy.id)
-    if tree.category_id_map:
-        await db.execute(delete(FeoPlannedItem).where(
-            FeoPlannedItem.feo_category_id.in_(tree.category_id_map.values())
-        ))
-        # Владелец, доп. задание 05.10.2026 («Бюджет (ФЭО)» карточка): clone_row
-        # копирует FeoCategory.budget ТОЖЕ — компьютинг бюджета
-        # (app/services/subsidy_budget.py::compute_budget_map) берёт явный
-        # budget узла КАК ЕСТЬ, не складывая ничего снизу, и
-        # app/services/feo_plan_tree.py::_feo_by_kind кладёт такой явный budget
-        # ЦЕЛИКОМ в «без типа» — отсюда карточка новой субсидии показывала
-        # 21 880 100 / без типа, унаследованные от ФАДМ_2026. Снимаем явный
-        # budget на ВСЕХ узлах (любой уровень — override срабатывает на
-        # каждом), тогда сумма считается по FeoPlannedItem.feo_amount снизу
-        # вверх — ниже заводим ровно эту сумму.
-        await db.execute(update(FeoCategory).where(
-            FeoCategory.id.in_(tree.category_id_map.values())
-        ).values(budget=None))
-    await copy_access_and_approvers(db, source.id, new_subsidy.id)
-    copy_templates(source.id, new_subsidy.id)
-
-    na_category, _created = await get_or_create_unallocated(db, new_subsidy.id, current_user=None)
+async def populate_subsidy_v2(db: AsyncSession, subsidy: Subsidy, rows: list[SheetRowV2],
+                               current_user, *, create_feo_plan_rows: bool = True,
+                               no_payments: bool = False) -> BuildCountersV2:
+    """Раскладка строк листа GoodsService (плановые позиции + закупки +
+    платежи) В УЖЕ существующую субсидию с готовым деревом ФЭО. Вынесено из
+    run_build_v2 (задание владельца 15.10.2026, режим `--rebuild-in-place`,
+    ПРАВИЛО №6) — ОДНА функция для обоих путей:
+      - run_build_v2 — свежая субсидия (копия дерева source), создаёт
+        create_feo_plan_rows=True (две агрегатные строки F1/G1 под «Не
+        определена» — бюджет ФЭО не был снят владельцем вручную на дереве);
+      - run_rebuild_in_place (sheet_v2_rebuild.py) — существующая субсидия 89
+        со своим деревом/бюджетом на категориях (владелец расставил budget
+        вручную) — create_feo_plan_rows=False, т.к. эти строки задвоили бы
+        бюджет (п.4 задания)."""
+    na_category, _created = await get_or_create_unallocated(db, subsidy.id, current_user=None)
     na_category_id = na_category.id if na_category else None
-    feo_tree = await load_feo_tree(db, new_subsidy.id)
+    feo_tree = await load_feo_tree(db, subsidy.id)
 
-    if na_category_id:
+    if na_category_id and create_feo_plan_rows:
         # Бюджет ФЭО листа GoodsService — строка 1 листа даёт его НАПРЯМУЮ
         # (E1=15 880 100 план, F1=4 380 000 товары, G1=11 500 100 услуги),
         # владелец подтвердил эти три числа как целевые для карточки. Не
@@ -769,9 +750,11 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
         ))
         await db.flush()
 
-    employee_lookup = await load_employee_lookup(db, new_subsidy.org_id)
-    source_advance_contractors = await _load_source_advance_contractors(db, source.id)
-    source_executors = await _load_source_executors_by_contractor(db, source.id)
+    employee_lookup = await load_employee_lookup(db, subsidy.org_id)
+    source_advance_contractors = await _load_source_advance_contractors(db, subsidy.copied_from_id) \
+        if subsidy.copied_from_id else {}
+    source_executors = await _load_source_executors_by_contractor(db, subsidy.copied_from_id) \
+        if subsidy.copied_from_id else {}
     groups, plan_rows = group_rows_v2(rows)
 
     counters = BuildCountersV2()
@@ -789,10 +772,12 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
         plan_item_by_key = await _build_plan_items_v2(db, rows, feo_tree, na_category_id, counters)
         await db.flush()
 
+        # Порядок создания закупок — по номеру закупки D (group_rows_v2 уже
+        # сортирует groups этим ключом, задание владельца 15.10.2026, п.2).
         for group in groups:
             if group.is_framework and len(group.distinct_orders) >= 1:
-                await build_framework(db, new_subsidy, group, feo_tree, na_category_id,
-                                      employee_lookup, new_subsidy.org_id, current_user, counters,
+                await build_framework(db, subsidy, group, feo_tree, na_category_id,
+                                      employee_lookup, subsidy.org_id, current_user, counters,
                                       pending_payments, source_advance_contractors, source_executors,
                                       plan_item_by_key)
                 continue
@@ -801,11 +786,16 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
             employee_id = employee_lookup.find_one(group.contractor)
             category_id = _resolve_feo_category(main, feo_tree, na_category_id, counters,
                                                  label=f"{group.contractor} №{group.purchase_no}") if main else na_category_id
-            contractor_id = None if employee_id else (await _resolve_contractor_id(db, main, new_subsidy.org_id, counters) if main else None)
-            await build_single(db, new_subsidy, group, category_id, contractor_id, employee_id, current_user, counters,
+            contractor_id = None if employee_id else (await _resolve_contractor_id(db, main, subsidy.org_id, counters) if main else None)
+            await build_single(db, subsidy, group, category_id, contractor_id, employee_id, current_user, counters,
                                pending_payments, source_advance_contractors, source_executors, plan_item_by_key)
 
         await db.flush()
+        if pending_payments and no_payments:
+            # --no-payments (задание владельца 15.10.2026) — ни выписка, ни
+            # «оплачено по отметке»: статусы закупок остаются такими, какими
+            # их выставил build_single/build_framework из листа.
+            pending_payments = []
         if pending_payments:
             # AW «оплачено по отметке» — ДО привязки банковской выписки: заводит
             # ручные Payment-заглушки (declared), которые attach_pending_payments
@@ -813,8 +803,8 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
             # find_manual_match, что и обычная ручная отметка + поздняя выписка
             # (см. докстринг create_declared_payments_for_paid_rows) — порядок
             # вызовов обязателен, иначе выписка создаст второй платёж.
-            _declared_run_id = await create_declared_payments_for_paid_rows(db, new_subsidy.id, pending_payments, counters, current_user)
-            await attach_pending_payments(db, new_subsidy.id, pending_payments, counters)
+            _declared_run_id = await create_declared_payments_for_paid_rows(db, subsidy.id, pending_payments, counters, current_user)
+            await attach_pending_payments(db, subsidy.id, pending_payments, counters)
             # Находка dry-run 05.10.2026 (п.1, вторая сессия): группировка
             # payment_target.build_groups может размазать один bank_payment по
             # НЕСКОЛЬКИМ закупкам одной платёжной группы — «отметка» конкретной
@@ -822,7 +812,63 @@ async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name:
             # привязки выписки (см. докстринг ensure_declared_floor_after_statement,
             # payment_lookup.py не трогаем — запрещено заданием).
             await ensure_declared_floor_after_statement(db, pending_payments, counters, _declared_run_id)
-        await _finalize_single_contract_amounts(db, new_subsidy.id)
+        await _finalize_single_contract_amounts(db, subsidy.id)
 
     await db.flush()
+    return counters
+
+
+async def run_build_v2(db: AsyncSession, *, rows: list[SheetRowV2], source_name: str, target_name: str,
+                        budget: Decimal, agreement_number: str, current_user, replace: bool,
+                        no_payments: bool = False, keep_source_budget: bool = False,
+                        ) -> tuple[Subsidy, BuildCountersV2]:
+    source = await find_source_subsidy(db, source_name)
+
+    existing = await find_existing_target_subsidy(db, target_name, source.id)
+    if existing:
+        if not replace:
+            raise ValueError(
+                f"Субсидия {target_name!r} (copied_from_id={source.id}) уже существует "
+                f"(id={existing.id}) — передайте --replace."
+            )
+        await delete_target_subsidy(db, existing)
+
+    new_subsidy = await create_subsidy(db, source, target_name, budget, agreement_number)
+
+    tree = await copy_feo_tree(db, source.id, new_subsidy.id)
+    if tree.category_id_map:
+        # ВСЕГДА удаляем скопированные плановые позиции источника — тот же
+        # лист GoodsService уже лежал в source.id (--keep-source-budget это
+        # НЕ меняет, иначе план задваивается поверх плана, который построит
+        # populate_subsidy_v2 из текущего --goodsservice; поправка владельца
+        # 15.10.2026 на первую версию флага, которая по ошибке пропускала
+        # удаление целиком вместе с обнулением budget).
+        await db.execute(delete(FeoPlannedItem).where(
+            FeoPlannedItem.feo_category_id.in_(tree.category_id_map.values())
+        ))
+        if not keep_source_budget:
+            # Владелец, доп. задание 05.10.2026 («Бюджет (ФЭО)» карточка):
+            # clone_row копирует FeoCategory.budget ТОЖЕ — компьютинг бюджета
+            # (app/services/subsidy_budget.py::compute_budget_map) берёт явный
+            # budget узла КАК ЕСТЬ, не складывая ничего снизу, и
+            # app/services/feo_plan_tree.py::_feo_by_kind кладёт такой явный
+            # budget ЦЕЛИКОМ в «без типа» — отсюда карточка новой субсидии
+            # показывала 21 880 100 / без типа, унаследованные от ФАДМ_2026.
+            # Снимаем явный budget на ВСЕХ узлах (любой уровень — override
+            # срабатывает на каждом), тогда сумма считается по
+            # FeoPlannedItem.feo_amount снизу вверх — ниже заводим ровно эту
+            # сумму. --keep-source-budget (задание 15.10.2026) пропускает
+            # ЭТОТ шаг — budget узлов остаётся как у source, только строки
+            # F1/G1 ниже не создаются (create_feo_plan_rows=False).
+            await db.execute(update(FeoCategory).where(
+                FeoCategory.id.in_(tree.category_id_map.values())
+            ).values(budget=None))
+    await copy_access_and_approvers(db, source.id, new_subsidy.id)
+    copy_templates(source.id, new_subsidy.id)
+
+    counters = await populate_subsidy_v2(
+        db, new_subsidy, rows, current_user,
+        create_feo_plan_rows=not keep_source_budget,
+        no_payments=no_payments,
+    )
     return new_subsidy, counters

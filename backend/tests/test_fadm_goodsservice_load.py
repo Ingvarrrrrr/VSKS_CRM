@@ -77,14 +77,14 @@ def _write_csv(rows: list[list[str]]) -> str:
     return buf.getvalue()
 
 
-async def _source_subsidy(db_session) -> Subsidy:
+async def _source_subsidy(db_session, *, category_budget: Decimal | None = None) -> Subsidy:
     org = Organization(name=f"Org-{_uid()}")
     db_session.add(org)
     await db_session.flush()
     s = Subsidy(name=f"ФАДМ_2026-test-{_uid()}", year=2026, require_planned_dates=False, org_id=org.id)
     db_session.add(s)
     await db_session.flush()
-    cat = FeoCategory(subsidy_id=s.id, name="Прочее", level=1, parent_id=None)
+    cat = FeoCategory(subsidy_id=s.id, name="Прочее", level=1, parent_id=None, budget=category_budget)
     db_session.add(cat)
     await db_session.commit()
     await db_session.refresh(s)
@@ -320,3 +320,295 @@ async def test_goodsservice_loader_replace(db_session):
     assert subsidy2.id != subsidy1.id
     gone = await db_session.get(Subsidy, subsidy1.id)
     assert gone is None
+
+
+async def _target_subsidy_with_tree(db_session) -> Subsidy:
+    """Субсидия-ЦЕЛЬ для --rebuild-in-place: своё дерево ФЭО с budget на
+    КОРНЕВЫХ категориях (как владелец расставил budget на 89 вручную) —
+    задание 15.10.2026 требует, чтобы rebuild-in-place НЕ трогал ни дерево,
+    ни эти суммы."""
+    org = Organization(name=f"Org-{_uid()}")
+    db_session.add(org)
+    await db_session.flush()
+    s = Subsidy(name=f"ФАДМ 2026_2-rebuild-{_uid()}", year=2026, require_planned_dates=False, org_id=org.id)
+    db_session.add(s)
+    await db_session.flush()
+    cat_a = FeoCategory(subsidy_id=s.id, name="Направление А", level=1, parent_id=None, budget=Decimal("1000.00"))
+    cat_b = FeoCategory(subsidy_id=s.id, name="Направление Б", level=1, parent_id=None, budget=Decimal("2000.00"))
+    db_session.add_all([cat_a, cat_b])
+    await db_session.commit()
+    await db_session.refresh(s)
+    await db_session.refresh(cat_a)
+    await db_session.refresh(cat_b)
+    return s, cat_a, cat_b
+
+
+def _rebuild_rows(tmp_path, suffix: str) -> list:
+    """Две разовые закупки — D='10' (товар) и D='2' (услуга), намеренно в
+    таком порядке в CSV, чтобы проверить сортировку по номеру D (задание
+    15.10.2026, п.2 — числом, «2» должна создаться раньше «10»)."""
+    rows_raw = [
+        _row(purchase_no="10", order_no="1", subject="Закупка десять", item_name="Товар Х",
+             contractor="ООО Десять", inn="7711111110", plan_sum="100", final_sum="100", plan_y="100",
+             contract_number="Д-10", goods_services="Товары", contract_signed="True",
+             contract_kind="Разовый"),
+        _row(purchase_no="2", order_no="1", subject="Закупка два", item_name="Услуга У",
+             contractor="ООО Два", inn="7722222220", plan_sum="200", final_sum="200", plan_y="200",
+             contract_number="Д-2", goods_services="Услуги", contract_signed="True",
+             contract_kind="Разовый"),
+    ]
+    csv_text = _write_csv(rows_raw)
+    csv_path = tmp_path / f"goodsservice_rebuild_{suffix}.csv"
+    csv_path.write_text(csv_text, encoding="utf-8")
+    return parse_goodsservice_csv(csv_path)
+
+
+async def _loader_plan_items_count_and_sum(db_session, category_ids) -> tuple[int, Decimal]:
+    """Плановые позиции ЗАГРУЗЧИКА (не бюджетные строки F1/G1, не чужие) —
+    фильтр ТОТ ЖЕ префикс notes, что ищет _loader_plan_item_ids в самом
+    sheet_v2_rebuild.py (ПРАВИЛО №6 — не второй, расходящийся, фильтр в
+    тесте)."""
+    from scripts.fadm_sheet_load.sheet_v2_rebuild import LOADER_PLAN_ITEM_NOTE_PREFIX
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    if not category_ids:
+        return 0, Decimal("0")
+    rows = (await db_session.execute(
+        select(FeoPlannedItem).where(
+            FeoPlannedItem.feo_category_id.in_(category_ids),
+            FeoPlannedItem.notes.ilike(f"{LOADER_PLAN_ITEM_NOTE_PREFIX}%"),
+        )
+    )).scalars().all()
+    total = sum((Decimal(str(r.amount)) for r in rows if r.amount is not None), Decimal("0"))
+    return len(rows), total
+
+
+async def test_goodsservice_rebuild_in_place(db_session, tmp_path):
+    from scripts.fadm_sheet_load.sheet_v2_rebuild import run_rebuild_in_place
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.purchase_item import PurchaseItem
+    from app.models.purchase_paid_confirmation import PurchasePaidConfirmation
+
+    target, cat_a, cat_b = await _target_subsidy_with_tree(db_session)
+    current_user = await _admin_user(db_session)
+
+    rows1 = _rebuild_rows(tmp_path, "v1")
+    result1 = await run_rebuild_in_place(
+        db_session, rows=rows1, target_id=target.id, target_name=None,
+        current_user=current_user, snapshot_out=str(tmp_path / "snap1.json"),
+    )
+    await db_session.commit()
+
+    # Первый прогон — ничего не было создано загрузчиком ранее, значит
+    # ничего и не удалилось.
+    assert result1.delete_counters.purchases_deleted == 0
+
+    purchases_v1 = (await db_session.execute(
+        select(Purchase).where(Purchase.subsidy_id == target.id).order_by(Purchase.id)
+    )).scalars().all()
+    assert len(purchases_v1) == 2
+    # Порядок создания — по D числом: «2» раньше «10», несмотря на порядок в CSV.
+    assert "закупка 2" in purchases_v1[0].task_comment
+    assert "закупка 10" in purchases_v1[1].task_comment
+
+    # Тип позиций — из AD (goods_services), не угадан иначе.
+    items_v1 = (await db_session.execute(
+        select(PurchaseItem).join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .where(Purchase.subsidy_id == target.id)
+    )).scalars().all()
+    assert any(it.item_type == "товар" for it in items_v1)
+    assert any(it.item_type == "услуга" for it in items_v1)
+
+    # Дерево/бюджет НЕ тронуты — ни строк F1/G1, ни изменения budget корней.
+    # Категории дерева по id (кроме автоматической «Не определена», которую
+    # заводит get_or_create_unallocated — она не часть дерева владельца).
+    categories = (await db_session.execute(
+        select(FeoCategory).where(FeoCategory.id.in_([cat_a.id, cat_b.id]))
+    )).scalars().all()
+    assert len(categories) == 2
+    assert {c.budget for c in categories} == {Decimal("1000.00"), Decimal("2000.00")}
+    all_category_ids = (await db_session.execute(
+        select(FeoCategory.id).where(FeoCategory.subsidy_id == target.id)
+    )).scalars().all()
+    plan_budget_rows = (await db_session.execute(
+        select(FeoPlannedItem).where(
+            FeoPlannedItem.feo_category_id.in_(all_category_ids),
+            FeoPlannedItem.name.ilike("План ФЭО (лист GoodsService%"),
+        )
+    )).scalars().all()
+    assert plan_budget_rows == [], "rebuild-in-place не должен создавать строки F1/G1"
+
+    # Снимок плановых позиций загрузчика ПОСЛЕ первого прогона — баг
+    # 15.10.2026: delete_loader_created_data искал notes по префиксу БЕЗ
+    # "Создано " (create_auto_planned_item дописывает его всегда), старые
+    # плановые позиции не удалялись и план задваивался на втором прогоне.
+    plan_items_count_v1, plan_items_sum_v1 = await _loader_plan_items_count_and_sum(
+        db_session, all_category_ids,
+    )
+    assert plan_items_count_v1 == 2
+    assert plan_items_sum_v1 == Decimal("300")
+
+    # Подтверждение «Оплачено» на одной из закупок — должно попасть в снимок
+    # ПЕРЕД тем, как закупка будет удалена следующим прогоном.
+    confirmed_purchase = next(p for p in purchases_v1 if "закупка 2" in p.task_comment)
+    db_session.add(PurchasePaidConfirmation(
+        purchase_id=confirmed_purchase.id, subsidy_id=target.id, status="confirmed",
+        decided_by=current_user.id, amount_confirmed=Decimal("200.00"),
+    ))
+    await db_session.commit()
+
+    # «Чужая» закупка — заведена человеком, НЕ загрузчиком (task_comment без
+    # маркера «Таблица GoodsService:») — должна пережить пересборку как есть.
+    foreign = Purchase(
+        subsidy_id=target.id, status="draft", subject="Чужая закупка (заведена человеком)",
+        task_comment="Внесена вручную, не из листа",
+    )
+    db_session.add(foreign)
+    await db_session.commit()
+    await db_session.refresh(foreign)
+
+    rows2 = _rebuild_rows(tmp_path, "v2")
+    result2 = await run_rebuild_in_place(
+        db_session, rows=rows2, target_id=target.id, target_name=None,
+        current_user=current_user, snapshot_out=str(tmp_path / "snap2.json"),
+    )
+    await db_session.commit()
+
+    # Второй прогон удалил РОВНО две закупки загрузчика из первого прогона.
+    assert result2.delete_counters.purchases_deleted == 2
+
+    still_foreign = await db_session.get(Purchase, foreign.id)
+    assert still_foreign is not None, "чужая закупка не должна удаляться rebuild-in-place"
+    assert still_foreign.task_comment == "Внесена вручную, не из листа"
+
+    all_purchases_after = (await db_session.execute(
+        select(Purchase).where(Purchase.subsidy_id == target.id)
+    )).scalars().all()
+    # Чужая закупка (1) + пересозданные закупки листа (2).
+    assert len(all_purchases_after) == 3
+    loader_ids_after = {p.id for p in all_purchases_after if p.task_comment and p.task_comment.startswith("Таблица GoodsService:")}
+    assert len(loader_ids_after) == 2
+    # Пересозданные — это НОВЫЕ id, не те же записи, что в первом прогоне.
+    assert loader_ids_after.isdisjoint({p.id for p in purchases_v1})
+
+    # Дерево/бюджет снова не тронуты вторым прогоном.
+    categories_after = (await db_session.execute(
+        select(FeoCategory).where(FeoCategory.id.in_([cat_a.id, cat_b.id]))
+    )).scalars().all()
+    assert {c.budget for c in categories_after} == {Decimal("1000.00"), Decimal("2000.00")}
+
+    # Плановые позиции загрузчика НЕ задвоились — старые удалены ПЕРЕД
+    # пересборкой (regression-проверка бага 15.10.2026, см. комментарий выше
+    # у plan_items_count_v1).
+    plan_items_count_v2, plan_items_sum_v2 = await _loader_plan_items_count_and_sum(
+        db_session, all_category_ids,
+    )
+    assert plan_items_count_v2 == plan_items_count_v1 == 2
+    assert plan_items_sum_v2 == plan_items_sum_v1 == Decimal("300")
+
+    # Снимок перед вторым удалением записан на диск и содержит подтверждение
+    # «Оплачено» закупки «D=2» из первого прогона.
+    import json
+    snap_path = tmp_path / "snap2.json"
+    assert snap_path.exists()
+    snap_data = json.loads(snap_path.read_text(encoding="utf-8"))
+    assert len(snap_data["purchases"]) == 2
+    confirmed_entry = next(p for p in snap_data["purchases"] if p["purchase_id"] == confirmed_purchase.id)
+    assert confirmed_entry["confirmations"][0]["status"] == "confirmed"
+    assert confirmed_entry["confirmations"][0]["amount_confirmed"] == "200.00"
+
+
+async def test_goodsservice_loader_no_payments_keep_source_budget(db_session, tmp_path):
+    """Задание владельца 15.10.2026 — --no-payments/--keep-source-budget на
+    обычной загрузке в НОВУЮ субсидию (run_build_v2): ни один Payment не
+    создаётся (ни выписка, ни «оплачено по отметке»), budget корневой
+    категории источника (12345.00) переживает копирование как есть, строк
+    «План ФЭО (лист GoodsService, F1/G1…)» нет. Поправка владельца: источник
+    («ФАДМ 2026_2») уже содержит плановые позиции из того же листа —
+    скопированная вместе с деревом FeoPlannedItem-«двойник» ДОЛЖНА быть
+    удалена (как и без флага), иначе план из текущего --goodsservice
+    задвоится; сохраняется ТОЛЬКО FeoCategory.budget."""
+    source = await _source_subsidy(db_session, category_budget=Decimal("12345.00"))
+    source_cat = (await db_session.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == source.id)
+    )).scalars().one()
+    from app.models.feo_planned_item import FeoPlannedItem as _FPI
+    db_session.add(_FPI(
+        feo_category_id=source_cat.id, name="Двойник из источника",
+        amount=Decimal("999999.00"), is_active=True, auto_created=True,
+        notes="plan item источника — не должен попасть в копию",
+    ))
+    await db_session.commit()
+    current_user = await _admin_user(db_session)
+
+    bp = BankPayment(
+        payment_number="777", payment_date=date(2026, 3, 1), status="ИСПОЛНЕН",
+        amount=Decimal("1000.00"), payee_inn="7700000099",
+        basis_doc_text="№ 091-10-2026-008 от 28.01.2026",
+    )
+    db_session.add(bp)
+    await db_session.commit()
+
+    rows_raw = [
+        _row(purchase_no="1", order_no="1", subject="Разовая закупка", item_name="Товар А",
+             contractor="ООО Ромашка-NP", plan_price="1000", plan_sum="1000", confirmed="True",
+             final_price="1000", final_sum="1000", sum_to_pay_delivery="1000", plan_y="1000",
+             inn="7700000099", contract_number="Д-1", contract_date="2026-01-01",
+             payment_doc="777", payment_purpose="оплата", payment_date="2026-03-02",
+             goods_services="Товары", contract_signed="True", delivered="True", paid="True",
+             contract_kind="Разовый"),
+    ]
+    csv_text = _write_csv(rows_raw)
+    csv_path = tmp_path / "goodsservice_no_payments.csv"
+    csv_path.write_text(csv_text, encoding="utf-8")
+    rows = parse_goodsservice_csv(csv_path)
+    assert rows
+
+    target_name = f"ФАДМ 2026_2-np-{_uid()}"
+    subsidy, counters = await run_build_v2(
+        db_session, rows=rows, source_name=source.name, target_name=target_name,
+        budget=Decimal("10000"), agreement_number="091-10-2026-008",
+        current_user=current_user, replace=False,
+        no_payments=True, keep_source_budget=True,
+    )
+    await db_session.commit()
+
+    purchases = (await db_session.execute(
+        select(Purchase).where(Purchase.subsidy_id == subsidy.id)
+    )).scalars().all()
+    assert purchases
+
+    from app.models.payment import Payment
+    payments = (await db_session.execute(
+        select(Payment).where(Payment.purchase_id.in_([p.id for p in purchases]))
+    )).scalars().all()
+    assert payments == [], "--no-payments не должен создавать Payment"
+
+    categories = (await db_session.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy.id, FeoCategory.parent_id.is_(None))
+    )).scalars().all()
+    roots = [c for c in categories if c.name == "Прочее"]
+    assert roots and roots[0].budget == Decimal("12345.00"), \
+        "--keep-source-budget не должен обнулять budget скопированной категории"
+
+    from app.models.feo_planned_item import FeoPlannedItem
+    all_category_ids = (await db_session.execute(
+        select(FeoCategory.id).where(FeoCategory.subsidy_id == subsidy.id)
+    )).scalars().all()
+    plan_budget_rows = (await db_session.execute(
+        select(FeoPlannedItem).where(
+            FeoPlannedItem.feo_category_id.in_(all_category_ids),
+            FeoPlannedItem.name.ilike("План ФЭО (лист GoodsService%"),
+        )
+    )).scalars().all()
+    assert plan_budget_rows == [], "--keep-source-budget не должен создавать строки F1/G1"
+
+    # Двойник из источника НЕ скопирован; остались только позиции, построенные
+    # ИЗ листа (план-из-Y), их Σ = 1000 (plan_y одной строки CSV).
+    all_items = (await db_session.execute(
+        select(FeoPlannedItem).where(FeoPlannedItem.feo_category_id.in_(all_category_ids))
+    )).scalars().all()
+    assert all(it.name != "Двойник из источника" for it in all_items), \
+        "--keep-source-budget не должен оставлять скопированные плановые позиции источника"
+    total = sum((Decimal(str(it.amount or 0)) for it in all_items), Decimal("0"))
+    assert total == Decimal("1000"), "Σ плана должна быть ровно из листа, без двойника источника"

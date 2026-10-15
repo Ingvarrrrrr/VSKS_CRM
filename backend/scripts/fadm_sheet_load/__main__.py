@@ -175,8 +175,12 @@ async def run_goodsservice_mode(args: argparse.Namespace) -> int:
                 agreement_number=GOODSSERVICE_AGREEMENT_NUMBER,
                 current_user=current_user,
                 replace=args.replace,
+                no_payments=args.no_payments,
+                keep_source_budget=args.keep_source_budget,
             )
             report = render_report_v2(rows, args.name, counters, dry_run=args.dry_run)
+            if args.no_payments:
+                report += "\nОплаты не создавались (--no-payments)"
             # Задание 05.10.2026, доп. п.5 — карточки ДО записи, ОДНОЙ
             # транзакцией с созданием (см. докстринг sheet_v2_dashboard_check.py).
             dash_stats = await compute_subsidy_dashboard_stats(db, current_user, subsidy.id)
@@ -199,6 +203,40 @@ async def run_goodsservice_mode(args: argparse.Namespace) -> int:
         else:
             await db.commit()
             print(f"Готово: субсидия id={subsidy.id} «{subsidy.name}» сохранена.")
+    return 0
+
+
+async def run_rebuild_in_place_mode(args: argparse.Namespace) -> int:
+    from .sheet_v2_parse import parse_goodsservice_csv
+    from .sheet_v2_rebuild import run_rebuild_in_place
+    from .sheet_v2_rebuild_report import render_rebuild_report
+
+    rows = parse_goodsservice_csv(args.goodsservice)
+    if not rows:
+        print(f"CSV {args.goodsservice} пуст или не содержит строк", file=sys.stderr)
+        return 1
+
+    async with async_session() as db:
+        try:
+            current_user = await _pick_current_user(db)
+            result = await run_rebuild_in_place(
+                db, rows=rows, target_id=args.target_id, target_name=args.name,
+                current_user=current_user, snapshot_out=args.snapshot_out,
+            )
+            report = render_rebuild_report(rows, result, dry_run=args.dry_run)
+        except Exception:
+            await db.rollback()
+            raise
+
+        print(report)
+
+        if args.dry_run:
+            await db.rollback()
+            print("DRY-RUN: изменения отменены (rollback). Файл снимка на диске ОСТАЁТСЯ "
+                  f"({result.snapshot_path}) — он не часть транзакции БД, перезапишется при следующем прогоне.")
+        else:
+            await db.commit()
+            print(f"Готово: субсидия id={result.subsidy.id} «{result.subsidy.name}» пересобрана на месте.")
     return 0
 
 
@@ -230,6 +268,8 @@ async def run_copy_docs_mode(args: argparse.Namespace) -> int:
 async def main_async(args: argparse.Namespace) -> int:
     if args.copy_docs:
         return await run_copy_docs_mode(args)
+    if args.rebuild_in_place:
+        return await run_rebuild_in_place_mode(args)
     if args.goodsservice:
         return await run_goodsservice_mode(args)
 
@@ -253,8 +293,17 @@ def main() -> None:
     parser.add_argument("--copy-docs", action="store_true",
                          help="Постфактум для уже существующей --name: скопировать документы/чеки двойника "
                               "из --source на закупки --name по (contractor_id, сумма) — см. sheet_v2_docs.py")
-    parser.add_argument("--source", required=True, help='Имя субсидии-источника, напр. "ФАДМ_2026"')
-    parser.add_argument("--name", help='Имя новой субсидии, напр. "ФАДМ 2026_2" (не нужно для --match-only)')
+    parser.add_argument("--rebuild-in-place", action="store_true",
+                         help="Пересобрать УЖЕ существующую субсидию (--target-id или --name) из --goodsservice: "
+                              "удалить только закупки/договоры/плановые позиции ЗАГРУЗЧИКА (дерево ФЭО, budget, "
+                              "участники, шаблоны — не трогаются), снять JSON-снимок перед удалением "
+                              "(--snapshot-out), затем пересобрать. См. sheet_v2_rebuild.py")
+    parser.add_argument("--target-id", type=int, help="id существующей субсидии для --rebuild-in-place")
+    parser.add_argument("--snapshot-out", help="Путь для JSON-снимка --rebuild-in-place "
+                         "(по умолчанию scripts/data/fadm_rebuild_snapshot_<id>_<дата>.json)")
+    parser.add_argument("--source", help='Имя субсидии-источника, напр. "ФАДМ_2026"')
+    parser.add_argument("--name", help='Имя новой субсидии, напр. "ФАДМ 2026_2" (не нужно для --match-only); '
+                         "для --rebuild-in-place — имя УЖЕ существующей целевой субсидии (альтернатива --target-id)")
     parser.add_argument("--dry-run", action="store_true", help="Всё в транзакции, откат в конце, только отчёт")
     parser.add_argument("--match-only", action="store_true",
                          help="Только сопоставление со старой субсидией, READ ONLY транзакция, ничего не создаёт")
@@ -268,21 +317,47 @@ def main() -> None:
                          help="Гарантировать (идемпотентно) сотрудника с таким ФИО в организации целевой субсидии "
                               "ПЕРЕД сопоставлением — чтобы его закупки распознались как авансовые (см. employees.py). "
                               "Можно указывать несколько раз. Только с --relink.")
+    parser.add_argument("--no-payments", action="store_true",
+                         help="Только с --goodsservice (обычный режим, новая субсидия): не создавать Payment "
+                              "(ни выписку, ни «оплачено по отметке») — статусы закупок берутся как есть из листа")
+    parser.add_argument("--keep-source-budget", action="store_true",
+                         help="Только с --goodsservice (обычный режим, новая субсидия): НЕ обнулять budget "
+                              "категорий ФЭО, скопированных из --source, и НЕ создавать агрегатные строки "
+                              "«План ФЭО (лист GoodsService, F1/G1…)»")
     args = parser.parse_args()
 
-    if args.copy_docs:
-        if args.match_only or args.relink or args.ensure_employee or args.replace or args.goodsservice:
-            parser.error("--copy-docs несовместим с --match-only/--relink/--ensure-employee/--replace/--goodsservice")
+    if args.rebuild_in_place:
+        if args.copy_docs or args.match_only or args.relink or args.ensure_employee or args.replace \
+                or args.no_payments or args.keep_source_budget:
+            parser.error("--rebuild-in-place несовместим с --copy-docs/--match-only/--relink/--ensure-employee/"
+                         "--replace/--no-payments/--keep-source-budget")
+        if not args.goodsservice:
+            parser.error("--rebuild-in-place требует --goodsservice (путь к CSV листа)")
+        if not args.target_id and not args.name:
+            parser.error("--rebuild-in-place требует --target-id ИЛИ --name (целевая субсидия, уже существующая)")
+        if args.target_id and args.name:
+            parser.error("--rebuild-in-place: укажите ТОЛЬКО --target-id ИЛИ ТОЛЬКО --name, не оба")
+    elif args.copy_docs:
+        if args.match_only or args.relink or args.ensure_employee or args.replace or args.goodsservice \
+                or args.no_payments or args.keep_source_budget:
+            parser.error("--copy-docs несовместим с --match-only/--relink/--ensure-employee/--replace/"
+                         "--goodsservice/--no-payments/--keep-source-budget")
         if not args.name:
             parser.error("--name обязателен для --copy-docs (целевая субсидия, уже существующая)")
+        if not args.source:
+            parser.error("--source обязателен для --copy-docs")
     elif args.goodsservice:
         if args.match_only or args.relink or args.ensure_employee:
             parser.error("--goodsservice несовместим с --match-only/--relink/--ensure-employee")
         if not args.name:
             parser.error("--name обязателен для --goodsservice")
+        if not args.source:
+            parser.error("--source обязателен для --goodsservice")
     else:
         if not args.csv:
             parser.error("--csv обязателен вне режима --goodsservice")
+        if not args.source:
+            parser.error("--source обязателен")
         if args.match_only and (args.dry_run or args.replace or args.relink):
             parser.error("--match-only несовместим с --dry-run/--replace/--relink (он ничего не создаёт и не удаляет)")
         if args.relink and args.replace:
@@ -291,6 +366,8 @@ def main() -> None:
             parser.error("--ensure-employee работает только вместе с --relink")
         if not args.match_only and not args.name:
             parser.error("--name обязателен вне режима --match-only")
+        if args.no_payments or args.keep_source_budget:
+            parser.error("--no-payments/--keep-source-budget работают только вместе с --goodsservice")
 
     exit_code = asyncio.run(main_async(args))
     sys.exit(exit_code)

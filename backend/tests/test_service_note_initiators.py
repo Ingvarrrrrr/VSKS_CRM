@@ -24,6 +24,7 @@ from sqlalchemy import select
 from app.models.subsidy import Subsidy
 from app.models.user_org_access import UserOrgAccess
 from app.models.user_hierarchy import UserHierarchy
+from app.models.user_subsidy_access import UserSubsidyAccess
 from app.services.service_note_initiators import (
     org_staff_user_ids,
     initiator_candidate_ids,
@@ -237,6 +238,41 @@ async def test_global_admin_outside_contour_sees_only_self_and_subordinates(
     candidates = await initiator_candidate_ids(db_session, foreign_admin, test_subsidy)
     assert staffer.id not in candidates
     assert foreign_admin.id not in candidates
+
+
+@pytest.mark.asyncio
+async def test_personal_subsidy_access_org_admin_sees_whole_staff(
+    db_session, test_org, test_org_b, test_subsidy, make_user,
+):
+    """Фикс 15.10.2026: персональный user_subsidy_access.role='org_admin' на
+    ЭТУ субсидию (а не на организацию) → весь штат орг субсидии, даже если
+    выдавший грант сам из ДРУГОЙ орг и не входит в штат test_org — сам он при
+    этом в кандидаты не попадает (грант не делает его частью штата)."""
+    grantee = await make_user(role="employee", org_id=test_org_b.id)
+    db_session.add(UserSubsidyAccess(user_id=grantee.id, subsidy_id=test_subsidy.id, role="org_admin"))
+    await db_session.commit()
+    staffer = await make_user(role="employee", org_id=test_org.id)
+
+    candidates = await initiator_candidate_ids(db_session, grantee, test_subsidy)
+    assert staffer.id in candidates
+    assert grantee.id not in candidates
+
+
+@pytest.mark.asyncio
+async def test_personal_subsidy_access_employee_role_grants_nothing(
+    db_session, test_org, test_org_b, test_subsidy, make_user,
+):
+    """Контрольный: user_subsidy_access.role='employee' (ниже org_admin) на
+    эту субсидию не открывает штат — грантополучатель без подчинённых и вне
+    штата не получает ни себя, ни коллегу."""
+    grantee = await make_user(role="employee", org_id=test_org_b.id)
+    db_session.add(UserSubsidyAccess(user_id=grantee.id, subsidy_id=test_subsidy.id, role="employee"))
+    await db_session.commit()
+    staffer = await make_user(role="employee", org_id=test_org.id)
+
+    candidates = await initiator_candidate_ids(db_session, grantee, test_subsidy)
+    assert grantee.id not in candidates
+    assert staffer.id not in candidates
 
 
 # ---------------------------------------------------------------------------

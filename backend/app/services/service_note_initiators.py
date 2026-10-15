@@ -23,6 +23,14 @@
       compute_account_contour_org_ids);
     - org_admin ЭТОЙ организации (эффективная роль в subsidy.org_id ==
       org_admin) → любой из штата;
+    - персональная роль ИМЕННО на ЭТУ субсидию (user_subsidy_access.role,
+      привязка к subsidy.id, а не к организации) уровня org_admin/admin/
+      account_owner → любой из штата организации субсидии. Пример
+      владельца 15.10.2026: Филиппов (org_id=5, глобально ниже) получил
+      user_subsidy_access.role='org_admin' на субсидию «ДНР_Правильная»
+      (org_id=29) → видит весь штат орг 29, но сам Филиппов не входит в
+      штат орг 29 (не её сотрудник) и в список кандидатов не попадает —
+      это ожидаемо, этот грант не делает его частью штата;
     - manager, employee (и org_admin другой организации — т.е. эффективная
       роль здесь ниже) → сам + подчинённые (app.routers.task_visibility.
       _get_visible_user_ids; None → SaaS-wide, трактуется как «весь штат»)
@@ -105,6 +113,20 @@ async def initiator_candidate_ids(db: AsyncSession, current_user, subsidy) -> se
     from app.auth.permissions import _resolve_role_for_org
     effective_role = await _resolve_role_for_org(current_user, db, org_id)
     if effective_role in ("account_owner", "admin", "org_admin") and current_user.role != "admin":
+        return staff
+
+    # Персональная роль ИМЕННО на ЭТУ субсидию (user_subsidy_access, привязка
+    # к subsidy.id, а не к организации) уровня org_admin/admin/account_owner —
+    # весь штат, как обычному org_admin/admin (Фикс 15.10.2026, Правило №6:
+    # не второй механизм, а дополнительная ветка той же функции).
+    from app.models.user_subsidy_access import UserSubsidyAccess
+    subsidy_role = (await db.execute(
+        select(UserSubsidyAccess.role).where(
+            UserSubsidyAccess.user_id == current_user.id,
+            UserSubsidyAccess.subsidy_id == subsidy.id,
+        )
+    )).scalar_one_or_none()
+    if subsidy_role in ("account_owner", "admin", "org_admin"):
         return staff
 
     # Остальные (manager/employee/org_admin другой орг) — сам + подчинённые,

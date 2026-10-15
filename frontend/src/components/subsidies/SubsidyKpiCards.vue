@@ -92,6 +92,21 @@
               <template v-if="subsidyOrderOverspendTotal > 0.005 && subsidyOrderEconomyTotal > 0.005"> · </template>
               <template v-if="subsidyOrderEconomyTotal > 0.005">экономия −{{ formatCurrency(subsidyOrderEconomyTotal) }}</template>
             </div>
+            <!-- Задача владельца 15.10.2026: план субсидии выше жёсткого
+                 потолка ФЭО (PLAN_OVER_SUBSIDY_CEILING) — плашка должна
+                 кричать прямо на карточке, не только блокировать запросы
+                 согласования. «Где взять деньги» на уровне субсидии целиком
+                 (без categoryId — тот же приём, что и у «Можно
+                 перераспределить» в SubsidyMoneyCards.vue, см. её шаблон). -->
+            <div v-if="planOverCeilingAmount > 0.005" class="kpi-sub-note kpi-ceiling-over text-caption"
+              :title="ceilingOverMatchesCards ? '' : 'статьи, где ФЭО не введено, в сравнение не входят'" @click.stop
+            >
+              {{ ceilingOverMatchesCards ? 'выше ФЭО на' : 'в статьях с ФЭО план выше на' }} {{ formatCurrency(planOverCeilingAmount) }} — уменьшите план
+              <v-btn v-if="ctx.selectedSubsidy.value?.id" size="x-small" variant="text" color="error"
+                prepend-icon="mdi-cash-sync" class="mt-1 d-block"
+                @click.stop="funding.openFundingSources({ subsidyId: ctx.selectedSubsidy.value!.id, amount: planOverCeilingAmount })"
+              >Где взять деньги</v-btn>
+            </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('plan_schedule')">
                 <div v-for="row in splitRowsFor('plan_schedule')" :key="row.kind" class="kpi-split-row kpi-split-row-clickable"
@@ -564,8 +579,10 @@ import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vu
 import ExcessDrilldownBar from '@/components/subsidies/ExcessDrilldownBar.vue'
 import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
 import type { SubsidyTypeTotals } from '@/composables/subsidies/types'
+import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 
 const ctx = useSubsidyDetailCtx()
+const funding = useFundingSources()
 const kpi = useKpiDrilldown(ctx)
 const feoTreeExcess = useFeoTreeExcess()
 const excessDrilldown = useExcessDrilldown()
@@ -591,6 +608,22 @@ interface SplitRow { kind: ItemTypeKind; label: string; amount: number | null }
 
 const kpiSubTarget_budget            = computed(() => ctx.selectedBudget.value)
 const kpiSubTarget_plan_schedule     = computed(() => ctx.selectedPlannedTotal.value)
+// Жёсткий потолок субсидии (задача владельца 15.10.2026, ФАДМ 2026_3:
+// «Запланировано» 15 920 830 > «Бюджет (ФЭО)» 15 880 100, карточка никак не
+// кричала) — готовое поле бэкенда (app.services.subsidy_ceiling через
+// subsidy_money_summary.py, ПРАВИЛО №6, фронт не считает).
+const planOverCeilingAmount = computed(() => ctx.selectedSubsidy.value?.plan_over_ceiling_amount ?? 0)
+// Расхождение (координатор, 15.10.2026, стенд, субсидия 10695): potolok
+// считает только статьи с ВВЕДЁННЫМ ФЭО (см. app.services.subsidy_ceiling),
+// а карточки «Запланировано»/«Бюджет (ФЭО)» — по ВСЕМ статьям субсидии,
+// поэтому план−бюджет карточек (520 332,70) может НЕ совпасть с
+// over_amount потолка (115 690,70 — статьи без ФЭО не в счёт). Числа карточек
+// уже отображаются (kpiSubTarget_plan_schedule/_budget) — здесь только
+// сравниваем, не считаем заново (Правило №6). ±0.01 — та же защита от шума
+// плавающей точки, что formatCurrency/roundMoney (format.ts).
+const ceilingOverMatchesCards = computed(() =>
+  Math.abs(planOverCeilingAmount.value - (kpiSubTarget_plan_schedule.value - kpiSubTarget_budget.value)) <= 0.01
+)
 const kpiSubTarget_work              = computed(() => ctx.selectedSubsidy.value?.work              ?? 0)
 const kpiSubTarget_ordered           = computed(() => ctx.selectedSubsidy.value?.ordered           ?? 0)
 const kpiSubTarget_contracts         = computed(() => ctx.selectedSubsidy.value?.contracts         ?? 0)
@@ -875,6 +908,14 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
 </script>
 
 <style scoped>
+/* Задача владельца 15.10.2026: план субсидии выше жёсткого потолка ФЭО —
+   красная строка на карточке «Запланировано» (PLAN_OVER_SUBSIDY_CEILING). */
+.kpi-ceiling-over {
+  color: #EF4444;
+  white-space: normal;
+  word-break: break-word;
+  margin-top: 4px;
+}
 .kpi-toggle-row {
   display: flex;
   justify-content: flex-end;

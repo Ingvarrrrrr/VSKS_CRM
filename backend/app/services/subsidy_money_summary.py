@@ -266,6 +266,8 @@ async def subsidy_money_summary(
         "budget_from_plan": bool,             # ВСЕГДА False теперь (поле выдачи сохранено только для совместимости старых потребителей — см. докстринг модуля)
         "free_basis": float | None,            # budget_basis − planned, если feo_entered, иначе None (для показа; "free" не трогается)
         "feo_entered": bool,                  # budget > 0 (официальный бюджет ИЛИ хоть одна сумма ФЭО) — решение владельца 07.10.2026
+        "plan_over_ceiling_amount": float,    # на сколько «Запланировано» выше жёсткого потолка ФЭО (0, если в пределах) — app.services.subsidy_ceiling, задача владельца 15.10.2026
+        "feo_ceiling": float,                  # сам жёсткий потолок (Σ ФЭО по «верхним введённым» узлам), 0 если ФЭО нигде не введено
     }} — см. докстринг модуля для источника каждого поля (ПРАВИЛО №6: ни одно
     поле здесь не пересчитывается заново, только собирается воедино и
     комбинируется в three производных free/planned_not_committed/redistributable)."""
@@ -503,5 +505,16 @@ async def subsidy_money_summary(
         else:
             result[sid]["balance_by_marks"] = None
             result[sid]["balance_by_statement"] = None
+
+        # Задача владельца 15.10.2026 (ФАДМ 2026_3: «Запланировано» 15 920 830 >
+        # «Бюджет (ФЭО)» 15 880 100, карточка никак не кричала об этом) —
+        # жёсткий потолок субсидии, ОДНА функция с assert_subsidy_ceiling/
+        # app.routers.plan_excess (ПРАВИЛО №6, см. app.services.subsidy_ceiling)
+        # — здесь БЕЗ исключения, только числа для карточки «Запланировано».
+        # adding_amount=0: это просто текущее состояние, не проверка действия.
+        from app.services.subsidy_ceiling import subsidy_ceiling_state
+        _ceiling_state = await subsidy_ceiling_state(db, sid, tree=_tree)
+        result[sid]["plan_over_ceiling_amount"] = _ceiling_state["over_amount"]
+        result[sid]["feo_ceiling"] = _ceiling_state["ceiling"]
 
     return result

@@ -592,6 +592,12 @@ async def dashboard_charts(
             # реальный источник не is_monthly_payment-график, а дочерние
             # заказы рамочных договоров в статусе 'contracted'.
             "contracted_not_ordered": _money.get("contracted_not_ordered", 0.0),
+            # Жёсткий потолок субсидии (задача владельца 15.10.2026, карточка
+            # «Запланировано» должна кричать, если план выше ФЭО) — ОДНА точка
+            # расчёта, app.services.subsidy_ceiling через subsidy_money_summary
+            # (см. её докстринг). 0.0 — план в пределах потолка/ФЭО нигде не введено.
+            "plan_over_ceiling_amount": _money.get("plan_over_ceiling_amount", 0.0),
+            "feo_ceiling": _money.get("feo_ceiling", 0.0),
             "over_plan_categories": _money.get("over_plan_categories", []),
             # ИСПРАВЛЕНО 02.10.2026: economy_total=None (ни одна позиция субсидии
             # не измерена) пропускается как null, не форсится в 0.0 — см.

@@ -664,6 +664,11 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         budget_from_plan: s.budget_from_plan ?? false,
         // 07.10.2026 — см. docstring у поля в interface SubsidyRow выше.
         feo_entered: s.feo_entered ?? true,
+        // Жёсткий потолок субсидии (задача владельца 15.10.2026) — те же
+        // готовые поля /dashboard/charts, что и в SubsidiesView.vue
+        // (pickSubsidyMoneyFields), добавлены точечно (см. её докстринг).
+        plan_over_ceiling_amount: s.plan_over_ceiling_amount ?? 0,
+        feo_ceiling: s.feo_ceiling ?? 0,
         // Плашка «Оплачено больше, чем поставлено» — см. docstring выше.
         paid_over_delivered: s.paid_over_delivered ?? null,
         paid_over_delivered_prepayment: s.paid_over_delivered_prepayment ?? null,

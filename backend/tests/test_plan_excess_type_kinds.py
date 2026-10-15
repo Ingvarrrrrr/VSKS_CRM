@@ -111,6 +111,15 @@ async def test_manual_request_type_kinds_category_and_subsidy_level(db_session, 
     subsidy = await _make_subsidy(db_session, test_org.id)
     approver = await _make_approver(db_session, test_org, make_user)
     cat = await _make_services_over_feo_node(db_session, subsidy.id)
+    # Задача владельца 15.10.2026 (app.services.subsidy_ceiling,
+    # test_plan_excess_ceiling_gate.py): ручной запрос согласования ТЕПЕРЬ
+    # тоже проходит жёсткий потолок субсидии целиком, а не только узла. Эта
+    # категория даёт субсидии запас по ФЭО (без собственного плана), чтобы
+    # перекос ОДНОЙ ветки (cat: план 150 > её ФЭО 100) не упирался в
+    # суммарный потолок субсидии (см. assert_subsidy_ceiling) — тест
+    # проверяет сами 4 новых вида/уровня, не жёсткий потолок (для него есть
+    # отдельный test_plan_excess_ceiling_gate.py).
+    await _make_category(db_session, subsidy.id, name="Запас по ФЭО (без плана)", budget=Decimal("1000000"))
 
     # (1) уровень категории: plan_over_feo_services -> 201, level=category.
     resp = await request_plan_excess_approval(

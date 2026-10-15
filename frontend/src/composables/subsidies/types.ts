@@ -171,6 +171,12 @@ export interface SubsidyRow {
   // Источник — backend/app/services/subsidy_money_summary.py.
   contracted_not_ordered?: number | null
   over_plan_categories?: { category_id: number; name: string | null; excess_amount: number }[]
+  // Жёсткий потолок субсидии (задача владельца 15.10.2026, карточка
+  // «Запланировано» должна кричать, если план выше ФЭО) — готовые поля
+  // backend/app/services/subsidy_ceiling.py через subsidy_money_summary.py
+  // (ПРАВИЛО №6, фронт не считает). 0 — план в пределах/ФЭО нигде не введено.
+  plan_over_ceiling_amount?: number | null
+  feo_ceiling?: number | null
 }
 
 // C4: участник (соредактор) черновой субсидии — калька wish_member без

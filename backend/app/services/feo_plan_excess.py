@@ -24,9 +24,11 @@ from sqlalchemy.orm import aliased
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.subsidy import Subsidy
 from app.services.feo_plan_common import _leaf_plan_manual, _order_substituted_plan, plan_floor_addition
 from app.services.feo_plan_tree import compute_feo_plan_tree
 from app.services.purchase_amounts import aggregate_scope_expr
+from app.services.subsidy_ceiling import assert_subsidy_ceiling
 
 
 async def find_excess_culprit(
@@ -430,9 +432,16 @@ async def find_excess_culprit(
         ord_rows = (await db.execute(
             select(PurchaseItem, Purchase)
             .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+            .join(Subsidy, Subsidy.id == Purchase.subsidy_id)
             .outerjoin(_fpi_ord, _fpi_ord.id == PurchaseItem.feo_planned_item_id)
             .where(cat_col_ord.in_(substituted_node_ids))
-            .where(committed_status_predicate(Purchase))
+            # subsidy_year_col=Subsidy.year (15.10.2026, план abstract-noodling-
+            # pelican.md, п.B) — ТА ЖЕ month-aware ветка committed_status_predicate,
+            # что committed_consumption_by_category (compute_feo_plan_tree):
+            # виновник превышения обязан считаться ТОЙ ЖЕ формулой «законтрактовано»,
+            # что и само дерево, иначе объяснение разойдётся с числом, которое
+            # объясняет (см. test_find_excess_culprit_uses_same_plan_source_formula).
+            .where(committed_status_predicate(Purchase, subsidy_year_col=Subsidy.year))
             .where(Purchase.stopped_at.is_(None))
             .where(PurchaseItem.over_plan.is_(False))
             .where(Purchase.subsidy_id == cat.subsidy_id)
@@ -648,55 +657,11 @@ async def assert_no_unapproved_excess(
         return warnings
 
     # ── Жёсткий потолок субсидии (задача владельца п.3) — см. docstring выше.
-    # ОДНА функция (ceiling, total_plan, entered_node_ids), общая с
-    # app.services.feo_tree_write.align_budget_to_plan (Правило №6, решение
-    # владельца 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-cards/
-    # PLAN.md шаг 3): статьи без ФЭО во всём поддереве не участвуют ни в
-    # total_plan, ни в ceiling — НА ЛЮБОМ уровне, не только у корня (иначе на
-    # субсидии «ДНР» ФЭО, введённое на одном глубоком листе внутри корня
-    # «Прочие расходы», тащило в сравнение план ВСЕХ статей корня). ──
-    from app.services.subsidy_budget import feo_entered_ceiling_and_plan
-    ceiling, total_plan_now, entered_node_ids = await feo_entered_ceiling_and_plan(db, cat.subsidy_id, tree)
-    if ceiling and ceiling > 0:
-        # adding_amount прибавляется к total_plan_now ТОЛЬКО если категория,
-        # на которую совершается действие, сама лежит в поддереве одного из
-        # «верхних введённых» узлов (себя или предка) — иначе её поддерево и
-        # так не участвует ни в одной из сторон сравнения (см. докстринг
-        # feo_entered_ceiling_and_plan).
-        _node_id = feo_category_id
-        _in_counted_subtree = _node_id in entered_node_ids
-        while not _in_counted_subtree:
-            _parent_id = tree.get(_node_id, {}).get("parent_id")
-            if _parent_id is None:
-                break
-            _node_id = _parent_id
-            _in_counted_subtree = _node_id in entered_node_ids
-        _adding = adding_amount if _in_counted_subtree else 0.0
-        total_plan_after_d = Decimal(str(total_plan_now)) + Decimal(str(_adding))
-        ceiling_d = Decimal(str(ceiling))
-        if total_plan_after_d - ceiling_d > Decimal("0.005"):
-            from app.models.subsidy import Subsidy
-            from app.services.documents.formatting import _fmt_money as _fmt_rub_num
-            subsidy_row = await db.get(Subsidy, cat.subsidy_id)
-            subsidy_name = subsidy_row.name if subsidy_row else f"#{cat.subsidy_id}"
-            over_d = total_plan_after_d - ceiling_d
-            raise HTTPException(
-                409,
-                {
-                    "code": "PLAN_OVER_SUBSIDY_CEILING",
-                    "message": (
-                        f"Жёсткий потолок ФЭО по субсидии «{subsidy_name}»: всего запланировано "
-                        f"{_fmt_rub_num(total_plan_after_d)} ₽, финансирование по ФЭО (потолок) "
-                        f"{_fmt_rub_num(ceiling_d)} ₽, превышение {_fmt_rub_num(over_d)} ₽. Это "
-                        f"ограничение НЕ согласуется ни при каких обстоятельствах — уменьшите план "
-                        f"по какой-либо подкатегории минимум на {_fmt_rub_num(over_d)} ₽."
-                    ),
-                    "subsidy_id": cat.subsidy_id,
-                    "total_plan": float(total_plan_after_d),
-                    "ceiling": float(ceiling_d),
-                    "over_amount": float(over_d),
-                },
-            )
+    # Вынесено в app.services.subsidy_ceiling.assert_subsidy_ceiling (Правило
+    # №6, задача владельца 15.10.2026: тот же потолок обязана проверять и
+    # ручная ручка согласования превышения app.routers.plan_excess — второй
+    # источник счёта не заводить, см. докстринг того модуля).
+    await assert_subsidy_ceiling(db, cat.subsidy_id, tree=tree, feo_category_id=feo_category_id, adding_amount=adding_amount)
 
     # Цепочка «узел → предки» через parent_id (снизу вверх)
     chain_ids: list[int] = []

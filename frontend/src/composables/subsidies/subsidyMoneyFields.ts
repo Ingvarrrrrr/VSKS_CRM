@@ -44,6 +44,12 @@ export function pickSubsidyMoneyFields(s: any) {
     // types.ts. ?? true — старый бэк без этого поля продолжает считаться
     // «ФЭО введено» (прежнее поведение), не ломаем карточки задним числом.
     feo_entered: s.feo_entered ?? true,
+    // Жёсткий потолок субсидии (задача владельца 15.10.2026, карточка
+    // «Запланировано») — готовые поля /dashboard/charts, ничего не считаем
+    // (Правило №6). Без этой записи поля терялись бы так же, как
+    // committed/balance_by_marks до них (см. докстринг модуля выше).
+    plan_over_ceiling_amount: s.plan_over_ceiling_amount ?? 0,
+    feo_ceiling: s.feo_ceiling ?? 0,
     // Плашка «Оплачено больше, чем поставлено» (владелец, 07.10.2026, прод
     // id=74 «ЛНР») — готовые поля /dashboard/charts (dashboard_charts.py::
     // subsidy_stats, см. backend app/services/paid_over_delivered.py),

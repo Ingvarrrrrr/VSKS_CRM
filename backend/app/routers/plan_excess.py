@@ -49,6 +49,7 @@ from app.models.subsidy import Subsidy
 from app.models.plan_excess_approval import PlanExcessApproval, PlanExcessApprovalStep
 from app.services.feo_plan import compute_feo_plan_tree
 from app.services import plan_excess_kinds as PEK
+from app.services.subsidy_ceiling import assert_subsidy_ceiling
 
 logger = logging.getLogger(__name__)
 
@@ -389,6 +390,15 @@ async def _request_type_excess_approval(
     if subsidy is None:
         raise HTTPException(404, "Субсидия не найдена")
 
+    # Задача владельца 15.10.2026: жёсткий потолок субсидии (план не выше
+    # ФЭО) ОБЯЗАН блокировать и ручной запрос согласования по видам товары/
+    # услуги — см. app.services.subsidy_ceiling (ПРАВИЛО №6, та же функция,
+    # что и assert_no_unapproved_excess). adding_amount=0 — сам запрос
+    # согласования ничего не добавляет к плану, только согласует уже
+    # существующее превышение узла/вида; если план субсидии УЖЕ выше потолка —
+    # запрос отклоняется безусловно.
+    await assert_subsidy_ceiling(db, subsidy_id)
+
     violations = await collect_type_excess_violations(db, subsidy_id, category_ids)
     violation = next(
         (
@@ -463,6 +473,12 @@ async def request_plan_excess_approval(
     node = tree.get(feo_category_id)
     if node is None:
         raise HTTPException(404, "Узел ФЭО не найден в дереве плана")
+
+    # Задача владельца 15.10.2026 — см. комментарий у того же вызова в
+    # _request_type_excess_approval выше: ручной запрос согласования (старая
+    # тройка over_feo/fact_over_plan/plan_over_manual) обязан пройти тот же
+    # жёсткий потолок субсидии, что и assert_no_unapproved_excess.
+    await assert_subsidy_ceiling(db, cat.subsidy_id, tree=tree)
 
     # Задача владельца «план ≠ факт» (сессия 2026-08-06): узел может иметь ДВА
     # независимых превышения — «план дороже финансирования ФЭО» (excess_amount,
@@ -739,6 +755,13 @@ async def decide_plan_excess_step(
                 400,
                 "Последовательное согласование: сначала должны согласовать нижестоящие в цепочке.",
             )
+
+    # Задача владельца 15.10.2026: решение «согласовать» обязано пройти тот же
+    # жёсткий потолок субсидии, что и создание нового запроса (см.
+    # app.services.subsidy_ceiling) — отклонение превышения всегда разрешено
+    # (план не растёт), поэтому проверка только на ветке approved.
+    if decision == "approved":
+        await assert_subsidy_ceiling(db, approval.subsidy_id)
 
     step.status = decision
     step.comment = body.get("comment")

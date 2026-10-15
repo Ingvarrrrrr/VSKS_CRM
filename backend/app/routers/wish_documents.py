@@ -172,6 +172,13 @@ async def generate_wish_service_note(
     responsible_raw = responsible_name or executor_full or creator_full
     responsible_initials = _format_initials(responsible_raw)
 
+    # initiator_phone/initiator_email: тот же фолбэк на создателя заявки, что
+    # уже есть у initiator_name выше (creator_full) — нет привязанного
+    # пользователя-инициатора → берём контакты создателя заявки.
+    from app.services.documents.initiator_contacts import initiator_contacts
+    _initiator_user = initiator.user if (initiator and getattr(initiator, "user", None)) else None
+    _contacts_ctx = initiator_contacts(_initiator_user or w.creator)
+
     # ── Build context dict ───────────────────────────────────────────────────
     # All keys from documents.py template context are present.
     # Purchase-only keys default to empty string/list so the template never errors.
@@ -209,6 +216,7 @@ async def generate_wish_service_note(
             db,
             getattr(w.subsidy, "org_id", None) if w.subsidy else None,
         ),
+        **_contacts_ctx,
         # Items
         "items": items_list,
         "items_count": len(items_list),

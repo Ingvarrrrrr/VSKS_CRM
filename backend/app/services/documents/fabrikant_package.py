@@ -412,6 +412,8 @@ async def render_fabrikant_package_files(
         "initiator_name": "",
         "initiator_role": "",
         "initiator_dept": "",
+        "initiator_phone": "",
+        "initiator_email": "",
         "event_name": event.name if event else "",
         "contract_type": {"single": "Единственный поставщик"}.get(p.purchase_contract_type or "", ""),
         "today": _fmt_date(date.today()),

@@ -25,6 +25,7 @@ from app.services.documents.contexts import (
 from app.services.documents.morphology import _inflect_phrase_genitive
 from app.services.documents.stages_amounts import resolve_vat_exemption_article
 from app.services.documents.contexts_extra import contractor_org_type_for_docs
+from app.services.documents.initiator_contacts import initiator_contacts
 
 
 def build_base_context_part1(
@@ -184,6 +185,9 @@ async def build_base_context_part2(
             initiator.user if (initiator and getattr(initiator, "user", None)) else None,
             db,
             getattr(subsidy, "org_id", None) if subsidy else None,
+        ),
+        **initiator_contacts(
+            initiator.user if (initiator and getattr(initiator, "user", None)) else None
         ),
         # Мероприятие
         "event_name": event.name if event else "",

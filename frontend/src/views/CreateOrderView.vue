@@ -1580,6 +1580,18 @@
             >
               Лист согласования
             </v-btn>
+            <v-btn
+              v-if="formMode !== 'advance_report' && form.purchase_method !== 'advance'"
+              prepend-icon="mdi-file-star"
+              variant="tonal"
+              color="brown"
+              size="small"
+              :loading="docLoading === 'order_purchase'"
+              @click="downloadDoc('order_purchase')"
+              title="Приказ о закупке (номер — в блоке «Приказ о закупке»)"
+            >
+              Приказ
+            </v-btn>
             <!-- Владелец (п.9, 2026-09-17): «Пакет для Фабриканта» на авансовый
                  отчёт не выставляется — скрыт по тому же признаку formMode/
                  purchase_method==='advance', которым весь файл уже отличает

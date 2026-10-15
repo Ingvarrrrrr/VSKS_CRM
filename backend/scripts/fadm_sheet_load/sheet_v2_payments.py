@@ -128,13 +128,19 @@ def _dedup_by_purchase(pending: list[PendingPayment]) -> list[PendingPayment]:
     внутри заказа (прод-находка 05.10.2026: «ЦЕНТРАВТО» заказ 5 — 17 строк
     общей поставки P=89 360,02 — без дедупликации это 17 одинаковых попыток
     поиска и 17 одинаковых «не найдено» в отчёте вместо одной). Все строки
-    одного purchase_id делят один P (delivery_payment_target) — берём первую."""
-    seen: set[int] = set()
+    одного заказа делят один P (delivery_payment_target) — берём первую.
+
+    Ключ — (закупка, заказ E), а не одна закупка (15.10.2026): у разовой
+    закупки D бывает несколько заказов, каждый оплачен своим п/п (№81:
+    заказы 2 и 3 — п/п 297 на 72 840 и 379 на 1 167 160); при дедупе по
+    одной закупке платёж второго заказа не искался вовсе."""
+    seen: set[tuple[int, str]] = set()
     out: list[PendingPayment] = []
     for item in pending:
-        if item.purchase_id in seen:
+        key = (item.purchase_id, str(item.row.order_no or ""))
+        if key in seen:
             continue
-        seen.add(item.purchase_id)
+        seen.add(key)
         out.append(item)
     return out
 

@@ -47,6 +47,19 @@ test_contracted_total_stage_rules.py (framework_with_amount независимо
 (заказ рамочного в статусе 'contracted' — договор на партию уже заключён) —
 список «терял» зарезервированные-но-не-оформленные-как-заказ деньги, которые
 карточка считала. Теперь оба места — ОДНО и то же выражение (ПРАВИЛО №6).
+
+ИСПРАВЛЕНО 15.10.2026 (владелец, прод — «общие» договоры между копиями
+субсидии «ФАДМ 2026_2»/id=89 и «ФАДМ 2026_3»/id=100: загрузчик нашёл
+существующие договоры по номеру/дате/контрагенту, Contract.subsidy_id указывает
+на ОДНУ "домашнюю" субсидию, а Purchase ОБЕИХ субсидий ссылаются на тот же
+Contract.id): single/framework_with_amount строки раньше строились ОДНА НА
+ДОГОВОР (Contract.id), атрибуция — Contract.subsidy_id, а Σ actual считалась
+по ВСЕМ привязанным закупкам независимо от их Purchase.subsidy_id — у 89
+список включал закупки 100-й. Теперь строка — на (contract_id, subsidy_id) из
+app.services.stage_cumulative.single_fwa_rows_by_contract_subsidy() (ПРАВИЛО
+№6 — та же атрибуция, что и у карточки/дерева ФЭО, не вторая формула);
+framework_cumulative (cfc_stmt) уже и раньше группировался по Purchase.
+subsidy_id, не трогали.
 """
 from typing import Optional
 
@@ -56,13 +69,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.contract import Contract
 from app.models.contractor import Contractor
 from app.models.purchase import Purchase
-from app.services.committed_amounts import (
-    FRAMEWORK_COMMITTED_STATUSES,
-    SINGLE_COMMITTED_STATUSES,
-    committed_status_predicate,
-)
+from app.services.committed_amounts import FRAMEWORK_COMMITTED_STATUSES, committed_status_predicate
 from app.services.purchase_amounts import effective_amount_expr
-from app.services.stage_cumulative import committed_uncounted_expr, reserved_child_predicate
+from app.services.stage_cumulative import (
+    committed_uncounted_expr,
+    reserved_child_predicate,
+    single_fwa_rows_by_contract_subsidy,
+)
 
 CONTRACT_TYPE_LABELS = {
     "single": "Разовый",
@@ -85,89 +98,64 @@ async def contracts_drill_rows(db: AsyncSession, *, subsidy_ids: list[int]) -> l
     if not subsidy_ids:
         return rows
 
-    # ── single / framework_with_amount — активные контракты этих типов ──────
-    # Те же предикаты, что и contracted_rows_by_category (карточка) — ОБЕ
-    # группы статусов (FRAMEWORK_COMMITTED_STATUSES И reserved_child_predicate,
-    # т.е. «ordered+reserved», ПРАВИЛО №6): раньше здесь был только
-    # FRAMEWORK_COMMITTED_STATUSES, из-за чего список на 35 611,80 расходился
-    # с карточкой на «зарезервированных» (status='contracted', заказ рамочного
-    # договора) детях (прод-находка 09.10.2026).
-    _fwa_children_sum = (
-        select(func.coalesce(func.sum(effective_amount_expr()), 0))
-        .where(Purchase.contract_id == Contract.id)
-        .where(Purchase.parent_purchase_id.isnot(None))
-        .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
-        .correlate(Contract)
-        .scalar_subquery()
-    )
-    _single_children_sum = (
-        select(func.coalesce(func.sum(effective_amount_expr()), 0))
-        .where(Purchase.contract_id == Contract.id)
-        .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
-        .correlate(Contract)
-        .scalar_subquery()
-    )
+    # ── single / framework_with_amount ───────────────────────────────────────
+    # ЕДИНСТВЕННЫЙ источник атрибуции «чей общий договор» — ПРАВИЛО №6,
+    # app.services.stage_cumulative.single_fwa_rows_by_contract_subsidy()
+    # (владелец, 15.10.2026 — договоры, общие между копиями субсидии: строка
+    # теперь на (contract_id, subsidy_id), а не на Contract.id с атрибуцией по
+    # Contract.subsidy_id — та же функция, что строит карточку/дерево ФЭО).
+    single_fwa_rows = await single_fwa_rows_by_contract_subsidy(db, subsidy_ids=subsidy_ids)
+    contract_ids = {cid for (cid, _sid) in single_fwa_rows}
+    contract_meta: dict[int, object] = {}
+    if contract_ids:
+        meta_stmt = select(
+            Contract.id, Contract.number, Contract.subject, Contract.contract_type, Contract.contractor_id,
+        ).where(Contract.id.in_(contract_ids))
+        contract_meta = {r.id: r for r in (await db.execute(meta_stmt)).all()}
 
-    cs_stmt = (
-        select(
-            Contract.id, Contract.number, Contract.subject, Contract.contract_type,
-            Contract.max_amount, Contract.contractor_id, Contract.subsidy_id,
-            _fwa_children_sum.label("fwa_actual"),
-            _single_children_sum.label("single_actual"),
-        )
-        .where(Contract.status == "active")
-        .where(Contract.subsidy_id.in_(subsidy_ids))
-        .where(Contract.contract_type.in_(("single", "framework_with_amount")))
-    )
-    cs_rows = (await db.execute(cs_stmt)).all()
+    contractor_ids = {m.contractor_id for m in contract_meta.values() if m.contractor_id}
 
-    contractor_ids = {r.contractor_id for r in cs_rows if r.contractor_id}
-
-    for r in cs_rows:
-        recorded = float(r.max_amount) if r.max_amount is not None else 0.0
-        if r.contract_type == "framework_with_amount":
-            ordered_amount = float(r.fwa_actual or 0)
-            if ordered_amount <= 0 and recorded <= 0:
-                continue  # ни лимита, ни заказов — договор не участвует в карточке
-        else:
-            # single — та же проверка "существует привязанная committed-закупка",
-            # что _contracted_purchase_exists в contracted_total_by_subsidy:
-            # контракт БЕЗ фактической закупки не входит в карточку, даже если
-            # у него записан max_amount (Правило №6 — не второй критерий отбора).
-            ordered_amount = float(r.single_actual or 0)
-            if ordered_amount <= 0:
-                continue
-        contract_amount = max(recorded, ordered_amount)
+    for (contract_id, sid), b in single_fwa_rows.items():
+        contract_amount = b["amount"]
+        if contract_amount <= 0:
+            continue
+        ordered_amount = b["actual"]
+        meta = contract_meta.get(contract_id)
         rows.append({
-            "contract_id": r.id,
-            "number": r.number,
-            "subject": r.subject,
-            "contract_type": r.contract_type,
-            "contract_type_label": _label(r.contract_type),
-            "contractor_id": r.contractor_id,
-            "subsidy_id": r.subsidy_id,
+            "contract_id": contract_id,
+            "number": meta.number if meta is not None else None,
+            "subject": meta.subject if meta is not None else None,
+            "contract_type": b["contract_type"],
+            "contract_type_label": _label(b["contract_type"]),
+            "contractor_id": meta.contractor_id if meta is not None else None,
+            "subsidy_id": sid,
             "contract_amount": contract_amount,
             "ordered_amount": ordered_amount,
             "remaining": max(0.0, contract_amount - ordered_amount),
         })
 
     # ── framework_cumulative — Σ закупок, привязанных к договору ─────────────
+    # Группировка ПО Purchase.subsidy_id, не Contract.subsidy_id (владелец,
+    # 15.10.2026 — тот же «общий договор между копиями субсидии» дефект: эта
+    # ветка суммировала ВСЕ закупки договора независимо от их субсидии и
+    # относила их на домашний Contract.subsidy_id — ровно как cfc_cat_stmt в
+    # stage_cumulative.contracted_rows_by_category уже делает ПРАВИЛЬНО, та
+    # же пара статусов — FRAMEWORK_COMMITTED_STATUSES ИЛИ reserved_child_
+    # predicate (заказ накопительного рамочного в статусе 'contracted' —
+    # договор на партию уже заключён; раньше здесь не было reserved — часть
+    # источника расхождения карточка/список, прод-находка 09.10.2026).
     cfc_stmt = (
         select(
-            Contract.id, Contract.number, Contract.subject, Contract.contractor_id, Contract.subsidy_id,
+            Contract.id, Contract.number, Contract.subject, Contract.contractor_id,
+            Purchase.subsidy_id,
             func.coalesce(func.sum(effective_amount_expr()), 0).label("amt"),
         )
         .join(Purchase, Purchase.contract_id == Contract.id)
         .where(Contract.status == "active")
         .where(Contract.contract_type == "framework_cumulative")
-        .where(Contract.subsidy_id.in_(subsidy_ids))
-        # Та же пара статусов, что и cfc_cat_stmt в contracted_rows_by_category
-        # (карточка) — FRAMEWORK_COMMITTED_STATUSES ИЛИ reserved_child_predicate
-        # (заказ накопительного рамочного в статусе 'contracted' — договор на
-        # партию уже заключён). Раньше здесь не было reserved — часть источника
-        # расхождения карточка/список (прод-находка 09.10.2026).
+        .where(Purchase.subsidy_id.in_(subsidy_ids))
         .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
-        .group_by(Contract.id, Contract.number, Contract.subject, Contract.contractor_id, Contract.subsidy_id)
+        .group_by(Contract.id, Contract.number, Contract.subject, Contract.contractor_id, Purchase.subsidy_id)
     )
     cfc_rows = (await db.execute(cfc_stmt)).all()
     for r in cfc_rows:

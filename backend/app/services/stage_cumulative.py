@@ -59,7 +59,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import and_ as sqland, case, func, literal, not_ as sqlnot, or_ as sqlor, select
+from sqlalchemy import and_ as sqland, func, not_ as sqlnot, or_ as sqlor, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract import Contract
@@ -128,48 +128,197 @@ async def committed_uncounted_by_subsidy(
     return result
 
 
-async def single_contract_topup_by_subsidy(
+## single_contract_topup_by_subsidy() — УДАЛЕНА 15.10.2026 (владелец, правка
+## «общие договоры между копиями субсидии»): её "greatest(recorded, actual)"
+## по single считался БЕЗ фильтра Purchase.subsidy_id (та же причина разрыва
+## 89/100, что и у cs_q в contracted_total_by_subsidy) — теперь это ровно
+## одно из слагаемых single_fwa_rows_by_contract_subsidy() ниже, посчитанное
+## ПРАВИЛЬНО (Σ actual только своей субсидии). Второй функции с тем же
+## смыслом не завели (ПРАВИЛО №6).
+
+
+async def single_fwa_rows_by_contract_subsidy(
     db: AsyncSession,
     *,
     subsidy_ids: Optional[list[int]] = None,
-) -> dict[int, dict]:
-    """{subsidy_id: {"amount": float, "count": int}} — причина 2, см.
-    докстринг модуля: активные Contract(contract_type='single') чья реальная
-    Σ committed-закупок (committed_status_predicate, effective_amount_expr)
-    ПРЕВЫШАЕТ учтённый cs_rows Contract.max_amount (в т.ч. max_amount IS
-    NULL → учтено как 0, SQL SUM молча теряет такие строки целиком — именно
-    это произошло на «ХО», 16 договоров, 4 777 721,20 ₽). Добавка = разница
-    (actual − recorded), НЕ дублирует то, что cs_rows уже посчитал —
-    `greatest()`-приём, идентичный framework_with_amount (_fwa_children_sum,
-    dashboard_charts.py), применённый теперь и к single."""
-    result: dict[int, dict] = {}
+) -> dict[tuple[int, int], dict]:
+    """{(contract_id, subsidy_id): {"contract_type", "recorded", "actual",
+    "amount", "head_cat_id", "cat_amounts": {cat_id|None: amt}}} — ЕДИНСТВЕННОЕ
+    место (ПРАВИЛО №6), где решается «какой субсидии принадлежит договор»,
+    когда single/framework_with_amount договор ОБЩИЙ между несколькими
+    субсидиями (владелец, находка 15.10.2026: прод-копии «ФАДМ 2026_2»
+    id=89/«ФАДМ 2026_3» id=100 — загрузчик сопоставил существующие договоры
+    по номеру/дате/контрагенту, поэтому Contract.subsidy_id указывает на ОДНУ
+    "домашнюю" субсидию, а Purchase от ОБЕИХ субсидий ссылаются на тот же
+    Contract.id; старый код считал Σ actual по ВСЕМ закупкам контракта
+    независимо от Purchase.subsidy_id и относил всё на Contract.subsidy_id —
+    отсюда «Заключено 89» включало закупки 100-й, а у 100-й оставались только
+    её «свои» договоры).
+
+    Правило владельца: контракт входит в «Заключено» субсидии S, если у S
+    есть хотя бы одна НЕ остановленная committed-закупка на этом договоре;
+    суммы (заказы/закупки разовых, заказы рамочных, «лимит или факт, что
+    больше») считаются ТОЛЬКО по закупкам ЭТОЙ субсидии — группировка везде
+    по Purchase.subsidy_id, а не Contract.subsidy_id. framework_with_amount
+    БЕЗ единой committed-закупки ВООБЩЕ (ни в одной субсидии, «действующий
+    рамочный без заказов», прод-пример «АДС-АВТО») — легаси: остаётся в
+    ДОМАШНЕЙ субсидии договора (Contract.subsidy_id), amount = max_amount."""
+    result: dict[tuple[int, int], dict] = {}
     if not subsidy_ids:
         return result
+    sid_set = set(subsidy_ids)
 
-    stmt = (
+    def _bucket(contract_id: int, sid: int, contract_type: str, recorded: float) -> dict:
+        key = (contract_id, sid)
+        return result.setdefault(key, {
+            "contract_type": contract_type, "recorded": recorded, "actual": 0.0,
+            "amount": 0.0, "head_cat_id": None, "cat_amounts": {},
+        })
+
+    # ── single: Σ actual ПО СВОЕЙ субсидии, greatest(recorded, actual_своей) ──
+    single_stmt = (
         select(
-            Contract.subsidy_id,
-            Contract.id,
-            Contract.max_amount,
+            Contract.id.label("contract_id"), Contract.max_amount,
+            Purchase.subsidy_id.label("psub"), Purchase.feo_category_id.label("cat_id"),
             func.coalesce(func.sum(effective_amount_expr()), 0).label("actual"),
         )
         .join(Purchase, Purchase.contract_id == Contract.id)
-        .where(Contract.subsidy_id.in_(subsidy_ids))
         .where(Contract.status == "active")
         .where(Contract.contract_type == "single")
-        .where(committed_status_predicate(Purchase))
-        .where(Purchase.stopped_at.is_(None))
-        .group_by(Contract.subsidy_id, Contract.id, Contract.max_amount)
+        .where(Purchase.subsidy_id.in_(subsidy_ids))
+        .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
+        .group_by(Contract.id, Contract.max_amount, Purchase.subsidy_id, Purchase.feo_category_id)
     )
-    rows = (await db.execute(stmt)).all()
-    for r in rows:
-        actual = float(r.actual or 0)
-        recorded = float(r.max_amount) if r.max_amount is not None else 0.0
-        topup = actual - recorded
-        if topup > 0.005:
-            d = result.setdefault(r.subsidy_id, {"amount": 0.0, "count": 0})
-            d["amount"] += topup
-            d["count"] += 1
+    by_cs: dict[tuple[int, int], list] = {}
+    recorded_by_contract: dict[int, float] = {}
+    for r in (await db.execute(single_stmt)).all():
+        by_cs.setdefault((r.contract_id, r.psub), []).append(r)
+        recorded_by_contract[r.contract_id] = float(r.max_amount) if r.max_amount is not None else 0.0
+    for (contract_id, psub), rows in by_cs.items():
+        recorded = recorded_by_contract[contract_id]
+        total_actual = sum(float(r.actual or 0) for r in rows)
+        final_total = max(recorded, total_actual)
+        if final_total <= 0:
+            continue
+        b = _bucket(contract_id, psub, "single", recorded)
+        b["actual"] = total_actual
+        b["amount"] = final_total
+        if total_actual > 0:
+            for r in rows:
+                b["cat_amounts"][r.cat_id] = b["cat_amounts"].get(r.cat_id, 0.0) + final_total * (float(r.actual or 0) / total_actual)
+        else:
+            n = len(rows)
+            for r in rows:
+                b["cat_amounts"][r.cat_id] = b["cat_amounts"].get(r.cat_id, 0.0) + final_total / n
+
+    # ── framework_with_amount: заказы (ordered+reserved) ПО СВОЕЙ субсидии,
+    # остаток лимита max(0, лимит − Σ(ordered+reserved)своей) — в категорию
+    # головы ЭТОЙ субсидии. ──
+    fwa_children_stmt = (
+        select(
+            Contract.id.label("contract_id"), Purchase.subsidy_id.label("psub"),
+            Purchase.feo_category_id.label("cat_id"),
+            func.coalesce(func.sum(effective_amount_expr()), 0).label("amt"),
+        )
+        .join(Purchase, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_with_amount")
+        .where(Purchase.subsidy_id.in_(subsidy_ids))
+        .where(Purchase.parent_purchase_id.isnot(None))
+        .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
+        .group_by(Contract.id, Purchase.subsidy_id, Purchase.feo_category_id)
+    )
+    fwa_children_rows = (await db.execute(fwa_children_stmt)).all()
+    fwa_children_by_cs: dict[tuple[int, int], list] = {}
+    for r in fwa_children_rows:
+        fwa_children_by_cs.setdefault((r.contract_id, r.psub), []).append(r)
+    fwa_children_contract_ids = {cid for (cid, _psub) in fwa_children_by_cs}
+
+    fwa_head_cat_stmt = (
+        select(Contract.id.label("contract_id"), Purchase.subsidy_id.label("psub"),
+               Purchase.feo_category_id.label("head_cat_id"))
+        .join(Purchase, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_with_amount")
+        .where(Purchase.subsidy_id.in_(subsidy_ids))
+        .where(Purchase.parent_purchase_id.is_(None))
+    )
+    head_cat_by_cs: dict[tuple[int, int], Optional[int]] = {
+        (r.contract_id, r.psub): r.head_cat_id for r in (await db.execute(fwa_head_cat_stmt)).all()
+    }
+
+    # Домашние контракты (нужны для легаси-фолбэка «без заказов вообще» И как
+    # источник recorded/home_subsidy для контрактов, у которых дом в scope).
+    fwa_home_stmt = (
+        select(Contract.id.label("contract_id"), Contract.subsidy_id.label("home_subsidy_id"), Contract.max_amount)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_with_amount")
+        .where(Contract.subsidy_id.in_(subsidy_ids))
+    )
+    fwa_info: dict[int, tuple] = {
+        r.contract_id: (r.home_subsidy_id, r.max_amount) for r in (await db.execute(fwa_home_stmt)).all()
+    }
+    extra_ids = fwa_children_contract_ids - set(fwa_info.keys())
+    if extra_ids:
+        extra_stmt = select(
+            Contract.id.label("contract_id"), Contract.subsidy_id.label("home_subsidy_id"), Contract.max_amount,
+        ).where(Contract.id.in_(extra_ids))
+        for r in (await db.execute(extra_stmt)).all():
+            fwa_info[r.contract_id] = (r.home_subsidy_id, r.max_amount)
+
+    # Есть ли у контракта ХОТЬ ОДНА committed-закупка в ЛЮБОЙ субсидии вообще
+    # (не только в scope) — отличает «реально не заказывали» (легаси-фолбэк
+    # на домашнюю субсидию) от «заказы есть, но все вне scope» (не наше дело).
+    fwa_exists_stmt = (
+        select(Contract.id)
+        .join(Purchase, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_with_amount")
+        .where(Purchase.parent_purchase_id.isnot(None))
+        .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
+        .distinct()
+    )
+    contract_ids_with_any_actual = {row[0] for row in (await db.execute(fwa_exists_stmt)).all()}
+
+    psubs_by_contract: dict[int, set] = {}
+    for (cid, psub) in fwa_children_by_cs:
+        psubs_by_contract.setdefault(cid, set()).add(psub)
+
+    for contract_id, (home_subsidy_id, max_amount) in fwa_info.items():
+        recorded = float(max_amount) if max_amount is not None else 0.0
+        psubs = psubs_by_contract.get(contract_id, set())
+        if not psubs:
+            if contract_id in contract_ids_with_any_actual:
+                continue  # заказы есть, но все — у субсидий вне scope
+            if recorded <= 0 or home_subsidy_id is None or home_subsidy_id not in sid_set:
+                continue
+            # Легаси: действующий рамочный без заказов вообще — «АДС-АВТО».
+            b = _bucket(contract_id, home_subsidy_id, "framework_with_amount", recorded)
+            b["amount"] = recorded
+            head_cat = head_cat_by_cs.get((contract_id, home_subsidy_id))
+            b["head_cat_id"] = head_cat
+            b["cat_amounts"][head_cat] = b["cat_amounts"].get(head_cat, 0.0) + recorded
+            continue
+        for psub in psubs:
+            kids = fwa_children_by_cs.get((contract_id, psub), [])
+            total_children = 0.0
+            b = _bucket(contract_id, psub, "framework_with_amount", recorded)
+            for k in kids:
+                amt = float(k.amt or 0)
+                total_children += amt
+                b["cat_amounts"][k.cat_id] = b["cat_amounts"].get(k.cat_id, 0.0) + amt
+            b["actual"] = total_children
+            remainder = max(0.0, recorded - total_children)
+            b["amount"] = total_children + remainder
+            if remainder <= 0:
+                continue
+            head_cat = head_cat_by_cs.get((contract_id, psub))
+            if head_cat is None:
+                kid_cats = {k.cat_id for k in kids}
+                head_cat = next(iter(kid_cats)) if len(kid_cats) == 1 else None
+            b["head_cat_id"] = head_cat
+            b["cat_amounts"][head_cat] = b["cat_amounts"].get(head_cat, 0.0) + remainder
+
     return result
 
 
@@ -227,125 +376,15 @@ async def contracted_rows_by_category(
         key = (sid, cat_id)
         result[key] = result.get(key, 0.0) + amt
 
-    # ── 1. single — per (contract, category) actual, затем greatest() по контракту ──
-    # (exists-проверка _contracted_purchase_exists из contracted_total_by_subsidy
-    # здесь НЕ нужна — JOIN на Purchase с тем же committed-статусным условием
-    # уже гарантирует: контракт без ни одной committed-закупки просто не даёт
-    # строк. Отдельный EXISTS-подзапрос по тому же Purchase без alias вызывал
-    # бы неоднозначную ссылку на таблицу, уже участвующую в FROM через JOIN.)
-    single_cat_stmt = (
-        select(
-            Contract.id.label("contract_id"),
-            Contract.subsidy_id,
-            Contract.max_amount,
-            Purchase.feo_category_id.label("cat_id"),
-            func.coalesce(func.sum(effective_amount_expr()), 0).label("actual"),
-        )
-        .join(Purchase, Purchase.contract_id == Contract.id)
-        .where(Contract.status == "active")
-        .where(Contract.contract_type == "single")
-        .where(Contract.subsidy_id.in_(subsidy_ids))
-        .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
-        .group_by(Contract.id, Contract.subsidy_id, Contract.max_amount, Purchase.feo_category_id)
-    )
-    single_rows = (await db.execute(single_cat_stmt)).all()
-    by_contract: dict[int, list] = {}
-    for r in single_rows:
-        by_contract.setdefault(r.contract_id, []).append(r)
-    for contract_id, rows in by_contract.items():
-        sid = rows[0].subsidy_id
-        recorded = float(rows[0].max_amount) if rows[0].max_amount is not None else 0.0
-        total_actual = sum(float(r.actual or 0) for r in rows)
-        final_total = max(recorded, total_actual)
-        if final_total <= 0:
-            continue
-        if total_actual > 0:
-            for r in rows:
-                share = final_total * (float(r.actual or 0) / total_actual)
-                _add(sid, r.cat_id, share)
-        else:
-            # Ни одна связанная закупка не дала ненулевую сумму, но лимит
-            # договора задан (recorded > 0) — распределяем поровну между
-            # найденными категориями (на практике их одна).
-            n = len(rows)
-            for r in rows:
-                _add(sid, r.cat_id, final_total / n)
-
-    # ── 2. framework_with_amount (владелец, правка 🔵 07.10.2026 — см. PLAN.md,
-    # пересмотр В3) ──────────────────────────────────────────────────────────
-    # Прод-находка, приведшая к пересмотру: у 3 из 4 framework_with_amount
-    # договоров голова лежит в «Не определена», а её заказы — в реальной
-    # статье («Техническое оснащение»); у 21 framework_cumulative голова
-    # вовсе без категории. Старое правило «вся сумма в категорию ГОЛОВЫ»
-    # прятало реальные деньги субсидии в «Не определена» вместо статьи, где
-    # они физически потрачены — владелец это отменил.
-    #
-    # Новое правило: заказы (И «из них заказано» FRAMEWORK_COMMITTED_STATUSES,
-    # И «зарезервировано» reserved_child_predicate — ОБЕ группы, иначе
-    # категория заказа показывала бы contracted МЕНЬШЕ ordered+reserved, что
-    # и было найденной владельцем ошибкой) несут «законтрактовано» СВОЕЙ
-    # категории целиком; остаток лимита max(0, лимит − Σ(ordered+reserved))
-    # идёт в категорию ГОЛОВЫ — а если у головы нет категории (или головы нет
-    # вовсе), остаток падает в категорию заказов, ЕСЛИ она у всех заказов этого
-    # контракта одна, иначе — в «без категории» (None).
-    fwa_contracts_stmt = (
-        select(Contract.id.label("contract_id"), Contract.subsidy_id, Contract.max_amount)
-        .where(Contract.status == "active")
-        .where(Contract.contract_type == "framework_with_amount")
-        .where(Contract.subsidy_id.in_(subsidy_ids))
-    )
-    fwa_contracts = (await db.execute(fwa_contracts_stmt)).all()
-
-    fwa_head_cat_stmt = (
-        select(Contract.id.label("contract_id"), Purchase.feo_category_id.label("head_cat_id"))
-        .join(Purchase, Purchase.contract_id == Contract.id)
-        .where(Contract.status == "active")
-        .where(Contract.contract_type == "framework_with_amount")
-        .where(Contract.subsidy_id.in_(subsidy_ids))
-        # Голова — parent_purchase_id IS NULL (тот же критерий, что у cs_q/
-        # _fwa_children_sum в contracted_total_by_subsidy), БЕЗ проверки
-        # Purchase.purchase_contract_type (см. test_dashboard_contracts_drill.py,
-        # где этот столбец у фикстур вовсе не заполнен).
-        .where(Purchase.parent_purchase_id.is_(None))
-    )
-    head_cat_by_contract: dict[int, Optional[int]] = {
-        r.contract_id: r.head_cat_id for r in (await db.execute(fwa_head_cat_stmt)).all()
-    }
-
-    fwa_children_cat_stmt = (
-        select(
-            Contract.id.label("contract_id"),
-            Purchase.feo_category_id.label("cat_id"),
-            func.coalesce(func.sum(effective_amount_expr()), 0).label("amt"),
-        )
-        .join(Purchase, Purchase.contract_id == Contract.id)
-        .where(Contract.status == "active")
-        .where(Contract.contract_type == "framework_with_amount")
-        .where(Contract.subsidy_id.in_(subsidy_ids))
-        .where(Purchase.parent_purchase_id.isnot(None))
-        .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
-        .group_by(Contract.id, Purchase.feo_category_id)
-    )
-    fwa_children_by_contract: dict[int, list] = {}
-    for r in (await db.execute(fwa_children_cat_stmt)).all():
-        fwa_children_by_contract.setdefault(r.contract_id, []).append(r)
-
-    for c in fwa_contracts:
-        kids = fwa_children_by_contract.get(c.contract_id, [])
-        total_children = 0.0
-        for k in kids:
-            amt = float(k.amt or 0)
-            total_children += amt
-            _add(c.subsidy_id, k.cat_id, amt)
-        recorded = float(c.max_amount) if c.max_amount is not None else 0.0
-        remainder = max(0.0, recorded - total_children)
-        if remainder <= 0:
-            continue
-        head_cat = head_cat_by_contract.get(c.contract_id)
-        if head_cat is None:
-            kid_cats = {k.cat_id for k in kids}
-            head_cat = next(iter(kid_cats)) if len(kid_cats) == 1 else None
-        _add(c.subsidy_id, head_cat, remainder)
+    # ── 1+2. single / framework_with_amount — ЕДИНСТВЕННЫЙ источник атрибуции
+    # «какой субсидии принадлежит общий договор» — single_fwa_rows_by_contract_
+    # subsidy() выше (владелец, 15.10.2026: исправление «общих» договоров между
+    # копиями субсидии). Строки уже разнесены по (contract_id, Purchase.subsidy_id)
+    # с готовым cat_amounts — здесь просто суммируем в (subsidy_id, cat_id).
+    single_fwa_rows = await single_fwa_rows_by_contract_subsidy(db, subsidy_ids=subsidy_ids)
+    for (_contract_id, sid), b in single_fwa_rows.items():
+        for cat_id, amt in b["cat_amounts"].items():
+            _add(sid, cat_id, amt)
 
     # ── 3. framework_cumulative — Σ заказов-детей (ordered+reserved), каждый в
     # СВОЮ категорию (владелец, правка 🟣 07.10.2026 — закрытие «экзотики»,
@@ -434,44 +473,18 @@ async def contracted_total_by_subsidy(
     if not subsidy_ids:
         return result
 
-    _contracted_purchase_exists = (
-        select(literal(1))
-        .where(Purchase.contract_id == Contract.id)
-        .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
-    )
-    _fwa_children_sum = (
-        select(func.coalesce(func.sum(effective_amount_expr()), 0))
-        .where(Purchase.contract_id == Contract.id)
-        .where(Purchase.parent_purchase_id.isnot(None))
-        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
-        .correlate(Contract)
-        .scalar_subquery()
-    )
-    cs_q = (
-        select(
-            Contract.subsidy_id,
-            func.coalesce(func.sum(
-                case(
-                    (
-                        Contract.contract_type == "framework_with_amount",
-                        func.greatest(func.coalesce(Contract.max_amount, 0), _fwa_children_sum),
-                    ),
-                    else_=Contract.max_amount,
-                )
-            ), 0).label("amt"),
-            func.count(Contract.id).label("cnt"),
-        )
-        .where(Contract.status == "active")
-        .where(Contract.subsidy_id.in_(subsidy_ids))
-        .where(
-            sqlor(
-                sqland(Contract.contract_type == "single", _contracted_purchase_exists.exists()),
-                Contract.contract_type == "framework_with_amount",
-            )
-        )
-        .group_by(Contract.subsidy_id)
-    )
-    cs_rows = (await db.execute(cs_q)).all()
+    # ── single / framework_with_amount — count ТОЛЬКО (amount отсюда ниже всё
+    # равно перезаписывается Σ contracted_rows_by_category, см. комментарий
+    # ниже) — ОДИН источник атрибуции «чей общий договор», ПРАВИЛО №6:
+    # single_fwa_rows_by_contract_subsidy() (владелец, 15.10.2026 — исправление
+    # «общих» договоров между копиями субсидии, см. её докстринг). Строка
+    # (contract_id, subsidy_id) существует ТОЛЬКО если у subsidy_id реально
+    # есть committed-закупка на этом договоре (или легаси-фолбэк «без заказов
+    # вообще» на домашнюю субсидию) — больше не Contract.subsidy_id.in_(...).
+    single_fwa_rows = await single_fwa_rows_by_contract_subsidy(db, subsidy_ids=subsidy_ids)
+    for (_contract_id, sid) in single_fwa_rows:
+        d = result.setdefault(sid, {"amount": 0.0, "count": 0})
+        d["count"] += 1
 
     cfc_q = (
         select(
@@ -488,10 +501,6 @@ async def contracted_total_by_subsidy(
     )
     cfc_rows = (await db.execute(cfc_q)).all()
 
-    for r in cs_rows:
-        d = result.setdefault(r.subsidy_id, {"amount": 0.0, "count": 0})
-        d["amount"] += float(r.amt)
-        d["count"] += int(r.cnt)
     for r in cfc_rows:
         d = result.setdefault(r.subsidy_id, {"amount": 0.0, "count": 0})
         d["amount"] += float(r.amt)
@@ -499,12 +508,6 @@ async def contracted_total_by_subsidy(
 
     uncounted_map = await committed_uncounted_by_subsidy(db, subsidy_ids=subsidy_ids)
     for sid, d0 in uncounted_map.items():
-        d = result.setdefault(sid, {"amount": 0.0, "count": 0})
-        d["amount"] += d0["amount"]
-        d["count"] += d0["count"]
-
-    topup_map = await single_contract_topup_by_subsidy(db, subsidy_ids=subsidy_ids)
-    for sid, d0 in topup_map.items():
         d = result.setdefault(sid, {"amount": 0.0, "count": 0})
         d["amount"] += d0["amount"]
         d["count"] += d0["count"]

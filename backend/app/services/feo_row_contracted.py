@@ -239,6 +239,15 @@ async def feo_row_drill(
         # их фактической доле — ТА ЖЕ математика, что и
         # contracted_rows_by_category() (тот же результат на одну категорию,
         # здесь просто с полями закупки для отображения строки).
+        # ИСПРАВЛЕНО 15.10.2026 (владелец — договоры, общие между копиями
+        # субсидии): фильтр был по Contract.subsidy_id (ДОМАШНЕЙ субсидии
+        # договора), а Σ actual считалась по ВСЕМ привязанным закупкам
+        # независимо от Purchase.subsidy_id — у общего договора actual включал
+        # закупки чужой субсидии. Теперь фильтр — Purchase.subsidy_id ==
+        # subsidy_id (ЭТОЙ субсидии), контракт учитывается, если у НЕЁ есть
+        # committed-закупка на нём, независимо от того, чья субсидия домашняя
+        # (та же атрибуция, что stage_cumulative.single_fwa_rows_by_contract_
+        # subsidy, ПРАВИЛО №6 — не вторая формула, просто построчный разрез).
         single_stmt = (
             select(
                 Contract.id.label("contract_id"), Contract.max_amount,
@@ -248,7 +257,7 @@ async def feo_row_drill(
             .join(Purchase, Purchase.contract_id == Contract.id)
             .where(Contract.status == "active")
             .where(Contract.contract_type == "single")
-            .where(Contract.subsidy_id == subsidy_id)
+            .where(Purchase.subsidy_id == subsidy_id)
             .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
         )
         single_rows_raw = (await db.execute(single_stmt)).all()
@@ -276,21 +285,23 @@ async def feo_row_drill(
         # — ОДНОЙ строкой (на голову, если она есть и/или имеет категорию,
         # иначе фолбэк на категорию заказов/«без категории» — та же логика,
         # что в SQL-источнике, не вторая формула).
-        fwa_contracts_stmt = (
-            select(Contract.id.label("contract_id"), Contract.max_amount)
-            .where(Contract.status == "active")
-            .where(Contract.contract_type == "framework_with_amount")
-            .where(Contract.subsidy_id == subsidy_id)
-        )
-        fwa_contracts = (await db.execute(fwa_contracts_stmt)).all()
-        fwa_contract_ids = [c.contract_id for c in fwa_contracts]
-
+        # ИСПРАВЛЕНО 15.10.2026 (владелец — договоры, общие между копиями
+        # субсидии): раньше контракты отбирались ТОЛЬКО по Contract.subsidy_id
+        # == subsidy_id (домашняя субсидия), а дети/голова — по Purchase.
+        # contract_id без фильтра Purchase.subsidy_id — у общего договора
+        # детей/голову чужой субсидии тоже считало сюда, а договор, домашний
+        # для ДРУГОЙ субсидии, но с заказами ЭТОЙ — вовсе выпадал. Теперь
+        # сначала ищем детей/голову ТОЛЬКО этой субсидии (Purchase.subsidy_id
+        # == subsidy_id), а контракты — это объединение «домашние для этой
+        # субсидии» ∪ «те, что нашлись через детей/голову» (та же атрибуция,
+        # что stage_cumulative.single_fwa_rows_by_contract_subsidy, ПРАВИЛО
+        # №6 — не вторая формула, просто построчный разрез для клика).
         fwa_head_stmt = (
             select(Contract.id.label("contract_id"), *_ROW_FIELDS)
             .join(Purchase, Purchase.contract_id == Contract.id)
             .where(Contract.status == "active")
             .where(Contract.contract_type == "framework_with_amount")
-            .where(Contract.subsidy_id == subsidy_id)
+            .where(Purchase.subsidy_id == subsidy_id)
             # Голова — parent_purchase_id IS NULL (тот же критерий, что
             # stage_cumulative.contracted_rows_by_category), без требования к
             # Purchase.purchase_contract_type — см. её комментарий.
@@ -300,22 +311,60 @@ async def feo_row_drill(
 
         fwa_rows: list[dict] = []
         fwa_children_by_contract: dict[int, list] = {}
-        if fwa_contract_ids:
-            fwa_children_stmt = (
-                select(Purchase.contract_id.label("contract_id"), *_ROW_FIELDS, effective_amount_expr().label("amt"))
-                .where(Purchase.contract_id.in_(fwa_contract_ids))
+        fwa_children_stmt = (
+            select(Purchase.contract_id.label("contract_id"), *_ROW_FIELDS, effective_amount_expr().label("amt"))
+            .join(Contract, Purchase.contract_id == Contract.id)
+            .where(Contract.status == "active")
+            .where(Contract.contract_type == "framework_with_amount")
+            .where(Purchase.subsidy_id == subsidy_id)
+            .where(Purchase.parent_purchase_id.isnot(None))
+            .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
+        )
+        for r in (await db.execute(fwa_children_stmt)).all():
+            fwa_children_by_contract.setdefault(r.contract_id, []).append(r)
+            d = _row_base(r)
+            d["amount"] = float(r.amt or 0)
+            d["_remaining"] = 0.0
+            fwa_rows.append(d)
+
+        fwa_touched_ids = set(fwa_children_by_contract.keys()) | set(head_by_contract.keys())
+        fwa_home_stmt = (
+            select(Contract.id.label("contract_id"), Contract.max_amount)
+            .where(Contract.status == "active")
+            .where(Contract.contract_type == "framework_with_amount")
+            .where(Contract.subsidy_id == subsidy_id)
+        )
+        fwa_contracts_by_id: dict[int, object] = {r.contract_id: r for r in (await db.execute(fwa_home_stmt)).all()}
+        extra_ids = fwa_touched_ids - set(fwa_contracts_by_id.keys())
+        if extra_ids:
+            extra_stmt = select(Contract.id.label("contract_id"), Contract.max_amount).where(Contract.id.in_(extra_ids))
+            for r in (await db.execute(extra_stmt)).all():
+                fwa_contracts_by_id[r.contract_id] = r
+        fwa_contracts = list(fwa_contracts_by_id.values())
+
+        # Легаси-фолбэк «действующий рамочный без заказов вообще» («АДС-АВТО»)
+        # применим ТОЛЬКО если у контракта нет committed-заказов НИ В ОДНОЙ
+        # субсидии — иначе домашняя субсидия без своих заказов получила бы
+        # остаток лимита ВТОРОЙ раз, поверх субсидии, где заказы реально есть
+        # (та же проверка, что contract_ids_with_any_actual в stage_cumulative.
+        # single_fwa_rows_by_contract_subsidy, ПРАВИЛО №6 — не вторая формула).
+        fwa_home_only_ids = [cid for cid in fwa_contracts_by_id if cid not in fwa_touched_ids]
+        contract_ids_with_any_actual: set = set()
+        if fwa_home_only_ids:
+            exists_stmt = (
+                select(Contract.id)
+                .join(Purchase, Purchase.contract_id == Contract.id)
+                .where(Contract.id.in_(fwa_home_only_ids))
                 .where(Purchase.parent_purchase_id.isnot(None))
                 .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
+                .distinct()
             )
-            for r in (await db.execute(fwa_children_stmt)).all():
-                fwa_children_by_contract.setdefault(r.contract_id, []).append(r)
-                d = _row_base(r)
-                d["amount"] = float(r.amt or 0)
-                d["_remaining"] = 0.0
-                fwa_rows.append(d)
+            contract_ids_with_any_actual = {row[0] for row in (await db.execute(exists_stmt)).all()}
 
         for c in fwa_contracts:
             kids = fwa_children_by_contract.get(c.contract_id, [])
+            if not kids and c.contract_id in contract_ids_with_any_actual:
+                continue  # заказы есть, но у другой субсидии — не наш остаток
             total_children = sum(float(k.amt or 0) for k in kids)
             recorded = float(c.max_amount) if c.max_amount is not None else 0.0
             remainder = max(0.0, recorded - total_children)

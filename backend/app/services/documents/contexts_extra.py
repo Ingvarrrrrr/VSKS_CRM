@@ -17,7 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.purchase import Purchase
 from app.services.documents.formatting import _fmt_date, _clean_id, _fio_to_initials_prefix, _signatory_position, _normalize_signatory_position
-from app.services.documents.morphology import _to_gen_fio, _to_gen_phrase, _inflect_phrase_genitive
+from app.services.documents.morphology import (
+    _to_gen_fio, _to_gen_phrase, _inflect_phrase_genitive,
+    _to_dat_fio, _to_dat_fio_initials, _to_dat_position,
+)
 from app.services.documents.contexts import _signatory_split
 from app.services.documents.contract_terms import warranty_period_text
 from app.services.contractor_pii import contractor_pii_doc_fields
@@ -174,6 +177,12 @@ def add_customer_context(context: dict, customer_org, customer_ctr) -> None:
         "customer_signatory":                cust_signatory_full,
         "customer_signatory_position":       cust_sig["position"],
         "customer_signatory_position_genitive": _to_gen_phrase(cust_sig["position"]),
+        # Дательный падеж (владелец, 15.10.2026: «Председателю Совета…
+        # Артеевой Анне Игоревне») — тот же единственный расчёт склонения
+        # (ПРАВИЛО №6), см. morphology._to_dat_position/_to_dat_fio/_to_dat_fio_initials.
+        "customer_signatory_position_dative":   _to_dat_position(cust_sig["position"]),
+        "customer_signatory_name_dative":       _to_dat_fio(cust_sig["name_full"]),
+        "customer_signatory_initials_dative":   _to_dat_fio_initials(cust_sig["name_full"]),
         "customer_signatory_name":           cust_sig["name_full"],
         "customer_signatory_name_genitive":  cust_sig["name_genitive"],
         "customer_signatory_initials":       cust_sig["name_initials"],
@@ -350,6 +359,11 @@ def add_contractor_signatory_context(context: dict, c) -> None:
         "contractor_signatory_name_initials": _fio_to_initials_prefix(ctr_sig["name_full"]),
         "contractor_signatory_position":          _ctr_signatory_position,
         "contractor_signatory_position_genitive": _to_gen_phrase(_ctr_signatory_position),
+        # Дательный падеж — см. комментарий у customer_signatory_*_dative выше
+        # (ПРАВИЛО №6, тот же единственный расчёт склонения).
+        "contractor_signatory_position_dative":   _to_dat_position(_ctr_signatory_position),
+        "contractor_signatory_name_dative":       _to_dat_fio(ctr_sig["name_full"]),
+        "contractor_signatory_initials_dative":   _to_dat_fio_initials(ctr_sig["name_full"]),
         "contractor_ogrnip":                  (c.ogrn or "") if (c and (c.org_type or "").lower().startswith("ип")) else "",
         # contractor_full_name — полное официальное название (fallback на name)
         "contractor_full_name":               (c.full_name or c.name or "") if c else "",

@@ -48,7 +48,10 @@
 | `{{customer_signatory_position}}` | Должность подписанта | Президент | из signatory (до ФИО) |
 | `{{customer_signatory_name}}` | ФИО подписанта | Козеев Евгений Викторович | из signatory |
 | `{{customer_signatory_name_genitive}}` | ФИО в родительном падеже | Козеева Евгения Викторовича | автоматическое склонение (приближённое) |
+| `{{customer_signatory_name_dative}}` | ФИО в дательном падеже | Артеевой Анне Игоревне | автоматическое склонение |
+| `{{customer_signatory_position_dative}}` | Должность в дательном падеже | Председателю Совета Донецкого РО ВСКС | автоматическое склонение (головная группа) |
 | `{{customer_signatory_initials}}` | Е.В. Козеев | Козеев Е.В. | из signatory |
+| `{{customer_signatory_initials_dative}}` | Фамилия (дат.) + инициалы | Артеевой А.И. | автоматическое склонение |
 | `{{customer_signatory_basis}}` | Основание полномочий | Устава | contractor.signatory_basis (linked) |
 
 > **Как заполнять:** реквизиты Заказчика редактируются в карточке Организации (Иерархия → клик на организацию)
@@ -79,7 +82,10 @@
 | `{{contractor_signatory_position}}` | Должность | Директор | из signatory |
 | `{{contractor_signatory_name}}` | ФИО подписанта | Сидоров Пётр Павлович | из signatory (Phase 23) |
 | `{{contractor_signatory_name_genitive}}` | ФИО в родительном | Сидорова Петра Павловича | автоматическое склонение (Phase 23) |
+| `{{contractor_signatory_name_dative}}` | ФИО в дательном | Сидорову Петру Павловичу | автоматическое склонение |
+| `{{contractor_signatory_position_dative}}` | Должность в дательном | Директору | автоматическое склонение (головная группа) |
 | `{{contractor_signatory_initials}}` | Инициалы + фамилия | Сидоров П.П. | из signatory (Phase 23) |
+| `{{contractor_signatory_initials_dative}}` | Фамилия (дат.) + инициалы | Сидорову П.П. | автоматическое склонение |
 | `{{contractor_signatory_line}}` | ФИО + основание (строка) | Сидоров П.П., действует на основании Устава | составное поле |
 | `{{contractor_bank_name}}` | Банк | ПАО Сбербанк | contractors.bank_name |
 | `{{contractor_bik}}` | БИК | 044525225 | contractors.bik |

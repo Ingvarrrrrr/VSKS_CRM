@@ -94,13 +94,172 @@ def _to_gen_word(word: str) -> str:
     # Phase 26-SS: fallback на эвристику если pymorphy3 нет (e2dee47 OOM revert)
     return _to_gen_word_heuristic(word)
 
-def _to_gen_phrase(phrase: str) -> str:
-    """Склонить фразу (должность) в родительный падеж — каждое слово отдельно."""
-    if not phrase:
+def _to_dat_word_heuristic(word: str) -> str:
+    """Эвристическое склонение слова в дательный падеж без pymorphy3.
+
+    Та же идея, что `_to_gen_word_heuristic` (мужской род, 2-е склонение),
+    зеркально для дательного падежа — fallback, когда pymorphy3 недоступен.
+    """
+    if not word or len(word) < 2:
+        return word
+    lower = word.lower()
+    cap = word[0].isupper()
+    if lower.endswith(('ый', 'ой')):      # «главный» → «главному»
+        result = lower[:-2] + 'ому'
+    elif lower.endswith('ий'):            # «ведущий» → «ведущему»,
+                                            # «генеральный» → не сюда (окончание -ый)
+        prev = lower[-3] if len(lower) >= 3 else ''
+        result = lower[:-2] + ('ему' if prev in ('ж', 'ч', 'ш', 'щ') else 'ому')
+    elif lower.endswith('ая'):            # «заведующая» → «заведующей»
+        result = lower[:-2] + 'ой'
+    elif lower.endswith('ь'):             # «руководитель» → «руководителю»
+        result = lower[:-1] + 'ю'
+    elif lower.endswith('й'):
+        result = lower[:-1] + 'ю'
+    elif lower.endswith('а'):             # «бухгалтера» (уже gen) → «бухгалтере» неверно,
+                                            # но эвристика без pymorphy3 не различает — ближайшее -е
+        result = lower[:-1] + 'е'
+    elif lower.endswith('я'):
+        result = lower[:-1] + 'е'
+    elif lower.endswith(('о', 'е', 'у', 'ы', 'э', 'ю')):
+        # Несклоняемые
+        result = lower
+    else:                                  # consonant: «директор» → «директору»
+        result = lower + 'у'
+
+    if cap:
+        result = result[0].upper() + result[1:]
+    return result
+
+
+def _to_dat_word(word: str) -> str:
+    """Склонить одно слово в дательный падеж: pymorphy3 → эвристика."""
+    if not word:
+        return word
+    morph = _get_morph()
+    if morph:
+        try:
+            parsed = morph.parse(word)[0]
+            inflected = parsed.inflect({'datv'})
+            if inflected:
+                out = inflected.word
+                if word[0].isupper():
+                    out = out[0].upper() + out[1:]
+                return out
+        except Exception:
+            pass
+    return _to_dat_word_heuristic(word)
+
+
+def _to_case_position(phrase: str, case: str) -> str:
+    """Склонить ДОЛЖНОСТЬ в падеж *case* ('gent' родительный / 'datv'
+    дательный) — только управляющую головную группу, НЕ пословно.
+
+    ПРАВИЛО №6: единственный алгоритм разбора головной группы должности —
+    используется и для родительного (_to_gen_phrase), и для дательного
+    (_to_dat_position) падежей, обе — тонкие обёртки над этой функцией.
+
+    Баг до объединения (15.10.2026, владелец): старый пословный
+    `_to_gen_phrase` ломал хвост и аббревиатуры — «Председатель Совета
+    Донецкого РО ВСКС» → «Председателя Совета Донецкого Ро Вскса»
+    (склонял КАЖДОЕ слово, включая уже-родительный «Совета», «Донецкого» и
+    аббревиатуры РО/ВСКС). Пословный алгоритм для дательного никогда не
+    заводился отдельно — сразу делался головной (см. ниже), поэтому баг был
+    только в родительном; теперь оба падежа идут через один безопасный
+    разбор головы.
+
+    Правило: с начала фразы склоняются идущие подряд прилагательные/причастия
+    в им.падеже (ADJF/PRTF, nomn), затем первое существительное в им.падеже
+    (NOUN, nomn) склоняется и ДАЛЬШЕ СКЛОНЕНИЕ ОСТАНАВЛИВАЕТСЯ — остаток
+    фразы возвращается дословно (он управляется этим существительным,
+    «Совета Донецкого РО ВСКС» уже не меняется). Причастие (PRTF, например
+    «Исполняющий») само управляет дополнением — склоняется и сразу
+    останавливает разбор («Исполняющего/Исполняющему обязанности директора»).
+    Аббревиатуры (слово целиком заглавными буквами, ≥2 символа) не трогаются
+    и не останавливают разбор (пропускаются как «не опорное слово»).
+    Регистр первой буквы каждого слова сохраняется (см. `_to_gen_word`/
+    `_to_dat_word`).
+
+    Без pymorphy3 — простая эвристика: первые слова с типичными
+    прилагательными окончаниями (-ый/-ой/-ий/-ая) считаются головной группой
+    и склоняются, первое слово без такого окончания — существительное,
+    склоняется, разбор останавливается.
+    """
+    if not phrase or not phrase.strip():
+        return phrase or ""
+
+    import re as _re3
+    tokens = _re3.split(r'(\s+|-)', phrase)
+
+    def _is_word(tok: str) -> bool:
+        return tok.strip() != '' and tok != '-'
+
+    word_indices = [i for i, t in enumerate(tokens) if _is_word(t)]
+    if not word_indices:
         return phrase
-    import re as _re
-    parts = _re.split(r'(\s+|-)', phrase)
-    return ''.join(_to_gen_word(p) if p.strip() and p != '-' else p for p in parts)
+
+    # Переиспользуем уже готовые пословные склонятели (pymorphy3 + эвристика
+    # как fallback) — не второй расчёт падежного окончания, только второй
+    # разбор ГОЛОВНОЙ ГРУППЫ сверху.
+    decline_word = _to_gen_word if case == 'gent' else _to_dat_word
+
+    morph = _get_morph()
+    out = list(tokens)
+    stop = False
+    for i in word_indices:
+        if stop:
+            break
+        word = tokens[i]
+        letters = [ch for ch in word if ch.isalpha()]
+        if letters and len(letters) >= 2 and all(ch.isupper() for ch in letters):
+            # Аббревиатура — не склоняем, не останавливаемся (не опорное слово)
+            continue
+
+        is_adj_or_prtf = False
+        is_noun = False
+        is_prtf = False
+        if morph:
+            try:
+                tag = morph.parse(word.lower())[0].tag
+                is_prtf = 'PRTF' in tag
+                is_adj_or_prtf = ('ADJF' in tag or is_prtf) and 'nomn' in tag
+                is_noun = 'NOUN' in tag and 'nomn' in tag
+            except Exception:
+                pass
+        if morph is None:
+            lw = word.lower()
+            is_adj_or_prtf = lw.endswith(('ый', 'ой', 'ий', 'ая'))
+            is_noun = not is_adj_or_prtf
+
+        if is_adj_or_prtf:
+            out[i] = decline_word(word)
+            if is_prtf:
+                stop = True
+            continue
+        if is_noun:
+            out[i] = decline_word(word)
+            stop = True
+            continue
+        # Слово не распознано ни как прилагательное/причастие, ни как
+        # существительное в им.падеже — дальше не трогаем.
+        stop = True
+
+    return ''.join(out)
+
+
+def _to_gen_phrase(phrase: str) -> str:
+    """Склонить ДОЛЖНОСТЬ в родительный падеж — тонкая обёртка над
+    `_to_case_position` (головная группа, не пословно, см. её докстринг).
+    Имя сохранено — много вызовов (contexts_extra.py,
+    stages_approvers_list.py, initiator_position_gen и т.д.)."""
+    return _to_case_position(phrase, 'gent')
+
+
+def _to_dat_position(phrase: str) -> str:
+    """Склонить ДОЛЖНОСТЬ в дательный падеж — тонкая обёртка над
+    `_to_case_position` (см. её докстринг)."""
+    return _to_case_position(phrase, 'datv')
+
 
 def _inflect_phrase_genitive(phrase: str) -> str:
     """
@@ -162,11 +321,15 @@ def _is_patronymic(word: str) -> bool:
     return lower.endswith(('вич', 'вна', 'чна', 'ична'))
 
 
-def _to_gen_fio(full_name: str) -> str:
-    """Склонить ФИО в родительный падеж через petrovich.
+def _to_case_fio(full_name: str, case_name: str) -> str:
+    """Склонить ФИО в заданный падеж через petrovich.
 
     ПРАВИЛО №6: единственное место склонения ФИО подписантов — используется
-    и для инициатора, и для ответственного, и для исполнителя в договоре.
+    и для инициатора, и для ответственного, и для исполнителя в договоре,
+    для родительного (_to_gen_fio) и дательного (_to_dat_fio) падежей —
+    обе тонкие обёртки над этой функцией, логика отбора слов/пола одна.
+
+    *case_name* — имя атрибута `petrovich.enums.Case` ('GENITIVE'/'DATIVE').
 
     Petrovich умеет склонять только классическое русское «Фамилия Имя
     Отчество» (ровно 3 слова, третье — отчество) — опционально с «оглы»/
@@ -188,6 +351,7 @@ def _to_gen_fio(full_name: str) -> str:
         return normalized
 
     petro, Case, Gender = petro_pack
+    case = getattr(Case, case_name)
 
     # Случай 1: ровно 3 слова, третье — отчество → классическое ФИО.
     # Случай 2: 4 слова, четвёртое — «оглы»/«кызы» (тюркский патронимик,
@@ -204,12 +368,71 @@ def _to_gen_fio(full_name: str) -> str:
     try:
         gender = Gender.FEMALE if fio_parts[2].lower().endswith(('вна', 'чна', 'ична')) else Gender.MALE
         result = [
-            petro.lastname(fio_parts[0], Case.GENITIVE, gender),
-            petro.firstname(fio_parts[1], Case.GENITIVE, gender),
-            petro.middlename(fio_parts[2], Case.GENITIVE, gender),
+            petro.lastname(fio_parts[0], case, gender),
+            petro.firstname(fio_parts[1], case, gender),
+            petro.middlename(fio_parts[2], case, gender),
         ]
         if suffix:
             result.append(suffix)
         return ' '.join(result)
     except Exception:
         return normalized
+
+
+def _to_gen_fio(full_name: str) -> str:
+    """Склонить ФИО в родительный падеж — тонкая обёртка над `_to_case_fio`
+    (поведение не изменилось, см. докстринг `_to_case_fio`)."""
+    return _to_case_fio(full_name, 'GENITIVE')
+
+
+def _to_dat_fio(full_name: str) -> str:
+    """Склонить ФИО в дательный падеж — тонкая обёртка над `_to_case_fio`.
+
+    «Артеева Анна Игоревна» → «Артеевой Анне Игоревне».
+    Неклассическое ФИО (см. докстринг `_to_case_fio`) — возвращается как есть.
+    """
+    return _to_case_fio(full_name, 'DATIVE')
+
+
+def _to_dat_fio_initials(full_name: str) -> str:
+    """«Фамилия И.О.» в дательном падеже: фамилия склоняется (petrovich),
+    инициалы имени/отчества — как в `formatting._fio_to_initials` (тот же
+    расчёт инициалов, ПРАВИЛО №6 — не дублируем вторым алгоритмом).
+
+    «Артеева Анна Игоревна» → «Артеевой А.И.»
+    Неклассическое ФИО или недоступный petrovich — возвращается
+    `_fio_to_initials(full_name)` без падежа (лучше неизменённые инициалы,
+    чем выдуманное окончание).
+    """
+    if not full_name or not full_name.strip():
+        return full_name
+    from .formatting import _fio_to_initials
+    nominative_initials = _fio_to_initials(full_name)
+
+    parts = full_name.strip().split()
+    ogly_kyzy = {'оглы', 'кызы'}
+    is_classic = (len(parts) == 3 and _is_patronymic(parts[2])) or (
+        len(parts) == 4 and parts[3].lower() in ogly_kyzy
+    )
+    if not is_classic:
+        return nominative_initials
+
+    petro_pack = _get_petro()
+    if not petro_pack:
+        return nominative_initials
+
+    petro, Case, Gender = petro_pack
+    try:
+        gender = Gender.FEMALE if parts[2].lower().endswith(('вна', 'чна', 'ична')) else Gender.MALE
+        last_dative = petro.lastname(parts[0], Case.DATIVE, gender)
+    except Exception:
+        return nominative_initials
+
+    nom_words = nominative_initials.split(maxsplit=1)
+    if len(nom_words) == 2:
+        out = f"{last_dative} {nom_words[1]}"
+    else:
+        out = last_dative
+    if parts[0][0].isupper():
+        out = out[0].upper() + out[1:]
+    return out

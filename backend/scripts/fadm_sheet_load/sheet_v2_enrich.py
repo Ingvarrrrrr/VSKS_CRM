@@ -106,6 +106,7 @@ from app.models.purchase_comment import PurchaseComment
 from app.models.purchase_event import PurchaseEvent, PurchaseMember
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase_paid_confirmation import PurchasePaidConfirmation
+from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
@@ -127,7 +128,7 @@ from .sheet_v2_rebuild import (
 # Маркер в тексте/данных переноса (п.1/п.2 плана: "перенесено из ФАДМ_2026,
 # РЕЕ-...") — единая формулировка, не собирается по месту использования.
 _TRANSFER_NOTE = "перенесено из ФАДМ_2026, РЕЕ-{old_reg}"
-_STOP_REASON = "перенесена в ФАДМ 2026_2, РЕЕ-{new_reg}"
+_STOP_REASON = "перенесена в {target_name}, РЕЕ-{new_reg}"
 _MOVE_NOTE = "перенесена из ФАДМ_2026"
 
 AMOUNT_TOLERANCE = Decimal("0.01")
@@ -287,9 +288,12 @@ async def _transfer_pair_people(db: AsyncSession, old: Purchase, new: Purchase) 
     Purchase напрямую (роли по memory project_service_note_roles:
     assigned_user_id=исполнитель, service_note_by=инициатор,
     service_note_to_user_id="на чьё имя", reimbursement_user_id=авансовый)."""
+    # Только в пустые поля (15.10.2026): у авансовых листа исполнитель и
+    # получатель возмещения уже стоят из листа (776 → Голичков), а в старой
+    # они часто пусты или это тот, кто заводил.
     for attr in ("assigned_user_id", "service_note_by", "service_note_to_user_id", "reimbursement_user_id"):
         old_value = getattr(old, attr)
-        if old_value is not None:
+        if old_value is not None and getattr(new, attr) is None:
             setattr(new, attr, old_value)
 
     existing = {m.user_id for m in (await db.execute(
@@ -394,7 +398,11 @@ async def transfer_pair(db: AsyncSession, old: Purchase, new: Purchase) -> PairT
         # stopped_by: нет "решающего" пользователя в скрипте-переносе —
         # сознательно NULL (как и stopped_wish_id), причина несёт весь смысл;
         # так же молчит и каскадная остановка из wish_transitions.py.
-        old.stopped_reason = _STOP_REASON.format(new_reg=new.registry_number or new.id)
+        target = await db.get(Subsidy, new.subsidy_id)
+        old.stopped_reason = _STOP_REASON.format(
+            target_name=target.name if target else f"субсидию {new.subsidy_id}",
+            new_reg=new.registry_number or new.id,
+        )
         db.add(PurchaseEvent(
             purchase_id=old.id, event_type="fadm_enrich_stopped",
             data={"reason": old.stopped_reason, "new_purchase_id": new.id},

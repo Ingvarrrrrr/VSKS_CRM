@@ -34,6 +34,10 @@
         формуле ({{ formatCurrency(cardTotal) }}) — обновите страницу, если число не совпадает.
       </v-alert>
 
+      <DrillSearchField v-model="search.query.value" :active="search.isActive.value"
+        :found-count="search.foundCount.value" :total-count="search.totalCount.value"
+        :found-amount="search.foundAmount.value" />
+
       <v-card-text class="pa-0" style="max-height:65vh; overflow-y:auto">
         <div v-if="loading" class="text-center py-12">
           <v-progress-linear indeterminate color="error" class="mb-4" />
@@ -54,7 +58,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="r in rows" :key="r.purchase_id" class="paid-over-delivered-row" @click="emit('row-click', r.purchase_id)">
+              <tr v-for="r in search.filtered.value" :key="r.purchase_id" class="paid-over-delivered-row" @click="emit('row-click', r.purchase_id)">
                 <td class="px-4 py-2" style="font-size:13px">{{ r.registry_number || r.purchase_number || r.purchase_id }}</td>
                 <td class="px-4 text-caption" style="max-width:260px; white-space:normal">{{ r.subject || '—' }}</td>
                 <td class="px-4 text-caption">{{ r.status_label }}</td>
@@ -66,8 +70,10 @@
                   {{ r.reason }}
                 </td>
               </tr>
-              <tr v-if="rows.length === 0">
-                <td colspan="7" class="text-center py-6 text-medium-emphasis">Нет закупок с переплатой</td>
+              <tr v-if="search.filtered.value.length === 0">
+                <td colspan="7" class="text-center py-6 text-medium-emphasis">
+                  {{ rows.length === 0 ? 'Нет закупок с переплатой' : 'Ничего не найдено по поиску' }}
+                </td>
               </tr>
             </tbody>
             <tfoot v-if="rows.length">
@@ -95,6 +101,9 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { describeApiError } from '@/utils/apiErrorMessage'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { useDrillSearch } from '@/composables/useDrillSearch'
+import { textOfPaidOverDeliveredRow } from '@/components/drill/drillRowText'
+import DrillSearchField from '@/components/drill/DrillSearchField.vue'
 
 const { mobile } = useDisplay()
 
@@ -138,6 +147,10 @@ const prepaymentTotal = ref(0)
 const purchasesCount = ref(0)
 
 const mismatch = computed(() => Math.abs(total.value - cardTotal.value) > 0.005)
+
+// Поле динамического поиска (владелец, 15.10.2026) — фильтрует уже
+// загруженные строки, ничего не пересчитывает (Правило №6).
+const search = useDrillSearch(rows, textOfPaidOverDeliveredRow, r => r.excess)
 
 function pluralizePurchases(n: number): string {
   const mod100 = Math.abs(n) % 100
@@ -190,7 +203,7 @@ async function load() {
   }
 }
 
-watch(() => [props.visible, props.subsidyId, props.subsidyIds], () => { if (props.visible) load() }, { immediate: true, deep: true })
+watch(() => [props.visible, props.subsidyId, props.subsidyIds], () => { if (props.visible) { search.reset(); load() } }, { immediate: true, deep: true })
 </script>
 
 <style scoped>

@@ -24,6 +24,10 @@
         Итог списка не совпадает с карточкой: {{ formatCurrency(cardTotal) }}
       </v-alert>
 
+      <DrillSearchField v-model="search.query.value" :active="search.isActive.value"
+        :found-count="search.foundCount.value" :total-count="search.totalCount.value"
+        :found-amount="search.foundAmount.value" />
+
       <v-card-text class="pa-0" style="max-height:65vh; overflow-y:auto">
         <div v-if="loading" class="text-center py-12">
           <v-progress-linear indeterminate color="primary" class="mb-4" />
@@ -43,7 +47,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="r in rows" :key="r.contract_id ?? 'u-' + r.subject + r.contract_amount">
+              <tr v-for="r in search.filtered.value" :key="r.contract_id ?? 'u-' + r.subject + r.contract_amount">
                 <td class="px-4 py-2" style="max-width:280px">
                   <div v-if="r.number" style="font-size:13px">{{ r.number }}</div>
                   <div v-if="r.subject && r.subject !== r.number" class="text-caption text-medium-emphasis" style="white-space:normal">{{ r.subject }}</div>
@@ -54,8 +58,10 @@
                 <td class="text-right px-4">{{ formatCurrency(r.ordered_amount) }}</td>
                 <td class="text-right px-4">{{ formatCurrency(r.remaining) }}</td>
               </tr>
-              <tr v-if="rows.length === 0">
-                <td colspan="6" class="text-center py-6 text-medium-emphasis">Нет договоров</td>
+              <tr v-if="search.filtered.value.length === 0">
+                <td colspan="6" class="text-center py-6 text-medium-emphasis">
+                  {{ rows.length === 0 ? 'Нет договоров' : 'Ничего не найдено по поиску' }}
+                </td>
               </tr>
             </tbody>
             <tfoot v-if="rows.length">
@@ -88,6 +94,9 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { describeApiError } from '@/utils/apiErrorMessage'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { useDrillSearch } from '@/composables/useDrillSearch'
+import { textOfContractRow } from '@/components/drill/drillRowText'
+import DrillSearchField from '@/components/drill/DrillSearchField.vue'
 
 const { mobile } = useDisplay()
 
@@ -124,6 +133,10 @@ const cardTotal = ref(0)
 const contractsCount = ref(0)
 
 const mismatch = computed(() => Math.abs(total.value - cardTotal.value) > 0.005)
+
+// Поле динамического поиска (владелец, 15.10.2026) — фильтрует уже
+// загруженные строки, ничего не пересчитывает (Правило №6).
+const search = useDrillSearch(rows, textOfContractRow, r => r.contract_amount)
 
 // Склонение «договор/договора/договоров» (11-14 — всегда «договоров»,
 // иначе по последней цифре: 1 → договор, 2-4 → договора, 0/5-9 → договоров).
@@ -167,7 +180,7 @@ async function load() {
   }
 }
 
-watch(() => [props.visible, props.subsidyId], () => { if (props.visible) load() }, { immediate: true })
+watch(() => [props.visible, props.subsidyId], () => { if (props.visible) { search.reset(); load() } }, { immediate: true })
 
 async function exportXlsx() {
   xlsxLoading.value = true

@@ -121,25 +121,19 @@
         </div>
       </template>
     </v-tooltip>
-    <!-- 3. Ведётся работа -->
+    <!-- 3. Ведётся работа — задача владельца 15.10.2026 (план abstract-
+         noodling-pelican.md): вся карточка открывает список ВСЕХ закупок
+         «Ведётся работа и дальше» (kind='all', StageFeoDrillDialog сам делит
+         на товары/услуги), подсветка дерева остаётся (onKpiCardClick). Подпись
+         «заказано … + договоры без заказа …» УБРАНА (владелец: «этого не
+         надо, это в других карточках есть»). -->
     <v-tooltip location="bottom" text="включает заказанные, поставленные и оплаченные">
       <template #activator="{ props: tip }">
-        <div v-bind="tip" class="kpi-card kpi-work" :class="kpi.kpiCardClass('work')" @click="kpi.onKpiCardClick('work')">
+        <div v-bind="tip" class="kpi-card kpi-work" :class="kpi.kpiCardClass('work')" @click="openStageAll('work')">
           <div class="kpi-icon-box"><v-icon icon="mdi-progress-wrench" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_work) }}</div>
             <div class="kpi-label">Ведётся работа</div>
-            <!-- Задача (владелец, 06.10.2026, ИСПРАВЛЕНО координатором) —
-                 расшифровка состава «Ведётся работа»: «Заказано» (эта же
-                 карточка в этом компоненте) + договоры без заказа —
-                 дочерние заказы рамочных договоров в статусе 'contracted'
-                 (contractedNotOrdered, готовое поле ниже; НЕ monthlyFutureToYearEnd
-                 — тот график payment-платежей тут ни при чём, см. backend/app/
-                 services/stage_cumulative.py::contracted_not_ordered_by_subsidy) —
-                 оба числа уже есть, здесь ничего не складывается заново (Правило №6). -->
-            <div v-if="contractedNotOrdered > 0" class="kpi-sub-note text-caption text-medium-emphasis">
-              заказано {{ formatCurrency(kpiSubTarget_ordered) }} + договоры без заказа (будущие месяцы) {{ formatCurrency(contractedNotOrdered) }}
-            </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('work')">
                 <div v-for="row in splitRowsFor('work')" :key="row.kind" class="kpi-split-row"
@@ -158,7 +152,7 @@
     <!-- 4. Заказано -->
     <v-tooltip location="bottom" text="включает поставленные и оплаченные">
       <template #activator="{ props: tip }">
-        <div v-bind="tip" class="kpi-card kpi-ordered" :class="kpi.kpiCardClass('ordered')" @click="kpi.onKpiCardClick('ordered')">
+        <div v-bind="tip" class="kpi-card kpi-ordered" :class="kpi.kpiCardClass('ordered')" @click="openStageAll('ordered')">
           <div class="kpi-icon-box"><v-icon icon="mdi-cart-check" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_ordered) }}</div>
@@ -191,8 +185,12 @@
             <!-- Задача 3 (владелец, 04.10.2026): остаток помесячных платежей
                  по уже заключённым помесячным договорам до конца года —
                  готовое поле бэкенда (monthly_future_to_year_end), см.
-                 SubsidyRow в composables/subsidies/types.ts. -->
-            <div v-if="monthlyFutureToYearEnd > 0" class="kpi-sub-note text-caption text-medium-emphasis">
+                 SubsidyRow в composables/subsidies/types.ts. Кликабельна
+                 (владелец, 15.10.2026, план abstract-noodling-pelican.md) —
+                 раскрытое дерево договор → помесячные платежи, MonthlyFutureTreeDialog,
+                 metric=monthly_future (backend/app/services/monthly_future_payments.py). -->
+            <div v-if="monthlyFutureToYearEnd > 0" class="kpi-sub-note kpi-sub-note-clickable text-caption text-medium-emphasis"
+              @click.stop="cardDrills.openMonthlyTree('monthly_future')">
               из них ещё уйдёт помесячно до конца года: {{ formatCurrency(monthlyFutureToYearEnd) }}
             </div>
             <div v-if="isSplit" class="kpi-split-rows" @click.stop>
@@ -213,7 +211,7 @@
     <!-- 6. Поставлено -->
     <v-tooltip location="bottom" text="включает оплаченные">
       <template #activator="{ props: tip }">
-        <div v-bind="tip" class="kpi-card kpi-delivered" :class="kpi.kpiCardClass('delivered')" @click="kpi.onKpiCardClick('delivered')">
+        <div v-bind="tip" class="kpi-card kpi-delivered" :class="kpi.kpiCardClass('delivered')" @click="openStageAll('delivered')">
           <div class="kpi-icon-box"><v-icon icon="mdi-truck-check" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_delivered) }}</div>
@@ -236,7 +234,7 @@
     <!-- 7. Поставлено, не оплачено -->
     <v-tooltip location="bottom" text="поставлено, но оплата ещё не прошла">
       <template #activator="{ props: tip }">
-        <div v-bind="tip" class="kpi-card kpi-delivered_unpaid" :class="kpi.kpiCardClass('delivered_unpaid')" @click="kpi.onKpiCardClick('delivered_unpaid')">
+        <div v-bind="tip" class="kpi-card kpi-delivered_unpaid" :class="kpi.kpiCardClass('delivered_unpaid')" @click="openStageAll('delivered_unpaid')">
           <div class="kpi-icon-box"><v-icon icon="mdi-truck-alert" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_delivered_unpaid) }}</div>
@@ -261,7 +259,7 @@
       <template #activator="{ props: tip }">
         <div v-bind="tip" class="kpi-card kpi-paid"
           :class="[kpi.kpiCardClass('paid'), paidOverDeliveredTotal > 0.5 ? 'kpi-over' : (paidHasDiscrepancy ? 'kpi-paid-discrepancy' : '')]"
-          @click="kpi.onKpiCardClick('paid')">
+          @click="kpi.onKpiCardClick('paid'); cardDrills.openMetric('paid_declared')">
           <div class="kpi-icon-box"><v-icon icon="mdi-cash-check" size="26" /></div>
           <div class="kpi-body">
             <!-- Решение владельца (06.10.2026, переигран порядок карточки):
@@ -270,17 +268,21 @@
                  часто ещё не подтверждена/заведена. «Подтверждено выпиской» и
                  расхождение — строками ниже, тем же порядком и той же
                  разбивкой товары/услуги, что раньше показывались у главного
-                 числа (ничего не пересчитывается — только порядок строк). -->
+                 числа (ничего не пересчитывается — только порядок строк).
+                 Задача владельца 15.10.2026 (план abstract-noodling-pelican.md):
+                 крупное число/чипы → MetricDrillDialog paid_declared[/kind],
+                 «подтверждено выпиской» → paid_confirmed (своя точка входа,
+                 @click.stop — не триггерит клик карточки). -->
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_paid) }}</div>
             <div class="kpi-label">Оплачено</div>
             <div class="kpi-paid-dual">
               <!-- Задача 3 (владелец, 06.10.2026): кружки-маркеры товары/услуги —
                    тот же приём, что у остальных карточек (kpi-split-dot-*). -->
               <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
-                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidDeclaredByKind.goods) }}</span>
-                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidDeclaredByKind.services) }}</span>
+                <span class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_declared', 'goods')"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidDeclaredByKind.goods) }}</span>
+                <span class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_declared', 'services')"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidDeclaredByKind.services) }}</span>
               </div>
-              <div class="kpi-paid-dual-row">
+              <div class="kpi-paid-dual-row kpi-paid-dual-row-clickable" @click.stop="cardDrills.openMetric('paid_confirmed')">
                 <span class="kpi-paid-dual-label">подтверждено выпиской:</span>
                 <span class="kpi-paid-dual-amount">{{ formatCurrency(paidConfirmedTotal) }}</span>
               </div>
@@ -482,31 +484,31 @@
        GET /dashboard/type-drill — allPurchases/subsidies здесь больше не нужны
        в режиме typeKind (единственный режим этого экрана). -->
   <StageFeoDrillDialog
-    :visible="stageDrillVisible"
-    :title="stageDrillTitle"
-    :stage-statuses="stageDrillStatuses"
+    :visible="cardDrills.stageDrillVisible.value"
+    :title="cardDrills.stageDrillTitle.value"
+    :stage-statuses="cardDrills.stageDrillStatuses.value"
     :all-purchases="[]"
     :subsidy-ids="drillSubsidyIds"
     :subsidies="drillSubsidies"
     :effective-price="purchaseEffectivePrice"
     :status-label-map="STATUS_LABELS"
     :status-color-map="STATUS_COLORS"
-    :type-kind="stageDrillTypeKind"
-    :stage-key="stageDrillStageKey"
+    :type-kind="cardDrills.stageDrillTypeKind.value"
+    :stage-key="cardDrills.stageDrillStageKey.value"
     scope="managed"
     :type-drill-subsidy-ids="drillSubsidyIds"
-    @close="stageDrillVisible = false"
-    @row-click="(id) => { stageDrillVisible = false; ctx.router.push(`/orders/${id}/edit`) }"
+    @close="cardDrills.closeStageDrill()"
+    @row-click="(id) => { cardDrills.closeStageDrill(); ctx.router.push(`/orders/${id}/edit`) }"
   />
 
   <!-- Квик-план 06.10.2026 (sleepy-fluttering-walrus.md, п.2): карточка
        «Заключено договоров» — отдельный диалог со списком ДОГОВОРОВ (не
        позиций закупок), см. ContractsDrillDialog.vue. -->
   <ContractsDrillDialog
-    :visible="contractsDrillVisible"
+    :visible="cardDrills.contractsDrillVisible.value"
     :subsidy-id="ctx.selectedId.value"
     scope="managed"
-    @close="contractsDrillVisible = false"
+    @close="cardDrills.contractsDrillVisible.value = false"
   />
 
   <!-- Задача 2-3 (владелец, 07.10.2026, план .planning/quick/2026-10-07-dnr-
@@ -514,11 +516,33 @@
        «Запланировано» / «Свободно» — GET /subsidies/{id}/card-drill, см. её
        докстринг (Правило №6, одна формула и у карточки, и у окна). -->
   <FeoCardDrillDialog
-    :visible="cardDrillVisible"
+    :visible="cardDrills.cardDrillVisible.value"
     :subsidy-id="ctx.selectedId.value"
-    :card="cardDrillCard"
-    :kind="cardDrillKind"
-    @close="cardDrillVisible = false"
+    :card="cardDrills.cardDrillCard.value"
+    :kind="cardDrills.cardDrillKind.value"
+    @close="cardDrills.cardDrillVisible.value = false"
+  />
+
+  <!-- НОВЫЕ окна (владелец, 15.10.2026, план abstract-noodling-pelican.md,
+       п.8): MetricDrillDialog — список по GET /dashboard/metric-drill
+       (оплачено/хотелось бы/скорее всего/остаток/экономия); MonthlyFutureTreeDialog
+       — дерево договор → помесячные платежи («Заключено»/«Можно
+       перераспределить»). Состояние — useCardDrills.ts (cardDrills выше). -->
+  <MetricDrillDialog
+    :visible="cardDrills.metricDrillVisible.value"
+    :subsidy-id="ctx.selectedId.value"
+    :metric="cardDrills.metricDrillMetric.value"
+    :kind="cardDrills.metricDrillKind.value"
+    scope="managed"
+    @close="cardDrills.metricDrillVisible.value = false"
+    @row-click="(id) => { cardDrills.metricDrillVisible.value = false; ctx.router.push(`/orders/${id}/edit`) }"
+  />
+  <MonthlyFutureTreeDialog
+    :visible="cardDrills.monthlyFutureVisible.value"
+    :subsidy-id="ctx.selectedId.value"
+    :metric="cardDrills.monthlyFutureMetric.value"
+    scope="managed"
+    @close="cardDrills.monthlyFutureVisible.value = false"
   />
 
   <!-- Плашка «Оплачено больше, чем поставлено» (07.10.2026) — список
@@ -572,14 +596,17 @@ import { purchaseEffectivePrice } from '@/composables/dashboard/dashboardFormat'
 import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
 import SubsidyMoneyCards from '@/components/subsidies/SubsidyMoneyCards.vue'
 import ContractsDrillDialog from '@/components/subsidies/ContractsDrillDialog.vue'
-import FeoCardDrillDialog, { type FeoCardDrillCard } from '@/components/subsidies/FeoCardDrillDialog.vue'
+import FeoCardDrillDialog from '@/components/subsidies/FeoCardDrillDialog.vue'
 import PaidOverDeliveredDrillDialog from '@/components/subsidies/PaidOverDeliveredDrillDialog.vue'
 import OrderSubstitutionDialog from '@/components/subsidies/OrderSubstitutionDialog.vue'
+import MetricDrillDialog from '@/components/subsidies/MetricDrillDialog.vue'
+import MonthlyFutureTreeDialog from '@/components/subsidies/MonthlyFutureTreeDialog.vue'
 import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
 import ExcessDrilldownBar from '@/components/subsidies/ExcessDrilldownBar.vue'
 import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
 import type { SubsidyTypeTotals } from '@/composables/subsidies/types'
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
+import { useCardDrills } from '@/composables/subsidies/useCardDrills'
 
 const ctx = useSubsidyDetailCtx()
 const funding = useFundingSources()
@@ -690,10 +717,6 @@ const freeDiffRounded = computed(() => roundMoney(ctx.selectedBudget.value - ctx
 const kpiSubTarget_free              = computed(() => freeDiffRounded.value)
 // Задача 3 (владелец, 04.10.2026) — готовое поле бэкенда, не считаем здесь (Правило №6).
 const monthlyFutureToYearEnd = computed(() => ctx.selectedSubsidy.value?.monthly_future_to_year_end ?? 0)
-// «Договоры без заказа» для подписи «Ведётся работа» (06.10.2026, ИСПРАВЛЕНО
-// координатором — см. комментарий у места использования выше): дочерние
-// заказы рамочных договоров в статусе 'contracted', НЕ is_monthly_payment-график.
-const contractedNotOrdered = computed(() => ctx.selectedSubsidy.value?.contracted_not_ordered ?? 0)
 
 // Задача владельца (13.10.2026) — «в т.ч. перерасход по заказам +X» у карточки
 // «Запланировано»: X = Σ ГОТОВОГО order_overspend корневых узлов дерева ФЭО
@@ -848,28 +871,35 @@ function isActiveTypeRow(stage: string, kind: ItemTypeKind): boolean {
 // ── Расшифровка по клику (StageFeoDrillDialog, режим typeKind) ──────────────
 // Позиции больше НЕ грузятся этим компонентом (правка после приёмки 21.09) —
 // диалог сам зовёт GET /dashboard/type-drill?scope=managed&subsidy_ids=
-// <текущая> (тот же расчёт, что и card.split, Правило №6); здесь только
-// состояние «что открыть» (заголовок/тип/ключ этапа).
-const stageDrillVisible = ref(false)
-const stageDrillTitle = ref('')
-const stageDrillStatuses = ref<string[]>([])
-const stageDrillTypeKind = ref<ItemTypeKind | null>(null)
-const stageDrillStageKey = ref<string | null>(null)
+// <текущая> (тот же расчёт, что и card.split, Правило №6). Состояние «что
+// открыть» (диалоги StageFeoDrillDialog/FeoCardDrillDialog/ContractsDrillDialog/
+// MetricDrillDialog/MonthlyFutureTreeDialog) — ОДНО место, useCardDrills.ts
+// (план abstract-noodling-pelican.md, п.9, Правило №6): строится здесь первым
+// (с ctx), SubsidyMoneyCards.vue переиспользует уже построенный singleton
+// (useCardDrills() без аргумента).
+const cardDrills = useCardDrills(ctx)
 
 const drillSubsidyIds = computed(() => ctx.selectedId.value ? [ctx.selectedId.value] : [])
 const drillSubsidies = computed(() => ctx.selectedSubsidy.value ? [ctx.selectedSubsidy.value] : [])
 
 watch(() => ctx.selectedId.value, () => {
-  stageDrillVisible.value = false
-  stageDrillTypeKind.value = null
-  stageDrillStageKey.value = null
+  cardDrills.closeStageDrill()
 })
 
+// ── «Ведётся работа»/«Заказано»/«Поставлено»/«Поставлено, не оплачено» —
+// клик по ВСЕЙ карточке (владелец, 15.10.2026, план abstract-noodling-pelican.md):
+// подсветка дерева (как раньше) + список ВСЕХ закупок стадии, kind='all'
+// (StageFeoDrillDialog сам делит на товары/услуги/без типа).
+function openStageAll(stage: 'work' | 'ordered' | 'delivered' | 'delivered_unpaid') {
+  kpi.onKpiCardClick(stage)
+  const statuses = KPI_STAGE_CUMULATIVE_STATUSES[stage]
+  if (!statuses) return
+  cardDrills.openStageKind(stage, 'all', KPI_STAGE_LABELS[stage] || stage, statuses)
+}
+
 // ── «Заключено договоров» — список договоров (квик-план 06.10.2026) ─────────
-const contractsDrillVisible = ref(false)
 function openContractsDrill() {
-  if (!ctx.selectedId.value) return
-  contractsDrillVisible.value = true
+  cardDrills.openContracts()
 }
 
 // ── «Бюджет (ФЭО)» / «Запланировано» / «Свободно» — FeoCardDrillDialog ──────
@@ -877,32 +907,20 @@ function openContractsDrill() {
 // (включая payroll/unspecified) открывают это окно, а НЕ StageFeoDrillDialog
 // со списком закупок (hasTreeDrill() в itemTypeKind.ts — отдельный признак от
 // hasStageDrill(), см. её докстринг; дашборд KpiCardsWidget.vue не трогается).
-const cardDrillVisible = ref(false)
-const cardDrillCard = ref<FeoCardDrillCard>('budget')
-const cardDrillKind = ref<ItemTypeKind | 'all'>('all')
 function openCardDrill(stage: 'budget' | 'plan_schedule' | 'free', kind: ItemTypeKind | 'all') {
-  if (!ctx.selectedId.value) return
-  cardDrillCard.value = stage === 'plan_schedule' ? 'planned' : stage
-  cardDrillKind.value = kind
-  cardDrillVisible.value = true
+  cardDrills.openCard(stage, kind)
 }
 
 function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
   if (!hasStageDrill(stage)) return  // budget/free — нет списка закупок; шаблон уже не вешает click (см. hasStageDrill выше)
   const active = kpiPrefs.toggleTypeFilter(stage, kind)
   if (!active) {
-    stageDrillVisible.value = false
-    stageDrillTypeKind.value = null
-    stageDrillStageKey.value = null
+    cardDrills.closeStageDrill()
     return
   }
   const statuses = KPI_STAGE_CUMULATIVE_STATUSES[stage]
   if (!statuses) return
-  stageDrillTypeKind.value = kind
-  stageDrillStageKey.value = stage
-  stageDrillTitle.value = `${KPI_STAGE_LABELS[stage] || stage} · ${KIND_LABELS[kind]}`
-  stageDrillStatuses.value = statuses
-  stageDrillVisible.value = true
+  cardDrills.openStageKind(stage, kind, `${KPI_STAGE_LABELS[stage] || stage} · ${KIND_LABELS[kind]}`, statuses)
 }
 
 </script>
@@ -1004,6 +1022,17 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
 }
 .kpi-paid-dual-label {
   opacity: 0.75;
+}
+/* «Подтверждено выпиской» (15.10.2026) и чипы тов./усл. — кликабельны,
+   открывают MetricDrillDialog (см. шаблон карточки «Оплачено» выше). */
+.kpi-paid-dual-row-clickable,
+.kpi-paid-dual-sub-dots .kpi-paid-dual-chip {
+  cursor: pointer;
+}
+.kpi-paid-dual-row-clickable:hover .kpi-paid-dual-label,
+.kpi-paid-dual-row-clickable:hover .kpi-paid-dual-amount,
+.kpi-paid-dual-sub-dots .kpi-paid-dual-chip:hover {
+  text-decoration: underline;
 }
 .kpi-paid-dual-amount {
   font-weight: 600;

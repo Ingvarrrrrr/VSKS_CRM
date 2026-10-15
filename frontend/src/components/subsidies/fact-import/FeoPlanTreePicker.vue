@@ -86,6 +86,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useFeoLeaves, type FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanPositionPart } from '@/composables/useFeoPlannedResiduals'
 import { formatMoney } from '@/utils/formatMoney'
+import { normalizeSearchText, searchWords as sharedSearchWords, matchesAllWords } from '@/utils/textSearch'
 
 const props = defineProps<{
   subsidyId: number | null
@@ -123,17 +124,19 @@ const candidateIdSet = computed(() => new Set(props.candidateIds))
 
 function fmt(v: number | null | undefined) { return formatMoney(v) }
 
-// ── нормализация для детерминированного поиска (регистр, ё/е, пробелы) ──
-function normalize(s: string): string {
-  return s.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ')
-}
+// ── нормализация для детерминированного поиска (регистр, ё/е, пробелы) —
+// общий модуль frontend/src/utils/textSearch.ts (Правило №6, вынесено
+// 15.10.2026 вместе с useFeoTreeSearch.ts/ordersSearch.ts), поведение не
+// изменилось — та же нормализация, что была здесь раньше. normalize/
+// findNodeByPath ниже используют normalizeSearchText напрямую (один сегмент
+// пути = одно сравнение, не разбиение на слова).
+const normalize = normalizeSearchText
 const searchActive = computed(() => searchQuery.value.trim().length > 0)
-const queryWords = computed(() => searchActive.value ? normalize(searchQuery.value).split(' ').filter(Boolean) : [])
+const queryWords = computed(() => searchActive.value ? sharedSearchWords(searchQuery.value) : [])
 
 function nameMatches(name: string): boolean {
   if (!queryWords.value.length) return true
-  const n = normalize(name)
-  return queryWords.value.every(w => n.includes(w))
+  return matchesAllWords(name, queryWords.value)
 }
 
 const nodeById = computed(() => {

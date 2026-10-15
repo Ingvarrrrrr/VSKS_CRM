@@ -135,10 +135,11 @@ export interface SubsidyRow {
   balance_paid_confirmed?: number | null
   balance_by_marks?: number | null
   balance_by_statement?: number | null
-  // 2026-10-06: «Законтрактовано, не заказано» (сумма по заключённым рамочным
-  // договорам, ещё не выбранная заказами) и перерасход по категориям ФЭО —
-  // готовые поля /dashboard/charts, см. composables/subsidies/subsidyMoneyFields.ts.
-  contracted_not_ordered?: number | null
+  // 2026-10-06: перерасход по категориям ФЭО — готовое поле /dashboard/charts,
+  // см. composables/subsidies/subsidyMoneyFields.ts. contracted_not_ordered
+  // (сумма по заключённым рамочным договорам, ещё не выбранная заказами)
+  // ПЕРЕИМЕНОВАНО бэкендом 15.10.2026 в monthly_future_not_started (план
+  // abstract-noodling-pelican.md) — см. поле ниже в этом интерфейсе.
   over_plan_categories?: Array<{ category_id: number; name: string; excess_amount: number }> | null
   // Решение владельца 06.10.2026 (budget_basis = план, когда ФЭО не введён и
   // ручного бюджета нет, см. backend/app/services/subsidy_money_summary.py) —
@@ -160,16 +161,15 @@ export interface SubsidyRow {
   is_sandbox?: boolean
   copied_from_id?: number | null
   // Квик-план 06.10.2026 (sleepy-fluttering-walrus.md, п.1/2 — «Можно
-  // перераспределить»/«Заключено договоров»/«Ведётся работа»):
-  // ИСПРАВЛЕНО (находка координатора): переименовано из
-  // monthly_future_to_redistribute — реальный источник НЕ is_monthly_payment-
-  // график (это другое поле, monthly_future_to_year_end выше), а дочерние
-  // заказы рамочных договоров в статусе 'contracted' (договор заключён, заказ
-  // как отдельная закупка ещё не создан) — см. backend/app/services/
-  // stage_cumulative.py::contracted_not_ordered_by_subsidy. over_plan_categories —
-  // категории ФЭО, законтрактованные сверх плана, с готовой суммой превышения.
-  // Источник — backend/app/services/subsidy_money_summary.py.
-  contracted_not_ordered?: number | null
+  // перераспределить»/«Заключено договоров»/«Ведётся работа») → ПЕРЕИМЕНОВАНО
+  // 15.10.2026 (план abstract-noodling-pelican.md): «договоры без заказа» стало
+  // «ещё уйдёт помесячно до конца года» — monthly_future_not_started, поле
+  // ОДНОГО модуля backend/app/services/monthly_future_payments.py (ПРАВИЛО №6,
+  // источники (а) заказы рамочных договоров ещё не начавшихся месяцев + (б)
+  // помесячные договоры с графиком). over_plan_categories — категории ФЭО,
+  // законтрактованные сверх плана, с готовой суммой превышения — источник
+  // backend/app/services/subsidy_money_summary.py, не трогается.
+  monthly_future_not_started?: number | null
   over_plan_categories?: { category_id: number; name: string | null; excess_amount: number }[]
   // Жёсткий потолок субсидии (задача владельца 15.10.2026, карточка
   // «Запланировано» должна кричать, если план выше ФЭО) — готовые поля

@@ -32,6 +32,7 @@ import { makeCtxSingleton } from './ctxSingleton'
 import type { FeoCategory } from './types'
 import { useToast } from '@/composables/useToast'
 import { waitForFeoSearchElement } from './useFeoTreeSearchHighlight'
+import { searchWords, matchesAllWords } from '@/utils/textSearch'
 
 export interface FeoSearchResult {
   key: string
@@ -159,15 +160,11 @@ function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
   // непустой ввод, а не сразу при открытии субсидии (поиском пользуются не всегда).
   watch(feoSearchQuery, (v) => { if ((v || '').trim()) ensurePlannedItemsLoaded() })
 
-  function searchWords(q: string): string[] {
-    // Vuetify clearable (кнопка «×» в поле ввода) отдаёт null, а не '' — модель
-    // типизирована как string, но рантайм не проверяет это за нас.
-    return (q || '').trim().toLowerCase().split(/\s+/).filter(Boolean)
-  }
-  function matchesAllWords(text: string, words: string[]): boolean {
-    const t = text.toLowerCase()
-    return words.every(w => t.includes(w))
-  }
+  // searchWords/matchesAllWords — общий модуль frontend/src/utils/textSearch.ts
+  // (Правило №6, вынесено 15.10.2026 вместе с FeoPlanTreePicker.vue/
+  // ordersSearch.ts); поведение прежнее (слова в любом порядке, подстрокой),
+  // плюс теперь ё/е не различаются — строго сверху прежнего, лишних
+  // совпадений не отфильтровывает.
 
   const catById = computed<Record<number, FeoCategory>>(() => {
     const map: Record<number, FeoCategory> = {}

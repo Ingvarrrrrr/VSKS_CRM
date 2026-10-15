@@ -22,6 +22,10 @@
         FEO-структура выбранных субсидий неоднородна — drill доступен внутри каждой ветки отдельно.
       </v-alert>
 
+      <DrillSearchField v-model="query" :active="searchActive"
+        :found-count="foundCount" :total-count="totalCount"
+        :found-amount="foundAmount" />
+
       <v-card-text class="pa-0" style="max-height:65vh; overflow-y:auto">
         <div v-if="loading && !typeKind" class="text-center py-12">
           <v-progress-circular indeterminate color="primary" size="42" />
@@ -53,27 +57,67 @@
                 <th class="text-right px-4">Сумма стадии</th>
               </tr>
             </thead>
-            <tbody>
-              <tr v-for="(r, idx) in typeDrillRows" :key="r.purchase_id + '-' + r.item_id + '-' + idx"
-                style="cursor:pointer" @click="emit('row-click', r.purchase_id)">
-                <td class="px-4 text-medium-emphasis">{{ r.purchase_number || r.purchase_id }}</td>
-                <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.subject || '—' }}</td>
-                <td class="px-4 text-caption">{{ r.subsidy_name }}</td>
-                <td class="px-4 text-caption">{{ r.feo_category_name || '—' }}</td>
-                <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.item_name || '—' }}</td>
-                <td class="px-4 text-caption">{{ r.item_type || '—' }}</td>
-                <td class="text-right px-4 font-weight-medium text-primary">{{ fmtMoney(r.stage_amount) }}</td>
-              </tr>
-              <tr v-if="typeDrillRows.length === 0">
-                <td colspan="7" class="text-center py-6 text-medium-emphasis">Нет позиций этого типа</td>
-              </tr>
-            </tbody>
-            <tfoot v-if="typeDrillRows.length">
-              <tr>
-                <td colspan="6" class="px-4 text-right font-weight-medium">Итого</td>
-                <td class="text-right px-4 font-weight-bold text-primary">{{ fmtMoney(typeDrillTotal) }}</td>
-              </tr>
-            </tfoot>
+            <!-- typeKind='all' (клик по ВСЕЙ карточке стадии, план abstract-
+                 noodling-pelican.md): строки группируются подзаголовками
+                 «Товары»/«Услуги»/«Без типа» — сумма подзаголовка = Σ строк
+                 ГРУППЫ (это группировка уже посчитанных строк, не вторая
+                 формула, Правило №6). -->
+            <template v-if="typeKind === 'all'">
+              <tbody v-for="g in groupedTypeDrillRows" :key="g.kind">
+                <tr class="type-drill-group-header">
+                  <td colspan="6" class="px-4 py-2 font-weight-medium">{{ g.label }} ({{ g.rows.length }})</td>
+                  <td class="text-right px-4 font-weight-bold text-primary">{{ fmtMoney(g.amount) }}</td>
+                </tr>
+                <tr v-for="(r, idx) in g.rows" :key="r.purchase_id + '-' + r.item_id + '-' + idx"
+                  style="cursor:pointer" @click="emit('row-click', r.purchase_id)">
+                  <td class="px-4 text-medium-emphasis">{{ r.purchase_number || r.purchase_id }}</td>
+                  <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.subject || '—' }}</td>
+                  <td class="px-4 text-caption">{{ r.subsidy_name }}</td>
+                  <td class="px-4 text-caption">{{ r.feo_category_name || '—' }}</td>
+                  <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.item_name || '—' }}</td>
+                  <td class="px-4 text-caption">{{ r.item_type || '—' }}</td>
+                  <td class="text-right px-4 font-weight-medium text-primary">{{ fmtMoney(r.stage_amount) }}</td>
+                </tr>
+              </tbody>
+              <tbody v-if="filteredTypeDrillRows.length === 0">
+                <tr>
+                  <td colspan="7" class="text-center py-6 text-medium-emphasis">
+                    {{ typeDrillRows.length === 0 ? 'Нет позиций' : 'Ничего не найдено по поиску' }}
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot v-if="typeDrillRows.length">
+                <tr>
+                  <td colspan="6" class="px-4 text-right font-weight-medium">Итого</td>
+                  <td class="text-right px-4 font-weight-bold text-primary">{{ fmtMoney(typeDrillTotal) }}</td>
+                </tr>
+              </tfoot>
+            </template>
+            <template v-else>
+              <tbody>
+                <tr v-for="(r, idx) in filteredTypeDrillRows" :key="r.purchase_id + '-' + r.item_id + '-' + idx"
+                  style="cursor:pointer" @click="emit('row-click', r.purchase_id)">
+                  <td class="px-4 text-medium-emphasis">{{ r.purchase_number || r.purchase_id }}</td>
+                  <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.subject || '—' }}</td>
+                  <td class="px-4 text-caption">{{ r.subsidy_name }}</td>
+                  <td class="px-4 text-caption">{{ r.feo_category_name || '—' }}</td>
+                  <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.item_name || '—' }}</td>
+                  <td class="px-4 text-caption">{{ r.item_type || '—' }}</td>
+                  <td class="text-right px-4 font-weight-medium text-primary">{{ fmtMoney(r.stage_amount) }}</td>
+                </tr>
+                <tr v-if="filteredTypeDrillRows.length === 0">
+                  <td colspan="7" class="text-center py-6 text-medium-emphasis">
+                    {{ typeDrillRows.length === 0 ? 'Нет позиций этого типа' : 'Ничего не найдено по поиску' }}
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot v-if="typeDrillRows.length">
+                <tr>
+                  <td colspan="6" class="px-4 text-right font-weight-medium">Итого</td>
+                  <td class="text-right px-4 font-weight-bold text-primary">{{ fmtMoney(typeDrillTotal) }}</td>
+                </tr>
+              </tfoot>
+            </template>
           </v-table>
         </template>
 
@@ -87,7 +131,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in currentRows" :key="row.key"
+            <tr v-for="row in filteredCurrentRows" :key="row.key"
               style="cursor:pointer" @click="drillInto(row)">
               <td class="px-4 py-2" style="max-width:600px">
                 <v-icon icon="mdi-folder-outline" size="16" class="mr-1" color="grey" />
@@ -101,9 +145,9 @@
                 {{ fmtMoney(row.amount) }}
               </td>
             </tr>
-            <tr v-if="currentRows.length === 0">
+            <tr v-if="filteredCurrentRows.length === 0">
               <td colspan="3" class="text-center py-6 text-medium-emphasis">
-                Нет данных на этом уровне
+                {{ currentRows.length === 0 ? 'Нет данных на этом уровне' : 'Ничего не найдено по поиску' }}
               </td>
             </tr>
           </tbody>
@@ -122,7 +166,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="p in leafPurchases" :key="p.id"
+            <tr v-for="p in filteredLeafPurchases" :key="p.id"
               style="cursor:pointer" @click="emit('row-click', p.id)">
               <td class="px-4 text-medium-emphasis">{{ p.purchase_number || p.id }}</td>
               <td class="px-4 py-2" style="max-width:300px;white-space:normal;font-size:13px">
@@ -139,8 +183,10 @@
               </td>
               <td class="px-4 text-caption">{{ p.contract_number || '—' }}</td>
             </tr>
-            <tr v-if="leafPurchases.length === 0">
-              <td colspan="6" class="text-center py-6 text-medium-emphasis">Нет закупок</td>
+            <tr v-if="filteredLeafPurchases.length === 0">
+              <td colspan="6" class="text-center py-6 text-medium-emphasis">
+                {{ leafPurchases.length === 0 ? 'Нет закупок' : 'Ничего не найдено по поиску' }}
+              </td>
             </tr>
           </tbody>
         </v-table>
@@ -152,6 +198,11 @@
           Скачать Excel
         </v-btn>
         <v-spacer />
+        <!-- «Итого» всегда видно внизу окна, а не только в конце длинной таблицы
+             (приёмка 15.10: на 45 позициях итог был за прокруткой). -->
+        <div v-if="typeKind && typeDrillRows.length" class="text-body-2 font-weight-medium mr-4">
+          Итого: {{ fmtMoney(typeDrillTotal) }}
+        </div>
         <v-btn @click="handleClose">Закрыть</v-btn>
       </v-card-actions>
     </v-card>
@@ -163,12 +214,15 @@ import { ref, computed, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { describeApiError } from '@/utils/apiErrorMessage'
-import type { ItemTypeKind } from '@/utils/itemTypeKind'
+import { KIND_LABELS, type ItemTypeKind } from '@/utils/itemTypeKind'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 // Задача 4 (владелец, 06.10.2026): суммы в списках по клику — до копейки, тем
 // же форматтером, что и карточки (Правило №6) — formatCurrency, не локальная
 // сокращённая fmtMoney (прежняя «19 тыс ₽» пряталась за округлением).
 import { formatCurrency } from '@/composables/subsidies/format'
+import { searchWords, matchesAllWords } from '@/utils/textSearch'
+import { textOfStageCurrentRow, textOfStageLeafPurchase, textOfStageTypeDrillRow } from '@/components/drill/drillRowText'
+import DrillSearchField from '@/components/drill/DrillSearchField.vue'
 
 const { mobile } = useDisplay()
 
@@ -190,8 +244,10 @@ interface Props {
   statusColorMap?: Record<string, string>
   /** Раздел C1 (план ancient-prancing-music.md, 21.09): режим «позиции одного
    * типа» вместо категорийного дерева — см. loadTypeDrill ниже. undefined/null =
-   * обычный режим (поведение не меняется). */
-  typeKind?: ItemTypeKind | null
+   * обычный режим (поведение не меняется). 'all' (план abstract-noodling-
+   * pelican.md, 15.10.2026) — клик по ВСЕЙ карточке стадии: все строки, в окне
+   * группировка товары/услуги/без типа (см. groupedTypeDrillRows). */
+  typeKind?: ItemTypeKind | 'all' | null
   /** Ключ этапа (plan_schedule/work/ordered/contracts/delivered/
    * delivered_unpaid/paid) — обязателен для запроса /dashboard/type-drill,
    * нужен ТОЛЬКО в режиме typeKind (стадия задаётся так же, как карточка её
@@ -517,6 +573,63 @@ const leafPurchases = computed(() => {
   const ids = new Set(nodeAndAllDescendants(node))
   return stageItems.value.filter(p => ids.has(p.feo_category_id))
 })
+
+// ── Поле динамического поиска (владелец, 15.10.2026) ────────────────────────
+// Окно — дерево с breadcrumb-навигацией (path), а не один статичный список:
+// поиск фильтрует ТУ таблицу, что сейчас показана (typeKind-режим / уровень
+// категорий / список закупок листа) — второго движка сравнения нет, та же
+// textSearch.ts, что и у остальных окон-расшифровок (Правило №6).
+const query = ref('')
+const searchWordsRef = computed(() => searchWords(query.value))
+const searchActive = computed(() => searchWordsRef.value.length > 0)
+const filteredTypeDrillRows = computed(() => {
+  if (!searchWordsRef.value.length) return typeDrillRows.value
+  return typeDrillRows.value.filter(r => matchesAllWords(textOfStageTypeDrillRow(r), searchWordsRef.value))
+})
+// typeKind='all' — деление уже полученных строк на товары/услуги/без типа
+// подзаголовками с суммами (SubsidyKpiCards.vue, карточки «Ведётся
+// работа»/«Заказано»/«Поставлено»/«Поставлено, не оплачено»). Группировка
+// готовых строк, не вторая формула (Правило №6) — r.kind уже посчитан
+// бэкендом (dashboard_type_drill.py, тот же compute_type_split_detail).
+const GROUP_ORDER: ItemTypeKind[] = ['goods', 'services', 'unspecified']
+const groupedTypeDrillRows = computed(() => {
+  const buckets = new Map<ItemTypeKind, typeof filteredTypeDrillRows.value>()
+  for (const r of filteredTypeDrillRows.value) {
+    const k = (GROUP_ORDER.includes(r.kind as ItemTypeKind) ? r.kind : 'unspecified') as ItemTypeKind
+    if (!buckets.has(k)) buckets.set(k, [])
+    buckets.get(k)!.push(r)
+  }
+  return GROUP_ORDER
+    .filter(k => buckets.has(k))
+    .map(k => {
+      const rows = buckets.get(k)!
+      return { kind: k, label: KIND_LABELS[k], rows, amount: rows.reduce((s, r) => s + (r.stage_amount || 0), 0) }
+    })
+})
+const filteredCurrentRows = computed(() => {
+  if (!searchWordsRef.value.length) return currentRows.value
+  return currentRows.value.filter(r => matchesAllWords(textOfStageCurrentRow(r), searchWordsRef.value))
+})
+const filteredLeafPurchases = computed(() => {
+  if (!searchWordsRef.value.length) return leafPurchases.value
+  return leafPurchases.value.filter(p => matchesAllWords(textOfStageLeafPurchase(p), searchWordsRef.value))
+})
+const totalCount = computed(() => {
+  if (props.typeKind) return typeDrillRows.value.length
+  return isLeafLevel.value ? leafPurchases.value.length : currentRows.value.length
+})
+const foundCount = computed(() => {
+  if (props.typeKind) return filteredTypeDrillRows.value.length
+  return isLeafLevel.value ? filteredLeafPurchases.value.length : filteredCurrentRows.value.length
+})
+const foundAmount = computed(() => {
+  if (props.typeKind) return filteredTypeDrillRows.value.reduce((s, r) => s + (r.stage_amount || 0), 0)
+  if (isLeafLevel.value) return filteredLeafPurchases.value.reduce((s, p) => s + (props.effectivePrice(p) || 0), 0)
+  return filteredCurrentRows.value.reduce((s, r: any) => s + (r.amount || 0), 0)
+})
+// Смена уровня (назад/вглубь) или типа — поиск с чистого листа, как при
+// открытии окна (владелец, п.5: «при открытии окна query сбрасывается»).
+watch(() => [path.value.length, props.typeKind, props.visible], () => { query.value = '' })
 
 // ── Navigation ───────────────────────────────────────────────────────────────
 function drillInto(row: any) {

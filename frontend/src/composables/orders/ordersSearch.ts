@@ -7,13 +7,18 @@
 // этот файл выносит проверку «есть ли совпадение среди позиций» в общую
 // функцию, чтобы «Поиск» переиспользовал её, а не дублировал цикл по items.
 import type { Purchase } from './ordersTypes'
+import { searchWords, matchesAllWords } from '@/utils/textSearch'
 
-/** Есть ли среди позиций закупки (items[].item_name) совпадение с query. */
+/** Есть ли среди позиций закупки (items[].item_name) совпадение с query —
+ *  слова запроса в любом порядке, ё/е не различаются (frontend/src/utils/
+ *  textSearch.ts, Правило №6, та же функция, что и у поиска по дереву ФЭО/
+ *  плановым позициям — переведено с прежнего подстрочного сравнения ЦЕЛОЙ
+ *  строки запроса 15.10.2026, см. докстринг файла ниже). */
 export function itemsMatchQuery(items: any[] | undefined | null, query: string): boolean {
   if (!items || !items.length) return false
-  const q = query.trim().toLowerCase()
-  if (!q) return false
-  return items.some((it: any) => String(it?.item_name ?? '').toLowerCase().includes(q))
+  const words = searchWords(query)
+  if (!words.length) return false
+  return items.some((it: any) => matchesAllWords(String(it?.item_name ?? ''), words))
 }
 
 /**
@@ -24,13 +29,13 @@ export function itemsMatchQuery(items: any[] | undefined | null, query: string):
  * отображаемые колонки и не находит совпадения внутри items[]).
  */
 export function purchaseMatchesSearch(o: Purchase, query: string): boolean {
-  const q = query.trim().toLowerCase()
-  if (!q) return true
+  const words = searchWords(query)
+  if (!words.length) return true
   const headerFields = [
     (o as any).registry_number, o.subject, o.item_name, (o as any).contractor_name,
     (o as any).subsidy_name, (o as any).contract_number, (o as any).order_number,
     (o as any).agreement_number,
   ]
-  if (headerFields.some(v => String(v ?? '').toLowerCase().includes(q))) return true
-  return itemsMatchQuery((o as any).items, q)
+  if (headerFields.some(v => matchesAllWords(String(v ?? ''), words))) return true
+  return itemsMatchQuery((o as any).items, query)
 }

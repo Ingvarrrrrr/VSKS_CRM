@@ -20,6 +20,13 @@
         <v-btn icon="mdi-close" variant="text" color="white" @click="emit('close')" />
       </v-card-title>
 
+      <!-- :show-amount="false" — у перерасхода и экономии разный знак, одна
+           «найдено на сумму» для обоих сразу вводила бы в заблуждение;
+           подпись каждого блока уже показывает свою сумму (+X / −Y). -->
+      <DrillSearchField v-model="query" :active="searchActive"
+        :found-count="foundCount" :total-count="totalCount"
+        :show-amount="false" />
+
       <v-card-text class="pa-0" style="max-height:70vh; overflow-y:auto">
         <div v-if="loading" class="text-center py-12">
           <v-progress-linear indeterminate color="primary" class="mb-4" />
@@ -32,7 +39,9 @@
             <div class="text-subtitle-2 font-weight-bold mb-1" style="color:#b91c1c">
               Перерасход по заказам — {{ overspendRows.length }} поз., +{{ formatCurrency(overspendTotal) }}
             </div>
-            <div v-if="!overspendRows.length" class="text-caption text-medium-emphasis mb-2">нет позиций с перерасходом</div>
+            <div v-if="!filteredOverspend.length" class="text-caption text-medium-emphasis mb-2">
+              {{ overspendRows.length === 0 ? 'нет позиций с перерасходом' : 'ничего не найдено по поиску' }}
+            </div>
             <div v-else style="overflow-x:auto">
               <v-table density="compact" style="min-width:760px">
                 <thead>
@@ -46,7 +55,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="r in overspendRows" :key="'o-' + r.feo_item_id">
+                  <tr v-for="r in filteredOverspend" :key="'o-' + r.feo_item_id">
                     <td class="px-3 text-caption">{{ r.category_path }}</td>
                     <td class="px-3">{{ r.name }}</td>
                     <td class="text-right px-3">{{ formatCurrency(r.plan_from_file) }}</td>
@@ -78,7 +87,9 @@
             <div class="text-subtitle-2 font-weight-bold mb-1" style="color:#15803d">
               Экономия по заказам — {{ economyRows.length }} поз., −{{ formatCurrency(economyTotal) }}
             </div>
-            <div v-if="!economyRows.length" class="text-caption text-medium-emphasis mb-2">нет позиций с экономией</div>
+            <div v-if="!filteredEconomy.length" class="text-caption text-medium-emphasis mb-2">
+              {{ economyRows.length === 0 ? 'нет позиций с экономией' : 'ничего не найдено по поиску' }}
+            </div>
             <div v-else style="overflow-x:auto">
               <v-table density="compact" style="min-width:760px">
                 <thead>
@@ -92,7 +103,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="r in economyRows" :key="'e-' + r.feo_item_id">
+                  <tr v-for="r in filteredEconomy" :key="'e-' + r.feo_item_id">
                     <td class="px-3 text-caption">{{ r.category_path }}</td>
                     <td class="px-3">{{ r.name }}</td>
                     <td class="text-right px-3">{{ formatCurrency(r.plan_from_file) }}</td>
@@ -138,6 +149,9 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { describeApiError } from '@/utils/apiErrorMessage'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { searchWords, matchesAllWords } from '@/utils/textSearch'
+import { textOfOrderSubstitutionRow } from '@/components/drill/drillRowText'
+import DrillSearchField from '@/components/drill/DrillSearchField.vue'
 
 const { mobile } = useDisplay()
 
@@ -172,6 +186,22 @@ const economyTotal = ref(0)
 const netTotal = computed(() => overspendTotal.value - economyTotal.value)
 const netSign = computed(() => (netTotal.value >= 0 ? '+' : '−'))
 
+// Поле динамического поиска (владелец, 15.10.2026) — одно поле на оба блока
+// (перерасход + экономия), фильтрует уже загруженные строки (Правило №6:
+// та же textSearch.ts, что и у остальных окон-расшифровок, не второй
+// движок сравнения).
+const query = ref('')
+const words = computed(() => searchWords(query.value))
+const searchActive = computed(() => words.value.length > 0)
+function filterRows(list: OrderSubstitutionRow[]): OrderSubstitutionRow[] {
+  if (!words.value.length) return list
+  return list.filter(r => matchesAllWords(textOfOrderSubstitutionRow(r), words.value))
+}
+const filteredOverspend = computed(() => filterRows(overspendRows.value))
+const filteredEconomy = computed(() => filterRows(economyRows.value))
+const totalCount = computed(() => overspendRows.value.length + economyRows.value.length)
+const foundCount = computed(() => filteredOverspend.value.length + filteredEconomy.value.length)
+
 async function load() {
   if (!props.subsidyId) {
     overspendRows.value = []
@@ -204,5 +234,5 @@ async function load() {
   }
 }
 
-watch(() => [props.visible, props.subsidyId, props.categoryId], () => { if (props.visible) load() }, { immediate: true })
+watch(() => [props.visible, props.subsidyId, props.categoryId], () => { if (props.visible) { query.value = ''; load() } }, { immediate: true })
 </script>

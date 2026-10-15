@@ -37,19 +37,21 @@
             <div class="kpi-value" :class="{ 'text-medium-emphasis': redistributable == null }">{{ redistributable != null ? formatCurrency(redistributable) : 'ФЭО не введено' }}</div>
             <div class="kpi-label">Можно перераспределить</div>
             <!-- Задача 1 (владелец, 04.10.2026 → доп. 06.10.2026, исправлено
-                 координатором): раньше одна строка «не запланировано X
-                 (Свободно) + в плане без договоров Y» — теперь четыре строки с
-                 разбивкой «в плане без договоров» по статусу плановой позиции
-                 (not_committed_likely/_nice, см. SubsidyRow в composables/
-                 subsidies/types.ts) + «договоры без заказа» (contracted_not_ordered,
-                 готовое поле бэкенда — дочерние заказы рамочных договоров в
-                 статусе 'contracted', см. app.services.stage_cumulative).
-                 «хотелось бы» показываем даже при 0 ₽, чтобы категория была видна. -->
+                 координатором → 15.10.2026 план abstract-noodling-pelican.md):
+                 четыре строки с разбивкой «в плане без договоров» по статусу
+                 плановой позиции (not_committed_likely/_nice, см. SubsidyRow в
+                 composables/subsidies/types.ts), все четыре теперь кликабельны —
+                 каждая открывает своё окно (Правило №9 useCardDrills.ts).
+                 4-я строка ПЕРЕИМЕНОВАНА из «договоры без заказа (будущие
+                 месяцы)» (contracted_not_ordered) в «ещё уйдёт помесячно до
+                 конца года» (monthly_future_not_started) — раскрытое дерево
+                 договор → месяцы, MonthlyFutureTreeDialog. «хотелось бы»
+                 показываем даже при 0 ₽, чтобы категория была видна. -->
             <div v-if="redistributable != null" class="kpi-sub-note kpi-redistributable-notes text-caption text-medium-emphasis">
-              <div class="kpi-redistributable-note-row">не запланировано: {{ formatCurrency(redistributableUnplanned) }}</div>
-              <div class="kpi-redistributable-note-row">хотелось бы, можно отказаться: {{ formatCurrency(notCommittedNice) }}</div>
-              <div class="kpi-redistributable-note-row">скорее всего понадобится: {{ formatCurrency(notCommittedLikely) }}</div>
-              <div class="kpi-redistributable-note-row">договоры без заказа (будущие месяцы): {{ formatCurrency(contractedNotOrdered) }}</div>
+              <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openFree()">не запланировано: {{ formatCurrency(redistributableUnplanned) }}</div>
+              <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openMetric('not_committed_nice')">хотелось бы, можно отказаться: {{ formatCurrency(notCommittedNice) }}</div>
+              <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openMetric('not_committed_likely')">скорее всего понадобится: {{ formatCurrency(notCommittedLikely) }}</div>
+              <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openMonthlyTree('monthly_future_not_started')">ещё уйдёт помесячно до конца года: {{ formatCurrency(monthlyFutureNotStarted) }}</div>
             </div>
           </div>
           <div class="kpi-redistributable-col-side">
@@ -123,8 +125,12 @@
                остаток временно считается от плана. -->
           <div v-if="props.subsidy?.budget_from_plan" class="text-caption text-medium-emphasis">по плану — суммы ФЭО не введены</div>
           <div v-if="balanceByMarks != null" class="kpi-sub-note kpi-balance-notes text-caption text-medium-emphasis">
-            <div class="kpi-balance-note-row">по отметке: {{ formatCurrency(balanceByMarks) }}</div>
-            <div class="kpi-balance-note-row" :class="{ 'text-error': (balanceByStatement ?? 0) < 0 }">
+            <!-- Задача владельца 15.10.2026 (план abstract-noodling-pelican.md):
+                 обе строки кликабельны — MetricDrillDialog balance_marked/
+                 balance_confirmed («Бюджет ФЭО X − оплачено Y = остаток»,
+                 первой строкой «Бюджет ФЭО», ниже оплаченные закупки). -->
+            <div class="kpi-balance-note-row kpi-balance-note-row-clickable" @click.stop="cardDrills.openMetric('balance_marked')">по отметке: {{ formatCurrency(balanceByMarks) }}</div>
+            <div class="kpi-balance-note-row kpi-balance-note-row-clickable" :class="{ 'text-error': (balanceByStatement ?? 0) < 0 }" @click.stop="cardDrills.openMetric('balance_confirmed')">
               подтверждено выпиской: {{ balanceByStatement != null ? formatCurrency(balanceByStatement) : '—' }}
             </div>
             <div class="kpi-balance-note-row kpi-balance-hint">бюджет ФЭО − оплачено; пока поступление = бюджету ФЭО</div>
@@ -136,8 +142,9 @@
 
   <v-tooltip location="bottom" :disabled="true">
     <template #activator="{ props: tip }">
-      <div v-bind="tip" class="kpi-card kpi-economy" :class="{ 'kpi-over': (economyTotal ?? 0) < 0, 'kpi-unmeasured': economyTotal == null }"
+      <div v-bind="tip" class="kpi-card kpi-economy" :class="{ 'kpi-over': (economyTotal ?? 0) < 0, 'kpi-unmeasured': economyTotal == null, 'kpi-economy-clickable': economyTotal != null }"
         title="Плановая позиция минус договор по законтрактованным закупкам; минус — согласованная переплата"
+        @click="economyTotal != null && cardDrills.openMetric('economy')"
       >
         <div class="kpi-icon-box"><v-icon :icon="(economyTotal ?? 0) < 0 ? 'mdi-cash-minus' : 'mdi-cash-plus'" size="26" /></div>
         <div class="kpi-body">
@@ -160,6 +167,11 @@ import { formatEconomyUnmeasuredText } from '@/utils/economyUnmeasured'
 import type { SubsidyRow } from '@/composables/subsidies/types'
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 import RedistributableDrillDialog from '@/components/subsidies/RedistributableDrillDialog.vue'
+// useCardDrills() БЕЗ аргумента — переиспользует singleton, построенный
+// SubsidyKpiCards.vue (который зовёт useCardDrills(ctx) первым, см. её
+// докстринг) — тот же приём, что useFeoTreeExcess()/useExcessDrilldown() там
+// же (Правило №6, одно состояние «что открыто» на оба компонента).
+import { useCardDrills } from '@/composables/subsidies/useCardDrills'
 
 const props = defineProps<{
   subsidy: SubsidyRow | null
@@ -167,6 +179,7 @@ const props = defineProps<{
 }>()
 
 const funding = useFundingSources()
+const cardDrills = useCardDrills()
 
 // Расшифровка «Товары»/«Услуги» по клику (доп. задача 06.10.2026) —
 // RedistributableDrillDialog сам зовёт GET /dashboard/redistributable-drill
@@ -192,8 +205,9 @@ const redistributableUnplanned = computed(() => props.subsidy?.redistributable_u
 const notCommittedLikely = computed(() => props.subsidy?.not_committed_likely ?? 0)
 const notCommittedNice = computed(() => props.subsidy?.not_committed_nice ?? 0)
 const committedMissingFactItems = computed(() => props.subsidy?.committed_missing_fact_items ?? 0)
-// Задача (владелец, 06.10.2026) — готовые поля бэкенда, фронт не считает (Правило №6).
-const contractedNotOrdered = computed(() => props.subsidy?.contracted_not_ordered ?? 0)
+// Переименовано 15.10.2026 (план abstract-noodling-pelican.md) — готовое поле
+// бэкенда, фронт не считает (Правило №6).
+const monthlyFutureNotStarted = computed(() => props.subsidy?.monthly_future_not_started ?? 0)
 const overPlanCategories = computed(() => props.subsidy?.over_plan_categories ?? [])
 // null-безопасно (02.10.2026, приёмка): нет данных (поле не пришло или
 // бэкенд явно вернул null) — показываем «—», а не 0 ₽ (0 — это РЕАЛЬНОЕ
@@ -236,6 +250,20 @@ const splitRows = computed<SplitRow[]>(() => {
 .kpi-redistributable-note-row {
   white-space: normal;
   word-break: break-word;
+}
+/* Задача владельца 15.10.2026 (план abstract-noodling-pelican.md) — все 4
+   строки «Можно перераспределить» и 2 строки «Остаток субсидии» кликабельны,
+   каждая открывает своё окно (useCardDrills.ts). */
+.kpi-redistributable-note-row-clickable,
+.kpi-balance-note-row-clickable {
+  cursor: pointer;
+}
+.kpi-redistributable-note-row-clickable:hover,
+.kpi-balance-note-row-clickable:hover {
+  text-decoration: underline;
+}
+.kpi-economy-clickable {
+  cursor: pointer;
 }
 /* scoped-стиль родителя (SubsidyKpiCards.vue:534) до дочернего компонента не
    доходит (урок feedback_split_view_css_before_after_screenshots.md) —

@@ -74,6 +74,10 @@
         <v-btn icon="mdi-close" variant="text" color="white" @click="emit('close')" />
       </v-card-title>
 
+      <DrillSearchField v-model="search.query.value" :active="search.isActive.value"
+        :found-count="search.foundCount.value" :total-count="search.totalCount.value"
+        :found-amount="search.foundAmount.value" />
+
       <v-card-text class="pa-0" style="max-height:65vh; overflow-y:auto">
         <div v-if="loading" class="text-center py-12">
           <v-progress-linear indeterminate color="primary" class="mb-4" />
@@ -81,6 +85,9 @@
         </div>
         <v-alert v-else-if="rows.length === 0" type="info" variant="tonal" density="compact" class="ma-3">
           {{ reason || 'Нет данных' }}
+        </v-alert>
+        <v-alert v-else-if="search.isActive.value && search.foundCount.value === 0" type="info" variant="tonal" density="compact" class="ma-3">
+          Ничего не найдено по поиску
         </v-alert>
         <div v-else style="overflow-x:auto">
           <!-- card='planned' — дерево категорий ФЭО → позиции (см. докстринг выше) -->
@@ -146,7 +153,7 @@
               </tr>
             </thead>
             <tbody>
-              <template v-for="r in directionRows" :key="r.feo_category_id ?? 'manual'">
+              <template v-for="r in filteredDirectionRows" :key="r.feo_category_id ?? 'manual'">
                 <tr :class="{ 'feo-drill-folder-row': r.amount < -0.5 && r.items.length }"
                   @click="r.amount < -0.5 && r.items.length ? toggleFolder('dir-' + r.feo_category_id) : null">
                   <td class="px-4 py-2">
@@ -247,7 +254,7 @@
               </tr>
             </thead>
             <tbody>
-              <template v-for="(r, idx) in categoryRows" :key="(r.feo_category_id ?? 'manual') + '-' + idx">
+              <template v-for="(r, idx) in filteredCategoryRows" :key="(r.feo_category_id ?? 'manual') + '-' + idx">
                 <tr
                   :class="{ 'feo-drill-folder-row': card === 'budget' && r.items && r.items.length }"
                   @click="card === 'budget' && r.items && r.items.length ? toggleFolder('budget-row-' + idx) : null">
@@ -330,6 +337,9 @@ import { useFeoLevel5ItemType } from '@/composables/subsidies/useFeoLevel5ItemTy
 import type { FeoPlannedItem } from '@/composables/subsidies/types'
 import FeoExcessCulpritsTable from '@/components/subsidies/FeoExcessCulpritsTable.vue'
 import type { ExcessGroup, ExcessBatchNote } from '@/components/subsidies/FeoExcessCulpritsTable.vue'
+import { useDrillSearch } from '@/composables/useDrillSearch'
+import { textOfFeoPlannedRow, textOfFeoCategoryOrDirectionRow } from '@/components/drill/drillRowText'
+import DrillSearchField from '@/components/drill/DrillSearchField.vue'
 
 const { mobile } = useDisplay()
 const toast = useToast()
@@ -424,9 +434,19 @@ const rows = ref<(BudgetFreeRow | PlannedRow | DirectionRow)[]>([])
 const total = ref(0)
 const reason = ref<string | null>(null)
 
-const plannedRows = computed(() => rows.value as PlannedRow[])
-const categoryRows = computed(() => rows.value as BudgetFreeRow[])
 const directionRows = computed(() => rows.value as DirectionRow[])
+
+// Поле динамического поиска (владелец, 15.10.2026) — одна функция фильтра на
+// все три вида таблицы card='planned'/'free'/'budget' (Правило №6, через
+// useDrillSearch.ts); textOf выбирается по виду строки, amount есть у всех
+// трёх форматов строк (amount — «запланировано»/«свободно, превышение»).
+function textOfRow(r: BudgetFreeRow | PlannedRow | DirectionRow): string {
+  return props.card === 'planned' ? textOfFeoPlannedRow(r) : textOfFeoCategoryOrDirectionRow(r)
+}
+const search = useDrillSearch(rows, textOfRow, r => r.amount)
+const filteredPlannedRows = computed(() => search.filtered.value as PlannedRow[])
+const filteredCategoryRows = computed(() => search.filtered.value as BudgetFreeRow[])
+const filteredDirectionRows = computed(() => search.filtered.value as DirectionRow[])
 
 function pluralizeRows(n: number): string {
   const mod100 = Math.abs(n) % 100
@@ -529,7 +549,7 @@ function groupByDepth(items: PlannedRow[], depth: number, parentKey: string): Fo
   })
 }
 
-const plannedTree = computed<FolderNode[]>(() => groupByDepth(plannedRows.value, 0, ''))
+const plannedTree = computed<FolderNode[]>(() => groupByDepth(filteredPlannedRows.value, 0, ''))
 
 // expanded — ключи развёрнутых папок ЛЮБОЙ глубины (не только корня); по
 // умолчанию, после каждой загрузки, развёрнут только 1-й уровень (владелец,
@@ -628,12 +648,40 @@ async function load() {
 
 watch(() => [props.visible, props.subsidyId, props.card, props.kind], async () => {
   if (!props.visible) return
+  search.reset()
   await load()
   // По умолчанию развёрнут только 1-й уровень дерева (владелец, п.2).
   if (props.card === 'planned') {
     expanded.value = new Set(plannedTree.value.map(n => n.key))
   }
 }, { immediate: true })
+
+// Поиск активен — раскрыть ветки с совпадением (владелец: «ветки раскрыты»),
+// чтобы найденное не пряталось в свёрнутом узле. card='planned' — дерево
+// категорий, развернуть ВСЕ уровни целиком (groupByDepth уже перестроил
+// дерево по отфильтрованным строкам, Правило №6 — второй построитель дерева
+// не заводим). card='free'/kind≠'all' и card='budget' — composition-строки
+// каждого направления/статьи раскрываются индивидуально (toggleFolder), ключ
+// у card='budget' позиционный ('budget-row-'+idx) — считаем idx ПО ОТОБРАЖАЕМОМУ
+// (уже отфильтрованному) списку, он же используется в шаблоне для того же ключа.
+watch(() => [search.isActive.value, search.filtered.value, props.card], () => {
+  if (!search.isActive.value) return
+  if (props.card === 'planned') {
+    expanded.value = new Set(allFolderKeys(plannedTree.value))
+  } else if (props.card === 'free' && props.kind !== 'all') {
+    const next = new Set(expanded.value)
+    for (const r of filteredDirectionRows.value) {
+      if (r.amount < -0.5 && r.items.length) next.add('dir-' + r.feo_category_id)
+    }
+    expanded.value = next
+  } else if (props.card === 'budget') {
+    const next = new Set(expanded.value)
+    filteredCategoryRows.value.forEach((r, idx) => {
+      if (r.items && r.items.length) next.add('budget-row-' + idx)
+    })
+    expanded.value = next
+  }
+})
 
 // Полный снимок плановой позиции — GET /feo-planned-items/?feo_category_id=
 // (существующая ручка, backend не трогаем) нужен putPlannedItemFull (PUT —

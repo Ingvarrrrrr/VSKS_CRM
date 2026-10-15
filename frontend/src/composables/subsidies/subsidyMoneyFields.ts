@@ -36,8 +36,10 @@ export function pickSubsidyMoneyFields(s: any) {
     balance_paid_confirmed: s.balance_paid_confirmed ?? null,
     balance_by_marks: s.balance_by_marks ?? null,
     balance_by_statement: s.balance_by_statement ?? null,
-    // 2026-10-06: «Законтрактовано, не заказано» и перерасход по категориям.
-    contracted_not_ordered: s.contracted_not_ordered ?? null,
+    // Переименовано 15.10.2026 (план abstract-noodling-pelican.md):
+    // contracted_not_ordered → monthly_future_not_started («ещё уйдёт
+    // помесячно до конца года»). Перерасход по категориям — не трогается.
+    monthly_future_not_started: s.monthly_future_not_started ?? null,
     over_plan_categories: s.over_plan_categories ?? [],
     // feo_entered (владелец 07.10.2026, план .planning/quick/2026-10-07-dnr-
     // feo-cards/PLAN.md шаг 1) — см. docstring у поля в composables/subsidies/

@@ -26,6 +26,10 @@
         Итог списка не совпадает с карточкой: {{ formatCurrency(cardTotal) }}
       </v-alert>
 
+      <DrillSearchField v-model="search.query.value" :active="search.isActive.value"
+        :found-count="search.foundCount.value" :total-count="search.totalCount.value"
+        :found-amount="search.foundAmount.value" />
+
       <v-card-text class="pa-0" style="max-height:65vh; overflow-y:auto">
         <div v-if="loading" class="text-center py-12">
           <v-progress-linear indeterminate color="primary" class="mb-4" />
@@ -45,7 +49,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="r in rows" :key="r.planned_item_id">
+              <tr v-for="r in search.filtered.value" :key="r.planned_item_id">
                 <td class="px-4 py-2" style="max-width:260px; white-space:normal">{{ r.name }}</td>
                 <td class="px-4 text-caption category-path-cell" :title="fullPathTooltip(r.category_path)">
                   {{ lastCategorySegment(r.category_path) }}
@@ -57,8 +61,10 @@
                   {{ formatCurrency(r.raw) }}
                 </td>
               </tr>
-              <tr v-if="rows.length === 0">
-                <td colspan="6" class="text-center py-6 text-medium-emphasis">Нет позиций с остатком</td>
+              <tr v-if="search.filtered.value.length === 0">
+                <td colspan="6" class="text-center py-6 text-medium-emphasis">
+                  {{ rows.length === 0 ? 'Нет позиций с остатком' : 'Ничего не найдено по поиску' }}
+                </td>
               </tr>
             </tbody>
             <tfoot v-if="rows.length">
@@ -89,6 +95,9 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { describeApiError } from '@/utils/apiErrorMessage'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { useDrillSearch } from '@/composables/useDrillSearch'
+import { textOfRedistributableRow } from '@/components/drill/drillRowText'
+import DrillSearchField from '@/components/drill/DrillSearchField.vue'
 
 const { mobile } = useDisplay()
 
@@ -125,6 +134,10 @@ const total = ref(0)
 const cardTotal = ref(0)
 
 const mismatch = computed(() => Math.abs(total.value - cardTotal.value) > 0.005)
+
+// Поле динамического поиска (владелец, 15.10.2026) — фильтрует уже
+// загруженные строки, ничего не пересчитывает (Правило №6).
+const search = useDrillSearch(rows, textOfRedistributableRow, r => r.raw)
 
 function pluralizeRows(n: number): string {
   const mod100 = Math.abs(n) % 100
@@ -196,7 +209,7 @@ async function load() {
   }
 }
 
-watch(() => [props.visible, props.subsidyId, props.kind], () => { if (props.visible) load() }, { immediate: true })
+watch(() => [props.visible, props.subsidyId, props.kind], () => { if (props.visible) { search.reset(); load() } }, { immediate: true })
 
 async function exportXlsx() {
   xlsxLoading.value = true

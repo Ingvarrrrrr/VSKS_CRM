@@ -157,3 +157,44 @@ async def test_economy_by_method_no_planned_price_items_counted(
     # привязки к FeoPlannedItem — причина 'unlinked', не 'no_plan_price'.
     assert advance_g["unmeasured_by_reason"]["unlinked"] == 1
     assert advance_g["unmeasured_by_reason"]["no_plan_price"] == 0
+
+
+@pytest.mark.asyncio
+async def test_economy_by_method_item_without_quantity_counted(
+    client, superadmin_headers, db_session, test_org,
+):
+    """ИСПРАВЛЕНО 15.10.2026 (та же щель, что чинил f214e776 для
+    committed_by_planned_item/«Запланировано», пример владельца «Gaz A22R35
+    Х920АЕ 180»): FeoPlannedItem БЕЗ quantity и БЕЗ unit_price, план
+    352 400, ОДНА committed-закупка договор 317 400 -> экономия 35 000, НЕ
+    в 'no_plan_price' (раньше считалась неизмеримой целиком)."""
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    leaf = await _make_category(db_session, subsidy.id, name="Без штук", budget=Decimal("1000000"))
+    fpi = FeoPlannedItem(
+        feo_category_id=leaf.id, name="Gaz A22R35 Х920АЕ 180",
+        quantity=None, unit_price=None, amount=Decimal("352400"), is_active=True,
+    )
+    db_session.add(fpi)
+    await db_session.commit()
+    await db_session.refresh(fpi)
+
+    purchase, _item = await _make_linked_purchase(
+        db_session, subsidy.id, leaf.id, fpi.id, 1, 317_400, planned_total=Decimal("352400"),
+    )
+    purchase.purchase_method = "single"
+    db_session.add(purchase)
+    await db_session.commit()
+
+    resp = await client.get(
+        "/api/dashboard/economy-by-method",
+        params={"subsidy_id": subsidy.id},
+        headers=superadmin_headers,
+    )
+    assert resp.status_code == 200
+    groups = {(g["method"], g["competitive_form"]): g for g in resp.json()}
+    single_g = groups[("single", None)]
+    assert single_g["economy"] == pytest.approx(35_000.0)
+    assert single_g["no_planned_price_items"] == 0
+    assert single_g["unmeasured_by_reason"]["no_plan_price"] == 0

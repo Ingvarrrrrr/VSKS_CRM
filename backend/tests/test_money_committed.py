@@ -243,13 +243,38 @@ async def test_6_economy_unlinked_item_is_not_zero(db_session, test_org):
 
 
 @pytest.mark.asyncio
-async def test_6b_economy_no_plan_price_when_planned_item_has_no_quantity_or_unit_price(db_session, test_org):
-    """Привязана к активной FeoPlannedItem, но у НЕЁ нет ни unit_price, ни
-    (quantity>0 и amount) — нечем посчитать базу → 'no_plan_price', НЕ
-    'unlinked' (привязка валидна, просто нечем мерить)."""
+async def test_6b_economy_qty_less_item_measured_via_committed_by_planned_item(db_session, test_org):
+    """ИСПРАВЛЕНО 15.10.2026 (щель, закрытая вместе с f214e776 для
+    committed_by_planned_item/«Запланировано» — пример владельца «Gaz A22R35
+    Х920АЕ 180»): привязана к активной FeoPlannedItem без unit_price и БЕЗ
+    (quantity>0 и amount) — раньше 'no_plan_price' (нечем мерить), теперь
+    считается через committed_by_planned_item (ЕДИНАЯ точка, ПРАВИЛО №6):
+    план 50 000 = договор 50 000 (fact) → economy 0, измерена (НЕ
+    'no_plan_price')."""
     subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
     leaf = await _make_category(db_session, subsidy.id, name="Плановая позиция без числа", budget=Decimal("1000000"))
     fpi = await _make_planned_item(db_session, leaf.id, "Бензопила", 0, 50_000)  # quantity=0 → доля не считается
+
+    purchase, _item = await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, 1, 50_000)
+
+    bucket = (await purchase_economy_bulk(db_session, [purchase.id]))[purchase.id]
+    assert bucket["economy"] == Decimal("0.00")
+    assert bucket["unmeasured_by_reason"]["no_plan_price"] == 0
+    assert bucket["unmeasured_by_reason"]["unlinked"] == 0
+
+
+@pytest.mark.asyncio
+async def test_6b2_economy_no_plan_price_when_item_has_no_amount_at_all(db_session, test_org):
+    """Привязана к активной FeoPlannedItem, у которой НЕТ вообще ничего —
+    ни unit_price, ни (quantity>0 и amount), ни голого amount — нечем
+    посчитать базу → 'no_plan_price' остаётся (единственный оставшийся
+    случай, см. app.services.purchase_economy docstring, шаг 1а)."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    leaf = await _make_category(db_session, subsidy.id, name="Плановая позиция без числа вовсе", budget=Decimal("1000000"))
+    fpi = await _make_planned_item(db_session, leaf.id, "Бензопила", 0, 50_000)
+    fpi.amount = None
+    db_session.add(fpi)
+    await db_session.commit()
 
     purchase, _item = await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, 1, 50_000)
 

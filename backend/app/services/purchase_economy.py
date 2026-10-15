@@ -37,9 +37,39 @@ feo_plan_fact — не дублируется):
             unit_price — здесь то же самое поле ничем не подменяется, просто
             пропорционально делится СУММА, храним её только в локальной
             переменной расчёта);
-          - иначе (ни unit_price, ни quantity+amount) → НЕ меряется,
-            причина 'no_plan_price'.
+          - иначе, НЕТ quantity (NULL/0) И НЕТ unit_price, НО amount задан —
+            позиция без штук (как «Запланировано», committed_amounts.
+            committed_by_planned_item/has_rows, ИСПРАВЛЕНО 15.10.2026, см.
+            ниже) — считается ОТДЕЛЬНО, после шага 1а/1б (qty_less_groups).
+          - иначе (вообще нет ни unit_price, ни quantity+amount, ни amount)
+            → НЕ меряется, причина 'no_plan_price'.
           Экономия строки = база − факт строки.
+       а.1) ИСПРАВЛЕНО 15.10.2026 (та же щель, что чинил коммит f214e776 для
+          committed_by_planned_item/«Запланировано» — субсидии «ДНР3»
+          id 94 / «ДНР5» id 97, позиция «Gaz A22R35 Х920АЕ 180», план
+          352 400 без quantity/unit_price: раньше 'no_plan_price', экономия
+          35 000 не считалась): позиция БЕЗ quantity и БЕЗ unit_price (но с
+          amount) — делить план по штукам нечем, план позиции УЖЕ считается
+          занятым целиком любой committed-закупкой (ПРАВИЛО №6 — то же
+          решение, что has_rows в committed_by_planned_item, вторая формула
+          не пишется). Σ фактов ВСЕХ committed-строк позиции и итоговая
+          «законтрактованная» сумма — committed_by_planned_item(db, [fpi.id])
+          (та же функция, никакого второго SQL): total_economy = fpi.amount −
+          committed["amount"]. Если по позиции ОДНА строка в этом пакете —
+          вся total_economy ей; если несколько — распределяется между ними
+          ПРОПОРЦИОНАЛЬНО их факту (fact_row / Σfact_rows_в_пакете), чтобы
+          Σ экономии по строкам позиции == total_economy == то самое число,
+          что «Запланировано» вычитает из плана (инвариант, не вторая
+          формула). Если Σfact_rows_в_пакете == 0 (факт всех строк пакета
+          нулевой) — делится РАВНОМЕРНО между строками. Отрицательная
+          total_economy (перерасход) распределяется тем же правилом — без
+          отдельной обработки, как и у позиций С количеством (см. шаг 4).
+          ОГРАНИЧЕНИЕ: если у позиции есть committed-строки ВНЕ текущего
+          пакета purchase_ids (напр. вызов для одной закупки, а не для всей
+          субсидии) — committed["amount"] их видит (глобальный запрос), а
+          строки пакета для распределения — нет; на практике
+          purchase_economy_by_subsidy вызывает bulk на ВСЕ закупки субсидии
+          одним пакетом, так что такого расхождения не возникает.
        б) СОСТАВНАЯ (P.is_composite=True) — несколько строк ОДНОЙ закупки на
           одну позицию (напр. «проживание» 133 чел. + «питание» 133 чел.,
           см. committed_by_planned_item/planned_item_consumption, ПРАВИЛО
@@ -106,7 +136,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
-from app.services.committed_amounts import is_purchase_committed
+from app.services.committed_amounts import committed_by_planned_item, is_purchase_committed
 from app.services.feo_plan_fact import fact_amounts_for_rows
 
 _CENTS = Decimal("0.01")
@@ -190,6 +220,10 @@ async def purchase_economy_bulk(db: AsyncSession, purchase_ids) -> dict[int, dic
     # Составные позиции группируются по (purchase_id, feo_planned_item_id) —
     # экономия считается НА УРОВНЕ ГРУППЫ (закупка, позиция), не по строкам.
     composite_groups: dict[tuple, dict] = {}
+    # Позиции без quantity и без unit_price (шаг 1а.1, см. докстринг модуля) —
+    # группируются ПО ПОЗИЦИИ (не по закупке): нужна Σ фактов ВСЕХ строк
+    # позиции в пакете, чтобы распределить её total_economy между закупками.
+    qty_less_groups: dict[int, dict] = {}
     for pi, p, fact in measured_rows:
         bucket = result[p.id]
         fpi = fpi_map.get(pi.feo_planned_item_id) if pi.feo_planned_item_id is not None else None
@@ -217,6 +251,14 @@ async def purchase_economy_bulk(db: AsyncSession, purchase_ids) -> dict[int, dic
             # ДОЛЯ плана позиции по количеству строки — НЕ «цена за единицу»
             # (см. докстринг модуля, запрет на подмену unit_price делением).
             base = Decimal(str(fpi.amount)) * qty / Decimal(str(fpi.quantity))
+        elif fpi.amount is not None:
+            # Шаг 1а.1 (см. докстринг модуля, ИСПРАВЛЕНО 15.10.2026) —
+            # позиция без quantity/unit_price, но с планом: откладывается,
+            # считается ПОСЛЕ составных групп (нужна Σ фактов ВСЕХ её строк
+            # пакета и committed_by_planned_item).
+            g = qty_less_groups.setdefault(fpi.id, {"fpi": fpi, "rows": []})
+            g["rows"].append((p.id, fact))
+            continue
         else:
             _mark_unmeasured(bucket, "no_plan_price")
             continue
@@ -234,6 +276,36 @@ async def purchase_economy_bulk(db: AsyncSession, purchase_ids) -> dict[int, dic
         fact_sum = sum((f for _pi, f in rows_), Decimal("0"))
         base = Decimal(str(fpi.amount)) * max_qty / Decimal(str(fpi.quantity))
         _apply_measured(bucket, base, fact_sum, rows_count=len(rows_))
+
+    # Шаг 1а.1 (см. докстринг модуля, ИСПРАВЛЕНО 15.10.2026) — позиции без
+    # quantity и без unit_price: committed_by_planned_item — ЕДИНАЯ точка
+    # (ПРАВИЛО №6, та же функция, что считает «Запланировано») даёт
+    # законтрактованную сумму ПОЗИЦИИ across ВСЕХ её committed-закупок
+    # (committed["amount"]); total_economy = план позиции − эта сумма —
+    # ТО ЖЕ число, что вычитается из плана в «Запланировано». Дальше
+    # total_economy раскладывается на закупки ЭТОГО пакета пропорционально
+    # их факту — см. докстринг шага 1а.1 про ограничение видимости пакета.
+    if qty_less_groups:
+        committed_map = await committed_by_planned_item(db, list(qty_less_groups.keys()))
+        for fpi_id, g in qty_less_groups.items():
+            fpi: FeoPlannedItem = g["fpi"]
+            rows_ = g["rows"]  # [(purchase_id, fact), ...]
+            base_total = Decimal(str(fpi.amount))
+            committed_info = committed_map.get(fpi_id) or {"amount": 0.0}
+            committed_amt = Decimal(str(committed_info["amount"])).quantize(_CENTS)
+            total_economy = (base_total - committed_amt).quantize(_CENTS)
+            total_fact = sum((f for _pid, f in rows_), Decimal("0"))
+            n = len(rows_)
+            for pid, fact in rows_:
+                bucket = result[pid]
+                if total_fact > 0:
+                    row_economy = (total_economy * fact / total_fact).quantize(_CENTS)
+                else:
+                    # Факт всех строк пакета нулевой — делить пропорционально
+                    # нечем, экономия/перерасход делится РАВНОМЕРНО.
+                    row_economy = (total_economy / n).quantize(_CENTS)
+                base_row = fact + row_economy
+                _apply_measured(bucket, base_row, fact, rows_count=1)
 
     return result
 

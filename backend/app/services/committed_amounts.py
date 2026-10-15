@@ -260,8 +260,20 @@ async def committed_by_planned_item(db: AsyncSession, item_ids: list[int]) -> di
     формула, что planned_item_consumption._comp_qty_q, feo_plan_fact.py,
     ПРАВИЛО №6 — переиспользуем идею, не копируем SQL дословно, т.к. тут уже
     нужна Python-группировка ради fact_amounts_for_rows). Строки без факта в
-    эту MAX/Σ-группировку количества НЕ попадают вовсе (см. исправление #1)."""
-    result: dict[int, dict] = {iid: {"amount": 0.0, "quantity": 0.0, "missing_fact_items": 0} for iid in item_ids}
+    эту MAX/Σ-группировку количества НЕ попадают вовсе (см. исправление #1).
+
+    ИСПРАВЛЕНИЕ #2 (13.10→15.10.2026, перерасход по позиции с планом 0/без
+    quantity, субсидия «ФАДМ 2026_3» id 100, позиция 42925): дополнительный
+    ключ `has_rows` — хотя бы одна committed-строка закупки привязана к этой
+    позиции (независимо от того, попала ли она в `quantity` — строки без
+    известного факта туда не попадают, см. исправление #1). Нужен
+    planned_item_contributions ниже, чтобы отличить «позиция без committed
+    активности вообще» от «позиция с committed, но без quantity» — только по
+    `amount != 0`/`quantity` этого не определить (amount может легитимно быть
+    0, если факт 0)."""
+    result: dict[int, dict] = {
+        iid: {"amount": 0.0, "quantity": 0.0, "missing_fact_items": 0, "has_rows": False} for iid in item_ids
+    }
     if not item_ids:
         return result
 
@@ -294,6 +306,7 @@ async def committed_by_planned_item(db: AsyncSession, item_ids: list[int]) -> di
     for r in rows:
         pi, p = r.PurchaseItem, r.Purchase
         amt = fact_by_item.get(pi.id)
+        result[pi.feo_planned_item_id]["has_rows"] = True
         if amt is not None:
             result[pi.feo_planned_item_id]["amount"] += float(amt)
             qty_by_item_purchase.setdefault((pi.feo_planned_item_id, p.id), []).append(float(pi.quantity or 0))
@@ -360,9 +373,23 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
     если законтрактованное количество по ней (committed_by_planned_item) ≥ её
     quantity, contribution = её законтрактованная СУММА (экономия/переплата
     высвобождается); иначе — amount целиком (план резервируется, пока
-    количество не набрано полностью). Ежемесячные (payment_mode='monthly') и
-    позиции БЕЗ quantity (NULL/0) — всегда amount (нечем мерить «набрано ли
-    количество» — владелец: «ежемесячные остаются зарезервированными целиком»).
+    количество не набрано полностью). Ежемесячные (payment_mode='monthly') —
+    всегда amount (владелец: «ежемесячные остаются зарезервированными
+    целиком» — у них по смыслу нет «набранного количества», оплата длится).
+
+    ИСПРАВЛЕНИЕ (13.10→15.10.2026, субсидия «ФАДМ 2026_3» id 100, позиция
+    42925 «Ремонт автомобиля…», план 0, quantity NULL, закупка delivered
+    40 730): одноразовая позиция БЕЗ quantity (NULL/0) — раньше ВСЕГДА
+    amount, то есть её committed-закупка не влияла на contribution вовсе,
+    а оседала только в own_committed_all узла — который, ПО ДИЗАЙНУ
+    plan_floor_addition (feo_plan_common.py), игнорирует ПРИВЯЗАННЫЕ к
+    FeoPlannedItem позиции (они «уже учтены own-планом своим путём»). Деньги
+    проваливались в щель между двумя механизмами и молча гасились свободным
+    планом СОСЕДНИХ позиций той же категории (planned_not_committed). Раз у
+    позиции нет quantity, «набрано частично» неприменимо — ЛЮБАЯ привязанная
+    committed-закупка (has_rows) целиком замещает её contribution, как если
+    бы количество набралось полностью (та же трактовка, что и у quantity>0,
+    просто без деления на штуки).
 
     Переиспользуется И leaf_items_committed_contribution ниже (агрегат по
     категории для compute_feo_plan_tree), И find_excess_culprit
@@ -390,10 +417,10 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
         return result
 
     # Законтрактованное количество/сумма нужны ТОЛЬКО позициям, способным
-    # замещаться (one_time, quantity > 0) — не гоняем лишний запрос по всем.
+    # замещаться (все one_time — и с quantity, и без, см. исправление выше);
+    # ежемесячные не запрашиваем — не гоняем лишний запрос по всем.
     _substitution_candidate_ids = [
-        r.id for r in rows
-        if (r.payment_mode or "one_time") == "one_time" and float(r.quantity or 0) > 0
+        r.id for r in rows if (r.payment_mode or "one_time") == "one_time"
     ]
     committed_map = await committed_by_planned_item(db, _substitution_candidate_ids)
     eff_types = await resolve_effective_item_types(db, rows)
@@ -401,9 +428,18 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
     for r in rows:
         raw_amount = float(r.amount or 0)
         contribution = raw_amount
-        if (r.payment_mode or "one_time") == "one_time" and float(r.quantity or 0) > 0:
-            _committed = committed_map.get(r.id) or {"amount": 0.0, "quantity": 0.0}
-            if _committed["quantity"] >= float(r.quantity):
+        if (r.payment_mode or "one_time") == "one_time":
+            own_qty = float(r.quantity or 0)
+            _committed = committed_map.get(r.id) or {
+                "amount": 0.0, "quantity": 0.0, "has_rows": False,
+            }
+            if own_qty > 0:
+                if _committed["quantity"] >= own_qty:
+                    contribution = _committed["amount"]
+            elif _committed.get("has_rows"):
+                # план 0/без quantity — нечем мерить «частично»: любая
+                # привязанная committed-закупка целиком замещает contribution
+                # (см. докстринг исправления выше).
                 contribution = _committed["amount"]
         result[r.id] = {
             "amount": contribution,

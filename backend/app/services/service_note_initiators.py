@@ -1,19 +1,31 @@
-"""Кто может быть инициатором служебной записки (Правило владельца, 14.10.2026).
+"""Кто может быть инициатором служебной записки (Правило владельца, 14.10.2026,
+уточнено 15.10.2026).
 
 Единственное место (Правило №6), где считаются:
   - org_staff_user_ids   — «штат» организации: кто физически числится в ней
-    (primary User.org_id, членство user_organizations, персональный
-    user_org_access). ТОТ ЖЕ расчёт, что ветка `org_id` в GET /users/
-    (app/routers/users.py::list_users) — вынесен сюда, list_users теперь
-    вызывает _staff_conditions напрямую, вторая формула не заводится.
+    (primary User.org_id ИЛИ членство user_organizations). Персональный
+    доступ (user_org_access) в «штат» для инициатора НЕ входит (см. ниже).
   - initiator_candidate_ids — кого текущий пользователь вправе указать
     инициатором служебной записки по конкретной субсидии.
 
-Правило владельца (дословно, 14.10.2026):
-  «Штат» = сотрудники организации субсидии (subsidy.org_id) — тот же расчёт,
-  что ветка org_id в GET /users/. НЕ включать людей с персональным доступом
-  к субсидии (user_subsidy_access) и сотрудников орг-контрагента. Вне штата
-  нельзя выбрать НИКОГО, даже подчинённого.
+«Штат» = кто числится в организации: основная организация пользователя
+(User.org_id) или членство в user_organizations (с должностью). Персональный
+доступ к организации (user_org_access) штатом НЕ является (Правило владельца
+15.10.2026: Новичкова, User.org_id=1 (ВСКС), с user_org_access.role='employee'
+на орг 29 (Донецкое отделение) — НЕ входит в штат орг 29, попадать в список
+инициаторов служебки по субсидии орг 29 не должна).
+
+GET /users/ (app/routers/users.py::list_users, параметр org_id) считает ШИРЕ:
+штат (см. выше) ОБЪЕДИНЁННЫЙ с персональным доступом (user_org_access) — этот
+список используют другие экраны (пикеры исполнителей и т.п.), его поведение
+здесь не меняется; он вызывает _staff_conditions() + _org_access_conditions()
+(include_access=True), а не ведёт вторую копию формулы (Правило №6).
+
+Правило владельца (дословно, 14.10.2026, штат сужен 15.10.2026):
+  «Штат» = сотрудники организации субсидии (subsidy.org_id) — primary org_id
+  или членство в user_organizations. НЕ включать людей с персональным доступом
+  (ни user_org_access, ни user_subsidy_access) и сотрудников орг-контрагента.
+  Вне штата нельзя выбрать НИКОГО, даже подчинённого.
 
   Кто выбирает (эффективная роль в орг субсидии через
   app.auth.permissions._resolve_role_for_org):
@@ -50,23 +62,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 def _staff_conditions(org_ids):
     """SQL-условия (НЕ выполняются здесь) — «штат» одной или нескольких орг:
-    primary User.org_id ИЛИ членство в user_organizations ИЛИ персональный
-    user_org_access. Делит одну формулу между users.py::list_users (параметр
-    org_id, в т.ч. список орг по субсидии+контрагенту+ИНН-дублям) и
-    org_staff_user_ids ниже — Правило №6, вторая формула не пишется.
+    primary User.org_id ИЛИ членство в user_organizations. Персональный доступ
+    (user_org_access) сюда НЕ входит — он не штат (Правило владельца
+    15.10.2026, см. docstring модуля). Для списков, которым нужен «штат +
+    персональный доступ» (например users.py::list_users), складывать с
+    _org_access_conditions() — вторая формула штата не пишется (Правило №6).
     """
     from app.models.user import User
     from app.models.user_organization import UserOrganization
-    from app.models.user_org_access import UserOrgAccess
 
     ids = [org_ids] if isinstance(org_ids, int) else list(org_ids)
     member_q = select(UserOrganization.user_id).where(UserOrganization.org_id.in_(ids))
+    return [User.org_id.in_(ids), User.id.in_(member_q)]
+
+
+def _org_access_conditions(org_ids):
+    """SQL-условие (НЕ выполняется здесь) — персональный доступ user_org_access
+    к одной или нескольким орг. НЕ является «штатом» (см. _staff_conditions);
+    используется отдельно там, где нужен штат ∪ доступ (users.py::list_users).
+    """
+    from app.models.user import User
+    from app.models.user_org_access import UserOrgAccess
+
+    ids = [org_ids] if isinstance(org_ids, int) else list(org_ids)
     uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(ids))
-    return [User.org_id.in_(ids), User.id.in_(member_q), User.id.in_(uoa_q)]
+    return [User.id.in_(uoa_q)]
 
 
 async def org_staff_user_ids(db: AsyncSession, org_id: int) -> set[int]:
-    """«Штат» организации org_id как множество user_id (см. _staff_conditions)."""
+    """«Штат» организации org_id как множество user_id (см. _staff_conditions).
+    Персональный доступ (user_org_access) не включён — не штат.
+    """
     from app.models.user import User
 
     if not org_id:

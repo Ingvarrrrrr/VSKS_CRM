@@ -63,7 +63,8 @@ async def test_subsidy_no_org(db_session):
 
 
 # ---------------------------------------------------------------------------
-# org_staff_user_ids — «штат» = primary org_id ∪ membership ∪ UOA
+# org_staff_user_ids — «штат» = primary org_id ∪ membership (UOA — НЕ штат,
+# Правило владельца 15.10.2026)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -80,14 +81,17 @@ async def test_org_staff_includes_primary_org_members(db_session, test_org, test
 
 
 @pytest.mark.asyncio
-async def test_org_staff_includes_personal_org_access(db_session, test_org, test_org_b, make_user):
-    """Персональный user_org_access на test_org (без primary org_id) тоже штат."""
+async def test_org_staff_excludes_personal_org_access(db_session, test_org, test_org_b, make_user):
+    """Фикс 15.10.2026 (баг прода, служебка «ДНР_Правильная»): персональный
+    user_org_access на test_org (без primary org_id/membership) — это ДОСТУП,
+    не штат. Кейс владельца: Новичкова, primary org_id=ВСКС, с UOA
+    role='employee' на Донецкое отделение — не его сотрудник."""
     u = await make_user(role="employee", org_id=test_org_b.id)
     db_session.add(UserOrgAccess(user_id=u.id, org_id=test_org.id, role="employee"))
     await db_session.commit()
 
     staff = await org_staff_user_ids(db_session, test_org.id)
-    assert u.id in staff
+    assert u.id not in staff
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +131,26 @@ async def test_org_admin_of_other_org_cannot_pick_colleague_but_can_pick_self(
     assert colleague.id not in candidates
     # foreign_admin сам не в штате test_org — себя выбрать тоже нельзя
     assert foreign_admin.id not in candidates
+
+
+@pytest.mark.asyncio
+async def test_org_admin_cannot_pick_uoa_only_user_not_in_staff(
+    db_session, test_org, test_org_b, test_subsidy, make_user,
+):
+    """Баг прода 15.10.2026 (служебка «ДНР_Правильная»): пользователь с
+    primary org_id в ДРУГОЙ орг и персональным user_org_access.role='employee'
+    на орг субсидии — НЕ в штате, org_admin не должен видеть его в кандидатах
+    на инициатора (это и есть кейс Новичковой)."""
+    admin = await make_user(role="org_admin", org_id=test_org.id)
+    uoa_only = await make_user(role="employee", org_id=test_org_b.id)
+    db_session.add(UserOrgAccess(user_id=uoa_only.id, org_id=test_org.id, role="employee"))
+    await db_session.commit()
+
+    candidates = await initiator_candidate_ids(db_session, admin, test_subsidy)
+    assert uoa_only.id not in candidates
+
+    staff = await org_staff_user_ids(db_session, test_org.id)
+    assert uoa_only.id not in staff
 
 
 @pytest.mark.asyncio
@@ -295,6 +319,23 @@ async def test_i_can_act_for_with_subsidy_id_returns_staff_for_org_admin(
     assert resp.status_code == 200, resp.text
     ids = {u["id"] for u in resp.json()}
     assert colleague.id in ids
+
+
+@pytest.mark.asyncio
+async def test_list_users_by_org_id_still_includes_personal_access(
+    client, db_session, test_org, test_org_b, make_user, auth_headers,
+):
+    """GET /api/users/?org_id= — поведение НЕ меняется фиксом 15.10.2026: этот
+    список шире, чем «штат» инициатора, и по-прежнему включает персональный
+    user_org_access (штат ∪ доступ), в отличие от initiator_candidate_ids."""
+    uoa_only = await make_user(role="employee", org_id=test_org_b.id)
+    db_session.add(UserOrgAccess(user_id=uoa_only.id, org_id=test_org.id, role="employee"))
+    await db_session.commit()
+
+    resp = await client.get(f"/api/users/?org_id={test_org.id}", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    ids = {u["id"] for u in resp.json()}
+    assert uoa_only.id in ids
 
 
 @pytest.mark.asyncio

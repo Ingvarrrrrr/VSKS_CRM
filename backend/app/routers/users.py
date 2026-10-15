@@ -111,12 +111,23 @@ async def list_users(
                 target_org_ids.update(inn_org_ids)
     if explicit_assign_mode:
         from sqlalchemy import or_
-        # Правило №6: «штат» орги — ОДНА формула (primary org_id ИЛИ членство
-        # user_organizations ИЛИ персональный user_org_access), вынесена в
-        # app.services.service_note_initiators._staff_conditions. Тот же
-        # расчёт используется для пула инициаторов служебной записки
-        # (initiator_candidate_ids) — вторая копия формулы не пишется.
-        from app.services.service_note_initiators import _staff_conditions as _org_member_conds
+        # Правило №6: этот список (используют пикеры исполнителей и т.п.) —
+        # штат орги (primary org_id ИЛИ членство user_organizations) ОБЪЕДИНЁН
+        # с персональным доступом (user_org_access). Обе формулы вынесены в
+        # app.services.service_note_initiators (_staff_conditions +
+        # _org_access_conditions) — вторая копия не пишется (Правило №6).
+        # Для инициатора служебной записки (initiator_candidate_ids) «штат»
+        # УЖЕ (с 15.10.2026) НЕ включает user_org_access — там это другая,
+        # более узкая выборка через ту же _staff_conditions без доступа.
+        from app.services.service_note_initiators import (
+            _staff_conditions,
+            _org_access_conditions,
+        )
+
+        def _org_member_conds(ids):
+            if not ids:
+                return []
+            return _staff_conditions(ids) + _org_access_conditions(ids)
 
         if subsidy_id is not None:
             # СТРОГО по субсидии (для всех ролей, включая super): исполнителями и

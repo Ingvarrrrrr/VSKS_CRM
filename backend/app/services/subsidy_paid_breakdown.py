@@ -32,6 +32,13 @@ app.services.dashboard_type_split.reconcile_split(raw, target) — ТУ ЖЕ
 №6 — вторая функция округления долей здесь не заводится). Сумма
 goods+services+unspecified конструктивно равна declared/confirmed субсидии
 ровно, без дробных копеек.
+
+ИЗМЕНЕНО (15.10.2026, план abstract-noodling-pelican.md, п.4 техчасти) —
+paid_breakdown_rows() вынесена как ЕДИНСТВЕННОЕ место, где читаются сами
+закупки с оплатой: paid_breakdown_by_subsidy (карточка) и построчная
+расшифровка GET /api/dashboard/metric-drill?metric=paid_declared|paid_confirmed
+(app.services.metric_drill_rows) — ОБА агрегируют эти же строки, не считают
+declared/confirmed закупки заново (ПРАВИЛО №6, Σ строк окна == карточке).
 """
 from __future__ import annotations
 
@@ -55,19 +62,13 @@ def _zero3() -> List[Decimal]:
     return [Decimal(0), Decimal(0), Decimal(0)]
 
 
-async def paid_breakdown_by_subsidy(db: AsyncSession, subsidy_ids: List[int]) -> Dict[int, dict]:
-    """{subsidy_id: {declared, confirmed, declared_by_kind, confirmed_by_kind}}
-
-    declared — Σ «оплачено по отметке сотрудников» (payment_amount_declared +
-    payment_amount, та же сумма, что paid_marked в дереве ФЭО — отметка
-    включает И неподтверждённое, И уже подтверждённое, подтверждение не
-    «отменяет» то, что человек когда-то отметил).
-    confirmed — Σ «подтверждено выпиской» (payment_amount, ТОЛЬКО
-    confirmed_by_statement=True)."""
-    result: Dict[int, dict] = {}
-    if not subsidy_ids:
-        return result
-
+async def paid_breakdown_rows(db: AsyncSession, subsidy_ids: List[int]) -> List[dict]:
+    """[{"purchase_id","subsidy_id","declared","confirmed","items"}] — ОДНО
+    место, где читаются закупки с оплатой (отметка/подтверждение) для
+    карточки «Оплачено» (см. докстринг модуля за формулой declared/confirmed
+    и областью агрегации). `items` — [(item_type, total_price), ...] той же
+    закупки, нужны читателю для разбивки по товар/услуга (purchase_type_shares),
+    второй запрос за ними не делается."""
     stmt = (
         select(
             Purchase.id.label("purchase_id"),
@@ -83,7 +84,7 @@ async def paid_breakdown_by_subsidy(db: AsyncSession, subsidy_ids: List[int]) ->
     )
     purchases = (await db.execute(stmt)).all()
     if not purchases:
-        return result
+        return []
 
     purchase_ids = [r.purchase_id for r in purchases]
     items_q = (
@@ -94,23 +95,54 @@ async def paid_breakdown_by_subsidy(db: AsyncSession, subsidy_ids: List[int]) ->
     for row in (await db.execute(items_q)).all():
         items_by_purchase.setdefault(row.purchase_id, []).append(row)
 
-    # totals[subsidy_id] = (declared_total, confirmed_total, raw_declared[3], raw_confirmed[3])
-    totals: Dict[int, dict] = {}
+    rows_out: List[dict] = []
     for r in purchases:
         declared = Decimal(str(r.payment_amount or 0)) + Decimal(str(r.payment_amount_declared or 0))
         confirmed = Decimal(str(r.payment_amount or 0))
         if declared == 0 and confirmed == 0:
             continue
+        rows_out.append({
+            "purchase_id": r.purchase_id,
+            "subsidy_id": r.subsidy_id,
+            "declared": declared,
+            "confirmed": confirmed,
+            "items": items_by_purchase.get(r.purchase_id, []),
+        })
+    return rows_out
 
-        t = totals.setdefault(r.subsidy_id, {
+
+async def paid_breakdown_by_subsidy(db: AsyncSession, subsidy_ids: List[int]) -> Dict[int, dict]:
+    """{subsidy_id: {declared, confirmed, declared_by_kind, confirmed_by_kind}}
+
+    declared — Σ «оплачено по отметке сотрудников» (payment_amount_declared +
+    payment_amount, та же сумма, что paid_marked в дереве ФЭО — отметка
+    включает И неподтверждённое, И уже подтверждённое, подтверждение не
+    «отменяет» то, что человек когда-то отметил).
+    confirmed — Σ «подтверждено выпиской» (payment_amount, ТОЛЬКО
+    confirmed_by_statement=True).
+
+    ПРАВИЛО №6 — чистая агрегация paid_breakdown_rows() по subsidy_id,
+    declared/confirmed ОДНОЙ закупки считается ТОЛЬКО там."""
+    result: Dict[int, dict] = {}
+    if not subsidy_ids:
+        return result
+
+    rows = await paid_breakdown_rows(db, subsidy_ids)
+    if not rows:
+        return result
+
+    # totals[subsidy_id] = (declared_total, confirmed_total, raw_declared[3], raw_confirmed[3])
+    totals: Dict[int, dict] = {}
+    for r in rows:
+        declared, confirmed = r["declared"], r["confirmed"]
+        t = totals.setdefault(r["subsidy_id"], {
             "declared": Decimal(0), "confirmed": Decimal(0),
             "raw_declared": _zero3(), "raw_confirmed": _zero3(),
         })
         t["declared"] += declared
         t["confirmed"] += confirmed
 
-        items = items_by_purchase.get(r.purchase_id, [])
-        shares: TypeShares = purchase_type_shares(items)
+        shares: TypeShares = purchase_type_shares(r["items"])
         for acc, amt in ((t["raw_declared"], declared), (t["raw_confirmed"], confirmed)):
             acc[0] += amt * shares.goods
             acc[1] += amt * shares.services

@@ -45,12 +45,26 @@ not_committed_raw_rows — ПОСТРОЧНАЯ версия (владелец, 
 теперь просто суммирует not_committed_raw_rows по need_level/kind, поэтому
 Σ строк диалога ВСЕГДА равна карточке «Можно перераспределить» (товары/
 услуги) побайтово. Строки с |raw| < 0.005 не возвращаются («остаток 0» —
-шум списка, не ошибка расчёта). Для позиций, по которым существует дочерний
-заказ рамочного договора в статусе 'contracted' (тот же предикат, что
-app.services.stage_cumulative.contracted_not_ordered_by_subsidy — договор
-заключён, заказ как отдельная закупка ещё не оформлен), ставится флаг
-`contracted_not_ordered=True` — фронт показывает отдельную подпись «нужности»
-вместо хотелось бы/скорее всего, вторая сумма не считается.
+шум списка, не ошибка расчёта).
+
+ИЗМЕНЕНО (🟡/🟢/🔵 правки плана abstract-noodling-pelican.md, 15.10.2026, п.C):
+committed_by_planned_item вызывается с month_aware=True — заказ рамочного
+договора, чей месяц УЖЕ НАЧАЛСЯ, теперь committed (см. докстринг
+committed_status_predicate), поэтому его доля автоматически уходит из `raw`
+сюда НЕ попадая. Для позиций, по которым существует ещё НЕ начавшийся
+(будущий месяц) заказ рамочного договора — app.services.monthly_future_payments.
+framework_order_month_rows, источник 'framework_order', month > текущего —
+ставится флаг `monthly_future_not_started=True` (было `contracted_not_ordered`,
+переименовано по плану): not_committed_raw_by_subsidy ПОЛНОСТЬЮ исключает
+такие строки из nice_raw/likely_raw/by_kind (их raw уходит в отдельную сумму
+monthly_future_not_started_raw — строка 4 карточки «Можно перераспределить»,
+«ещё уйдёт помесячно», см. docstring not_committed_raw_by_subsidy) — ТАК
+ИНВАРИАНТ redistributable == not_planned + nice + likely + monthly_future_not_started
+держится АЛГЕБРАИЧЕСКИ (Σ raw не меняется, просто одни строки идут в
+отдельную сумму вместо nice/likely), а не сверкой двух независимых источников
+(raw плановой позиции vs. effective_amount_expr заказа — эти две суммы в
+общем случае НЕ обязаны совпадать копейка-в-копейку при расхождении плановой
+цены и цены заказа, см. test_monthly_future_payments.py).
 """
 from typing import Optional
 
@@ -87,12 +101,15 @@ def _category_path(cat_id: Optional[int], cats: dict[int, dict]) -> str:
     return " › ".join(reversed(names))
 
 
-async def not_committed_raw_rows(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, list[dict]]:
+async def not_committed_raw_rows(
+    db: AsyncSession, subsidy_ids: list[int], *, today=None,
+) -> dict[int, list[dict]]:
     """{subsidy_id: [{"planned_item_id","name","feo_category_id","category_path",
-    "kind","need_level","contribution","committed","raw","contracted_not_ordered"}]}
+    "kind","need_level","contribution","committed","raw","monthly_future_not_started"}]}
     — см. докстринг модуля за формулой `raw` и условием фильтрации нулевых
     строк. `need_level` — 'nice_to_have'/'likely' (app.services.plan_need_level),
-    нормализовано normalize_need_level."""
+    нормализовано normalize_need_level. `today` — параметр для тестов
+    (по умолчанию date.today())."""
     result: dict[int, list[dict]] = {sid: [] for sid in subsidy_ids}
     if not subsidy_ids:
         return result
@@ -121,29 +138,39 @@ async def not_committed_raw_rows(db: AsyncSession, subsidy_ids: list[int]) -> di
 
     item_ids = [r.id for r in rows]
     contrib = await planned_item_contributions(db, cat_ids)
-    committed_map = await committed_by_planned_item(db, item_ids)
+    # month_aware=True (🟢/🔵 правки, п.B/C) — заказ рамочного договора, чей
+    # месяц уже начался, тоже committed — см. докстринг committed_by_planned_item.
+    committed_map = await committed_by_planned_item(db, item_ids, month_aware=True)
     # payroll-категории (своя или по предку, план .planning/quick/2026-10-07-
     # dnr-feo-cards/PLAN.md шаг 2) — ОДИН резолвер, ПРАВИЛО №6.
     from app.services.feo_payroll import payroll_category_ids
     _payroll_ids = await payroll_category_ids(db, subsidy_ids)
 
-    # «Договор заключён, заказ ещё не создан» — ТОТ ЖЕ предикат, что
-    # stage_cumulative.contracted_not_ordered_by_subsidy (status='contracted',
-    # дочерний заказ рамочного договора, не остановлена), здесь — просто
-    # множество planned_item_id, чьи заказы под него попадают (не вторая
-    # сумма, флаг для отображения).
+    # «Ещё уйдёт помесячно, не начато» — ОДИН источник правила, см. докстринг
+    # модуля: app.services.monthly_future_payments.framework_order_month_rows,
+    # ТОЛЬКО source='framework_order' и ТОЛЬКО месяцы ПОСЛЕ текущего (started-
+    # месяцы уже committed выше, в committed_by_planned_item). Здесь — просто
+    # множество planned_item_id, чьи заказы под него попадают (флаг для
+    # отображения и для исключения из nice/likely Σ ниже, не вторая сумма).
+    from datetime import date as _date
+    from app.services.monthly_future_payments import framework_order_month_rows as _fw_rows_fn
+
     flagged_ids: set = set()
     if item_ids:
-        flag_rows = (await db.execute(
-            select(PurchaseItem.feo_planned_item_id)
-            .join(Purchase, Purchase.id == PurchaseItem.purchase_id)
-            .where(Purchase.status == "contracted")
-            .where(Purchase.parent_purchase_id.isnot(None))
-            .where(Purchase.stopped_at.is_(None))
-            .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
-            .distinct()
-        )).all()
-        flagged_ids = {r.feo_planned_item_id for r in flag_rows}
+        _today = today or _date.today()
+        _cur_month = _date(_today.year, _today.month, 1)
+        fw_rows = await _fw_rows_fn(db, subsidy_ids)
+        future_purchase_ids = {
+            r["purchase_id"] for r in fw_rows if r["month"] is not None and r["month"] > _cur_month
+        }
+        if future_purchase_ids:
+            flag_rows = (await db.execute(
+                select(PurchaseItem.feo_planned_item_id)
+                .where(PurchaseItem.purchase_id.in_(future_purchase_ids))
+                .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
+                .distinct()
+            )).all()
+            flagged_ids = {r.feo_planned_item_id for r in flag_rows}
 
     for r in rows:
         info = contrib.get(r.id)
@@ -166,34 +193,51 @@ async def not_committed_raw_rows(db: AsyncSession, subsidy_ids: list[int]) -> di
             "contribution": info["amount"],
             "committed": committed_amt,
             "raw": raw,
-            "contracted_not_ordered": r.id in flagged_ids,
+            "monthly_future_not_started": r.id in flagged_ids,
         })
     return result
 
 
-async def not_committed_raw_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
+async def not_committed_raw_by_subsidy(
+    db: AsyncSession, subsidy_ids: list[int], *, today=None,
+) -> dict[int, dict]:
     """{subsidy_id: {"nice_raw": float, "likely_raw": float, "by_kind": {goods,
-    services, unspecified}}} — Σ not_committed_raw_rows по need_level/kind
-    (ПРАВИЛО №6 — raw одной позиции считается ТОЛЬКО там, эта функция —
-    чистая агрегация, не вторая формула)."""
+    services, unspecified}, "monthly_future_not_started_raw": float}} — Σ
+    not_committed_raw_rows по need_level/kind (ПРАВИЛО №6 — raw одной позиции
+    считается ТОЛЬКО там, эта функция — чистая агрегация, не вторая формула).
+
+    Строки с monthly_future_not_started=True исключены из nice_raw/likely_raw
+    (их raw идёт в monthly_future_not_started_raw — строка 4 карточки «Можно
+    перераспределить», держит инвариант redistributable == not_planned + nice
+    + likely + monthly_future_not_started АЛГЕБРАИЧЕСКИ), НО остаются в
+    `by_kind` (находка координатора 06.10.2026, не отменена: «Можно
+    перераспределить по типам» — отдельная раскладка ВСЕЙ суммы redistributable
+    по товар/услуга, она не делится на need_level/«ещё уйдёт» — иначе Σ
+    by_kind разошлась бы с redistributable, см. test_redistributable_drill.py)."""
     result: dict[int, dict] = {
-        sid: {"nice_raw": 0.0, "likely_raw": 0.0, "by_kind": _empty_kind_bucket()}
+        sid: {
+            "nice_raw": 0.0, "likely_raw": 0.0, "by_kind": _empty_kind_bucket(),
+            "monthly_future_not_started_raw": 0.0,
+        }
         for sid in subsidy_ids
     }
     if not subsidy_ids:
         return result
 
-    rows_by_sid = await not_committed_raw_rows(db, subsidy_ids)
+    rows_by_sid = await not_committed_raw_rows(db, subsidy_ids, today=today)
     for sid, rows in rows_by_sid.items():
         d = result.get(sid)
         if d is None:
             continue
         for row in rows:
+            d["by_kind"][row["kind"]] += row["raw"]
+            if row["monthly_future_not_started"]:
+                d["monthly_future_not_started_raw"] += row["raw"]
+                continue
             if row["need_level"] == NEED_LEVEL_NICE_TO_HAVE:
                 d["nice_raw"] += row["raw"]
             else:
                 d["likely_raw"] += row["raw"]
-            d["by_kind"][row["kind"]] += row["raw"]
     return result
 
 

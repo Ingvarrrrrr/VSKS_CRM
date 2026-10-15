@@ -129,20 +129,18 @@ async def test_over_plan_categories_empty_when_within_plan(db_session, test_org)
 
 
 @pytest.mark.asyncio
-async def test_contracted_not_ordered_is_carved_out_of_likely_not_added_on_top(db_session, test_org):
-    """Находка координатора (06.10.2026, ДВА исправления подряд): сначала
-    «ежемесячные по договорам» искали через is_monthly_payment-график — на
-    проде id=89 разрыв «Ведётся работа»−«Заказано» целиком состоял из
-    ДОЧЕРНИХ ЗАКАЗОВ РАМОЧНЫХ ДОГОВОРОВ в статусе 'contracted' (договор уже
-    заключён, сам заказ как закупка ещё не оформлен) — is_monthly_payment=
-    False у всех. committed_status_predicate НЕ считает 'contracted' для
-    framework-закупок (FRAMEWORK_COMMITTED_STATUSES={ordered,delivered,paid}),
-    поэтому плановая позиция такого заказа целиком остаётся «не
-    законтрактовано» в not_committed_raw_by_subsidy. contracted_not_ordered
-    обязан быть ВЫРЕЗКОЙ из not_committed_likely/not_committed_nice (по
-    need_level заказа), а не добавкой поверх, и redistributable_by_kind НЕ
-    трогается (товары/услуги уже включают эту сумму — по заданию
-    координатора).
+async def test_monthly_future_not_started_is_carved_out_of_likely_not_added_on_top(db_session, test_org):
+    """ИЗМЕНЕНО (15.10.2026, план abstract-noodling-pelican.md, п.C) — поле
+    переименовано contracted_not_ordered → monthly_future_not_started,
+    источник переехал на app.services.monthly_future_payments. Сценарий:
+    рамочный договор + дочерний заказ 'contracted' БЕЗ planned_payment_month/
+    service_start_date — месяц определяется по порядку номеров (единственный
+    заказ договора → декабрь года субсидии, 2026, что на дату прогона теста
+    ещё НЕ наступило — заказ остаётся «ещё уйдёт помесячно, не начато»).
+    monthly_future_not_started обязан быть ВЫРЕЗКОЙ из not_committed_likely/
+    not_committed_nice (по need_level заказа), а не добавкой поверх, и
+    redistributable_by_kind НЕ трогается (товары/услуги по-прежнему включают
+    эту сумму — не второй расчёт, см. докстринг not_committed_raw_by_subsidy).
 
     Бюджет субсидии = плану (250 000), задан явно (ОТМЕНЕНО решение владельца
     06.10.2026 «бюджет = план без ФЭО» — владелец 07.10.2026, план
@@ -186,20 +184,16 @@ async def test_contracted_not_ordered_is_carved_out_of_likely_not_added_on_top(d
     await db_session.commit()
 
     raw_map = await not_committed_raw_by_subsidy(db_session, [subsidy.id])
-    likely_raw = raw_map[subsidy.id]["likely_raw"]
-    assert likely_raw == pytest.approx(250_000.0)  # 'contracted' не считается committed для framework
-
-    contracted_total = await contracted_not_ordered_by_subsidy(db_session, subsidy_ids=[subsidy.id])
-    assert contracted_total[subsidy.id] == pytest.approx(250_000.0)
-    split = await contracted_not_ordered_need_level_split(db_session, subsidy_ids=[subsidy.id])
-    assert split[subsidy.id]["nice"] == pytest.approx(0.0)
-    assert split[subsidy.id]["likely"] == pytest.approx(250_000.0)
+    # ИЗМЕНЕНО: месяц заказа (декабрь 2026) ещё не наступил — его raw ушёл
+    # ЦЕЛИКОМ в monthly_future_not_started_raw, likely_raw теперь 0.
+    assert raw_map[subsidy.id]["likely_raw"] == pytest.approx(0.0)
+    assert raw_map[subsidy.id]["monthly_future_not_started_raw"] == pytest.approx(250_000.0)
 
     summary = await subsidy_money_summary(db_session, [subsidy.id])
     row = summary[subsidy.id]
 
     assert row["redistributable_unplanned"] == pytest.approx(0.0)
-    assert row["contracted_not_ordered"] == pytest.approx(250_000.0)
+    assert row["monthly_future_not_started"] == pytest.approx(250_000.0)
     # Вырезка, не добавка: likely карточки = likely_raw МИНУС заказ целиком.
     assert row["not_committed_likely"] == pytest.approx(0.0)
     assert row["not_committed_nice"] == pytest.approx(0.0)
@@ -213,5 +207,5 @@ async def test_contracted_not_ordered_is_carved_out_of_likely_not_added_on_top(d
 
     # Инвариант карточки: 4 строки складываются в итог ровно.
     assert row["redistributable_unplanned"] + row["not_committed_nice"] \
-        + row["not_committed_likely"] + row["contracted_not_ordered"] \
+        + row["not_committed_likely"] + row["monthly_future_not_started"] \
         == pytest.approx(row["redistributable"])

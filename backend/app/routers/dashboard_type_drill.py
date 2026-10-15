@@ -41,11 +41,15 @@ from app.services.dashboard_type_split import STAGE_KEYS, compute_type_split_det
 # источник остатка, что и карточка (delivered_unpaid_residual_by_subsidy),
 # см. докстринг delivered_unpaid_residual.py.
 from app.services.delivered_unpaid_residual import delivered_unpaid_residual_detail
+from app.services.purchase_drill_text import purchase_drill_texts
 
 router = APIRouter(prefix="/type-drill", tags=["dashboard"])
 
 _STAGE_REGEX = "^(" + "|".join(STAGE_KEYS) + ")$"
-_KIND_REGEX = "^(goods|services|unspecified)$"
+# kind=all (15.10.2026, план abstract-noodling-pelican.md, п.1 техчасти) —
+# карточка стадии («Ведётся работа»/«Заказано»/…) нажимается ЦЕЛИКОМ, без
+# деления на товары/услуги: все строки стадии, без фильтра по kind.
+_KIND_REGEX = "^(goods|services|unspecified|all)$"
 
 
 def _parse_subsidy_ids(raw: Optional[str]) -> Optional[set]:
@@ -106,7 +110,7 @@ async def dashboard_type_drill(
             db, apply_filter=_purchase_filter, use_sids=True,
             visible_subsidy_ids=visible_subsidy_ids, org_ids=org_ids, stage=stage,
         )
-    matched = [r for r in detail["rows"] if r["kind"] == kind]
+    matched = detail["rows"] if kind == "all" else [r for r in detail["rows"] if r["kind"] == kind]
 
     purchase_ids = {r["purchase_id"] for r in matched if r["purchase_id"] is not None}
     contract_ids = {
@@ -148,14 +152,30 @@ async def dashboard_type_drill(
             )).scalars().all()
         }
 
+    # items_text/supplier — ОДИН общий хелпер (ПРАВИЛО №6, план abstract-
+    # noodling-pelican.md п.1/6 техчасти), один запрос на ВЕСЬ список закупок.
+    drill_texts = await purchase_drill_texts(db, purchases_map.keys())
+    contractor_ids_for_contracts = {c.contractor_id for c in contracts_map.values() if c.contractor_id}
+    contract_contractor_names = {}
+    if contractor_ids_for_contracts:
+        from app.models.contractor import Contractor
+        contract_contractor_names = {
+            c.id: c.name for c in (await db.execute(
+                select(Contractor).where(Contractor.id.in_(contractor_ids_for_contracts))
+            )).scalars().all()
+        }
+
     rows_out = []
     for r in matched:
         p = purchases_map.get(r["purchase_id"]) if r["purchase_id"] is not None else None
         if p is not None:
+            text = drill_texts.get(p.id, {})
             row_out = {
                 "purchase_id": p.id,
                 "purchase_number": p.purchase_number if p.purchase_number is not None else p.id,
                 "subject": p.subject or "",
+                "supplier": text.get("supplier"),
+                "items_text": text.get("items_text", ""),
                 "status": p.status,
                 "subsidy_id": p.subsidy_id,
                 "subsidy_name": subsidy_names.get(p.subsidy_id),
@@ -171,6 +191,8 @@ async def dashboard_type_drill(
                 "purchase_id": None,
                 "purchase_number": None,
                 "subject": (c.subject if c and c.subject else None) or (f"Договор {c.number}" if c else "— (без закупки)"),
+                "supplier": contract_contractor_names.get(c.contractor_id) if c else None,
+                "items_text": "",
                 "status": c.status if c else None,
                 "subsidy_id": c.subsidy_id if c else None,
                 "subsidy_name": subsidy_names.get(c.subsidy_id) if c else None,

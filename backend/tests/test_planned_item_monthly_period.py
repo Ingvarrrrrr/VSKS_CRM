@@ -6,26 +6,16 @@
 Проверяем compute_monthly_schedule (app/services/feo_monthly_schedule.py,
 ЕДИНСТВЕННАЯ формула — используется и при сохранении/_apply_payment_fields,
 и предпросмотром monthly-schedule-preview, и cash-flow-разворачиванием
-plan_cashflow.expand_planned_item) на всех узлах, перечисленных владельцем:
-  - ровные 6 месяцев (без остатка);
-  - 6 месяцев и 20 дней (остаток считается по длине ИМЕННО того месяца, куда
-    он попадает — не усреднённо и не по соседнему месяцу);
-  - период внутри одного месяца (0 полных месяцев, весь срок — остаток);
-  - февраль невисокосный (28 дней) и високосный (29 дней) — один и тот же
-    15-дневный остаток даёт РАЗНУЮ сумму, потому что делитель разный;
-  - легаси-позиция: months_count заполнен, monthly_end_date НЕ задана —
-    считается по-старому (monthly_amount × months_count, без остатка).
+plan_cashflow.expand_planned_item).
 
-Плюс сквозная проверка через _apply_payment_fields (app/routers/
-feo_planned_items.py) и создание/правку через сам роутер (POST/PUT), чтобы
-удостовериться, что «Кол-во» больше не путается со сроком (владелец, п.2:
-«двоится Количество») — monthly-позиция всегда сохраняет quantity=1,
-независимо от того, что прислали в payload.
-
-Чистые функции (compute_monthly_schedule/_apply_payment_fields) не требуют
-настоящей БД — узлы ниже не используют db_session/test_org (в отличие от
-test_planned_item_unit_price.py, где assert_tz_not_over_plan делает
-db.get(...) и требует реальный ORM-инстанс с id)."""
+ИЗМЕНЕНО (🔵 правка 3 плана abstract-noodling-pelican.md, 15.10.2026, п.А):
+период считается КАЛЕНДАРНЫМ правилом (calendar_month_payments) — отчётный
+период = календарный месяц до последнего числа, первый/последний неполные
+месяцы пропорциональны ДНЯМ ЭТОГО периода В ЭТОМ месяце. Старое правило
+«месяц от даты до той же даты» (15.01→15.02) удалено — числа ниже посчитаны
+НОВОЙ формулой (см. test_monthly_future_payments.py::test_calendar_month_payments_*
+за самим calendar_month_payments, этот файл проверяет обёртку
+compute_monthly_schedule/_apply_payment_fields поверх неё)."""
 from datetime import date
 from decimal import Decimal
 
@@ -37,46 +27,42 @@ from app.schemas.schemas import FeoPlannedItemCreate
 
 
 # ---------------------------------------------------------------------------
-# Узел 1 — ровно 6 месяцев, без остатка.
+# Узел 1 — 15.01–15.07: январь (17 дн. из 31) + 5 полных месяцев + июль (15 дн. из 31).
 # ---------------------------------------------------------------------------
 
-def test_exact_six_months_no_remainder():
+def test_calendar_period_with_partial_start_and_end():
     schedule = compute_monthly_schedule(
         start_date=date(2026, 1, 15), end_date=date(2026, 7, 15),
         months_count=None, monthly_amount=Decimal("1000"),
     )
-    assert schedule.full_months == 6
-    assert schedule.extra_days == 0
-    assert schedule.extra_amount is None
-    assert schedule.total == Decimal("6000.00")
-    assert schedule.label == "6 мес."
-    assert schedule.effective_months_count == 6
+    assert schedule.full_months == 5
+    assert schedule.extra_days == 32  # 17 (январь) + 15 (июль)
+    assert schedule.total == Decimal("6032.26")  # 1000*17/31 + 5*1000 + 1000*15/31
+    assert schedule.label == "январь 17 дн. из 31 · 5 полных мес. · июль 15 дн. из 31"
+    assert schedule.effective_months_count == 7  # число календарных платежей, не только полных
 
 
 # ---------------------------------------------------------------------------
-# Узел 2 — 6 месяцев и 20 дней. Остаток (16 июля — 4 августа) считается по
-# длине ИЮЛЯ (31 день) — календарный месяц, начинающийся на следующий день
-# после конца последнего полного месяца (15 июля).
+# Узел 2 — 15.01–04.08: январь (17 дн. из 31) + 6 полных месяцев + август (4 дн. из 31).
 # ---------------------------------------------------------------------------
 
-def test_six_months_and_twenty_days_remainder_uses_that_months_length():
+def test_period_with_partial_start_and_short_end():
     schedule = compute_monthly_schedule(
         start_date=date(2026, 1, 15), end_date=date(2026, 8, 4),
         months_count=None, monthly_amount=Decimal("3100"),
     )
     assert schedule.full_months == 6
-    assert schedule.extra_days == 20
-    # 3100 / 31 (дней в июле) * 20 = 2000.00 ровно
-    assert schedule.extra_amount == Decimal("2000.00")
-    assert schedule.total == Decimal("20600.00")  # 6*3100 + 2000
-    assert schedule.label == "6 мес. 20 дн."
-    assert schedule.remainder_start == date(2026, 7, 16)
+    assert schedule.extra_days == 21  # 17 (январь) + 4 (август)
+    assert schedule.extra_amount == Decimal("2100.00")  # 3100/31*17 + 3100/31*4 = 1700+400
+    assert schedule.total == Decimal("20700.00")  # 1700 + 6*3100 + 400
+    assert schedule.label == "январь 17 дн. из 31 · 6 полных мес. · август 4 дн. из 31"
+    assert schedule.effective_months_count == 8
 
 
 # ---------------------------------------------------------------------------
-# Узел 3 — период внутри одного месяца (0 полных месяцев). Остаток обязан
-# считаться по длине ТОГО ЖЕ месяца (марта, 31 день), а не следующего —
-# «в том месяце, к которому относится остаток», а не по соседнему.
+# Узел 3 — период внутри одного месяца (0 полных месяцев). Остаток считается
+# по длине ТОГО ЖЕ месяца (марта, 31 день) — «в том месяце, к которому
+# относится остаток», а не по соседнему.
 # ---------------------------------------------------------------------------
 
 def test_period_within_single_month():
@@ -85,44 +71,50 @@ def test_period_within_single_month():
         months_count=None, monthly_amount=Decimal("3100"),
     )
     assert schedule.full_months == 0
-    assert schedule.extra_days == 15
-    # 3100 / 31 (дней в марте, том же месяце, где лежит весь остаток) * 15 = 1500.00
-    assert schedule.extra_amount == Decimal("1500.00")
-    assert schedule.total == Decimal("1500.00")
-    assert schedule.label == "15 дн."
+    assert schedule.extra_days == 16  # 05.03..20.03 включительно
+    # 3100 / 31 (дней в марте) * 16 = 1600.00
+    assert schedule.extra_amount == Decimal("1600.00")
+    assert schedule.total == Decimal("1600.00")
+    assert schedule.label == "март 16 дн. из 31"
+    assert schedule.effective_months_count == 1
 
 
 # ---------------------------------------------------------------------------
-# Узел 4 — февраль невисокосный (28 дней) и високосный (29 дней): один и тот
-# же 15-дневный остаток при одинаковой посуточной цене (100 ₽/день) даёт
-# РАЗНУЮ сумму — 2800 vs 2900 — потому что делитель (число дней в феврале)
-# разный. Если бы остаток считался усреднённо, суммы совпали бы.
+# Узел 4/5 — период декабрь→февраль, захватывающий невисокосный и високосный
+# февраль: день остатка в декабре (1 дн. из 31) одинаков, но дневная ставка в
+# феврале (15 дн.) разная — 2800/28=100 ₽/день vs 2900/29=100 ₽/день — РАЗНЫЕ
+# monthly_amount подобраны так, чтобы дневная ставка в феврале совпала (100
+# ₽/день), демонстрируя, что делитель — именно число дней ИМЕННО этого месяца.
 # ---------------------------------------------------------------------------
 
-def test_february_non_leap_28_days():
+def test_period_spanning_non_leap_february():
     schedule = compute_monthly_schedule(
         start_date=date(2026, 12, 31), end_date=date(2027, 2, 15),
         months_count=None, monthly_amount=Decimal("2800"),
     )
-    assert schedule.full_months == 1  # 31.12 -> 31.01
-    assert schedule.extra_days == 15  # 31.01 -> 15.02
-    assert schedule.extra_amount == Decimal("1500.00")  # 2800/28*15
-    assert schedule.total == Decimal("4300.00")
+    assert schedule.full_months == 1  # январь целиком
+    assert schedule.extra_days == 16  # 1 (31.12) + 15 (01.02-15.02)
+    # декабрь: 2800/31*1 = 90.32; февраль (28 дн.): 2800/28*15 = 1500.00
+    assert schedule.extra_amount == Decimal("1590.32")
+    assert schedule.total == Decimal("4390.32")  # 90.32 + 2800 + 1500.00
+    assert schedule.label == "декабрь 1 дн. из 31 · 1 полный мес. · февраль 15 дн. из 28"
 
 
-def test_february_leap_29_days():
+def test_period_spanning_leap_february():
     schedule = compute_monthly_schedule(
         start_date=date(2027, 12, 31), end_date=date(2028, 2, 15),
         months_count=None, monthly_amount=Decimal("2900"),
     )
     assert schedule.full_months == 1
-    assert schedule.extra_days == 15
-    assert schedule.extra_amount == Decimal("1500.00")  # 2900/29*15 — тот же день, другая сумма
-    assert schedule.total == Decimal("4400.00")
+    assert schedule.extra_days == 16
+    # декабрь: 2900/31*1 = 93.55; февраль (29 дн., високосный): 2900/29*15 = 1500.00
+    assert schedule.extra_amount == Decimal("1593.55")
+    assert schedule.total == Decimal("4493.55")  # 93.55 + 2900 + 1500.00 — отличается от non-leap теста
+    assert schedule.label == "декабрь 1 дн. из 31 · 1 полный мес. · февраль 15 дн. из 29"
 
 
 # ---------------------------------------------------------------------------
-# Узел 5 — легаси: months_count заполнен, monthly_end_date НЕ задана —
+# Узел 6 — легаси: months_count заполнен, monthly_end_date НЕ задана —
 # продолжает считаться по старой формуле (monthly_amount × months_count),
 # без остатка дней. «Не сломай старые позиции».
 # ---------------------------------------------------------------------------
@@ -150,7 +142,7 @@ def test_legacy_months_count_fractional_input_rejected_by_schema():
 
 
 # ---------------------------------------------------------------------------
-# Узел 6 — сквозь _apply_payment_fields: сумма позиции при сохранении = то же
+# Узел 7 — сквозь _apply_payment_fields: сумма позиции при сохранении = то же
 # число, что вернула бы compute_monthly_schedule напрямую (единственная
 # формула, Правило №6), и «Кол-во» принудительно 1 для monthly (владелец,
 # п.2 «двоится Количество») — даже если в payload прислали другое quantity.
@@ -186,8 +178,8 @@ def test_apply_payment_fields_uses_single_formula_and_forces_quantity_one():
         start_date=date(2026, 1, 15), end_date=date(2026, 8, 4),
         months_count=None, monthly_amount=Decimal("3100"),
     )
-    assert item.amount == expected.total == Decimal("20600.00")
-    assert item.months_count == expected.effective_months_count == 6
+    assert item.amount == expected.total == Decimal("20700.00")
+    assert item.months_count == expected.effective_months_count == 8
     # Владелец, Волна 3, п.2: «Кол-во» ≠ месяцы — 6.66 из payload НЕ попадает
     # в quantity, monthly-позиция всегда фиксирует 1.
     assert item.quantity == Decimal("1")

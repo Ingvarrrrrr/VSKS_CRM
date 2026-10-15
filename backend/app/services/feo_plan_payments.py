@@ -34,26 +34,20 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 
 
-async def paid_consumption_by_category(
+async def paid_consumption_rows(
     db: AsyncSession,
     subsidy_ids: list[int],
     exclude_planned_item_linked: bool = False,
-) -> dict[int, dict]:
-    """{feo_category_id: {paid_marked, paid_confirmed}}
-
-    paid_marked — Σ (payment_amount + payment_amount_declared) закупки,
-    распределённая на позиции узла (= «Оплачено (по отметке)», включает
-    неподтверждённые ручные отметки).
-    paid_confirmed — Σ payment_amount (ТОЛЬКО подтверждённое выпиской),
-    та же пропорция.
-
-    exclude_planned_item_linked — та же семантика, что у
-    plan_consumption_by_category: True исключает строки с валидной привязкой
-    к активной FeoPlannedItem СВОЕЙ категории (уже учтены на уровне Ур.5,
-    не задваиваются здесь) — вызывается с True там же, где и over_consumption
-    (см. compute_feo_plan_tree._visit: own_consumed/own_over).
-    """
-    result: dict[int, dict] = {}
+) -> list[dict]:
+    """[{"purchase_id","subsidy_id","cat_id","paid_marked","paid_confirmed"}]
+    — ОДНО место, где платёж закупки распределяется на позиции/категории (см.
+    докстринг модуля за формулой пропорции). ПРАВИЛО №6: `paid_consumption_
+    by_category` (агрегат по категории, дерево ФЭО) и построчная расшифровка
+    карточки «Остаток субсидии» (dashboard_metric_drill.py, metric_drill_rows.
+    balance_drill) — ОБЕ читают ЭТИ строки, не считают ratio/paid_marked
+    заново. Одна строка на (PurchaseItem, его категория) — несколько строк
+    одной закупки суммируются её читателями по необходимости."""
+    result: list[dict] = []
     if not subsidy_ids:
         return result
 
@@ -79,6 +73,8 @@ async def paid_consumption_by_category(
 
     stmt = (
         select(
+            Purchase.id.label("purchase_id"),
+            Purchase.subsidy_id.label("subsidy_id"),
             cat_col.label("cat_id"),
             PurchaseItem.total_price.label("item_total"),
             _purchase_totals_sq.c.items_sum,
@@ -121,7 +117,43 @@ async def paid_consumption_by_category(
         marked = Decimal(str(r.payment_amount or 0)) + Decimal(str(r.payment_amount_declared or 0))
         confirmed = Decimal(str(r.payment_amount or 0))
 
-        d = result.setdefault(r.cat_id, {"paid_marked": 0.0, "paid_confirmed": 0.0})
-        d["paid_marked"] += float(marked * ratio)
-        d["paid_confirmed"] += float(confirmed * ratio)
+        result.append({
+            "purchase_id": r.purchase_id,
+            "subsidy_id": r.subsidy_id,
+            "cat_id": r.cat_id,
+            "paid_marked": float(marked * ratio),
+            "paid_confirmed": float(confirmed * ratio),
+        })
+    return result
+
+
+async def paid_consumption_by_category(
+    db: AsyncSession,
+    subsidy_ids: list[int],
+    exclude_planned_item_linked: bool = False,
+) -> dict[int, dict]:
+    """{feo_category_id: {paid_marked, paid_confirmed}}
+
+    paid_marked — Σ (payment_amount + payment_amount_declared) закупки,
+    распределённая на позиции узла (= «Оплачено (по отметке)», включает
+    неподтверждённые ручные отметки).
+    paid_confirmed — Σ payment_amount (ТОЛЬКО подтверждённое выпиской),
+    та же пропорция.
+
+    exclude_planned_item_linked — та же семантика, что у
+    plan_consumption_by_category: True исключает строки с валидной привязкой
+    к активной FeoPlannedItem СВОЕЙ категории (уже учтены на уровне Ур.5,
+    не задваиваются здесь) — вызывается с True там же, где и over_consumption
+    (см. compute_feo_plan_tree._visit: own_consumed/own_over).
+
+    ПРАВИЛО №6 — чистая агрегация paid_consumption_rows() по cat_id, raw
+    ratio/payment-формула считается ТОЛЬКО там."""
+    result: dict[int, dict] = {}
+    if not subsidy_ids:
+        return result
+    rows = await paid_consumption_rows(db, subsidy_ids, exclude_planned_item_linked)
+    for r in rows:
+        d = result.setdefault(r["cat_id"], {"paid_marked": 0.0, "paid_confirmed": 0.0})
+        d["paid_marked"] += r["paid_marked"]
+        d["paid_confirmed"] += r["paid_confirmed"]
     return result

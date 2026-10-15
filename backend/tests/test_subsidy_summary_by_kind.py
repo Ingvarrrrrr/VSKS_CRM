@@ -2,9 +2,19 @@
 графика (Задача А, владелец 07.10.2026) теперь читает уже готовые числа с
 экрана субсидии, вместо второго расчёта. Тесты проверяют ИМЕННО инварианты из
 задания: Σ по видам likely/nice/monthly обязаны совпадать с тем, что уже
-показывает subsidy_money_summary (carточка «Можно перераспределить») и
-contracted_not_ordered_need_level_split — не вторая формула, а разрез тех же
-чисел по виду позиции.
+показывает subsidy_money_summary (карточка «Можно перераспределить»).
+
+ИЗМЕНЕНО (15.10.2026, план abstract-noodling-pelican.md, п.B/C): «monthly»
+теперь читает флаг `monthly_future_not_started` из
+app.services.redistributable_raw.not_committed_raw_rows (ОДНА точка правила
+«ещё уйдёт помесячно, не начато» — app.services.monthly_future_payments), а
+НЕ app.services.stage_cumulative.contracted_not_ordered_need_level_split
+(старая функция меряет СУММУ ЗАКАЗА построчно и не знает о месяце; новая —
+ОСТАТОК ПЛАНОВОЙ ПОЗИЦИИ целиком, если у неё есть хоть один НЕ начавшийся
+заказ рамочного договора — эти две величины в общем случае РАЗНЫЕ, когда
+плановая позиция и сумма заказа расходятся, см. отчёт сессии). Поэтому
+сверяем monthly С МЕСТОМ, ОТКУДА subsidy_summary_by_kind реально его берёт —
+money["monthly_future_not_started"] — а не со старой независимой функцией.
 
 Переиспользует фабрики test_feo_plan_tree_scenarios.py/test_money_committed.py
 (ПРАВИЛО №6 — вторая копия фабрик не заводится)."""
@@ -36,14 +46,30 @@ async def _make_reserved_child(db_session, subsidy_id, cat_id, planned_item_id, 
     reserved_child_predicate(): status='contracted' + parent_purchase_id НЕ
     NULL. parent_purchase_id указывает на отдельную «голову» (сама голова
     бизнес-смысла в этом тесте не несёт, нужен только факт существования
-    родителя под FK)."""
-    head = Purchase(subsidy_id=subsidy_id, item_name="Рамочный договор (голова)", status="contracted")
+    родителя под FK).
+
+    ИСПРАВЛЕНО (15.10.2026, план abstract-noodling-pelican.md, п.B): заказ
+    ОБЯЗАН нести purchase_contract_type='framework_with_amount' — как и
+    РЕАЛЬНЫЕ дочерние заказы рамочных договоров на проде (см. также
+    test_redistributable_drill.py::test_redistributable_drill_rows_match_card_by_kind
+    и test_monthly_future_payments.py::_make_framework_order). Без этого поля
+    committed_status_predicate.is_framework_purchase_expr считает закупку
+    ОБЫЧНОЙ (не framework) — тогда status='contracted' сам по себе уже входит
+    в SINGLE_COMMITTED_STATUSES, заказ немедленно «законтрактован» в обход
+    всего смысла reserved_child_predicate (была задействована только
+    reserved_child_predicate-ветка редких legacy-потребителей, не затронутая
+    этой правкой до 15.10.2026 — обнажилось при переводе not_committed_raw_rows
+    на month-aware committed_by_planned_item, см. отчёт сессии)."""
+    head = Purchase(
+        subsidy_id=subsidy_id, item_name="Рамочный договор (голова)", status="contracted",
+        purchase_contract_type="framework_with_amount",
+    )
     db_session.add(head)
     await db_session.flush()
 
     p = Purchase(
         subsidy_id=subsidy_id, feo_category_id=cat_id, item_name="Заказ рамочного договора",
-        status="contracted", parent_purchase_id=head.id,
+        status="contracted", parent_purchase_id=head.id, purchase_contract_type="framework_with_amount",
         contract_price=Decimal(str(amount)), item_type=item_type,
     )
     db_session.add(p)
@@ -115,10 +141,11 @@ async def test_subsidy_summary_by_kind_sums_match_money_summary(db_session, test
     assert set(summary.keys()) == set(_KINDS)
 
     money = (await subsidy_money_summary(db_session, [subsidy.id]))[subsidy.id]
-    contracted_split = await contracted_not_ordered_need_level_split(db_session, subsidy_ids=[subsidy.id])
-    contracted_total = (
-        contracted_split[subsidy.id]["nice"] + contracted_split[subsidy.id]["likely"]
-    )
+    # ИЗМЕНЕНО (15.10.2026) — monthly сверяется с money["monthly_future_not_started"]
+    # (ОДНА точка расчёта, см. докстринг модуля), не со старой независимой
+    # stage_cumulative-функцией (меряет сумму ЗАКАЗА, а не остаток ПЛАНОВОЙ
+    # позиции — в этом сценарии заказ 100 000 меньше плана позиции 300 000).
+    contracted_total = money["monthly_future_not_started"]
 
     sum_likely = sum(v["likely"] for v in summary.values())
     sum_nice = sum(v["nice"] for v in summary.values())

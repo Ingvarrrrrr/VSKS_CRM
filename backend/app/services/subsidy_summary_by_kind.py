@@ -8,14 +8,16 @@
                   (feo_{kind}/plan_{kind} по корневым узлам дерева ФЭО).
   committed     — app.services.subsidy_money_summary.subsidy_money_summary
                   ["committed_by_kind"] («Заказано» на экране субсидии).
-  monthly       — app.services.stage_cumulative.contracted_not_ordered_split_by_kind
-                  (nice+likely) — «договоры без заказа», владелец зовёт
-                  «Ежемесячные платежи».
-  likely/nice   — app.services.redistributable_raw.not_committed_raw_rows,
-                  Σ по need_level/kind, МИНУС своя доля monthly (та же вырезка,
-                  что subsidy_money_summary делает для not_committed_likely/
-                  not_committed_nice, см. её докстринг — «вырезка, не
-                  добавка»).
+  monthly/likely/nice — ВСЕ ТРИ из ОДНОГО прохода по
+                  app.services.redistributable_raw.not_committed_raw_rows
+                  (ИЗМЕНЕНО 15.10.2026, план abstract-noodling-pelican.md,
+                  п.C — раньше «monthly» читался отдельно из
+                  app.services.stage_cumulative.contracted_not_ordered_
+                  split_by_kind, который не знает о месяце заказа; теперь
+                  not_committed_raw_rows САМА помечает флагом
+                  `monthly_future_not_started` строки, чей заказ рамочного
+                  договора ещё не начал свой месяц — читаем этот флаг, вторая
+                  формула не нужна, см. докстринг not_committed_raw_rows).
   paid          — app.services.subsidy_paid_breakdown.paid_breakdown_by_subsidy
                   ["declared_by_kind"] («Оплачено по отметке»); payroll там не
                   считается (нет such корзины в этом модуле) — 0.
@@ -35,7 +37,6 @@ from app.services.delivered_unpaid_residual import delivered_unpaid_residual_by_
 from app.services.item_type_split import ALL_KINDS
 from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE
 from app.services.redistributable_raw import not_committed_raw_rows
-from app.services.stage_cumulative import contracted_not_ordered_split_by_kind
 from app.services.subsidy_money_summary import subsidy_money_summary
 from app.services.subsidy_paid_breakdown import paid_breakdown_by_subsidy
 from app.services.type_totals import subsidy_type_totals
@@ -69,13 +70,14 @@ async def subsidy_summary_by_kind(db: AsyncSession, subsidy_id: int) -> dict[str
     money_map = await subsidy_money_summary(db, [subsidy_id], tree=tree)
     committed_by_kind: dict = (money_map.get(subsidy_id) or {}).get("committed_by_kind") or {}
 
-    monthly_split = await contracted_not_ordered_split_by_kind(db, subsidy_id)
-    monthly_by_kind = {k: monthly_split[k]["nice"] + monthly_split[k]["likely"] for k in ALL_KINDS}
-
+    monthly_by_kind: dict[str, float] = {k: 0.0 for k in ALL_KINDS}
     raw_nice_by_kind: dict[str, float] = {k: 0.0 for k in ALL_KINDS}
     raw_likely_by_kind: dict[str, float] = {k: 0.0 for k in ALL_KINDS}
     rows_by_sid = await not_committed_raw_rows(db, [subsidy_id])
     for row in rows_by_sid.get(subsidy_id, []):
+        if row["monthly_future_not_started"]:
+            monthly_by_kind[row["kind"]] += row["raw"]
+            continue
         bucket = raw_nice_by_kind if row["need_level"] == NEED_LEVEL_NICE_TO_HAVE else raw_likely_by_kind
         bucket[row["kind"]] += row["raw"]
 
@@ -91,11 +93,12 @@ async def subsidy_summary_by_kind(db: AsyncSession, subsidy_id: int) -> dict[str
             "plan": float(tt.get(f"plan_{k}", 0.0) or 0.0),
             "committed": float(committed_by_kind.get(k, 0.0) or 0.0),
             "monthly": float(monthly_by_kind.get(k, 0.0) or 0.0),
-            # «Хотелось бы»/«Скорее всего» БЕЗ договоров-без-заказа — та же
-            # вырезка (не добавка), что subsidy_money_summary делает для
-            # not_committed_likely/not_committed_nice на уровне субсидии.
-            "likely": float(raw_likely_by_kind.get(k, 0.0) - monthly_split[k]["likely"]),
-            "nice": float(raw_nice_by_kind.get(k, 0.0) - monthly_split[k]["nice"]),
+            # «Хотелось бы»/«Скорее всего» уже БЕЗ «ещё уйдёт помесячно, не
+            # начато» — not_committed_raw_rows отвела такие строки в monthly
+            # выше САМА (вырезка происходит один раз, при разборе rows, не
+            # вторым вычитанием здесь).
+            "likely": float(raw_likely_by_kind.get(k, 0.0)),
+            "nice": float(raw_nice_by_kind.get(k, 0.0)),
             "paid": float(paid_by_kind.get(k, 0.0) or 0.0),
             "delivered_unpaid": float(du_by_kind.get(k, 0.0) or 0.0),
         }

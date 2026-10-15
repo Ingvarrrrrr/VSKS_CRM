@@ -5,8 +5,16 @@
 Контрольный пример: закупка на 12 месяцев (10 000 ₽/мес, договор 120 000 ₽),
 начало — 1 января текущего года, без service_end_date (потолок — только
 monthly_payment_count=12). Числа считаются ТЕМИ ЖЕ формулами, что и
-compute_monthly_ordered_map (_calendar_months/_monthly_schedule_basis,
-ПРАВИЛО №6 — не вторая копия), чтобы тест не зависел от даты запуска CI."""
+compute_monthly_ordered_map (_monthly_schedule_basis/_accrued_and_future,
+calendar_month_payments, ПРАВИЛО №6 — не вторая копия), чтобы тест не зависел
+от даты запуска CI.
+
+ИЗМЕНЕНО (🔵 правка 3 плана abstract-noodling-pelican.md, 15.10.2026, п.А):
+график считается calendar_month_payments (календарное правило с пропорцией
+по дням), а не старой «целые месяцы × платёж» (_calendar_months — удалена).
+Начало периода у теста — 1 января, поэтому границы месяцев совпадают с
+календарными и числа не меняются для ЭТОГО сценария — важен сам переход на
+новую формулу (см. test_monthly_future_payments.py для частичных месяцев)."""
 from datetime import date
 from decimal import Decimal
 
@@ -14,11 +22,29 @@ import pytest
 
 from app.models.purchase import Purchase
 from app.services.dashboard_monthly_accrual import (
-    _calendar_months,
+    _monthly_schedule_basis,
+    _accrued_and_future,
     compute_monthly_future_map,
     compute_monthly_ordered_map,
 )
 from tests.test_feo_plan_tree_scenarios import _make_subsidy
+
+
+def _calendar_months(start: date, end: date) -> int:
+    """Хелпер ТОЛЬКО для построения ожидаемых чисел в тестах ниже (не
+    используется продакшн-кодом) — кол-во календарных месяцев от месяца start
+    до месяца end включительно, 0 если end раньше start."""
+    if end < start:
+        return 0
+    start_m = date(start.year, start.month, 1)
+    end_m = date(end.year, end.month, 1)
+    k = 0
+    cur = start_m
+    while cur <= end_m:
+        k += 1
+        y, m = cur.year + (cur.month // 12), cur.month % 12 + 1
+        cur = date(y, m, 1)
+    return k
 
 
 def _identity_filter(q):

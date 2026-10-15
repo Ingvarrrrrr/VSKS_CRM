@@ -32,8 +32,8 @@ from app.services.subsidy_budget import effective_subsidy_budget
 # ПРАВИЛО №6 (2026-09-05): единый расчёт «суммы закупки» по стадии — см. dashboard.py
 # для полного пояснения; effective_amount_expr/aggregate_scope_expr уже применены
 # во всех местах ниже, где раньше были точечные COALESCE(...).
-from app.services.purchase_amounts import effective_amount_expr
-from app.services.dashboard_monthly_accrual import compute_monthly_ordered_map, compute_monthly_future_map
+from app.services.purchase_amounts import effective_amount_expr, aggregate_scope_expr
+from app.services.dashboard_monthly_accrual import compute_monthly_ordered_map
 # План B (ancient-prancing-music.md, раздел B) — товары/услуги/без типа по этапам
 # (?type_split=true) и по «Бюджет (ФЭО)»/«Запланировано» — оба читаются отсюда,
 # единственный источник (Правило №6), никакой второй копии формул типа/долей.
@@ -54,6 +54,11 @@ from app.routers.dashboard_redistributable_drill import router as redistributabl
 # Расшифровка плашки «Оплачено больше, чем поставлено» (владелец, 07.10.2026,
 # прод id=74 «ЛНР») — тот же приём подключения под-роутера.
 from app.routers.dashboard_paid_over_delivered_drill import router as paid_over_delivered_drill_router
+# Расшифровка «Заключено → ещё уйдёт помесячно», «Можно перераспределить»
+# (4 строки), «Оплачено», «Остаток субсидии», «Экономия по закупкам» (план
+# abstract-noodling-pelican.md, 15.10.2026, п.4 техчасти) — тот же приём
+# подключения под-роутера.
+from app.routers.dashboard_metric_drill import router as metric_drill_router
 # Ускорение (координатор, 2026-10-12, прод-жалоба «/charts 7-15с, uvicorn не
 # отвечает другим запросам»): compute_feo_plan_tree (feo_plan_tree.py)
 # строилось дважды за один этот запрос по всем видимым субсидиям —
@@ -69,6 +74,7 @@ router.include_router(type_drill_router)
 router.include_router(contracts_drill_router)
 router.include_router(redistributable_drill_router)
 router.include_router(paid_over_delivered_drill_router)
+router.include_router(metric_drill_router)
 
 
 @router.get("/charts")
@@ -363,21 +369,22 @@ async def dashboard_charts(
         monthly_ordered_map = await compute_monthly_ordered_map(
             db, lambda q: _apply_purchase_org_filter(q, current_user, subsidy_ids=visible_subsidy_ids)
         )
-        # Задача 3 (владелец, 04.10.2026) — будущие помесячные платежи до конца
-        # года субсидии, тот же фильтр видимости, что и monthly_ordered_map.
-        monthly_future_map = await compute_monthly_future_map(
-            db, lambda q: _apply_purchase_org_filter(q, current_user, subsidy_ids=visible_subsidy_ids)
-        )
     else:
         monthly_ordered_map = await compute_monthly_ordered_map(
             db, lambda q: _apply_purchase_org_filter(q, current_user, org_ids)
         )
-        monthly_future_map = await compute_monthly_future_map(
-            db, lambda q: _apply_purchase_org_filter(q, current_user, org_ids)
-        )
+    # «Ещё уйдёт помесячно до конца года» (карточка «Заключено договоров») —
+    # ИЗМЕНЕНО (🟡/🟢/🔵 правки плана abstract-noodling-pelican.md, 15.10.2026,
+    # п.B): ОБА источника (framework_order + monthly_contract), ОДНА точка
+    # расчёта — app.services.monthly_future_payments.monthly_future_totals_by_subsidy
+    # (ПРАВИЛО №6, переиспользует compute_monthly_future_rows внутри себя, не
+    # дублирует). sid_list — тот же уже отфильтрованный по видимости список
+    # субсидий, что читают money_summary_map/ceiling_forecasts ниже.
+    from app.services.monthly_future_payments import monthly_future_totals_by_subsidy as _monthly_future_totals_fn
+    monthly_future_totals_map = await _monthly_future_totals_fn(db, sid_list)
+    monthly_future_map = {sid: d["total"] for sid, d in monthly_future_totals_map.items()}
     # Общий итог — та же техника, что monthly_payments_total выше (Σ по
-    # субсидиям в scope, без песочниц — monthly_future_map строится по уже
-    # отфильтрованным apply_filter строкам, второй фильтр не нужен).
+    # субсидиям в scope).
     monthly_future_to_year_end_total = float(sum(monthly_future_map.values()))
 
     # Контракт API (PLAN.md шаг 1-2/5, п. A, ревью 02.10.2026): «Свободно»/
@@ -587,18 +594,18 @@ async def dashboard_charts(
             # Новые поля карточки «Можно перераспределить» (владелец, 06.10.2026,
             # план sleepy-fluttering-walrus.md п.1) — см. докстринг
             # app.services.redistributable_raw/subsidy_money_summary.py.
-            # ИЗМЕНЕНО (находка координатора): переименовано из
-            # monthly_future_to_redistribute в contracted_not_ordered —
-            # реальный источник не is_monthly_payment-график, а дочерние
-            # заказы рамочных договоров в статусе 'contracted'.
-            "contracted_not_ordered": _money.get("contracted_not_ordered", 0.0),
+            # ИЗМЕНЕНО (15.10.2026, план abstract-noodling-pelican.md, п.C):
+            # переименовано из contracted_not_ordered в monthly_future_not_started
+            # — источник теперь app.services.monthly_future_payments (ТОЛЬКО
+            # заказы рамочных договоров, ещё не начавшие свой месяц).
+            "monthly_future_not_started": _money.get("monthly_future_not_started", 0.0),
+            "over_plan_categories": _money.get("over_plan_categories", []),
             # Жёсткий потолок субсидии (задача владельца 15.10.2026, карточка
             # «Запланировано» должна кричать, если план выше ФЭО) — ОДНА точка
             # расчёта, app.services.subsidy_ceiling через subsidy_money_summary
             # (см. её докстринг). 0.0 — план в пределах потолка/ФЭО нигде не введено.
             "plan_over_ceiling_amount": _money.get("plan_over_ceiling_amount", 0.0),
             "feo_ceiling": _money.get("feo_ceiling", 0.0),
-            "over_plan_categories": _money.get("over_plan_categories", []),
             # ИСПРАВЛЕНО 02.10.2026: economy_total=None (ни одна позиция субсидии
             # не измерена) пропускается как null, не форсится в 0.0 — см.
             # purchase_economy.py docstring.
@@ -741,6 +748,13 @@ async def dashboard_charts(
             ), 0).label("spd_cnt"),
         )
         .where(Purchase.status.notin_(["cancelled", "wishes"]))
+        # aggregate_scope_expr() (ИСПРАВЛЕНО 15.10.2026, вместе с
+        # dashboard_type_split.py — ПРАВИЛО №6, один предикат): без него этот
+        # ГЛОБАЛЬНЫЙ виджет считал рамочную голову с реальным заказом ДВАЖДЫ
+        # (сама голова + её заказы-дети), расходясь с subsidy_q ниже (та же
+        # формула per-subsidy, но УЖЕ с этим фильтром через JOIN) — Σ per-
+        # subsidy total_work не билась с глобальным widgets["work"].
+        .where(aggregate_scope_expr())
     )
     if use_sids:
         basket_q = _apply_purchase_org_filter(basket_q, current_user, subsidy_ids=visible_subsidy_ids)

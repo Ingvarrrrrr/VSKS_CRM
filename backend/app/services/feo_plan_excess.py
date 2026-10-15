@@ -432,7 +432,12 @@ async def find_excess_culprit(
         ord_rows = (await db.execute(
             select(PurchaseItem, Purchase)
             .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
-            .join(Subsidy, Subsidy.id == Purchase.subsidy_id)
+            # outerjoin (ИСПРАВЛЕНО 15.10.2026, та же находка координатора, что
+            # committed_amounts.py::committed_consumption_by_category/
+            # committed_by_planned_item — закупка без Purchase.subsidy_id):
+            # INNER JOIN на Subsidy выбрасывал строку ещё ДО committed_status_
+            # predicate.
+            .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
             .outerjoin(_fpi_ord, _fpi_ord.id == PurchaseItem.feo_planned_item_id)
             .where(cat_col_ord.in_(substituted_node_ids))
             # subsidy_year_col=Subsidy.year (15.10.2026, план abstract-noodling-
@@ -444,7 +449,10 @@ async def find_excess_culprit(
             .where(committed_status_predicate(Purchase, subsidy_year_col=Subsidy.year))
             .where(Purchase.stopped_at.is_(None))
             .where(PurchaseItem.over_plan.is_(False))
-            .where(Purchase.subsidy_id == cat.subsidy_id)
+            # Purchase.subsidy_id может быть NULL (см. outerjoin выше) — строка
+            # остаётся виновником ЭТОЙ категории через cat_col_ord, сверка с
+            # cat.subsidy_id обязательна только когда Purchase.subsidy_id задан.
+            .where(sqlor(Purchase.subsidy_id == cat.subsidy_id, Purchase.subsidy_id.is_(None)))
             # Та же исключающая точка, что в committed_consumption_by_category
             # (aggregate_scope_expr, purchase_amounts.py, ПРАВИЛО №6) — рамочная
             # голова с реальными дочерними заказами не должна сама попадать в

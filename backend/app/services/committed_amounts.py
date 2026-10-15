@@ -51,6 +51,7 @@ from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.subsidy import Subsidy
 from app.services.feo_plan_fact import fact_amounts_for_rows
 from app.services.plan_need_level import NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE, normalize_need_level
 from app.services.purchase_amounts import aggregate_scope_expr
@@ -75,27 +76,72 @@ def is_framework_purchase_expr(purchase=Purchase):
     return sqland(purchase.purchase_contract_type.isnot(None), purchase.purchase_contract_type.like("framework%"))
 
 
-def committed_status_predicate(purchase=Purchase):
+def committed_status_predicate(purchase=Purchase, *, subsidy_year_col=None, today=None):
     """Единственное место правила статусов «законтрактовано» (см. докстринг
     модуля) — SQL boolean-выражение для WHERE. Остановленные закупки сюда НЕ
     включены (Purchase.stopped_at.is_(None) — отдельное условие, добавляется
-    вызывающим кодом, как и everywhere в feo_plan_fact.py)."""
+    вызывающим кодом, как и everywhere в feo_plan_fact.py).
+
+    ДОБАВЛЕНО (🟢 правка 2 плана abstract-noodling-pelican.md, 15.10.2026,
+    п.B): заказ рамочного договора (status='contracted', parent_purchase_id
+    не NULL — app.services.stage_cumulative.reserved_child_predicate()), чей
+    месяц (app.services.monthly_future_payments.framework_child_month_expr)
+    уже НАСТУПИЛ (≤ первое число текущего месяца) — тоже «занято», хотя сам
+    заказ как отдельная закупка ещё не оформлен (status ещё 'contracted', не
+    'ordered'). Второго правила «занято» это не заводит — ветка добавляется
+    ТОЛЬКО если вызывающий код передал subsidy_year_col (выражение года
+    субсидии из уже выполненного JOIN на Subsidy в своём запросе) — без него
+    predicate ведёт себя КАК РАНЬШЕ (обратная совместимость для вызовов, где
+    JOIN на Subsidy нет и месяц проверить нечем)."""
     is_fw = is_framework_purchase_expr(purchase)
-    return sqlor(
+    base = sqlor(
         sqland(is_fw, purchase.status.in_(FRAMEWORK_COMMITTED_STATUSES)),
         sqland(sqlnot(is_fw), purchase.status.in_(SINGLE_COMMITTED_STATUSES)),
     )
+    if subsidy_year_col is None:
+        return base
+
+    from datetime import date as _date
+    from app.services.monthly_future_payments import framework_child_month_expr
+    from app.services.stage_cumulative import reserved_child_predicate
+
+    _today = today or _date.today()
+    cur_month = _date(_today.year, _today.month, 1)
+    started_reserved = sqland(
+        reserved_child_predicate(),
+        framework_child_month_expr(purchase, subsidy_year_col) <= cur_month,
+    )
+    return sqlor(base, started_reserved)
 
 
-def is_purchase_committed(purchase: Purchase) -> bool:
+def is_purchase_committed(purchase: Purchase, *, framework_order_month=None, today=None) -> bool:
     """Питоновский эквивалент committed_status_predicate — для кода, уже
     держащего ORM-объект Purchase в памяти (не строящего SQL). ОДНО правило —
-    см. докстринг модуля, не дублировать набор статусов где-либо ещё."""
+    см. докстринг модуля, не дублировать набор статусов где-либо ещё.
+
+    `framework_order_month` (🟢 правка 2, 15.10.2026) — ГОТОВЫЙ месяц заказа
+    (date, 1-е число), если вызывающий код уже его знает (например, из
+    app.services.monthly_future_payments.framework_order_month_rows) — эта
+    функция сама в БД не лезет и siblings/Subsidy.year не считает. Без него
+    поведение прежнее (заказ 'contracted' без фактического 'ordered' НЕ
+    считается занятым)."""
     if purchase.stopped_at is not None:
         return False
     is_fw = bool(purchase.purchase_contract_type) and purchase.purchase_contract_type.startswith("framework")
-    allowed = FRAMEWORK_COMMITTED_STATUSES if is_fw else SINGLE_COMMITTED_STATUSES
-    return purchase.status in allowed
+    if is_fw:
+        if purchase.status in FRAMEWORK_COMMITTED_STATUSES:
+            return True
+        if (
+            purchase.status == "contracted"
+            and purchase.parent_purchase_id is not None
+            and framework_order_month is not None
+        ):
+            from datetime import date as _date
+            _today = today or _date.today()
+            cur_month = _date(_today.year, _today.month, 1)
+            return framework_order_month <= cur_month
+        return False
+    return purchase.status in SINGLE_COMMITTED_STATUSES
 
 
 async def committed_consumption_by_category(
@@ -164,11 +210,31 @@ async def committed_consumption_by_category(
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .join(FeoCategory, FeoCategory.id == cat_col)
+        # outerjoin (ИСПРАВЛЕНО 15.10.2026, находка координатора на сверке
+        # прода — закупка id=941, single/contracted, Purchase.subsidy_id=NULL,
+        # но её позиция привязана к плановой позиции субсидии 7): INNER JOIN
+        # на Subsidy выбрасывал строку ЦЕЛИКОМ ещё ДО committed_status_predicate
+        # — 40 117 ₽ уезжали из «законтрактовано» в «скорее всего». Год
+        # субсидии (subsidy_year_col) нужен ТОЛЬКО ветке рамочного заказа
+        # внутри committed_status_predicate — при NULL (нет JOIN-строки) эта
+        # ветка просто не срабатывает (см. её докстринг), обычное правило
+        # статусов (SINGLE/FRAMEWORK_COMMITTED_STATUSES) продолжает работать
+        # как раньше.
+        .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
         .outerjoin(_fpi, _fpi.id == PurchaseItem.feo_planned_item_id)
-        .where(committed_status_predicate(Purchase))
+        # subsidy_year_col=Subsidy.year (🟢 правка 2, 15.10.2026, п.B) — «законтрактовано»
+        # дерева ФЭО включает заказ рамочного договора, чей месяц уже начался,
+        # даже если сам заказ ещё не оформлен отдельной закупкой (status=
+        # 'contracted'). См. докстринг committed_status_predicate.
+        .where(committed_status_predicate(Purchase, subsidy_year_col=Subsidy.year))
         .where(Purchase.stopped_at.is_(None))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
-        .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
+        # Purchase.subsidy_id может быть NULL (находка 15.10.2026, см. outerjoin
+        # выше) — строка всё равно принадлежит категории cat_col, которую она
+        # явно указывает на PurchaseItem/Purchase.feo_category_id; при
+        # заполненном Purchase.subsidy_id сверка с категорией остаётся
+        # ОБЯЗАТЕЛЬНОЙ (защита от чужой субсидии не снимается).
+        .where(sqlor(Purchase.subsidy_id == FeoCategory.subsidy_id, Purchase.subsidy_id.is_(None)))
         # Рамочная ГОЛОВА (framework_with_amount/framework_cumulative,
         # parent_purchase_id IS NULL) с реально существующими дочерними
         # заказами — та же исключающая точка, что и в карточках субсидии
@@ -239,7 +305,9 @@ async def committed_consumption_by_category(
     return result
 
 
-async def committed_by_planned_item(db: AsyncSession, item_ids: list[int]) -> dict[int, dict]:
+async def committed_by_planned_item(
+    db: AsyncSession, item_ids: list[int], *, month_aware: bool = False,
+) -> dict[int, dict]:
     """{feo_planned_item_id: {amount, quantity, missing_fact_items}} —
     законтрактованная сумма/количество позиций закупок, привязанных к
     плановой позиции (PurchaseItem.feo_planned_item_id), статус —
@@ -270,7 +338,16 @@ async def committed_by_planned_item(db: AsyncSession, item_ids: list[int]) -> di
     planned_item_contributions ниже, чтобы отличить «позиция без committed
     активности вообще» от «позиция с committed, но без quantity» — только по
     `amount != 0`/`quantity` этого не определить (amount может легитимно быть
-    0, если факт 0)."""
+    0, если факт 0).
+
+    `month_aware=True` (🟢 правка 2 плана abstract-noodling-pelican.md,
+    15.10.2026, п.B/C) — JOIN на Subsidy и committed_status_predicate(...,
+    subsidy_year_col=Subsidy.year): заказ рамочного договора, чей месяц уже
+    начался, тоже committed (см. докстринг committed_status_predicate).
+    Используется app.services.redistributable_raw (карточка «Можно
+    перераспределить» не должна показывать уже начавшийся месяц ни
+    «нужностью», ни «ещё уйдёт помесячно»). По умолчанию False — поведение
+    прежнее (для вызовов без интереса к рамочным заказам)."""
     result: dict[int, dict] = {
         iid: {"amount": 0.0, "quantity": 0.0, "missing_fact_items": 0, "has_rows": False} for iid in item_ids
     }
@@ -281,10 +358,22 @@ async def committed_by_planned_item(db: AsyncSession, item_ids: list[int]) -> di
         select(PurchaseItem, Purchase)
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
-        .where(committed_status_predicate(Purchase))
         .where(Purchase.stopped_at.is_(None))
         .where(PurchaseItem.over_plan.is_(False))
     )
+    if month_aware:
+        # outerjoin (ИСПРАВЛЕНО 15.10.2026, та же находка, что у
+        # committed_consumption_by_category выше — закупка id=941 без
+        # Purchase.subsidy_id): INNER JOIN на Subsidy выбрасывал строку
+        # целиком. Здесь нет отдельной сверки Purchase.subsidy_id==...,
+        # NULL-год просто не включает ветку рамочного заказа предиката (см.
+        # докстринг committed_status_predicate), обычный статусный чек
+        # работает как раньше.
+        stmt = stmt.outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id).where(
+            committed_status_predicate(Purchase, subsidy_year_col=Subsidy.year)
+        )
+    else:
+        stmt = stmt.where(committed_status_predicate(Purchase))
     rows = (await db.execute(stmt)).all()
     if not rows:
         return result

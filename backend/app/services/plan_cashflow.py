@@ -42,13 +42,14 @@ def add_months(d: date, k: int) -> date:
 def expand_planned_item(item: FeoPlannedItem) -> list[tuple[date, Decimal]]:
     """Развернуть плановую позицию в список (дата, сумма).
 
-    monthly: monthly_start_date + k месяцев, monthly_amount — для k in range(months_count).
-    Владелец (Волна 3, п.3, 2026-09-13): если задан период (monthly_end_date),
-    остаток дней сверх полных месяцев разворачивается отдельной точкой — та же
-    формула, что считает итоговую сумму позиции при сохранении (см.
-    compute_monthly_schedule, app/services/feo_monthly_schedule.py, Правило
-    №6 — не дублируем расчёт остатка здесь второй раз). Легаси-позиции (без
-    monthly_end_date) считаются по-старому: months_count равных точек.
+    monthly + период (monthly_end_date задана): точки — ОДНА на каждый
+    календарный платёж calendar_month_payments(start, end, amount) (Правило
+    №6 — та же формула, что считает итоговую сумму позиции при сохранении,
+    compute_monthly_schedule, app/services/feo_monthly_schedule.py; дата
+    точки — period_from платежа, сумма — его amount; неполные первый/
+    последний месяцы пропорциональны дням). Легаси-позиции (без
+    monthly_end_date) считаются по-старому: months_count равных точек
+    monthly_amount, начиная с monthly_start_date, с шагом add_months.
     one_time: если есть planned_date → [(planned_date, amount)]; иначе [].
     """
     mode = getattr(item, 'payment_mode', 'one_time') or 'one_time'
@@ -60,19 +61,20 @@ def expand_planned_item(item: FeoPlannedItem) -> list[tuple[date, Decimal]]:
             # Недостаточно данных — ничего не разворачиваем
             return []
         amt_d = Decimal(str(amt))
-        # Локальный импорт (не на уровне модуля) — feo_monthly_schedule.py сам
-        # импортирует add_months ИЗ ЭТОГО модуля; импорт на уровне модуля здесь
-        # создал бы циклическую загрузку.
-        from app.services.feo_monthly_schedule import compute_monthly_schedule
-        schedule = compute_monthly_schedule(
-            start, getattr(item, 'monthly_end_date', None), item.months_count, amt_d,
-        )
-        if not schedule.full_months and not schedule.extra_days:
+        end = getattr(item, 'monthly_end_date', None)
+        if end is not None and end > start:
+            # Локальный импорт (не на уровне модуля) — feo_monthly_schedule.py
+            # сам импортирует add_months ИЗ ЭТОГО модуля; импорт на уровне
+            # модуля здесь создал бы циклическую загрузку.
+            from app.services.feo_monthly_schedule import calendar_month_payments
+            payments = calendar_month_payments(start, end, amt_d)
+            return [(p.period_from, p.amount) for p in payments]
+
+        # Легаси: без периода — months_count равных точек.
+        cnt = item.months_count
+        if not cnt:
             return []
-        points = [(add_months(start, k), amt_d) for k in range(schedule.full_months)]
-        if schedule.extra_days and schedule.extra_amount is not None and schedule.remainder_start is not None:
-            points.append((schedule.remainder_start, schedule.extra_amount))
-        return points
+        return [(add_months(start, k), amt_d) for k in range(int(cnt))]
     else:
         # one_time
         if item.planned_date is None:

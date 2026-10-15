@@ -481,3 +481,35 @@ async def test_10_economy_total_null_when_subsidy_has_no_measured_purchases(db_s
     assert row2["economy_total"] == Decimal("10000.00")
     assert row2["economy_no_planned_price_items"] == 2
     assert row2["economy_unmeasured_by_reason"]["unlinked"] == 2
+
+
+@pytest.mark.asyncio
+async def test_11_committed_by_planned_item_month_aware_survives_null_purchase_subsidy(db_session, test_org):
+    """Находка координатора на сверке прода (15.10.2026): закупка id=941 —
+    single, status='contracted', Purchase.subsidy_id=NULL (данные так и
+    остались на проде), но её позиция привязана к плановой позиции субсидии 7
+    — committed_by_planned_item(month_aware=True) должен считать её так же,
+    как month_aware=False (старый код), а не терять INNER JOIN-ом на Subsidy
+    (нужен ТОЛЬКО для ветки рамочного заказа предиката, см. её докстринг)."""
+    from app.services.committed_amounts import committed_by_planned_item
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    leaf = await _make_category(db_session, subsidy.id, name="Бензопила (лист)", budget=Decimal("1000000"))
+    fpi = await _make_planned_item(db_session, leaf.id, "Бензопила", 1, 40_117)
+
+    p, i = await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, 1, 40_117)
+    # Воспроизводим прод: закупка без собственного subsidy_id (данные так и
+    # остались), позиция по-прежнему указывает на плановую позицию субсидии 7.
+    p.subsidy_id = None
+    db_session.add(p)
+    await db_session.commit()
+
+    by_item_old = await committed_by_planned_item(db_session, [fpi.id], month_aware=False)
+    by_item_new = await committed_by_planned_item(db_session, [fpi.id], month_aware=True)
+
+    assert by_item_old[fpi.id]["amount"] == pytest.approx(40_117.0)
+    assert by_item_new[fpi.id]["amount"] == pytest.approx(40_117.0), (
+        "month_aware=True не должен терять строку без Purchase.subsidy_id "
+        "(INNER JOIN на Subsidy раньше выбрасывал её целиком)"
+    )
+    assert by_item_new[fpi.id]["amount"] == by_item_old[fpi.id]["amount"]

@@ -93,7 +93,7 @@ async def test_redistributable_drill_rows_match_card_by_kind(db_session, test_or
     assert by_id[item_nice.id]["raw"] == pytest.approx(100_000.0)
     assert by_id[item_nice.id]["kind"] == "goods"
     assert by_id[item_nice.id]["need_level"] == "nice_to_have"
-    assert by_id[item_nice.id]["contracted_not_ordered"] is False
+    assert by_id[item_nice.id]["monthly_future_not_started"] is False
 
     assert by_id[item_likely.id]["raw"] == pytest.approx(30_000.0)
     assert by_id[item_likely.id]["kind"] == "services"
@@ -103,7 +103,7 @@ async def test_redistributable_drill_rows_match_card_by_kind(db_session, test_or
 
     assert by_id[item_framework.id]["raw"] == pytest.approx(40_000.0)
     assert by_id[item_framework.id]["kind"] == "services"
-    assert by_id[item_framework.id]["contracted_not_ordered"] is True
+    assert by_id[item_framework.id]["monthly_future_not_started"] is True
     assert "Товары и услуги" in by_id[item_framework.id]["category_path"]
 
     # Σ по виду == агрегату того же модуля (not_committed_raw_by_subsidy).

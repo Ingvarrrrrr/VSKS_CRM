@@ -44,7 +44,7 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Callable, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, or_ as sqlor
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract import Contract
@@ -53,20 +53,30 @@ from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
 # ПРАВИЛО №6 (02.10.2026): единственный источник статусов «законтрактовано» —
 # committed_amounts.py. Рамочный (framework_cumulative) — FRAMEWORK_COMMITTED_STATUSES
-# (ordered/delivered/paid, не contracted — см. докстринг модуля); «реально привязанная
-# закупка» у single-договора (тот же смысл, что single/без-типа-договора) —
-# SINGLE_COMMITTED_STATUSES (contracted/ordered/delivered/paid).
-from app.services.committed_amounts import FRAMEWORK_COMMITTED_STATUSES, SINGLE_COMMITTED_STATUSES
+# (ordered/delivered/paid, не contracted — см. докстринг модуля); сумма single/
+# framework_with_amount целиком строится через
+# stage_cumulative.single_fwa_rows_by_contract_subsidy() (см. ниже), которая
+# сама использует SINGLE_COMMITTED_STATUSES/FRAMEWORK_COMMITTED_STATUSES.
+from app.services.committed_amounts import FRAMEWORK_COMMITTED_STATUSES
 # Решение владельца 05.10.2026 («любая оплата = был договор, хоть
 # упрощённый») — тот же добавочный источник, что и contracts_map в
 # dashboard_charts.py (Правило №6, см. докстринг stage_cumulative.py).
-from app.services.stage_cumulative import committed_uncounted_expr
-from app.services.committed_amounts import committed_status_predicate
+# single_fwa_rows_by_contract_subsidy/reserved_child_predicate (ИСПРАВЛЕНО
+# 15.10.2026, ФАДМ 2026_2 id=7320, Σ chip-ов контура "contracts" была БОЛЬШЕ
+# карточки на 39 661,80 — та же причина, что и в докстринге
+# single_fwa_rows_by_contract_subsidy: single/framework_with_amount считались
+# здесь ВТОРОЙ, более старой формулой — без greatest(лимит, факт) и без учёта
+# «заказ рамочного в статусе contracted» (reserved_child_predicate). ПРАВИЛО
+# №6 — amount единого источника (contracted_total_by_subsidy его же и
+# использует), здесь он только РАСКЛАДЫВАЕТСЯ по типу позиций.
+from app.services.stage_cumulative import (
+    committed_uncounted_expr, single_fwa_rows_by_contract_subsidy, reserved_child_predicate,
+)
 from app.services.item_type_split import (
     KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED,
     TypeShares, kind_of, purchase_type_shares, split_amount_by_shares,
 )
-from app.services.purchase_amounts import effective_amount_expr
+from app.services.purchase_amounts import effective_amount_expr, aggregate_scope_expr
 
 STAGE_KEYS: tuple = (
     "plan_schedule", "work", "ordered", "contracts", "delivered", "delivered_unpaid", "paid",
@@ -106,6 +116,24 @@ def reconcile_split(raw: List[Decimal], target) -> Dict[str, float]:
     )
     g, s, u = split_amount_by_shares(target_dec, shares)
     return {"goods": float(g), "services": float(s), "unspecified": float(u)}
+
+
+async def _resolve_contract_subsidy_ids(
+    db: AsyncSession, use_sids: bool, visible_subsidy_ids: Optional[set], org_ids: Optional[list],
+) -> List[int]:
+    """Список subsidy_id для single_fwa_rows_by_contract_subsidy() (та функция
+    требует явный список, не умеет «без ограничения») — тот же набор субсидий,
+    который раньше контролировал contract_q.where(...) построчно здесь
+    (use_sids→visible_subsidy_ids, иначе org_ids, иначе вообще без фильтра)."""
+    if use_sids:
+        if visible_subsidy_ids is not None:
+            return list(visible_subsidy_ids)
+        return list((await db.execute(select(Subsidy.id))).scalars().all())
+    if org_ids is not None:
+        return list((await db.execute(
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+        )).scalars().all())
+    return list((await db.execute(select(Subsidy.id))).scalars().all())
 
 
 async def _items_by_purchase(db: AsyncSession, purchase_ids: List[int]) -> Dict[int, list]:
@@ -261,25 +289,41 @@ async def compute_type_split_raw(
         return per_subsidy_split[sid]
 
     # ── Покупки, попадающие хотя бы в одну корзину (те же 6, что basket_q) ──
+    # aggregate_scope_expr() (ИСПРАВЛЕНО 15.10.2026, ФАДМ 2026_2 id=7320:
+    # drill «Ведётся работа» 16 252 487,61 vs карточка 13 949 555,61, разница
+    # 2 302 932,00 — ровно Σ max_amount трёх рамочных голов с реальными
+    # заказами: 1 400 000 + 207 900 + 584 032 + 111 000). Причина: subsidy_q
+    # в dashboard_charts.py считает total_work/widget[stage] ЧЕРЕЗ JOIN с
+    # aggregate_scope_expr() — рамочная голова (framework_cumulative/
+    # framework_with_amount) с реальным заказом-ребёнком НЕ входит в
+    # статусные суммы (её деньги несут сами заказы, см. докстринг
+    # aggregate_scope_expr); base_q здесь этот фильтр не применял — голова
+    # (её Contract.max_amount через effective_amount_expr) считалась ЕЩЁ РАЗ
+    # поверх уже посчитанных заказов-детей. ПРАВИЛО №6 — тот же предикат, что
+    # и у карточки, не второй набор правил.
     base_q = (
         select(
             Purchase.id, Purchase.status, Purchase.subsidy_id,
             Purchase.planned_total_price, effective_amount_expr().label("effective"),
         )
         .where(Purchase.status.notin_(["cancelled", "wishes"]))
+        .where(aggregate_scope_expr())
     )
     base_q = apply_filter(base_q)
     purchase_rows = (await db.execute(base_q)).all()
 
     # ── «Заключено договоров», framework_cumulative — те же покупки, что
-    # contract_fc_q (committed_amounts.FRAMEWORK_COMMITTED_STATUSES — заказ
-    # занимает деньги с «Заказано», сама рамочная ГОЛОВА нет, см. ПРАВИЛО №6). ──
+    # contracted_rows_by_category::cfc_cat_stmt (ИСПРАВЛЕНО 15.10.2026: раньше
+    # здесь стоял только FRAMEWORK_COMMITTED_STATUSES, без reserved_child_
+    # predicate() — заказ рамочного в статусе 'contracted' (договор на партию
+    # уже заключён, заказ как отдельная закупка ещё не оформлен) пропускался,
+    # хотя карточка его уже считает «законтрактованным» — ПРАВИЛО №6). ──
     fc_q = (
         select(Purchase.id, Purchase.subsidy_id, effective_amount_expr().label("effective"))
         .join(Contract, Purchase.contract_id == Contract.id)
         .where(Contract.status == "active")
         .where(Contract.contract_type == "framework_cumulative")
-        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
+        .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
     )
     if use_sids:
         if visible_subsidy_ids is not None:
@@ -290,56 +334,35 @@ async def compute_type_split_raw(
         ))
     fc_rows = (await db.execute(fc_q)).all()
 
-    # ── «Заключено договоров», single/framework_with_amount — сумма (max_amount)
-    # не привязана к конкретной закупке; доля берётся по ПУЛУ позиций ВСЕХ
-    # закупок, привязанных к договору (Purchase.contract_id). ──
-    contract_q = (
-        select(Contract.id, Contract.subsidy_id, Contract.max_amount, Contract.contract_type)
-        .where(Contract.status == "active")
-    )
-    if use_sids:
-        if visible_subsidy_ids is not None:
-            contract_q = contract_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
-    elif org_ids is not None:
-        contract_q = contract_q.where(Contract.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-        ))
-    all_contracts = (await db.execute(contract_q)).all()
-    # 'single' требует хотя бы одну реально привязанную закупку в нужных статусах
-    # (см. _contracted_purchase_exists в dashboard_charts.py::contract_single_q,
-    # committed_amounts.SINGLE_COMMITTED_STATUSES — ПРАВИЛО №6);
-    # 'framework_with_amount' входит безусловно. Один запрос на ВСЕ single-контракты
-    # сразу — не по одному (избегаем N+1/await внутри comprehension).
-    _single_ids = [c.id for c in all_contracts if c.contract_type == "single"]
-    _existing_purchase_contract_ids: set = set()
-    if _single_ids:
-        _rows = (await db.execute(
-            select(Purchase.contract_id)
-            .where(Purchase.contract_id.in_(_single_ids))
-            .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
-            .distinct()
-        )).all()
-        _existing_purchase_contract_ids = {r[0] for r in _rows}
-    single_contracts = [
-        c for c in all_contracts
-        if c.contract_type == "framework_with_amount"
-        or (c.contract_type == "single" and c.id in _existing_purchase_contract_ids)
-    ]
-    contract_ids = [c.id for c in single_contracts]
+    # ── «Заключено договоров», single/framework_with_amount — ЕДИНЫЙ источник
+    # суммы (ПРАВИЛО №6, см. импорт выше): stage_cumulative.
+    # single_fwa_rows_by_contract_subsidy() — та же функция, что строит amount
+    # для contracted_total_by_subsidy() (карточка «Заключено договоров»).
+    # Раньше здесь жила вторая, более старая формула (голый Contract.max_amount
+    # без greatest(лимит, факт) для single и без топ-апа остатка лимита
+    # framework_with_amount по его заказам-детям) — на ФАДМ 2026_2 id=7320 она
+    # давала на 39 661,80 больше карточки. Доля по типу — ПУЛ позиций ВСЕХ
+    # закупок, привязанных к договору В ЭТОЙ субсидии (не ко всему договору —
+    # у «общих» между копиями субсидии договоров своя доля на каждую, тот же
+    # принцип, что Purchase.subsidy_id в single_fwa_rows_by_contract_subsidy). ──
+    contract_subsidy_ids = await _resolve_contract_subsidy_ids(db, use_sids, visible_subsidy_ids, org_ids)
+    fwa_buckets = await single_fwa_rows_by_contract_subsidy(db, subsidy_ids=contract_subsidy_ids)
+    contract_ids = list({cid for (cid, _sid) in fwa_buckets})
     linked_purchase_rows: list = []
     if contract_ids:
         linked_purchase_rows = (await db.execute(
-            select(Purchase.id, Purchase.contract_id).where(Purchase.contract_id.in_(contract_ids))
+            select(Purchase.id, Purchase.contract_id, Purchase.subsidy_id)
+            .where(Purchase.contract_id.in_(contract_ids))
         )).all()
-    linked_purchase_ids_by_contract: Dict[int, list] = {}
-    for pid, cid in linked_purchase_rows:
-        linked_purchase_ids_by_contract.setdefault(cid, []).append(pid)
+    linked_purchase_ids_by_contract_subsidy: Dict[tuple, list] = {}
+    for pid, cid, psid in linked_purchase_rows:
+        linked_purchase_ids_by_contract_subsidy.setdefault((cid, psid), []).append(pid)
 
     # ── Один общий запрос позиций закупок на объединение всех участвующих id ──
     all_purchase_ids = list({
         *[r.id for r in purchase_rows],
         *[r.id for r in fc_rows],
-        *[pid for pid, _ in linked_purchase_rows],
+        *[pid for pid, _cid, _psid in linked_purchase_rows],
     })
     items_by_purchase = await _items_by_purchase(db, all_purchase_ids)
 
@@ -366,27 +389,33 @@ async def compute_type_split_raw(
         if sid_bucket is not None:
             _add3(sid_bucket["contracts"], amt, shares)
 
-    # ── «Заключено договоров»: single/framework_with_amount ──
-    for c in single_contracts:
-        linked_ids = linked_purchase_ids_by_contract.get(c.id, [])
+    # ── «Заключено договоров»: single/framework_with_amount (greatest(лимит,
+    # факт) + топ-ап уже внутри bucket["amount"], см. комментарий выше) ──
+    for (cid, sid), bucket in fwa_buckets.items():
+        amt = Decimal(str(bucket["amount"]))
+        if amt == 0:
+            continue
+        linked_ids = linked_purchase_ids_by_contract_subsidy.get((cid, sid), [])
         pooled_items: list = []
         for pid in linked_ids:
             pooled_items.extend(items_by_purchase.get(pid, ()))
         shares = purchase_type_shares(pooled_items)
-        amt = Decimal(str(c.max_amount)) if c.max_amount is not None else Decimal(0)
         _add3(global_split["contracts"], amt, shares)
-        sid_bucket = _sid_bucket(c.subsidy_id)
+        sid_bucket = _sid_bucket(sid)
         if sid_bucket is not None:
             _add3(sid_bucket["contracts"], amt, shares)
 
     # ── «Заключено договоров»: committed-закупки, НЕ покрытые активным
     # Contract известного типа (владелец, 05.10.2026) — добавочное слагаемое,
-    # та же выборка, что committed_uncounted_by_subsidy (dashboard_charts.py),
-    # своими позициями. ──
+    # та же выборка, что committed_uncounted_by_subsidy (ПРАВИЛО №6, включая
+    # её stopped_at-фильтр — отсутствие которого здесь раньше НЕ создавало
+    # видимой разницы с card только потому, что он не затрагивал найденные
+    # прод-кейсы; добавлен для полной параллели предикату), своими позициями. ──
     contractless_q = (
         select(Purchase.id, Purchase.subsidy_id, effective_amount_expr().label("effective"))
         .outerjoin(Contract, Purchase.contract_id == Contract.id)
         .where(committed_uncounted_expr())
+        .where(Purchase.stopped_at.is_(None))
     )
     if use_sids:
         if visible_subsidy_ids is not None:
@@ -405,55 +434,6 @@ async def compute_type_split_raw(
             sid_bucket = _sid_bucket(r.subsidy_id)
             if sid_bucket is not None:
                 _add3(sid_bucket["contracts"], amt, shares)
-
-    # ── «Заключено договоров»: топ-ап single-контрактов, чей Contract.
-    # max_amount занижен/NULL относительно реальной Σ привязанных committed-
-    # закупок (владелец, 05.10.2026, находка «ХО» — см. докстринг stage_
-    # cumulative.py::single_contract_topup_by_subsidy). Доля по типу — ПУЛ
-    # позиций ВСЕХ committed-закупок контракта (тот же приём, что и обычная
-    # ветка single/framework_with_amount выше), топ-ап размазывается по тем
-    # же долям. ──
-    single_active_q = (
-        select(Contract.id, Contract.subsidy_id, Contract.max_amount)
-        .where(Contract.status == "active")
-        .where(Contract.contract_type == "single")
-    )
-    if use_sids:
-        if visible_subsidy_ids is not None:
-            single_active_q = single_active_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
-    elif org_ids is not None:
-        single_active_q = single_active_q.where(Contract.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-        ))
-    single_active_contracts = (await db.execute(single_active_q)).all()
-    if single_active_contracts:
-        _sa_ids = [c.id for c in single_active_contracts]
-        _sa_purchase_rows = (await db.execute(
-            select(Purchase.id, Purchase.contract_id, effective_amount_expr().label("effective"))
-            .where(Purchase.contract_id.in_(_sa_ids))
-            .where(committed_status_predicate(Purchase))
-            .where(Purchase.stopped_at.is_(None))
-        )).all()
-        _sa_by_contract: Dict[int, list] = {}
-        for r in _sa_purchase_rows:
-            _sa_by_contract.setdefault(r.contract_id, []).append(r)
-        _sa_purchase_ids = [r.id for r in _sa_purchase_rows]
-        _sa_items = await _items_by_purchase(db, _sa_purchase_ids)
-        for c in single_active_contracts:
-            linked = _sa_by_contract.get(c.id, [])
-            actual = sum((Decimal(str(r.effective)) if r.effective is not None else Decimal(0)) for r in linked)
-            recorded = Decimal(str(c.max_amount)) if c.max_amount is not None else Decimal(0)
-            topup = actual - recorded
-            if topup <= 0:
-                continue
-            pooled_items: list = []
-            for r in linked:
-                pooled_items.extend(_sa_items.get(r.id, ()))
-            shares = purchase_type_shares(pooled_items)
-            _add3(global_split["contracts"], topup, shares)
-            sid_bucket = _sid_bucket(c.subsidy_id)
-            if sid_bucket is not None:
-                _add3(sid_bucket["contracts"], topup, shares)
 
     return {
         "global": global_split,
@@ -492,14 +472,15 @@ async def compute_type_split_detail(
     raw = _zero3()
 
     if stage == "contracts":
-        # Тот же контур, что contract_fc_q/contract_single_q в dashboard_charts.py
-        # и fc_q/all_contracts в compute_type_split_raw выше.
+        # framework_cumulative — тот же контур, что compute_type_split_raw
+        # выше (ИСПРАВЛЕНО 15.10.2026 вместе с ним: + reserved_child_predicate()
+        # — заказ рамочного в статусе 'contracted' тоже «законтрактован»). ──
         fc_q = (
             select(Purchase.id, Purchase.subsidy_id, effective_amount_expr().label("effective"))
             .join(Contract, Purchase.contract_id == Contract.id)
             .where(Contract.status == "active")
             .where(Contract.contract_type == "framework_cumulative")
-            .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
+            .where(sqlor(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)), reserved_child_predicate()))
         )
         if use_sids:
             if visible_subsidy_ids is not None:
@@ -510,46 +491,25 @@ async def compute_type_split_detail(
             ))
         fc_rows = (await db.execute(fc_q)).all()
 
-        contract_q = (
-            select(Contract.id, Contract.subsidy_id, Contract.max_amount, Contract.contract_type)
-            .where(Contract.status == "active")
-        )
-        if use_sids:
-            if visible_subsidy_ids is not None:
-                contract_q = contract_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
-        elif org_ids is not None:
-            contract_q = contract_q.where(Contract.subsidy_id.in_(
-                select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-            ))
-        all_contracts = (await db.execute(contract_q)).all()
-        _single_ids = [c.id for c in all_contracts if c.contract_type == "single"]
-        _existing_purchase_contract_ids: set = set()
-        if _single_ids:
-            _rows = (await db.execute(
-                select(Purchase.contract_id)
-                .where(Purchase.contract_id.in_(_single_ids))
-                .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
-                .distinct()
-            )).all()
-            _existing_purchase_contract_ids = {r[0] for r in _rows}
-        single_contracts = [
-            c for c in all_contracts
-            if c.contract_type == "framework_with_amount"
-            or (c.contract_type == "single" and c.id in _existing_purchase_contract_ids)
-        ]
-        contract_ids = [c.id for c in single_contracts]
+        # single/framework_with_amount — ЕДИНЫЙ источник суммы (ПРАВИЛО №6,
+        # см. комментарий в compute_type_split_raw выше): stage_cumulative.
+        # single_fwa_rows_by_contract_subsidy(), не вторая формула.
+        contract_subsidy_ids = await _resolve_contract_subsidy_ids(db, use_sids, visible_subsidy_ids, org_ids)
+        fwa_buckets = await single_fwa_rows_by_contract_subsidy(db, subsidy_ids=contract_subsidy_ids)
+        contract_ids = list({cid for (cid, _sid) in fwa_buckets})
         linked_purchase_rows: list = []
         if contract_ids:
             linked_purchase_rows = (await db.execute(
-                select(Purchase.id, Purchase.contract_id).where(Purchase.contract_id.in_(contract_ids))
+                select(Purchase.id, Purchase.contract_id, Purchase.subsidy_id)
+                .where(Purchase.contract_id.in_(contract_ids))
             )).all()
-        linked_purchase_ids_by_contract: Dict[int, list] = {}
-        for pid, cid in linked_purchase_rows:
-            linked_purchase_ids_by_contract.setdefault(cid, []).append(pid)
+        linked_purchase_ids_by_contract_subsidy: Dict[tuple, list] = {}
+        for pid, cid, psid in linked_purchase_rows:
+            linked_purchase_ids_by_contract_subsidy.setdefault((cid, psid), []).append(pid)
 
         all_purchase_ids = list({
             *[r.id for r in fc_rows],
-            *[pid for pid, _ in linked_purchase_rows],
+            *[pid for pid, _cid, _psid in linked_purchase_rows],
         })
         items_by_purchase = await _items_by_purchase(db, all_purchase_ids)
 
@@ -557,28 +517,62 @@ async def compute_type_split_detail(
             amt = Decimal(str(r.effective)) if r.effective is not None else Decimal(0)
             _emit_item_rows(rows, raw, purchase_id=r.id, amt=amt, items=items_by_purchase.get(r.id, ()))
 
-        for c in single_contracts:
-            linked_ids = linked_purchase_ids_by_contract.get(c.id, [])
+        for (cid, sid), bucket in fwa_buckets.items():
+            amt = Decimal(str(bucket["amount"]))
+            if amt == 0:
+                continue
+            linked_ids = linked_purchase_ids_by_contract_subsidy.get((cid, sid), [])
             pooled_items: list = []
             for pid in linked_ids:
                 pooled_items.extend(items_by_purchase.get(pid, ()))
-            amt = Decimal(str(c.max_amount)) if c.max_amount is not None else Decimal(0)
             # Договор сам не имеет позиций — они принадлежат привязанным
-            # закупкам (может быть больше одной), поэтому purchase_id=None
-            # здесь: каждая строка ниже несёт СВОЙ purchase_id (из items),
-            # только строка «без позиции» (пустой пул) остаётся без закупки.
-            _emit_item_rows(rows, raw, purchase_id=None, amt=amt, items=pooled_items, contract_id=c.id)
+            # закупкам ЭТОЙ субсидии (может быть больше одной), поэтому
+            # purchase_id=None здесь: каждая строка ниже несёт СВОЙ
+            # purchase_id (из items), только строка «без позиции» (пустой
+            # пул) остаётся без закупки.
+            _emit_item_rows(rows, raw, purchase_id=None, amt=amt, items=pooled_items, contract_id=cid)
+
+        # ── committed-закупки, НЕ покрытые активным Contract известного типа
+        # (владелец, 05.10.2026) — НЕДОСТАЮЩЕЕ слагаемое (ИСПРАВЛЕНО
+        # 15.10.2026: при переходе на single_fwa_rows_by_contract_subsidy для
+        # этой функции оно было пропущено целиком — на субсидиях 51/ДНР id=7
+        # drill оказался МЕНЬШЕ карточки на 54 318,00 / 341 565,00, ровно Σ
+        # этого слагаемого). Та же выборка, что committed_uncounted_by_
+        # subsidy() (ПРАВИЛО №6), своими позициями — см. compute_type_split_raw. ──
+        contractless_q = (
+            select(Purchase.id, Purchase.subsidy_id, effective_amount_expr().label("effective"))
+            .outerjoin(Contract, Purchase.contract_id == Contract.id)
+            .where(committed_uncounted_expr())
+            .where(Purchase.stopped_at.is_(None))
+        )
+        if use_sids:
+            if visible_subsidy_ids is not None:
+                contractless_q = contractless_q.where(Purchase.subsidy_id.in_(visible_subsidy_ids))
+        elif org_ids is not None:
+            contractless_q = contractless_q.where(Purchase.subsidy_id.in_(
+                select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+            ))
+        contractless_rows = (await db.execute(contractless_q)).all()
+        if contractless_rows:
+            _cl_items = await _items_by_purchase(db, [r.id for r in contractless_rows])
+            for r in contractless_rows:
+                amt = Decimal(str(r.effective)) if r.effective is not None else Decimal(0)
+                _emit_item_rows(rows, raw, purchase_id=r.id, amt=amt, items=_cl_items.get(r.id, ()))
 
         return {"raw": raw, "rows": rows}
 
     # ── не-"contracts" этапы: та же корзина покупок, что base_q в
     # compute_type_split_raw, разложенная по _stage_contributions ──
+    # aggregate_scope_expr() — см. комментарий в compute_type_split_raw выше
+    # (та же правка 15.10.2026): без него рамочная голова с реальным заказом
+    # считалась и сама, и через своих детей — drill был больше карточки.
     base_q = (
         select(
             Purchase.id, Purchase.status, Purchase.subsidy_id,
             Purchase.planned_total_price, effective_amount_expr().label("effective"),
         )
         .where(Purchase.status.notin_(["cancelled", "wishes"]))
+        .where(aggregate_scope_expr())
     )
     base_q = apply_filter(base_q)
     purchase_rows = (await db.execute(base_q)).all()

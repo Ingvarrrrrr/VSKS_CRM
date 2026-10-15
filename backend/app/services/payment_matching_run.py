@@ -49,14 +49,32 @@ async def run_match_payments(db: AsyncSession, subsidy_id: int, dry_run: bool = 
         "suspicious": [_suspicious_group_to_dict(s) for s in susp],
     }
 
+    # Строки выписки, выбранные в этом прогоне: в пробном Payment не пишется,
+    # и без этого множества одинаковые суммы у одного ИНН (5 закупок по 51 000)
+    # получали один и тот же платёж — пробный отчёт расходился с записью.
+    used_bp_ids: set[int] = set()
+
     for g in groups:
-        cands = await find_candidates(db, g)
+        cands = await find_candidates(db, g, exclude_ids=used_bp_ids)
+        whole_amount = False
+        if (g.goods_amount and g.services_amount
+                and not any(c.auto for kc in cands.values() for c in kc)):
+            # Закупка разбита на товары и услуги, а оплачена одним платежом
+            # (ЦЕНТРАВТО 89 360,02 = 28 652,50 + 60 707,52).
+            whole = await find_candidates(db, g, exclude_ids=used_bp_ids, whole_amount=True)
+            if any(c.auto for c in whole["goods"]):
+                cands, whole_amount = whole, True
         group_attached: list[dict] = []
         group_ambiguous: list[dict] = []
         group_had_target = False
 
         for kind in ("goods", "services"):
-            kind_amount = g.goods_amount if kind == "goods" else g.services_amount
+            if whole_amount:
+                if kind == "services":
+                    continue
+                kind_amount = g.goods_amount + g.services_amount
+            else:
+                kind_amount = g.goods_amount if kind == "goods" else g.services_amount
             if not kind_amount:
                 continue
             group_had_target = True
@@ -64,6 +82,7 @@ async def run_match_payments(db: AsyncSession, subsidy_id: int, dry_run: bool = 
             auto_cand = next((c for c in kind_cands if c.auto), None)
 
             if auto_cand:
+                used_bp_ids.add(auto_cand.bank_payment_id)
                 if dry_run:
                     group_attached.append({
                         "kind": kind, "bank_payment_id": auto_cand.bank_payment_id,
@@ -151,6 +170,19 @@ async def run_match_payments(db: AsyncSession, subsidy_id: int, dry_run: bool = 
         r = await match_advance(db, advance_pairs, dry_run=dry_run)
         multi_report["advance"]["attached"].extend(r["attached"])
         multi_report["advance"]["ambiguous"].extend(r["ambiguous"])
+
+    if dry_run:
+        # При записи добор не видит строк, уже разнесённых простым проходом
+        # (они в БД); в пробном их в БД нет — убираем из отчёта так же, иначе
+        # заказы рамочного договора показаны дважды (по заказу и по договору).
+        for part in multi_report.values():
+            kept = []
+            for item in part["attached"]:
+                ids = set(item.get("bank_payment_ids") or [item.get("bank_payment_id")])
+                if not ids & used_bp_ids:
+                    used_bp_ids.update(ids)
+                    kept.append(item)
+            part["attached"] = kept
 
     report["multi"] = multi_report
 

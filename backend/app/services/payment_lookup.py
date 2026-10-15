@@ -184,7 +184,7 @@ async def _attached_bank_payment_ids_in_subsidy(
 
 
 async def _eligible_bank_payments(
-    db: AsyncSession, group: PaymentGroup, target_amount: Decimal, target_kind: str,
+    db: AsyncSession, group: PaymentGroup, target_amount: Decimal, target_kind: Optional[str],
 ) -> list[BankPayment]:
     """Признаки 1-4 (субсидия/ИНН/сумма/код), кроме занятости — та проверяется
     отдельно после (см. find_candidates), т.к. занятые всё равно показываются
@@ -204,19 +204,27 @@ async def _eligible_bank_payments(
         )
     )).scalars().all()
 
-    out = []
+    # Код расхода — подсказка, а не запрет (15.10.2026, ФАДМ 2026_3): вид
+    # позиций закупки из листа и код платежа расходятся («услуга» в листе,
+    # платёж кодом «товар» — 4198, 4212, 4205), а загрузчик, разнёсший ту же
+    # выписку на ФАДМ 2026_2, вид не сверял. Платёж с совпавшим кодом —
+    # первым; с несовпавшим — только если с совпавшим нет ни одного.
+    # target_kind=None — вид не важен (вся сумма группы одним платежом).
+    matched, other = [], []
     for bp in rows:
         if (bp.status or "").upper().strip() not in EXECUTED_STATUSES:
             continue
         code = _expense_code(bp)
         kind = await expense_kind(db, code)
-        if kind is not None:
+        if kind is not None and target_kind is not None:
             if target_kind == "goods" and kind != "товар":
+                other.append(bp)
                 continue
             if target_kind == "services" and kind not in ("услуга", "работа"):
+                other.append(bp)
                 continue
-        out.append(bp)
-    return out
+        matched.append(bp)
+    return matched or other
 
 
 def _fmt_amount(v) -> str:
@@ -226,25 +234,39 @@ def _fmt_amount(v) -> str:
         return str(v)
 
 
-async def find_candidates(db: AsyncSession, group: PaymentGroup) -> dict[str, list[Candidate]]:
+async def find_candidates(
+    db: AsyncSession, group: PaymentGroup, exclude_ids: Optional[set[int]] = None,
+    whole_amount: bool = False,
+) -> dict[str, list[Candidate]]:
     """{'goods': [...], 'services': [...]} — кандидаты для каждой из двух сумм
-    группы (пустая/нулевая сумма не ищется — искать нечего)."""
+    группы (пустая/нулевая сумма не ищется — искать нечего).
+
+    exclude_ids — строки выписки, уже выбранные в этом же прогоне
+    (run_match_payments, в т.ч. пробном — там Payment не пишется, и без этого
+    пять закупок по 51 000 получали один и тот же платёж).
+    whole_amount=True — одна сумма группы целиком (товары + услуги) под ключом
+    'goods', вид не важен: закупка разбита на товары и услуги, а оплачена одним
+    платежом (ЦЕНТРАВТО 89 360,02 = 28 652,50 + 60 707,52)."""
     result: dict[str, list[Candidate]] = {"goods": [], "services": []}
     if group.subsidy_id is None or not group.contractor_inn:
         return result
 
     monthly_purchase = await _monthly_purchase(db, group.purchase_ids)
 
-    for kind, target_amount in (("goods", group.goods_amount), ("services", group.services_amount)):
+    targets = (
+        (("goods", (group.goods_amount or 0) + (group.services_amount or 0)),) if whole_amount
+        else (("goods", group.goods_amount), ("services", group.services_amount))
+    )
+    for kind, target_amount in targets:
         if not target_amount or target_amount <= 0:
             continue
-        bps = await _eligible_bank_payments(db, group, target_amount, kind)
+        bps = await _eligible_bank_payments(db, group, target_amount, None if whole_amount else kind)
         if not bps:
             continue
         attached_ids = await _attached_bank_payment_ids_in_subsidy(
             db, [bp.id for bp in bps], group.subsidy_id
         )
-        bps = [bp for bp in bps if bp.id not in attached_ids]
+        bps = [bp for bp in bps if bp.id not in attached_ids and bp.id not in (exclude_ids or ())]
         if not bps:
             continue
         rejected_ids = await _rejected_bank_payment_ids(

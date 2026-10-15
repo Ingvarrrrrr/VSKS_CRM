@@ -257,10 +257,14 @@ const splitRows = computed<SplitRow[]>(() => {
 .kpi-redistributable-note-row-clickable,
 .kpi-balance-note-row-clickable {
   cursor: pointer;
+  /* Тот же вид, что .kpi-sub-note-clickable в SubsidyKpiCards.vue («ещё уйдёт
+     помесячно» в «Заключено») — видно, что нажимается, без наведения
+     (прод 15.10: строки выглядели простым текстом). */
+  text-decoration: underline dotted;
 }
 .kpi-redistributable-note-row-clickable:hover,
 .kpi-balance-note-row-clickable:hover {
-  text-decoration: underline;
+  opacity: 0.8;
 }
 .kpi-economy-clickable {
   cursor: pointer;

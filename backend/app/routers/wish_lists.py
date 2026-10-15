@@ -218,7 +218,9 @@ async def list_wishes(
     deadline_from: Optional[date] = None,
     deadline_to: Optional[date] = None,
     skip: int = 0,
-    limit: int = Query(50, le=200),
+    # Владелец 15.10.2026: заявки 7xx–9xx не находились поиском — сервер молча
+    # отдавал 50 последних, а интерфейс лимит не передаёт. По умолчанию — все.
+    limit: Optional[int] = Query(None, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -270,7 +272,9 @@ async def list_wishes(
         # Другие экраны (useRiskScores.ts, WishesView.vue myWishes/incoming)
         # зовут без status и рассчитывают именно на это.
         q = q.where(Wish.status != 'converted')
-    q = q.order_by(Wish.created_at.desc()).offset(skip).limit(limit)
+    q = q.order_by(Wish.created_at.desc()).offset(skip)
+    if limit is not None:
+        q = q.limit(limit)
     result = await db.execute(q)
     wishes = result.scalars().all()
 

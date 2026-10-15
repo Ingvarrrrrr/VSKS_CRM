@@ -14,7 +14,7 @@ from app.models.product import Product
 from app.models.feo_category import FeoCategory
 from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
-from app.auth.jwt import get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES
+from app.auth.jwt import get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, OWNER_ROLES
 from app.auth.visibility import build_visibility_clause, get_visible_user_ids, get_visible_subsidy_ids
 from app.utils.coerce import coerce_patch_value
 from app.models.user import User
@@ -1835,7 +1835,13 @@ async def _guard_feo_category_change_after_approval(
     # из этой заявки/плана, наоборот. Исключаем purchase_method == 'advance'
     # из замка — тот же предикат, что и на фронте
     # (utils/feoItemLock.ts::isPurchaseFeoHeaderLocked, ПРАВИЛО №6).
-    if getattr(p, "wish_id", None) is not None and getattr(p, "purchase_method", None) != "advance":
+    # Владелец (2026-10-15): «почему я даже на уровне ХОЗЯИНА АККАУНТА не могу
+    # поменять категорию ФЭО, хотя хозяин может всё» — хозяин аккаунта и
+    # суперадмин (OWNER_ROLES) проходят оба замка ниже; согласовавшие и
+    # ответственный получают уведомление (блок в конце функции).
+    is_owner = getattr(current_user, "role", None) in OWNER_ROLES
+    from_wish = getattr(p, "wish_id", None) is not None and getattr(p, "purchase_method", None) != "advance"
+    if from_wish and not is_owner:
         raise HTTPException(
             422,
             detail={
@@ -1847,10 +1853,10 @@ async def _guard_feo_category_change_after_approval(
             },
         )
 
-    if p.approval_status != "approved":
+    if p.approval_status != "approved" and not from_wish:
         return
 
-    if current_user.role != "superadmin":
+    if not is_owner:
         raise HTTPException(
             422,
             detail={
@@ -1862,7 +1868,8 @@ async def _guard_feo_category_change_after_approval(
             },
         )
 
-    # Суперадмин: смена разрешена, но согласовавшие и ответственный должны узнать.
+    # Хозяин аккаунта / суперадмин: смена разрешена, но согласовавшие и
+    # ответственный должны узнать.
     from app.notifications import notify_user, _esc, _purchase_url
     from app.models.purchase_approval import PurchaseApproval
 
@@ -1874,7 +1881,7 @@ async def _guard_feo_category_change_after_approval(
     when = datetime.now().strftime("%d.%m.%Y %H:%M")
     from app.services.purchase_label import purchase_label as _purchase_label_fmt
     text = (
-        f"⚠️ <b>Категория ФЭО изменена после согласования</b>\n\n"
+        f"⚠️ <b>Категория ФЭО изменена {'после согласования' if p.approval_status == 'approved' else 'в закупке из заявки'}</b>\n\n"
         f"📌 Закупка {_purchase_label_fmt(p)}\n"
         f"👤 {_esc(actor_name)} изменил(а) {when}:\n"
         f"«{_esc(old_name)}» → «{_esc(new_name)}»"

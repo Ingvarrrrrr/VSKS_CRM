@@ -126,9 +126,8 @@
         v-model="selected"
         v-model:expanded="expandedRows"
         :headers="tableHeaders"
-        :items="filteredItemsWithRowNum"
+        :items="tableSearchItems"
         :loading="loading"
-        :search="search"
         :sort-by="localSort ? [localSort] : undefined"
         show-select
         show-expand
@@ -857,6 +856,29 @@ async function load() {
   }
 }
 
+// Поиск — одни поля для таблицы и карточек (ПРАВИЛО №6). Владелец 15.10.2026:
+// искал «233» и не находил РЕЕ-2026-04233 — встроенный :search таблицы
+// смотрит только видимые колонки, а «№ реестра» по умолчанию скрыт.
+function advanceSearchFields(item: any): unknown[] {
+  return [
+    item.registry_number,
+    item.displayName,
+    item.subsidy_name,
+    item.reimbursement_user_name,
+    item.subject,
+    item.item_name,
+    item._seller_display,
+  ]
+}
+const tableSearchItems = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return filteredItemsWithRowNum.value
+  return filteredItemsWithRowNum.value.filter((it: any) =>
+    advanceSearchFields(it).some(v => String(v ?? '').toLowerCase().includes(q))
+    || Object.values(it).some(v => (typeof v === 'string' || typeof v === 'number') && String(v).toLowerCase().includes(q)),
+  )
+})
+
 // ── Card view (table↔cards toggle) ────────────────────────────────────────
 const {
   mobile: arMobile,
@@ -869,15 +891,7 @@ const {
   storageKey: 'advance_reports_view_mode',
   source: () => filteredItemsWithRowNum.value,
   search: () => search.value,
-  searchFields: (item) => [
-    item.registry_number,
-    item.displayName,
-    item.subsidy_name,
-    item.reimbursement_user_name,
-    item.subject,
-    item.item_name,
-    (item as any)._seller_display,
-  ],
+  searchFields: advanceSearchFields,
 })
 
 onMounted(load)

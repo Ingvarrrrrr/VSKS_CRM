@@ -89,10 +89,28 @@ def test_purchase_from_wish_blocks_category_change_regardless_of_approval():
         assert "плане" in detail["message"]
 
 
-def test_purchase_from_wish_blocks_even_for_superadmin():
-    """Жёсткий замок — БЕЗ суперадмин-обхода (в отличие от FEO_CATEGORY_LOCKED_AFTER_APPROVAL)."""
-    p = _mk_purchase(wish_id=555, feo_category_id=1, approval_status="approved")
-    user = _mk_user(role="superadmin")
+@pytest.mark.parametrize("role", ["account_owner", "superadmin"])
+@pytest.mark.parametrize("approval_status", [None, "approved"])
+def test_purchase_from_wish_owner_roles_can_change(role, approval_status):
+    """Владелец 15.10.2026: «хозяин может всё» — хозяин аккаунта и суперадмин
+    меняют категорию и у закупки из заявки, согласованной или нет."""
+    class _NoApproversDB:
+        async def get(self, model, id_):
+            return None
+
+        async def execute(self, stmt):  # список согласовавших для уведомления — пуст
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    p = _mk_purchase(wish_id=555, feo_category_id=1, approval_status=approval_status)
+    user = _mk_user(role=role)
+
+    asyncio.run(pr._guard_feo_category_change_after_approval(p, 2, user, _NoApproversDB()))  # не бросает
+
+
+@pytest.mark.parametrize("role", ["admin", "org_admin", "manager", "employee"])
+def test_purchase_from_wish_blocks_below_owner(role):
+    p = _mk_purchase(wish_id=555, feo_category_id=1, approval_status=None)
+    user = _mk_user(role=role)
     db = _FakeDB()
 
     with pytest.raises(HTTPException) as exc_info:

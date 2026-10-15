@@ -3265,7 +3265,10 @@ const isAdmin = computed(() => ADMIN_ROLES.includes(userRole as typeof ADMIN_ROL
 // то же самое поле (form.approval_status), которое сервер сравнивает в
 // _guard_feo_category_change_after_approval (routers/purchases.py). Банер +
 // :disabled на v-form (см. шаблон) + на кнопку «Сохранить» ниже.
-const isPurchaseLockedForEdit = computed(() => isEdit.value && form.approval_status === 'approved')
+// Владелец (2026-10-15): «хозяин может всё» — хозяину аккаунта и суперадмину
+// (isSaas = OWNER_ROLES) согласованная закупка не закрывается; сервер их тоже
+// пропускает (_guard_feo_category_change_after_approval).
+const isPurchaseLockedForEdit = computed(() => isEdit.value && form.approval_status === 'approved' && !isSaas.value)
 
 // ── Approval (Согласование) — extracted to ApprovalPanel.vue ─────────────────
 const approvalPanelRef = ref<InstanceType<typeof ApprovalPanel> | null>(null)
@@ -3819,7 +3822,7 @@ const feoCategoryMissing = computed(() =>
 // получают wish_id (заявка-компаньон на возмещение), но это не значит, что
 // категория пришла из плана; замок должен зависеть от purchase_method, а не
 // от голого факта wish_id (тот же предикат, что и на бэке — ПРАВИЛО №6).
-const isFeoHeaderLocked = computed(() => isPurchaseFeoHeaderLocked({
+const isFeoHeaderLocked = computed(() => !isSaas.value && isPurchaseFeoHeaderLocked({
   wish_id: purchaseData.value?.wish_id,
   purchase_method: form.purchase_method,
 }))

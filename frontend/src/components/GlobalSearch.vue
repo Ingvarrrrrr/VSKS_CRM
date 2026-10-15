@@ -72,6 +72,7 @@ import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useAppSearch } from '@/composables/useAppSearch'
+import { purchaseStatusLabel } from '@/constants/purchaseStatus'
 
 const router = useRouter()
 const { mobile } = useDisplay()
@@ -118,14 +119,27 @@ watch(globalDialog, (v) => {
 async function doSearch(q: string) {
   loading.value = true
   try {
-    const [p, c] = await Promise.all([
-      apiFetch<any[]>(`/purchases/?search=${encodeURIComponent(q)}&limit=8`).catch(() => []),
+    // Владелец 15.10.2026: вводил последние цифры номера («767») и не видел
+    // РЕЕ-2026-00767 — в выдаче не было номера, а 8 случайных совпадений по
+    // всем полям вытесняли нужную. Цифры (до 5) ищем ещё и как номер реестра
+    // с ведущими нулями и ставим эти совпадения первыми.
+    const trimmed = q.trim()
+    const numberQuery = /^\d{1,5}$/.test(trimmed) ? trimmed.padStart(5, '0') : null
+    const [p, byNumber, c] = await Promise.all([
+      apiFetch<any[]>(`/purchases/?search=${encodeURIComponent(q)}&limit=20`).catch(() => []),
+      numberQuery
+        ? apiFetch<any[]>(`/purchases/?search=${encodeURIComponent('-' + numberQuery)}&limit=20`).catch(() => [])
+        : Promise.resolve([] as any[]),
       apiFetch<any[]>(`/contractors/?search=${encodeURIComponent(q)}`).catch(() => []),
     ])
-    purchases.value = (p || []).slice(0, 8).map(x => ({
+    const exact = (byNumber || []).filter(x => numberQuery && String(x.registry_number || '').endsWith(numberQuery))
+    const seen = new Set<number>()
+    const ordered = [...exact, ...(byNumber || []), ...(p || [])]
+      .filter(x => (seen.has(x.id) ? false : (seen.add(x.id), true)))
+    purchases.value = ordered.slice(0, 20).map(x => ({
       id: x.id,
-      title: x.item_name || x.subject || `Закупка #${x.purchase_number || x.id}`,
-      subtitle: [x.subsidy_name, x.contractor_name, x.status].filter(Boolean).join(' · '),
+      title: [x.registry_number, x.subject || x.item_name].filter(Boolean).join(' · ') || `Закупка #${x.id}`,
+      subtitle: [purchaseStatusLabel(x.status), x.subsidy_name, x.contractor_name].filter(Boolean).join(' · '),
     }))
     contractors.value = (c || []).slice(0, 5).map(x => ({
       id: x.id,

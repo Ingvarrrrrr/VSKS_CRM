@@ -449,7 +449,7 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         # finalize_lvl5_items).
         invalidate_planned_items_cache(state, leaf.id)
         state.created += 1
-        reason = extra_reason or f"плановая позиция ({level_label(5)})"
+        reason = extra_reason or f"плановая позиция ({level_label(6)})"
         state.created_details.append({"row": row_num, "name": name, "reason": reason})
         if state.import_run_id is not None:
             await feo_history.record_created(

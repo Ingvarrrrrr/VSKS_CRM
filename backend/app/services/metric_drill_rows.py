@@ -41,7 +41,7 @@ from app.services.monthly_future_payments import (
     monthly_future_rows as _monthly_future_rows,
     monthly_future_totals_by_subsidy,
 )
-from app.services.plan_need_level import NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE
+from app.services.plan_need_level import is_reserve_need_level
 from app.services.purchase_drill_text import purchase_drill_texts
 from app.services.purchase_economy import purchase_economy_bulk
 from app.services.redistributable_raw import not_committed_raw_rows
@@ -259,12 +259,16 @@ async def monthly_future_not_started_drill(db: AsyncSession, subsidy_ids: list[i
 
 async def not_committed_level_drill(db: AsyncSession, subsidy_ids: list[int], metric: str,
                                      today: Optional[_date] = None) -> dict:
-    need_level = NEED_LEVEL_NICE_TO_HAVE if metric == "not_committed_nice" else NEED_LEVEL_LIKELY
+    is_nice_metric = metric == "not_committed_nice"
     raw_rows_map = await not_committed_raw_rows(db, subsidy_ids, today=today)
+    # 🟡 "not_committed_nice" собирает И 'nice_to_have', И 'unforeseen' (тот
+    # же резервный бакет — is_reserve_need_level, ПРАВИЛО №6); "not_committed_likely" —
+    # всё остальное (включая отсутствие валидной привязки, see docstring выше).
     rows = [
         {**row, "subsidy_id": sid}
         for sid, item_rows in raw_rows_map.items() for row in item_rows
-        if not row["monthly_future_not_started"] and row["need_level"] == need_level
+        if not row["monthly_future_not_started"]
+        and (is_reserve_need_level(row["need_level"]) if is_nice_metric else not is_reserve_need_level(row["need_level"]))
     ]
     summary = await subsidy_money_summary(db, subsidy_ids)
     field = "not_committed_nice" if metric == "not_committed_nice" else "not_committed_likely"

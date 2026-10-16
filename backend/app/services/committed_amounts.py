@@ -53,7 +53,9 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
 from app.services.feo_plan_fact import fact_amounts_for_rows
-from app.services.plan_need_level import NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE, normalize_need_level
+from app.services.plan_need_level import (
+    NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE, is_reserve_need_level, normalize_need_level,
+)
 from app.services.purchase_amounts import aggregate_scope_expr
 from sqlalchemy import func
 
@@ -286,7 +288,11 @@ async def committed_consumption_by_category(
             and bool(r.fpi_is_active)
             and r.fpi_cat_id == r.cat_id
         )
-        _level = normalize_need_level(r.fpi_need_level) if _valid_link else NEED_LEVEL_LIKELY
+        # 🟡 'unforeseen' схлопывается в 'nice_to_have' — d имеет только два
+        # ключа committed_likely/committed_nice_to_have (ПРАВИЛО №6, см.
+        # is_reserve_need_level).
+        _level = (NEED_LEVEL_NICE_TO_HAVE if (_valid_link and is_reserve_need_level(r.fpi_need_level))
+                  else NEED_LEVEL_LIKELY)
         if fact_amount is None:
             # ИСПРАВЛЕНИЕ #1 — см. докстринг выше: сумма по плановой/факт.
             # цене позиции входит в committed (деньги заняты договором), но
@@ -658,7 +664,11 @@ async def leaf_items_not_committed_by_need_level(
             continue
         committed_amt = (committed_map.get(r.id) or {}).get("amount", 0.0)
         remainder = info["amount"] - committed_amt
-        level = normalize_need_level(r.need_level)
+        # 🟡 'unforeseen' («Непредвиденные расходы») схлопывается в тот же
+        # бакет, что 'nice_to_have' — единое правило резерва (ПРАВИЛО №6,
+        # app.services.plan_need_level.is_reserve_need_level), эта функция
+        # не заводит собственного списка резервных значений.
+        level = NEED_LEVEL_NICE_TO_HAVE if is_reserve_need_level(r.need_level) else NEED_LEVEL_LIKELY
         d = result.setdefault(r.feo_category_id, {NEED_LEVEL_LIKELY: 0.0, NEED_LEVEL_NICE_TO_HAVE: 0.0})
         d[level] += remainder
     return result

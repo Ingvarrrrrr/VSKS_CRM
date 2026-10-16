@@ -30,6 +30,10 @@ _HEADER_HINTS = (
     "уровень", "план", "факт", "оплач", "оплат", "аванс", "законтракт", "статус", "поставщик",
     "№ закупки", "наименование", "подкатегория", "количество", "сумма",
     "ед. изм", "товар/услуга",
+    # Лист GoodsService владельца (16.10.2026) — заголовки стадий Да/Нет,
+    # без них header_row_guess листа не находил строку 3 (нет слов
+    # "уровень"/"факт"/"законтракт" на этом листе вовсе).
+    "закупка провед", "договор заключ", "товар заказ", "товар поставлен",
 )
 
 # Канонический заголовок формата 'columns' (как в образце ХО) — используется
@@ -64,16 +68,31 @@ TEMPLATE_HEADER[26] = "№ Закупки"
 TEMPLATE_HEADER[28] = "Поставщик "
 
 FIELDS = (
-    "path_l2", "path_l3", "path_l4", "plan_item_name", "item_type", "unit",
+    "path_l2", "path_l3", "path_l4", "path_l5", "plan_item_name", "item_type", "unit",
     "plan_qty", "plan_price", "plan_amount",
     "fact_qty", "fact_price", "fact_amount",
     "paid", "advance", "contracted", "status", "status_raw", "purchase_no", "supplier",
     "comment",
+    # Лист GoodsService владельца (16.10.2026) — стадия закупки в НЕСКОЛЬКИХ
+    # колонках Да/Нет вместо одной «Статус»/«Правильный статус» — rows.py
+    # сводит их в status_raw через statuses.status_label_from_stage_flags,
+    # когда колонки status/status_raw в файле нет (см. rows.py).
+    "stage_purchase_done", "stage_contracted", "stage_ordered", "stage_delivered", "stage_paid",
+    # Группировка по договору (владелец, 16.10.2026, шаг 2) — см. contract_groups.py.
+    "contract_kind", "order_no", "inn", "contract_number", "contract_date",
 )
 
 
 def _norm(s) -> str:
-    return str(s).strip().lower() if s is not None else ""
+    """Нормализация заголовка для сравнения — регистр, \\xa0 (неразрывный
+    пробел — лист GoodsService владельца начинает ряд заголовков с него) и
+    повторные пробелы внутри текста (владелец набирает заголовки руками,
+    «Итоговая цена  за единицу товара» — два пробела) не должны мешать
+    совпадению подстроки."""
+    if s is None:
+        return ""
+    text = str(s).replace("\xa0", " ").strip().lower()
+    return " ".join(text.split())
 
 
 def _is_paid_header(h: str) -> bool:
@@ -152,7 +171,12 @@ def detect_format_and_header(content: bytes, filename: str, sheet_name: Optional
     # Формат 'columns' (ХО) — одна строка заголовка с явными текстами уровней.
     for idx in range(max_scan):
         norm = [_norm(c) for c in all_rows[idx]]
-        score = sum(1 for c in norm if c and (any(h in c for h in ("уровень", "факт", "законтракт", "правильный статус")) or _is_paid_header(c)))
+        score = sum(1 for c in norm if c and (any(h in c for h in (
+            "уровень", "факт", "законтракт", "правильный статус",
+            # Лист GoodsService владельца (16.10.2026) — нет слов "уровень"/
+            # "факт"/"законтракт" вовсе, зацепиться за заголовки стадий.
+            "закупка провед", "договор заключ", "товар заказ", "товар поставлен",
+        )) or _is_paid_header(c)))
         if score >= 3:
             return {"format": "columns", "header_row": idx + 1, "rows": all_rows, "header": all_rows[idx]}
 
@@ -166,31 +190,57 @@ def detect_format_and_header(content: bytes, filename: str, sheet_name: Optional
 def _map_columns_format(header: list) -> list:
     """Поколонное сопоставление для формата 'columns' (ХО) — одна строка
     заголовка. Тройка факта (кол-во/цена/сумма) подряд после ячейки «Факт»
-    (только первая ячейка тройки содержит текст)."""
+    (только первая ячейка тройки содержит текст).
+
+    Лист GoodsService владельца (16.10.2026, тот же формат 'columns', другие
+    подписи колонок — НЕ новый формат) — дополнительные заголовки ниже:
+    путь ФЭО в 4 уровня («Направление расходов по категориям…»/«Тип расходов
+    в соответствии с ФЭО конкретизированный»/«Направление расходов из
+    приложений к ФЭО»/«Тип расходов конкретизированный (сам придумываю…)»),
+    стадия закупки в 5 колонках Да/Нет вместо одной «Статус»."""
+    # «Оплачено в деньгах» (BD) есть на листе → голое «Оплачено» (AW) — это
+    # ФЛАГ стадии, не сумма платежа (см. docstring _is_paid_header). Без
+    # «Оплачено в деньгах» — старое поведение (ХО/ЛНР/ДНР): «Оплачено» = сумма.
+    has_paid_money_header = any("оплачено в деньгах" in _norm(h) for h in header)
     cols = []
     i = 0
     n = len(header)
     while i < n:
         h = _norm(header[i])
         field = None
-        if "уровень 2" in h:
+        if "уровень 2" in h or "направление расходов по категориям" in h:
             field = "path_l2"
-        elif "уровень 3" in h:
+        elif "уровень 3" in h or ("тип расходов" in h and "соответс" in h):
+            # "соответс" (не "соответств") — лист владельца пишет «в
+            # соответсвии» (без «т»), ловим и опечатку, и правильное
+            # написание одним условием.
             field = "path_l3"
-        elif "уровень 4" in h:
+        elif "уровень 4" in h or "направление расходов из приложений" in h:
             field = "path_l4"
-        elif "плановая позиция" in h:
+        elif "тип расходов" in h:
+            # «Тип расходов конкретизированный (сам придумываю…)» (AH) —
+            # 4-й (новый) уровень владельца, после l2/l3/l4 выше.
+            field = "path_l5"
+        elif "плановая позиция" in h or "наименование товара" in h:
             field = "plan_item_name"
-        elif "товар/услуга" in h or "товар / услуга" in h:
+        elif "товар/услуга" in h or "товар / услуга" in h or "товары или услуги" in h:
             field = "item_type"
-        elif "ед. изм. плана" in h or h == "ед. изм.":
+        elif "ед. изм. плана" in h or h == "ед. изм." or "ед. изм" in h:
             field = "unit"
         elif "плановое количество" in h:
             field = "plan_qty"
         elif "плановая цена" in h:
             field = "plan_price"
-        elif "сумма плана" in h:
+        elif "сумма плана" in h or "плановая стоимость" in h:
             field = "plan_amount"
+        elif "закупка провед" in h:
+            field = "stage_purchase_done"
+        elif "договор заключ" in h:
+            field = "stage_contracted"
+        elif "товар заказ" in h:
+            field = "stage_ordered"
+        elif "товар поставлен" in h:
+            field = "stage_delivered"
         # Шаблон ФЭО (решение владельца 05.10.2026, app/routers/
         # feo_import_template.py) — необязательный блок «Факт» с явными
         # заголовками «Факт: Количество/Цена/Сумма», В ОТЛИЧИЕ от одноимённой
@@ -200,9 +250,9 @@ def _map_columns_format(header: list) -> list:
         # но порядок рядом — для читаемости).
         elif "факт: количество" in h or "факт количество" in h:
             field = "fact_qty"
-        elif "факт: цена" in h or "факт цена" in h:
+        elif "факт: цена" in h or "факт цена" in h or "итоговая цена за единицу" in h:
             field = "fact_price"
-        elif "факт: сумма" in h or "факт сумма" in h:
+        elif "факт: сумма" in h or "факт сумма" in h or "итоговая цена за объ" in h:
             field = "fact_amount"
         elif h.strip() == "факт":
             cols.append({"index": i, "letter": _col_letter(i), "header": header[i], "field": "fact_qty"})
@@ -213,7 +263,13 @@ def _map_columns_format(header: list) -> list:
             i += 3
             continue
         elif _is_paid_header(h):
-            field = "paid"
+            if has_paid_money_header and h.strip() == "оплачено":
+                # Лист GoodsService владельца — голое «Оплачено» (AW) рядом с
+                # «Оплачено в деньгах» (BD) — это стадия (флаг), сумма лежит
+                # в BD (см. docstring _is_paid_header).
+                field = "stage_paid"
+            else:
+                field = "paid"
         elif "аванс" in h:
             # Задача 2 (владелец, 05.10.2026) — «Аванс (да/нет)», сразу после
             # «Оплачено» в обоих шаблонах (historical_fact_import/template.py
@@ -225,12 +281,27 @@ def _map_columns_format(header: list) -> list:
             field = "status_raw"
         elif h.strip() == "статус":
             field = "status"
-        elif "№ закупки" in h:
+        elif "№ закупки" in h or "номер закупки" in h:
             field = "purchase_no"
-        elif "поставщик" in h:
+        elif "поставщик" in h or "контрагент" in h:
             field = "supplier"
         elif "коммент" in h:
             field = "comment"
+        # Группировка по договору (владелец, 16.10.2026, шаг 2) — R «ИНН»,
+        # S «Номер договора», T «Дата Договора», E «Номер заказа внутри
+        # закупки…». «Тип договора» (C) НЕ ловится здесь — на листе владельца
+        # её заголовок перезаписан номером соглашения, см. детект по
+        # значениям ниже build_columns().
+        elif "тип договора" in h:
+            field = "contract_kind"
+        elif h == "инн":
+            field = "inn"
+        elif "номер договора" in h:
+            field = "contract_number"
+        elif "дата договора" in h:
+            field = "contract_date"
+        elif "номер заказа" in h:
+            field = "order_no"
         cols.append({"index": i, "letter": _col_letter(i), "header": header[i], "field": field})
         i += 1
     return cols
@@ -287,7 +358,23 @@ def build_columns(detected: dict) -> list:
     """{format, header_row, header|group_row/sub_row} → columns[] контракта."""
     if detected["format"] == "sections":
         return _map_sections_format(detected["group_row"], detected["sub_row"])
-    return _map_columns_format(detected["header"])
+    cols = _map_columns_format(detected["header"])
+    if not any(c.get("field") == "contract_kind" for c in cols):
+        # Лист GoodsService владельца (16.10.2026, шаг 2) — заголовок колонки
+        # «Тип договора» (C) перезаписан номером соглашения, по тексту не
+        # найти. Ищем ПО ЗНАЧЕНИЯМ среди колонок, которым заголовок не дал
+        # другого смысла (ПРАВИЛО №6 — contract_groups.py, одно определение
+        # для мастера «Импорт факта» и для загрузчика ФАДМ).
+        from app.services.historical_fact_import.contract_groups import detect_contract_kind_column
+        sample_rows = detected["rows"][detected["header_row"]:detected["header_row"] + 200]
+        unmapped = [c["index"] for c in cols if not c.get("field")]
+        idx = detect_contract_kind_column(sample_rows, unmapped)
+        if idx is not None:
+            for c in cols:
+                if c["index"] == idx:
+                    c["field"] = "contract_kind"
+                    break
+    return cols
 
 
 def apply_mapping_override(columns: list, mapping: Optional[dict]) -> list:

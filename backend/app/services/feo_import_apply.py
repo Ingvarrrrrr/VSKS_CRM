@@ -98,6 +98,9 @@ async def apply_rows(state) -> None:
     c_lvl2 = state.c_lvl2
     c_lvl3 = state.c_lvl3
     c_lvl4 = state.c_lvl4
+    # 🟡 Правка 16.10.2026 (задача 1): 4-й настраиваемый уровень категории,
+    # см. докстринг c_lvl4b в feo_import_core.py::FeoImportState.
+    c_lvl4b = state.c_lvl4b
     c_lvl5 = state.c_lvl5
     c_qty = state.c_qty
     c_unit = state.c_unit
@@ -347,7 +350,7 @@ async def apply_rows(state) -> None:
     # разовому запросу как раньше.
     _candidate_item_names = {
         _v for _v in (
-            get_cell(_r, _c) for _r in rows for _c in (c_lvl2, c_lvl3, c_lvl4, c_lvl5) if _c is not None
+            get_cell(_r, _c) for _r in rows for _c in (c_lvl2, c_lvl3, c_lvl4, c_lvl4b, c_lvl5) if _c is not None
         )
         if _v and not _v.startswith("←")
     }
@@ -365,6 +368,12 @@ async def apply_rows(state) -> None:
 
         lvl3_name = get_cell(row, c_lvl3)
         lvl4_name = get_cell(row, c_lvl4)
+        # 🟡 Правка 16.10.2026 (задача 1): 4-й настраиваемый уровень категории
+        # (лист GoodsService, колонка AH) — между Уровнем 4 и «Плановой
+        # позицией». Не участвует в legacy-эвристиках ниже (защита от сдвига
+        # колонок, продвижение «Плановой позиции» в пустой уровень) — те
+        # разбирают старые 3-уровневые боевые файлы, этого уровня там не было.
+        lvl4b_name = get_cell(row, c_lvl4b) if c_lvl4b is not None else None
         lvl5_name = get_cell(row, c_lvl5)
         # Владелец, 22.09: «Комментарий» строки — читается один раз здесь (до
         # любых веток продвижения/пропуска ниже), т.к. и orphan-ветка (строка
@@ -954,7 +963,7 @@ async def apply_rows(state) -> None:
         item_plan_qty    = to_dec(get_cell(row, c_qty))
         item_plan_unit   = get_cell(row, c_unit)
         item_plan_unit   = _check_unit_shift(
-            item_plan_unit, row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, f"Ед. изм. ({level_label(5)})"
+            item_plan_unit, row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, f"Ед. изм. ({level_label(6)})"
         )
         item_plan_amount = to_dec(get_cell(row, c_item_amt))
         item_plan_price  = to_dec(get_cell(row, c_item_price)) if c_item_price is not None else None
@@ -1014,6 +1023,17 @@ async def apply_rows(state) -> None:
                 "plan_unit":get_cell(row, c_unit_lvl4)             if c_unit_lvl4     is not None else None,
                 "plan_amt": to_dec(get_cell(row, c_amt_lvl4))      if c_amt_lvl4      is not None else None,
                 "plan_sum": to_dec(get_cell(row, c_plan_sum_lvl4)) if c_plan_sum_lvl4 is not None else None,
+            },
+            # 🟡 Правка 16.10.2026 (задача 1): 4-й настраиваемый уровень
+            # категории (c_lvl4b) — у него пока нет СВОИХ per-level колонок
+            # кол-во/ед./цена/сумма (как и выше у 2/3/4) в мастере импорта,
+            # только имя; дедуп/разрыв уровня (ниже, «Схлопываем соседние
+            # дубли») работает по level_src одинаково для любого уровня.
+            {
+                "level_src": 5,
+                "name": lvl4b_name,
+                "feo_qty": None, "feo_unit": None, "feo_amt": None, "feo_sum": None,
+                "plan_qty": None, "plan_unit": None, "plan_amt": None, "plan_sum": None,
             },
         ]
 
@@ -1479,8 +1499,30 @@ async def apply_rows(state) -> None:
                     _eff_feo_qty = item_feo_qty if item_feo_qty is not None else Decimal("1")
                     eff_item_feo_amount = (item_feo_price * _eff_feo_qty).quantize(QUANT)
 
+                # Задача 3 владельца (16.10.2026, лист GoodsService — col_item_amt
+                # замаплен на «Подтверждённые желания» Y, col_item_price на K):
+                # «Сумма позиции» (Y) первична ВСЕГДА (записывается как есть,
+                # ниже без изменений), а «цена за единицу» (K) достоверна ТОЛЬКО
+                # если Y == Количество(I) × K (до копеек) — иначе K считается
+                # устаревшей/ошибочной и цена пересчитывается как Y/I (округл.
+                # до копеек). Без количества (I=0/нет) пересчитать цену из суммы
+                # нельзя — K остаётся как в файле. ЕДИНСТВЕННОЕ место этого
+                # пересчёта (Правило №6) — не трогает item_plan_amount.
+                if item_plan_amount is not None and item_plan_qty is not None and item_plan_qty != ZERO:
+                    _expected_plan_amt = (item_plan_qty * (item_plan_price or ZERO)).quantize(QUANT)
+                    if item_plan_price is None or _expected_plan_amt != item_plan_amount.quantize(QUANT):
+                        item_plan_price = (item_plan_amount / item_plan_qty).quantize(QUANT)
+
                 eff_item_plan_amount = item_plan_amount
-                if eff_item_plan_amount is None and item_plan_price is not None:
+                # Задача 3 владельца (16.10.2026): «Сумма» (Y) ПУСТАЯ в КОНКРЕТНОЙ
+                # строке, когда колонка c_item_amt ВООБЩЕ сопоставлена (лист
+                # GoodsService — Y «Подтверждённые желания», пусто = ещё не
+                # подтверждено) — это НЕ «считать из кол-во×цена», а «у этой
+                # строки пока нет суммы» (иначе Σ листа 16 330 100 превращается в
+                # 18 822 032 — 4 строки без Y получают K×I). Фолбэк остаётся ТОЛЬКО
+                # когда колонка «Сумма» вообще НЕ сопоставлена (c_item_amt is None,
+                # старые шаблоны без отдельной колонки суммы позиции) — как раньше.
+                if eff_item_plan_amount is None and item_plan_price is not None and c_item_amt is None:
                     _eff_plan_qty = item_plan_qty if item_plan_qty is not None else Decimal("1")
                     eff_item_plan_amount = (item_plan_price * _eff_plan_qty).quantize(QUANT)
 

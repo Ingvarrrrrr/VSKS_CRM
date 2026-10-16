@@ -121,6 +121,57 @@ def resolve_status(status_raw: Optional[str]) -> dict:
     }
 
 
+# Лист GoodsService владельца (16.10.2026) — колонка «Товар заказан» несёт,
+# помимо Да/Нет, два особых текста владельца, которые НЕ означают закупку:
+_ORDERED_NOT_A_PURCHASE = {"скорее всего поставка потребуется", "непредвиденные расходы"}
+_ORDERED_YES = {"да", "yes", "true", "1"}
+
+
+def status_code_from_stage_flags(
+    *, purchase_done: bool, contracted: bool, ordered_raw: Optional[str],
+    delivered: bool, paid: bool,
+) -> Optional[str]:
+    """Статус из НЕСКОЛЬКИХ колонок Да/Нет (лист GoodsService владельца,
+    16.10.2026) вместо одной «Статус»/«Правильный статус» — та же лестница
+    6 кодов GALA, решает старшая заполненная стадия: Оплачено → paid;
+    Товар поставлен → delivered; Товар заказан=«Да» → ordered; Договор
+    заключён (или «Товар заказан» = «Еще не поставлено, но будет.
+    Ежемесячная услуга» — это тоже контракт, владелец) → contracted; Закупка
+    проведена → work_in_progress; иначе None (plan_schedule — закупку не
+    создавать). «Товар заказан» = «Скорее всего поставка потребуется» /
+    «Непредвиденные расходы» — это запланированные расходы владельца, НЕ
+    закупка, побеждает любые другие стадии (решение владельца)."""
+    ordered_norm = " ".join(str(ordered_raw).strip().lower().split()) if ordered_raw else ""
+    if ordered_norm in _ORDERED_NOT_A_PURCHASE:
+        return None
+    if paid:
+        return "paid"
+    if delivered:
+        return "delivered"
+    if ordered_norm in _ORDERED_YES:
+        return "ordered"
+    if contracted or ordered_norm.startswith("еще не поставлено") or ordered_norm.startswith("ещё не поставлено"):
+        return "contracted"
+    if purchase_done:
+        return "work_in_progress"
+    return None
+
+
+def status_label_from_stage_flags(
+    *, purchase_done: bool, contracted: bool, ordered_raw: Optional[str],
+    delivered: bool, paid: bool,
+) -> str:
+    """Та же лестница, что и status_code_from_stage_flags(), но возвращает
+    официальную подпись (STATUS_LABELS) — чтобы rows.py положил её в
+    status_raw и дальше статус разбирал ОДИН источник истины
+    (statuses.resolve_status), не второй механизм (ПРАВИЛО №6)."""
+    code = status_code_from_stage_flags(
+        purchase_done=purchase_done, contracted=contracted, ordered_raw=ordered_raw,
+        delivered=delivered, paid=paid,
+    )
+    return STATUS_LABELS[code or "plan_schedule"]
+
+
 def resolve_status_by_code(code: str) -> dict:
     """Тот же формат ответа, что и resolve_status(), но для явного выбора
     пользователя (decisions.row_overrides[row].status) — без «приведения»,

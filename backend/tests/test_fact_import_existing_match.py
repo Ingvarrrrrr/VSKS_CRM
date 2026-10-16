@@ -33,7 +33,13 @@ async def existing_match_setup(db_session, test_org):
     plan_item = FeoPlannedItem(feo_category_id=cat.id, name="Стол офисный", amount=240000, is_active=True)
     db_session.add(plan_item)
 
-    contractor = Contractor(name="ООО «ОФИСМАГ»", org_id=test_org.id)
+    # ИНН (владелец 16.10.2026): поиск существующей закупки/поставщика в
+    # импорте факта теперь только по ИНН (contractor_resolve.py,
+    # existing_link.py) — совпадение по названию убрано совсем (ложные
+    # «сопоставлено» у разных организаций с похожими названиями). Файл
+    # ниже должен нести ТОТ ЖЕ ИНН в колонке "ИНН" (см. _row(..., inn=...)
+    # в тестах этого файла), иначе существующая закупка не найдётся вовсе.
+    contractor = Contractor(name="ООО «ОФИСМАГ»", inn="7701234567", org_id=test_org.id)
     db_session.add(contractor)
     await db_session.flush()
 
@@ -68,7 +74,7 @@ async def test_same_amount_match_detected_and_preselected(client, auth_headers, 
 
     content = _build_ho_workbook([
         _row("Мебель и инвентарь", 240000, 240000, 240000, paid=240000, status_raw="Оплачено",
-             supplier="ООО ОФИСМАГ", item_name="Стол офисный"),
+             supplier="ООО ОФИСМАГ", item_name="Стол офисный", inn="7701234567"),
     ])
     resp = await client.post(
         f"/api/subsidies/{subsidy.id}/fact-import/preview",
@@ -118,7 +124,7 @@ async def test_same_supplier_different_amount_needs_decision(client, auth_header
 
     content = _build_ho_workbook([
         _row("Мебель и инвентарь", 999000, 999000, 999000, paid=999000, status_raw="Оплачено",
-             supplier="ООО ОФИСМАГ", item_name="Стол офисный"),
+             supplier="ООО ОФИСМАГ", item_name="Стол офисный", inn="7701234567"),
     ])
     resp = await client.post(
         f"/api/subsidies/{subsidy.id}/fact-import/preview",
@@ -157,7 +163,7 @@ async def test_create_planned_item_and_rollback_undoes_it(client, auth_headers, 
 
     content = _build_ho_workbook([
         _row("Мебель и инвентарь", 240000, 240000, 240000, paid=240000, status_raw="Оплачено",
-             supplier="ООО ОФИСМАГ", item_name="Стол офисный"),
+             supplier="ООО ОФИСМАГ", item_name="Стол офисный", inn="7701234567"),
     ])
     resp = await client.post(
         f"/api/subsidies/{subsidy.id}/fact-import/preview",
@@ -219,7 +225,7 @@ async def test_already_bound_item_not_touched(client, auth_headers, test_user, d
 
     content = _build_ho_workbook([
         _row("Мебель и инвентарь", 240000, 240000, 240000, paid=240000, status_raw="Оплачено",
-             supplier="ООО ОФИСМАГ", item_name="Стол офисный"),
+             supplier="ООО ОФИСМАГ", item_name="Стол офисный", inn="7701234567"),
     ])
     resp2 = await client.post(
         f"/api/subsidies/{subsidy.id}/fact-import/commit",
@@ -243,7 +249,7 @@ async def test_stopped_purchase_excluded_from_matches(client, auth_headers, test
 
     content = _build_ho_workbook([
         _row("Мебель и инвентарь", 240000, 240000, 240000, paid=240000, status_raw="Оплачено",
-             supplier="ООО ОФИСМАГ", item_name="Стол офисный"),
+             supplier="ООО ОФИСМАГ", item_name="Стол офисный", inn="7701234567"),
     ])
     resp = await client.post(
         f"/api/subsidies/{subsidy.id}/fact-import/preview",

@@ -126,6 +126,15 @@ async def import_feo_from_excel(
     c_lvl2     = find_col(["уровень 2", "направление расходов", "level 2"])
     c_lvl3     = find_col(["уровень 3", "тип расходов", "level 3"])
     c_lvl4     = find_col(["уровень 4", "конкретизир", "level 4"])
+    # 🟡 Правка 16.10.2026 (задача 1, лист GoodsService владельца, колонка AH
+    # «Тип расходов конкретизированный (свой)») — 4-й настраиваемый уровень
+    # категории, МЕЖДУ Уровнем 4 и «Плановой позицией». find_col по заголовку
+    # ДОЛЖЕН идти ПОСЛЕ "уровень 4" выше (иначе "уровень 5" ниже перехватит
+    # колонку раньше своей очереди — тот же порядок, что у других per-level
+    # find_col в этом файле), и ПЕРЕД "уровень 5"/"плановая позиция" ниже —
+    # иначе слово «5» в заголовке этого нового уровня (если его назовут
+    # «Уровень 5») увело бы колонку в c_lvl5 (имя позиции), не в категорию.
+    c_lvl4b    = find_col(["уровень 5 (категория)", "уровень 4б", "конкретизированный (свой)"])
     c_lvl5     = find_col(["плановая позиция", "уровень 5", "плановый товар", "level 5"])
     c_qty      = find_col(["количество (ур.5)", "количество ур.5", "кол-во (ур.5)", "кол-во ур.5"])
     # Новый шаблон: «кол-во по фэо» — feo_quantity
@@ -214,7 +223,7 @@ async def import_feo_from_excel(
 
     result = await _do_feo_import(
         rows=rows[1:],
-        c_subsidy=c_subsidy, c_lvl2=c_lvl2, c_lvl3=c_lvl3, c_lvl4=c_lvl4,
+        c_subsidy=c_subsidy, c_lvl2=c_lvl2, c_lvl3=c_lvl3, c_lvl4=c_lvl4, c_lvl4b=c_lvl4b,
         c_lvl5=c_lvl5, c_qty=c_qty, c_unit=c_unit, c_item_amt=c_item_amt,
         c_code=c_code, c_appendix=c_appendix, c_budget=c_budget, c_active=c_active,
         c_qty_lvl2=c_qty_lvl2, c_qty_lvl3=c_qty_lvl3, c_qty_lvl4=c_qty_lvl4,
@@ -254,6 +263,9 @@ async def import_feo_mapped(
     col_lvl2: int = Query(-1),
     col_lvl3: int = Query(-1),
     col_lvl4: int = Query(-1),
+    # 🟡 Правка 16.10.2026 (задача 1): 4-й настраиваемый уровень категории,
+    # см. c_lvl4b в app/services/feo_import_core.py.
+    col_lvl4b: int = Query(-1),
     col_lvl5: int = Query(-1),
     col_code: int = Query(-1),
     col_appendix: int = Query(-1),
@@ -347,7 +359,7 @@ async def import_feo_mapped(
     _p = await resolve_feo_import_mapped_params(
         request,
         sheet_name=sheet_name, header_row_offset=header_row_offset,
-        col_subsidy=col_subsidy, col_lvl2=col_lvl2, col_lvl3=col_lvl3, col_lvl4=col_lvl4, col_lvl5=col_lvl5,
+        col_subsidy=col_subsidy, col_lvl2=col_lvl2, col_lvl3=col_lvl3, col_lvl4=col_lvl4, col_lvl4b=col_lvl4b, col_lvl5=col_lvl5,
         col_code=col_code, col_appendix=col_appendix, col_budget=col_budget,
         col_quantity=col_quantity, col_unit=col_unit, col_item_amt=col_item_amt, col_active=col_active,
         col_qty_lvl2=col_qty_lvl2, col_qty_lvl3=col_qty_lvl3, col_qty_lvl4=col_qty_lvl4,
@@ -505,6 +517,7 @@ async def import_feo_mapped(
         c_lvl2=col_lvl2,
         c_lvl3=_c("col_lvl3"),
         c_lvl4=_c("col_lvl4"),
+        c_lvl4b=_c("col_lvl4b"),
         c_lvl5=_c("col_lvl5"),
         c_qty=_c("col_quantity"),
         c_unit=_c("col_unit"),

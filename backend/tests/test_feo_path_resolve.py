@@ -233,3 +233,76 @@ def test_ae_not_found_returns_none():
     result = resolve_feo_path(tree, ae="Направление, которого нет в дереве", af="что угодно", ag="")
     assert result.category_id is None
     assert result.stopped_at == "none"
+
+
+# ---------------------------------------------------------------------------
+# 🟡 4-й уровень (AH) — план composed-noodling-lampson.md, 16.10.2026.
+# Импорт НАПРЯМУЮ из app.services.feo_path_resolve (ЕДИНСТВЕННОЕ место,
+# ПРАВИЛО №6) — scripts/fadm_sheet_load/feo_path_resolve.py теперь только
+# re-export shim оттуда, см. его docstring.
+# ---------------------------------------------------------------------------
+from app.services.feo_path_resolve import resolve_feo_path4  # noqa: E402
+
+
+def _build_tree_4lvl() -> FeoTree:
+    nodes = [
+        CategoryNode(1, None, "Направление", 1),
+        CategoryNode(10, 1, "Тип расходов", 2),
+        CategoryNode(100, 10, "Приложение", 3),
+        CategoryNode(1000, 100, "Конкретная позиция", 4),
+        CategoryNode(1001, 100, "Другая позиция", 4),
+    ]
+    return FeoTree(nodes)
+
+
+def test_resolve_4_levels_finds_leaf():
+    tree = _build_tree_4lvl()
+    result = resolve_feo_path4(tree, "Направление", "Тип расходов", "Приложение", "Конкретная позиция")
+    assert result.category_id == 1000
+    assert result.stopped_at == "ah"
+    assert result.path == ["Направление", "Тип расходов", "Приложение", "Конкретная позиция"]
+
+
+def test_resolve_4_levels_ah_empty_stays_on_ag():
+    """AH пуст — остаёмся на узле AG (как раньше, 3-уровневый результат)."""
+    tree = _build_tree_4lvl()
+    result = resolve_feo_path4(tree, "Направление", "Тип расходов", "Приложение", "")
+    assert result.category_id == 100
+    assert result.stopped_at == "ag"
+
+
+def test_resolve_4_levels_adjacent_duplicates_collapsed():
+    """AE и AF совпадают текстом (лист дублирует родителя) — склеиваются:
+    реально ищем «Направление»→«Приложение»→«Конкретная позиция», а не
+    безуспешно AF=«Направление» среди детей корня."""
+    tree = _build_tree_4lvl()
+    result = resolve_feo_path4(tree, "Направление", "Направление", "Тип расходов", "Приложение")
+    assert result.category_id == 100
+    assert result.stopped_at == "ag"
+    assert result.path == ["Направление", "Тип расходов", "Приложение"]
+
+
+def test_resolve_4_levels_ah_not_found_stays_on_ag():
+    tree = _build_tree_4lvl()
+    result = resolve_feo_path4(tree, "Направление", "Тип расходов", "Приложение", "Совсем другое")
+    assert result.category_id == 100
+    assert result.stopped_at == "ag"
+
+
+def test_resolve_4_levels_ah_ambiguous_stays_on_ag():
+    """Оба листа (1000/1001) имеют общий длинный префикс с AH — без явного
+    лидера остаёмся на AG и фиксируем неоднозначность уровня 'ah'."""
+    shared = "Закупка комплекта формы для торжественных мероприятий клуба целиком "
+    nodes = [
+        CategoryNode(1, None, "Направление", 1),
+        CategoryNode(10, 1, "Тип расходов", 2),
+        CategoryNode(100, 10, "Приложение", 3),
+        CategoryNode(1000, 100, shared + "Бета", 4),
+        CategoryNode(1001, 100, shared + "Гамма", 4),
+    ]
+    tree = FeoTree(nodes)
+    result = resolve_feo_path4(tree, "Направление", "Тип расходов", "Приложение", shared + "Альфа")
+    assert result.category_id == 100
+    assert result.stopped_at == "ag"
+    assert result.ambiguous
+    assert result.ambiguous_level == "ah"

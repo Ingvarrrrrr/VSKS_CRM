@@ -56,6 +56,19 @@
               </template>
             </span>
           </div>
+          <!-- Группировка по договору (владелец, 16.10.2026, шаг 2) —
+               только показ, без редактирования (минимум по заданию):
+               рамочный договор виден видом/номером/датой и числом заказов,
+               чтобы было понятно, что внутри карточки будет не одна
+               закупка, а голова + несколько заказов. -->
+          <div v-if="g.contract_kind && g.contract_kind !== 'Разовый'" class="text-caption text-medium-emphasis mt-1">
+            {{ g.contract_kind }}<template v-if="g.contract_number">, № {{ g.contract_number }}</template>
+            <template v-if="g.contract_date">от {{ fmtDate(g.contract_date) }}</template>
+            <template v-if="g.contract_orders?.length">
+              — {{ g.contract_orders.length }} {{ g.contract_orders.length === 1 ? 'заказ' : 'заказов' }}
+            </template>
+          </div>
+
           <v-alert v-if="g.warnings?.length" type="warning" variant="tonal" density="compact" class="mt-2">
             <div v-for="(w, i) in g.warnings" :key="i">{{ w }}</div>
           </v-alert>
@@ -137,6 +150,11 @@ const openGroupPanels = reactive<Record<string, number | null>>({})
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
   return formatMoney(v)
+}
+
+function fmtDate(iso: string): string {
+  const [y, m, d] = iso.split('-')
+  return y && m && d ? `${d}.${m}.${y}` : iso
 }
 
 function onSupplierOverride(groupKey: string, contractorId: number | null) {

@@ -71,7 +71,7 @@ from app.services.committed_amounts import (
     SINGLE_COMMITTED_STATUSES,
     committed_status_predicate,
 )
-from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE
+from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE, RESERVE_NEED_LEVELS
 from app.services.purchase_amounts import effective_amount_expr
 
 # Контракты этих трёх типов (и ТОЛЬКО этих, СО status='active') уже учтены
@@ -604,7 +604,7 @@ async def contracted_not_ordered_need_level_split(
         .where(Purchase.parent_purchase_id.isnot(None))
         .where(Purchase.stopped_at.is_(None))
         .where(Purchase.subsidy_id.in_(list(totals.keys())))
-        .where(FeoPlannedItem.need_level == NEED_LEVEL_NICE_TO_HAVE)
+        .where(FeoPlannedItem.need_level.in_(RESERVE_NEED_LEVELS))  # 🟡 nice_to_have + unforeseen
         .group_by(Purchase.subsidy_id)
     )
     nice_rows = (await db.execute(nice_stmt)).all()
@@ -672,7 +672,7 @@ async def contracted_not_ordered_split_by_kind(
         .where(Purchase.status == "contracted")
         .where(Purchase.parent_purchase_id.isnot(None))
         .where(Purchase.stopped_at.is_(None))
-        .where(FeoPlannedItem.need_level == NEED_LEVEL_NICE_TO_HAVE)
+        .where(FeoPlannedItem.need_level.in_(RESERVE_NEED_LEVELS))  # 🟡 nice_to_have + unforeseen
         .group_by(Purchase.id)
     )
     nice_by_purchase: dict[int, float] = {r.id: float(r.amt or 0) for r in (await db.execute(nice_stmt)).all()}

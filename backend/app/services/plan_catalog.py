@@ -68,10 +68,22 @@ async def load_plan_catalog(db: AsyncSession, subsidy_id: int) -> list[dict]:
             "amount": qty * unit_price,
         })
 
-    if leaves:
+    # Правка (владелец, 16.10.2026, сверка карточек субсидии 26121): раньше
+    # FeoPlannedItem читались ТОЛЬКО у «листьев» (children_count==0) — с
+    # добавлением 4-го настраиваемого уровня категории (задача 1, AH-уровень
+    # «Услуги связи» и т.п.) появились УЗЛЫ СМЕШАННОГО вида — категория несёт
+    # И свои собственные позиции (строки без AH), И дочернюю подкатегорию
+    # (строки с заполненным AH) — такой узел больше не «лист» (у него есть
+    # ребёнок), и его СОБСТВЕННЫЕ 14 плановых позиций («БРОНИРОВАНИЕ ГОСТИНИЦ»
+    # и т.п.) вообще не попадали в каталог матчинга — импорт факта не находил
+    # для них позицию (ambiguous/not_found), хотя она была в дереве. Теперь
+    # читаем FeoPlannedItem у ЛЮБОЙ категории (лист или не лист) — позиция
+    # всегда принадлежит узлу напрямую (FeoPlannedItem.feo_category_id), не
+    # «листовости» узла.
+    if all_cats:
         fpi_rows = (await db.execute(
             select(FeoPlannedItem)
-            .where(FeoPlannedItem.feo_category_id.in_([c.id for c in leaves]))
+            .where(FeoPlannedItem.feo_category_id.in_([c.id for c in all_cats]))
             .where(FeoPlannedItem.is_active == True)
         )).scalars().all()
         for it in fpi_rows:

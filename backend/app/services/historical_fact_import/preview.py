@@ -40,6 +40,10 @@ from app.services.feo_import_common import format_rows as _format_rows
 from app.services.historical_fact_import.plan_diff_warnings import (
     _rub, build_file_plan_vs_gala_warning, build_tz_excess_message,
 )
+# Задача 1 владельца (16.10.2026, продолжение GoodsService) — ОДНО место
+# формата ключа «это и есть моя же закупка» (ПРАВИЛО №6), см. docstring
+# build_source_key в contract_groups.py.
+from app.services.historical_fact_import.contract_groups import build_source_key, valid_inn
 # Часть объединённой плановой позиции (план merged-item-parts.md) —
 # ПРАВИЛО №6, единственное место решения строка→часть (см. docstring модуля).
 from app.services.historical_fact_import.plan_parts import (
@@ -483,6 +487,31 @@ async def build_preview(
         )
         existing_purchase: Optional[dict] = None
 
+        # 🟢 Правка (владелец, 16.10.2026, продолжение GoodsService): позиция
+        # каталога «Услуги связи» (ежемесячная услуга) — ОДНА, но реальных
+        # закупок на неё за разные месяцы МНОГО. matching.match_row видит
+        # «позиция уже привязана» и ставит already_purchased для КАЖДОЙ
+        # строки с этим именем, указывая на ОДНУ (первую попавшуюся)
+        # привязанную закупку — даже когда эта строка на самом деле про
+        # СВОЙ, другой, месяц/заказ (другой № закупки/заказа). Раньше все
+        # такие строки молча копились в один бакет «обновить статус/оплату»
+        # (existing_update.py) — 7 месяцев схлопывались в один платёж задним
+        # числом поверх первой закупки (боевая находка: +78 203 к закупке на
+        # 11 870). Если у строки есть СВОЯ опознаваемая личность (ИНН+№
+        # закупки, build_source_key) и у найденной привязанной закупки тоже
+        # есть source_key, но они РАЗНЫЕ — это НЕ та же закупка, просто то же
+        # имя позиции: откатываем match на not_found, строка пойдёт обычным
+        # путём (создаст СВОЮ закупку, см. ветку ambiguous/not_found ниже,
+        # которая теперь тоже не пропускается молча). Если source_key нет
+        # (старые файлы без ИНН/№ закупки) — поведение не меняется.
+        if match["state"] == "already_purchased":
+            _bound_single = ctx.get("bound_purchases", {}).get(match["planned_item_id"]) or []
+            if len(_bound_single) == 1:
+                _row_source_key = build_source_key(valid_inn(row.get("inn")), row.get("purchase_no"))
+                _cand_source_key = _bound_single[0].get("source_key")
+                if _row_source_key and _cand_source_key and _row_source_key != _cand_source_key:
+                    match = {**match, "state": "not_found", "planned_item_id": None}
+
         if match["state"] == "already_purchased" and "skip" not in override:
             # Задача B (владелец, 07.10.2026): «он должен статусы смотреть» —
             # не пропускать строку молча, а обновить закупку, которой уже
@@ -537,14 +566,19 @@ async def build_preview(
                 warnings.append("У плановой позиции уже есть закупка — строка пропущена по умолчанию")
 
         if match["state"] == "ambiguous" and "skip" not in override:
-            skip = True
-            skip_forced = True
-            # 🟡 Правка (план lazy-swimming-hollerith.md, п.3): остаётся
-            # только для случая «позицию добавили в файл, а в план GALA не
-            # завели» (владелец: «KAMAZ 43101» дважды в файле при одной
-            # позиции в плане). N — реальное число одноимённых позиций в
-            # плане (len(candidates)), не «сколько строк её хотят» — для
-            # этой строки места в плане действительно больше нет.
+            # 🟢 Правка (владелец, 16.10.2026, продолжение задачи GoodsService):
+            # «каждая строка со стадией должна стать закупкой/заказом
+            # независимо от того, нашлась ли плановая позиция; строка без
+            # позиции — с пометкой «плановая позиция не найдена», не пропуск».
+            # Раньше ambiguous принудительно пропускался (skip_forced) — на
+            # листе GoodsService 14 строк со стадией и реальной суммой молча
+            # не становились закупками (952 950 ₽ «терялись»). Теперь строка
+            # создаёт закупку БЕЗ привязки к плану (как и `not_found` — та
+            # ветка никогда не была force-skip), предупреждение остаётся
+            # информационным (видно в предпросмотре), привязку человек может
+            # донастроить вручную позже через override.planned_item_id —
+            # ПРЯМОЕ ручное «Пропустить» (override.skip) продолжает работать
+            # (проверка `"skip" not in override` выше не изменилась).
             competing_rows = match.get("competing_rows") or []
             competing_name = match.get("competing_item_name") or row["name"]
             n_candidates = len(match["candidates"])
@@ -562,9 +596,9 @@ async def build_preview(
                     if n_candidates == 1 else "все уже сопоставлены другим строкам файла"
                 )
             reason_text = (
-                f'В плане GALA {n_candidates} {word} «{competing_name}», {linked_part} — для этой строки '
-                'позиции в плане нет. Похоже, позицию добавили в файл, но не в план GALA: добавьте её в '
-                'План закупок или пропустите строку'
+                f'Плановая позиция не найдена: в плане GALA {n_candidates} {word} «{competing_name}», '
+                f'{linked_part} — для этой строки позиции в плане нет. Закупка будет создана БЕЗ привязки '
+                'к плану; привязать вручную можно в колонке «Сопоставление», либо нажать «Пропустить»'
             )
             skip_reason = {"code": "ambiguous", "text": reason_text}
             warnings.append(reason_text)
@@ -763,6 +797,14 @@ async def build_preview(
             "existing_purchase": existing_purchase,
             "warnings": warnings,
             "_status_info": status_info,
+            # Группировка по договору (владелец, 16.10.2026, шаг 2) —
+            # grouping.py (ключ группы) и contract_groups.py (разбор группы
+            # на заказы/лимит) читают их отсюда, не второй источник.
+            "inn": row.get("inn"),
+            "contract_kind": row.get("contract_kind"),
+            "order_no": row.get("order_no"),
+            "contract_number": row.get("contract_number"),
+            "contract_date": row.get("contract_date"),
         })
         if warnings:
             top_warnings.extend(f"Строка {row['row']}: {w}" for w in warnings)
@@ -770,24 +812,71 @@ async def build_preview(
     rows_with_match = [{"row": r, "match": r["match"], "status_info": r["_status_info"]} for r in out_rows]
     groups = grouping_mod.build_groups(rows_with_match, decisions)
 
+    # Группировка по договору (владелец, 16.10.2026, шаг 2) — «внутри
+    # договора — по номерам заказов, делай как GoodsService»: каждая группа
+    # (уже собранная grouping.py по ИНН/поставщик + № закупки) разбирается
+    # contract_groups.build_contract_group() на вид договора/реальный номер
+    # и дату/заказы (для рамочных) — ОДНО определение (ПРАВИЛО №6), то же,
+    # что потом использует commit.py при создании закупок.
+    from app.services.historical_fact_import import contract_groups as contract_groups_mod
+    from app.services.historical_fact_import.existing_update import RANK as _CONTRACT_RANK
+    _rows_by_num_for_contract = {r["row"]: r for r in out_rows}
+    for group in groups:
+        group_rows_full = [_rows_by_num_for_contract[rn] for rn in group["rows"] if rn in _rows_by_num_for_contract]
+        has_contract_columns = any(gr.get("contract_kind") or gr.get("order_no") for gr in group_rows_full)
+        if not has_contract_columns:
+            continue
+        info = contract_groups_mod.build_contract_group(
+            group_rows_full, status_of=lambda r: r.get("status"), status_rank=_CONTRACT_RANK,
+        )
+        group["contract_kind"] = info.kind
+        group["contract_number"] = info.contract_number
+        group["contract_date"] = info.contract_date.isoformat() if info.contract_date else None
+        group["contract_orders"] = [
+            {
+                "order_no": o.order_no,
+                "amount": float(o.amount),
+                "status": o.status,
+                "rows": [r["row"] for r in o.rows],
+            }
+            for o in info.orders
+        ]
+        group["contract_limit_amount"] = float(info.limit_amount) if info.limit_amount is not None else None
+
     for r in out_rows:
         r.pop("_status_info", None)
 
     # 🔵 правка 3 (план breezy-mixing-lovelace.md, Часть А «Похожие закупки в
     # импорте факта»): для каждой будущей закупки (группы) — поиск уже
     # существующей закупки того же поставщика/суммы (historical_fact_import.
-    # existing_link, ПРАВИЛО №6 — переиспользует purchase_similar +
-    # contractor_resolve.find_contractors_by_name, не второй поиск
-    # контрагента). Группа без ни одной незапропущенной строки (всё skip) —
-    # искать нечего, она всё равно не станет закупкой (commit.py её
-    # пропускает).
+    # existing_link). Владелец (16.10.2026): поиск поставщика там теперь
+    # ТОЛЬКО по ИНН (см. докстринг existing_link.py) — имя больше не
+    # используется вовсе, совпадение по имени давало ложные «сопоставлено»
+    # у разных организаций с похожими названиями. Группа без ни одной
+    # незапропущенной строки (всё skip) — искать нечего, она всё равно не
+    # станет закупкой (commit.py её пропускает).
     from app.services.historical_fact_import import existing_link as existing_link_mod
     from app.services.tz_excess_approval import collect_tz_over_plan_violations as _collect_violations
     from types import SimpleNamespace as _SimpleNamespace
+    from app.services.vehicle_org_matching import normalize_inn as _normalize_inn
+    from app.services.contractor_resolve import find_contractor_ids_by_inns
 
     rows_by_num = {r["row"]: r for r in out_rows}
     existing_decisions = decisions.get("existing_match") or {}
     purchases_count = 0
+
+    # Замер скорости (владелец 16.10.2026): раньше find_existing_matches_
+    # for_group на КАЖДУЮ группу (113 на листе GoodsService владельца) сама
+    # заново запрашивала и нормализовала ВСЕХ контрагентов (4,8 млн вызовов
+    # normalize_org_name, ~107 с) — теперь ОДИН запрос `inn IN (...)` по
+    # ВСЕМ уникальным валидным ИНН файла разом, здесь, один раз на весь
+    # прогон preview (ПРАВИЛО №6 — contractor_resolve.find_contractor_ids_
+    # by_inns, тот же normalize_inn, что и везде).
+    all_group_inns = [g.get("inn") for g in groups]
+    contractor_ids_by_inn = await find_contractor_ids_by_inns(db, all_group_inns)
+
+    missing_inn_groups: list = []
+
     for group in groups:
         group_rows = [
             rows_by_num[rn] for rn in group["rows"]
@@ -795,6 +884,23 @@ async def build_preview(
         ]
         if group_rows:
             purchases_count += 1
+
+        # Владелец (16.10.2026): группа БЕЗ валидного ИНН поставщика (10/12
+        # цифр, normalize_inn) — не ищем существующую закупку вовсе (ниже),
+        # ПОМЕЧАЕМ предупреждением (видно на шаге групп мастера,
+        # FactImportStepGroups.vue уже рисует group.warnings — ПРАВИЛО №6,
+        # не второе поле) и считаем в totals.missing_supplier_inn. ИНН есть,
+        # но контрагента с таким ИНН в базе нет — это НЕ предупреждение
+        # (обычный новый поставщик, которого ещё не было в базе), просто нет
+        # совпадения с существующей закупкой.
+        norm_group_inn = _normalize_inn(group.get("inn"))
+        group["supplier_inn_missing"] = not norm_group_inn
+        if not norm_group_inn and group_rows:
+            group["warnings"].append(
+                "Не хватает ИНН поставщика — поставщик может быть указан неверно."
+            )
+            missing_inn_groups.append(group)
+
         if not group_rows:
             group["existing_matches"] = []
             group["needs_existing_decision"] = False
@@ -802,8 +908,24 @@ async def build_preview(
 
         group_amount = Decimal(str(group["contract_amount"])) if group["contract_amount"] else None
         matches = await existing_link_mod.find_existing_matches_for_group(
-            db, subsidy_id, group.get("supplier"), group_amount,
+            db, subsidy_id, group_amount,
+            group_inn=group.get("inn"), contractor_ids_by_inn=contractor_ids_by_inn,
+            source_key=group.get("source_key"),
         )
+        # Задача 4 владельца (16.10.2026): ИНН+№закупки[+№заказа] совпали
+        # точно (source_key_match) — это та же закупка, НО если сумма файла
+        # разошлась с суммой закупки — пометка в предупреждениях группы
+        # (владелец: «обновлять сумму только если пользователь отметил,
+        # иначе не трогать» — сама пометка ничего не меняет, решение по
+        # сумме человек принимает отдельно, здесь только видимость).
+        _sk_match = next((m for m in matches if m["kind"] == "source_key_match"), None)
+        if _sk_match is not None and group_amount is not None and _sk_match.get("amount") is not None:
+            _old_amt = Decimal(str(_sk_match["amount"]))
+            if _old_amt != group_amount:
+                group["warnings"].append(
+                    f"Сумма изменилась: было {_rub(_old_amt)} → в файле {_rub(group_amount)} "
+                    "(сумма закупки не обновлена — это пометка для проверки)"
+                )
         if matches:
             file_row_planned_item_id = group_rows[0]["match"].get("planned_item_id")
             excess_units: list = []
@@ -836,12 +958,15 @@ async def build_preview(
 
         group["existing_matches"] = matches
         decided = group["key"] in existing_decisions
-        has_same_amount = any(m["kind"] == "same_amount" for m in matches)
-        has_same_supplier_only = bool(matches) and not has_same_amount
-        # «Скорее всего та же» (same_amount) — предвыбрано, коммит может идти
-        # без явного решения. «Возможно» (same_supplier, сумма другая) —
-        # решение обязательно (владелец: «импорт не идёт, пока по каждому
-        # „возможно“ не выбрано»).
+        # Задача 4 (16.10.2026): source_key_match — точное опознание той же
+        # закупки (ИНН+№закупки[+№заказа]) — автоприменяется как same_amount,
+        # НЕ требует решения человека (см. docstring resolve_group_decision).
+        has_auto_same = any(m["kind"] in ("same_amount", "source_key_match") for m in matches)
+        has_same_supplier_only = bool(matches) and not has_auto_same
+        # «Скорее всего та же» (same_amount/source_key_match) — предвыбрано,
+        # коммит может идти без явного решения. «Возможно» (same_supplier,
+        # сумма другая) — решение обязательно (владелец: «импорт не идёт,
+        # пока по каждому „возможно“ не выбрано»).
         group["needs_existing_decision"] = has_same_supplier_only and not decided
 
     # Задача B: агрегируем строки с существующей закупкой (row['existing_
@@ -1006,6 +1131,14 @@ async def build_preview(
                 "count": len(overspend_rows),
                 "amount": float(overspend_total),
                 "rows": overspend_rows,
+            },
+            # Владелец (16.10.2026) — счётчик групп без валидного ИНН
+            # поставщика (существующая закупка для них не ищется вовсе, см.
+            # выше), чтобы видеть масштаб на шаге итогов мастера, не только
+            # на карточке каждой группы.
+            "missing_supplier_inn": {
+                "count": len(missing_inn_groups),
+                "groups": [g["key"] for g in missing_inn_groups],
             },
         },
         "warnings": top_warnings,

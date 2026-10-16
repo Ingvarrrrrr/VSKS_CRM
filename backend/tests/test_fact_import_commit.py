@@ -20,7 +20,11 @@ from app.models.feo_planned_item import FeoPlannedItem
 def _build_ho_workbook(rows: list) -> bytes:
     wb = Workbook()
     ws = wb.active
-    header = [None] * 28
+    # 29 колонок (было 28) — добавлена "ИНН" (владелец 16.10.2026, поиск
+    # существующей/совпадение контрагента в импорте факта только по ИНН,
+    # test_fact_import_existing_match.py). Остальные тесты этого файла
+    # передают inn=None в _row() — пустая колонка 28 их не трогает.
+    header = [None] * 29
     header[0] = "Субсидия"
     header[4] = "Уровень 2 (Направление расходов по ФЭО)"
     header[5] = "Уровень 3 (Тип расходов по ФЭО)"
@@ -37,6 +41,7 @@ def _build_ho_workbook(rows: list) -> bytes:
     header[24] = "Правильный статус"
     header[25] = "№ Закупки"
     header[27] = "Поставщик "
+    header[28] = "ИНН"
     ws.append(header)
     for r in rows:
         ws.append(r)
@@ -47,8 +52,8 @@ def _build_ho_workbook(rows: list) -> bytes:
 
 def _row(l3, amount, fact_price, fact_amount, paid=None, contracted=None,
          status_raw=None, purchase_no=None, supplier=None, item_name=None, item_type=None,
-         l4=None):
-    r = [None] * 28
+         l4=None, inn=None):
+    r = [None] * 29
     r[0] = "ХО_2026"
     r[5] = l3
     # l4 (опционально, чек-лист 13.10.2026, «Проезд, проживание, питание»):
@@ -74,6 +79,11 @@ def _row(l3, amount, fact_price, fact_amount, paid=None, contracted=None,
     r[21], r[22] = paid, contracted
     r[24] = status_raw
     r[25], r[27] = purchase_no, supplier
+    # inn (опционально, test_fact_import_existing_match.py) — колонка "ИНН"
+    # (r[28], владелец 16.10.2026): поиск существующей закупки/контрагента
+    # в импорте факта теперь только по ИНН, см. contractor_resolve.py.
+    if inn is not None:
+        r[28] = inn
     return r
 
 
@@ -705,17 +715,17 @@ async def test_preview_skip_reason_ambiguous(client, auth_headers, test_user, db
     assert rows[0]["match"]["state"] == "found"
     second = rows[1]
     assert second["match"]["state"] == "ambiguous"
-    assert second["skip"] is True
-    assert second["skip_forced"] is True
+    # 🟢 Правка (владелец, 16.10.2026, продолжение GoodsService): ambiguous
+    # больше НЕ принудительно пропускается — «каждая строка со стадией
+    # должна стать закупкой независимо от того, нашлась ли плановая позиция»
+    # (раньше это молча «теряло» строки со своей суммой/стадией — 14 строк,
+    # 952 950 ₽ на листе владельца). Строка создаёт закупку без привязки к
+    # плану, предупреждение остаётся информационным.
+    assert second["skip"] is False
     assert second["skip_reason"]["code"] == "ambiguous"
     assert str(rows[0]["row"]) in second["skip_reason"]["text"]
     assert "Аренда оборудования" in second["skip_reason"]["text"]
-    # 🔵 Правка (план lazy-swimming-hollerith.md, п.3): текст ambiguous
-    # переписан — «позиции в плане нет» (владелец), а не «выберите другую
-    # позицию в колонке «Сопоставление»» (это осталось верно по смыслу —
-    # картинка пикера, но текст теперь другой).
-    assert "в плане нет" in second["skip_reason"]["text"]
-    assert "План закупок" in second["skip_reason"]["text"]
+    assert "не найдена" in second["skip_reason"]["text"]
 
 
 async def test_preview_no_item_name_notification_and_manual_override(

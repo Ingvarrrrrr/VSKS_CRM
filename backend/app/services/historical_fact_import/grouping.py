@@ -25,6 +25,10 @@ from app.services.vehicle_org_matching import normalize_org_name
 # русских слов (задание 07.10.2026, п.5 — «смешаны статусы (delivered,
 # ordered)» должно звучать по-русски).
 from app.routers.purchase_transitions import STATUS_LABELS
+# Группировка по договору (владелец, 16.10.2026, шаг 2) — «ИНН из R, иначе
+# контрагент» + «№ Закупки» — valid_inn — ОДНО определение (ПРАВИЛО №6,
+# contract_groups.py), не вторая копия регулярки.
+from app.services.historical_fact_import.contract_groups import build_source_key, valid_inn
 
 
 def _supplier_key(supplier: Optional[str]) -> str:
@@ -35,15 +39,26 @@ def _supplier_key(supplier: Optional[str]) -> str:
 
 
 def default_group_key(row: dict, match: dict) -> tuple:
-    supplier_key = _supplier_key(row.get("supplier"))
+    # Группировка по договору (владелец, 16.10.2026, шаг 2, лист
+    # GoodsService): «группа — одна закупка с договором: ключ (валидный ИНН
+    # из «ИНН», иначе нормализованный «Контрагент») + «Номер закупки»».
+    # ИНН — настоящий идентификатор контрагента (не текст-заглушка,
+    # valid_inn), ПРИОРИТЕТНЕЕ названия поставщика (та же организация может
+    # писать имя по-разному, ИНН не ошибается) — иначе, как раньше, по имени
+    # поставщика.
+    identity_key = valid_inn(row.get("inn"))
+    identity_kind = "inn"
+    if not identity_key:
+        identity_key = _supplier_key(row.get("supplier"))
+        identity_kind = "supplier"
     purchase_no = (row.get("purchase_no") or "").strip()
-    if supplier_key and purchase_no:
-        return ("supplier_no", supplier_key, purchase_no)
-    if supplier_key:
-        return ("supplier", supplier_key)
+    if identity_key and purchase_no:
+        return (f"{identity_kind}_no", identity_key, purchase_no)
+    if identity_key:
+        return (identity_kind, identity_key)
     if purchase_no:
-        # Поставщика нет, но «№ Закупки» указан — группа по номеру закупки
-        # (несколько строк одной будущей закупки без явного поставщика).
+        # Поставщика/ИНН нет, но «№ Закупки» указан — группа по номеру
+        # закупки (несколько строк одной будущей закупки без явного поставщика).
         return ("purchase_no", purchase_no)
     # Правка 12.10.2026 (п.4а): без поставщика И без «№ Закупки» — КАЖДАЯ
     # строка отдельная закупка (ключ по номеру строки файла), а не общий
@@ -137,7 +152,22 @@ def build_groups(rows_with_match: list, decisions: Optional[dict] = None) -> lis
         groups.append({
             "key": "|".join(str(x) for x in (default_group_key(first_row, items[0]["match"]))),
             "supplier": first_row.get("supplier"),
+            # Замер скорости (владелец 16.10.2026) — existing_link.
+            # find_existing_matches_for_group ищет контрагента группы точно
+            # по ИНН, когда он есть (приоритет ИНН — тот же, что уже решает
+            # ключ группы выше, default_group_key, ПРАВИЛО №6: не второй
+            # источник приоритета ИНН-vs-имя). Поле добавлено к уже
+            # существующим — ничего из прежних ключей group{} не убрано.
+            "inn": first_row.get("inn"),
             "purchase_no": first_row.get("purchase_no"),
+            # Задача 4 владельца (16.10.2026) — ключ повторной заливки (см.
+            # docstring build_source_key в contract_groups.py); None, когда
+            # нет настоящего ИНН/№ закупки — тогда группа просто не умеет
+            # опознать себя при повторном прогоне (как и раньше).
+            "source_key": build_source_key(
+                valid_inn(first_row.get("inn")), first_row.get("purchase_no"),
+                supplier_fallback=_supplier_key(first_row.get("supplier")) or None,
+            ),
             "category_path": " › ".join(first_row.get("path") or []) or None,
             "status": target_status,
             "rows": [it["row"]["row"] for it in items],

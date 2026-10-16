@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.delivered_unpaid_residual import delivered_unpaid_residual_by_subsidy
 from app.services.item_type_split import ALL_KINDS
-from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE
+from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE, is_reserve_need_level
 from app.services.redistributable_raw import not_committed_raw_rows
 from app.services.subsidy_money_summary import subsidy_money_summary
 from app.services.subsidy_paid_breakdown import paid_breakdown_by_subsidy
@@ -78,7 +78,7 @@ async def subsidy_summary_by_kind(db: AsyncSession, subsidy_id: int) -> dict[str
         if row["monthly_future_not_started"]:
             monthly_by_kind[row["kind"]] += row["raw"]
             continue
-        bucket = raw_nice_by_kind if row["need_level"] == NEED_LEVEL_NICE_TO_HAVE else raw_likely_by_kind
+        bucket = raw_nice_by_kind if is_reserve_need_level(row["need_level"]) else raw_likely_by_kind
         bucket[row["kind"]] += row["raw"]
 
     paid_map = await paid_breakdown_by_subsidy(db, [subsidy_id])

@@ -161,7 +161,7 @@ async def test_import_mapped_with_explicit_fact_and_need_level_mapping(db_sessio
     try:
         result = await import_feo_mapped(
             request=request, file=upload, sheet_name="", header_row_offset=0,
-            col_subsidy=-1, col_lvl2=0, col_lvl3=-1, col_lvl4=-1,
+            col_subsidy=-1, col_lvl2=0, col_lvl3=-1, col_lvl4=-1, col_lvl4b=-1,
             col_lvl5=1, col_code=-1, col_appendix=-1, col_budget=-1,
             col_quantity=-1, col_unit=-1, col_item_amt=-1, col_active=-1,
             col_qty_lvl2=-1, col_qty_lvl3=-1, col_qty_lvl4=-1,
@@ -216,7 +216,7 @@ async def test_import_mapped_without_fact_mapping_reports_zero(db_session, super
     try:
         result = await import_feo_mapped(
             request=request, file=upload, sheet_name="", header_row_offset=0,
-            col_subsidy=-1, col_lvl2=0, col_lvl3=-1, col_lvl4=-1,
+            col_subsidy=-1, col_lvl2=0, col_lvl3=-1, col_lvl4=-1, col_lvl4b=-1,
             col_lvl5=1, col_code=-1, col_appendix=-1, col_budget=-1,
             col_quantity=-1, col_unit=-1, col_item_amt=-1, col_active=-1,
             col_qty_lvl2=-1, col_qty_lvl3=-1, col_qty_lvl4=-1,

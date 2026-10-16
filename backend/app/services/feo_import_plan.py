@@ -149,7 +149,7 @@ async def apply_collected_plan(state) -> None:
                         "name": _plan_name,
                         "message": (
                             f"План строки «{_plan_name}» ({_plan_rows_str}) = {_fmt(_pdata['amount'])}{_fallback_note} "
-                            f"{_cmp_word} суммы строк «{level_label(5)}» этой категории = {_fmt(_items_sum)}{_item_rows_part} "
+                            f"{_cmp_word} суммы строк «{level_label(6)}» этой категории = {_fmt(_items_sum)}{_item_rows_part} "
                             f"— расхождение, план строки не записан"
                         ),
                     })

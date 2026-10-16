@@ -15,7 +15,9 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.schemas.schemas import FeoPlannedItemCreate
 from app.services import feo_item_write
 from app.services.feo_plan import compute_feo_plan_tree
-from app.services.plan_need_level import NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE
+from app.services.plan_need_level import (
+    NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE, NEED_LEVEL_UNFORESEEN, is_reserve_need_level,
+)
 from app.services.subsidy_money_summary import subsidy_money_summary
 from tests.test_feo_plan_tree_scenarios import _make_category, _make_planned_item, _make_subsidy
 from tests.test_money_committed import _make_linked_purchase
@@ -214,3 +216,50 @@ async def test_plan_positions_not_committed_raw_matches_tree_when_all_linked(db_
     sum_not_committed_raw = sum(r["not_committed_raw"] for r in leaf_rows)
     assert sum_not_committed_raw == pytest.approx(node["planned_not_committed"])
     assert sum_not_committed_raw == pytest.approx(100_000.0 + 40_000.0 - 18_000.0)
+
+
+# ---------------------------------------------------------------------------
+# 🟡 Третий вариант нужности 'unforeseen' («Непредвиденные расходы») — план
+# composed-noodling-lampson.md, 16.10.2026 (импорт GoodsService, колонка AU).
+# В денежных итогах ведёт себя КАК 'nice_to_have' (is_reserve_need_level).
+# ---------------------------------------------------------------------------
+
+def test_is_reserve_need_level():
+    assert is_reserve_need_level(NEED_LEVEL_NICE_TO_HAVE) is True
+    assert is_reserve_need_level(NEED_LEVEL_UNFORESEEN) is True
+    assert is_reserve_need_level(NEED_LEVEL_LIKELY) is False
+    assert is_reserve_need_level(None) is False
+    assert is_reserve_need_level("мусор") is False
+
+
+@pytest.mark.asyncio
+async def test_unforeseen_counted_as_nice_in_not_committed_split(db_session, test_org):
+    """Позиция need_level='unforeseen' попадает в not_committed_nice узла
+    ТОЧНО так же, как 'nice_to_have' — один резервный бакет (ПРАВИЛО №6:
+    committed_amounts.leaf_items_not_committed_by_need_level не заводит
+    третьего бакета)."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    leaf = await _make_category(db_session, subsidy.id, name="Непредвиденные-разбивка")
+    await _make_planned_item_with_level(db_session, leaf.id, "Бензопила", 1, 100_000, NEED_LEVEL_LIKELY)
+    await _make_planned_item_with_level(db_session, leaf.id, "Резерв", 1, 30_000, NEED_LEVEL_UNFORESEEN)
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[leaf.id]
+
+    assert node["planned_not_committed"] == pytest.approx(130_000.0)
+    assert node["not_committed_likely"] == pytest.approx(100_000.0)
+    assert node["not_committed_nice"] == pytest.approx(30_000.0)
+
+
+@pytest.mark.asyncio
+async def test_unforeseen_counted_as_nice_in_subsidy_money_summary(db_session, test_org):
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    leaf = await _make_category(db_session, subsidy.id, name="Сводка-непредвиденные", budget=Decimal("1000000"))
+    await _make_planned_item_with_level(db_session, leaf.id, "Бензопила", 1, 200_000, NEED_LEVEL_LIKELY)
+    await _make_planned_item_with_level(db_session, leaf.id, "Резерв", 1, 50_000, NEED_LEVEL_UNFORESEEN)
+
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+
+    assert row["not_committed_likely"] == pytest.approx(200_000.0)
+    assert row["not_committed_nice"] == pytest.approx(50_000.0)

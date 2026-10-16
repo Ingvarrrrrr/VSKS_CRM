@@ -77,7 +77,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.committed_amounts import committed_by_planned_item, planned_item_contributions
 from app.services.item_type_split import empty_kind_dict, kind_of_by_category_id
-from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE, normalize_need_level
+from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE, is_reserve_need_level, normalize_need_level
 
 _ZERO_EPS = 0.005
 
@@ -234,7 +234,7 @@ async def not_committed_raw_by_subsidy(
             if row["monthly_future_not_started"]:
                 d["monthly_future_not_started_raw"] += row["raw"]
                 continue
-            if row["need_level"] == NEED_LEVEL_NICE_TO_HAVE:
+            if is_reserve_need_level(row["need_level"]):  # 🟡 nice_to_have + unforeseen
                 d["nice_raw"] += row["raw"]
             else:
                 d["likely_raw"] += row["raw"]

@@ -85,6 +85,13 @@ class FeoImportState:
     c_lvl2: int | None = None
     c_lvl3: int | None = None
     c_lvl4: int | None = None
+    # 🟡 Правка 16.10.2026 (задача 1, лист GoodsService владельца, колонка AH
+    # «Тип расходов конкретизированный (свой)») — 4-й настраиваемый уровень
+    # категории дерева ФЭО, МЕЖДУ Уровнем 4 (c_lvl4) и «Плановой позицией»
+    # (c_lvl5, имя НЕ менялось, см. feo_import_common.py::_LEVEL_LABELS).
+    # Опционален, как и c_lvl3/c_lvl4 — пустая ячейка/не сопоставленная
+    # колонка пропускается, см. feo_import_apply.py.
+    c_lvl4b: int | None = None
     c_lvl5: int | None = None
     c_qty: int | None = None
     c_unit: int | None = None
@@ -361,6 +368,9 @@ async def _do_feo_import(
     # Владелец, 2026-10-04: колонка «Нужность» — см. докстринг c_need_level в
     # FeoImportState выше и app/services/plan_need_level.py.
     c_need_level: int | None = None,
+    # 🟡 Правка 16.10.2026: 4-й настраиваемый уровень категории (между c_lvl4
+    # и c_lvl5), см. докстринг c_lvl4b в FeoImportState выше.
+    c_lvl4b: int | None = None,
     default_subsidy_id: int | None = None,
     dry_run: bool = False,
     user=None,

@@ -46,6 +46,16 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
+# ПРАВИЛО №6 (владелец, 16.10.2026, шаг 2) — виды договора/ИНН-валидация/
+# порядок номеров/маркер строки-лимита теперь ОДНО определение в
+# app/services/historical_fact_import/contract_groups.py (используется и
+# generic-мастером «Импорт факта», и этим загрузчиком) — здесь просто
+# переиспользуем те же имена, вторую копию не заводим.
+from app.services.historical_fact_import.contract_groups import (
+    KIND_SINGLE, KIND_FRAMEWORK_CUMULATIVE, KIND_FRAMEWORK_WITH_AMOUNT, FRAMEWORK_KINDS,
+    LIMIT_MARKER, natural_purchase_key, valid_inn,
+)
+
 # Индексы колонок (0-based) — см. docstring __main__.py / задание 05.10.2026,
 # сверено построчно с заголовками экспортированного CSV (scripts/data/
 # fadm_2026_goodsservice.csv), см. headers.txt в отчёте загрузчика.
@@ -95,11 +105,6 @@ IDX_PAID_AMT_BD = 55        # BD — «Оплачено» (сумма, свер�
 IDX_UPD_NUMBER = 64         # BM
 IDX_EXPENSE_CODE = 71       # BT
 
-KIND_SINGLE = "Разовый"
-KIND_FRAMEWORK_CUMULATIVE = "Рамочный накопительный"
-KIND_FRAMEWORK_WITH_AMOUNT = "Рамочный с суммой"
-FRAMEWORK_KINDS = {KIND_FRAMEWORK_CUMULATIVE, KIND_FRAMEWORK_WITH_AMOUNT}
-
 # Решение владельца 05.10.2026 (доп. правка): колонка C листа (вид договора)
 # ошибочно размечает «Рамочный с суммой» у 13 ключей (ИНН, D) — из них
 # РЕАЛЬНО рамочные с суммой только 4 (владелец разобрал вручную): Егорова
@@ -137,8 +142,6 @@ def _apply_contract_kind_override(inn: str, purchase_no: str, raw_kind: str) -> 
     if key in SINGLE_OVERRIDE:
         return KIND_SINGLE
     return raw_kind
-
-LIMIT_MARKER = "установка предельной суммы договора"
 
 # Номер соглашения о субсидии — владелец подтвердил формулы листа 05.10.2026:
 # V/U/W/S/T в GoodsService производны от поиска в листе Scroller выписки
@@ -369,18 +372,6 @@ def fill_missing_subject_item_name(rows: list[SheetRowV2]) -> None:
                 r.item_name = best_item_name
 
 
-def natural_purchase_key(no: Optional[str]) -> tuple:
-    """Порядок номера закупки (D) или заказа (E) — ЧИСЛОМ, если номер состоит
-    только из цифр, иначе (нечисловые — в конец, по алфавиту) — задание
-    владельца 15.10.2026, п.2. ЕДИНАЯ функция (ПРАВИЛО №6) — используется и
-    для порядка закупок в группировке (group_rows_v2), и для порядка заказов
-    E внутри рамочной группы (sheet_v2_build.py::build_framework)."""
-    s = (no or "").strip()
-    if s.isdigit():
-        return (0, int(s), "")
-    return (1, 0, s)
-
-
 def parse_goodsservice_csv(path: str | Path) -> list[SheetRowV2]:
     path = Path(path)
     out: list[SheetRowV2] = []
@@ -448,19 +439,6 @@ def need_level_for(row: "SheetRowV2") -> str:
     if row.nice_to_have_bc:
         return "nice_to_have"
     return "likely"
-
-
-def valid_inn(raw: Optional[str]) -> Optional[str]:
-    """R иногда содержит текст-заглушку («Не найден», «не указан») вместо
-    настоящего ИНН (прод-находка dry-run 05.10.2026 — буквальная передача
-    такого текста как ИНН в find_or_create_contractor роняла вставку
-    UniqueViolationError на ix_contractors_inn_unique: несколько РАЗНЫХ
-    контрагентов с одной и той же заглушкой-«ИНН»). Настоящий ИНН — только
-    цифры, 10 или 12 знаков (организации/ИП). Общая для sheet_v2_build.py
-    (резолв контрагента) и sheet_v2_payments.py (поиск платежа по ИНН) —
-    ПРАВИЛО №6, один источник, не копия."""
-    v = (raw or "").strip()
-    return v if v.isdigit() and len(v) in (10, 12) else None
 
 
 @dataclass

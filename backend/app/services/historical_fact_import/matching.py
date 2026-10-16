@@ -105,6 +105,14 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
             PurchaseItem.feo_planned_item_id,
             Purchase.id, Purchase.registry_number, Purchase.status,
             PurchaseItem.feo_plan_part_key,
+            # Задача 1 владельца (16.10.2026, продолжение GoodsService) —
+            # см. docstring _row_identity_matches_bound в preview.py: ОДНА
+            # плановая позиция («Услуги связи», ежемесячная услуга) легитимно
+            # «уже привязана» к покупке за ОДИН месяц, а строка файла за
+            # ДРУГОЙ месяц — это ДРУГАЯ настоящая закупка, не повтор. Отдаём
+            # source_key бюджетной закупки, чтобы preview.py мог отличить
+            # «это и есть моя же закупка» от «просто то же имя позиции».
+            Purchase.source_key,
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(
@@ -125,9 +133,10 @@ async def build_matching_context(db: AsyncSession, subsidy_id: int) -> dict:
     # позицию занятой целиком (прежнее поведение).
     bound_parts: dict[int, dict[str, dict]] = {}
     bound_rows_no_part: set[int] = set()
-    for fpi_id, pid, registry_number, status, part_key in bound_rows:
+    for fpi_id, pid, registry_number, status, part_key, source_key in bound_rows:
         bound_purchases.setdefault(fpi_id, []).append(
-            {"id": pid, "registry_number": registry_number, "status": status, "part_key": part_key}
+            {"id": pid, "registry_number": registry_number, "status": status, "part_key": part_key,
+             "source_key": source_key}
         )
         if part_key:
             bound_parts.setdefault(fpi_id, {})[part_key] = {

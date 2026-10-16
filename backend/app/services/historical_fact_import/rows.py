@@ -51,6 +51,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from app.services.feo_import_common import row_is_position
+from app.services.historical_fact_import import statuses as statuses_mod
 
 _WS_RE = re.compile(r"\s+")
 
@@ -73,8 +74,36 @@ def _to_dec(v) -> Optional[Decimal]:
 def _to_text(v) -> Optional[str]:
     if v is None:
         return None
+    if isinstance(v, float) and v.is_integer():
+        # ИНН/«Номер закупки»/«Номер заказа» на листе GoodsService владельца
+        # приходят из openpyxl как float (1.0, 2.0, 7707049388.0) — текстом
+        # должно остаться "1"/"7707049388", не "1.0" (natural_purchase_key/
+        # classify_contract_kind/valid_inn сравнивают цифровой текст).
+        v = int(v)
     s = str(v).strip()
     return s or None
+
+
+def _to_date(v):
+    """«Дата Договора» — на листе владельца встречается И датой Excel
+    (datetime.date/datetime через openpyxl), И текстом «24.11.2023» в одной
+    и той же колонке (разные строки) — обе формы приводим к date."""
+    import datetime as _dt
+    if v is None:
+        return None
+    if isinstance(v, _dt.datetime):
+        return v.date()
+    if isinstance(v, _dt.date):
+        return v
+    s = str(v).strip()
+    if not s:
+        return None
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            return _dt.datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _norm_level(v: Optional[str]) -> str:
@@ -144,10 +173,16 @@ def _row_has_meaningful_data(status_raw: Optional[str], fact_amount, paid) -> bo
     return False
 
 
-def _build_path(l2: Optional[str], l3: Optional[str], l4: Optional[str], leaf_name: str) -> list:
+def _build_path(l2: Optional[str], l3: Optional[str], l4: Optional[str], l5: Optional[str], leaf_name: str) -> list:
     path = [p for p in (l2, l3) if p and p != leaf_name]
     if l4 and l4 != leaf_name:
         path.append(l4)
+    # Лист GoodsService владельца (16.10.2026) — 4-й (новый) уровень «Тип
+    # расходов конкретизированный (сам придумываю…)», тот же принцип, что и
+    # l2/l3/l4: пустой уровень пропускается, совпадающий с именем позиции —
+    # не дублируется.
+    if l5 and l5 != leaf_name:
+        path.append(l5)
     return path
 
 
@@ -190,6 +225,7 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
             "l2": _to_text(get(raw_row, "path_l2")),
             "l3": _to_text(get(raw_row, "path_l3")),
             "l4": _to_text(get(raw_row, "path_l4")),
+            "l5": _to_text(get(raw_row, "path_l5")),
             "own_item_name": _to_text(get(raw_row, "plan_item_name")),
         })
 
@@ -203,7 +239,7 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
     for idx, rec in enumerate(records):
         raw_row = rec["raw"]
         excel_row = rec["excel_row"]
-        l2, l3, l4, own_item_name = rec["l2"], rec["l3"], rec["l4"], rec["own_item_name"]
+        l2, l3, l4, l5, own_item_name = rec["l2"], rec["l3"], rec["l4"], rec["l5"], rec["own_item_name"]
 
         is_position = row_is_position(bool(own_item_name), item_column_in_use)
 
@@ -230,7 +266,7 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
                 continue  # категория без позиций и без данных — пропуск молча
             no_item_name_flag = True
 
-        path = _build_path(l2, l3, l4, leaf_name)
+        path = _build_path(l2, l3, l4, l5, leaf_name)
         # Чек-лист 13.10.2026 (прод «ДНР 3», «Проезд, проживание, питание»):
         # `path` НЕ годится как категория строки для матчинга — _build_path
         # выбрасывает уровень, РАВНЫЙ имени позиции (чтобы не дублировать его
@@ -242,7 +278,17 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
         # ЕГО, не path — ПРАВИЛО №6, одно поле «категория строки» для
         # матчинга, path остаётся только для отображения/авто-раскрытия
         # дерева, см. FeoPlanTreePicker.vue).
-        category_name = l4 or l3 or l2
+        # Правка (владелец, 16.10.2026, сверка карточек субсидии 26121):
+        # лист GoodsService завёл 4-й уровень категории (l5/AH, задача 1
+        # «Уровень 5 (категория)») — здесь он не учитывался вовсе, строка с
+        # реальной категорией на этом уровне (например, «Услуги связи» под
+        # AH) получала category_name НА УРОВЕНЬ ВЫШЕ настоящей категории
+        # дерева ФЭО (l4/l3/l2) — _row_category_key не совпадал с
+        # _candidate_category_key (последний сегмент пути позиции —
+        # настоящая глубокая категория), 14 строк «БРОНИРОВАНИЕ ГОСТИНИЦ» (и
+        # другие) уходили в ambiguous/not_found, хотя для каждой строки в
+        # плане была СВОЯ позиция с той же суммой в правильной категории.
+        category_name = l5 or l4 or l3 or l2
 
         plan_qty = _to_dec(get(raw_row, "plan_qty"))
         plan_price = _to_dec(get(raw_row, "plan_price"))
@@ -259,11 +305,37 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
         advance = _to_advance_bool(get(raw_row, "advance"))
         contracted = _to_dec(get(raw_row, "contracted"))
         status_raw = _to_text(get(raw_row, "status_raw")) or _to_text(get(raw_row, "status"))
+        if not status_raw and any(
+            f in by_field for f in (
+                "stage_purchase_done", "stage_contracted", "stage_ordered",
+                "stage_delivered", "stage_paid",
+            )
+        ):
+            # Лист GoodsService владельца (16.10.2026) — нет колонки «Статус»/
+            # «Правильный статус» вовсе, стадия закупки лежит в 5 колонках
+            # Да/Нет — сводим их в тот же текст статуса (подпись одного из 6
+            # кодов GALA), чтобы дальше статус разбирал ОДИН источник истины
+            # (statuses.resolve_status, ПРАВИЛО №6), а не второй механизм.
+            status_raw = statuses_mod.status_label_from_stage_flags(
+                purchase_done=_to_advance_bool(get(raw_row, "stage_purchase_done")),
+                contracted=_to_advance_bool(get(raw_row, "stage_contracted")),
+                ordered_raw=_to_text(get(raw_row, "stage_ordered")),
+                delivered=_to_advance_bool(get(raw_row, "stage_delivered")),
+                paid=_to_advance_bool(get(raw_row, "stage_paid")),
+            )
         purchase_no = _to_text(get(raw_row, "purchase_no"))
         supplier = _to_text(get(raw_row, "supplier"))
         comment = _to_text(get(raw_row, "comment"))
         item_type = _to_text(get(raw_row, "item_type"))
         unit = _to_text(get(raw_row, "unit"))
+        # Группировка по договору (владелец, 16.10.2026, шаг 2) — см.
+        # contract_groups.py (ключ группы/разбивка на заказы/лимит/настоящий
+        # номер договора — там же, одно определение).
+        inn = _to_text(get(raw_row, "inn"))
+        contract_kind = _to_text(get(raw_row, "contract_kind"))
+        order_no = _to_text(get(raw_row, "order_no"))
+        contract_number = _to_text(get(raw_row, "contract_number"))
+        contract_date = _to_date(get(raw_row, "contract_date"))
 
         out.append({
             "row": excel_row,
@@ -282,5 +354,10 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
             "supplier": supplier,
             "comment": comment,
             "no_item_name": no_item_name_flag,
+            "inn": inn,
+            "contract_kind": contract_kind,
+            "order_no": order_no,
+            "contract_number": contract_number,
+            "contract_date": contract_date,
         })
     return out

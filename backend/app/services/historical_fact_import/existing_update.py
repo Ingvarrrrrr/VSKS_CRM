@@ -82,7 +82,8 @@ async def build_preview_entries(db: AsyncSession, buckets: dict[int, dict]) -> l
     return out
 
 
-async def materialize_contract(db: AsyncSession, p: Purchase, *, force_temp_number: bool = False) -> None:
+async def materialize_contract(db: AsyncSession, p: Purchase, *, force_temp_number: bool = False,
+                                real_number: Optional[str] = None, real_date=None) -> None:
     """Переход закупки в contracted+ — РОВНО тот же набор действий, что
     commit.py делает для только что созданной закупки: временный № договора,
     договорные позиции (copy_items_to_contract сам идемпотентен — не
@@ -97,14 +98,25 @@ async def materialize_contract(db: AsyncSession, p: Purchase, *, force_temp_numb
     временным «ВРЕМ-…» (так вело себя commit.py до выноса сюда). Путь
     «обновить существующую» (apply_existing_updates) — force_temp_number=
     False (умолчание): у существующей закупки может быть настоящий №
-    договора, трогаем ТОЛЬКО если он пуст (владелец, задача B)."""
+    договора, трогаем ТОЛЬКО если он пуст (владелец, задача B).
+
+    `real_number`/`real_date` (владелец, 16.10.2026, шаг 2, группировка по
+    договору) — настоящий номер/дата договора из листа (contract_groups.
+    real_contract_number уже отличил его от заглушки «Нет данных» и т.п.),
+    а не временный: когда задан, побеждает ЛЮБОЙ force_temp_number — лист
+    дал настоящий номер, выдумывать «ВРЕМ-…» для него не нужно."""
     from app.services.contract_items_materialize import copy_items_to_contract
     from app.services.contracts_linking import ensure_contract_linked
     from app.services.purchase_money_writer import recalc_purchase_money
     from app.services.temp_contract_number import generate_temp_contract_number
     from app.services.price_actualization import actualize_contract_item_prices
 
-    if force_temp_number or not p.contract_number:
+    if real_number:
+        p.contract_number = real_number
+        p.contract_number_is_temporary = False
+        if real_date:
+            p.contract_date = real_date
+    elif force_temp_number or not p.contract_number:
         p.contract_number = await generate_temp_contract_number(p, db)
         p.contract_number_is_temporary = True
     await copy_items_to_contract(db, p.id)

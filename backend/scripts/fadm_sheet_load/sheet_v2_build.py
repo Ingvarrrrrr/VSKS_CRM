@@ -48,6 +48,10 @@ from app.services.purchase_money_writer import recalc_purchase_money
 from app.services.subsidy_copy.copy_tree import copy_feo_tree, copy_access_and_approvers, copy_templates
 from app.services.temp_contract_number import generate_temp_contract_number
 from app.routers.purchase_budget import _assign_framework_seq
+# ПРАВИЛО №6 (владелец, 16.10.2026, шаг 2) — «настоящий номер договора или
+# заглушка» — одно определение, см. contract_groups.py (используется и этим
+# загрузчиком, и generic-мастером «Импорт факта»).
+from app.services.historical_fact_import.contract_groups import real_contract_number as _real_contract_number
 
 from .advance import EmployeeLookup, load_employee_lookup
 from .feo_path_resolve import FeoTree, load_feo_tree, resolve_feo_path
@@ -67,22 +71,6 @@ FRAMEWORK_TYPE = "framework_cumulative"
 # доп. задание 05.10.2026), см. комментарий у места использования ниже.
 GOODSSERVICE_PLAN_GOODS = Decimal("4380000.00")
 GOODSSERVICE_PLAN_SERVICES = Decimal("11500100.00")
-
-# Значения колонки S «Номер договора», которые на самом деле означают
-# «номер неизвестен» (проверено на реальном листе GoodsService — «Нет
-# данных» встречается 37 раз У РАЗНЫХ рамочных голов разных ИНН; буквальное
-# использование этой строки как Contract.number сталкивало бы их все в один
-# Contract — ensure_contract_linked ищет ПО ВСЕЙ БД при contractor_id/date
-# пустых, см. app/services/contracts_linking.py). Такой голове присваивается
-# технический номер (generate_temp_contract_number — тот же, что у первого
-# загрузчика для голов без номера).
-PLACEHOLDER_CONTRACT_NUMBERS = {"", "нет данных", "без номера", "не указан", "n/a"}
-
-
-def _real_contract_number(raw: str) -> Optional[str]:
-    v = (raw or "").strip()
-    return None if v.lower() in PLACEHOLDER_CONTRACT_NUMBERS else v
-
 
 # ---------------------------------------------------------------------------
 # Уведомления «Оплачено» — отключаем на время загрузки (решение владельца,

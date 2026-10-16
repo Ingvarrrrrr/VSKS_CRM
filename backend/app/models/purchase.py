@@ -1,5 +1,5 @@
 from datetime import date as _date
-from sqlalchemy import Column, Integer, SmallInteger, String, Numeric, Boolean, ForeignKey, Date, Text, DateTime, event, update
+from sqlalchemy import Column, Index, Integer, SmallInteger, String, Numeric, Boolean, ForeignKey, Date, Text, DateTime, event, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Session
 from sqlalchemy.orm.attributes import set_committed_value
@@ -13,6 +13,12 @@ from app.models import fact_import_run as _fact_import_run_model  # noqa: F401
 
 class Purchase(Base):
     __tablename__ = "purchases"
+    # 🟡 Повторная заливка того же файла импорта факта (source_key column
+    # ниже) ищет закупку по (subsidy_id, source_key) — индекс на эту пару,
+    # см. миграцию v2w3x4y5z6a7_purchases_source_key.py.
+    __table_args__ = (
+        Index("ix_purchases_subsidy_source_key", "subsidy_id", "source_key"),
+    )
     id = Column(Integer, primary_key=True, index=True)
     row_number = Column(Integer)
     purchase_number = Column(Integer)
@@ -154,6 +160,16 @@ class Purchase(Base):
     # Kanban / task assignment
     assigned_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     task_comment = Column(Text, nullable=True)
+
+    # 🟡 Ключ строки источника импорта факта (план composed-noodling-lampson.md,
+    # 16.10.2026, раздел 4 «Повторная заливка того же файла») — служебное
+    # поле, НЕ входит ни в payload схем, ни в PATCHABLE_FIELDS (не
+    # редактируется пользователем). Формат для листа GoodsService:
+    # `gs:{ИНН или нормализованный контрагент}:{номер закупки D}`, у заказа
+    # внутри рамочной закупки — ещё `:{номер заказа E}`. Повторная заливка
+    # того же файла ищет закупку по (subsidy_id, source_key) — см. индекс
+    # ix_purchases_subsidy_source_key ниже и миграцию v2w3x4y5z6a7_purchases_source_key.py.
+    source_key = Column(String(200), nullable=True)
 
     # Служебка (service note) — D-22
     service_note_text = Column(Text, nullable=True)

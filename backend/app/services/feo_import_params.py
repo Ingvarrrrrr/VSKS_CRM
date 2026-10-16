@@ -16,7 +16,9 @@ from app.services.request_params import merge_form_over_query
 # default_subsidy_id (перечислены отдельно ниже вместе с ними в вызывающем
 # коде) — единственное место, где перечислены имена col_*-полей эндпоинта.
 _COL_INT_FIELDS = frozenset({
-    "col_subsidy", "col_lvl2", "col_lvl3", "col_lvl4", "col_lvl5",
+    # col_lvl4b — 🟡 правка 16.10.2026 (задача 1): 4-й настраиваемый уровень
+    # категории (см. docstring c_lvl4b в feo_import_core.py).
+    "col_subsidy", "col_lvl2", "col_lvl3", "col_lvl4", "col_lvl4b", "col_lvl5",
     "col_code", "col_appendix", "col_budget", "col_quantity", "col_unit",
     "col_item_amt", "col_active",
     "col_qty_lvl2", "col_qty_lvl3", "col_qty_lvl4",

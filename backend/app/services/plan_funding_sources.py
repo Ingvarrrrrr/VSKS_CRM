@@ -39,7 +39,9 @@ from app.services import feo_history
 from app.services.committed_amounts import committed_by_planned_item, planned_item_contributions
 from app.services.feo_item_write import update_planned_item as _write_update_planned_item
 from app.services.feo_plan import build_category_path, compute_feo_plan_tree
-from app.services.plan_need_level import NEED_LEVEL_LABELS, NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE
+from app.services.plan_need_level import (
+    NEED_LEVEL_LABELS, NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE, NEED_LEVEL_UNFORESEEN,
+)
 from app.schemas.feo import FeoPlannedItemCreate
 from app.services.subsidy_revision_guard import assert_direct_edit
 
@@ -271,7 +273,16 @@ async def find_funding_sources(
     def _sort_key(c: dict):
         return (0 if c["same_branch"] else 1, -c["residual"])
 
-    groups_order = (NEED_LEVEL_NICE_TO_HAVE, NEED_LEVEL_LIKELY)
+    # 🟡 'unforeseen' — тот же резерв, что 'nice_to_have' (is_reserve_need_level) —
+    # забирается наравне, РАНЬШЕ 'likely' (ПРАВИЛО №6: один порядок резерва).
+    # Группа 'unforeseen' выводится ТОЛЬКО если среди кандидатов она реально
+    # есть (в отличие от nice_to_have/likely, выводимых всегда даже пустыми,
+    # — обратная совместимость существующего контракта ответа/тестов, у
+    # субсидий без единой позиции 'unforeseen' список групп не меняется).
+    groups_order = [NEED_LEVEL_NICE_TO_HAVE]
+    if any(c["need_level"] == NEED_LEVEL_UNFORESEEN for c in candidates):
+        groups_order.append(NEED_LEVEL_UNFORESEEN)
+    groups_order.append(NEED_LEVEL_LIKELY)
     groups: list[dict] = []
     cumulative = 0.0
     covered = 0.0

@@ -185,6 +185,14 @@ export interface FactImportGroup {
   warnings: string[]
   existing_matches: FactImportExistingMatch[]
   needs_existing_decision: boolean
+  // Группировка по договору (владелец, 16.10.2026, шаг 2) — только у групп,
+  // где в файле есть колонки «Тип договора»/«Номер заказа» (лист
+  // GoodsService); для старых форматов backend их не добавляет вовсе.
+  contract_kind?: string | null
+  contract_number?: string | null
+  contract_date?: string | null
+  contract_orders?: { order_no: string; amount: number; status: string | null; rows: number[] }[]
+  contract_limit_amount?: number | null
 }
 
 // Доп. задача (владелец, 07.10.2026): «при импорте об этом должно идти
@@ -402,6 +410,7 @@ export const FACT_IMPORT_TARGET_FIELDS: ImportMappingTargetField[] = [
   { key: 'path_l2', label: 'Направление (Ур.2)' },
   { key: 'path_l3', label: 'Подраздел (Ур.3)' },
   { key: 'path_l4', label: 'Категория (Ур.4)' },
+  { key: 'path_l5', label: 'Уровень 5' },
   { key: 'plan_item_name', label: 'Наименование плановой позиции', required: true },
   { key: 'item_type', label: 'Товар/услуга/работа' },
   { key: 'unit', label: 'Единица' },
@@ -418,6 +427,22 @@ export const FACT_IMPORT_TARGET_FIELDS: ImportMappingTargetField[] = [
   { key: 'purchase_no', label: '№ Закупки' },
   { key: 'supplier', label: 'Поставщик' },
   { key: 'comment', label: 'Комментарий' },
+  // Лист GoodsService владельца (16.10.2026) — стадия закупки в НЕСКОЛЬКИХ
+  // колонках Да/Нет вместо одной «Статус»/«Правильный статус».
+  { key: 'stage_purchase_done', label: 'Стадия: закупка проведена' },
+  { key: 'stage_contracted', label: 'Стадия: договор заключён' },
+  { key: 'stage_ordered', label: 'Стадия: товар заказан' },
+  { key: 'stage_delivered', label: 'Стадия: товар поставлен' },
+  { key: 'stage_paid', label: 'Стадия: оплачено' },
+  // Группировка по договору (владелец, 16.10.2026, шаг 2) — вид договора
+  // (Разовый/Рамочный накопительный/Рамочный с суммой), ИНН как ключ
+  // группы, номер заказа внутри рамочного договора, настоящий номер/дата
+  // договора.
+  { key: 'contract_kind', label: 'Тип договора' },
+  { key: 'order_no', label: 'Номер заказа' },
+  { key: 'inn', label: 'ИНН' },
+  { key: 'contract_number', label: 'Номер договора' },
+  { key: 'contract_date', label: 'Дата договора' },
 ]
 
 // ---- Состояние мастера -----------------------------------------------------

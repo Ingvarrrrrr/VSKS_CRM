@@ -6,13 +6,23 @@
 
 Два входа:
   - `find_existing_matches_for_group()` — preview.py вызывает её на каждую
-    группу файла: тот же поставщик (все id с совпадающим нормализованным
-    именем — find_contractors_by_name) + ИТОГОВАЯ сумма группы (contract_
-    amount группы, без пропущенных строк — см. grouping.py) против
-    total_nmck/contract_price/payment_amount/сумм платежей существующей
-    закупки (find_similar_purchases). kind='same_amount' — поставщик И
-    сумма совпали («скорее всего та же», предвыбрано). kind='same_supplier'
-    — только поставщик («возможно», без предвыбора — решение обязательно).
+    группу файла: тот же поставщик + ИТОГОВАЯ сумма группы (contract_amount
+    группы, без пропущенных строк — см. grouping.py) против total_nmck/
+    contract_price/payment_amount/сумм платежей существующей закупки
+    (find_similar_purchases). kind='same_amount' — поставщик И сумма
+    совпали («скорее всего та же», предвыбрано). kind='same_supplier' —
+    только поставщик («возможно», без предвыбора — решение обязательно).
+
+    Владелец (16.10.2026): поставщик здесь ищется ТОЛЬКО по ИНН группы
+    (точное совпадение, contractor_resolve.find_contractor_ids_by_inns) —
+    поиск по названию убран совсем. Причина: названия поставщиков в файлах
+    владельца повторяются/похожи у разных организаций (опечатки,
+    сокращения, тёзки) — совпадение по имени давало ложные «сопоставлено»
+    (эта же закупка на самом деле у другой организации). Группа БЕЗ
+    валидного ИНН (10/12 цифр, normalize_inn) или с ИНН, которого нет среди
+    контрагентов, — вообще не ищет существующую закупку (возвращает []),
+    preview.py отдельно помечает такую группу предупреждением «Не хватает
+    ИНН поставщика» (не относится к этой функции).
   - `build_existing_match_items()` — для КОНКРЕТНОЙ существующей закупки
     (после того, как её выбрали/предложили) отдаёт ВСЕ её позиции: уже
     привязанные к плану — как есть, непривязанные — с предложенной плановой
@@ -29,7 +39,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,22 +48,86 @@ from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
-from app.services.contractor_resolve import find_contractors_by_name
+from app.services.contractor_resolve import find_contractor_ids_by_inns
+from app.services.vehicle_org_matching import normalize_inn
 from app.services.historical_fact_import.matching import normalize_item_name
 from app.services.purchase_similar import find_similar_purchases
+
+
+async def find_existing_purchase_by_source_key(
+    db: AsyncSession, subsidy_id: int, source_key: Optional[str],
+) -> Optional[dict]:
+    """Задача 4 владельца (16.10.2026) — точное совпадение по ключу
+    повторной заливки (ИНН+№ закупки[+№ заказа], см. contract_groups.
+    build_source_key). В отличие от find_similar_purchases (поставщик+сумма,
+    может ошибаться на похожих закупках) — это ТОЧНОЕ опознание «та же
+    строка файла, которую мы уже импортировали» независимо от суммы: сумма
+    сравнивается ОТДЕЛЬНО вызывающим кодом (preview.py), чтобы её изменение
+    стало пометкой, а не поводом не узнать закупку. None (нет source_key на
+    этой группе) -> None без запроса."""
+    if not source_key:
+        return None
+    row = (await db.execute(
+        select(Purchase).where(Purchase.subsidy_id == subsidy_id, Purchase.source_key == source_key)
+    )).scalars().first()
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "registry_number": row.registry_number,
+        "subject": row.subject,
+        "contractor": None,
+        "amount": float(row.total_nmck) if row.total_nmck is not None else None,
+        "status": row.status,
+        "kind": "source_key_match",
+    }
 
 
 async def find_existing_matches_for_group(
     db: AsyncSession,
     subsidy_id: int,
-    supplier_name: Optional[str],
     group_amount: Optional[Decimal],
+    *,
+    group_inn: Optional[Any] = None,
+    contractor_ids_by_inn: Optional[dict] = None,
+    source_key: Optional[str] = None,
 ) -> list[dict]:
     """[{purchase_id, registry_number, subject, contractor, amount, status,
     kind}] — без items (см. build_existing_match_items, вызывается отдельно
     на выбранную/предложенную закупку, чтобы не тянуть позиции закупок, на
-    которые владелец даже не посмотрит)."""
-    contractor_ids = await find_contractors_by_name(db, supplier_name)
+    которые владелец даже не посмотрит).
+
+    Поиск поставщика — ТОЛЬКО по ИНН группы (см. докстринг модуля выше, ни
+    имени, ни fuzzy-сопоставления нет вовсе). `group_inn` — «сырое» значение
+    ИНН из файла (нормализуется здесь, `normalize_inn`, та же проверка, что
+    и contract_groups.valid_inn использует для ключа группы). Без валидного
+    ИНН (не 10/12 цифр) или если такого ИНН нет среди `contractor_ids_by_inn`
+    — возвращает [] (не ищет вовсе, не fallback на имя).
+
+    `contractor_ids_by_inn` — {нормализованный ИНН → [contractor_id, ...]},
+    заранее построенный `contractor_resolve.find_contractor_ids_by_inns()`
+    ОДНИМ запросом по ВСЕМ ИНН файла сразу (preview.py, один раз на весь
+    прогон — замер скорости, владелец 16.10.2026: раньше здесь был SELECT
+    всех контрагентов + нормализация имён НА КАЖДУЮ из 113 групп файла,
+    4,8 млн вызовов normalize_org_name, ~107 с). Без него (None, тестовый
+    вызов напрямую) — делает собственный разовый запрос по одному ИНН.
+
+    `source_key` — задача 4 владельца (16.10.2026): точное совпадение по
+    ИНН+№закупки[+№заказа] (contract_groups.build_source_key) проверяется
+    ПЕРВЫМ и, если найдено, возвращается ОДНО это совпадение — при повторной
+    заливке того же файла не нужен фолбэк на размытый поиск по сумме, свою
+    же закупку опознаём точно."""
+    source_key_match = await find_existing_purchase_by_source_key(db, subsidy_id, source_key)
+    if source_key_match is not None:
+        return [source_key_match]
+
+    norm_group_inn = normalize_inn(group_inn) if group_inn is not None else None
+    if not norm_group_inn:
+        return []
+    if contractor_ids_by_inn is not None:
+        contractor_ids = contractor_ids_by_inn.get(norm_group_inn, [])
+    else:
+        contractor_ids = (await find_contractor_ids_by_inns(db, [norm_group_inn])).get(norm_group_inn, [])
     if not contractor_ids:
         return []
 
@@ -189,11 +263,14 @@ def resolve_group_decision(group: dict, existing_decisions: dict) -> dict:
     existing_matches): {action: 'same'|'new'|None, match: entry|None}.
 
     action=None — в группе нет ни одного existing_matches (обычная новая
-    закупка, ничего не меняется). 'same' без явного решения применяется
-    ТОЛЬКО для kind='same_amount' (владелец: «скорее всего та же,
-    предвыбрано»); для kind='same_supplier' без явного решения
-    needs_existing_decision=True уже отклонил коммит раньше (см. commit.py)
-    — сюда такая группа без решения не попадает."""
+    закупка, ничего не меняется). 'same' без явного решения применяется для
+    kind='same_amount' (владелец: «скорее всего та же, предвыбрано») И для
+    kind='source_key_match' (задача 4, 16.10.2026: ИНН+№закупки[+№заказа]
+    совпали точно — это та же закупка НЕЗАВИСИМО от суммы, расхождение
+    суммы — отдельная пометка в preview.py, не причина спросить человека
+    «это та же?» — она и так та же); для kind='same_supplier' без явного
+    решения needs_existing_decision=True уже отклонил коммит раньше (см.
+    commit.py) — сюда такая группа без решения не попадает."""
     matches = group.get("existing_matches") or []
     if not matches:
         return {"action": None, "match": None}
@@ -204,6 +281,10 @@ def resolve_group_decision(group: dict, existing_decisions: dict) -> dict:
         purchase_id = decision.get("purchase_id")
         match = next((m for m in matches if m["id"] == purchase_id), matches[0])
         return {"action": action or "new", "match": match if action == "same" else None}
+
+    source_key_match = [m for m in matches if m["kind"] == "source_key_match"]
+    if source_key_match:
+        return {"action": "same", "match": source_key_match[0]}
 
     same_amount = [m for m in matches if m["kind"] == "same_amount"]
     if same_amount:

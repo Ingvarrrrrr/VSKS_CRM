@@ -20,7 +20,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.auth.jwt import get_current_user, get_org_filter, MANAGER_ROLES
+from app.auth.jwt import get_current_user, get_org_filter, MANAGER_ROLES, OWNER_ROLES
 from app.auth.permissions import has_org_key
 from app.models.user import User
 from app.models.feo_category import FeoCategory
@@ -392,8 +392,9 @@ async def patch_wish_execution(
     # (например, случайный юрист) мог сам перетыкивать позиции. Остальные поля
     # этого эндпоинта (executor_id/execution_deadline/event_id/assigned_to) это
     # право не трогает — их разрешают проверки выше (цепочка/assignee/менеджер+).
+    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
     _feo_fields_touched = body.feo_category_id is not None or body.items is not None or body.subsidy_id is not None
-    if _feo_fields_touched and current_user.role != "superadmin":
+    if _feo_fields_touched and current_user.role not in OWNER_ROLES:
         if not await has_org_key(current_user, db, wish.org_id, "wish.edit_feo", subsidy_id=wish.subsidy_id):
             raise HTTPException(
                 status_code=403,

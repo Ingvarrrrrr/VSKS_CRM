@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.jwt import OWNER_ROLES
 from app.auth.permissions import require_tab, require_action, _has_key_in_any_org
 from app.database import get_db
 from app.models.org_section_config import OrgSectionConfig
@@ -51,7 +52,8 @@ async def get_vehicle_fields(
     hidden_keys = await get_hidden_field_keys(db, current_user.org_id)
 
     can_manage = (
-        current_user.role == "superadmin"
+        # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
+        current_user.role in OWNER_ROLES
         or await _has_key_in_any_org(current_user, db, "vehicle.fields.manage")
     )
 

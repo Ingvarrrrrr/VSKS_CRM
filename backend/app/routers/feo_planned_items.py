@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, OWNER_ROLES
 from app.auth.permissions import require_tab, has_org_key, _has_key_in_any_org
 from app.database import get_db
 from app.models.feo_planned_item import FeoPlannedItem
@@ -143,8 +143,9 @@ async def _check_planned_item_write_access(current_user, db: AsyncSession, cat: 
     POST /bulk, PUT /{id}, /map по-прежнему НЕ используют этот хелпер —
     остаются доступны только через вкладку feo_categories (владелец
     ограничил задачу именно созданием/удалением одиночной позиции).
+    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
     """
-    if current_user.role == "superadmin":
+    if current_user.role in OWNER_ROLES:
         return
     has_tab = await _has_key_in_any_org(current_user, db, 'feo_categories')
     has_edit_feo = False
@@ -182,7 +183,7 @@ async def _can_edit_feo_origin(current_user, db: AsyncSession) -> bool:
     нет вкладки ФЭО, менять признак не нужно — create_planned_item просто
     тихо игнорирует эти два поля, если их прислали без права (не 403 —
     остальная часть запроса, создание самой позиции, доступ имеет)."""
-    if current_user.role == "superadmin":
+    if current_user.role in OWNER_ROLES:
         return True
     return await _has_key_in_any_org(current_user, db, 'feo_categories')
 

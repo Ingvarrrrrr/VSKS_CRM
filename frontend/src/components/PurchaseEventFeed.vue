@@ -185,6 +185,13 @@ const eventIcon = (type: string) => {
     member_added: 'mdi-account-plus-outline',
     member_removed: 'mdi-account-minus-outline',
     created: 'mdi-plus-circle-outline',
+    // Перенос закупок между субсидиями (владелец, сессия 16.10.2026) —
+    // usePurchaseTransfer.ts/backend purchase_transfer.py. data: registry_number,
+    // subsidy_name — см. renderEvent ниже.
+    copied_to: 'mdi-content-copy',
+    copied_from: 'mdi-content-duplicate',
+    merged_from: 'mdi-call-merge',
+    merged_to: 'mdi-call-merge',
   }
   return icons[type] || 'mdi-circle-small'
 }
@@ -210,6 +217,18 @@ function renderEvent(e: Event): string {
   if (e.event_type === 'member_added' && e.data?.username) return `Добавлен: ${e.data.username}`
   if (e.event_type === 'member_removed' && e.data?.username) return `Удалён: ${e.data.username}`
   if (e.event_type === 'created') return 'Закупка создана'
+  if (e.event_type === 'copied_to' && e.data?.registry_number) {
+    return `Скопирована в ${e.data.registry_number}${e.data.subsidy_name ? ` (субсидия «${e.data.subsidy_name}»)` : ''}`
+  }
+  if (e.event_type === 'copied_from' && e.data?.registry_number) {
+    return `Копия из ${e.data.registry_number}${e.data.subsidy_name ? ` (субсидия «${e.data.subsidy_name}»)` : ''}`
+  }
+  if (e.event_type === 'merged_from' && e.data?.registry_number) {
+    return `Дополнена из ${e.data.registry_number}${e.data.subsidy_name ? ` (субсидия «${e.data.subsidy_name}»)` : ''}`
+  }
+  if (e.event_type === 'merged_to' && e.data?.registry_number) {
+    return `Данные перенесены в ${e.data.registry_number}${e.data.subsidy_name ? ` (субсидия «${e.data.subsidy_name}»)` : ''}`
+  }
   return e.event_type
 }
 

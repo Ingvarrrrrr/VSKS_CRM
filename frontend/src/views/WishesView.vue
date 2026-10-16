@@ -275,7 +275,7 @@
 // открыть карточку строкой из таблицы — см. комментарий в этом файле).
 import { computed, onMounted, ref, watch } from 'vue'
 import { usePageCache } from '@/composables/usePageCache'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
@@ -294,6 +294,7 @@ import WishApproveSheet from '@/components/wishes/WishApproveSheet.vue'
 import type { Wish, Subsidy, FeoCategory, EventItem, User, PendingWishConsent } from '@/composables/wishes/wishTypes'
 
 const route = useRoute()
+const router = useRouter()
 const ctx = provideWishesContext()
 
 // Tabs
@@ -366,10 +367,52 @@ const searchEmptyState = computed(() =>
   !!searchText.value.trim() && activeWishesFiltered.value.length === 0,
 )
 
+// Владелец (16.10.2026, «Авансовые видны в Заявках»): авансовый отчёт —
+// частный случай заявки; у части авансовых (заведённых загрузчиком, минуя
+// обычный путь создания) нет заявки-компаньона (Purchase.wish_id IS NULL) —
+// такие отчёты не были видны в «Заявках» вовсе. GET /wishes/standalone-advances
+// (отдельный лёгкий endpoint, не меняет форму ответа GET /wishes/ — ПРАВИЛО №6,
+// её читают несколько потребителей, см. docstring бэкенда) отдаёт их с той же
+// видимостью, что и закупки этого пользователя. Превращаем в псевдо-Wish с
+// id=-purchase_id (гарантированно не пересекается с реальными id заявок) —
+// строка попадает в ту же таблицу/поиск/выгрузку, что обычные заявки.
+function advanceToPseudoWish(a: any): Wish {
+  return {
+    id: -a.purchase_id,
+    purchase_id: a.purchase_id,
+    is_advance: true,
+    org_id: a.org_id,
+    subsidy_id: a.subsidy_id,
+    subsidy_name: a.subsidy_name,
+    title: a.registry_number ? `Авансовый отчёт ${a.registry_number}` : 'Авансовый отчёт',
+    status: 'advance' as any,
+    created_by: a.reimbursement_user_id || a.assigned_user_id || 0,
+    creator_name: a.reimbursement_user_name || a.assigned_user_name || '—',
+    registry_number: a.registry_number,
+    items_total: a.amount,
+    created_at: '',
+    updated_at: '',
+  } as Wish
+}
+
+async function loadStandaloneAdvances(extra: Record<string, any> = {}): Promise<Wish[]> {
+  try {
+    const rows = await apiFetch<any[]>('/wishes/standalone-advances' + buildFilterParams(extra))
+    return (rows || []).map(advanceToPseudoWish)
+  } catch {
+    // Авансовые — дополнение к списку заявок, не критично для его работы.
+    return []
+  }
+}
+
 async function loadWishes() {
   loading.value = true
   try {
-    myWishes.value = await apiFetch<Wish[]>('/wishes/' + buildFilterParams({ mine_only: true }))
+    const [wishes, advances] = await Promise.all([
+      apiFetch<Wish[]>('/wishes/' + buildFilterParams({ mine_only: true })),
+      loadStandaloneAdvances({ mine_only: true }),
+    ])
+    myWishes.value = [...wishes, ...advances]
   } catch (e: any) {
     ctx.showSnack(`Ошибка загрузки заявок: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
@@ -382,7 +425,11 @@ async function loadAllWishes() {
   try {
     // Владелец, 2026-09-01: «Все» больше не значит «без статуса» — передаём status
     // ЯВНО всегда, включая 'all', которое сервер трактует как «действительно всё».
-    allWishes.value = await apiFetch<Wish[]>('/wishes/' + buildFilterParams({ subordinates_only: true, status: allFilter.value }))
+    const [wishes, advances] = await Promise.all([
+      apiFetch<Wish[]>('/wishes/' + buildFilterParams({ subordinates_only: true, status: allFilter.value })),
+      loadStandaloneAdvances(),
+    ])
+    allWishes.value = [...wishes, ...advances]
     loadWishCounts()
   } catch (e: any) {
     ctx.showSnack(`Ошибка загрузки заявок: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
@@ -443,7 +490,15 @@ function onAllFilterChange(v: string) {
 // ── Форма/действия над одной заявкой живут в WishFormDialog.vue (defineExpose) ──
 const formDialogRef = ref<InstanceType<typeof WishFormDialog> | null>(null)
 function onCreate() { formDialogRef.value?.openCreate() }
-function onOpenEdit(w: Wish) { formDialogRef.value?.openEdit(w) }
+function onOpenEdit(w: Wish) {
+  // Авансовый без заявки-компаньона (псевдо-строка, см. advanceToPseudoWish) —
+  // открывает карточку авансового отчёта, не форму заявки (её у него нет).
+  if ((w as any).is_advance) {
+    router.push(`/advance-reports/${(w as any).purchase_id}/edit`)
+    return
+  }
+  formDialogRef.value?.openEdit(w)
+}
 function onSubmitWish(w: Wish) { formDialogRef.value?.submitWish(w) }
 function onDeleteWish(w: Wish) { formDialogRef.value?.deleteWish(w) }
 function onApprove(w: Wish) { formDialogRef.value?.approveWish(w) }

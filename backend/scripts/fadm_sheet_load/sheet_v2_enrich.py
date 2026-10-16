@@ -102,8 +102,7 @@ from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
 from app.models.payment import Payment
 from app.models.purchase import Purchase
-from app.models.purchase_comment import PurchaseComment
-from app.models.purchase_event import PurchaseEvent, PurchaseMember
+from app.models.purchase_event import PurchaseEvent
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase_paid_confirmation import PurchasePaidConfirmation
 from app.models.subsidy import Subsidy
@@ -112,6 +111,9 @@ from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.services.purchase_amounts import load_purchase_amounts
 from app.services.purchase_stop import can_stop_purchase
+from app.services.purchase_transfer.comments_transfer import copy_comments
+from app.services.purchase_transfer.match import PurchaseKey, build_purchase_key
+from app.services.purchase_transfer.people_transfer import copy_members, transfer_person_fields_into_empty
 from app.services.subsidy_copy._clone import clone_row
 from app.services.subsidy_copy.clone_items import clone_purchase_items
 from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
@@ -138,36 +140,11 @@ AMOUNT_TOLERANCE = Decimal("0.01")
 # A. Сопоставление закупка-листа <-> закупка-источника — ЧИСТАЯ функция,
 #    без БД (тестируется напрямую, см. tests/test_fadm_enrich.py).
 # ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class PurchaseKey:
-    """Ключ сопоставления ОДНОЙ закупки — ИНН контрагента + "поставщик" +
-    сумма. Для авансового (purchase_method='advance') "поставщик" =
-    сотрудник-получатель возмещения (reimbursement_user_id, см. memory
-    project_service_note_roles) — ИНН контрагента у авансового нет (чек
-    выписан на организацию, не на сотрудника), inn остаётся пустой строкой у
-    ОБЕИХ сторон сравнения, различает их supplier_key."""
-    purchase_id: int
-    registry_number: str
-    inn: str
-    supplier_key: str
-    amount: Decimal
-
-
-def build_purchase_key(
-    p: Purchase, *, contractor_inn: Optional[str], effective_amount: Optional[Decimal],
-) -> PurchaseKey:
-    is_advance = getattr(p, "purchase_method", None) == "advance"
-    if is_advance:
-        inn = ""
-        supplier_key = f"employee:{p.reimbursement_user_id}"
-    else:
-        inn = (contractor_inn or "").strip()
-        supplier_key = f"contractor:{p.contractor_id}"
-    amount = effective_amount if effective_amount is not None else Decimal("0")
-    return PurchaseKey(
-        purchase_id=p.id, registry_number=p.registry_number or "",
-        inn=inn, supplier_key=supplier_key, amount=amount,
-    )
+# PurchaseKey/build_purchase_key ПЕРЕНЕСЕНЫ в app.services.purchase_transfer.
+# match (ПРАВИЛО №6, задача «копирование закупок в другую субсидию») —
+# импортируются сверху, не определяются здесь второй раз. registry_number у
+# ключа не нужен был ни одному читателю этого модуля (проверено grep'ом) — в
+# перенесённой версии его нет.
 
 
 @dataclass
@@ -284,32 +261,12 @@ class PairTransferResult:
 
 
 async def _transfer_pair_people(db: AsyncSession, old: Purchase, new: Purchase) -> int:
-    """Исполнитель/инициатор/"на чьё имя"/получатель возмещения — поля
-    Purchase напрямую (роли по memory project_service_note_roles:
-    assigned_user_id=исполнитель, service_note_by=инициатор,
-    service_note_to_user_id="на чьё имя", reimbursement_user_id=авансовый)."""
-    # Только в пустые поля (15.10.2026): у авансовых листа исполнитель и
-    # получатель возмещения уже стоят из листа (776 → Голичков), а в старой
-    # они часто пусты или это тот, кто заводил.
-    for attr in ("assigned_user_id", "service_note_by", "service_note_to_user_id", "reimbursement_user_id"):
-        old_value = getattr(old, attr)
-        if old_value is not None and getattr(new, attr) is None:
-            setattr(new, attr, old_value)
-
-    existing = {m.user_id for m in (await db.execute(
-        select(PurchaseMember).where(PurchaseMember.purchase_id == new.id)
-    )).scalars().all()}
-    old_members = (await db.execute(
-        select(PurchaseMember).where(PurchaseMember.purchase_id == old.id)
-    )).scalars().all()
-    added = 0
-    for m in old_members:
-        if m.user_id in existing:
-            continue
-        db.add(clone_row(m, PurchaseMember, purchase_id=new.id))
-        existing.add(m.user_id)
-        added += 1
-    return added
+    """Исполнитель/инициатор/"на чьё имя"/получатель возмещения (ТОЛЬКО в
+    пустые поля — у авансовых листа они часто уже стоят из листа, 776 →
+    Голичков) + участники. ПЕРЕНЕСЕНО в app.services.purchase_transfer.
+    people_transfer (ПРАВИЛО №6) — здесь только вызов."""
+    transfer_person_fields_into_empty(old, new)
+    return await copy_members(db, old, new)
 
 
 async def _transfer_pair_items(db: AsyncSession, old: Purchase, new: Purchase) -> tuple[bool, str]:
@@ -357,13 +314,11 @@ async def _transfer_pair_items(db: AsyncSession, old: Purchase, new: Purchase) -
 async def _transfer_pair_comments_events(db: AsyncSession, old: Purchase, new: Purchase) -> tuple[int, int]:
     note = _TRANSFER_NOTE.format(old_reg=old.registry_number or old.id)
 
-    old_comments = (await db.execute(
-        select(PurchaseComment).where(PurchaseComment.purchase_id == old.id)
-    )).scalars().all()
-    n_comments = 0
-    for c in old_comments:
-        db.add(clone_row(c, PurchaseComment, purchase_id=new.id, text=f"{c.text}\n\n[{note}]"))
-        n_comments += 1
+    # Комментарии — ПЕРЕНЕСЕНО в app.services.purchase_transfer.comments_transfer
+    # (ПРАВИЛО №6). История событий (ниже) остаётся специфичной для этого
+    # скрипта (копирует ВСЮ историю old с пометкой fadm_enrich_transfer_note —
+    # copy_to_subsidy/merge_into этого не делают, см. docstring comments_transfer.py).
+    n_comments = await copy_comments(db, old, new, note=note)
 
     old_events = (await db.execute(
         select(PurchaseEvent).where(PurchaseEvent.purchase_id == old.id)

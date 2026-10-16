@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.jwt import OWNER_ROLES
 from app.auth.permissions import require_tab, require_action, _has_key_in_any_org
 from app.database import get_db
 from app.models.user import User
@@ -54,7 +55,9 @@ async def get_body_type_icons(
     overrides = await get_overrides(db, org_id) if org_id else {}
 
     can_manage = (
-        current_user.role == "superadmin"
+        # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026) —
+        # значки кузова ТС своей орги правит без отдельной выдачи права.
+        current_user.role in OWNER_ROLES
         or await _has_key_in_any_org(current_user, db, "vehicle.fields.manage")
     )
 

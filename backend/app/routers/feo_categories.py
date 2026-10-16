@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
 from app.schemas.schemas import FeoCategoryOut, FeoCategoryCreate
-from app.auth.jwt import get_current_user, get_org_filter
+from app.auth.jwt import get_current_user, get_org_filter, OWNER_ROLES
 from app.auth.permissions import require_tab
 from app.auth.visibility import get_visible_subsidy_ids
 from app.utils.http import content_disposition
@@ -74,8 +74,9 @@ async def _has_feo_action(current_user, db: AsyncSession, action_key: str) -> bo
     """Есть ли у пользователя один из feo_budget.* action-ключей (эффективно, с учётом
     ролевой матрицы + персональных/субсидийных оверрайдов). superadmin — всегда True.
     Общий хелпер для мягкого усечения денежных полей в /leaves, /flat, /plan-tree —
-    см. задачу владельца 2026-08-06 «остаток средств по каждой категории ФЭО»."""
-    if current_user.role == "superadmin":
+    см. задачу владельца 2026-08-06 «остаток средств по каждой категории ФЭО».
+    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026)."""
+    if current_user.role in OWNER_ROLES:
         return True
     from app.auth.permissions import _get_effective, _active_org
     effective = await _get_effective(current_user, db, _active_org(current_user))
@@ -104,8 +105,9 @@ async def _require_feo_category_write(
         может касаться нескольких субсидий одновременно) — subsidy_id=None: право
         проверяется по ЛЮБОЙ доступной пользователю орге (has_org_key на каждую
         кандидатскую оргу активная+UOA, БЕЗ наследования по иерархии).
+    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
     """
-    if current_user.role == "superadmin":
+    if current_user.role in OWNER_ROLES:
         return
 
     def _deny():
@@ -415,8 +417,9 @@ async def _check_unallocated_write_access(
     них). has_org_key/has_org_key — ненаследующая по иерархии проверка права
     (иерархия «ставлю задачи» не даёт права на чужую субсидию), а
     _has_key_in_any_org для вкладок — та же логика видимости, что и у tab-гейтов.
+    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
     """
-    if current_user.role == "superadmin":
+    if current_user.role in OWNER_ROLES:
         return
     from app.auth.permissions import has_org_key, _has_key_in_any_org
 

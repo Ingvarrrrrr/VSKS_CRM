@@ -215,6 +215,12 @@ class Purchase(Base):
     # на фронте (отдельно и по-разному для заявки и закупки) и слетал при конвертации.
     feo_per_item = Column(Boolean, nullable=False, default=False, server_default='false')
 
+    # Копирование закупки в другую субсидию (app/services/purchase_transfer/,
+    # миграция v3x4y5z6a7b8_purchase_copied_from.py) — какая закупка-оригинал
+    # породила эту копию. NULL у оригиналов и у закупок, не связанных копией;
+    # ondelete=SET NULL — удаление оригинала не должно утягивать копию.
+    copied_from_purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="SET NULL"), nullable=True)
+
     # Phase 26-YY: snapshot-hash гейт для auto-recompute (SHA-1 от items+receipts).
     # Если current_hash == recompute_snapshot_hash → skip fuzzy/autocreate/dedup.
     recompute_snapshot_hash = Column(String(64), nullable=True)

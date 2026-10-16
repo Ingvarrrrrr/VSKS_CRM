@@ -86,13 +86,22 @@ async def _get_repair(repair_id: int, db: AsyncSession, user) -> VehicleRepair:
     vehicle = await db.get(Vehicle, repair.vehicle_id)
     if not vehicle:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "ТС не найдено"})
-    _check_visibility(vehicle, user)
+    await _check_visibility(vehicle, user, db)
     return repair
 
 
-def _check_visibility(vehicle: Vehicle, user) -> None:
+async def _check_visibility(vehicle: Vehicle, user, db: AsyncSession) -> None:
+    # Суперадмин — без проверки. Хозяин аккаунта (16.10.2026, «Хозяин аккаунта
+    # в своём аккаунте = суперадмин») — так же, но ТОЛЬКО если ТС принадлежит
+    # ЕГО аккаунту (is_org_in_owner_account) — иначе он не отличался бы от
+    # платформенного superadmin для ЧУЖИХ аккаунтов.
     if user.role == "superadmin":
         return
+    if user.role == "account_owner":
+        from app.auth.visibility import is_org_in_owner_account
+        if await is_org_in_owner_account(db, user, vehicle.owner_org_id) or await is_org_in_owner_account(db, user, vehicle.assigned_org_id):
+            return
+        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "Нет доступа к этому ТС"})
     user_org = user.org_id
     if vehicle.owner_org_id != user_org and vehicle.assigned_org_id != user_org:
         raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "Нет доступа к этому ТС"})
@@ -200,7 +209,7 @@ async def get_attachment(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Вложение не найдено"})
     repair = await db.get(VehicleRepair, att.repair_id)
     vehicle = await db.get(Vehicle, repair.vehicle_id)
-    _check_visibility(vehicle, current_user)
+    await _check_visibility(vehicle, current_user, db)
     return _att_out(att)
 
 
@@ -218,7 +227,7 @@ async def download_attachment(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Вложение не найдено"})
     repair = await db.get(VehicleRepair, att.repair_id)
     vehicle = await db.get(Vehicle, repair.vehicle_id)
-    _check_visibility(vehicle, current_user)
+    await _check_visibility(vehicle, current_user, db)
 
     async def _streamer():
         yield att.file_data
@@ -247,7 +256,7 @@ async def patch_attachment(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Вложение не найдено"})
     repair = await db.get(VehicleRepair, att.repair_id)
     vehicle = await db.get(Vehicle, repair.vehicle_id)
-    _check_visibility(vehicle, current_user)
+    await _check_visibility(vehicle, current_user, db)
 
     if name is not None:
         att.name = name
@@ -278,7 +287,7 @@ async def delete_attachment(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Вложение не найдено"})
     repair = await db.get(VehicleRepair, att.repair_id)
     vehicle = await db.get(Vehicle, repair.vehicle_id)
-    _check_visibility(vehicle, current_user)
+    await _check_visibility(vehicle, current_user, db)
 
     await db.delete(att)
     await db.commit()

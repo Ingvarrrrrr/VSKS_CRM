@@ -765,3 +765,27 @@ def _build_contract_clause(user: User, visible_uids: Optional[set[int]], view_al
         )
 
     return or_(*clauses)
+
+
+async def is_org_in_owner_account(db: AsyncSession, user: User, org_id: Optional[int]) -> bool:
+    """Хозяин аккаунта = суперадмин, но ТОЛЬКО в своём аккаунте (владелец,
+    16.10.2026, задача «Хозяин аккаунта в своём аккаунте = суперадмин»).
+
+    org_id принадлежит аккаунту account_owner, если корень орги (root_org_id,
+    а сама орга — корень, если root_org_id IS NULL) принадлежит ему
+    (Organization.owner_user_id == user.id) — тот же признак аккаунта, что и
+    в app/services/org_account_resolution.py (там — для НОВОЙ org, здесь —
+    проверка ПРИНАДЛЕЖНОСТИ существующей). Для ролей кроме account_owner
+    эта функция не вызывается вызывающим кодом (superadmin — без проверки,
+    остальные роли — org-scoped иначе); сама не проверяет user.role.
+    """
+    if org_id is None:
+        return False
+    from app.models.organization import Organization
+
+    org = await db.get(Organization, org_id)
+    if org is None:
+        return False
+    root_id = org.root_org_id or org.id
+    root = org if root_id == org.id else await db.get(Organization, root_id)
+    return bool(root and root.owner_user_id == user.id)

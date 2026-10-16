@@ -202,6 +202,57 @@ async def wish_tab_counts(
     }
 
 
+@router.get("/standalone-advances")
+async def list_standalone_advances_endpoint(
+    subsidy_id: Optional[int] = None,
+    org_id: Optional[int] = None,
+    account_org_id: Optional[int] = None,
+    creator_id: Optional[int] = None,
+    assigned_to_id: Optional[int] = None,
+    mine_only: bool = False,
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Авансовые отчёты (Purchase.purchase_method='advance') БЕЗ заявки-компаньона
+    (wish_id IS NULL) — отдельный лёгкий GET, не польём существующий список
+    GET /wishes/ (WishOut) чужими полями: несколько потребителей уже читают его
+    форму как есть (WishesView.vue, useRiskScores.ts) — безопаснее новый endpoint,
+    чем менять форму ответа старого (задача владельца 16.10.2026, «Авансовые
+    видны в Заявках»).
+
+    Видимость — та же, что у закупок этого пользователя (Правило №6, см.
+    app/services/standalone_advances.py::list_standalone_advances — переиспользует
+    build_visibility_clause/get_visible_subsidy_ids ровно как list_purchases).
+    """
+    from app.services.standalone_advances import list_standalone_advances
+
+    rows = await list_standalone_advances(
+        db, current_user,
+        subsidy_id=subsidy_id, org_id=org_id, account_org_id=account_org_id,
+        creator_id=creator_id, assigned_to_id=assigned_to_id,
+        mine_only=mine_only, search=search,
+    )
+    return [
+        {
+            "id": r.id,
+            "purchase_id": r.id,
+            "is_advance": True,
+            "registry_number": r.registry_number,
+            "subsidy_id": r.subsidy_id,
+            "subsidy_name": r.subsidy_name,
+            "org_id": r.org_id,
+            "reimbursement_user_id": r.reimbursement_user_id,
+            "reimbursement_user_name": r.reimbursement_user_name,
+            "assigned_user_id": r.assigned_user_id,
+            "assigned_user_name": r.assigned_user_name,
+            "status": r.status,
+            "amount": r.amount,
+        }
+        for r in rows
+    ]
+
+
 @router.get("/", response_model=list[WishOut])
 async def list_wishes(
     status: Optional[str] = None,

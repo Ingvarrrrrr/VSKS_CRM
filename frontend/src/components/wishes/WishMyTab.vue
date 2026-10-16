@@ -92,7 +92,7 @@
           <!-- Владелец (30.09): номер заявки — отдельная колонка, программный id,
                не редактируется. Предмет заявки вынесен в колонку title_col. -->
           <div class="d-flex align-center flex-wrap" style="gap:6px">
-            <span class="font-weight-medium">№{{ item.id }}</span>
+            <span class="font-weight-medium">{{ item.is_advance ? (item.registry_number || 'Авансовый') : '№' + item.id }}</span>
             <!-- Phase 31-06: badge for unseen changes -->
             <v-chip
               v-if="(item.unseen_changes_count ?? 0) > 0"

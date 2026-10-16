@@ -141,6 +141,11 @@ export interface Wish {
   // заполняется backend app.services.wish_tz_warnings.wish_tz_over_plan_warnings.
   // Пустой массив/undefined — превышений нет.
   tz_over_plan_warnings?: WishTzOverPlanWarning[]
+  // Владелец (16.10.2026, «Авансовые видны в Заявках»): псевдо-строка для
+  // авансового отчёта без заявки-компаньона (Purchase.purchase_method='advance',
+  // wish_id IS NULL) — см. WishesView.vue::advanceToPseudoWish. id у такой
+  // строки отрицательный (-purchase_id), настоящей заявки не существует.
+  is_advance?: boolean
 }
 
 export interface WishTzOverPlanWarning {

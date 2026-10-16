@@ -58,6 +58,14 @@
             </span>
           </template>
         </v-tooltip>
+        <!-- Владелец, сессия 16.10.2026: «копировать закупку в другую субсидию» —
+             та же кнопочная группа, что «Остановить»/«Возобновить» выше. Видна
+             только с правом purchase.copy_to_subsidy (см. PurchaseCopyToSubsidyDialog.vue,
+             composables/purchaseTransfer/usePurchaseTransfer.ts). -->
+        <v-btn v-if="isEdit && purchaseId && canCopyToSubsidy" size="x-small" variant="tonal" color="indigo"
+          prepend-icon="mdi-swap-horizontal-bold" @click="onCopyToSubsidy">
+          Скопировать в субсидию…
+        </v-btn>
         <v-icon v-if="form.is_monthly_payment" size="small" color="blue" title="Ежемесячный платёж">mdi-calendar-sync</v-icon>
         <span v-if="isEdit && form.registry_number" class="text-caption text-medium-emphasis">
           Реестр: {{ form.registry_number }}
@@ -190,6 +198,12 @@ interface Props {
   // здесь только вызов колбэка (тот же приём, что forceOrderStatus/clearDraft выше).
   onStopPurchase: () => void
   onResumePurchase: () => void
+  // Владелец, сессия 16.10.2026: кнопка «Скопировать в субсидию…» — открытие
+  // PurchaseCopyToSubsidyDialog.vue живёт в родителе (CreateOrderView.vue), как
+  // и onStopPurchase/onResumePurchase выше; видимость — по праву
+  // purchase.copy_to_subsidy (authStore.hasAction, считается в родителе).
+  onCopyToSubsidy: () => void
+  canCopyToSubsidy: boolean
   // Квик-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б): на
   // стадии 'delivered' у авансового кнопка «Остановить» ниже физически и есть
   // «Отказать в оплате» директора (can_stop_purchase расширил порог до 'paid'

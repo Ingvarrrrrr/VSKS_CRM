@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.feo_category import FeoCategory
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, OWNER_ROLES
 from app.routers import feo_categories as fc
 # Правило №6: рекурсия «budget узла = собственный, иначе сумма детей» —
 # единственная реализация, см. app.services.subsidy_budget (та же формула,
@@ -143,7 +143,8 @@ async def feo_budget_residuals(
     """
     from app.auth.permissions import _get_effective, _active_org
     effective = await _get_effective(current_user, db, _active_org(current_user))
-    can_view_all_levels = (current_user.role == "superadmin") or ("feo_budget.view_all_levels" in effective)
+    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
+    can_view_all_levels = (current_user.role in OWNER_ROLES) or ("feo_budget.view_all_levels" in effective)
     from sqlalchemy import select as _sel
 
     ids = [int(x) for x in category_ids.split(",") if x.strip().isdigit()]

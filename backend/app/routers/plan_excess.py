@@ -248,7 +248,8 @@ async def list_plan_excess_approvals(
     # орги, что и в /decide) — считаем один раз.
     org_id = subsidy.org_id or get_single_org_id(current_user)
 
-    if current_user.role != "superadmin" and not await _has_key_in_any_org(current_user, db, "feo_categories"):
+    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
+    if current_user.role not in OWNER_ROLES and not await _has_key_in_any_org(current_user, db, "feo_categories"):
         if not await has_org_key(current_user, db, org_id, "plan_excess.decide", subsidy_id=subsidy_id):
             raise HTTPException(
                 403,

@@ -31,6 +31,7 @@ from app.database import async_session
 from app.models.contractor import Contractor
 from app.models.purchase import Purchase
 from app.services.purchase_amounts import load_purchase_amounts
+from app.services.purchase_transfer.match import build_purchase_key
 
 from .auto_approve_excess import auto_approve_subsidy_excess
 from .feo_path_resolve import load_feo_tree
@@ -77,12 +78,13 @@ async def run(source_id: int, target_id: int, apply: bool, approve_as: int | Non
         amounts = await load_purchase_amounts(db, [p.id for p in old + new])
 
         def key(p: Purchase):
+            # ПЕРЕНЕСЕНО в app.services.purchase_transfer.match.build_purchase_key
+            # (ПРАВИЛО №6) — здесь только перевод в (поставщик_или_None, сумма),
+            # формат, который использует остальной код этого модуля (pool/by_reg_old).
             amt = amounts[p.id].effective if p.id in amounts else None
-            if p.purchase_method == "advance":
-                who = p.reimbursement_user_id or p.assigned_user_id
-                return (f"employee:{who}" if who else None, amt)
-            inn = (inns.get(p.contractor_id) or "").strip()
-            return (inn or None, amt)
+            k = build_purchase_key(p, contractor_inn=inns.get(p.contractor_id), effective_amount=amt)
+            supplier = k.supplier_key or k.inn or None
+            return (supplier or None, k.amount)
 
         by_reg_old = {p.registry_number: p for p in old}
         pairs: list[tuple[Purchase, Purchase, str]] = []

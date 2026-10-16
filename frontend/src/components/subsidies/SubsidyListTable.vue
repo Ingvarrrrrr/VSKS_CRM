@@ -88,6 +88,7 @@
         </template>
         <template v-else>
           <v-btn icon="mdi-content-copy" size="x-small" variant="text" color="deep-purple" title="Скопировать для эксперимента" @click.stop="ctx.openSandboxCopy(item)" />
+          <v-btn icon="mdi-swap-horizontal-bold" size="x-small" variant="text" color="indigo" title="Перенести закупки в другую субсидию…" @click.stop="ctx.openTransferPurchases(item)" />
           <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="ctx.confirmDelete(item)" />
         </template>
       </div>

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, OWNER_ROLES
 from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.department import Department
@@ -279,9 +279,10 @@ async def remove_member(
     if dept_org_id is not None:
         active_count_q = active_count_q.where(Subsidy.org_id == dept_org_id)
     active_count = (await db.execute(active_count_q)).scalar() or 0
-    # Суперадмин переносит/выводит сотрудника несмотря на активные закупки
-    # (ссылки не блокируют операции суперадмина — модель Wave 1/3).
-    if active_count > 0 and current_user.role != 'superadmin':
+    # Суперадмин и хозяин аккаунта (в своём аккаунте — владелец, 16.10.2026)
+    # переносят/выводят сотрудника несмотря на активные закупки (ссылки не
+    # блокируют операции суперадмина — модель Wave 1/3).
+    if active_count > 0 and current_user.role not in OWNER_ROLES:
         org_name = (await db.execute(
             select(Organization.name).where(Organization.id == dept_org_id)
         )).scalar() if dept_org_id else 'этой организации'

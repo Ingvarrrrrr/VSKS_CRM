@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func
 
 from app.database import get_db
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, OWNER_ROLES
 from app.auth.permissions import has_org_key
 from app.models.user import User
 from app.models.subsidy import Subsidy
@@ -47,7 +47,8 @@ def _feature_gate() -> None:
 
 
 async def _can_review(db: AsyncSession, user: User, subsidy: Subsidy) -> bool:
-    if user.role == "superadmin":
+    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
+    if user.role in OWNER_ROLES:
         return True
     return await has_org_key(user, db, subsidy.org_id, "subsidy.edit", subsidy_id=subsidy.id)
 
@@ -62,7 +63,8 @@ async def _load_revision(db: AsyncSession, revision_id: int) -> SubsidyRevision:
 
 
 async def _require_participant(db: AsyncSession, user: User, revision: SubsidyRevision, subsidy: Subsidy) -> None:
-    if user.role == "superadmin" or user.id == revision.author_id:
+    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
+    if user.role in OWNER_ROLES or user.id == revision.author_id:
         return
     if await _can_review(db, user, subsidy):
         return

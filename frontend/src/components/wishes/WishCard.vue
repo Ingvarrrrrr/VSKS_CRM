@@ -14,7 +14,7 @@
            «На согласование мне»/«Заявки сотрудников»; на «Моих» оставлена старая
            подпись через showRegistryNumber, чтобы карточка выглядела ровно как раньше. -->
       <div v-if="showHeaderMeta" class="d-flex align-center justify-space-between mb-1" style="gap:8px">
-        <span class="text-caption text-medium-emphasis">№{{ wish.id }} · {{ formatDate(wish.created_at) }}</span>
+        <span class="text-caption text-medium-emphasis">{{ wish.is_advance ? (wish.registry_number || 'Авансовый') : '№' + wish.id }}{{ wish.created_at ? ' · ' + formatDate(wish.created_at) : '' }}</span>
         <span v-if="wish.items_count" class="text-caption text-medium-emphasis">{{ wish.items_count }} {{ pluralRu(wish.items_count, 'позиция', 'позиции', 'позиций') }}</span>
       </div>
 

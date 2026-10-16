@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.jwt import get_current_user, get_single_org_id
+from app.auth.jwt import get_current_user, get_single_org_id, OWNER_ROLES
 from app.database import get_db
 from app.models.product import Product, DEFAULT_PRODUCT_CATEGORY
 from app.models.purchase_category import PurchaseCategory
@@ -142,8 +142,10 @@ async def list_products(
     result = await db.execute(q)
     products = result.scalars().all()
 
-    # Скрыть контрактные цены для чужих организаций (если не shared)
-    if current_user.role != "superadmin":
+    # Скрыть контрактные цены для чужих организаций (если не shared).
+    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026) —
+    # контрактная цена своей же орги для него не «чужая».
+    if current_user.role not in OWNER_ROLES:
         user_org_id = current_user.org_id
         for p in products:
             if p.contract_org_id and p.contract_org_id != user_org_id and not p.price_shared:

@@ -104,6 +104,7 @@
     <SubsidyEditDialog ref="subsidyEditDialogRef" v-model:add-open="showAddDialog" v-model:edit-open="showEditDialog" />
     <SubsidyDeleteDialog ref="subsidyDeleteDialogRef" v-model="showDeleteDialog" @deleted="onSubsidyDeleted" />
     <SubsidySandboxDialog ref="subsidySandboxDialogRef" @changed="silentRefreshSubsidies" />
+    <SubsidyTransferPurchasesDialog ref="transferPurchasesDialogRef" />
     <FeoCategoryDialog ref="feoCategoryDialogRef" v-model:add-open="showAddFeoDialog" v-model:edit-open="showEditFeoDialog" />
     <FeoCategoryDeleteDialog ref="feoCategoryDeleteDialogRef" v-model="showDeleteFeoDialog" />
 
@@ -168,6 +169,7 @@ import SubsidyEventsPanel from '@/components/subsidies/SubsidyEventsPanel.vue'
 import SubsidyEditDialog from '@/components/subsidies/SubsidyEditDialog.vue'
 import SubsidyDeleteDialog from '@/components/subsidies/SubsidyDeleteDialog.vue'
 import SubsidySandboxDialog from '@/components/subsidies/SubsidySandboxDialog.vue'
+import SubsidyTransferPurchasesDialog from '@/components/subsidies/SubsidyTransferPurchasesDialog.vue'
 import FeoCategoryDialog from '@/components/subsidies/FeoCategoryDialog.vue'
 import FeoCategoryDeleteDialog from '@/components/subsidies/FeoCategoryDeleteDialog.vue'
 import SubsidyApproversDialog from '@/components/subsidies/SubsidyApproversDialog.vue'
@@ -976,6 +978,13 @@ async function openSandboxPromote(s: SubsidyRow) {
   await subsidySandboxDialogRef.value?.openPromote(s)
 }
 
+// Перенос закупок субсидии в другую — тонкий прокси в
+// SubsidyTransferPurchasesDialog.vue, тот же приём, что у openSandboxCopy выше
+// (ПРАВИЛО №6, диалог сам ведёт сравнение/применение через usePurchaseTransfer.ts).
+async function openTransferPurchases(s: SubsidyRow) {
+  await transferPurchasesDialogRef.value?.open(s)
+}
+
 // SubsidyDeleteDialog.vue уже убрала удалённую строку из allSubsidies оптимистично
 // (единственный источник — ctx.allSubsidies, Правило №6) — здесь её не трогаем
 // второй раз (кроме фильтра на всякий случай ниже). Раньше здесь был
@@ -1057,6 +1066,7 @@ const eventsPanelRef = ref<InstanceType<typeof SubsidyEventsPanel> | null>(null)
 const subsidyEditDialogRef = ref<InstanceType<typeof SubsidyEditDialog> | null>(null)
 const subsidyDeleteDialogRef = ref<InstanceType<typeof SubsidyDeleteDialog> | null>(null)
 const subsidySandboxDialogRef = ref<InstanceType<typeof SubsidySandboxDialog> | null>(null)
+const transferPurchasesDialogRef = ref<InstanceType<typeof SubsidyTransferPurchasesDialog> | null>(null)
 const feoCategoryDialogRef = ref<InstanceType<typeof FeoCategoryDialog> | null>(null)
 const feoCategoryDeleteDialogRef = ref<InstanceType<typeof FeoCategoryDeleteDialog> | null>(null)
 const subsidyMembersDialogRef = ref<InstanceType<typeof SubsidyMembersDialog> | null>(null)
@@ -1101,6 +1111,7 @@ const subsidyDetailCtx = {
   openSandboxCopy,
   openSandboxDelete,
   openSandboxPromote,
+  openTransferPurchases,
   openMembersDialog,
   openHistoryDialog,
   openContractorOverride,

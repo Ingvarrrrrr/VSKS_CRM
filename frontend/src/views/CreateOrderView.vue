@@ -30,6 +30,8 @@
       :on-stop-purchase="onStopPurchase"
       :on-resume-purchase="onResumePurchase"
       :can-decide-advance-payment="canDecideAdvancePayment"
+      :on-copy-to-subsidy="onCopyToSubsidy"
+      :can-copy-to-subsidy="canCopyToSubsidy"
     />
 
     <PurchaseStopDialog
@@ -40,6 +42,14 @@
       :loading="stopAction.loading.value"
       @update:reason="v => stopAction.dialog.reason = v"
       @confirm="onConfirmStopPurchase"
+    />
+
+    <PurchaseCopyToSubsidyDialog
+      v-if="isEdit && purchaseId"
+      v-model="copyToSubsidyDialogOpen"
+      :purchase-id="purchaseId"
+      :source-subsidy-id="form.subsidy_id || null"
+      @done="onPurchaseCopiedToSubsidy"
     />
 
     <div v-if="form.subsidy_id && (feoDirections.length || feoResiduals.length)" class="mb-4">
@@ -1677,6 +1687,11 @@
         ref="fabrikantFileInputEl" type="file" accept=".docx,.pdf" style="display:none"
         @change="uploadFabrikantOverride" />
 
+      <!-- Владелец, сессия 16.10.2026: «Копия из РЕЕ-… / Скопирована в: …» —
+           данные GET /purchase-transfer/links/{id} (PurchaseCopyLinks.vue,
+           usePurchaseTransfer.ts). Сама не рендерится, если переносов не было. -->
+      <PurchaseCopyLinks v-if="isEdit && purchaseId" :purchase-id="purchaseId" />
+
       <PurchaseLinkedTasksCard
         v-if="isEdit && purchaseId"
         :purchase-id="purchaseId"
@@ -2073,6 +2088,8 @@ import { useDocPickerDialogs } from '@/composables/purchase/useDocPickerDialogs'
 import DocPickerDialogs from '@/components/purchase/DocPickerDialogs.vue'
 import { usePurchaseStop } from '@/composables/orders/usePurchaseStop'
 import PurchaseStopDialog from '@/components/orders/PurchaseStopDialog.vue'
+import PurchaseCopyToSubsidyDialog from '@/components/purchase/PurchaseCopyToSubsidyDialog.vue'
+import PurchaseCopyLinks from '@/components/purchase/PurchaseCopyLinks.vue'
 import { usePurchaseFiles } from '@/composables/purchase/usePurchaseFiles'
 import { usePurchaseNmck } from '@/composables/purchase/usePurchaseNmck'
 import PurchaseFileDialogs from '@/components/purchase/PurchaseFileDialogs.vue'
@@ -3203,12 +3220,31 @@ function onConfirmStopPurchase() {
   stopAction.confirm(() => { loadPurchase() })
 }
 
+// Владелец, сессия 16.10.2026: «копировать закупку в другую субсидию» —
+// открытие PurchaseCopyToSubsidyDialog.vue (composables/purchaseTransfer/
+// usePurchaseTransfer.ts, ПРАВИЛО №6 — тот же composable, что у диалога
+// переноса целой субсидии в SubsidiesView.vue). После успешного копирования —
+// перегружаем карточку, чтобы PurchaseCopyLinks.vue увидел новую связь.
+const copyToSubsidyDialogOpen = ref(false)
+function onCopyToSubsidy() {
+  copyToSubsidyDialogOpen.value = true
+}
+function onPurchaseCopiedToSubsidy() {
+  loadPurchase()
+}
+
 const itemsEditorRef = ref<any>(null)
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number; limit?: number; spent?: number } | null>(null)
 // Остатки бюджета по ФЭО (по правам: лист всем с view_leaf, уровни выше — view_all_levels)
 const authStore = useAuthStore()
 const canViewLeafBudget = computed(() => authStore.hasAction(ACTIONS.FEO_BUDGET_VIEW_LEAF!))
 const canViewAllLevelsBudget = computed(() => authStore.hasAction(ACTIONS.FEO_BUDGET_VIEW_ALL_LEVELS!))
+// 'purchase.copy_to_subsidy' — права на копирование закупки в другую субсидию
+// (владелец, сессия 16.10.2026). Нет константы ACTIONS.* под этот ключ — она
+// заводится в dictionaries.json серверным исполнителем, здесь строкой до её
+// появления (тот же обходной путь, что и 'publication.create' выше, см.
+// докстринг constants/permissionActions.ts).
+const canCopyToSubsidy = computed(() => authStore.hasAction('purchase.copy_to_subsidy'))
 type FeoNode = { id: number; name: string; level: number; path: string; budget: number; used: number; residual: number; contracted_used: number; planned_used: number; uncontracted_remaining: number; spendable_remaining: number }
 type FeoLeaf = FeoNode & { ancestors: FeoNode[] }
 const feoDirections = ref<FeoNode[]>([])

@@ -76,6 +76,9 @@ export interface SubsidyDetailContext {
   openSandboxCopy: (s: SubsidyRow) => Promise<void>
   openSandboxDelete: (s: SubsidyRow) => Promise<void>
   openSandboxPromote: (s: SubsidyRow) => Promise<void>
+  // Перенос закупок субсидии в другую (владелец, сессия 16.10.2026) — тонкий
+  // прокси в SubsidyTransferPurchasesDialog.vue, тот же приём, что openSandboxCopy.
+  openTransferPurchases: (s: SubsidyRow) => Promise<void>
   openMembersDialog: (s: SubsidyRow) => Promise<void>
   openHistoryDialog: (s: SubsidyRow) => void
 

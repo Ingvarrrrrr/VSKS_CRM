@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query, Body, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.jwt import get_current_user, get_single_org_id, ADMIN_ROLES
+from app.auth.jwt import get_current_user, get_single_org_id, ADMIN_ROLES, OWNER_ROLES
 from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.contractor import Contractor
@@ -57,8 +57,9 @@ async def toggle_price_sharing(
     product = result.scalar_one_or_none()
     if not product:
         raise HTTPException(404, "Товар не найден")
-    # Только владелец организации или superadmin
-    if current_user.role != "superadmin":
+    # Только владелец организации, хозяин аккаунта (в своём аккаунте, владелец
+    # 16.10.2026) или superadmin.
+    if current_user.role not in OWNER_ROLES:
         if product.contract_org_id != current_user.org_id:
             raise HTTPException(403, "Только организация-владелец контракта может управлять доступом к цене")
     product.price_shared = bool(data.get("shared", False))

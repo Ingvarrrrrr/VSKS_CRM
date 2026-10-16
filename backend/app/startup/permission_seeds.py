@@ -628,6 +628,41 @@ async def _advance_payment_decision_action():
         logging.getLogger(__name__).warning(f"advance_payment_decision action seed skipped (non-fatal): {e}")
 
 
+async def _purchase_copy_to_subsidy_action():
+    # Копирование закупки в другую субсидию (app/services/purchase_transfer/,
+    # роутер app/routers/purchase_transfer.py). Дефолт: superadmin/
+    # account_owner=True (им и так доступно почти всё, см. _account_owner_
+    # all_rights ниже), остальные роли=False — выдаётся точечно персональным
+    # грантом на конкретную субсидию (SUBSIDY_GRANT_NON_GLOBAL в
+    # app/auth/permissions.py не даёт такому гранту стать глобальным).
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'purchase.copy_to_subsidy'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Копировать закупку в другую субсидию',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True), ('admin', False),
+                ('org_admin', False), ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"purchase_copy_to_subsidy action seed skipped (non-fatal): {e}")
+
+
 async def _subsidy_correct_action():
     # Корректировка утверждённой субсидии через проверку, волна 1 (2026-10-02,
     # владелец). Новое action-право subsidy.correct: обладатель БЕЗ
@@ -777,6 +812,7 @@ async def run():
     await _purchase_tz_waive_action()
     await _advance_payment_decision_action()
     await _subsidy_correct_action()
+    await _purchase_copy_to_subsidy_action()
     await _paid_confirmation_decide_action()
     await _products_edit_catalog_action()
     await _account_owner_all_rights()

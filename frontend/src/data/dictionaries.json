@@ -149,6 +149,10 @@
       "description": "Редактировать каталог товаров (общий, не привязан к организации)"
     },
     {
+      "key": "purchase.copy_to_subsidy",
+      "description": "Копировать закупку в другую субсидию"
+    },
+    {
       "key": "purchase.status_change",
       "description": "Изменение статуса закупки"
     },

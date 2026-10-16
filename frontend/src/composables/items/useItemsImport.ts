@@ -54,8 +54,6 @@ export interface UseItemsImportDeps {
   emit: (event: 'reload-requested') => void
   showSnack: (text: string, color?: ToastType, opts?: { actionText?: string; onAction?: () => void; duration?: number }) => void
   nextUid: () => string
-  /** From useItemMatching().applyCandidate — shared with inline/bulk matching. */
-  applyMatchCandidate: (row: EditorItem, cand: MatchCandidate) => void
   // 2026-10-02 (.planning/quick/2026-10-02-vat-on-top): УПД-колонки «цена без
   // налога» (4) + «стоимость с налогом — всего» (9) — цена в импортируемых
   // строках БЕЗ НДС, сумма с НДС. Вызывается autoDetectMapping, когда она
@@ -69,7 +67,7 @@ export interface UseItemsImportDeps {
 export function useItemsImport(deps: UseItemsImportDeps) {
   const {
     props, localItems, localContractItems, contractItemImportMode,
-    emitUpdate, emitContractItemsUpdate, emit, showSnack, nextUid, applyMatchCandidate,
+    emitUpdate, emitContractItemsUpdate, emit, showSnack, nextUid,
     suggestContractVatOnTop,
   } = deps
 
@@ -822,31 +820,10 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     })
   }
 
-  // ── P1-B: Single product repick dialog ───────────────────────────────────────
-  const repickDialog = ref<{ show: boolean; itemIdx: number; itemName: string }>({
-    show: false,
-    itemIdx: -1,
-    itemName: '',
-  })
-
-  function openRepickDialog(idx: number) {
-    repickDialog.value = {
-      show: true,
-      itemIdx: idx,
-      itemName: localItems.value[idx]?.item_name || '',
-    }
-  }
-
-  function onRepickPick(candidate: MatchCandidate) {
-    const idx = repickDialog.value.itemIdx
-    if (idx < 0) return
-    const item = localItems.value[idx]
-    if (!item) return
-    applyMatchCandidate(item as any, candidate)
-    repickDialog.value.show = false
-    emitUpdate()
-    showSnack(`Товар перепривязан: ${candidate.name}`, 'success')
-  }
+  // P1-B «Перепривязка товара» переехала в useItemsCatalog.ts
+  // (openRepickPicker/bindProductToItem, ПРАВИЛО №6, владелец 16.10.2026) —
+  // кнопка-скрепка теперь открывает ОБЩЕЕ окно ProductPickerDialog.vue
+  // (с фото и поиском), а не отдельный SingleProductPickerDialog.vue.
 
   const CRM_MAPPING_FIELDS: Record<string, string> = {
     item_name: 'Наименование',
@@ -1415,8 +1392,6 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     dupMergeShow, dupMergeGroups, onDupMergeConfirm,
     // Sum-mismatch (Дефект 2, владелец 2026-09-14)
     sumMismatchShow, sumMismatchWarnings, onSumMismatchConfirm,
-    // P1-B repick
-    repickDialog, openRepickDialog, onRepickPick,
     // Своё ТЗ при импорте — окно сравнения с каталогом (план item-tz-description.md, Этап Б)
     tzCompareShow, tzCompareRows, onTzCompareConfirm, onTzCompareCancel,
   }

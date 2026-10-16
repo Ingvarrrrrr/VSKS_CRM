@@ -20,6 +20,8 @@ import { onFeoPlanChanged } from './feoPlanChangeBus'
 import { materializeManualPlanAsItem } from './useFeoManualPlanMaterialize'
 import { collectSubtreeIds } from './feoCategoryUtils'
 import type { FeoCategory, FeoNode } from './types'
+import { STAGE_ORDER } from '@/constants/planStageScale'
+import type { PlanStageSegment } from '@/utils/planStageBackground'
 
 export interface PlanToWishLinkedPurchase {
   purchase_id: number
@@ -551,6 +553,60 @@ export function usePlanToRequest() {
     return !!p && p.consumed > 0
   }
 
+  // ── Раскраска по стадии закупки (владелец, 16.10.2026) — см.
+  // @/utils/planStageBackground.ts и backend app.services.plan_item_stage.
+  // Строка плановой позиции/ручного плана листа читает stage_segments ПРЯМО
+  // из FeoPlanPosition (посчитан backend'ом batch-ом) — второй расчёт не
+  // заводим (ПРАВИЛО №6).
+  function plannedItemStageSegments(plannedItemId: number): PlanStageSegment[] {
+    return residualRowFor(plannedItemId)?.stage_segments || []
+  }
+
+  function categoryPlanStageSegments(categoryId: number): PlanStageSegment[] {
+    return residualRowForCategory(categoryId)?.stage_segments || []
+  }
+
+  // Строка КАТЕГОРИИ дерева целиком (узел со свёрнутой Ур.5-панелью) — сводная
+  // полоса по ВСЕМ строкам плана этой категории (categoryRowsWithPlan — тот же
+  // набор, что у isCategoryFullyPurchased/categoryPurchaseProgress выше, второй
+  // обход не заводим), доля = по сумме (владелец: «сводные полосы ... по доле
+  // плана категории, закрытой закупками каждой стадии; по сумме»). Сегменты
+  // ОДНОЙ закупки, встретившиеся в нескольких строках плана категории (напр.
+  // объединённые позиции), складываются в одну полосу той же закупки.
+  // Сводная полоса по ВСЕМУ поддереву категории (владелец 16.10.2026: у
+  // направления — сумма по его подкатегориям). Поддерево — тот же
+  // collectSubtreeIds, что у selectCategorySubtree; строки — с планом по сумме
+  // (позиции без количества тоже входят, доля по сумме).
+  function categoryStageSegments(categoryId: number, feoCategories?: FeoCategory[]): PlanStageSegment[] {
+    const ids = feoCategories ? new Set(collectSubtreeIds(feoCategories, categoryId)) : new Set([categoryId])
+    const rows = feoResiduals.plannedResiduals.value.filter(
+      r => ids.has(r.category_id) && (Number(r.planned_amount) || 0) > 0,
+    )
+    if (!rows.length) return []
+    const totalAmount = rows.reduce((sum, r) => sum + (Number(r.planned_amount) || 0), 0)
+    if (!(totalAmount > 0)) return []
+    const byKey = new Map<string, PlanStageSegment>()
+    for (const r of rows) {
+      for (const seg of (r.stage_segments || [])) {
+        const key = `${seg.purchase_id}:${seg.stage}`
+        const existing = byKey.get(key)
+        const amount = Number(seg.amount) || 0
+        const quantity = Number(seg.quantity) || 0
+        if (existing) {
+          existing.amount += amount
+          existing.quantity += quantity
+        } else {
+          byKey.set(key, { ...seg, amount, quantity, share: 0 })
+        }
+      }
+    }
+    const segments = Array.from(byKey.values()).map((s) => ({ ...s, share: s.amount / totalAmount }))
+    // Сверху самая дальняя стадия (владелец) — тот же порядок STAGE_ORDER, что
+    // и в легенде (FeoTreeToolbar.vue), второй список порядка не заводим.
+    segments.sort((a, b) => STAGE_ORDER.indexOf(b.stage as any) - STAGE_ORDER.indexOf(a.stage as any))
+    return segments
+  }
+
   // feoCategories в сигнатуре сохранён ради единообразия вызова с
   // selectWholeSmeta/subtreeSelectionState (FeoTreeToolbar.vue передаёт
   // ctx.feoCategories.value во все четыре без разбора) — сам eligibleResidualIds
@@ -874,5 +930,8 @@ export function usePlanToRequest() {
     // Частично закупленные (0 < куплено < план) — фон «кружочками» на строке/
     // категории, отдельно от зелёной штриховки «полностью» (владелец, 30.09.2026).
     isPlannedItemPartiallyTaken, isCategoryPartiallyPurchased, categoryPurchaseProgress,
+    // Раскраска по стадии закупки (владелец, 16.10.2026) — FeoLevel5Panel.vue/
+    // FeoTreeRow.vue, см. @/utils/planStageBackground.ts.
+    plannedItemStageSegments, categoryPlanStageSegments, categoryStageSegments,
   }
 }

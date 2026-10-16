@@ -107,23 +107,87 @@ async def paid_consumption_rows(
         items_sum = Decimal(str(r.items_sum or 0))
         item_total = Decimal(str(r.item_total or 0))
         items_count = int(r.items_count or 1)
-        if items_count > 1 and items_sum > 0:
-            ratio = item_total / items_sum
-        elif items_count > 1:
-            ratio = Decimal(1) / Decimal(items_count)
-        else:
-            ratio = Decimal(1)
-
-        marked = Decimal(str(r.payment_amount or 0)) + Decimal(str(r.payment_amount_declared or 0))
-        confirmed = Decimal(str(r.payment_amount or 0))
+        ratio = _item_ratio(item_total, items_sum, items_count)
+        marked, confirmed = _item_payment_split(ratio, r.payment_amount, r.payment_amount_declared)
 
         result.append({
             "purchase_id": r.purchase_id,
             "subsidy_id": r.subsidy_id,
             "cat_id": r.cat_id,
-            "paid_marked": float(marked * ratio),
-            "paid_confirmed": float(confirmed * ratio),
+            "paid_marked": float(marked),
+            "paid_confirmed": float(confirmed),
         })
+    return result
+
+
+def _item_ratio(item_total: Decimal, items_sum: Decimal, items_count: int) -> Decimal:
+    """Доля позиции в сумме её закупки — ЕДИНСТВЕННАЯ формула пропорции (см.
+    докстринг модуля). Вынесена из paid_consumption_rows (была инлайн-кодом)
+    ПРАВИЛО №6 — переиспользуется purchase_item_payment_amounts ниже
+    (plan_item_stage.py, раскраска плана по стадии), сумма по категории не
+    меняется (закреплено тестом test_plan_item_stage.py)."""
+    if items_count > 1 and items_sum > 0:
+        return item_total / items_sum
+    if items_count > 1:
+        return Decimal(1) / Decimal(items_count)
+    return Decimal(1)
+
+
+def _item_payment_split(ratio: Decimal, payment_amount, payment_amount_declared) -> tuple[Decimal, Decimal]:
+    """Платёж закупки (payment_amount — подтверждено выпиской, +declared —
+    ручная отметка), распределённый на позицию её `ratio`. Вынесена из
+    paid_consumption_rows — та же формула, второй раз не считаем (ПРАВИЛО №6)."""
+    marked = (Decimal(str(payment_amount or 0)) + Decimal(str(payment_amount_declared or 0))) * ratio
+    confirmed = Decimal(str(payment_amount or 0)) * ratio
+    return marked, confirmed
+
+
+async def purchase_item_payment_amounts(db: AsyncSession, purchase_ids: list[int]) -> dict[int, dict]:
+    """{purchase_item_id: {"paid_marked", "paid_confirmed", "item_total"}} — та же
+    пропорция, что в paid_consumption_rows (_item_ratio/_item_payment_split,
+    ПРАВИЛО №6, единственная формула распределения платежа закупки по позициям),
+    но по произвольному списку purchase_id, без фильтра по категории/субсидии.
+    Источник для app.services.plan_item_stage (раскраска плановых позиций дерева
+    ФЭО по стадии оплаты) — второй расчёт ratio/marked/confirmed не заводится."""
+    result: dict[int, dict] = {}
+    if not purchase_ids:
+        return result
+
+    _purchase_totals_sq = (
+        select(
+            PurchaseItem.purchase_id.label("purchase_id"),
+            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("items_sum"),
+            func.count(PurchaseItem.id).label("items_count"),
+        )
+        .where(PurchaseItem.purchase_id.in_(purchase_ids))
+        .group_by(PurchaseItem.purchase_id)
+        .subquery()
+    )
+    stmt = (
+        select(
+            PurchaseItem.id.label("purchase_item_id"),
+            PurchaseItem.total_price.label("item_total"),
+            _purchase_totals_sq.c.items_sum,
+            _purchase_totals_sq.c.items_count,
+            Purchase.payment_amount,
+            Purchase.payment_amount_declared,
+        )
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .join(_purchase_totals_sq, _purchase_totals_sq.c.purchase_id == PurchaseItem.purchase_id)
+        .where(PurchaseItem.purchase_id.in_(purchase_ids))
+    )
+    rows = (await db.execute(stmt)).all()
+    for r in rows:
+        items_sum = Decimal(str(r.items_sum or 0))
+        item_total = Decimal(str(r.item_total or 0))
+        items_count = int(r.items_count or 1)
+        ratio = _item_ratio(item_total, items_sum, items_count)
+        marked, confirmed = _item_payment_split(ratio, r.payment_amount, r.payment_amount_declared)
+        result[r.purchase_item_id] = {
+            "paid_marked": float(marked),
+            "paid_confirmed": float(confirmed),
+            "item_total": float(item_total),
+        }
     return result
 
 

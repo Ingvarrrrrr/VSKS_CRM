@@ -118,7 +118,9 @@
                    data-feo-node-id у строки категории (FeoTreeRow.vue). -->
               <tr v-if="!isPlannedRowHidden(planned)"
                 style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id"
-                :class="{ 'feo-fully-purchased-row': isRowFullyPurchased(planned), 'feo-partially-purchased-row': isRowPartiallyPurchased(planned), 'feo-search-highlight-row': ctx.isFeoSearchHighlighted(`p-${planned.id}`) }"
+                :class="{ 'feo-stage-row': !!rowStageBackground(planned), 'feo-search-highlight-row': ctx.isFeoSearchHighlighted(`p-${planned.id}`) }"
+                :style="rowStageBackground(planned) ? { backgroundImage: rowStageBackground(planned)! } : {}"
+                :title="rowStageTooltip(planned) || undefined"
               >
                 <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
                   <div class="d-flex align-center" style="gap:2px">
@@ -265,7 +267,7 @@
                        частично закупленные — без штриховки строки, только мини-подпись,
                        второй такой индикатор в проекте не заводим (Правило №6). -->
                   <div v-if="isRowFullyPurchased(planned)" class="mt-1">
-                    <v-chip size="x-small" color="success" variant="flat" prepend-icon="mdi-check-all" style="font-size:9px;height:16px">Закуплено полностью</v-chip>
+                    <v-chip size="x-small" color="success" variant="flat" prepend-icon="mdi-check-all" style="font-size:9px;height:16px">{{ fullyPurchasedChipLabel(planned) }}</v-chip>
                   </div>
                   <div v-else-if="rowProgress(planned) && rowProgress(planned)!.consumed > 0" class="text-medium-emphasis"
                     style="font-size:10px;line-height:1.3"
@@ -849,6 +851,8 @@ import { formatCurrency } from '@/composables/subsidies/format'
 import { leftGroupInfo, withNameColumnFloor } from '@/composables/subsidies/feoCategoryUtils'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { purchaseStatusLabel, purchaseStatusColor, PURCHASE_STATUS_ORDER } from '@/constants/purchaseStatus'
+import { planStageBackground, planStageTooltip } from '@/utils/planStageBackground'
+import { planStageLabel } from '@/constants/planStageScale'
 import type { FeoNode, FeoPlannedItem } from '@/composables/subsidies/types'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { computed, reactive, watch } from 'vue'
@@ -956,14 +960,35 @@ function rowProgress(planned: FeoPlannedItem & { isManual?: boolean }): { consum
     ? planToRequest.categoryPlanProgress(node.id)
     : planToRequest.plannedItemProgress(planned.id)
 }
-// Частично закуплена (владелец, 30.09.2026, п.3) — фон «кружочками» на всю
-// строку (feo-partially-purchased-row, styles/subsidies.css), отдельно от
-// зелёной штриховки «полностью» выше — та же пара источников, второй расчёт
-// не заводим. Ручной план категории (isManual) частичным не бывает — у него
-// нет своего FeoPlannedItem-остатка по количеству (isCategoryPlanFullyTaken
-// уже единственная проверка для этой строки, см. её докстринг).
-function isRowPartiallyPurchased(planned: FeoPlannedItem & { isManual?: boolean }): boolean {
-  return planned.isManual ? false : planToRequest.isPlannedItemPartiallyTaken(planned.id)
+// Раскраска строки по стадии закупки (владелец, 16.10.2026) — ЗАМЕНЯЕТ
+// штриховку/«пузырьки», которые раньше читали isRowFullyPurchased/
+// usePlanToRequest.ts::isPlannedItemPartiallyTaken для фона строки (сам флаг
+// isRowFullyPurchased выше остаётся — на нём держится мини-подпись
+// «куплено k из N» и логика переключателя «скрыть закупленные полностью»,
+// Правило №6, второй расчёт занятости не заводим). stage_segments — с бэка
+// (planToRequest.plannedItemStageSegments/categoryPlanStageSegments читают
+// то же FeoPlanPosition, что isPlannedItemFullyTaken выше).
+function rowStageSegments(planned: FeoPlannedItem & { isManual?: boolean }) {
+  return planned.isManual
+    ? planToRequest.categoryPlanStageSegments(node.id)
+    : planToRequest.plannedItemStageSegments(planned.id)
+}
+function rowStageBackground(planned: FeoPlannedItem & { isManual?: boolean }): string | null {
+  return planStageBackground(rowStageSegments(planned))
+}
+function rowStageTooltip(planned: FeoPlannedItem & { isManual?: boolean }): string {
+  return planStageTooltip(rowStageSegments(planned), planned.unit)
+}
+// Подпись чипа «Закуплено полностью» (владелец, 16.10.2026) — если ВСЕ полосы
+// позиции одной стадии (одна закупка, либо несколько одной стадии), чип
+// называет именно её; иначе остаётся общая подпись (несколько стадий сразу).
+function fullyPurchasedChipLabel(planned: FeoPlannedItem & { isManual?: boolean }): string {
+  const segments = rowStageSegments(planned)
+  if (segments && segments.length > 0) {
+    const stages = new Set(segments.map((s) => s.stage))
+    if (stages.size === 1) return planStageLabel(segments[0]?.stage)
+  }
+  return 'Закуплено полностью'
 }
 const hideFullyPurchased = useFeoHideFullyPurchased()
 // Баг владельца 06.10.2026: переключатель «Скрыть закупленные полностью»

@@ -268,19 +268,22 @@
     </div>
   </div>
 
-  <!-- «Закуплено полностью» — легенда + переключатель «Скрыть закупленные
-       полностью» (владелец, 30.09.2026, п.4-5): один флажок на всё дерево ФЭО
-       и панель Ур.5 (useFeoHideFullyPurchased.ts, module-level singleton,
-       Правило №6 — второй Set не заводим), запоминается в localStorage,
-       по умолчанию выключен. Штриховка/чип читают
+  <!-- Легенда шкалы стадий закупки (владелец, 16.10.2026, заменяет легенду
+       «закуплено полностью/частично» — штриховка/«пузырьки» убраны, строка
+       теперь закрашена градиентом по стадии, см. @/utils/planStageBackground.ts)
+       + переключатель «Скрыть закупленные полностью» (владелец, 30.09.2026,
+       п.4-5, смысл не меняется): один флажок на всё дерево ФЭО и панель Ур.5
+       (useFeoHideFullyPurchased.ts, module-level singleton, Правило №6 —
+       второй Set не заводим), запоминается в localStorage, по умолчанию
+       выключен. «Закуплено» (закрашено целиком) определяют те же формулы
        usePlanToRequest.ts::isPlannedItemFullyTaken/isCategoryPlanFullyTaken/
-       isCategoryFullyPurchased — те же формулы, что уже использует режим
-       «Создать закупку на основе плана», второй расчёт остатка не заводим. -->
+       isCategoryFullyPurchased, что и режим «Создать закупку на основе
+       плана» — второй расчёт остатка не заводим. -->
   <div class="feo-fully-purchased-legend">
-    <span class="feo-fully-purchased-legend-swatch" />
-    <span>— закуплено полностью (остаток по согласованным закупкам = 0)</span>
-    <span class="feo-partially-purchased-legend-swatch ml-2" />
-    <span>— закуплено частично</span>
+    <span v-for="st in planStageLegend" :key="st.key" class="d-flex align-center" style="gap:4px">
+      <span class="feo-stage-legend-swatch" :style="{ background: st.color }" />
+      <span>{{ st.label }}</span>
+    </span>
     <v-switch
       v-model="hideFullyPurchased.hideFullyPurchased.value"
       density="compact" hide-details color="success" class="ml-4" style="flex:0 0 auto"
@@ -370,6 +373,7 @@ import PlanToOrderDialog from '@/components/subsidies/PlanToOrderDialog.vue'
 import AlignBudgetAllDialog from '@/components/subsidies/AlignBudgetAllDialog.vue'
 import SubsidyExportDialog from '@/components/subsidies/SubsidyExportDialog.vue'
 import { filenameFromContentDisposition } from '@/utils/contentDisposition'
+import { STAGE_ORDER, PLAN_STAGE_META } from '@/constants/planStageScale'
 
 const ctx = useSubsidyDetailCtx()
 const alignAllDialog = ref<InstanceType<typeof AlignBudgetAllDialog> | null>(null)
@@ -377,6 +381,10 @@ const planToRequest = usePlanToRequest()
 const feoCollapse = useFeoCategoryCollapse()
 const kpiPrefs = useKpiPrefs()
 const hideFullyPurchased = useFeoHideFullyPurchased()
+// Легенда шкалы стадий закупки (владелец, 16.10.2026) — ЕДИНСТВЕННЫЙ источник
+// порядка/подписи/цвета @/constants/planStageScale.ts, второй список здесь не
+// заводим (ПРАВИЛО №6).
+const planStageLegend = computed(() => STAGE_ORDER.map((key) => PLAN_STAGE_META[key]))
 const planToOrder = usePlanToOrderDialog()
 
 // Остатки плановых позиций (planned_item_consumption/category_plan_links) —

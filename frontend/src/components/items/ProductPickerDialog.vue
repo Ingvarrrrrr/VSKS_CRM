@@ -6,7 +6,7 @@
     @update:model-value="(v: boolean) => emit('update:modelValue', v)">
     <v-card class="d-flex flex-column" style="height: calc(100vh - 48px)">
       <v-card-title class="text-h6 pt-4 px-4 px-sm-6 d-flex align-center justify-space-between">
-        <span>Выбрать товар из каталога</span>
+        <span>{{ title || 'Выбрать товар из каталога' }}</span>
         <v-btn icon="mdi-close" variant="text" size="small" @click="emit('update:modelValue', false)" />
       </v-card-title>
       <v-card-text class="px-4 pb-2 flex-grow-1" style="overflow-y:auto">
@@ -99,6 +99,9 @@ defineProps<{
   search: string
   results: ProductLike[]
   supportsFullProductDialog?: boolean
+  /** Заголовок окна — свой у режима «Изменить привязку к каталогу»
+      (владелец 16.10.2026, PurchaseItemsEditor.vue::openRepickDialog). */
+  title?: string
   /** Resolves the row photo src (parent's productPhotoSrc helper). */
   photoSrc: (p: ProductLike | null | undefined) => string | undefined
 }>()

@@ -14,6 +14,7 @@ import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { ItemsDisplayRow } from '@/components/items/types'
 import type { ToastType } from '@/composables/useToast'
 import { productPhotoSrc } from '@/utils/productPhoto'
+import { matchesAllWords, normalizeSearchText, searchWords } from '@/utils/textSearch'
 
 // EditorItem/Product are structurally identical to the parent's; kept loose
 // here (same convention as ItemsTableFlat.vue) since the parent owns the real
@@ -45,8 +46,11 @@ export interface UseItemsCatalogDeps {
   // ПРАВИЛО №6) — владеет сама PurchaseItemsEditor.vue (там живёт ref на
   // диалог и привязка выбранного товара к строке/set-product). Композабл
   // только просит открыть его с предзаполнением, когда «Создать новый
-  // товар» нажали из пикера/инлайн-подбора.
-  openProductEditor: (idx: number, prefill?: string, productId?: number | null, prefillPrice?: number) => void
+  // товар» нажали из пикера/инлайн-подбора. `mode` — тот же режим, что у
+  // пикера (openProductPicker), чтобы после сохранения нового товара
+  // PurchaseItemsEditor.vue знал, привязывать ли его как обычно (имя+цена)
+  // или только привязку (режим «repick», владелец 16.10.2026).
+  openProductEditor: (idx: number, prefill?: string, productId?: number | null, prefillPrice?: number, mode?: 'normal' | 'repick') => void
 }
 
 export function useItemsCatalog(deps: UseItemsCatalogDeps) {
@@ -221,15 +225,28 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   // Keep productFilter available but it's not used directly in this component's template
   void productFilter
 
+  // Слова в любом порядке (utils/textSearch.ts — один алгоритм на проект).
+  // Владелец 16.10.2026: окно привязки открывается с полным названием позиции
+  // («Бинт марлевый стерильный 7 м х 14 см.») и показывало «Ничего не найдено»,
+  // пока не сотрёшь лишнее. Если все слова разом не нашлись — показываем
+  // товары, где совпало больше всего значимых слов (от 3 букв), лучшие сверху.
   function productItemsFor(search?: string): Product[] {
-    const q = (search || '').toLowerCase().trim()
-    if (!q) return products.value
-    return products.value.filter(p => {
-      const name = (p.name || '').toLowerCase()
-      const desc = (p.description || '').toLowerCase()
-      const type = (p.product_type || '').toLowerCase()
-      return name.includes(q) || desc.includes(q) || type.includes(q)
-    })
+    const words = searchWords(search)
+    if (!words.length) return products.value
+    const text = (p: Product) => `${p.name || ''} ${p.description || ''} ${p.product_type || ''}`
+    const exact = products.value.filter(p => matchesAllWords(text(p), words))
+    if (exact.length) return exact
+    const significant = words.filter(w => w.length >= 3)
+    if (significant.length < 2) return exact
+    return products.value
+      .map(p => {
+        const t = normalizeSearchText(text(p))
+        return { p, hits: significant.filter(w => t.includes(w)).length }
+      })
+      .filter(r => r.hits > 0)
+      .sort((a, b) => b.hits - a.hits)
+      .slice(0, 60)
+      .map(r => r.p)
   }
 
   const hasProducts = computed(() => products.value.length > 0)
@@ -304,10 +321,22 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   const productPickerDialog = ref(false)
   const productPickerSearch = ref('')
   const productPickerIdx = ref(-1)
+  // Режим окна (владелец, 16.10.2026, «Изменить привязку к каталогу»):
+  // 'normal' — обычный выбор товара в наименование (как раньше, через
+  // onItemProductSelect — перезаписывает имя/цену строки); 'repick' —
+  // кнопка-скрепка в позиции, меняет ТОЛЬКО product_id, имя/цена/количество
+  // позиции не трогаются (см. bindProductToItem). Общее окно
+  // components/items/ProductPickerDialog.vue теперь одно на оба режима
+  // (ПРАВИЛО №6) — отдельный SingleProductPickerDialog.vue убран.
+  const pickerMode = ref<'normal' | 'repick'>('normal')
+  const pickerTitle = computed(() =>
+    pickerMode.value === 'repick' ? 'Изменить привязку к каталогу' : 'Выбрать товар из каталога'
+  )
 
   const productPickerResults = computed(() => productItemsFor(productPickerSearch.value))
 
-  function openProductPicker(idx: number) {
+  function openProductPicker(idx: number, mode: 'normal' | 'repick' = 'normal') {
+    pickerMode.value = mode
     productPickerIdx.value = idx
     productPickerSearch.value = localItems.value[idx]?.item_name || ''
     productPickerDialog.value = true
@@ -316,9 +345,44 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     void ensureFullCatalog()
   }
 
+  // Кнопка-скрепка «Изменить привязку к каталогу» у позиции — тот же пикер,
+  // но в режиме repick (ItemsTableStages.vue::open-repick-dialog).
+  function openRepickPicker(idx: number) {
+    openProductPicker(idx, 'repick')
+  }
+
+  // Привязка СУЩЕСТВУЮЩЕГО товара каталога к позиции без перезаписи
+  // наименования/цены/количества строки (владелец 16.10.2026: окно привязки
+  // раньше молча ничего не предлагало, но даже при выборе трогать саму
+  // позицию не нужно — только её product_id). В отличие от onItemProductSelect
+  // (обычный выбор товара в колонке наименования), который через
+  // applyMatchCandidate перезаписывает item_name/unit_price/total_price.
+  function bindProductToItem(idx: number, prod: Product) {
+    const item = localItems.value[idx]
+    if (!item) return
+    item.product_id = prod.id
+    item._selectedProduct = prod
+    item._photo_url = productPhotoSrc(prod) ?? undefined
+    item._description = prod.description ?? undefined
+    item._price_meta = {
+      price_updated_at: prod.price_updated_at ?? null,
+      price_source: prod.price_source ?? null,
+      price_source_ref: prod.price_source_ref ?? null,
+      price_freshness: prod.price_freshness ?? null,
+    }
+    item.match_confirmed = true
+    emitUpdate()
+  }
+
   function selectFromPicker(prod: Product) {
     productPickerDialog.value = false
-    onItemProductSelect(productPickerIdx.value, prod)
+    const idx = productPickerIdx.value
+    if (pickerMode.value === 'repick') {
+      bindProductToItem(idx, prod)
+      showSnack(`Товар перепривязан: ${prod.name}`, 'success')
+      return
+    }
+    onItemProductSelect(idx, prod)
   }
 
   function createProductFromPicker() {
@@ -326,7 +390,7 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     const idx = productPickerIdx.value
     const row = idx >= 0 ? localItems.value[idx] : null
     const price = row && row.unit_price != null && Number(row.unit_price) > 0 ? Number(row.unit_price) : undefined
-    openProductEditor(idx, productPickerSearch.value, undefined, price)
+    openProductEditor(idx, productPickerSearch.value, undefined, price, pickerMode.value)
   }
 
   return {
@@ -337,6 +401,7 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     productFilter, productItemsFor, hasProducts, onItemProductSelect,
     onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
     productPickerDialog, productPickerSearch, productPickerIdx, productPickerResults,
-    openProductPicker, selectFromPicker, createProductFromPicker,
+    pickerMode, pickerTitle, bindProductToItem,
+    openProductPicker, openRepickPicker, selectFromPicker, createProductFromPicker,
   }
 }

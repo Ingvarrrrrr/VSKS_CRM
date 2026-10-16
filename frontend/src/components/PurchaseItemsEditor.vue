@@ -642,6 +642,7 @@
       :search="productPickerSearch"
       :results="productPickerResults"
       :supports-full-product-dialog="props.supportsFullProductDialog"
+      :title="pickerTitle"
       :photo-src="productPhotoSrc"
       @update:search="(v: string) => productPickerSearch = v"
       @pick="selectFromPicker"
@@ -745,14 +746,6 @@
       :rows="tzCompareRows"
       @confirm="onTzCompareConfirm"
       @cancel="onTzCompareCancel"
-    />
-
-    <!-- ===== P1-B: Single Product Repick Dialog ===== -->
-    <SingleProductPickerDialog
-      v-if="repickDialog.show"
-      v-model="repickDialog.show"
-      :item-name="repickDialog.itemName"
-      @pick="onRepickPick"
     />
 
     <!-- ===== ISSUE-3 PART B: Bulk FEO assignment dialog — extracted ===== -->
@@ -859,7 +852,6 @@ import FileDropZone from '@/components/FileDropZone.vue'
 import ProductMatchReviewDialog from '@/components/ProductMatchReviewDialog.vue'
 import DuplicateMergeDialog from '@/components/DuplicateMergeDialog.vue'
 import SumMismatchDialog from '@/components/items/SumMismatchDialog.vue'
-import SingleProductPickerDialog from '@/components/SingleProductPickerDialog.vue'
 import ProductPickerDialog from '@/components/items/ProductPickerDialog.vue'
 import ProductEditorDialog from '@/components/products/ProductEditorDialog.vue'
 import { useBulkProductCreateQueue } from '@/composables/items/useBulkProductCreateQueue'
@@ -2084,12 +2076,22 @@ const {
   hasUncatalogedSelected, uncatalogedSelectedCount, bulkAddCatalogLoading, bulkAddToCatalog,
   onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
   productPickerDialog, productPickerSearch, productPickerResults,
-  openProductPicker, selectFromPicker, createProductFromPicker,
+  pickerTitle, bindProductToItem,
+  openProductPicker, openRepickPicker, selectFromPicker, createProductFromPicker,
 } = useItemsCatalog({
   props, localItems, selectedItemIdxs, emitUpdate, emit, showSnack,
   applyMatchCandidate, clearMatchBinding, clearItem,
-  openProductEditor: (idx, prefill, productId, prefillPrice) => openProductEditor(idx, prefill, productId, prefillPrice),
+  openProductEditor: (idx, prefill, productId, prefillPrice, mode) => openProductEditor(idx, prefill, productId, prefillPrice, mode),
 })
+
+// Кнопка-скрепка «Изменить привязку к каталогу» в позиции
+// (ItemsTableStages.vue::open-repick-dialog) — открывает ОБЩЕЕ окно выбора
+// товара (ProductPickerDialog.vue) в режиме repick через useItemsCatalog;
+// отдельное окно components/SingleProductPickerDialog.vue убрано (ПРАВИЛО
+// №6, владелец 16.10.2026: «надо вводить название товара, где картинки»).
+function openRepickDialog(idx: number) {
+  openRepickPicker(idx)
+}
 
 // ===== Единое окно товара (ProductEditorDialog.vue, ПРАВИЛО №6) =====
 // Раньше здесь жила своя урезанная копия (fullProductForm/openFullProduct/
@@ -2099,9 +2101,14 @@ const {
 const productEditorRef = ref<InstanceType<typeof ProductEditorDialog> | null>(null)
 // -1 — «Добавить товар в каталог» снизу/из пикера без привязки к строке.
 const productEditorIdx = ref(-1)
+// Режим, с которым была открыта форма товара — 'repick' (кнопка-скрепка/
+// пикер в режиме привязки) не должен перезаписать имя/цену позиции после
+// сохранения (см. openProductEditor/onProductEditorSaved).
+const productEditorMode = ref<'normal' | 'repick'>('normal')
 
-function openProductEditor(idx: number, prefill?: string, productId?: number | null, prefillPrice?: number) {
+function openProductEditor(idx: number, prefill?: string, productId?: number | null, prefillPrice?: number, mode: 'normal' | 'repick' = 'normal') {
   productEditorIdx.value = idx
+  productEditorMode.value = mode
   productEditorRef.value?.open({ productId: productId ?? null, name: prefill, price: prefillPrice })
 }
 
@@ -2122,7 +2129,14 @@ async function onProductEditorSaved(saved: Product) {
   }
   const idx = productEditorIdx.value
   if (idx >= 0) {
-    onItemProductSelect(idx, saved)
+    // Режим repick (кнопка-скрепка «Изменить привязку к каталогу») — только
+    // привязка нового товара к позиции, имя/цена/количество не трогаются
+    // (bindProductToItem), в отличие от обычного onItemProductSelect.
+    if (productEditorMode.value === 'repick') {
+      bindProductToItem(idx, saved)
+    } else {
+      onItemProductSelect(idx, saved)
+    }
     // 27.4-14: моментальная запись привязки в БД (без ожидания общего
     // «Сохранить»), иначе после F5 product_id вернётся в null.
     const linkItem = localItems.value[idx]
@@ -2192,12 +2206,11 @@ const {
   matchReviewShow, matchReviewRows, onMatchConfirm, onMatchCancel,
   dupMergeShow, dupMergeGroups, onDupMergeConfirm,
   sumMismatchShow, sumMismatchWarnings, onSumMismatchConfirm,
-  repickDialog, openRepickDialog, onRepickPick,
   importTotalInFile, importTruncated,
   tzCompareShow, tzCompareRows, onTzCompareConfirm, onTzCompareCancel,
 } = useItemsImport({
   props: propsForItemDefaults, localItems, localContractItems, contractItemImportMode,
-  emitUpdate, emitContractItemsUpdate, emit, showSnack, nextUid, applyMatchCandidate,
+  emitUpdate, emitContractItemsUpdate, emit, showSnack, nextUid,
   // 2026-10-02: импорт распознал УПД-колонки «цена без налога»/«сумма с налогом» —
   // предлагаем включить «НДС сверху» для стадии Договор, не переключаем молча.
   suggestContractVatOnTop: () => {

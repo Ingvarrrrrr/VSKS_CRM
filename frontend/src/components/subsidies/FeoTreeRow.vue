@@ -30,12 +30,13 @@
       ctx.dragOverId.value === node.id ? 'feo-drop-target' : '',
       ctx.dragNodeId.value === node.id ? 'feo-dragging' : '',
       kpi.kpiNodeClass(node),
-      isCategoryFullyPurchased ? 'feo-fully-purchased-row' : '',
-      isCategoryPartiallyPurchased ? 'feo-partially-purchased-row' : '',
+      categoryStageBackground ? 'feo-stage-row' : '',
       excessDrilldown.isExcessTarget(node.id) ? 'feo-excess-target-row' : '',
       excessDrilldown.isCurrentExcessTarget(node.id) ? 'feo-excess-target-row--current' : '',
       ctx.isFeoSearchHighlighted(`c-${node.id}`) ? 'feo-search-highlight-row' : '',
     ]"
+    :style="categoryStageBackground ? { backgroundImage: categoryStageBackground } : {}"
+    :title="categoryStageTooltip || undefined"
     :draggable="ctx.canEditFeo.value"
     @dragstart="ctx.canEditFeo.value && ctx.onDragStart($event, node)"
     @dragover.prevent="ctx.canEditFeo.value && ctx.onDragOver($event, node)"
@@ -974,6 +975,7 @@ import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFull
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 import { useFeoRowContractTotals } from '@/composables/subsidies/useFeoRowContractTotals'
 import { useFeoRowDrill, FEO_ROW_DRILL_LABELS, type FeoRowDrillKind } from '@/composables/subsidies/useFeoRowDrill'
+import { planStageBackground, planStageTooltip } from '@/utils/planStageBackground'
 
 const funding = useFundingSources()
 
@@ -1054,11 +1056,16 @@ const subtreeSelection = computed(() => planToRequest.subtreeSelectionState(node
 // один раз для всей субсидии в FeoTreeToolbar.vue, Правило №6 — второй запрос
 // не шлём).
 const isCategoryFullyPurchased = computed(() => !node.value.hasChildren && planToRequest.isCategoryFullyPurchased(node.value.id))
-// Частично закуплена (владелец, 30.09.2026, уточнение) — тот же принцип, что и
-// у isCategoryFullyPurchased выше (только листовые категории), другой источник
-// формулы (usePlanToRequest.ts::isCategoryPartiallyPurchased), второй обход
-// плана категории не заводим.
-const isCategoryPartiallyPurchased = computed(() => !node.value.hasChildren && planToRequest.isCategoryPartiallyPurchased(node.value.id))
+// Раскраска строки категории по стадии закупки (владелец, 16.10.2026) —
+// ЗАМЕНЯЕТ штриховку/«пузырьки», которые раньше читали isCategoryFullyPurchased/
+// usePlanToRequest.ts::isCategoryPartiallyPurchased для фона строки
+// (isCategoryFullyPurchased выше остаётся — держит «скрыть закупленные
+// полностью», Правило №6, второй расчёт занятости не заводим). Сводная
+// полоса — usePlanToRequest.ts::categoryStageSegments, по сумме всех строк
+// плана категории (та же feoResiduals, что и у isCategoryFullyPurchased).
+const categoryStageSegments = computed(() => planToRequest.categoryStageSegments(node.value.id, ctx.feoCategories.value))
+const categoryStageBackground = computed(() => planStageBackground(categoryStageSegments.value))
+const categoryStageTooltip = computed(() => planStageTooltip(categoryStageSegments.value, node.value.unit))
 const hideFullyPurchased = useFeoHideFullyPurchased()
 // Найденная поиском категория и путь к ней не прячутся этим фильтром, пока
 // держится подсветка (владелец, 2026-10-13) — см. докстринг

@@ -462,6 +462,15 @@ async def get_plan_positions(
         committed_consumption_by_category, committed_by_planned_item, planned_item_contributions,
     )
     committed_by_cat = await committed_consumption_by_category(db, [subsidy_id], include_over_plan=True)
+    # Раскраска плановых позиций по стадии закупки (владелец, 16.10.2026) — см.
+    # app.services.plan_item_stage, ПРАВИЛО №6 (не вторая формула «куплено»,
+    # а разбивка уже существующего consumed/consumed_quantity по стадии+закупке).
+    # stage_segments считается пакетно на ВСЕ листья/FeoPlannedItem сразу ниже,
+    # без N+1 (leaf_ids/fpi_ids известны заранее).
+    from app.services.plan_item_stage import category_plan_stage_segments, planned_item_stage_segments
+    leaf_stage_segments = await category_plan_stage_segments(
+        db, [c.id for c in leaves], exclude_purchase_id=exclude_purchase_id,
+    )
 
     result = []
     for c in leaves:
@@ -522,6 +531,10 @@ async def get_plan_positions(
             "savings": (planned_total - _committed_amt_c) if _closed_c else None,
             "closed": _closed_c,
             "committed_missing_fact_items": _committed_c["committed_missing_fact_items"],
+            # Раскраска по стадии закупки (владелец, 16.10.2026) — см.
+            # app.services.plan_item_stage.category_plan_stage_segments.
+            "stage_segments": leaf_stage_segments.get(c.id, {}).get("segments", []),
+            "stage_segments_overflow": leaf_stage_segments.get(c.id, {}).get("overflow", False),
         })
 
     # + FeoPlannedItem (Ур.5) — детализация внутри элементов. Владелец 2026-08-18:
@@ -562,6 +575,12 @@ async def get_plan_positions(
             # поэтому category_ids = все категории субсидии воспроизводят ТОТ ЖЕ набор
             # позиций без доп. фильтра.
             contrib_map = await planned_item_contributions(db, [c.id for c in all_cats])
+            # Раскраска по стадии закупки (владелец, 16.10.2026) — см.
+            # app.services.plan_item_stage.planned_item_stage_segments, пакетно
+            # на все fpi_ids сразу (без N+1).
+            fpi_stage_segments = await planned_item_stage_segments(
+                db, fpi_ids, exclude_purchase_id=exclude_purchase_id,
+            )
             for it in fpi_rows:
                 cat = cat_by_id.get(it.feo_category_id)
                 planned_total = float(it.amount or 0)
@@ -656,6 +675,10 @@ async def get_plan_positions(
                     "not_committed_raw": (
                         contrib_map.get(it.id, {"amount": planned_total})["amount"] - _committed_i["amount"]
                     ),
+                    # Раскраска по стадии закупки (владелец, 16.10.2026) — см.
+                    # app.services.plan_item_stage.planned_item_stage_segments.
+                    "stage_segments": fpi_stage_segments.get(it.id, {}).get("segments", []),
+                    "stage_segments_overflow": fpi_stage_segments.get(it.id, {}).get("overflow", False),
                 })
 
     result.sort(key=lambda x: x["path"])

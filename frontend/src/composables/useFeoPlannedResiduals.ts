@@ -108,6 +108,15 @@ export interface FeoPlanPosition {
    *  app/services/feo_import_duplicates.py). [] у обычной позиции — пикер и
    *  «План закупок» рисуют позицию как раньше (без раскрытия на части). */
   parts?: FeoPlanPositionPart[]
+  /** Раскраска по стадии закупки (владелец, 16.10.2026) — одна полоса на
+   *  каждую действующую закупку, привязанную к этой плановой позиции (см.
+   *  backend app.services.plan_item_stage). Отсортированы backend'ом от
+   *  самой дальней стадии к самой ранней (см. @/utils/planStageBackground.ts). */
+  stage_segments?: import('@/utils/planStageBackground').PlanStageSegment[]
+  /** Σ share сегментов была > 1 (несколько закупок перекрыли план) —
+   *  backend нормировал share к 1, сырые quantity/amount внутри segments[]
+   *  остаются как есть. */
+  stage_segments_overflow?: boolean
 }
 
 /** Одна часть объединённой позиции — исходная строка файла плана плюс её

@@ -304,6 +304,14 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
         paid = _to_dec(get(raw_row, "paid"))
         advance = _to_advance_bool(get(raw_row, "advance"))
         contracted = _to_dec(get(raw_row, "contracted"))
+        # Группировка по договору (владелец, 16.10.2026, шаг 2) — см.
+        # contract_groups.py (ключ группы/разбивка на заказы/лимит/настоящий
+        # номер договора — там же, одно определение). Прочитан ДО статуса —
+        # правило владельца (16.10.2026, правило 2) для разовых договоров
+        # ниже читает contract_kind этой же строки (ПРАВИЛО №6, без второй
+        # копии classify_contract_kind).
+        inn = _to_text(get(raw_row, "inn"))
+        contract_kind = _to_text(get(raw_row, "contract_kind"))
         status_raw = _to_text(get(raw_row, "status_raw")) or _to_text(get(raw_row, "status"))
         if not status_raw and any(
             f in by_field for f in (
@@ -322,17 +330,13 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
                 ordered_raw=_to_text(get(raw_row, "stage_ordered")),
                 delivered=_to_advance_bool(get(raw_row, "stage_delivered")),
                 paid=_to_advance_bool(get(raw_row, "stage_paid")),
+                contract_kind=contract_kind,
             )
         purchase_no = _to_text(get(raw_row, "purchase_no"))
         supplier = _to_text(get(raw_row, "supplier"))
         comment = _to_text(get(raw_row, "comment"))
         item_type = _to_text(get(raw_row, "item_type"))
         unit = _to_text(get(raw_row, "unit"))
-        # Группировка по договору (владелец, 16.10.2026, шаг 2) — см.
-        # contract_groups.py (ключ группы/разбивка на заказы/лимит/настоящий
-        # номер договора — там же, одно определение).
-        inn = _to_text(get(raw_row, "inn"))
-        contract_kind = _to_text(get(raw_row, "contract_kind"))
         order_no = _to_text(get(raw_row, "order_no"))
         contract_number = _to_text(get(raw_row, "contract_number"))
         contract_date = _to_date(get(raw_row, "contract_date"))

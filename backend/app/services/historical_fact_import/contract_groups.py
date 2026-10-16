@@ -158,20 +158,30 @@ def build_source_key(
     inn: Optional[str], purchase_no: Optional[str], order_no: Optional[str] = None,
     *, supplier_fallback: Optional[str] = None,
 ) -> Optional[str]:
-    """None, когда нет настоящего ИНН (valid_inn) И (если он дан) нет
-    нормализованного имени поставщика (`supplier_fallback`, задача 4 правка
-    16.10.2026 — группа без ИНН в файле вообще, только название, см.
-    `default_group_key` выше: ТОТ ЖЕ приоритет ИНН-vs-имя, не второй), ИЛИ
-    нет «№ закупки» (D) — без identity+номера узнать СВОЮ строку при
-    повторной заливке нельзя. `supplier_fallback` — ТОЧНОЕ (не fuzzy)
-    совпадение нормализованного имени, в отличие от размытого поиска
-    по имени, который владелец запретил в find_existing_matches_for_group —
-    тут риска ложного срабатывания нет: ключ сравнивается на равенство, а не
-    подстрокой/похожестью."""
+    """None, когда нет «№ закупки» (D) — без номера узнать СВОЮ строку при
+    повторной заливке нельзя в любом случае. Когда нет ни настоящего ИНН
+    (valid_inn), ни нормализованного имени поставщика (`supplier_fallback`,
+    задача 4 правка 16.10.2026 — группа без ИНН в файле вообще, только
+    название, см. `default_group_key` выше: ТОТ ЖЕ приоритет ИНН-vs-имя, не
+    второй) — identity нет, но № закупки (D) есть: ключ строится по D (и E
+    у дочернего заказа рамочного) с явным маркером «нет поставщика» вместо
+    identity (`-`), правка 16.10.2026 — прод-находка: закупка 40999 без
+    контрагента и ИНН писалась с source_key=NULL и задваивалась бы при
+    повторной заливке. `supplier_fallback` — ТОЧНОЕ (не fuzzy) совпадение
+    нормализованного имени, в отличие от размытого поиска по имени, который
+    владелец запретил в find_existing_matches_for_group — тут риска ложного
+    срабатывания нет: ключ сравнивается на равенство, а не подстрокой/
+    похожестью."""
     identity = inn or supplier_fallback
     purchase_no = (purchase_no or "").strip()
-    if not identity or not purchase_no:
+    if not purchase_no:
         return None
+    if not identity:
+        key = f"gs:-:{purchase_no}"
+        order_no = (order_no or "").strip()
+        if order_no:
+            key += f":{order_no}"
+        return key
     prefix = "gs" if inn else "gs-sup"
     key = f"{prefix}:{identity}:{purchase_no}"
     order_no = (order_no or "").strip()

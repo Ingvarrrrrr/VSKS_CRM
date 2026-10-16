@@ -22,6 +22,29 @@ from sqlalchemy import select
 from app.models.subsidy import Subsidy
 from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
+from app.services.historical_fact_import.contract_groups import build_source_key
+
+
+def test_build_source_key_no_identity_falls_back_to_purchase_no():
+    """Правка 16.10.2026 — прод-находка: строка без ИНН и без поставщика
+    (supplier_fallback пуст), но с № закупки (D) — ключ строится по D с
+    маркером «нет поставщика» (`-`), а не None, иначе при повторной заливке
+    закупка без идентификатора задваивается (прод-пример: закупка 40999,
+    № закупки D=130, без контрагента, субсидия 26121)."""
+    assert build_source_key(None, "130") == "gs:-:130"
+
+
+def test_build_source_key_no_identity_with_order_no():
+    """То же для дочернего заказа рамочного договора — № заказа (E)
+    дописывается в конец ключа, как и у ключей с identity."""
+    assert build_source_key(None, "130", "1") == "gs:-:130:1"
+
+
+def test_build_source_key_no_identity_and_no_purchase_no_is_none():
+    """Без № закупки (D) identity всё равно не восстановить — None, как и
+    раньше (ничего не меняется в этом случае)."""
+    assert build_source_key(None, None) is None
+    assert build_source_key(None, "") is None
 
 # Базовый layout — как в test_fact_import_commit.py (28 колонок ХО), плюс
 # 5 новых в конце под группировку по договору.

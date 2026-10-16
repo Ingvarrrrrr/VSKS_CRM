@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Optional
 
 from app.routers.purchase_transitions import STATUS_LABELS
+from app.services.historical_fact_import.contract_groups import KIND_SINGLE, classify_contract_kind
 
 STATUS_CODES = ("plan_schedule", "work_in_progress", "contracted", "ordered", "delivered", "paid")
 
@@ -129,7 +130,7 @@ _ORDERED_YES = {"да", "yes", "true", "1"}
 
 def status_code_from_stage_flags(
     *, purchase_done: bool, contracted: bool, ordered_raw: Optional[str],
-    delivered: bool, paid: bool,
+    delivered: bool, paid: bool, contract_kind: Optional[str] = None,
 ) -> Optional[str]:
     """Статус из НЕСКОЛЬКИХ колонок Да/Нет (лист GoodsService владельца,
     16.10.2026) вместо одной «Статус»/«Правильный статус» — та же лестница
@@ -140,9 +141,23 @@ def status_code_from_stage_flags(
     проведена → work_in_progress; иначе None (plan_schedule — закупку не
     создавать). «Товар заказан» = «Скорее всего поставка потребуется» /
     «Непредвиденные расходы» — это запланированные расходы владельца, НЕ
-    закупка, побеждает любые другие стадии (решение владельца)."""
+    закупка, побеждает любые другие стадии (решение владельца).
+
+    Правка (владелец, 16.10.2026, правило 2): исключение из предыдущего
+    абзаца — если вид договора строки (`contract_kind`, колонка C,
+    classify_contract_kind — ОДНО определение из contract_groups.py,
+    ПРАВИЛО №6, не второй разбор) — «Разовый» (или не распознан, пусто
+    считается разовым тем же contract_groups.py) И «Договор заключён»=Да, то
+    «Скорее всего поставка потребуется» не побеждает: для разового
+    «заключён» по смыслу владельца равносилен «заказан», код статуса —
+    contracted. Рамочные (накопительный/с суммой) и «Непредвиденные
+    расходы» — без изменений (plan_schedule/None)."""
     ordered_norm = " ".join(str(ordered_raw).strip().lower().split()) if ordered_raw else ""
     if ordered_norm in _ORDERED_NOT_A_PURCHASE:
+        if ordered_norm == "скорее всего поставка потребуется" and contracted:
+            is_single = classify_contract_kind(contract_kind) in (None, KIND_SINGLE)
+            if is_single:
+                return "contracted"
         return None
     if paid:
         return "paid"
@@ -159,7 +174,7 @@ def status_code_from_stage_flags(
 
 def status_label_from_stage_flags(
     *, purchase_done: bool, contracted: bool, ordered_raw: Optional[str],
-    delivered: bool, paid: bool,
+    delivered: bool, paid: bool, contract_kind: Optional[str] = None,
 ) -> str:
     """Та же лестница, что и status_code_from_stage_flags(), но возвращает
     официальную подпись (STATUS_LABELS) — чтобы rows.py положил её в
@@ -167,7 +182,7 @@ def status_label_from_stage_flags(
     (statuses.resolve_status), не второй механизм (ПРАВИЛО №6)."""
     code = status_code_from_stage_flags(
         purchase_done=purchase_done, contracted=contracted, ordered_raw=ordered_raw,
-        delivered=delivered, paid=paid,
+        delivered=delivered, paid=paid, contract_kind=contract_kind,
     )
     return STATUS_LABELS[code or "plan_schedule"]
 

@@ -160,6 +160,31 @@ def test_goodsservice_status_from_stage_flags_all_au_values():
     assert statuses_mod.resolve_status(by_name["Товар оплачен"]["status_raw"])["target_status"] == "paid"
 
 
+def test_single_contract_likely_supply_becomes_contracted():
+    """ПРАВИЛО ВЛАДЕЛЬЦА (16.10.2026, правило 2): «Разовый» договор с
+    «Договор заключен»=Да — статус contracted, даже при AU=«Скорее всего
+    поставка потребуется» (для разового «заключён» по смыслу владельца
+    равносилен «заказан», код статуса — contracted). Рамочный
+    накопительный — без изменений (plan_schedule, target None)."""
+    from app.services.historical_fact_import.contract_groups import (
+        KIND_FRAMEWORK_CUMULATIVE, KIND_SINGLE,
+    )
+
+    code_single = statuses_mod.status_code_from_stage_flags(
+        purchase_done=True, contracted=True,
+        ordered_raw="Скорее всего поставка потребуется",
+        delivered=False, paid=False, contract_kind=KIND_SINGLE,
+    )
+    assert code_single == "contracted"
+
+    code_framework = statuses_mod.status_code_from_stage_flags(
+        purchase_done=True, contracted=True,
+        ordered_raw="Скорее всего поставка потребуется",
+        delivered=False, paid=False, contract_kind=KIND_FRAMEWORK_CUMULATIVE,
+    )
+    assert code_framework is None
+
+
 def test_old_format_paid_amount_column_still_works():
     """ХО/ЛНР/ДНР: нет «Оплачено в деньгах» рядом — голое «Оплачено» остаётся
     суммой (старое поведение), а не стадией."""

@@ -24,11 +24,16 @@ def _mock_lookup_inn(director_last, director_first, director_middle, director_po
 async def test_refresh_writes_director_and_keeps_signatory_untouched(
     client, db_session, superadmin_headers, test_org, monkeypatch,
 ):
-    test_org.inn = "7700000010"
-    test_org.signatory_last_name = "Доверенный"
-    test_org.signatory_first_name = "Иван"
-    test_org.signatory_middle_name = "Иванович"
-    db_session.add(test_org)
+    # Правило №6 (миграция w6x7y8z9a0b1): org.inn/signatory_* — column_property,
+    # читающие Contractor — присвоение им молча не сохраняется. Пишем в
+    # привязанного контрагента (test_org fixture уже создаёт и линкует его).
+    from app.models.contractor import Contractor
+    contractor = await db_session.get(Contractor, test_org.contractor_id)
+    contractor.inn = "7700000010"
+    contractor.signatory_last_name = "Доверенный"
+    contractor.signatory_first_name = "Иван"
+    contractor.signatory_middle_name = "Иванович"
+    db_session.add(contractor)
     await db_session.commit()
 
     # lookup_inn импортируется лениво внутри refresh_director_from_egrul из

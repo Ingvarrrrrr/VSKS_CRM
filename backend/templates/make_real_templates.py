@@ -124,7 +124,7 @@ def make_service_note():
     if len(doc.tables) >= 2:
         t1 = doc.tables[1]
         cell_set(t1.rows[1].cells[1],
-            'Контрагент: {{contractor_name}}\nИНН: {{contractor_inn}}\nТел.: {{contractor_phone}}\nАдрес эл. почты: {{contractor_email}}')
+            'Контрагент: {{contractor_short_name}}\nИНН: {{contractor_inn}}\nТел.: {{contractor_phone}}\nАдрес эл. почты: {{contractor_email}}')
 
     out = os.path.join(TEMPLATES_DIR, 'service_note.docx')
     doc.save(out)
@@ -142,7 +142,7 @@ def make_approval_sheet():
         ('Способ определения поставщика: ',
          'Способ определения поставщика: {{purchase_method}}'),
         ('Контрагент: ООО «Феникс»',
-         'Контрагент: {{contractor_name}}'),
+         'Контрагент: {{contractor_short_name}}'),
         ('ИНН контрагента: 7733872083',
          'ИНН контрагента: {{contractor_inn}}'),
         ('Цена договора (в том числе НДС/ без НДС): ,00 руб., без НДС.',
@@ -181,7 +181,7 @@ def make_contract_tz():
     para_set(paras[1], '{{contractor_address}}                               {{contract_date}}')
 
     # P5: contractor block
-    para_replace(paras[5], '_____,', '{{contractor_name}},')
+    para_replace(paras[5], '_____,', '{{contractor_short_name}},')
     para_replace(paras[5], 'в лице ______,', 'в лице {{contractor_signatory}},')
     para_replace(paras[5], 'на основании _______,', 'на основании {{contractor_signatory_basis}},')
 
@@ -236,7 +236,7 @@ def make_contract_tz():
         reqs = [
             'Покупатель: Всероссийская общественная молодежная организация «ВСКС»\nАдрес: Пр-т Вернадского, д. 78, стр. 8, Москва, 119454\nТел.: (495) 568-00-11  e-mail: info@vsks.ru',
             '',
-            'Поставщик: {{contractor_name}}\nАдрес: {{contractor_address}}\nПочтовый адрес: {{contractor_postal_address}}\nИНН/КПП: {{contractor_inn}} / {{contractor_kpp}}  ОГРН: {{contractor_ogrn}}\nр/с {{contractor_settlement_account}}\n{{contractor_bank_name}}\nБИК {{contractor_bik}}  к/с {{contractor_correspondent_account}}\nТел.: {{contractor_phone}}  e-mail: {{contractor_email}}',
+            'Поставщик: {{contractor_short_name}}\nАдрес: {{contractor_address}}\nПочтовый адрес: {{contractor_postal_address}}\nИНН/КПП: {{contractor_inn}} / {{contractor_kpp}}  ОГРН: {{contractor_ogrn}}\nр/с {{contractor_settlement_account}}\n{{contractor_bank_name}}\nБИК {{contractor_bik}}  к/с {{contractor_correspondent_account}}\nТел.: {{contractor_phone}}  e-mail: {{contractor_email}}',
             '',
         ]
         for i, p in enumerate(empty_paras[:len(reqs)]):
@@ -310,7 +310,7 @@ def make_contract_tz():
     if len(doc.tables) >= 2:
         t1 = doc.tables[1]
         cell_set(t1.rows[0].cells[1],
-            'Поставщик\n{{contractor_name}}\n{{contractor_signatory}}\n\n____________________ / М.П.')
+            'Поставщик\n{{contractor_short_name}}\n{{contractor_signatory}}\n\n____________________ / М.П.')
 
     out = os.path.join(TEMPLATES_DIR, 'contract_tz.docx')
     doc.save(out)

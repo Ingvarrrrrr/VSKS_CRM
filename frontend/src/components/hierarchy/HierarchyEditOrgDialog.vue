@@ -45,7 +45,7 @@
           </v-autocomplete>
 
           <v-text-field
-            v-model="form.name" label="Краткое название *"
+            v-model="form.name" label="Краткое наименование *"
             variant="outlined" density="compact" class="mb-2"
           />
           <v-text-field

@@ -67,7 +67,13 @@ async def test_resolve_fetches_from_egrul_when_director_empty_but_inn_present(
     employee = await make_user(
         role="employee", last_name="Козеев", first_name="Евгений", middle_name="Викторович",
     )
-    test_org.inn = "7701234567"
+    # Правило №6 (миграция w6x7y8z9a0b1): org.inn — column_property,
+    # читающая Contractor.inn; присвоение ему молча не сохраняется. Пишем в
+    # привязанного контрагента (test_org fixture уже создаёт и линкует его).
+    from app.models.contractor import Contractor
+    contractor = await db_session.get(Contractor, test_org.contractor_id)
+    contractor.inn = "7701234567"
+    db_session.add(contractor)
     assert test_org.director_last_name is None
     await db_session.commit()
 

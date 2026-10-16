@@ -71,6 +71,9 @@ async def enrich_all_contractors_from_egrul(
         except Exception:
             failed += 1
 
+    # Правило №6: Organization.name — column_property, читающая
+    # Contractor.name напрямую; после bulk-правки имён контрагентов
+    # организации видят новые значения без отдельной синхронизации.
     await db.commit()
     return {
         "ok": True,
@@ -149,6 +152,8 @@ async def enrich_contractors_from_receipts(
         except Exception:
             failed += 1
 
+    # Правило №6: Organization.name — column_property (Contractor.name),
+    # отдельной синхронизации после bulk-обогащения больше не нужно.
     await db.commit()
     return {
         "ok": True,

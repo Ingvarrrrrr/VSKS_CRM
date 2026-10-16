@@ -70,8 +70,10 @@ def build_base_context_part1(
         "subsidy_name": subsidy.name if subsidy else "",
         "subsidy_year": subsidy.year if subsidy else "",
         "subsidy_budget": _fmt_money(subsidy.budget) if subsidy else "",
-        # Контрагент — основные
-        "contractor_name": (c.name or "") if c else "",
+        # Контрагент — основные. contractor_name убран (16.10.2026) — дублировал
+        # contractor_short_name (единственный расчёт ниже, строка
+        # contractor_short_name); contractor_full_name — единственный расчёт
+        # в add_contractor_signatory_context (contexts_extra.py), ПРАВИЛО №6.
         "contractor_inn": _clean_id(c.inn) if c else "",
         "contractor_kpp": _clean_id(c.kpp) if c else "",
         "contractor_address": (c.address or "") if c else "",
@@ -266,3 +268,8 @@ async def build_base_context_part2(
         # Phase 23.1: subject_kind for universal contract.docx auto-switch
         "subject_kind": subject_kind,
     })
+    # contractor_name — недокументированный алиас, НЕ отдельное вычисление
+    # (ПРАВИЛО №6): 39 кастомных шаблонов на проде используют {{contractor_name}},
+    # убирать нельзя, но второй расчёт тоже заводить нельзя — тот же источник,
+    # что и contractor_short_name (единственное вычисление, выше).
+    context["contractor_name"] = context["contractor_short_name"]

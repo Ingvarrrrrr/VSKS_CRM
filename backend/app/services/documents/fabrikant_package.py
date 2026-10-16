@@ -361,7 +361,9 @@ async def render_fabrikant_package_files(
         "subsidy_budget": _fmt_money(subsidy.budget) if subsidy else "",
         # subsidy_agreement_number/date — не черновим здесь, единственный
         # расчёт в add_subsidy_agreement_context ниже (ПРАВИЛО №6).
-        "contractor_name": (c.name or "") if c else "",
+        # contractor_name убран (16.10.2026) — дублировал contractor_short_name
+        # ниже; и то, и contractor_full_name — единственный расчёт в
+        # add_contractor_signatory_context (contexts_extra.py), ПРАВИЛО №6.
         "contractor_inn": _clean_id(c.inn) if c else "",
         "contractor_kpp": _clean_id(c.kpp) if c else "",
         "contractor_address": (c.address or "") if c else "",
@@ -377,7 +379,7 @@ async def render_fabrikant_package_files(
         # contractor_signatory_position/_name/_genitive/_initials/_ogrnip — не
         # черновим здесь, единственный расчёт в add_contractor_signatory_context
         # ниже (ПРАВИЛО №6).
-        "contractor_full_name": (c.full_name or c.name or "") if c else "",
+        "contractor_full_name": (c.full_name or "") if c else "",
         "contractor_short_name": (c.name or "") if c else "",
         "feo_category_name": p.feo_category.name if p.feo_category else "",
         "feo_path": feo_path,
@@ -504,6 +506,10 @@ async def render_fabrikant_package_files(
     add_subsidy_agreement_context(context, subsidy)
     add_contractor_signatory_context(context, c)
     add_customer_context(context, customer_org, customer_ctr)
+    # contractor_name — недокументированный алиас (ПРАВИЛО №6: один источник —
+    # contractor_short_name, см. то же в contexts_build.py::build_base_context_part2);
+    # 39 загруженных на проде шаблонов используют {{contractor_name}}.
+    context["contractor_name"] = context["contractor_short_name"]
     context["initiator_name_gen"] = ""
     context["initiator_position_gen"] = ""
     context["responsible_name_gen"] = _to_gen_fio(resolved_responsible)

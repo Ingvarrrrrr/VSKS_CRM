@@ -66,7 +66,7 @@ py backend/templates/make_contract_services.py
 | `{{ subject }}` | Предмет закупки | Поставка оборудования |
 | `{{ purchase_method }}` | Способ закупки | Единственный поставщик |
 | `{{ purchase_basis }}` | Основание | план-график |
-| `{{ contractor_name }}` | Контрагент | ООО «Ромашка» |
+| `{{ contractor_short_name }}` | Контрагент | ООО «Ромашка» |
 | `{{ contractor_inn }}` | ИНН | 7700000000 |
 | `{{ total_nmck }}` | НМЦК | 135 000,00 ₽ |
 | `{{ contract_price }}` | Цена договора | 130 000,00 ₽ |
@@ -97,7 +97,7 @@ py backend/templates/make_contract_services.py
 | `{{ subject }}` | Предмет закупки | Поставка оборудования |
 | `{{ purchase_method }}` | Способ закупки | Единственный поставщик |
 | `{{ contract_type }}` | Тип договора | Единственный поставщик |
-| `{{ contractor_name }}` | Контрагент | ООО «Ромашка» |
+| `{{ contractor_short_name }}` | Контрагент | ООО «Ромашка» |
 | `{{ contractor_inn }}` | ИНН | 7700000000 |
 | `{{ contract_number }}` | Номер договора | 2026/42 |
 | `{{ contract_date }}` | Дата договора | 15.01.2026 |
@@ -136,7 +136,7 @@ py backend/templates/make_contract_services.py
 | `{{ execution_term }}` | Срок исполнения | 28.02.2026 |
 | `{{ delivery_date }}` | Дата поставки | 20.02.2026 |
 | `{{ country_origin }}` | Страна происхождения | Российская Федерация |
-| `{{ contractor_name }}` | Наименование контрагента | ООО «Ромашка» |
+| `{{ contractor_short_name }}` | Наименование контрагента | ООО «Ромашка» |
 | `{{ contractor_inn }}` | ИНН | 7700000000 |
 | `{{ contractor_kpp }}` | КПП | 770000000 |
 | `{{ contractor_ogrn }}` | ОГРН | 1027700000000 |
@@ -214,7 +214,7 @@ py backend/templates/make_contract_services.py
 
 Использует те же переменные, что и служебная записка. Типичные:
 
-`{{ purchase_number }}`, `{{ subject }}`, `{{ contractor_name }}`, `{{ contract_price }}`,
+`{{ purchase_number }}`, `{{ subject }}`, `{{ contractor_short_name }}`, `{{ contract_price }}`,
 `{{ contract_number }}`, `{{ contract_date }}`, `{{ responsible_person }}`, `{{ today }}`,
 `{{ subsidy_name }}`, `{{ event_name }}`
 
@@ -283,7 +283,7 @@ py backend/templates/make_contract_services.py
 
 | Переменная | Описание | Формат |
 |---|---|---|
-| `{{ contractor_name }}` | Полное наименование | ООО «Ромашка» |
+| `{{ contractor_short_name }}` | Полное наименование | ООО «Ромашка» |
 | `{{ contractor_short_name }}` | Краткое наименование | Ромашка |
 | `{{ contractor_org_type }}` | Тип организации | Юр.лицо / ИП / Самозанятый |
 | `{{ contractor_inn }}` | ИНН | 7700000000 |

@@ -94,7 +94,7 @@ def make_contract_tz():
     add_label_value(doc, "Субсидия:", "{{subsidy_name}} ({{subsidy_year}})")
     add_label_value(doc, "Реестровый номер:", "{{registry_number}}")
     add_label_value(doc, "Способ закупки:", "{{purchase_method}}")
-    add_label_value(doc, "Контрагент:", "{{contractor_name}}, ИНН {{contractor_inn}} / КПП {{contractor_kpp}}")
+    add_label_value(doc, "Контрагент:", "{{contractor_short_name}}, ИНН {{contractor_inn}} / КПП {{contractor_kpp}}")
     add_label_value(doc, "Срок исполнения:", "{{execution_term}}")
 
     doc.add_paragraph()
@@ -185,7 +185,7 @@ def make_contract_tz():
     sig_cell(0, 0, "Заказчик", bold=True)
     sig_cell(0, 1, "Исполнитель", bold=True)
     sig_cell(1, 0, "Всероссийская общественная молодежная организация «ВСКС»\nИНН: 7704190720 / КПП: 770401001\nОГРН: 1037739183516")
-    sig_cell(1, 1, "{{contractor_name}}\nИНН: {{contractor_inn}} / КПП: {{contractor_kpp}}\nОГРН: {{contractor_ogrn}}")
+    sig_cell(1, 1, "{{contractor_short_name}}\nИНН: {{contractor_inn}} / КПП: {{contractor_kpp}}\nОГРН: {{contractor_ogrn}}")
     sig_cell(2, 0,
         "Адрес: Пр-т Вернадского, д. 78, стр. 8, Москва, 119454\n"
         "р/с 40703810138060100002\nПАО Сбербанк г. Москва\n"
@@ -218,7 +218,7 @@ def make_service_note():
     add_label_value(doc, "Дата:", "{{today}}")
     add_label_value(doc, "Субсидия:", "{{subsidy_name}} ({{subsidy_year}})")
     add_label_value(doc, "Реестровый номер:", "{{registry_number}}")
-    add_label_value(doc, "Контрагент:", "{{contractor_name}}, ИНН {{contractor_inn}}")
+    add_label_value(doc, "Контрагент:", "{{contractor_short_name}}, ИНН {{contractor_inn}}")
     add_label_value(doc, "Способ закупки:", "{{purchase_method}}")
     add_label_value(doc, "НМЦК:", "{{total_nmck}}")
     add_label_value(doc, "Цена договора:", "{{contract_price}}")
@@ -232,7 +232,7 @@ def make_service_note():
     body = doc.add_paragraph()
     body.add_run(
         "Прошу согласовать закупку №{{purchase_number}} (реестр {{registry_number}}) "
-        "у контрагента {{contractor_name}} на сумму {{total_nmck}} "
+        "у контрагента {{contractor_short_name}} на сумму {{total_nmck}} "
         "в рамках субсидии «{{subsidy_name}}»."
     ).font.size = Pt(10)
 
@@ -277,7 +277,7 @@ def make_approval_sheet():
     doc.add_paragraph()
 
     add_label_value(doc, "Субсидия:", "{{subsidy_name}} ({{subsidy_year}})")
-    add_label_value(doc, "Контрагент:", "{{contractor_name}}, ИНН {{contractor_inn}}")
+    add_label_value(doc, "Контрагент:", "{{contractor_short_name}}, ИНН {{contractor_inn}}")
     add_label_value(doc, "НМЦК:", "{{total_nmck}}")
     add_label_value(doc, "Цена договора:", "{{contract_price}}")
     add_label_value(doc, "Договор:", "№{{contract_number}} от {{contract_date}}")
@@ -337,7 +337,7 @@ def make_service_note_delivery():
     add_label_value(doc, "Дата:", "{{today}}")
     add_label_value(doc, "Субсидия:", "{{subsidy_name}} ({{subsidy_year}})")
     add_label_value(doc, "Реестровый номер:", "{{registry_number}}")
-    add_label_value(doc, "Контрагент:", "{{contractor_name}}, ИНН {{contractor_inn}}")
+    add_label_value(doc, "Контрагент:", "{{contractor_short_name}}, ИНН {{contractor_inn}}")
     add_label_value(doc, "Договор:", "№{{contract_number}} от {{contract_date}}")
     add_label_value(doc, "Дата поставки / исполнения:", "{{delivery_date}}")
     add_label_value(doc, "Акт приёмки:", "{{acceptance_doc_name}} №{{acceptance_doc_number}} от {{acceptance_doc_date}}")
@@ -349,7 +349,7 @@ def make_service_note_delivery():
     body.add_run(
         "Прошу принять и выдать поставленные товары (работы, услуги) по закупке "
         "№{{purchase_number}} (реестр {{registry_number}}) "
-        "у контрагента {{contractor_name}} на основании договора №{{contract_number}} "
+        "у контрагента {{contractor_short_name}} на основании договора №{{contract_number}} "
         "от {{contract_date}} на сумму {{acceptance_doc_amount}}."
     ).font.size = Pt(10)
 
@@ -383,7 +383,7 @@ def make_service_note_payment():
     add_label_value(doc, "Дата:", "{{today}}")
     add_label_value(doc, "Субсидия:", "{{subsidy_name}} ({{subsidy_year}})")
     add_label_value(doc, "Реестровый номер:", "{{registry_number}}")
-    add_label_value(doc, "Контрагент:", "{{contractor_name}}, ИНН {{contractor_inn}}")
+    add_label_value(doc, "Контрагент:", "{{contractor_short_name}}, ИНН {{contractor_inn}}")
     add_label_value(doc, "Договор:", "№{{contract_number}} от {{contract_date}}")
     add_label_value(doc, "Сумма договора:", "{{contract_price}}")
     add_label_value(doc, "Акт приёмки:", "{{acceptance_doc_name}} №{{acceptance_doc_number}} от {{acceptance_doc_date}}")
@@ -404,7 +404,7 @@ def make_service_note_payment():
     body = doc.add_paragraph()
     body.add_run(
         "Прошу произвести оплату по закупке №{{purchase_number}} (реестр {{registry_number}}) "
-        "контрагенту {{contractor_name}} на сумму {{acceptance_doc_amount}} "
+        "контрагенту {{contractor_short_name}} на сумму {{acceptance_doc_amount}} "
         "в соответствии с договором №{{contract_number}} от {{contract_date}} "
         "и актом приёмки {{acceptance_doc_name}} №{{acceptance_doc_number}} от {{acceptance_doc_date}}."
     ).font.size = Pt(10)

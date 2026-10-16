@@ -312,6 +312,10 @@ async def update_contractor(
     # app/services/contractor_pii.py).
     updates = sanitize_contractor_write_fields(data.model_dump(), can_write_pii)
     apply_requisite_fields(c, updates)
+    # Правило №6: Organization.name/реквизиты — column_property, читающие
+    # Contractor напрямую (app/models/organization.py) — правка карточки
+    # контрагента сразу видна в Персонал/Иерархия, отдельной синхронизации
+    # организаций больше не требуется.
     await db.commit()
     await db.refresh(c)
     item = ContractorOut.model_validate(c).model_dump()

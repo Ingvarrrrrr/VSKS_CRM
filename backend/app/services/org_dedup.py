@@ -39,19 +39,17 @@ async def _materialize_org_from_contractor(db: AsyncSession, contractor, account
         select(Organization).where(Organization.contractor_id == contractor.id)
     )).scalars().first()
     if org is None and contractor.inn:
+        # Organization.inn — вычисляемое поле контрагента (column_property),
+        # этот where корректно разворачивается в подзапрос к contractors.
         org = (await db.execute(
             select(Organization).where(Organization.inn == contractor.inn)
         )).scalars().first()
     if org is None:
         _root_org_id = await resolve_new_org_root_id(db, account_org_id, None)
+        # Правило №6: Organization НЕ хранит имя/реквизиты — только ссылку
+        # на контрагента, который их уже содержит (если что-то у контрагента
+        # пусто — значит пусто и у org, column_property читает contractor_id).
         org = Organization(
-            name=(contractor.name or "")[:255] or f"Контрагент #{contractor.id}",
-            full_name=(contractor.full_name or None),
-            inn=contractor.inn,
-            kpp=contractor.kpp,
-            ogrn=contractor.ogrn,
-            address=((contractor.address or "")[:500] or None),
-            signatory=((contractor.signatory or "")[:500] or None),
             contractor_id=contractor.id,
             root_org_id=_root_org_id,
             is_active=True,
@@ -65,13 +63,25 @@ async def _materialize_org_from_contractor(db: AsyncSession, contractor, account
 
 
 async def _merge_duplicate_orgs_by_inn(db: AsyncSession, *, dry_run: bool = False) -> Optional[dict]:
-    """Идемпотентный мерж дублей organizations по ИНН.
+    """Идемпотентный мерж дублей organizations по ИНН контрагента.
+
+    ПРАВИЛО №6 (миграция w6x7y8z9a0b1, 16.10.2026): organizations.inn и
+    organizations.name/full_name/kpp/ogrn/address/signatory — мёртвые
+    legacy-колонки, новый код их больше не пишет (см. app/models/
+    organization.py). Группировать дубли по ним означало бы сравнивать
+    замороженные на момент миграции значения. Дубли теперь ищутся по
+    `contractors.inn` привязанного контрагента (contractor_id организации),
+    а «свежие данные» для реквизитных полей брать неоткуда и не из чего
+    мержить — они не хранятся в organizations вовсе, поэтому мержатся
+    только НЕ-реквизитные поля самой organizations (color/is_active/
+    contractor_id).
 
     Алгоритм:
     - survivor = MIN(id) в группе (стабильный якорь).
-    - Победа «свежих данных»: для каждого поля берём непустое значение из строки с MAX(id).
-    - Все FK перепривязываются через information_schema (generic), SAVEPOINT защищает
-      от конфликтов уникальных индексов (junction-таблицы).
+    - Победа «свежих данных» для color/is_active/contractor_id: непустое
+      значение из строки с MAX(id).
+    - Все FK перепривязываются через information_schema (generic), SAVEPOINT
+      защищает от конфликтов уникальных индексов (junction-таблицы).
     - losers удаляются, commit выполняется после всех групп.
     - Функция НЕ падает фатально — ошибка группы логируется и пропускается.
 
@@ -84,12 +94,14 @@ async def _merge_duplicate_orgs_by_inn(db: AsyncSession, *, dry_run: bool = Fals
     """
     _log = logging.getLogger(__name__)
 
-    # 1. Найти группы дублей по ИНН
+    # 1. Найти группы дублей по ИНН контрагента (через contractor_id, НЕ по
+    #    мёртвой organizations.inn — ПРАВИЛО №6).
     dup_result = await db.execute(text(
-        "SELECT inn, array_agg(id ORDER BY id) AS ids "
-        "FROM organizations "
-        "WHERE inn IS NOT NULL AND btrim(inn) <> '' "
-        "GROUP BY inn HAVING count(*) > 1"
+        "SELECT c.inn, array_agg(o.id ORDER BY o.id) AS ids "
+        "FROM organizations o "
+        "JOIN contractors c ON c.id = o.contractor_id "
+        "WHERE c.inn IS NOT NULL AND btrim(c.inn) <> '' "
+        "GROUP BY c.inn HAVING count(*) > 1"
     ))
     groups = dup_result.fetchall()
 
@@ -116,11 +128,11 @@ async def _merge_duplicate_orgs_by_inn(db: AsyncSession, *, dry_run: bool = Fals
     ))
     fk_refs = fk_result.fetchall()  # список (table_name, column_name)
 
-    # Поля для «свежих данных»
-    _merge_fields = [
-        "name", "full_name", "kpp", "ogrn", "address",
-        "signatory", "color", "contractor_id", "is_active",
-    ]
+    # Поля для «свежих данных» — только НЕ-реквизитные (реквизиты теперь
+    # только у контрагента, ПРАВИЛО №6; contractor_id у всей группы и так
+    # совпадает, т.к. группа собрана по c.inn — но берём явно, на случай
+    # если организации привязаны к РАЗНЫМ контрагентам с одним ИНН).
+    _merge_fields = ["color", "contractor_id", "is_active"]
 
     total_deleted = 0
     n_groups = len(groups)
@@ -134,8 +146,7 @@ async def _merge_duplicate_orgs_by_inn(db: AsyncSession, *, dry_run: bool = Fals
         try:
             # 3. Загрузить все строки группы и выбрать «свежие» непустые поля
             all_rows_result = await db.execute(
-                text("SELECT id, name, full_name, kpp, ogrn, address, signatory, "
-                     "color, contractor_id, is_active "
+                text("SELECT id, color, contractor_id, is_active "
                      "FROM organizations WHERE id = ANY(:ids) ORDER BY id DESC"),
                 {"ids": ids}
             )
@@ -155,8 +166,7 @@ async def _merge_duplicate_orgs_by_inn(db: AsyncSession, *, dry_run: bool = Fals
 
             # Получить текущие значения survivor для сравнения
             surv_row_result = await db.execute(
-                text("SELECT name, full_name, kpp, ogrn, address, signatory, "
-                     "color, contractor_id, is_active "
+                text("SELECT color, contractor_id, is_active "
                      "FROM organizations WHERE id = :sid"),
                 {"sid": survivor_id}
             )

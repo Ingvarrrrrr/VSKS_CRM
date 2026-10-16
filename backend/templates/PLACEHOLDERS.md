@@ -30,9 +30,8 @@
 
 | Переменная | Описание | Пример | Источник |
 |---|---|---|---|
-| `{{customer_name}}` | Краткое наименование | ВСКС | organizations.name |
-| `{{customer_full_name}}` | Полное наименование | Автономная некоммерческая организация... | organizations.full_name |
-| `{{customer_short_name}}` | В кавычках из названия | ВСКС | извлекается из full_name/name |
+| `{{customer_full_name}}` | Полное наименование (поле «Полное наименование» карточки) | Автономная некоммерческая организация... | org_requisites().full_name (контрагент — источник истины) |
+| `{{customer_short_name}}` | Краткое наименование (поле «Краткое наименование» карточки) | ВСКС | organizations.name (зеркалит contractor.name при привязке) |
 | `{{customer_inn}}` | ИНН | 7700000001 | organizations.inn |
 | `{{customer_kpp}}` | КПП | 770001001 | organizations.kpp |
 | `{{customer_ogrn}}` | ОГРН | 1027700000001 | organizations.ogrn |
@@ -65,9 +64,8 @@
 
 | Переменная | Описание | Пример | Источник |
 |---|---|---|---|
-| `{{contractor_name}}` | Наименование | ООО «Ромашка» | contractors.name |
-| `{{contractor_full_name}}` | Полное наименование | Общество с ограниченной... | contractors.full_name |
-| `{{contractor_short_name}}` | В кавычках | Ромашка | извлекается из name |
+| `{{contractor_full_name}}` | Полное наименование (поле «Полное наименование» карточки) | Общество с ограниченной... | contractors.full_name |
+| `{{contractor_short_name}}` | Краткое наименование (поле «Краткое наименование» карточки) | ООО «Ромашка» | contractors.name |
 | `{{contractor_org_type}}` | Тип организации | Юр.лицо / ИП / Самозанятый | contractors.org_type |
 | `{{contractor_inn}}` | ИНН | 7700000002 | contractors.inn |
 | `{{contractor_kpp}}` | КПП | 770001002 | contractors.kpp |

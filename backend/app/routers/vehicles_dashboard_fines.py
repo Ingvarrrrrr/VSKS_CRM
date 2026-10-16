@@ -79,10 +79,13 @@ async def fine_leaders(
         ]
 
     if kind == "filials":
+        # ПРАВИЛО №6: имя организации читается ИСКЛЮЧИТЕЛЬНО из contractors
+        # (organizations.name — мёртвая legacy-колонка, не обновляется новым
+        # кодом после миграции w6x7y8z9a0b1, app/models/organization.py).
         sql = text(f"""
             SELECT
                 o.id::text                                             AS entity_key,
-                COALESCE(o.name, '— Без филиала —')                   AS entity_name,
+                COALESCE(c.name, '— Без филиала —')                   AS entity_name,
                 NULL                                                   AS entity_sub,
                 o.id                                                   AS entity_id,
                 COUNT(f.id)::int                                       AS fines_count,
@@ -92,8 +95,9 @@ async def fine_leaders(
             FROM vehicle_fines f
             JOIN vehicles v ON v.id = f.vehicle_id
             LEFT JOIN organizations o ON o.id = v.owner_org_id
+            LEFT JOIN contractors c ON c.id = o.contractor_id
             WHERE 1=1 {period_filter}
-            GROUP BY o.id, o.name
+            GROUP BY o.id, c.name
             ORDER BY fines_total DESC NULLS LAST
             LIMIT :lim
         """)

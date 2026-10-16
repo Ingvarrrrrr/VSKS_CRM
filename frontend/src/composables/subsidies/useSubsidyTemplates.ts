@@ -75,10 +75,16 @@ export function useSubsidyTemplates(ctx?: SubsidyDetailContext) {
     toast.addToast(text, color, opts)
   }
 
+  // Справочник отдаёт строки-заголовки разделов (var === '', description —
+  // заголовок группы, как в PlaceholdersDialog.vue). Здесь список выводится
+  // плоской v-data-table с resizable-columns — под неё группировка как в
+  // PlaceholdersDialog не укладывается без переделки таблицы, поэтому минимальный
+  // фильтр: не показываем строки-заголовки отдельной пустой строкой в таблице.
   const filteredVars = computed(() => {
-    if (!varsSearch.value) return templateVars.value
+    const base = templateVars.value.filter(v => v.var)
+    if (!varsSearch.value) return base
     const q = varsSearch.value.toLowerCase()
-    return templateVars.value.filter(v =>
+    return base.filter(v =>
       v.var.toLowerCase().includes(q) ||
       v.description.toLowerCase().includes(q) ||
       v.example_template.toLowerCase().includes(q)

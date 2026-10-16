@@ -42,21 +42,23 @@ CONSENT_VERSION_MISSING_MESSAGE = (
 
 def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> OrganizationOut:
     """Return OrganizationOut with legal requisites resolved via org_requisites()
-    (Правило №6): Contractor is the single source of truth when
-    org.contractor_id is set — its values are NOT mixed with Organization's
-    own (deprecated) columns, otherwise editing the contractor directly
-    (ContractorEditDialog) silently stops being visible on the organization.
-
-    The short `name` field keeps Organization's own value — it is a display
-    label, not a legal requisite, and stays distinct from a contractor's
-    legal short-name by design.
+    (Правило №6): Organization has NO requisites of its own — `org.name` and
+    every other field in REQUISITE_FIELDS is a computed column_property
+    reading straight from the linked Contractor (app/models/organization.py).
+    There is nothing to merge or keep in sync any more.
     """
     c = getattr(org, 'contractor', None)
     req = org_requisites(org, c)
 
     return OrganizationOut(
         id=org.id,
-        name=org.name,
+        # org.name — НЕ читаем (column_property): если org в этой сессии
+        # была где-то закоммичена (даже правкой НЕ-реквизитного поля —
+        # region/color/director_*), ORM «expire»-ит её вычисляемые поля и
+        # синхронный getattr вне await падает MissingGreenlet (см.
+        # org_requisites.py). `c.name` — обычная колонка Contractor, тот же
+        # источник, без ловушки.
+        name=(c.name if c else None),
         full_name=req['full_name'],
         inn=req['inn'],
         kpp=req['kpp'],
@@ -99,22 +101,29 @@ async def _auto_link_contractor_by_inn(
     org: Organization,
     data: OrganizationCreate,
 ) -> None:
-    """If data has an INN and org.contractor_id is NULL, find-or-create
-    Contractor with that INN and link it. Safe to call on POST and PUT.
+    """Если у org.contractor_id пусто — найти контрагента по ИНН из `data`,
+    иначе создать минимального контрагента из `data` и привязать. Safe to
+    call on POST and PUT.
+
+    Правило №6 (16.10.2026): организация без контрагента больше не
+    допускается — `Organization.name`/реквизиты — вычисляемые поля,
+    читающие Contractor; без contractor_id они всегда NULL. Поэтому ветка
+    "ИНН не указан" тоже создаёт контрагента (просто без ИНН), а не
+    оставляет org без источника названия/реквизитов.
     """
     if org.contractor_id:
         return
     inn = (data.inn or '').strip() if data.inn else ''
-    if not inn:
-        return
-    res = await db.execute(select(Contractor).where(Contractor.inn == inn).limit(1))
-    contractor = res.scalar_one_or_none()
+    contractor = None
+    if inn:
+        res = await db.execute(select(Contractor).where(Contractor.inn == inn).limit(1))
+        contractor = res.scalar_one_or_none()
     if contractor is None:
         # Create minimal Contractor from available Organization fields
         contractor = Contractor(
-            name=data.name or inn,
+            name=data.name or inn or f"Организация #{org.id}",
             full_name=data.full_name,
-            inn=inn,
+            inn=inn or None,
             kpp=data.kpp,
             ogrn=data.ogrn,
             address=data.address,
@@ -159,10 +168,25 @@ async def register(data: RegisterRequest, request: Request, db: AsyncSession = D
     if existing_username:
         username = data.email  # fallback to email as username
 
-    # Create organization (root of contour — owner set after user creation)
-    org = Organization(name=data.org_name, inn=data.org_inn, is_active=True)
+    # Create organization (root of contour — owner set after user creation).
+    # Правило №6: организация не хранит своё название/ИНН — она обязана
+    # ссылаться на Contractor (найденного по ИНН либо созданного здесь же),
+    # как и любое другое создание организации в этом файле.
+    _reg_inn = (data.org_inn or '').strip() or None
+    _reg_contractor = None
+    if _reg_inn:
+        _reg_contractor = (await db.execute(
+            select(Contractor).where(Contractor.inn == _reg_inn).limit(1)
+        )).scalar_one_or_none()
+    if _reg_contractor is None:
+        _reg_contractor = Contractor(name=data.org_name or _reg_inn or "Новая организация", inn=_reg_inn)
+        db.add(_reg_contractor)
+        await db.flush()
+    org = Organization(is_active=True, contractor_id=_reg_contractor.id)
     db.add(org)
     await db.flush()  # get org.id
+    if _reg_contractor.org_id is None:
+        _reg_contractor.org_id = org.id
 
     # Create account_owner user
     token = str(uuid.uuid4())
@@ -372,18 +396,10 @@ async def create_organization(
     _explicit_root_org_id = data.root_org_id if current_user.role == 'superadmin' else None
     _root_org_id = await resolve_new_org_root_id(db, current_user.org_id, _explicit_root_org_id)
 
+    # Правило №6: Organization НЕ хранит имя/реквизиты — они создаются
+    # сразу в Contractor (явно переданный `data.contractor_id`, иначе
+    # найден/создан по ИНН ниже, _auto_link_contractor_by_inn).
     org = Organization(
-        name=data.name,
-        full_name=data.full_name,
-        inn=data.inn,
-        kpp=data.kpp,
-        ogrn=data.ogrn,
-        address=data.address,
-        signatory=_org_signatory,
-        signatory_position=data.signatory_position,
-        signatory_last_name=data.signatory_last_name,
-        signatory_first_name=data.signatory_first_name,
-        signatory_middle_name=data.signatory_middle_name,
         is_active=True,
         root_org_id=_root_org_id,
         owner_user_id=current_user.id if _becomes_owner else None,
@@ -392,9 +408,35 @@ async def create_organization(
     )
     maybe_set_org_region_from_address(org, data.address)
     db.add(org)
-    await db.flush()  # get org.id so we can link a new Contractor back
+    await db.flush()  # get org.id so we can link a new/existing Contractor back
     # Auto-link to Contractor by INN (or create minimal Contractor if missing)
     await _auto_link_contractor_by_inn(db, org, data)
+    _linked_contractor = (await db.execute(
+        select(Contractor).where(Contractor.id == org.contractor_id)
+    )).scalar_one_or_none()
+    if _linked_contractor is not None:
+        _new_fields = {
+            'name': data.name,
+            'full_name': data.full_name,
+            'inn': data.inn,
+            'kpp': data.kpp,
+            'ogrn': data.ogrn,
+            'address': data.address,
+            'signatory_position': data.signatory_position,
+            'signatory_last_name': data.signatory_last_name,
+            'signatory_first_name': data.signatory_first_name,
+            'signatory_middle_name': data.signatory_middle_name,
+        }
+        # data.contractor_id явно выбран (существующий контрагент) — его
+        # поля не перетираем формой создания org; данные контрагента и так
+        # побеждают (Правило №6). Только что найденному/созданному по ИНН
+        # контрагенту (в _auto_link_contractor_by_inn) — заполняем пустые.
+        if data.contractor_id is None:
+            _updates = {f: v for f, v in _new_fields.items() if v is not None and not getattr(_linked_contractor, f, None)}
+            if _updates:
+                apply_requisite_fields(_linked_contractor, _updates)
+            if _org_signatory and not _linked_contractor.signatory:
+                _linked_contractor.signatory = _org_signatory
     if _becomes_owner:
         # Та же транзакция, что и org — запись поручения обязана существовать
         # для КАЖДОЙ организации, где current_user становится owner_user_id
@@ -411,14 +453,15 @@ async def create_organization(
             source="org_create",
         ))
     await db.commit()
-    await db.refresh(org)
-    # Re-fetch with contractor eager-loaded
-    res = await db.execute(
-        select(Organization)
-        .options(selectinload(Organization.contractor))
-        .where(Organization.id == org.id)
-    )
-    org = res.scalar_one()
+    # ЛОВУШКА (Правило №6, см. org_requisites.py): `org` уже в identity map
+    # этой сессии — ни новый select(...), ни db.refresh(org) без указания
+    # "contractor" не обновят relationship-указатель, если он был прочитан
+    # ДО того, как contractor_id привязался выше (_auto_link_contractor_by_inn);
+    # column_property-поля вдобавок могли "expire"-иться после commit — читать
+    # их синхронным getattr() здесь же небезопасно (MissingGreenlet). Отдаём
+    # relationship явно тем же объектом, который реально использовался для
+    # записи реквизитов — ничего не перезапрашиваем.
+    org.contractor = _linked_contractor
     return _merge_org_with_contractor(org, user_count=0)
 
 
@@ -475,7 +518,6 @@ async def update_organization(
         )).scalar_one_or_none()
         if _dup:
             raise HTTPException(400, f"Организация с ИНН {_inn} уже существует: «{_dup.name}» (id={_dup.id}).")
-    org.name = data.name
     if data.color is not None:
         org.color = data.color or None
     # Explicit contractor_id override (allows un-linking by setting null)
@@ -487,10 +529,11 @@ async def update_organization(
         'signatory_position', 'signatory_last_name', 'signatory_first_name', 'signatory_middle_name',
     )
 
-    # Правило №6: если org привязана к контрагенту — реквизиты пишутся В
-    # КОНТРАГЕНТА (он источник истины), а не в organizations.* (deprecated).
-    # Резолвим контрагента заново — org.contractor мог устареть, если выше
-    # data.contractor_id только что переставил org.contractor_id.
+    # Правило №6: если org привязана к контрагенту — реквизиты (и краткое
+    # название) пишутся В КОНТРАГЕНТА (он источник истины), а не в
+    # organizations.* (deprecated). Резолвим контрагента заново — org.contractor
+    # мог устареть, если выше data.contractor_id только что переставил
+    # org.contractor_id.
     contractor = None
     if org.contractor_id:
         if org.contractor is not None and org.contractor.id == org.contractor_id:
@@ -499,44 +542,54 @@ async def update_organization(
             contractor = (await db.execute(
                 select(Contractor).where(Contractor.id == org.contractor_id)
             )).scalar_one_or_none()
-
-    if contractor is not None:
-        _updates = {f: (getattr(data, f) or None) for f in _requisite_fields if getattr(data, f, None) is not None}
-        if _updates:
-            apply_requisite_fields(contractor, _updates)
-        # signatory (единой строкой) без структурированных частей — как раньше у org
-        if data.signatory is not None and not any(
-            getattr(data, f, None) for f in ('signatory_last_name', 'signatory_first_name', 'signatory_middle_name')
-        ):
-            contractor.signatory = data.signatory or None
     else:
-        # Переходный период: org без контрагента — прежнее поведение (пишем в org.*)
-        for field in _requisite_fields:
-            val = getattr(data, field, None)
-            if val is not None:
-                setattr(org, field, val or None)
-        # signatory: если пришли структурированные части — пересобрать; иначе обновить как обычно
-        if any([data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name]):
-            org.signatory = compose_fio(
-                data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name
-            ) or org.signatory
-        elif data.signatory is not None:
-            org.signatory = data.signatory or None
         # Auto-link by INN if still unlinked (создаст/найдёт контрагента и привяжет —
-        # только для org, у которой контрагента ещё нет)
+        # только для org, у которой контрагента ещё нет). Делаем это ДО решения
+        # про name/реквизиты ниже, чтобы вновь привязанный контрагент тоже
+        # участвовал в синхронизации краткого названия.
         await _auto_link_contractor_by_inn(db, org, data)
+        if org.contractor_id:
+            contractor = (await db.execute(
+                select(Contractor).where(Contractor.id == org.contractor_id)
+            )).scalar_one_or_none()
+
+    if contractor is None:
+        # Не должно происходить (_auto_link_contractor_by_inn выше всегда
+        # находит или создаёт контрагента), но защищаемся явно: без
+        # контрагента писать реквизиты НЕКУДА — org.name/org.inn/... теперь
+        # вычисляемые поля (column_property), присвоение им молча не
+        # сохранится (Правило №6: не плодим обратно колонки-копии на org).
+        raise HTTPException(
+            500,
+            "Не удалось определить контрагента организации — реквизиты не сохранены",
+        )
+    # Правка идёт «из карточки организации» — название и реквизиты, введённые
+    # в форме, пишутся В КОНТРАГЕНТА (единственное хранилище); org.name и
+    # остальные читают его немедленно через column_property, синхронизировать
+    # отдельно нечего.
+    if data.name is not None and data.name != contractor.name:
+        contractor.name = data.name
+    _updates = {f: (getattr(data, f) or None) for f in _requisite_fields if getattr(data, f, None) is not None}
+    if _updates:
+        apply_requisite_fields(contractor, _updates)
+    # signatory (единой строкой) без структурированных частей — как раньше у org
+    if data.signatory is not None and not any(
+        getattr(data, f, None) for f in ('signatory_last_name', 'signatory_first_name', 'signatory_middle_name')
+    ):
+        contractor.signatory = data.signatory or None
     # Регион организации из юр. адреса (данные могут быть и в org.address, и
     # в контрагенте — data.address — это то, что реально пришло от пользователя
     # в этом запросе, независимо от того, в какую колонку оно легло выше).
     maybe_set_org_region_from_address(org, data.address)
     await db.commit()
-    # Re-fetch with contractor eager-loaded
-    res = await db.execute(
-        select(Organization)
-        .options(selectinload(Organization.contractor))
-        .where(Organization.id == org.id)
-    )
-    org = res.scalar_one()
+    # ЛОВУШКА (Правило №6, см. org_requisites.py docstring): `org` уже в
+    # identity map этой сессии. Повторный select(...) НЕ перечитает его
+    # relationship/column_property, если объект не "expired" — а если
+    # `org.region`/`org.contractor_id` поменялись выше, commit() их и вовсе
+    # expire-ит, и синхронный getattr() вне await упал бы MissingGreenlet.
+    # Отдаём relationship явно тем же объектом `contractor`, который реально
+    # получил новые реквизиты выше — ничего не перезапрашиваем.
+    org.contractor = contractor
     count_q = await db.execute(select(func.count()).where(User.org_id == org.id))
     return _merge_org_with_contractor(org, user_count=count_q.scalar() or 0)
 

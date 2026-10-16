@@ -293,7 +293,7 @@ def add_body_delivery(doc):
     add_text(p, " от ")
     add_placeholder(p, "{{contract_date}}")
     add_text(p, " прошу выдать со склада товарно-материальные ценности по ")
-    add_placeholder(p, "{{contractor_name}}")
+    add_placeholder(p, "{{contractor_short_name}}")
     add_text(p, " согласно прилагаемой спецификации (Приложение №1):")
 
     # Таблица позиций — цикл
@@ -349,7 +349,7 @@ def add_body_payment(doc):
     add_text(p, " от ")
     add_placeholder(p, "{{contract_date}}")
     add_text(p, " с ")
-    add_placeholder(p, "{{contractor_name}}")
+    add_placeholder(p, "{{contractor_short_name}}")
     add_text(p, " (ИНН ")
     add_placeholder(p, "{{contractor_inn}}")
     add_text(p, ") на сумму ")

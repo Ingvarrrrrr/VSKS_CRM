@@ -150,13 +150,16 @@ def add_customer_context(context: dict, customer_org, customer_ctr) -> None:
     )
 
     context.update({
-        "customer_name":         _g(customer_org.name if customer_org else None,
-                                    customer_ctr.name if customer_ctr else None),
-        "customer_full_name":    _g(_cust_req.get('full_name'),
-                                    customer_ctr.name if customer_ctr else None,
-                                    customer_org.name if customer_org else None),
-        # Phase 27.2-08: краткое название Заказчика = поле "Краткое наименование" из карточки
-        # организации/контрагента напрямую, без вытаскивания из кавычек.
+        # Владелец (16.10.2026): {{customer_name}} убран — единственные ключи
+        # краткого/полного названия Заказчика — customer_short_name и
+        # customer_full_name, строго по своему полю карточки, БЕЗ фолбэка
+        # одного на другое (пусто — значит пусто в карточке).
+        # customer_full_name — ТОЛЬКО поле «Полное наименование» (org_requisites,
+        # контрагент — источник истины при org.contractor_id).
+        "customer_full_name":    _cust_req.get('full_name') or "",
+        # customer_short_name — ТОЛЬКО поле «Краткое наименование»: organizations.name
+        # (column_property, читает Contractor.name напрямую — app/models/
+        # organization.py) либо, если org не передана — contractor.name.
         "customer_short_name":   _g(customer_org.name if customer_org else None,
                                     customer_ctr.name if customer_ctr else None),
         "customer_address":      _g(_cust_req.get('address')),
@@ -365,6 +368,8 @@ def add_contractor_signatory_context(context: dict, c) -> None:
         "contractor_signatory_name_dative":       _to_dat_fio(ctr_sig["name_full"]),
         "contractor_signatory_initials_dative":   _to_dat_fio_initials(ctr_sig["name_full"]),
         "contractor_ogrnip":                  (c.ogrn or "") if (c and (c.org_type or "").lower().startswith("ип")) else "",
-        # contractor_full_name — полное официальное название (fallback на name)
-        "contractor_full_name":               (c.full_name or c.name or "") if c else "",
+        # Владелец (16.10.2026): полное наименование — ТОЛЬКО поле «Полное
+        # наименование» контрагента, без фолбэка на краткое (contractor_name
+        # убран — он дублировал contractor_short_name).
+        "contractor_full_name":               (c.full_name or "") if c else "",
     })

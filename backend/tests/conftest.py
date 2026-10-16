@@ -164,10 +164,24 @@ async def client(db_session) -> AsyncClient:
 
 @pytest_asyncio.fixture
 async def test_org(db_session):
-    """Create a test Organization and return it (committed to DB)."""
+    """Create a test Organization and return it (committed to DB).
+
+    ПРАВИЛО №6 (миграция w6x7y8z9a0b1, 16.10.2026): Organization.name — теперь
+    column_property, читающая Contractor.name (app/models/organization.py).
+    `Organization(name=...)` больше НЕ персистирует имя (column_property не
+    пишется) — org без contractor_id вернула бы org.name == None везде, где
+    тесты читают его из этой фикстуры. Создаём и привязываем Contractor,
+    как и любой реальный путь создания организации (app/routers/
+    organizations.py::create_organization, org_dedup.py::
+    _materialize_org_from_contractor)."""
     import uuid
+    from app.models.contractor import Contractor
     from app.models.organization import Organization
-    org = Organization(name=f"TestOrg-{uuid.uuid4().hex[:8]}")
+    _name = f"TestOrg-{uuid.uuid4().hex[:8]}"
+    contractor = Contractor(name=_name)
+    db_session.add(contractor)
+    await db_session.flush()
+    org = Organization(contractor_id=contractor.id)
     db_session.add(org)
     await db_session.commit()
     await db_session.refresh(org)

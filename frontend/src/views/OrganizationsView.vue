@@ -211,7 +211,7 @@
           </v-alert>
 
           <v-text-field
-            v-model="editOrgItem.name" label="Краткое название *"
+            v-model="editOrgItem.name" label="Краткое наименование *"
             variant="outlined" density="compact" class="mb-2"
           />
           <v-text-field
@@ -401,7 +401,7 @@ interface Org {
 }
 
 const EGRUL_FIELDS = [
-  { key: 'name', label: 'Краткое название' },
+  { key: 'name', label: 'Краткое наименование' },
   { key: 'full_name', label: 'Полное наименование' },
   { key: 'kpp', label: 'КПП' },
   { key: 'ogrn', label: 'ОГРН' },

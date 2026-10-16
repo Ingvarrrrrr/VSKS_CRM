@@ -1,36 +1,19 @@
 """Единый источник юридических реквизитов организации (Правило №6).
 
-Контекст: `organizations.*` (inn/kpp/ogrn/address/подписант/full_name)
-дублирует `contractors.*` — исторически они копировались один раз при
-создании (`app/routers/subsidies.py::_materialize_org_from_contractor`,
-`app/routers/organizations.py::_auto_link_contractor_by_inn`), а дальше
-могли править независимо: карточка контрагента (`ContractorEditDialog`)
-меняет `contractors.*`, но `organizations.*` оставались как были — итог,
-документы/сериализатор показывали устаревшие реквизиты, хотя владелец
-поправил их через контрагента.
-
-Contractor — источник истины, когда `Organization.contractor_id` указывает
-на существующего контрагента. Колонки `Organization.inn/kpp/ogrn/address/
-signatory*/full_name` считаются deprecated (см. комментарии в
-`app/models/organization.py`) и читаются напрямую ТОЛЬКО как переходный
-фолбэк для организаций без контрагента.
+Начиная с миграции `w6x7y8z9a0b1` (16.10.2026) у организации больше НЕТ
+собственных реквизитов: `Organization.name/full_name/inn/kpp/ogrn/address/
+signatory*` — вычисляемые `column_property` (см. `app/models/
+organization.py`), читающие значение из привязанного `Contractor` по
+`contractor_id`. Эта функция больше не мержит "org или contractor" —
+Contractor — ЕДИНСТВЕННЫЙ источник, пусто у контрагента значит пусто,
+никакого фолбэка на `_legacy_*` колонки организации.
 
 Один хелпер — везде, где нужен набор реквизитов организации (сериализатор
 `/api/organizations`, генерация документов, публикации), обязаны вызывать
-`org_requisites()` вместо прямого чтения `Organization.inn` и т.п. и вместо
-повторного изобретения своего merge-паттерна "org или contractor".
-
-2026-09-07 (по факту на проде, org id=5 «АНО ЦЕНТРПОИСК»): контрагент
-побеждает целиком, НО если конкретное поле у контрагента пусто/NULL, а у
-org есть значение — контрагент неполный (например, создан вручную без
-части реквизитов), и слепое "контрагент побеждает" стирало бы то, что уже
-было видно пользователю (пропадало наименование заказчика в документах).
-Поэтому фолбэк — ПОПОЛЕЙНО: пустое поле контрагента подменяется значением
-org с предупреждением в лог (см. `org_requisites()`); миграция
-`t2v4x6z8b0d2` тем же критерием дозаполняет такие пустые поля контрагента
-из org напрямую в БД, чтобы предупреждение не повторялось на каждый запрос.
+`org_requisites()`, а не читать поля Organization по отдельности и не
+изобретать свой merge-паттерн "org или contractor" — второго источника
+того же показателя не должно быть (Правило №6).
 """
-import logging
 from typing import Iterable, Optional
 
 from sqlalchemy import select
@@ -38,8 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contractor import Contractor
 from app.models.organization import Organization
-
-logger = logging.getLogger(__name__)
 
 # Поля-реквизиты: при наличии привязанного контрагента читаются ИСКЛЮЧИТЕЛЬНО
 # из него (не смешиваются "бери непустое" — иначе ровно та же болезнь
@@ -60,41 +41,32 @@ REQUISITE_FIELDS: tuple[str, ...] = (
 )
 
 
-def _blank(v) -> bool:
-    return v is None or (isinstance(v, str) and v.strip() == '')
-
-
 def org_requisites(org: Organization, contractor: Optional[Contractor] = None) -> dict:
     """Вернуть словарь реквизитов организации `org`.
 
-    - `org.contractor_id` задан И `contractor` передан (и это тот самый
-      контрагент) → реквизиты берутся ИЗ КОНТРАГЕНТА, ПОПОЛЕЙНО. Контрагент
-      побеждает по каждому полю, где у него есть значение; там, где у
-      контрагента пусто/NULL, а у org — есть, отдаётся значение org (иначе
-      неполный контрагент стирал бы то, что пользователь уже видел) с
-      предупреждением в лог — сигнал дозаполнить контрагента.
-    - Иначе (org ещё не привязана к контрагенту, либо контрагент не
-      передан/не найден) → переходный период: собственные deprecated
-      колонки Organization.
-    """
-    c = contractor if (org.contractor_id and contractor is not None and contractor.id == org.contractor_id) else None
-    if c is None:
-        return {field: getattr(org, field, None) for field in REQUISITE_FIELDS}
+    Читает поля НАПРЯМУЮ из `contractor` (обычные mapped-колонки Contractor),
+    а не через `org.<field>` (column_property со скалярным подзапросом).
 
-    result = {}
-    for field in REQUISITE_FIELDS:
-        c_val = getattr(c, field, None)
-        if not _blank(c_val):
-            result[field] = c_val
-            continue
-        org_val = getattr(org, field, None)
-        result[field] = org_val
-        if not _blank(org_val):
-            logger.warning(
-                "org_requisites: пустое поле %s у контрагента %s, взято из организации %s",
-                field, c.id, org.id,
-            )
-    return result
+    Это не «второй источник» (Правило №6 не нарушено: при наличии contractor
+    значение — то же самое число, что вернул бы `org.<field>`, читается из
+    того же Contractor.<field>, только напрямую, а не через подзапрос) — это
+    защита от реальной ловушки async SQLAlchemy: если организация в текущей
+    сессии была где-то закоммичена (даже правкой НЕ-реквизитного поля, напр.
+    `org.region`/`org.director_last_name`), ORM молча «expire»-ит её
+    column_property-атрибуты; следующий синхронный `getattr(org, 'inn')` вне
+    `await` пытается тихо перезагрузить их и падает
+    `sqlalchemy.exc.MissingGreenlet` (воспроизведено на этой волне:
+    app/routers/organization_director.py — GET/POST .../director). Поля
+    Contractor такой проблеме не подвержены (обычные колонки, не подзапрос).
+
+    `contractor=None` (org без contractor_id — не должно происходить после
+    миграции w6x7y8z9a0b1, но на случай гонки/битых данных) → все поля None,
+    без обращения к `org.<field>` (та же причина — не трогаем
+    column_property вовсе, если неоткуда ждать осмысленного значения).
+    """
+    if contractor is None:
+        return {field: None for field in REQUISITE_FIELDS}
+    return {field: getattr(contractor, field, None) for field in REQUISITE_FIELDS}
 
 
 async def bulk_org_requisites(db: AsyncSession, orgs: Iterable[Organization]) -> dict[int, dict]:

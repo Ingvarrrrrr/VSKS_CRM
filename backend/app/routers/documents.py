@@ -296,15 +296,18 @@ async def download_template_guide(
 @guide_router.get("/template-vars")
 async def get_template_vars(current_user=Depends(get_current_user)):
     """Return all template variables with description, example template text, and example result."""
+    # Владелец (16.10.2026): раньше строки-заголовки разделов (var == "")
+    # выкидывались — фронт не мог построить разделы справочника. Отдаём их
+    # тоже, с явным признаком is_header, чтобы фронт группировал переменные
+    # по разделам вместо плоского списка.
     result = []
     for entry in TEMPLATE_VARIABLES:
         var, desc, ex_t, ex_r = entry
-        if not var:
-            continue  # skip section headers
         result.append({
             "var": var,
             "description": desc,
             "example_template": ex_t,
             "example_result": ex_r,
+            "is_header": not var,
         })
     return result

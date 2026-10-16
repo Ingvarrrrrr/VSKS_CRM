@@ -50,7 +50,7 @@
         </v-autocomplete>
         <v-text-field
           v-model="form.name"
-          label="Краткое название *"
+          label="Краткое наименование *"
           prepend-inner-icon="mdi-domain"
           variant="outlined" density="compact" class="mb-2"
         />

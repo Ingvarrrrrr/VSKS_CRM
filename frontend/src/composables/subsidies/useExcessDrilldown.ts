@@ -426,7 +426,17 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
     // дефект — цель в верхней трети экрана, под запасом на липкую шапку
     // таблицы (FeoTreeTable.vue :: .feo-th, position:sticky; top:0), а не по
     // центру под плавающей панелью (ExcessDrilldownBar.vue).
-    el.style.scrollMarginTop = '160px'
+    // 19.10.2026: липкая панель ФЭО (FeoTreeToolbar.vue::.feo-sticky-toolbar,
+    // ≥960px) теперь закрывает верх экрана помимо шапки таблицы — запас
+    // раньше был фиксированным 160px, теперь читаем реальную высоту панели
+    // из --feo-toolbar-h (та же переменная, что считает ResizeObserver в
+    // FeoTreeToolbar.vue, Правило №6 — второй расчёт высоты не заводим) плюс
+    // высоту шапки приложения (48px) и небольшой зазор. Переменная может быть
+    // не выставлена (панель ещё не смонтирована/мобильный экран) — fallback
+    // на прежние 160px.
+    const toolbarHRaw = getComputedStyle(document.documentElement).getPropertyValue('--feo-toolbar-h')
+    const toolbarH = parseFloat(toolbarHRaw)
+    el.style.scrollMarginTop = Number.isFinite(toolbarH) && toolbarH > 0 ? `${Math.ceil(toolbarH + 48 + 20)}px` : '160px'
     el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 

@@ -11,6 +11,19 @@
     />
   </div>
 
+  <!-- Липкая панель (владелец, 19.10.2026): шапка ФЭО (заголовок/переключатели/
+       поиск/кнопки + легенда стадий + строка «убрать номера строк» + подсказка
+       режима выбора) остаётся вверху экрана, пока на экране дерево — иначе
+       колесо докручивает .feo-table-wrap до конца, прокрутка переходит на
+       страницу, и панель уезжает вместе с деревом. Контрагент (.detail-contractor
+       выше) сознательно ВНЕ обёртки — требование владельца. Высота панели
+       переменная (1-3 строки) → меряется ResizeObserver'ом (см. скрипт) и
+       пишется в CSS-переменную --feo-toolbar-h на <html>, которую читает
+       .feo-table-wrap (FeoTreeTable.vue/subsidies.css), чтобы высота таблицы
+       всегда была «экран минус шапка приложения минус эта панель минус нижняя
+       строка». Только десктоп (≥960px, см. стиль ниже) — на мобильном
+       оставляем прежнее поведение. -->
+  <div ref="stickyToolbarRef" class="feo-sticky-toolbar">
   <div class="detail-feo-header">
     <span class="chart-card-title">Направления ФЭО</span>
     <div class="d-flex align-center ml-4" style="gap:6px" title="Группировка позиций «из заявок» при раскрытии направления">
@@ -181,8 +194,7 @@
                уже прошла, грузят ОДНИМ файлом — необязательный блок «Факт». -->
           Если часть закупок уже прошла — заполните блок «Факт»: после загрузки плана система предложит загрузить их.
         </v-tooltip>
-        <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
-        <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
+        <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт ФЭО</v-btn>
         <!-- «Импорт факта» (план breezy-mixing-lovelace.md, Часть 2) — уже
              совершённые закупки из таблиц ведения субсидии. Та же видимость,
              что у «Импорт» выше (ctx.canEditFeo). Журнал прогонов — пункт
@@ -325,6 +337,7 @@
     Отметьте плановые позиции галочками (построчно, категорией целиком или «Вся смета») — из них соберётся заявка
     <span v-if="planToRequest.residualsLoading.value" class="ml-2 text-medium-emphasis">(загрузка остатков…)</span>
   </div>
+  </div>
 
   <PlanToRequestDialog />
   <PlanToOrderDialog />
@@ -342,7 +355,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useRegistryExport } from '@/composables/useRegistryExport'
@@ -518,6 +531,37 @@ async function exportFeoPdf() {
   }
 }
 
+// Липкая панель (владелец, 19.10.2026) — см. докстринг в <template> выше.
+// Высота панели (1-3 строки в зависимости от ширины/режима) пишется в
+// CSS-переменную на <html>, а не на локальный предок: FeoTreeTable.vue —
+// отдельный компонент (scoped CSS соседа её не видит), а subsidies.css —
+// глобальный, но переменная на документе читается отовсюду одинаково просто.
+const stickyToolbarRef = ref<HTMLElement | null>(null)
+let toolbarResizeObserver: ResizeObserver | null = null
+function applyToolbarHeightVar(px: number) {
+  document.documentElement.style.setProperty('--feo-toolbar-h', `${Math.ceil(px)}px`)
+}
+onMounted(() => {
+  const el = stickyToolbarRef.value
+  if (!el || typeof ResizeObserver === 'undefined') return
+  applyToolbarHeightVar(el.getBoundingClientRect().height)
+  toolbarResizeObserver = new ResizeObserver(() => {
+    // Доработка 20.10.2026 (владелец нашёл регресс — заголовки .feo-th
+    // прятались под панелью): ResizeObserverEntry.contentRect исключает
+    // padding/border (у .feo-sticky-toolbar — padding-bottom:6px +
+    // border-bottom:1px = 7px), а следующий элемент (.feo-table-wrap) в
+    // обычном потоке начинается ровно от border-box панели. Меряем
+    // getBoundingClientRect().height самого элемента (border-box) — то же
+    // число, что реально занимает панель в документе.
+    applyToolbarHeightVar(el.getBoundingClientRect().height)
+  })
+  toolbarResizeObserver.observe(el)
+})
+onBeforeUnmount(() => {
+  toolbarResizeObserver?.disconnect()
+  toolbarResizeObserver = null
+})
+
 async function uploadTemplate(file: File) {
   const fd = new FormData()
   fd.append('file', file)
@@ -537,6 +581,24 @@ async function uploadTemplate(file: File) {
 </script>
 
 <style scoped>
+/* Липкая панель — только десктоп (владелец, 19.10.2026): ниже 960px оставляем
+   прежнее поведение (панель прокручивается вместе со страницей, на узком
+   экране места и так мало). top — высота шапки приложения (App.vue:
+   .v-app-bar height: calc(48px + var(--gala-safe-top))), z-index выше таблицы
+   (её sticky thead — z-index:3, .feo-th-actions — 5), но ниже дропдауна
+   поиска (.feo-search-dropdown — z-index:1300, см. subsidies.css) и диалогов. */
+@media (min-width: 960px) {
+  .feo-sticky-toolbar {
+    position: sticky;
+    top: calc(48px + var(--gala-safe-top, 0px));
+    z-index: 6;
+    background: var(--crm-surface);
+    padding-bottom: 6px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--crm-border);
+    box-shadow: 0 2px 6px var(--crm-shadow);
+  }
+}
 .feo-clear-source-rows-bar {
   display: flex;
   align-items: center;

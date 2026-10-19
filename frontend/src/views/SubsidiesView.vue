@@ -33,7 +33,7 @@
         <SubsidySummaryBar />
 
         <!-- ── Detail panel ── -->
-        <div v-if="selectedSubsidy" class="detail-panel">
+        <div v-if="selectedSubsidy" ref="detailPanelRef" class="detail-panel">
           <div class="detail-header">
             <v-icon icon="mdi-folder-open-outline" size="20" color="#3B82F6" class="mr-2" />
             <span class="detail-title">{{ selectedSubsidy.name }} — направления ФЭО</span>
@@ -90,12 +90,13 @@
             <RevisionDraftBar v-if="subsidyRevision" :revision="subsidyRevision" :overlay="revisionOverlay" />
           </div>
 
-          <SubsidyEventsPanel ref="eventsPanelRef" :subsidy-id="selectedId" />
-
-          <!-- Журнал загрузок ФЭО (волна 3, 26.09) — «кто загрузил файл
-               импорта и что он перезаписал». Корректировки GALA 12.10, п.5:
-               ниже «Мероприятий», видна только администраторам. -->
-          <FeoImportRunsPanel :subsidy-id="selectedId" />
+          <!-- Мероприятия + Журнал загрузок ФЭО (владелец, 19.10.2026) —
+               раньше два отдельных блока, занимавших много места и видных
+               всегда; теперь одна тонкая строка, каждая половина
+               раскрывается по клику (SubsidyBottomSections.vue). reload()
+               пробрасывается насквозь к SubsidyEventsPanel.vue — второй
+               способ перезагрузки мероприятий не заводим (Правило №6). -->
+          <SubsidyBottomSections ref="eventsPanelRef" :subsidy-id="selectedId" />
         </div>
 
       </template>
@@ -142,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
@@ -161,11 +162,10 @@ import PaidConfirmationsPanel from '@/components/subsidies/PaidConfirmationsPane
 import SubsidyPaymentControlBanner from '@/components/subsidies/SubsidyPaymentControlBanner.vue'
 import FeoTreeToolbar from '@/components/subsidies/FeoTreeToolbar.vue'
 import FeoTreeTable from '@/components/subsidies/FeoTreeTable.vue'
-import FeoImportRunsPanel from '@/components/subsidies/FeoImportRunsPanel.vue'
 import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 import { pickSubsidyMoneyFields } from '@/composables/subsidies/subsidyMoneyFields'
-import SubsidyEventsPanel from '@/components/subsidies/SubsidyEventsPanel.vue'
+import SubsidyBottomSections from '@/components/subsidies/SubsidyBottomSections.vue'
 import SubsidyEditDialog from '@/components/subsidies/SubsidyEditDialog.vue'
 import SubsidyDeleteDialog from '@/components/subsidies/SubsidyDeleteDialog.vue'
 import SubsidySandboxDialog from '@/components/subsidies/SubsidySandboxDialog.vue'
@@ -1061,8 +1061,69 @@ async function loadEvents(subsidyId: number) {
   await eventsPanelRef.value?.reload(subsidyId)
 }
 
+// «Хвост» под деревом ФЭО (владелец, 20.10.2026 — доработка после первой
+// приёмки): заголовки колонок .feo-th прятались под липкой панелью при
+// докрутке страницы до конца — формула max-height у .feo-table-wrap
+// (FeoTreeTable.vue/subsidies.css) резервировала фиксированные 56px под
+// «нижнюю строку + зазор», а реальный «хвост» (нижний padding/border
+// .detail-panel, строка SubsidyBottomSections::.subsidy-bottom-row и то, что
+// может быть ниже) оказался больше — первая попытка мерить зазор только до
+// .subsidy-bottom-row (без неизвестных нам paddin'ов ПОСЛЕ неё) не докрыла
+// расхождение на приёмке (замерено: реальный хвост ~107px против
+// посчитанных 46px). Вместо повторного гадания какие ещё отступы учесть —
+// меряем РЕАЛЬНОЕ расстояние от низа .feo-table-wrap до АБСОЛЮТНОГО конца
+// документа (document.documentElement.scrollHeight), это по определению
+// учитывает вообще всё, что рендерится ниже таблицы, независимо от того,
+// что это. Эта величина не зависит от ТЕКУЩЕЙ высоты самой таблицы (если
+// таблица на px выше/ниже — все, что после неё, включая конец документа,
+// сдвигается на тот же px, разница не меняется) — поэтому не циклическая.
+// Чтобы раскрытие «Мероприятий»/«Журнала» не сжимало таблицу (требование
+// владельца: «пусть страница просто станет длиннее») — пока в DOM есть хоть
+// один раскрытый раздел (.subsidy-bottom-content), пересчёт ПРОПУСКАЕТСЯ:
+// --feo-tail-h остаётся замороженной на последнем значении, посчитанном при
+// свёрнутых разделах. Пишем в CSS-переменную --feo-tail-h на <html> (тот же
+// приём, что --feo-toolbar-h в FeoTreeToolbar.vue, Правило №6 — единственное
+// место расчёта).
+const detailPanelRef = ref<HTMLElement | null>(null)
+let tailResizeObserver: ResizeObserver | null = null
+function recomputeFeoTailHeight() {
+  const root = detailPanelRef.value
+  if (!root) return
+  const tableWrap = root.querySelector('.feo-table-wrap') as HTMLElement | null
+  if (!tableWrap) return
+  if (root.querySelector('.subsidy-bottom-content')) return // раздел раскрыт — не трогаем, см. докстринг выше
+  const tableWrapBottomDoc = tableWrap.getBoundingClientRect().bottom + window.scrollY
+  const tail = document.documentElement.scrollHeight - tableWrapBottomDoc
+  if (!Number.isFinite(tail)) return
+  document.documentElement.style.setProperty('--feo-tail-h', `${Math.max(0, Math.ceil(tail))}px`)
+}
+onMounted(() => {
+  if (typeof ResizeObserver !== 'undefined') {
+    tailResizeObserver = new ResizeObserver(() => recomputeFeoTailHeight())
+    // Наблюдаем за всей detail-panel — срабатывает на любое изменение
+    // высоты внутри (раскрытие/загрузка дерева и т.п.), это нормально:
+    // сам расчёт (.feo-table-wrap → .subsidy-bottom-row) от раскрытия
+        // секций не зависит, пересчёт просто лишний раз подтверждает то же число.
+    if (detailPanelRef.value) tailResizeObserver.observe(detailPanelRef.value)
+  }
+  window.addEventListener('resize', recomputeFeoTailHeight)
+})
+onUnmounted(() => {
+  tailResizeObserver?.disconnect()
+  tailResizeObserver = null
+  window.removeEventListener('resize', recomputeFeoTailHeight)
+})
+watch(() => selectedId.value, () => {
+  void nextTick().then(() => {
+    tailResizeObserver?.disconnect()
+    if (detailPanelRef.value && tailResizeObserver) tailResizeObserver.observe(detailPanelRef.value)
+    recomputeFeoTailHeight()
+  })
+})
+watch(() => loadingFeo.value, (v) => { if (!v) void nextTick().then(recomputeFeoTailHeight) })
+
 // ── Ссылки на диалоги, вынесенные в components/subsidies/* ──
-const eventsPanelRef = ref<InstanceType<typeof SubsidyEventsPanel> | null>(null)
+const eventsPanelRef = ref<InstanceType<typeof SubsidyBottomSections> | null>(null)
 const subsidyEditDialogRef = ref<InstanceType<typeof SubsidyEditDialog> | null>(null)
 const subsidyDeleteDialogRef = ref<InstanceType<typeof SubsidyDeleteDialog> | null>(null)
 const subsidySandboxDialogRef = ref<InstanceType<typeof SubsidySandboxDialog> | null>(null)

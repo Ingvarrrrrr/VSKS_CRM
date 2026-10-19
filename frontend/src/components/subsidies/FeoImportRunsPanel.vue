@@ -1,17 +1,17 @@
 <template>
-  <div v-if="subsidyId && isAdminLevel" class="feo-import-runs-panel mt-4">
-    <div class="d-flex align-center mb-2" style="cursor:pointer" @click="toggleCollapsed">
-      <v-icon :icon="collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down'" size="18" class="mr-1" />
-      <v-icon icon="mdi-file-upload-outline" size="18" class="mr-2" />
-      <span class="text-subtitle-2">Журнал загрузок ФЭО</span>
+  <!-- Собственный заголовок со стрелкой убран (владелец, 19.10.2026) —
+       открытость раздела теперь приходит проп'ом expanded из
+       SubsidyBottomSections.vue (общая строка «Мероприятия · Журнал загрузок
+       ФЭО»), второго localStorage-состояния здесь больше нет. Журнал
+       по-прежнему грузится только при раскрытии (см. watch(expanded) ниже). -->
+  <div v-if="subsidyId && isAdminLevel && panelOpen" class="feo-import-runs-panel mt-1">
+    <div class="d-flex justify-end mb-2">
       <v-btn
-        v-if="!collapsed"
-        size="x-small" variant="text" icon="mdi-refresh" class="ml-auto"
-        :loading="loading" @click.stop="load"
+        size="x-small" variant="text" icon="mdi-refresh"
+        :loading="loading" @click="load"
       />
     </div>
 
-    <template v-if="!collapsed">
     <div v-if="loading && !runs.length" class="d-flex align-center py-3">
       <v-progress-circular indeterminate size="20" width="2" color="primary" class="mr-2" />
       <span class="text-caption text-medium-emphasis">Загрузка журнала…</span>
@@ -98,7 +98,6 @@
     <div v-if="total > runs.length" class="d-flex justify-center mt-2">
       <v-btn size="small" variant="text" :loading="loading" @click="loadMore">Показать ещё</v-btn>
     </div>
-    </template>
   </div>
 </template>
 
@@ -113,36 +112,23 @@
 // из @/constants/roles — тот же единственный список, что и у SubsidyEventsPanel.vue,
 // ПРАВИЛО №6, второй список ролей не завести) — на сервере тот же гейт отдельно
 // (app/routers/feo_import_runs.py::_check_subsidy_read_access, ADMIN_ROLES через
-// has_role_via_hierarchy). Сворачивается, по умолчанию свёрнута — состояние в
-// localStorage (per-браузер, не критично при недоступности/приватном режиме —
-// try/catch, тихий фоллбэк на "свёрнуто").
+// has_role_via_hierarchy).
+//
+// 19.10.2026 (владелец): собственный заголовок со стрелкой и localStorage-
+// состояние свёрнутости убраны — открытость раздела теперь владение
+// SubsidyBottomSections.vue (общая строка «Мероприятия · Журнал загрузок
+// ФЭО», единственный источник, второе состояние здесь не заводим). Журнал
+// по-прежнему грузится только при первом раскрытии (watch(panelOpen) ниже),
+// как и раньше.
 import { ref, watch, onMounted } from 'vue'
 import { apiFetch } from '@/api'
 import { feoHistoryFieldLabel } from '@/constants/feoHistoryFieldLabels'
 import { ADMIN_ROLES } from '@/constants/roles'
 
-const props = defineProps<{ subsidyId: number | null | undefined }>()
+const props = defineProps<{ subsidyId: number | null | undefined; panelOpen: boolean }>()
 
 const userRoleRaw = localStorage.getItem('user_role') || ''
 const isAdminLevel = ADMIN_ROLES.includes(userRoleRaw as typeof ADMIN_ROLES[number])
-
-const COLLAPSE_KEY = 'feo_import_runs_panel_collapsed'
-function readCollapsed(): boolean {
-  try {
-    const v = localStorage.getItem(COLLAPSE_KEY)
-    return v === null ? true : v === '1'
-  } catch {
-    return true
-  }
-}
-const collapsed = ref(readCollapsed())
-function toggleCollapsed() {
-  collapsed.value = !collapsed.value
-  try {
-    localStorage.setItem(COLLAPSE_KEY, collapsed.value ? '1' : '0')
-  } catch { /* приватный режим/квота — не критично, свёрнутость просто не запомнится */ }
-  if (!collapsed.value && !runs.value.length) load()
-}
 
 interface RunOut {
   id: number
@@ -266,17 +252,20 @@ async function toggle(runId: number) {
   }
 }
 
-// По умолчанию панель свёрнута — не грузим журнал, пока её не раскрыли
-// (toggleCollapsed зовёт load() сам). При смене субсидии сбрасываем кэш
-// и подгружаем заново только если панель уже раскрыта.
+// Грузим журнал только когда раздел раскрыт (panelOpen приходит из
+// SubsidyBottomSections.vue). При смене субсидии сбрасываем кэш и подгружаем
+// заново только если раздел уже раскрыт.
 watch(() => props.subsidyId, () => {
   runs.value = []
   total.value = 0
   expanded.value = new Set()
   changesByRun.value = new Map()
-  if (!collapsed.value) load()
+  if (props.panelOpen) load()
 })
-onMounted(() => { if (!collapsed.value) load() })
+// Первое раскрытие (или раскрытие уже открытого при монтировании) — грузим,
+// если ещё не грузили.
+watch(() => props.panelOpen, (v) => { if (v && !runs.value.length) load() })
+onMounted(() => { if (props.panelOpen) load() })
 </script>
 
 <style scoped>

@@ -1,21 +1,22 @@
 <template>
-  <!-- ── Мероприятия ── -->
-  <div class="mt-4">
-    <div class="detail-feo-header">
-      <span class="chart-card-title">Мероприятия</span>
-      <div class="d-flex gap-2">
-        <v-btn v-if="subsidyId" size="small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel"
-          @click="downloadReport(subsidyId)">
-          Приложение №3
-        </v-btn>
-        <v-btn v-if="isAdminLevel" size="small" variant="tonal" prepend-icon="mdi-plus" @click="showAddEventDialog = true">
-          Добавить
-        </v-btn>
-      </div>
+  <!-- ── Мероприятия ── (владелец, 19.10.2026: собственный крупный заголовок
+       и пустая иконка-заглушка убраны — раздел теперь раскрывается из общей
+       тонкой строки SubsidyBottomSections.vue, которая и показывает заголовок
+       + счётчик N. Этот компонент остаётся смонтированным ВСЕГДА (даже когда
+       раздел свёрнут), чтобы count/reload работали в фоне — см. expanded prop
+       и defineExpose ниже. -->
+  <div v-if="expanded" class="mt-1">
+    <div class="d-flex gap-2 mb-2">
+      <v-btn v-if="subsidyId" size="small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel"
+        @click="downloadReport(subsidyId)">
+        Приложение №3
+      </v-btn>
+      <v-btn v-if="isAdminLevel" size="small" variant="tonal" prepend-icon="mdi-plus" @click="showAddEventDialog = true">
+        Добавить
+      </v-btn>
     </div>
-    <div v-if="subsidyEvents.length === 0" class="feo-empty">
-      <v-icon icon="mdi-calendar-blank" size="40" color="grey-lighten-2" />
-      <div class="text-caption text-medium-emphasis mt-2">Нет мероприятий</div>
+    <div v-if="subsidyEvents.length === 0" class="text-caption text-medium-emphasis">
+      Мероприятий нет
     </div>
     <v-list v-else density="compact" class="pa-0">
       <v-list-item v-for="ev in subsidyEvents" :key="ev.id" class="px-2">
@@ -116,14 +117,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { ADMIN_ROLES } from '@/constants/roles'
 import type { EventItem } from '@/composables/subsidies/types'
 
-const props = defineProps<{ subsidyId: number | null }>()
+// expanded — приходит из SubsidyBottomSections.vue (владелец, 19.10.2026):
+// открытость раздела теперь живёт ТАМ (одна строка «Мероприятия · Журнал
+// загрузок ФЭО»), этот компонент сам решения «свёрнут/раскрыт» не хранит.
+// subsidyEvents грузится НЕЗАВИСИМО от expanded (родитель вызывает reload()
+// всегда), чтобы счётчик N в строке был виден и когда раздел свёрнут.
+const props = defineProps<{ subsidyId: number | null; expanded?: boolean }>()
 
 const { mobile } = useDisplay()
 const toast = useToast()
@@ -286,17 +292,17 @@ async function deleteEvent(eventId: number) {
 // subsidyEvents — так watcher'ы globalSubsidyId/toggleSelect (не в этой волне
 // рефакторинга) остаются текстуально нетронутыми: они по-прежнему вызывают
 // loadEvents(id), которая теперь просто проксирует сюда.
-defineExpose({ reload: loadEvents })
+// count — для строки SubsidyBottomSections.vue «▸ Мероприятия (N)», тот же
+// subsidyEvents.length, второй счётчик не заводим (Правило №6).
+const count = computed(() => subsidyEvents.value.length)
+defineExpose({ reload: loadEvents, count })
 </script>
 
 <style scoped>
 /* .dialog-card/.dialog-title — было в <style scoped> SubsidiesView.vue, пока
    диалог был её частью; вынесено вместе с диалогом (волна 5c) — иначе scoped CSS
    другого файла эти классы не достаёт (проверено на ContractorEditDialog.vue —
-   тот же паттерн: каждый диалог держит эти два правила у себя). Здесь также
-   используются глобальные .detail-feo-header/.chart-card-title/.feo-empty —
-   те рендерятся НЕ в диалоге (инлайн в детали субсидии), их достаёт
-   @/styles/subsidies.css, отдельная копия не нужна. */
+   тот же паттерн: каждый диалог держит эти два правила у себя). */
 .dialog-card {}
 .dialog-title {
   display: flex; align-items: center;

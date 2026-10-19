@@ -469,6 +469,22 @@
   overflow-y: auto;
   max-height: calc(100vh - 260px);
 }
+/* Дубль правила из FeoTreeTable.vue (не scoped) — тот же global-класс описан
+   в двух местах (см. докстринг там же про волну 5c: scoped CSS одного файла
+   не достаёт разметку другого компонента, а .feo-table-wrap рендерится в
+   FeoTreeTable.vue). Формула ДОЛЖНА совпадать 1-в-1 (ПРАВИЛО №6) — иначе
+   специфичность (.subsidies-page .feo-table-wrap = 2 класса = та же, что
+   .feo-table-wrap[data-v-xxx]) решает порядок подключения стилей, и побеждает
+   непредсказуемо то один файл, то другой при пересборке. 19.10.2026: липкая
+   панель ФЭО (FeoTreeToolbar.vue::.feo-sticky-toolbar) меняет высоту
+   доступного места под таблицу. 20.10.2026: фиксированные 56px заменены на
+   измеренный --feo-tail-h (SubsidiesView.vue) — см. идентичный докстринг в
+   FeoTreeTable.vue. */
+@media (min-width: 960px) {
+  .subsidies-page .feo-table-wrap {
+    max-height: calc(100vh - 48px - var(--gala-safe-top, 0px) - var(--feo-toolbar-h, 200px) - var(--feo-tail-h, 56px));
+  }
+}
 .subsidies-page .feo-table {
   width: 100%;
   border-collapse: collapse;

@@ -51,6 +51,7 @@ from app.routers.documents import (
 # файле жила урезанная копия-дубль (_resolve_local_product_photo), умевшая
 # только локальный /api/products/photos/<file> и не знавшая про photo_data.
 from app.services.documents.stages_template_engine import make_photo_resolver
+from app.services.documents.docx_post import strip_template_legend
 from app.services.item_tz import effective_item_tz
 # Правило №6 — единственный резолвер пути к шаблону документа (субсидийный
 # override → глобальный → DOC_TYPE_FALLBACK_FILES). До 2026-09-17 здесь жила
@@ -324,6 +325,9 @@ async def generate_wish_service_note(
         buf = BytesIO()
         tpl.save(buf)
         buf.seek(0)
+        # ПРАВИЛО №6: единственное место удаления легенды — docx_post.py,
+        # готовая служебная записка (не шаблон) её не содержит.
+        buf = BytesIO(strip_template_legend(buf.read()))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка генерации документа: {e}")
 
@@ -442,6 +446,9 @@ async def generate_wish_tech_spec(
         buf = BytesIO()
         tpl.save(buf)
         buf.seek(0)
+        # ПРАВИЛО №6: единственное место удаления легенды — docx_post.py,
+        # готовое ТЗ (не шаблон) её не содержит.
+        buf = BytesIO(strip_template_legend(buf.read()))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка генерации документа: {e}")
 

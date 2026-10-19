@@ -7,8 +7,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _strip_tech_spec_legend(docx_bytes: bytes) -> bytes:
-    """Remove legend paragraphs from a rendered tech_spec_request docx.
+def strip_template_legend(docx_bytes: bytes) -> bytes:
+    """Remove the «ЛЕГЕНДА — как читать этот шаблон» block from a rendered
+    (готовый, filled-in) docx — any doc_type, not just tech_spec.
+
+    Правило владельца: в ШАБЛОНЕ легенда есть и его всегда можно скачать с
+    ней для правки; в ГОТОВОМ документе (заполненном данными закупки/заявки)
+    легенды быть не должно. Единственное место удаления (ПРАВИЛО №6) — вызов
+    отсюда идёт из ВСЕХ путей выдачи готового документа:
+    stages_finalize.py::finalize_response (закупки), wish_documents.py
+    (заявки: служебка/ТЗ), fabrikant_package.py (пакет Фабрикант). Скачивание
+    самого шаблона (subsidy_templates.py, subsidy_approvers.py) эту функцию
+    не вызывает — легенда там остаётся как есть.
 
     Deletes paragraphs from the first one containing «ЛЕГЕНДА» up to and
     including the first paragraph consisting solely of em-dashes (—), which
@@ -57,7 +67,7 @@ def _strip_tech_spec_legend(docx_bytes: bytes) -> bytes:
         doc.save(out)
         return out.getvalue()
     except Exception as _exc:
-        logger.warning("_strip_tech_spec_legend: failed to strip legend, returning original: %s", _exc)
+        logger.warning("strip_template_legend: failed to strip legend, returning original: %s", _exc)
         return docx_bytes
 
 

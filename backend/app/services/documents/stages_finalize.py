@@ -7,7 +7,7 @@ from io import BytesIO
 from urllib.parse import quote
 
 from app.services.documents.templates import _sanitize_subject
-from app.services.documents.docx_post import _strip_word_comments
+from app.services.documents.docx_post import _strip_word_comments, strip_template_legend
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -21,6 +21,11 @@ def finalize_response(buf: BytesIO, p, pid: int, filename_base: str, fallback_in
     # ТЗ append, methodology attach and merge, so it always sees the final bytes.
     buf.seek(0)
     buf = BytesIO(_strip_word_comments(buf.read()))
+    # ── Strip the «ЛЕГЕНДА» template-authoring block (ПРАВИЛО №6: единственное
+    # место удаления — strip_template_legend, docx_post.py) — готовый документ
+    # закупки её не содержит, сам шаблон (скачивание) не трогаем.
+    buf.seek(0)
+    buf = BytesIO(strip_template_legend(buf.read()))
 
     _subj = _sanitize_subject(getattr(p, "subject", "") or "")
     if _subj:

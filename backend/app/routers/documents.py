@@ -90,7 +90,7 @@ from app.services.documents.contexts import (
     _resolve_user_position,
     _format_service_term,
 )
-from app.services.documents.docx_post import _strip_tech_spec_legend, _strip_word_comments
+from app.services.documents.docx_post import strip_template_legend, _strip_word_comments
 from app.services.documents.fabrikant_package import render_fabrikant_package_files
 from app.services.documents.kp_xlsx import build_kp_xlsx
 from app.services.documents.generate import generate_document_bytes

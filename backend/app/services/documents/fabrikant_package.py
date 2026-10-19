@@ -43,7 +43,7 @@ from app.services.item_amounts import vat_included_amount as _vat_included_amoun
 from .templates import _resolve_vat_exemption_basis, _vat_exemption_missing_hint, _resolve_doc_template_path, _purchase_method_label
 from .doc_types import _PURCHASE_METHOD_LABELS
 from .morphology import _to_gen_fio, _inflect_phrase_genitive
-from .docx_post import _strip_tech_spec_legend
+from .docx_post import strip_template_legend
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
 from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
 from app.services.purchase_economy import purchase_economy_one as _purchase_economy_one_fn
@@ -623,8 +623,10 @@ async def render_fabrikant_package_files(
             _buf = BytesIO()
             _tpl.save(_buf)
             _rendered_bytes = _buf.getvalue()
-            if doc_key == "tech_spec_request":
-                _rendered_bytes = _strip_tech_spec_legend(_rendered_bytes)
+            # ПРАВИЛО №6: единственное место удаления легенды — docx_post.py,
+            # применяем ко всем 5 готовым файлам пакета (не только tech_spec_request —
+            # любой из них может быть кастомным шаблоном субсидии со своей легендой).
+            _rendered_bytes = strip_template_legend(_rendered_bytes)
             rendered.append((ascii_name, ru_title, _rendered_bytes))
         except Exception as _re:
             _tb = _traceback.format_exc()

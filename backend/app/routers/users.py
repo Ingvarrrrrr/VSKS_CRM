@@ -235,8 +235,16 @@ async def create_user(
     from app.auth.jwt import get_org_filter
     allowed = get_org_filter(current_user)  # None = все орг (SaaS), иначе список
     requested = data.org_id
-    if current_user.role in ('superadmin', 'account_owner'):
+    if current_user.role == 'superadmin':
         org_id = requested or current_user.org_id or (allowed[0] if allowed else None)
+    elif current_user.role == 'account_owner':
+        # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): requested принимался
+        # БЕЗ проверки на allowed (контур аккаунта) — владелец мог завести
+        # сотрудника в организации чужого аккаунта по org_id в теле запроса.
+        if requested and allowed is not None and requested in allowed:
+            org_id = requested
+        else:
+            org_id = current_user.org_id or (allowed[0] if allowed else None)
     elif requested and (allowed is None or requested in allowed):
         org_id = requested
     else:

@@ -105,10 +105,26 @@ async def _require_feo_category_write(
         может касаться нескольких субсидий одновременно) — subsidy_id=None: право
         проверяется по ЛЮБОЙ доступной пользователю орге (has_org_key на каждую
         кандидатскую оргу активная+UOA, БЕЗ наследования по иерархии).
-    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
+    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026), но
+    ТОЛЬКО в своём аккаунте — ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026):
+    раньше account_owner обходил эту проверку безусловно и мог
+    редактировать/удалять категории ФЭО субсидии ЧУЖОГО аккаунта по id.
     """
-    if current_user.role in OWNER_ROLES:
+    if current_user.role == "superadmin":
         return
+    if current_user.role == "account_owner":
+        if subsidy_id is not None:
+            from app.models.subsidy import Subsidy as _Subsidy
+            _sub = (await db.execute(
+                select(_Subsidy).where(_Subsidy.id == subsidy_id)
+            )).scalar_one_or_none()
+            if _sub is not None:
+                from app.auth.visibility import is_org_in_owner_account
+                if await is_org_in_owner_account(db, current_user, _sub.org_id):
+                    return
+                raise HTTPException(403, detail={"code": "feo_category_edit_required", "message": "Субсидия вне вашего аккаунта"})
+        else:
+            return  # import без единой субсидии — построчная проверка ниже не знает об account_owner, оставлено как есть
 
     def _deny():
         raise HTTPException(
@@ -367,6 +383,14 @@ async def category_tree(
     current_user=Depends(get_current_user),
 ):
     from app.models.subsidy import Subsidy
+    if subsidy_id is not None:
+        # ИСПРАВЛЕНИЕ С1 (19.10.2026): отзыв user_subsidy_access прячет
+        # субсидию из списка (get_visible_subsidy_ids), но дерево ФЭО
+        # фильтровало только по org_id — пер-субсидийный override
+        # игнорировался. Единственный источник — тот же гейт, что
+        # GET /api/subsidies/{id} (object_visibility.ensure_subsidy_visible).
+        from app.auth.object_visibility import ensure_subsidy_visible
+        await ensure_subsidy_visible(current_user, subsidy_id, db)
     q = select(FeoCategory)
     if subsidy_id is not None:
         q = q.where(FeoCategory.subsidy_id == subsidy_id)
@@ -417,10 +441,16 @@ async def _check_unallocated_write_access(
     них). has_org_key/has_org_key — ненаследующая по иерархии проверка права
     (иерархия «ставлю задачи» не даёт права на чужую субсидию), а
     _has_key_in_any_org для вкладок — та же логика видимости, что и у tab-гейтов.
-    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
+    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026), но
+    ТОЛЬКО в своём — ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026).
     """
-    if current_user.role in OWNER_ROLES:
+    if current_user.role == "superadmin":
         return
+    if current_user.role == "account_owner":
+        from app.auth.visibility import is_org_in_owner_account
+        if org_id is None or await is_org_in_owner_account(db, current_user, org_id):
+            return
+        raise HTTPException(403, detail={"code": "forbidden", "message": "Субсидия вне вашего аккаунта"})
     from app.auth.permissions import has_org_key, _has_key_in_any_org
 
     if await has_org_key(current_user, db, org_id, "feo_category.edit", subsidy_id=subsidy_id):
@@ -568,7 +598,7 @@ async def _collect_subtree_ids(cat_id: int, db: AsyncSession) -> list[int]:
 async def get_category_subtree(
     cat_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Имя категории + id всего поддерева (для фильтра «закупки этой категории»),
     плюс сколько плановых позиций (feo_planned_items) лежит во всём поддереве —
@@ -585,6 +615,10 @@ async def get_category_subtree(
     )).scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. category_tree выше — та же видимость субсидии.
+    if cat.subsidy_id is not None:
+        from app.auth.object_visibility import ensure_subsidy_visible
+        await ensure_subsidy_visible(current_user, cat.subsidy_id, db)
     ids = await _collect_subtree_ids(cat_id, db)
     planned_items_count = (await db.execute(
         select(func.count()).select_from(FeoPlannedItem).where(FeoPlannedItem.feo_category_id.in_(ids))

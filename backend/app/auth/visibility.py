@@ -42,8 +42,13 @@ from app.models.user_org_access import UserOrgAccess
 
 logger = logging.getLogger(__name__)
 
-# SaaS-level roles that bypass all user-level filters
-_SAAS_ROLES = frozenset({"superadmin", "account_owner"})
+# SaaS-level roles that bypass ALL filters globally (across every account).
+# ИСПРАВЛЕНИЕ К1 (19.10.2026): account_owner убран отсюда — он «хозяин СВОЕГО
+# аккаунта», не SaaS-суперпользователь. Его видимость теперь идёт через общий
+# путь ниже, ограниченный account-контуром (compute_account_contour_org_ids,
+# единственный источник — см. jwt.get_current_user и permissions.
+# _get_effective_simple). Менять набор ролей здесь — менять его everywhere.
+_SAAS_ROLES = frozenset({"superadmin"})
 
 # Maximum iterations for the frontier fix-point loop
 _MAX_FRONTIER_ITER = 5
@@ -70,6 +75,19 @@ async def get_visible_user_ids(user: User, db: AsyncSession) -> Optional[set[int
 
     visible: set[int] = {user.id}
     frontier: set[int] = {user.id}
+
+    # account_owner: видит ВСЕХ пользователей своего аккаунта (контур орг),
+    # независимо от иерархии/отделов — «один владелец, видит всё в своём
+    # аккаунте» (Правило №6: тот же compute_account_contour_org_ids, что в
+    # jwt.get_current_user и get_account_contour_org_ids).
+    if user.role == "account_owner":
+        contour_org_ids = await get_account_contour_org_ids(user, db)
+        if contour_org_ids:
+            contour_user_q = select(User.id).where(
+                User.org_id.in_(contour_org_ids), User.role != "superadmin"
+            )
+            contour_users = await db.execute(contour_user_q)
+            visible.update(r[0] for r in contour_users.all())
 
     for _iter in range(_MAX_FRONTIER_ITER):
         if not frontier:
@@ -154,20 +172,30 @@ async def get_visible_user_ids(user: User, db: AsyncSession) -> Optional[set[int
             user.role,
         )
 
-    # Phase 26-AA: «поглощение» — если в подчинённых есть account_owner, наследуем
-    # SaaS-видимость (None = без фильтра). Бизнес-правило: «ты ставишь задачи
-    # account_owner'у → ты видишь то же что и он».
+    # Phase 26-AA (скорректировано 19.10.2026, К1): если в подчинённых есть
+    # account_owner, наследуем его видимость — раньше это было «None» (без
+    # фильтра вообще, SaaS-уровень), но account_owner больше не SaaS-роль,
+    # а только «хозяин своего аккаунта». Наследуем РОВНО то же множество —
+    # контур аккаунта этого account_owner, а не весь SaaS.
     # superadmin намеренно исключён из этой проверки: он невидим для не-суперадминов,
     # поэтому подчинённый-суперадмин не должен давать вызывающему SaaS-видимость.
     if visible - {user.id}:
         saas_check = await db.execute(
-            select(User.id).where(
+            select(User).where(
                 User.id.in_(visible - {user.id}),
                 User.role == "account_owner",
             )
         )
-        if saas_check.first() is not None:
-            return None  # bypass фильтра — наследовал SaaS от account_owner
+        owners = saas_check.scalars().all()
+        for owner in owners:
+            owner_contour_org_ids = await compute_account_contour_org_ids(db, owner.org_id)
+            if owner_contour_org_ids:
+                owner_users = await db.execute(
+                    select(User.id).where(
+                        User.org_id.in_(owner_contour_org_ids), User.role != "superadmin"
+                    )
+                )
+                visible.update(r[0] for r in owner_users.all())
 
     return visible
 
@@ -223,6 +251,20 @@ async def compute_account_contour_org_ids(db: AsyncSession, org_id: Optional[int
 
     contour.add(int(org_id))
     return contour
+
+
+async def owner_scope_org_ids(user: User, db: AsyncSession) -> Optional[set[int]]:
+    """ЕДИНЫЙ источник для «списочных» ручек с копией `role in (superadmin,
+    account_owner) → видно всё» (QA-итерация 2, 19.10.2026): None только для
+    superadmin (без фильтра вообще — настоящий SaaS); для ЛЮБОЙ другой роли,
+    включая account_owner, — контур аккаунта (compute_account_contour_org_ids/
+    get_account_contour_org_ids), а не произвольные 23 организации всех
+    аккаунтов. Для ролей НЕ из OWNER_ROLES вызывающий код сам решает (обычно
+    использует get_org_filter/get_visible_* — эта функция только закрывает
+    копии условия «superadmin/account_owner = всё без ограничений»)."""
+    if user.role == "superadmin":
+        return None
+    return await get_account_contour_org_ids(user, db)
 
 
 async def get_all_orgs_access_org_ids(
@@ -605,7 +647,16 @@ async def build_visibility_clause(user: User, db: AsyncSession, doc_type: str):
 # ---------------------------------------------------------------------------
 
 def _purchase_participation_clauses(user_id: int):
-    """Return list of participation clauses for purchase (no org_id branch)."""
+    """Return list of participation clauses for purchase (no org_id branch).
+
+    QA-итерация 2 (19.10.2026) — регрессия: согласующий закупки (PurchaseApproval.
+    user_id — лист согласования договора/оплаты, routers/purchase_approvals.py)
+    и согласующий заявки (WishApproval.user_id), из которой закупка создана
+    (Purchase.wish_id), должны видеть закупку (и по списку, и по id —
+    ЕДИНСТВЕННЫЙ источник, т.к. and ensure_purchase_visible, и list_purchases
+    читают этот же build_visibility_clause)."""
+    from app.models.purchase_approval import PurchaseApproval
+    from app.models.wish_approval import WishApproval
     return [
         # PurchaseMember — explicitly added to purchase
         Purchase.id.in_(
@@ -628,6 +679,16 @@ def _purchase_participation_clauses(user_id: int):
                 TaskAssignee.user_id == user_id,
                 Task.purchase_id.isnot(None),
             )
+        ),
+        # Approver on the purchase's own approval chain (contract/payment)
+        Purchase.id.in_(
+            select(PurchaseApproval.purchase_id).where(PurchaseApproval.user_id == user_id)
+        ),
+        # Approver on the wish this purchase was created from
+        Purchase.id.in_(
+            select(Purchase.id)
+            .join(WishApproval, WishApproval.wish_id == Purchase.wish_id)
+            .where(WishApproval.user_id == user_id, Purchase.wish_id.isnot(None))
         ),
     ]
 

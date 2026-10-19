@@ -152,7 +152,7 @@ async def get_external_driver(
     driver = await db.get(ExternalDriver, driver_id)
     if not driver:
         raise HTTPException(404, {"code": "NOT_FOUND", "detail": "Водитель не найден"})
-    _check_visibility(driver, current_user)
+    await _check_visibility(driver, current_user, db)
     return _driver_out(driver)
 
 
@@ -169,7 +169,7 @@ async def patch_external_driver(
     driver = await db.get(ExternalDriver, driver_id)
     if not driver:
         raise HTTPException(404, {"code": "NOT_FOUND", "detail": "Водитель не найден"})
-    _check_visibility(driver, current_user)
+    await _check_visibility(driver, current_user, db)
 
     for field, value in data.items():
         if field not in _PATCHABLE_FIELDS:
@@ -193,7 +193,7 @@ async def delete_external_driver(
     driver = await db.get(ExternalDriver, driver_id)
     if not driver:
         raise HTTPException(404, {"code": "NOT_FOUND", "detail": "Водитель не найден"})
-    _check_visibility(driver, current_user)
+    await _check_visibility(driver, current_user, db)
 
     # 409 guard: check if driver is referenced in any trips
     try:
@@ -303,10 +303,20 @@ def _driver_out(d: ExternalDriver) -> dict:
     }
 
 
-def _check_visibility(driver: ExternalDriver, user: User) -> None:
-    """Raise 403 if user cannot see this driver."""
-    if user.role in ("superadmin", "account_owner"):
+async def _check_visibility(driver: ExternalDriver, user: User, db: AsyncSession) -> None:
+    """Raise 403 if user cannot see this driver.
+
+    ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): account_owner раньше обходил
+    проверку целиком (видел водителя ЛЮБОГО аккаунта) — теперь ограничен
+    своим аккаунтом, тем же хелпером, что app/routers/vehicle_attachments.py
+    (единственный источник для этого паттерна — is_org_in_owner_account)."""
+    if user.role == "superadmin":
         return
+    if user.role == "account_owner":
+        from app.auth.visibility import is_org_in_owner_account
+        if driver.org_id is None or await is_org_in_owner_account(db, user, driver.org_id):
+            return
+        raise HTTPException(403, {"code": "FORBIDDEN", "detail": "Нет доступа к этому водителю"})
     org_ids = get_org_filter(user)
     if org_ids is None:
         return

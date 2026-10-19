@@ -73,8 +73,16 @@ async def _check_staff_visibility(target: User, current_user: User, db: AsyncSes
     Свой собственный user_id сюда не попадает — вызывающий код обязан проверить
     это раньше и пропустить self без вызова этой функции.
     """
-    if current_user.role in ("superadmin", "account_owner"):
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): account_owner раньше обходил
+    # проверку безусловно (видел местоположение сотрудника ЛЮБОГО аккаунта) —
+    # теперь только в своём (is_org_in_owner_account).
+    if current_user.role == "superadmin":
         return
+    if current_user.role == "account_owner":
+        from app.auth.visibility import is_org_in_owner_account
+        if target.org_id is None or await is_org_in_owner_account(db, current_user, target.org_id):
+            return
+        raise HTTPException(status_code=403, detail="Этот сотрудник вне вашего аккаунта.")
     if not await _has_key_in_any_org(current_user, db, _LOCATION_VIEW_ACTION):
         raise HTTPException(
             status_code=403,

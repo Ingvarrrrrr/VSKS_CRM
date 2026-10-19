@@ -263,6 +263,9 @@ async def list_approvals(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # ИСПРАВЛЕНИЕ К2 (QA-итерация 2, 19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     result = await db.execute(
         select(PurchaseApproval)
         .where(PurchaseApproval.purchase_id == pid)

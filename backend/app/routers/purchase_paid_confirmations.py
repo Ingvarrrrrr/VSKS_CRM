@@ -91,7 +91,13 @@ async def _can_decide(current_user, db: AsyncSession, subsidy_id: int, org_id: O
     gate (_assert_can_decide, 403 на confirm/reject), и список (который вместо
     403 отдаёт пустой список без права — см. list_subsidy_paid_confirmations)
     читают отсюда, не считают заново."""
-    if current_user.role in _SAAS_BYPASS_ROLES:
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): _SAAS_BYPASS_ROLES считал account_owner
+    # глобальным SaaS-bypass'ом без привязки к org_id/контуру аккаунта —
+    # владелец аккаунта Б видел подтверждения оплаты субсидии аккаунта А.
+    # superadmin — настоящий bypass; account_owner — только если орг субсидии
+    # в его контуре (has_org_key сам это проверяет через permissions.
+    # _get_effective_simple, единственный источник — Правило №6).
+    if current_user.role == "superadmin":
         return True
     if org_id is None:
         subsidy = await db.get(Subsidy, subsidy_id)

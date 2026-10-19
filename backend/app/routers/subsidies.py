@@ -482,8 +482,14 @@ async def _is_subsidy_member(subsidy_id: int, user_id: int, db: AsyncSession) ->
 async def _can_edit_draft_subsidy(subsidy: Subsidy, user: User, db: AsyncSession) -> bool:
     """Пока субсидия в черновике, её содержимое правят автор и участники
     совместной работы (subsidy_members) — без выданного права subsidy.edit."""
-    if user.role in ("superadmin", "account_owner"):
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): account_owner раньше правил
+    # черновик субсидии ЛЮБОГО аккаунта — теперь только своего.
+    if user.role == "superadmin":
         return True
+    if user.role == "account_owner":
+        from app.auth.visibility import is_org_in_owner_account
+        if await is_org_in_owner_account(db, user, subsidy.org_id):
+            return True
     if subsidy.created_by is not None and subsidy.created_by == user.id:
         return True
     return await _is_subsidy_member(subsidy.id, user.id, db)
@@ -724,6 +730,10 @@ async def subsidy_delete_impact(
     Закупки разбиты на группы purchases/wishes/split по видимости в реестре
     закупок (см. докстринг модуля) — раньше единое число «закупок» включало
     status='wishes'/'split', которые /orders не показывает никаким фильтром."""
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): require_tab — «есть вкладка хоть в одной
+    # своей орге», не привязано к subsidy_id из path.
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(current_user, subsidy_id, db)
     return await get_subsidy_delete_impact(db, subsidy_id)
 
 @router.delete("/{subsidy_id}")
@@ -947,6 +957,9 @@ async def get_budget_history(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('subsidies')),
 ):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. delete-impact выше.
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(current_user, subsidy_id, db)
     from app.models.budget_history import BudgetHistory as BudgetHistoryModel
     from sqlalchemy import func as safunc
 

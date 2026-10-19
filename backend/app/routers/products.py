@@ -144,15 +144,29 @@ async def list_products(
 
     # Скрыть контрактные цены для чужих организаций (если не shared).
     # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026) —
-    # контрактная цена своей же орги для него не «чужая».
-    if current_user.role not in OWNER_ROLES:
+    # контрактная цена своей же орги для него не «чужая». ИСПРАВЛЕНИЕ К1
+    # (QA-итерация 2, 19.10.2026): account_owner раньше обходил скрытие
+    # БЕЗУСЛОВНО (видел контрактные цены любой организации любого аккаунта,
+    # т.к. каталог товаров общий — project_products_catalog_shared) — теперь
+    # только для орг своего аккаунта (та же проверка, что у app.routers.
+    # external_drivers.py::_check_visibility — is_org_in_owner_account).
+    if current_user.role != "superadmin":
+        contour_org_ids = None
+        if current_user.role == "account_owner":
+            from app.auth.visibility import get_account_contour_org_ids
+            contour_org_ids = await get_account_contour_org_ids(current_user, db)
         user_org_id = current_user.org_id
         for p in products:
-            if p.contract_org_id and p.contract_org_id != user_org_id and not p.price_shared:
-                p.contract_price = None
-                p.contract_number = None
-                p.contract_date = None
-                p.contract_org_id = None
+            if not p.contract_org_id or p.price_shared:
+                continue
+            if p.contract_org_id == user_org_id:
+                continue
+            if contour_org_ids is not None and p.contract_org_id in contour_org_ids:
+                continue
+            p.contract_price = None
+            p.contract_number = None
+            p.contract_date = None
+            p.contract_org_id = None
 
     # Актуализация цены (владелец, 2026-08-29): контекст правил + курс USD
     # грузится ОДИН раз на весь список, не в цикле по товарам.

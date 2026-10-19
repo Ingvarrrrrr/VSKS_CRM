@@ -99,6 +99,11 @@ async def generate_wish_service_note(
     w = result.scalar_one_or_none()
     if not w:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): та же проверка видимости, что GET
+    # /api/wishes/{id} (services.wish_access.ensure_wish_read_access) —
+    # скачивание служебки по wish_id раньше не проверялось вовсе.
+    from app.services.wish_access import ensure_wish_read_access
+    await ensure_wish_read_access(w, current_user, db)
 
     # ── Resolve doc_type + template path (subsidy override → global → fallback) ──
     _note_doc_type = "service_note_advance" if getattr(w, "source", None) == "advance_report" else "service_note_procurement"
@@ -378,6 +383,10 @@ async def generate_wish_tech_spec(
     w = result.scalar_one_or_none()
     if not w:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. generate_wish_service_note выше —
+    # тот же гейт, не второй механизм (Правило №6).
+    from app.services.wish_access import ensure_wish_read_access
+    await ensure_wish_read_access(w, current_user, db)
     if not (w.items or []):
         raise HTTPException(status_code=422, detail="В заявке нет позиций — нечего печатать в ТЗ")
 

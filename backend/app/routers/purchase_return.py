@@ -61,6 +61,9 @@ async def preview_return_to_wish(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     p = await _load_purchase(pid, db)
     return compute_return_to_wish_preview(p)
 

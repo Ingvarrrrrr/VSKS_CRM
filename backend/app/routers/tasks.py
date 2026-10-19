@@ -726,9 +726,11 @@ async def get_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    t = await db.get(Task, task_id)
-    if not t:
-        raise HTTPException(404, "Задача не найдена")
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): видимость по id = видимость в списке —
+    # list_tasks использует build_visibility_clause('task'), а get_task
+    # раньше не проверял вовсе (object_visibility.py, Правило №6).
+    from app.auth.object_visibility import ensure_task_visible
+    t = await ensure_task_visible(current_user, task_id, db)
     result = await _enrich_tasks([t], db)
     return result[0]
 

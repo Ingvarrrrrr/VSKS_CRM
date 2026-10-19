@@ -143,10 +143,20 @@ async def _check_planned_item_write_access(current_user, db: AsyncSession, cat: 
     POST /bulk, PUT /{id}, /map по-прежнему НЕ используют этот хелпер —
     остаются доступны только через вкладку feo_categories (владелец
     ограничил задачу именно созданием/удалением одиночной позиции).
-    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
+    Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026), но
+    ТОЛЬКО в своём — ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026).
     """
-    if current_user.role in OWNER_ROLES:
+    if current_user.role == "superadmin":
         return
+    if current_user.role == "account_owner":
+        org_id_for_cat = None
+        if cat.subsidy_id is not None:
+            _sub = (await db.execute(select(Subsidy).where(Subsidy.id == cat.subsidy_id))).scalar_one_or_none()
+            org_id_for_cat = _sub.org_id if _sub is not None else None
+        from app.auth.visibility import is_org_in_owner_account
+        if org_id_for_cat is None or await is_org_in_owner_account(db, current_user, org_id_for_cat):
+            return
+        raise HTTPException(403, "Субсидия вне вашего аккаунта")
     has_tab = await _has_key_in_any_org(current_user, db, 'feo_categories')
     has_edit_feo = False
     if not has_tab and cat.subsidy_id is not None:

@@ -225,6 +225,9 @@ async def export_subsidy_report_xlsx(
     Генерирует Excel-файл Приложение №3 по субсидии.
     21 колонка (A–U), по одной строке на закупку.
     """
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(current_user, subsidy_id, db)
     try:
         import openpyxl
         from openpyxl.styles import Font, Alignment, PatternFill, Border, Side, numbers

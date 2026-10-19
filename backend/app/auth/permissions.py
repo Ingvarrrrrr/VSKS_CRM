@@ -154,6 +154,20 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
     # _has_key_in_any_org все идут через _get_effective_simple (напрямую или
     # через _get_effective) — второй формулы «владелец = всё» в проекте нет.
     if user.role == "account_owner":
+        # ИСПРАВЛЕНИЕ К1 (19.10.2026): «владелец = всё» ограничено контуром ЕГО
+        # аккаунта, иначе владелец аккаунта Б получал все права в организации
+        # аккаунта А просто передав её org_id в ручку. Контур — тот же
+        # единственный источник, что в jwt.get_current_user (_contour_org_ids)
+        # и visibility.get_account_contour_org_ids (Правило №6).
+        if org_id is not None:
+            from app.auth.visibility import compute_account_contour_org_ids
+            contour = getattr(user, "_contour_org_ids", None)
+            if contour is None:
+                contour = await compute_account_contour_org_ids(db, user.org_id)
+            else:
+                contour = set(contour)
+            if int(org_id) not in {int(x) for x in contour}:
+                return set()
         from app.models.permission import PermissionTab, PermissionAction
         tab_keys = {r for r, in (await db.execute(select(PermissionTab.tab_key))).all()}
         action_keys = {r for r, in (await db.execute(select(PermissionAction.action_key))).all()}
@@ -337,6 +351,11 @@ async def assert_can_manage_user_access(
         target_user = await db.get(User, target_user_id)
         if target_user is not None and target_user.role == "superadmin":
             raise HTTPException(403, "Нельзя менять допуски суперадмина.")
+        # ИСПРАВЛЕНИЕ К1 (19.10.2026): «владелец аккаунта может всё» — но
+        # только СВОЕГО аккаунта. Без этой проверки владелец аккаунта Б мог
+        # редактировать допуски сотрудника аккаунта А по одному known id.
+        if target_user is not None:
+            await assert_target_in_owner_account(current_user, target_user, db)
         return
     # account_owner обработан выше и сюда никогда не доходит — is_self здесь
     # всегда означает ОБЫЧНОГО пользователя, редактирующего самого себя,
@@ -378,12 +397,11 @@ async def assert_target_in_owner_account(
     ЕДИНСТВЕННЫМ каноническим расчётом контура — visibility.compute_account_
     contour_org_ids (Правило №6, не дублировать логику дерева организаций).
 
-    Намеренно НЕ через get_account_contour_org_ids(current_user, db): та
-    обёртка в первую очередь читает кэш current_user._contour_org_ids, а
-    jwt.get_current_user оставляет этот кэш ПУСТЫМ именно для account_owner
-    (роль и так обходит visibility-ограничения на остальных путях) — обёртка
-    вернула бы пустое множество для КАЖДОГО account_owner, а не настоящий
-    контур. Здесь контур нужен по-настоящему, поэтому считаем напрямую.
+    С 19.10.2026 (исправление К1) jwt.get_current_user уже заполняет
+    _contour_org_ids и для account_owner, поэтому get_account_contour_org_ids
+    тоже можно было бы использовать — здесь оставлен прямой вызов
+    compute_account_contour_org_ids, чтобы не зависеть от наличия кэша на
+    объекте current_user (например, если вызвано не из обычного request-флоу).
 
     Если current_user не account_owner — no-op, вызывающий код сам решает,
     когда её вызывать. Если у target нет ни одной орги — разрешить (сотрудник

@@ -58,9 +58,15 @@ async def toggle_price_sharing(
     if not product:
         raise HTTPException(404, "Товар не найден")
     # Только владелец организации, хозяин аккаунта (в своём аккаунте, владелец
-    # 16.10.2026) или superadmin.
-    if current_user.role not in OWNER_ROLES:
-        if product.contract_org_id != current_user.org_id:
+    # 16.10.2026) или superadmin. ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026):
+    # account_owner раньше обходил это безусловно для ЛЮБОЙ organizации —
+    # теперь только если контрактная орга в его собственном контуре.
+    if current_user.role != "superadmin":
+        allowed = product.contract_org_id == current_user.org_id
+        if not allowed and current_user.role == "account_owner":
+            from app.auth.visibility import is_org_in_owner_account
+            allowed = product.contract_org_id is None or await is_org_in_owner_account(db, current_user, product.contract_org_id)
+        if not allowed:
             raise HTTPException(403, "Только организация-владелец контракта может управлять доступом к цене")
     product.price_shared = bool(data.get("shared", False))
     await db.commit()

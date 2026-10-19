@@ -249,9 +249,18 @@ async def create_department(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('staff')),
 ):
-    # Superadmin can assign to any org via body.org_id; others use their org
-    if data.org_id and current_user.role in ('superadmin', 'account_owner'):
+    # Superadmin can assign to any org via body.org_id; account_owner only
+    # within own account contour (ИСПРАВЛЕНИЕ К1, QA-итерация 2, 19.10.2026—
+    # раньше принимал ЛЮБОЙ data.org_id, включая орг чужого аккаунта).
+    if data.org_id and current_user.role == 'superadmin':
         org_id = data.org_id
+    elif data.org_id and current_user.role == 'account_owner':
+        from app.auth.visibility import owner_scope_org_ids
+        scope = await owner_scope_org_ids(current_user, db)
+        if scope and data.org_id in scope:
+            org_id = data.org_id
+        else:
+            raise HTTPException(403, "Организация вне вашего аккаунта")
     else:
         org_id = get_single_org_id(current_user) or current_user.org_id
     # 27.4-02: НЕ применяем .title() — он ломает аббревиатуры («отдел МТО» → «Отдел Мто»).

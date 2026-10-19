@@ -150,6 +150,11 @@ async def transition_status(
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Закупка не найдена")
+    # ИСПРАВЛЕНИЕ К2 (QA-итерация 2, 19.10.2026): transition_status не
+    # проверял видимость вовсе — любой пользователь мог сменить статус чужой
+    # закупки по id. См. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
 
     # Владелец (2026-09-29): «авансовый не должен уходить в план закупок без
     # согласования возмещения — иначе все сотрудники наделают авансовых и
@@ -333,6 +338,9 @@ async def convert_service_note_to_order(
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Закупка не найдена")
+    # ИСПРАВЛЕНИЕ К2 (QA-итерация 2, 19.10.2026): см. transition_status выше.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     if p.purchase_basis != 'service_note':
         raise HTTPException(422, "Конвертация доступна только для служебных записок")
     p.purchase_basis = 'plan_schedule'

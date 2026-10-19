@@ -47,6 +47,9 @@ async def get_wish_purchases_board(
     from app.services.product_catalog_match import normalize_product_name, find_products_by_normalized_names
 
     wish = await _load_wish(wish_id, db)
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py / wish_access.py.
+    from app.services.wish_access import ensure_wish_read_access
+    await ensure_wish_read_access(wish, current_user, db)
 
     purchases_res = await db.execute(
         select(Purchase)

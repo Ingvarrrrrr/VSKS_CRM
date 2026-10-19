@@ -50,6 +50,9 @@ async def get_purchase_tz_rows(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     p = await _load_purchase_with_items(pid, db)
     decisions = dict(p.tz_duplicate_decisions or {})
     built = build_tz_rows(p.items or [], decisions)

@@ -150,6 +150,10 @@ async def submit_wish(
 ):
     """Submit a draft wish for approval (creator only, draft/rejected -> submitted)."""
     wish = await wishes_core._load_wish(wish_id, db)
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): _is_saas(account_owner) ниже
+    # обходил created_by/member без org-проверки вовсе — см. update_wish.
+    from app.services.wish_access import ensure_wish_read_access
+    await ensure_wish_read_access(wish, current_user, db)
 
     if not wishes_core._is_saas(current_user) and wish.created_by != current_user.id:
         # Участники заявки (WishMember) тоже могут отправить её на согласование
@@ -372,6 +376,10 @@ async def patch_wish_execution(
     Разрешено: assignee (согласующий), admin/manager. Только на submitted/approved.
     """
     wish = await wishes_core._load_wish(wish_id, db)
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): _is_saas(account_owner) ниже
+    # обходил проверки без привязки к аккаунту — см. wishes.py::update_wish.
+    from app.services.wish_access import ensure_wish_read_access
+    await ensure_wish_read_access(wish, current_user, db)
     if not wishes_core._is_saas(current_user) and wish.status not in ("submitted", "approved"):
         raise HTTPException(status_code=400, detail="Срок и исполнителя можно задать только на статусах submitted/approved")
     if not wishes_core._is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:

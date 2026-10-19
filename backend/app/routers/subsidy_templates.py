@@ -21,7 +21,9 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import get_db
 from app.auth.permissions import require_tab, require_action
 
 try:
@@ -93,9 +95,15 @@ def _check_template_render_ok(path: str) -> bool:
 @router.get("/{subsidy_id}/templates")
 async def list_subsidy_templates(
     subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('subsidies')),
 ):
     """List which doc types have a subsidy-specific template override."""
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): require_tab('subsidies') — гейт «есть ли
+    # вкладка хоть в одной своей орге», НЕ привязан к субсидии из path —
+    # любой с вкладкой «Субсидии» читал шаблоны ЧУЖОЙ субсидии по id.
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(current_user, subsidy_id, db)
     result = []
     subsidy_dir = os.path.join(SUBSIDY_TEMPLATES_BASE, "subsidies", str(subsidy_id))
     for doc_type, label in SUPPORTED_DOC_TYPES.items():

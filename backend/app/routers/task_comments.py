@@ -47,9 +47,10 @@ async def list_comments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    task = await db.get(Task, task_id)
-    if not task:
-        raise HTTPException(404, "Задача не найдена")
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py — тот же гейт,
+    # что у списка задач.
+    from app.auth.object_visibility import ensure_task_visible
+    await ensure_task_visible(current_user, task_id, db)
     result = await db.execute(
         select(TaskComment)
         .where(TaskComment.task_id == task_id)
@@ -65,9 +66,10 @@ async def add_comment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    task = await db.get(Task, task_id)
-    if not task:
-        raise HTTPException(404, "Задача не найдена")
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. list_comments выше — писать в задачу,
+    # которую не видишь в списке, тоже нельзя.
+    from app.auth.object_visibility import ensure_task_visible
+    task = await ensure_task_visible(current_user, task_id, db)
     if not body.text.strip():
         raise HTTPException(422, "Комментарий не может быть пустым")
     comment = TaskComment(

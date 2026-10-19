@@ -60,6 +60,19 @@ def _is_saas(user: User) -> bool:
     return user.role in OWNER_ROLES
 
 
+async def _is_saas_for_org(user: User, db: AsyncSession, org_id: int | None) -> bool:
+    """ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): _is_saas(user) выше считал
+    account_owner SaaS-ролью БЕЗ привязки к org_id — владелец аккаунта Б мог
+    решить шаг согласования превышения плана субсидии аккаунта А. Используется
+    вместо _is_saas(user) везде, где уже известен org_id конкретного approval."""
+    if user.role == "superadmin":
+        return True
+    if user.role == "account_owner":
+        from app.auth.visibility import is_org_in_owner_account
+        return org_id is None or await is_org_in_owner_account(db, user, org_id)
+    return False
+
+
 async def _authorized_plan_excess_approvers(
     db: AsyncSession, org_id: int, subsidy_id: int, exclude_user_id: int | None = None,
 ) -> list[User]:
@@ -174,7 +187,7 @@ async def _plan_excess_decide_error(
     Возвращает None, если решать можно; иначе — текст причины отказа (тот же,
     что раньше был захардкожен в /decide).
     """
-    if _is_saas(user):
+    if await _is_saas_for_org(user, db, org_id):
         return None
     if not await has_org_key(user, db, org_id, "plan_excess.decide", subsidy_id=approval.subsidy_id):
         return "Право на согласование превышения плана ФЭО не выдано, обратитесь к администратору"
@@ -204,7 +217,7 @@ async def _can_decide_plan_excess(
     if not pending_steps:
         return False
     candidates = pending_steps if approval.mode == "parallel" else pending_steps[:1]
-    is_saas = _is_saas(user)
+    is_saas = await _is_saas_for_org(user, db, org_id)
     step = next((s for s in candidates if s.user_id == user.id), None)
     if step is None:
         if not is_saas:
@@ -248,8 +261,15 @@ async def list_plan_excess_approvals(
     # орги, что и в /decide) — считаем один раз.
     org_id = subsidy.org_id or get_single_org_id(current_user)
 
-    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
-    if current_user.role not in OWNER_ROLES and not await _has_key_in_any_org(current_user, db, "feo_categories"):
+    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026), но
+    # ТОЛЬКО в своём — ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): is_owner_ok
+    # ниже заменяет голый "role in OWNER_ROLES", чтобы account_owner чужого
+    # аккаунта не обходил проверку по субсидии чужого аккаунта.
+    is_owner_ok = current_user.role == "superadmin"
+    if not is_owner_ok and current_user.role == "account_owner":
+        from app.auth.visibility import is_org_in_owner_account
+        is_owner_ok = org_id is None or await is_org_in_owner_account(db, current_user, org_id)
+    if not is_owner_ok and not await _has_key_in_any_org(current_user, db, "feo_categories"):
         if not await has_org_key(current_user, db, org_id, "plan_excess.decide", subsidy_id=subsidy_id):
             raise HTTPException(
                 403,

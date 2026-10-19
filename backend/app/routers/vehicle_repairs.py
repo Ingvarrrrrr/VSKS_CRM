@@ -61,10 +61,12 @@ def _get_user_org_ids(user) -> Optional[List[int]]:
 def _check_vehicle_visibility(vehicle: Vehicle, user) -> None:
     """403 если юзер не видит данный Vehicle (по org).
 
-    SaaS-роли (superadmin / account_owner с org_ids=None) — bypass.
+    SaaS-роль (superadmin, org_ids=None) — bypass. account_owner — контур
+    своего аккаунта (ИСПРАВЛЕНИЕ К1, QA-итерация 2, 19.10.2026: раньше был
+    безусловным bypass как superadmin).
     Visibility: пересечение {owner_org_id, assigned_org_id} ∩ user.org_ids.
     """
-    if user.role in ("superadmin", "account_owner"):
+    if user.role == "superadmin":
         return
     org_ids = _get_user_org_ids(user)
     if org_ids is None:
@@ -305,6 +307,10 @@ async def get_repair_link_for_purchase(
     связанного с данной закупкой, или null если нет.
     Используется на фронте для cross-link Purchase ↔ Repair.
     """
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): require_tab("vehicles") — вкладка хоть в
+    # одной своей орге, не привязана к purchase_id из path.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, purchase_id, db)
     result = await db.execute(
         select(VehicleRepair.id, VehicleRepair.vehicle_id)
         .where(VehicleRepair.purchase_id == purchase_id)

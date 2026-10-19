@@ -47,9 +47,14 @@ def _feature_gate() -> None:
 
 
 async def _can_review(db: AsyncSession, user: User, subsidy: Subsidy) -> bool:
-    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
-    if user.role in OWNER_ROLES:
+    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026), но
+    # ТОЛЬКО в своём — ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026).
+    if user.role == "superadmin":
         return True
+    if user.role == "account_owner":
+        from app.auth.visibility import is_org_in_owner_account
+        if await is_org_in_owner_account(db, user, subsidy.org_id):
+            return True
     return await has_org_key(user, db, subsidy.org_id, "subsidy.edit", subsidy_id=subsidy.id)
 
 
@@ -63,8 +68,10 @@ async def _load_revision(db: AsyncSession, revision_id: int) -> SubsidyRevision:
 
 
 async def _require_participant(db: AsyncSession, user: User, revision: SubsidyRevision, subsidy: Subsidy) -> None:
-    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
-    if user.role in OWNER_ROLES or user.id == revision.author_id:
+    # Автор — всегда; superadmin — всегда; account_owner — ТОЛЬКО в своём
+    # аккаунте (ИСПРАВЛЕНИЕ К1, QA-итерация 2, 19.10.2026) — _can_review ниже
+    # уже содержит эту проверку, не дублируем условие по-другому.
+    if user.id == revision.author_id or user.role == "superadmin":
         return
     if await _can_review(db, user, subsidy):
         return

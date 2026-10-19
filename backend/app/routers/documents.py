@@ -141,6 +141,10 @@ async def download_fabrikant_package(
     """
     import zipfile as _zipfile
 
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
+
     rendered, errors = await render_fabrikant_package_files(db, pid, current_user)
 
     if not rendered:
@@ -184,6 +188,9 @@ async def download_kp_xlsx(
     current_user=Depends(get_current_user),
 ):
     """Generate xlsx with purchase items (for КП request attachment)."""
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     return await build_kp_xlsx(pid, db)
 
 

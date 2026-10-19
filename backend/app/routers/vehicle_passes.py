@@ -51,8 +51,11 @@ _PASS_PATCHABLE = {"name", "status", "expires_at", "note"}
 
 def _check_vehicle_visibility(vehicle: Vehicle, user) -> None:
     """403, если пользователь не видит данный Vehicle (та же логика, что и в
-    других sub-resource роутерах ТС — app/routers/vehicle_repairs.py)."""
-    if user.role in ("superadmin", "account_owner"):
+    других sub-resource роутерах ТС — app/routers/vehicle_repairs.py).
+
+    ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): см. vehicles.py::
+    _check_vehicle_visibility — account_owner больше не безусловный bypass."""
+    if user.role == "superadmin":
         return
     org_ids = get_org_filter(user)
     if org_ids is None:

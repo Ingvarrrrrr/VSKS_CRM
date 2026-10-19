@@ -295,6 +295,9 @@ async def links(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, purchase_id, db)
     p = await db.get(Purchase, purchase_id)
     if p is None:
         raise HTTPException(status_code=404, detail={"code": "PURCHASE_NOT_FOUND", "message": "Закупка не найдена"})

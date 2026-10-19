@@ -186,8 +186,13 @@ def _visibility_q(user: User):
 
 
 def _check_vehicle_visibility(vehicle: Vehicle, user: User) -> None:
-    """Raise 403 if user has no access to this specific vehicle (D-06)."""
-    if user.role in ("superadmin", "account_owner"):
+    """Raise 403 if user has no access to this specific vehicle (D-06).
+
+    ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): account_owner раньше обходил
+    эту проверку безусловно (видел ТС любого аккаунта) — get_org_filter уже
+    возвращает контур аккаунта для account_owner (не None), поэтому убираем
+    его из безусловного bypass и пускаем через обычную ветку ниже."""
+    if user.role == "superadmin":
         return
     org_ids = get_org_filter(user)
     if org_ids is None:

@@ -569,6 +569,11 @@ async def load_purchase_for_out(db: AsyncSession, pid: int) -> Purchase | None:
 
 @router.get("/{pid}", response_model=PurchaseOutFull)
 async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): видимость по id = видимость в списке —
+    # см. backend/app/auth/object_visibility.py (переиспользует тот же
+    # build_visibility_clause/get_visible_subsidy_ids, что list_purchases).
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     p = await load_purchase_for_out(db, pid)
     if not p:
         raise HTTPException(404, "Not found")
@@ -838,6 +843,27 @@ async def create_purchase(
     for _alloc in (data.subsidy_allocations or []):
         await assert_subsidy_approved_for_binding(db, _alloc.subsidy_id)
 
+    # ИСПРАВЛЕНИЕ С1 (19.10.2026): assert_subsidy_approved_for_binding проверяет
+    # только СТАТУС субсидии (draft/approved), не доступ конкретного
+    # пользователя — отозванный per-subsidy грант (UserSubsidyAccess) не мешал
+    # завести закупку в субсидии, к которой доступ явно отозван. Тот же
+    # источник видимости, что у списка закупок (routers/purchases.py::
+    # list_purchases, scope purchases/advance_reports/service_notes).
+    if data.subsidy_id is not None:
+        from app.auth.visibility import get_visible_subsidy_ids
+        from app.models.user_subsidy_access import UserSubsidyAccess
+        _scope = "advance_reports" if is_advance else ("service_notes" if is_sn else "purchases")
+        _vis_subs = await get_visible_subsidy_ids(current_user, db, _scope)
+        if _vis_subs is not None and data.subsidy_id not in _vis_subs:
+            _granted = (await db.execute(
+                select(UserSubsidyAccess.id).where(
+                    UserSubsidyAccess.user_id == current_user.id,
+                    UserSubsidyAccess.subsidy_id == data.subsidy_id,
+                )
+            )).scalar_one_or_none()
+            if _granted is None:
+                raise HTTPException(404, "Субсидия не найдена")
+
     items_data = data.items or []
 
     # Авансовый (владелец, 30.09.2026, решение повторное и жёсткое): каждая
@@ -1019,6 +1045,14 @@ async def update_purchase(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): _has_purchase_write_access по дизайну
+    # полагается на то, что «кто смог прочесть (GET /{pid}), тот может и
+    # сохранить» — но до этой правки GET /{pid} сам не проверял видимость,
+    # поэтому PATCH/PUT тоже были открыты. Теперь GET гейтится через
+    # object_visibility.ensure_purchase_visible — PUT/PATCH обязаны пройти
+    # ТОТ ЖЕ гейт, а не полагаться на устаревшее предположение комментария.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
     p = result.scalar_one_or_none()
     if not p:
@@ -2026,6 +2060,9 @@ async def patch_purchase(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. update_purchase (PUT) выше — тот же гейт.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     p = await db.get(Purchase, pid)
     if not p:
         raise HTTPException(404, "Not found")

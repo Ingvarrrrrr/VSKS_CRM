@@ -116,8 +116,16 @@ async def initiator_candidate_ids(db: AsyncSession, current_user, subsidy) -> se
 
     staff = await org_staff_user_ids(db, org_id)
 
-    if current_user.role in ("superadmin", "account_owner"):
+    if current_user.role == "superadmin":
         return staff
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): account_owner раньше получал
+    # штат ЛЮБОЙ организации — теперь как у admin ниже, только если org_id в
+    # контуре его аккаунта (единственный источник — compute_account_contour_org_ids).
+    if current_user.role == "account_owner":
+        from app.auth.visibility import compute_account_contour_org_ids
+        contour = await compute_account_contour_org_ids(db, current_user.org_id)
+        if org_id in contour:
+            return staff
 
     # admin («Администратор аккаунта») — весь штат, если орг субсидии в контуре
     # его аккаунта.

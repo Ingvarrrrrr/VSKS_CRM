@@ -35,11 +35,15 @@ router = APIRouter(tags=["organization-director"])
 
 
 async def _check_view_access(db: AsyncSession, current_user: User, org_id: int) -> None:
-    """Тот же гейт видимости, что у GET /api/organizations/{id}."""
-    if current_user.role not in ('superadmin', 'account_owner'):
+    """Тот же гейт видимости, что у GET /api/organizations/{id}.
+
+    ИСПРАВЛЕНИЕ К1 (19.10.2026): account_owner исключался из проверки —
+    get_org_filter теперь сам ограничивает его контуром аккаунта (единственный
+    источник), второе исключение здесь было избыточным и опасным."""
+    if current_user.role != 'superadmin':
         visible = get_org_filter(current_user)
         if visible is not None and org_id not in visible:
-            raise HTTPException(403, "Нет доступа к этой организации")
+            raise HTTPException(404, "Организация не найдена")
 
 
 async def _load_org(db: AsyncSession, org_id: int) -> Organization:

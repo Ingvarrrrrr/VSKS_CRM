@@ -54,6 +54,12 @@ async def get_feo_leaves(
     приходят 0, структура ответа не меняется (закрытие дыры: раньше эндпоинт вообще
     не проверял права, см. задачу владельца 2026-08-06).
     """
+    # ИСПРАВЛЕНИЕ К2 (QA-итерация 3, 19.10.2026): эндпоинт не проверял
+    # видимость субсидии вовсе (только денежные поля гейтились правом) —
+    # см. object_visibility.py, тот же источник, что category_tree.
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(current_user, subsidy_id, db)
+
     can_view_leaf = await fc._has_feo_action(current_user, db, "feo_budget.view_leaf")
     from sqlalchemy import select
 
@@ -141,6 +147,10 @@ async def feo_budget_residuals(
             leaves:[{id,name,level,path,budget,used,residual,ancestors:[...]}]}
     (ancestors — сверху вниз: ур.1 первым).
     """
+    # ИСПРАВЛЕНИЕ К2 (QA-итерация 3, 19.10.2026): см. get_feo_leaves выше.
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(current_user, subsidy_id, db)
+
     from app.auth.permissions import _get_effective, _active_org
     effective = await _get_effective(current_user, db, _active_org(current_user))
     # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).

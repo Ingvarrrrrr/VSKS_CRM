@@ -93,6 +93,11 @@ async def generate_document_bytes(
 
     # Stage 2: load purchase + relations.
     p = await load_purchase_and_relations(db, pid)
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): видимость по id = видимость в списке —
+    # сотрудник чужой орг. скачивал ТЗ/договор по известному pid, хотя сама
+    # закупка/субсидия ему не видны (object_visibility.py, Правило №6).
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     await apply_responsible_person_update(p, responsible_name, db)
 
     # Stage 3: framework-head temp contract number + doc-type gates.

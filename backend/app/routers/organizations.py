@@ -315,12 +315,18 @@ async def assignable_organizations(
     управляющий несколькими орг (напр. Маркодеева → ВСКС + Донецкое), мог выбрать
     целевую орг при добавлении сотрудника, а не был жёстко привязан к своей.
     """
-    from app.auth.jwt import get_org_filter
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): локальная копия «superadmin/
+    # account_owner = все орг» отдавала владельцу аккаунта Б ВСЕ организации
+    # ВСЕХ аккаунтов (23 орг, включая чужие 1/5/34222). Единственный источник —
+    # owner_scope_org_ids (None только для superadmin, иначе контур аккаунта).
+    from app.auth.visibility import owner_scope_org_ids
     base_q = select(Organization).options(selectinload(Organization.contractor)).order_by(Organization.name)
-    if current_user.role in ('superadmin', 'account_owner'):
+    scope = await owner_scope_org_ids(current_user, db)
+    if scope is None:
         orgs = (await db.execute(base_q)).scalars().all()
     else:
-        allowed = get_org_filter(current_user)
+        from app.auth.jwt import get_org_filter
+        allowed = set(get_org_filter(current_user) or []) | scope
         if not allowed:
             return []
         orgs = (await db.execute(base_q.where(Organization.id.in_(allowed)))).scalars().all()
@@ -473,9 +479,20 @@ async def list_organizations(
     current_user: User = Depends(get_current_user),
 ):
     # 29.3-a5: GET LIST доступен любому залогиненному (нужен для dropdown'ов
-    # «Владелец/Эксплуатат» во VehicleListView, VehicleDetailView, StaffView).
+    # «Владелец/Эксплуатат» во VehicleListView, VehicleDetailView, StaffView,
+    # а также каталог имён organizations в useStaffOrganizations.ts).
     # Раньше был require_superadmin → admin получал 403, ломая UI dropdown'ы.
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 3, 19.10.2026): «доступен любому» отдавал
+    # организации ВСЕХ аккаунтов (ИНН/адрес/подписант/банк. реквизиты) —
+    # теперь ограничено контуром аккаунта пользователя (owner_scope_org_ids,
+    # None только для superadmin — единственный источник, тот же, что К1 в
+    # остальных 54 местах). Dropdown'ы ТС/штата работают внутри своего
+    # аккаунта — им чужих организаций и не требовалось.
+    from app.auth.visibility import owner_scope_org_ids
+    scope = await owner_scope_org_ids(current_user, db)
     q = select(Organization).options(selectinload(Organization.contractor))
+    if scope is not None:
+        q = q.where(Organization.id.in_(scope))
     if search:
         like = f"%{search}%"
         q = q.where(
@@ -649,11 +666,20 @@ async def update_organization_color(
 async def toggle_org_active(
     org_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     _=Depends(require_role('superadmin', 'admin', 'account_owner')),
 ):
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(404, "Организация не найдена")
+    # ИСПРАВЛЕНИЕ К1 (19.10.2026): require_role пропускал любого account_owner
+    # на ЛЮБУЮ организацию по id — владелец аккаунта Б мог выключить/включить
+    # «ВСКС» аккаунта А. Видимость по id = видимость в списке (get_org_filter).
+    if current_user.role != 'superadmin':
+        from app.auth.jwt import get_org_filter
+        visible = get_org_filter(current_user)
+        if visible is not None and org_id not in visible:
+            raise HTTPException(404, "Организация не найдена")
     org.is_active = not org.is_active
     await db.commit()
     return {"id": org.id, "is_active": org.is_active}
@@ -676,11 +702,14 @@ async def get_organization(
     org = res.scalar_one_or_none()
     if not org:
         raise HTTPException(404, "Организация не найдена")
-    if current_user.role not in ('superadmin', 'account_owner'):
+    if current_user.role != 'superadmin':
+        # ИСПРАВЛЕНИЕ К1 (19.10.2026): account_owner больше не обходит эту
+        # проверку — get_org_filter теперь сам ограничивает его контуром
+        # своего аккаунта (единственный источник — compute_account_contour_org_ids).
         from app.auth.jwt import get_org_filter
         visible = get_org_filter(current_user)
         if visible is not None and org_id not in visible:
-            raise HTTPException(403, "Нет доступа к этой организации")
+            raise HTTPException(404, "Организация не найдена")
     uc = (await db.execute(select(func.count()).where(User.org_id == org.id))).scalar() or 0
     return _merge_org_with_contractor(org, user_count=uc)
 
@@ -689,11 +718,18 @@ async def get_organization(
 async def organization_delete_impact(
     org_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     _=Depends(require_role('superadmin', 'admin', 'account_owner')),
 ):
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(404, "Организация не найдена")
+    # ИСПРАВЛЕНИЕ К1 (19.10.2026) — см. toggle_org_active выше.
+    if current_user.role != 'superadmin':
+        from app.auth.jwt import get_org_filter
+        visible = get_org_filter(current_user)
+        if visible is not None and org_id not in visible:
+            raise HTTPException(404, "Организация не найдена")
     from app.models.user import User as _U
     from app.models.user_organization import UserOrganization as _UO
     from app.models.department import Department as _D

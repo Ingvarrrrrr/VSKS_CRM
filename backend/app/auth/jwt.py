@@ -120,9 +120,14 @@ async def get_current_user(
     # сотрудники корня теряют субсидии, перепривязанные к дочерним оргам
     # (Wave 2: org_id = грантополучатель), а орг-роли остаются per-org через UOA.
     user._contour_org_ids = []
-    if user.role not in ('superadmin', 'account_owner') and user.org_id:
+    if user.role != 'superadmin' and user.org_id:
         # Канонический расчёт — visibility.compute_account_contour_org_ids
         # (lazy import: visibility импортирует из jwt, прямой был бы циклом)
+        # account_owner ВКЛЮЧЁН (исправление К1, 19.10.2026): «хозяин аккаунта»
+        # видит и может всё СВОЁМ аккаунте (корневая орга + все дочерние,
+        # + owner_user_id-связь), а не во всех аккаунтах SaaS. Единственный
+        # источник контура — эта же функция, см. get_org_filter ниже и
+        # permissions._get_effective_simple.
         from app.auth.visibility import compute_account_contour_org_ids
         user._contour_org_ids = list(
             await compute_account_contour_org_ids(db, user.org_id)
@@ -227,15 +232,21 @@ def require_role(*roles):
     return checker
 
 def get_org_filter(current_user: User) -> Optional[List[int]]:
-    """Returns None for SaaS roles without selection, list of org_ids otherwise.
+    """Returns None for superadmin without selection, list of org_ids otherwise.
 
-    Phase 26-Z: account_owner был ошибочно в обычной org-фильтрации, хотя по
-    OWNER_ROLES/_SAAS_ROLES должен видеть всё. Цыганов (account_owner) без
-    привязки к отделу не видел закупок, потому что _active_org_ids был пуст
-    или фильтровал только его явные org'и.
+    Phase 26-Z: account_owner раньше был в обычной org-фильтрации, хотя по
+    OWNER_ROLES/_SAAS_ROLES должен был видеть всё в своём аккаунте. Цыганов
+    (account_owner) без привязки к отделу не видел закупок, потому что
+    _active_org_ids был пуст или фильтровал только его явные org'и — это чинится
+    ниже через _contour_org_ids (ЕДИНЫЙ источник: compute_account_contour_org_ids).
+
+    ИСПРАВЛЕНИЕ К1 (19.10.2026): account_owner НЕ SaaS-роль «видит всё во всех
+    аккаунтах» — только superadmin. account_owner ограничен контуром своего
+    аккаунта и падает в общую ветку ниже (contour_ids заполнен для него в
+    get_current_user).
     """
-    # SaaS-роли — без фильтра по умолчанию, опционально с активной выборкой
-    if current_user.role in ('superadmin', 'account_owner'):
+    # Только superadmin — без фильтра по умолчанию, опционально с активной выборкой
+    if current_user.role == 'superadmin':
         org_ids = getattr(current_user, '_active_org_ids', None)
         return org_ids  # None = no filter (all), list = selected orgs
     # For all other roles: account contour (глобальная роль действует на весь

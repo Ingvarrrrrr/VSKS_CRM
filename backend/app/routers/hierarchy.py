@@ -137,10 +137,14 @@ async def get_hierarchy_graph(
     current_user: User = Depends(get_current_user),
 ):
     org_ids = get_org_filter(current_user)
-    # Hierarchy canvas is the org-management surface: SaaS roles see ALL orgs
+    # Hierarchy canvas is the org-management surface: superadmin sees ALL orgs
     # regardless of the transient active-org focus selection (otherwise a
     # newly-created org card never shows up). Fixes "created org not appearing".
-    if current_user.role in ('superadmin', 'account_owner'):
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): account_owner раньше получал
+    # ТУ ЖЕ безусловную «все org», теперь только superadmin — get_org_filter
+    # уже сам возвращает контур аккаунта для account_owner (единственный
+    # источник, compute_account_contour_org_ids).
+    if current_user.role == 'superadmin':
         org_ids = None
 
     # Load orgs
@@ -153,8 +157,9 @@ async def get_hierarchy_graph(
     # Rule: any org linked to a subsidy is "in the contour" → ensure its card
     # appears even if it's outside the dept-based org filter.
     # Только для SaaS-ролей: org_admin видит только свои орги, subsidy-expansion
-    # давала ему чужие карточки.
-    if current_user.role in ('superadmin', 'account_owner'):
+    # давала ему чужие карточки. account_owner — контур своего аккаунта, не
+    # ВСЕ субсидии платформы (ИСПРАВЛЕНИЕ К1, см. выше).
+    if current_user.role == 'superadmin':
         from app.models.subsidy import Subsidy
         subsidy_org_rows = (await db.execute(
             select(Subsidy.org_id).where(Subsidy.org_id.isnot(None)).distinct()
@@ -680,8 +685,20 @@ async def get_user_salary(
     current_user: User = Depends(get_current_user),
 ):
     """Get salary info for a user across all orgs. Restricted to superadmin, org_admin, chief accountant."""
-    # Access check: superadmin sees all; org_admin/accountant sees own org members
-    can_view = current_user.role in ("superadmin", "account_owner")
+    # Access check: superadmin sees all; org_admin/accountant sees own org members.
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): account_owner раньше видел
+    # оклад ЛЮБОГО пользователя (любой аккаунт) по id — теперь только если
+    # target-пользователь в его аккаунте (assert_target_in_owner_account).
+    can_view = current_user.role == "superadmin"
+    if not can_view and current_user.role == "account_owner":
+        from app.auth.permissions import assert_target_in_owner_account
+        target_user = await db.get(User, uid)
+        if target_user is not None:
+            try:
+                await assert_target_in_owner_account(current_user, target_user, db)
+                can_view = True
+            except HTTPException:
+                can_view = False
     if not can_view and current_user.role in ("org_admin", "admin"):
         can_view = True  # org admins can see their org members' salary
     if not can_view:

@@ -198,6 +198,9 @@ async def list_purchase_tasks(
     current_user: User = Depends(get_current_user),
 ):
     """Get all tasks linked to a purchase."""
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     from app.models.task import Task
     from app.routers.task_visibility import _enrich_tasks
     from app.schemas.schemas import TaskOut

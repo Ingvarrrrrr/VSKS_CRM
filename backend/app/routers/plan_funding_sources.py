@@ -42,6 +42,9 @@ async def get_funding_sources(
     app.services.plan_funding_sources). Ровно один из category_id/
     planned_item_id обязателен; amount необязателен — тогда берётся текущее
     превышение цели из дерева ФЭО."""
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(_current_user, subsidy_id, db)
     return await svc.find_funding_sources(
         db, subsidy_id, category_id=category_id, planned_item_id=planned_item_id, amount=amount,
     )

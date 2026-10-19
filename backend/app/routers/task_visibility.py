@@ -56,7 +56,7 @@ async def _get_visible_user_ids(current_user, db) -> Optional[set]:
     export, publish) but does NOT widen visibility. Only the SaaS-level
     roles see everything by virtue of being the platform itself.
     """
-    if current_user.role in ('superadmin', 'account_owner'):
+    if current_user.role == 'superadmin':
         return None  # SaaS-level — no user-level filter
 
     from app.models.manager_department import ManagerDepartment
@@ -66,6 +66,19 @@ async def _get_visible_user_ids(current_user, db) -> Optional[set]:
     from app.routers.user_hierarchy import get_all_subordinate_ids
 
     visible = {current_user.id}
+
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): account_owner раньше получал
+    # безусловный None (SaaS-wide, видел задачи/закупки ЛЮБОГО аккаунта) — эта
+    # функция дублирует app.auth.visibility.get_visible_user_ids (Правило №6
+    # долг, не второй механизм заводим здесь, а переиспользуем тот же контур).
+    if current_user.role == 'account_owner':
+        from app.auth.visibility import get_account_contour_org_ids
+        contour_org_ids = await get_account_contour_org_ids(current_user, db)
+        if contour_org_ids:
+            contour_users = await db.execute(
+                select(User.id).where(User.org_id.in_(contour_org_ids), User.role != 'superadmin')
+            )
+            visible.update(r[0] for r in contour_users.all())
 
     # Direct + recursive subordinates (everyone can have reports, incl. admins)
     sub_ids = await get_all_subordinate_ids(current_user.id, db)

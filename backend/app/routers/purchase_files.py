@@ -670,6 +670,9 @@ async def list_files(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     result = await db.execute(select(PurchaseFile).where(PurchaseFile.purchase_id == pid))
     return [_file_out(f) for f in result.scalars().all()]
 
@@ -706,6 +709,9 @@ async def download_file(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     result = await db.execute(
         select(PurchaseFile).where(PurchaseFile.id == fid, PurchaseFile.purchase_id == pid)
     )
@@ -735,6 +741,9 @@ async def view_file(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     result = await db.execute(
         select(PurchaseFile).where(PurchaseFile.id == fid, PurchaseFile.purchase_id == pid)
     )

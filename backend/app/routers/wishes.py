@@ -402,6 +402,10 @@ async def update_wish(
     B3: contracted-locked wishes (purchase in Договор+) are read-only.
     """
     wish = await _load_wish(wish_id, db)
+    # ИСПРАВЛЕНИЕ К1 (QA-итерация 2, 19.10.2026): _is_saas(account_owner)
+    # обходил ВСЕ проверки ниже без привязки к аккаунту — см. delete_wish.
+    from app.services.wish_access import ensure_wish_read_access
+    await ensure_wish_read_access(wish, current_user, db)
 
     if not _is_saas(current_user) and wish.created_by != current_user.id:
         # Участники заявки (WishMember) тоже могут её редактировать
@@ -927,6 +931,14 @@ async def delete_wish(
 ):
     """Delete a draft wish (creator only)."""
     wish = await _load_wish(wish_id, db)
+
+    # ИСПРАВЛЕНИЕ К1 (19.10.2026): _is_saas(account_owner) обходил проверку
+    # «автор/статус», но НЕ проверял принадлежность заявки аккаунту владельца —
+    # владелец аккаунта Б удалял заявку аккаунта А по известному id. Видимость
+    # (get_org_filter теперь ограничивает account_owner его контуром) проверяем
+    # ДО бизнес-гейтов, тем же источником, что GET /{wish_id}.
+    from app.services.wish_access import ensure_wish_read_access
+    await ensure_wish_read_access(wish, current_user, db)
 
     if not _is_saas(current_user) and wish.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Только автор может удалить заявку")

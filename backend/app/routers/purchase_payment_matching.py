@@ -308,6 +308,9 @@ async def get_purchase_vat_payment_check(
     from app.routers.purchases import load_purchase_for_out
     from app.services.purchase_vat_check import check_purchase_vat, _purchase_payment_sources
 
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     p = await load_purchase_for_out(db, pid)
     if not p:
         raise HTTPException(404, "Закупка не найдена")

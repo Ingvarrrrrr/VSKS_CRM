@@ -69,6 +69,23 @@ export function feoExcessChip(item: Purchase): { color: string; text: string; ti
   }
 }
 
+// Владелец (19.10.2026, решение по жёсткому потолку субсидии, п.2): «Стоит:
+// план субсидии выше ФЭО на X» — в отличие от feoExcessChip (перекос ветки,
+// предупреждение) это НЕПРОХОДИМЫЙ гейт — закупка реально не продвинется
+// дальше «Плана закупок», пока план субсидии не уменьшат или не найдут
+// деньги (app.services.subsidy_ceiling.assert_subsidy_ceiling). Сумма —
+// ceiling_over_amount, ТА ЖЕ, что у плитки «Запланировано» (ПРАВИЛО №6).
+export function ceilingBlockedChip(item: Purchase): { color: string; text: string; title: string } {
+  const amount = item.ceiling_over_amount != null
+    ? item.ceiling_over_amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : null
+  return {
+    color: 'red-darken-3',
+    text: amount != null ? `Стоит: план выше ФЭО на ${amount} ₽` : 'Стоит: план субсидии выше ФЭО',
+    title: 'Закупка не может продвинуться дальше «Плана закупок» — план субсидии выше жёсткого потолка ФЭО. Нажмите «Где взять деньги», чтобы освободить план.',
+  }
+}
+
 export const STATUS_ORDER = PURCHASE_STATUS_ORDER
 export const STATUS_LABEL: Record<string, string> = Object.fromEntries(
   PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])

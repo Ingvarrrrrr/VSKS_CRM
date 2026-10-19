@@ -124,6 +124,7 @@ def _purchase_to_full(
     feo_mismatch_map: dict | None = None, amounts_map: dict | None = None,
     contract=None, tz_waived_by_map: dict | None = None, sn_map: dict | None = None,
     economy_map: dict | None = None, subsidy_sandbox_map: dict | None = None,
+    ceiling_map: dict | None = None,
 ) -> PurchaseOutFull:
     # Ленивый импорт — избежать цикла на уровне модуля: purchases.py (ядро)
     # импортирует _purchase_to_full ОТСЮДА, поэтому этот модуль не может
@@ -210,6 +211,7 @@ def _purchase_to_full(
 
     _excess = (feo_excess_map or {}).get(p.id) or {}
     _mismatch = (feo_mismatch_map or {}).get(p.id) or {}
+    _ceiling = (ceiling_map or {}).get(p.id) or {}
     # ПРАВИЛО №6 (2026-09-05): amounts_map — bulk-загруженный
     # app.services.purchase_amounts.load_purchase_amounts (без N+1, см. вызывающий
     # код). Если карта не передана (путь ещё не переведён) — считаем на месте
@@ -268,6 +270,11 @@ def _purchase_to_full(
         feo_excess_state=_excess.get("feo_excess_state", "none"),
         feo_excess_approved_by=_excess.get("feo_excess_approved_by"),
         feo_excess_approved_at=_excess.get("feo_excess_approved_at"),
+        # Значок «Стоит: план субсидии выше ФЭО на X» (владелец, 19.10.2026) —
+        # см. app.services.purchase_ceiling_block (ПРАВИЛО №6, та же сумма,
+        # что у плитки «Запланировано»/plan_over_ceiling_amount).
+        ceiling_blocked=_ceiling.get("ceiling_blocked", False),
+        ceiling_over_amount=_ceiling.get("ceiling_over_amount"),
         # Родительская заявка (план crystalline-soaring-heron.md, п.3) — «Создана
         # из заявки №N «…»» на карточке закупки.
         wish_title=(wish_title_map or {}).get(p.wish_id) if p.wish_id else None,

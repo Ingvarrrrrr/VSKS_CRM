@@ -153,6 +153,25 @@ async def list_wish_approvers(
     return await _approval_dicts(rows, db)
 
 
+# ── GET предпросмотр потолка ФЭО ДО согласования ───────────────────────────────
+
+@router.get("/{wid}/approval-ceiling-preview")
+async def wish_approval_ceiling_preview(
+    wid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Владелец (19.10.2026, решение по жёсткому потолку субсидии): согласующий
+    обязан увидеть крупное предупреждение «план станет выше ФЭО на X ₽» ДО
+    нажатия «Согласовать», а не только после. Вся логика — app.services.
+    wish_approval_ceiling_preview.preview_wish_approval_ceiling (ПРАВИЛО №6:
+    одна формула потолка, subsidy_ceiling_state, сухой прогон реального пути
+    создания закупок, а не вторая формула «что добавит заявка»)."""
+    wish = await _get_wish_or_403(wid, current_user, db)
+    from app.services.wish_approval_ceiling_preview import preview_wish_approval_ceiling
+    return await preview_wish_approval_ceiling(db, wish, current_user)
+
+
 # ── GET candidates для «Верхний согласующий» ───────────────────────────────────
 
 @router.get("/{wid}/approvers/candidates")

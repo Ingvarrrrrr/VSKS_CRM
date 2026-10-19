@@ -65,6 +65,7 @@ from datetime import datetime, date
 from app.services.purchase_serializers import _item_to_out, _purchase_to_full, items_out_with_contractor_map
 from app.services.item_contractor import set_item_contractor
 from app.services.purchase_contract_header import CONTRACT_HEADER_FIELDS
+from app.services.purchase_ceiling_block import compute_purchase_ceiling_block, PRE_CONTRACT_STATUSES as _CEILING_PRE_CONTRACT_STATUSES
 from app.services.purchase_feo_checks import (
     _compute_purchase_feo_excess, _compute_purchase_feo_mismatch, _item_feo_mismatch,
     _category_within, _reset_incompatible_item_feo_links,
@@ -481,13 +482,39 @@ async def list_purchases(
         for p in purchases if p.contract_id and p.contract is not None
     }
 
-    # Владелец (2026-08-12): значок «закупка создаёт превышение плана ФЭО» — опционален
-    # (?with_feo_excess=true), считается ОДНИМ вызовом compute_feo_plan_tree на все субсидии
-    # видимой страницы (не N+1), без новых колонок в БД. Общий код с GET /{id} — см.
-    # _compute_purchase_feo_excess (план crystalline-soaring-heron.md, п.4).
+    # Перф (20.10.2026, жалоба «GET /api/purchases стал 13-16 с»):
+    # compute_purchase_ceiling_block раньше считала compute_feo_plan_tree ОТДЕЛЬНО
+    # на КАЖДУЮ субсидию страницы (19-27 субсидий × ~0,3 с = 5-6 с) —
+    # subsidy_ceiling_state без переданного tree строит его сама. Дерево строим
+    # ОДИН раз здесь и отдаём его обоим потребителям (ПРАВИЛО №6).
+    #
+    # Два масштаба дерева по стоимости РАЗНЫЕ: _compute_purchase_feo_excess
+    # (?with_feo_excess=true) обязана смотреть на категорию ЛЮБОЙ закупки —
+    # нужно дерево по ВСЕМ субсидиям страницы. А значок потолка (считается
+    # ВСЕГДА, без флага) касается только закупок в статусах ДО «Заключён
+    # договор» (см. compute_purchase_ceiling_block._PRE_CONTRACT_STATUSES) —
+    # обычно это подмножество субсидий страницы (замер 20.10.2026: 18 из 27),
+    # поэтому для него строим дерево ТОЛЬКО по этому подмножеству, а не по
+    # всем субсидиям — иначе каждый обычный GET /purchases (без
+    # with_feo_excess) платил бы те же ~2 с, которые раньше были ценой ТОЛЬКО
+    # опционального флага.
+    _subsidy_ids_on_page = list({p.subsidy_id for p in purchases if p.subsidy_id})
+    _ceiling_subsidy_ids = list({
+        p.subsidy_id for p in purchases
+        if p.subsidy_id and p.status in _CEILING_PRE_CONTRACT_STATUSES
+    })
+
     _feo_excess_map: dict = {}
+    _ceiling_map: dict = {}
     if with_feo_excess and purchases:
-        _feo_excess_map = await _compute_purchase_feo_excess(db, purchases)
+        # Один проход по ВСЕМ субсидиям страницы покрывает оба потребителя —
+        # второй (узкий) tree не нужен, передаём этот же.
+        _shared_tree = await compute_feo_plan_tree(db, _subsidy_ids_on_page) if _subsidy_ids_on_page else {}
+        _feo_excess_map = await _compute_purchase_feo_excess(db, purchases, tree=_shared_tree)
+        _ceiling_map = await compute_purchase_ceiling_block(db, purchases, tree=_shared_tree)
+    elif purchases:
+        _ceiling_tree = await compute_feo_plan_tree(db, _ceiling_subsidy_ids) if _ceiling_subsidy_ids else {}
+        _ceiling_map = await compute_purchase_ceiling_block(db, purchases, tree=_ceiling_tree)
 
     # Владелец (2026-09-02): «уведомление глобально, если позиция категории ФЭО
     # вверху и в каждом товаре не соответствует друг другу — об этом должен быть
@@ -516,6 +543,7 @@ async def list_purchases(
             feo_mismatch_map=_feo_mismatch_map, amounts_map=_amounts_map, contract=p.contract,
             tz_waived_by_map=tz_waived_by_map, sn_map=sn_map,
             economy_map=_economy_map_list, subsidy_sandbox_map=subsidy_sandbox_map,
+            ceiling_map=_ceiling_map,
         )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
@@ -710,6 +738,10 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     # Общий код с list_purchases — см. _compute_purchase_feo_excess.
     _single_feo_excess_map = await _compute_purchase_feo_excess(db, [p], tree=_plan_tree_single)
 
+    # Значок «Стоит: план субсидии выше ФЭО на X» (владелец, 19.10.2026) —
+    # то же дерево _plan_tree_single, второй раз не считаем (ПРАВИЛО №6).
+    _single_ceiling_map = await compute_purchase_ceiling_block(db, [p], tree=_plan_tree_single)
+
     # Расхождение категории ФЭО между шапкой/позицией/плановой позицией
     # (владелец, 2026-09-02) — см. _compute_purchase_feo_mismatch, тот же код
     # для списка и карточки.
@@ -780,6 +812,7 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
         wish_status_map=_wish_status_map, feo_mismatch_map=_single_feo_mismatch_map,
         amounts_map=_single_amounts_map, contract=p.contract,
         tz_waived_by_map=single_tz_waived_by_map, sn_map=single_sn_map,
+        ceiling_map=_single_ceiling_map,
         subsidy_sandbox_map=subsidy_sandbox_map_single,
         economy_map=_single_economy_map,
     )

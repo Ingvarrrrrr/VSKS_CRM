@@ -30,6 +30,11 @@
               >
                 <v-icon icon="mdi-alert" size="12" class="mr-1" />Расхождение ФЭО
               </v-chip>
+              <v-chip v-if="item.ceiling_blocked" size="x-small" :color="ceilingBlockedChip(item).color" variant="flat"
+                :title="ceilingBlockedChip(item).title" @click.stop="openCeilingFunding(item)"
+              >
+                <v-icon icon="mdi-alert-octagon" size="12" class="mr-1" />{{ ceilingBlockedChip(item).text }}
+              </v-chip>
             </div>
             <div class="text-caption text-medium-emphasis">Контрагент</div>
             <div class="text-body-2 mb-1" style="overflow-wrap:anywhere">{{ item.contractor_name || '—' }}</div>
@@ -97,11 +102,18 @@ import { formatMoney } from '@/utils/formatMoney'
 import {
   STATUS_COLOR, APPROVAL_STATUS_COLOR, APPROVAL_STATUS_LABEL,
   effectivePrice, formatDate, statusLabelFor, purchaseTypeLabel, purchaseTypeColor,
-  feoExcessChip, nextStatus, canStopPurchase,
+  feoExcessChip, ceilingBlockedChip, nextStatus, canStopPurchase,
   stopButtonIconFor, stopButtonTooltipFor,
 } from '@/composables/orders/ordersLabels'
 import type { Purchase } from '@/composables/orders/ordersTypes'
 import PurchaseStoppedBanner from '@/components/orders/PurchaseStoppedBanner.vue'
+import { useFundingSources } from '@/composables/subsidies/useFundingSources'
+
+const funding = useFundingSources()
+function openCeilingFunding(item: Purchase) {
+  if (!item.subsidy_id) return
+  funding.openFundingSources({ subsidyId: item.subsidy_id, amount: item.ceiling_over_amount ?? null })
+}
 
 defineProps<{
   pagedCards: any[]

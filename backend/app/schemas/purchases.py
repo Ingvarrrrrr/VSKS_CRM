@@ -564,6 +564,15 @@ class PurchaseOut(PurchaseCreate):
     tz_not_required: bool = False
     tz_waived_by_user_id: Optional[int] = None
     tz_waived_by_name: Optional[str] = None
+    # Владелец (19.10.2026, решение по жёсткому потолку субсидии, п.2):
+    # «Стоит: план субсидии выше ФЭО на X» — значок для закупок, которые ещё
+    # не прошли «Заключён договор» и упрутся в жёсткий гейт
+    # (app.services.subsidy_ceiling.assert_subsidy_ceiling) на следующем
+    # forward-переходе. ceiling_over_amount — ТА ЖЕ сумма, что у плитки
+    # «Запланировано» (plan_over_ceiling_amount, ПРАВИЛО №6). См.
+    # app.services.purchase_ceiling_block.
+    ceiling_blocked: bool = False
+    ceiling_over_amount: Optional[Decimal] = None
     model_config = {"from_attributes": True}
 
     @model_validator(mode='after')

@@ -1006,6 +1006,7 @@
                     <div v-if="tzNotRequiredChecked[a.id] || editingWish?.tz_not_required" class="text-caption text-medium-emphasis mb-2">
                       Позиции уйдут в закупку без технического задания — как у авансовых.
                     </div>
+                    <WishApprovalCeilingWarning v-if="isFinalApprovalStep(a)" :preview="ceilingPreview.data.value" />
                     <div class="d-flex" style="gap:8px">
                       <v-btn
                         color="green"
@@ -1359,6 +1360,15 @@
           </v-btn>
         </template>
         <template v-else-if="canAssigneeAct && editingWish">
+          <!-- Владелец (19.10, доработка видимости 20.10.2026): то же предупреждение,
+               что и вверху окна, ПРОДУБЛИРОВАНО в закреплённой нижней панели — прямо
+               над кнопками «Одобрить без согласования остальных»/«Распределить и
+               одобрить», которые его и вызывают (useWishActions.ts::approveWish/
+               openKanbanDialog). Компонент сам ничего не грузит повторно — те же
+               ceilingPreview.data. -->
+          <div style="flex: 1 1 100%; min-width: 100%;">
+            <WishApprovalCeilingWarning :preview="ceilingPreview.data.value" />
+          </div>
           <!-- Владелец (30.09, заявка №92): «Это должно быть ОТДЕЛЬНОЕ разрешение
                в ролях» — видно только с правом purchase.tz_waive, доступно при быстром
                одобрении так же, как в цепочке согласования выше. -->
@@ -1449,6 +1459,7 @@
            эмитит — вызовы actions.openKanbanDialog/approveWish делает этот файл
            (Правило №6). -->
       <div v-if="mobile && canAssigneeAct && editingWish" class="wish-mobile-approve-bar">
+        <WishApprovalCeilingWarning :preview="ceilingPreview.data.value" class="mb-2" />
         <div v-if="form.canWaiveTz.value && !editingWish.tz_not_required" class="mb-2">
           <div class="text-caption text-medium-emphasis mb-1">Техническое задание</div>
           <v-btn-toggle
@@ -1593,7 +1604,7 @@
 // wishApprovers/feoAutosaveSaving/feoAutosavePending и функции открытия/действий)
 // через defineExpose — единственное официально разрешённое место для него по
 // заданию, здесь расширенное на этот один непреодолимый случай.
-import { ref, computed, reactive, nextTick } from 'vue'
+import { ref, computed, reactive, nextTick, watch } from 'vue'
 import { useWishLive } from '@/composables/useWishLive'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
@@ -1613,6 +1624,8 @@ import {
 } from '@/composables/wishes/useWishesContext'
 import { useWishForm } from '@/composables/wishes/useWishForm'
 import { useWishApprovers } from '@/composables/wishes/useWishApprovers'
+import { useWishApprovalCeilingPreview } from '@/composables/wishes/useWishApprovalCeilingPreview'
+import WishApprovalCeilingWarning from '@/components/wishes/WishApprovalCeilingWarning.vue'
 import { useWishItemsFeoAutosave } from '@/composables/wishes/useWishItemsFeoAutosave'
 import { useWishActions, canDistributeWish } from '@/composables/wishes/useWishActions'
 import { useWishDistributionReset } from '@/composables/wishes/useWishDistributionReset'
@@ -1796,6 +1809,33 @@ const {
   runCascade, addApprover, reorderLoading, moveApprover, removeApprover, decideApprover,
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
 } = approvers
+
+// Предпросмотр жёсткого потолка ФЭО ДО нажатия «Согласовать» (владелец,
+// 19.10.2026) — см. докстринг useWishApprovalCeilingPreview.ts и
+// WishApprovalCeilingWarning.vue. Показываем только на шаге, который
+// ЗАВЕРШАЕТ согласование (остальные pending уже решены) — именно на этом
+// шаге заявка превращается в закупку и план субсидии реально растёт (та же
+// проверка remaining==0, что на бэкенде в decide_wish_approval).
+const ceilingPreview = useWishApprovalCeilingPreview()
+function isFinalApprovalStep(a: { id: number }): boolean {
+  return !wishApprovers.value.some(x => x.id !== a.id && x.status === 'pending')
+}
+watch(
+  () => [editingWishId.value, (wishForm.value as any)?.status, wishApprovers.value.map(a => a.status).join(','), canAssigneeAct.value],
+  () => {
+    const wid = editingWishId.value
+    if (!wid || (wishForm.value as any)?.status !== 'submitted') { ceilingPreview.reset(); return }
+    // canAssigneeAct (исполнитель/админ) — кнопки «Одобрить без согласования
+    // остальных»/«Распределить и одобрить» ВСЕГДА завершают согласование целиком
+    // (approveWish — см. useWishActions.ts), независимо от очереди цепочки.
+    // Иначе — обычный согласующий цепочки видит предупреждение только на шаге,
+    // который РЕАЛЬНО завершает согласование (remaining==0, как на бэкенде).
+    const hasFinalDecidablePending = canAssigneeAct.value
+      || wishApprovers.value.some(a => canDecideApprover(a) && isFinalApprovalStep(a))
+    if (hasFinalDecidablePending) void ceilingPreview.load(wid)
+  },
+  { immediate: true },
+)
 
 // Текст, когда список кандидатов на «Верхнего согласующего» пуст — три разных
 // причины, не одна общая (баг прод, заявка №96: ошибка загрузки выглядела

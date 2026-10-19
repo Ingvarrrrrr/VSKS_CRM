@@ -132,6 +132,22 @@
       Убрать свои категории у позиций ({{ feoMismatchFixableItems.length }})
     </v-btn>
   </div>
+  <!-- Владелец (19.10.2026, решение по жёсткому потолку субсидии, п.2):
+       «Стоит: план субсидии выше ФЭО на X» — НЕПРОХОДИМЫЙ гейт (в отличие от
+       feo-excess-culprit выше, который только предупреждение), см.
+       app.services.purchase_ceiling_block / subsidy_ceiling.py. -->
+  <v-alert v-if="isEdit && purchaseData?.ceiling_blocked" type="error" variant="tonal" density="comfortable" class="mb-3" icon="mdi-alert-octagon">
+    <div class="font-weight-bold mb-1">
+      Стоит: план субсидии выше ФЭО на {{ formatMoney(purchaseData.ceiling_over_amount) }}
+    </div>
+    <div class="text-body-2 mb-2">
+      Закупка не продвинется дальше «Плана закупок» (в работу/договор), пока план не уменьшат
+      или не найдут деньги.
+    </div>
+    <v-btn size="small" variant="flat" color="error" prepend-icon="mdi-cash-sync" @click="openCeilingFunding">
+      Где взять деньги
+    </v-btn>
+  </v-alert>
   <div v-if="isEdit && purchaseData?.wish_id" class="text-caption text-medium-emphasis mb-3 d-flex align-center ga-1 flex-wrap">
     <v-icon size="14" icon="mdi-file-document-outline" />
     <span>Создана из заявки №{{ purchaseData.wish_id }}{{ purchaseData.wish_title ? ` «${purchaseData.wish_title}»` : '' }}</span>
@@ -165,6 +181,8 @@ import {
   isAdvancePaymentRefusal as isAdvancePaymentRefusalFor,
   stopButtonLabelFor, stopButtonIconFor, stopButtonTooltipFor,
 } from '@/composables/orders/ordersLabels'
+import { formatMoney } from '@/utils/formatMoney'
+import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 
 interface Props {
   form: any
@@ -215,6 +233,17 @@ interface Props {
   canDecideAdvancePayment?: boolean
 }
 const props = withDefaults(defineProps<Props>(), { canDecideAdvancePayment: true })
+
+// Владелец (19.10.2026, решение по жёсткому потолку субсидии, п.2): «Где
+// взять деньги» для значка ceiling_blocked — ТОТ ЖЕ диалог/композабл, что у
+// плитки «Запланировано» и у значков в OrdersTable.vue/OrdersCards.vue
+// (ПРАВИЛО №6, второй диалог не заводим).
+const funding = useFundingSources()
+function openCeilingFunding() {
+  const subsidyId = props.purchaseData?.subsidy_id
+  if (!subsidyId) return
+  funding.openFundingSources({ subsidyId, amount: props.purchaseData?.ceiling_over_amount ?? null })
+}
 
 // Та же граница «можно ли остановить», что и в списке «Закупки»
 // (composables/orders/ordersLabels.ts::canStopPurchase, ПРАВИЛО №6).

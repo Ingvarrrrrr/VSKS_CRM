@@ -82,6 +82,14 @@ export interface Purchase {
   // не может красить любое feo_excess красным с текстом про блокировку —
   // approved-превышение уже никого не блокирует.
   feo_excess_state?: 'not_requested' | 'pending' | 'approved' | 'none' | null
+  // Владелец (19.10.2026, решение по жёсткому потолку субсидии, п.2): «Стоит:
+  // план субсидии выше ФЭО на X» — в отличие от feo_excess (перекос ветки,
+  // предупреждение) это НЕПРОХОДИМЫЙ гейт (PLAN_OVER_SUBSIDY_CEILING, см.
+  // app.services.subsidy_ceiling) — закупка реально не продвинется дальше,
+  // пока план субсидии не уменьшат или не найдут деньги. См.
+  // app.services.purchase_ceiling_block.
+  ceiling_blocked?: boolean
+  ceiling_over_amount?: number | null
   // Остановка закупки (владелец, 2026-08-13, см. POST /api/wishes/{wish_id}/stop) —
   // read-only, проставляется системой при остановке заявки. Закупка НЕ удаляется —
   // просто помечается, чтобы видна была история.

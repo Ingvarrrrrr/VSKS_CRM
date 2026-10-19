@@ -305,6 +305,12 @@
           >
             <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />{{ feoExcessChip(item).text }}
           </v-chip>
+          <!-- Значок жёсткого потолка субсидии (владелец, 19.10.2026) — см. ceilingBlockedChip. -->
+          <v-chip v-if="item.ceiling_blocked" size="x-small" :color="ceilingBlockedChip(item).color" variant="flat"
+            :title="ceilingBlockedChip(item).title" @click.stop="openCeilingFunding(item)"
+          >
+            <v-icon icon="mdi-alert-octagon" size="12" class="mr-1" />{{ ceilingBlockedChip(item).text }}
+          </v-chip>
           <!-- Расхождение категории ФЭО шапки/товара/плановой позиции. -->
           <v-tooltip v-if="item.feo_mismatch" location="top" max-width="380">
             <template #activator="{ props: mmTp }">
@@ -516,12 +522,19 @@ import { getRowField, uniqValues } from '@/composables/orders/useOrdersColumns'
 import {
   STATUS_ORDER, STATUS_LABEL, STATUS_COLOR, APPROVAL_STATUS_COLOR, APPROVAL_STATUS_LABEL,
   effectivePrice, formatDate, statusLabelFor, purchaseTypeLabel, purchaseTypeColor,
-  purchaseMethodLabel, feoExcessChip, itemDisplayName, nextStatus, canStopPurchase,
+  purchaseMethodLabel, feoExcessChip, ceilingBlockedChip, itemDisplayName, nextStatus, canStopPurchase,
   stopButtonIconFor, stopButtonTooltipFor,
 } from '@/composables/orders/ordersLabels'
 import type { Purchase } from '@/composables/orders/ordersTypes'
 import type { FilterValue } from '@/composables/useColumnConfig'
 import PurchaseStoppedBanner from '@/components/orders/PurchaseStoppedBanner.vue'
+import { useFundingSources } from '@/composables/subsidies/useFundingSources'
+
+const funding = useFundingSources()
+function openCeilingFunding(item: Purchase) {
+  if (!item.subsidy_id) return
+  funding.openFundingSources({ subsidyId: item.subsidy_id, amount: item.ceiling_over_amount ?? null })
+}
 
 const props = defineProps<{
   headers: any[]

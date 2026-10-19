@@ -41,6 +41,7 @@
           </div>
 
           <apexchart
+            v-if="chartAlive"
             type="bar"
             :height="Math.max(280, chartItems.length * 68)"
             :options="chartOptions"
@@ -56,10 +57,16 @@
 import { ref, computed, watch, defineAsyncComponent } from 'vue'
 import { useTheme, useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { deferChartAction } from '@/composables/dashboard/deferChartAction'
+import { useKeepAliveChartGuard } from '@/composables/dashboard/useKeepAliveChartGuard'
 
 // vue3-apexcharts больше не регистрируется глобально (main.ts) — тяжёлая
 // библиотека тянется динамически только там, где реально есть <apexchart>.
 const apexchart = defineAsyncComponent(() => import('vue3-apexcharts').then(m => m.default))
+// chartAlive: честно размонтирует <apexchart> при деактивации страницы под
+// <keep-alive> (см. useKeepAliveChartGuard.ts) — иначе зомби-экземпляр
+// ApexCharts роняет приложение на другой странице.
+const chartAlive = useKeepAliveChartGuard()
 
 const { mobile } = useDisplay()
 const theme = useTheme()
@@ -172,6 +179,10 @@ function nodeToItem(n: any): ChartItem {
 }
 
 // ── Navigation ──────────────────────────────────────────────────────────────
+// deferChartAction: смена curSubsidyId/curNodeId меняет chartItems — если
+// в итоге он опустеет, <apexchart> размонтируется (v-else-if="chartItems.
+// length === 0"); делать это нужно не синхронно изнутри обработчика клика
+// самого графика, а на следующий тик (см. хелпер deferChartAction).
 function handleBarClick(event: any, _ctx: any, config: any) {
   const idx = config?.dataPointIndex ?? -1
   if (idx < 0) return
@@ -179,17 +190,21 @@ function handleBarClick(event: any, _ctx: any, config: any) {
   if (!item) return
 
   if (item._isSubsidy) {
-    drillStack.value.push({ subsidyId: curSubsidyId.value, nodeId: curNodeId.value })
-    curSubsidyId.value = item.id
-    curNodeId.value    = null
-    if (!dashTree.value.length) loadTree()
+    deferChartAction(() => {
+      drillStack.value.push({ subsidyId: curSubsidyId.value, nodeId: curNodeId.value })
+      curSubsidyId.value = item.id
+      curNodeId.value    = null
+      if (!dashTree.value.length) loadTree()
+    })
     return
   }
 
   const raw = item._raw
   if (!raw?.children?.length) return  // leaf node, no drill
-  drillStack.value.push({ subsidyId: curSubsidyId.value, nodeId: curNodeId.value })
-  curNodeId.value = raw.id
+  deferChartAction(() => {
+    drillStack.value.push({ subsidyId: curSubsidyId.value, nodeId: curNodeId.value })
+    curNodeId.value = raw.id
+  })
 }
 
 function goBack() {

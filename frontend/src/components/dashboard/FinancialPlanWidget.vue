@@ -48,7 +48,7 @@
     </div>
 
     <apexchart
-      v-if="finplanSeries.length"
+      v-if="finplanSeries.length && chartAlive"
       type="bar" height="300"
       :options="finplanOptions" :series="finplanSeries"
     />
@@ -61,10 +61,15 @@
 
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
+import { useKeepAliveChartGuard } from '@/composables/dashboard/useKeepAliveChartGuard'
 
 // vue3-apexcharts больше не регистрируется глобально (main.ts) — тяжёлая
 // библиотека тянется динамически только там, где реально есть <apexchart>.
 const apexchart = defineAsyncComponent(() => import('vue3-apexcharts').then(m => m.default))
+// chartAlive: честно размонтирует <apexchart> при деактивации страницы под
+// <keep-alive> (см. useKeepAliveChartGuard.ts) — иначе зомби-экземпляр
+// ApexCharts роняет приложение на другой странице.
+const chartAlive = useKeepAliveChartGuard()
 
 defineProps<{
   finplanNoDeadlineCount: number

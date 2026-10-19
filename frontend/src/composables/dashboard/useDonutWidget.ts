@@ -3,6 +3,7 @@
 // Перенесено без изменений из DashboardView.vue при разбиении на модули.
 import { ref, computed, type Ref } from 'vue'
 import { formatCurrency, formatCurrencyShort, truncate } from './dashboardFormat'
+import { deferChartAction } from './deferChartAction'
 import type { SubsidyRow } from './useDashboardData'
 
 export const SEGMENT_LABELS  = ['Оплачено', 'Заказано', 'Запланировано', 'Свободно']
@@ -74,14 +75,18 @@ export function useDonutWidget(
       animations: { speed: 350 },
       theme: { mode: isDark.value ? 'dark' : 'light' },
       events: {
+        // deferChartAction: открытие диалога не должно размонтировать этот же
+        // бар-график СИНХРОННО изнутри его собственного клика (см. хелпер).
         dataPointSelection: (_e: any, _ctx: any, config: any) => {
           const row = drillDownRows.value[config.dataPointIndex]
           if (!row) return
           const sub = filteredSubsidies.value.find((s: any) => s.name === row.name)
           if (sub) {
-            budgetDrilldown.drillDialogSubsidies.value = [sub]
-            budgetDrilldown.breakdownMetric.value = SEGMENT_METRICS[drillDownSegment.value ?? 0]
-            budgetDrilldown.showBreakdownDialog.value = true
+            deferChartAction(() => {
+              budgetDrilldown.drillDialogSubsidies.value = [sub]
+              budgetDrilldown.breakdownMetric.value = SEGMENT_METRICS[drillDownSegment.value ?? 0]
+              budgetDrilldown.showBreakdownDialog.value = true
+            })
           }
         }
       }
@@ -112,10 +117,15 @@ export function useDonutWidget(
       animations: { speed: 500 },
       theme: { mode: isDark.value ? 'dark' : 'light' },
       events: {
+        // deferChartAction: donutView='breakdown' переключает v-if/Transition
+        // и размонтирует ИМЕННО этот <apexchart> (донат) — делать это нужно
+        // не синхронно изнутри его же обработчика клика (см. хелпер).
         dataPointSelection: (_e: any, _ctx: any, config: any) => {
           const idx = config.dataPointIndex
-          drillDownSegment.value = idx
-          donutView.value = 'breakdown'
+          deferChartAction(() => {
+            drillDownSegment.value = idx
+            donutView.value = 'breakdown'
+          })
         }
       }
     },

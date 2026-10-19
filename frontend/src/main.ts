@@ -8,6 +8,12 @@ import { vResizableColumns } from './directives/resizable-columns'
 import { initSwUpdate, initChunkLoadRecovery } from './composables/useSwUpdate'
 import VDialogWithClose from './components/global/VDialogWithClose.vue'
 import { migrateLegacyToken } from './composables/useLegacyTokenMigration'
+import { initLastUserAction } from './utils/lastUserAction'
+
+// Трекер «последнее действие пользователя» — для ApiErrorDialog.vue (строка
+// «Произошло после: …» под JS-ошибкой). Один раз на всё приложение, до
+// монтирования, чтобы не пропустить клики во время первой загрузки.
+initLastUserAction()
 
 const app = createApp(App)
 const pinia = createPinia()

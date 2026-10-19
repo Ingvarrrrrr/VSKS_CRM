@@ -16,6 +16,9 @@
           </span>
         </div>
         <div class="mb-3 text-body-1">{{ error?.message }}</div>
+        <div v-if="error?.actionContext" class="mb-3 text-caption text-medium-emphasis">
+          {{ error.actionContext }}
+        </div>
         <v-expansion-panels v-if="error?.details" v-model="techExpanded" class="text-caption">
           <v-expansion-panel value="details">
             <v-expansion-panel-title class="text-caption">
@@ -23,7 +26,7 @@
               Технические детали
             </v-expansion-panel-title>
             <v-expansion-panel-text>
-              <pre style="white-space: pre-wrap; max-height: 240px; overflow: auto; font-size: 11px; margin: 0">{{ error.details }}</pre>
+              <pre style="white-space: pre-wrap; max-height: 240px; overflow: auto; font-size: 11px; margin: 0">{{ techDetailsText }}</pre>
             </v-expansion-panel-text>
           </v-expansion-panel>
         </v-expansion-panels>
@@ -44,7 +47,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { describeLastAction } from '@/utils/lastUserAction'
 
 interface ErrorPayload {
   code: string
@@ -52,6 +56,17 @@ interface ErrorPayload {
   details?: string
   correlation_id?: string
   title?: string
+  // «Произошло после: нажатие «…» на странице «…» (…), ЧЧ:ММ:СС» — видимая
+  // строка под основным сообщением (см. lastUserAction.ts). Для API-ошибок,
+  // приходящих снаружи компонента через событие api-error, может отсутствовать
+  // в detail — тогда достраивается здесь же, в handleApiError.
+  actionContext?: string
+}
+
+// Короткая версия User-Agent — без лишних деталей движка, которые ничего не
+// добавляют владельцу/разработчику сверх браузера и платформы.
+function shortUserAgent(): string {
+  return navigator.userAgent
 }
 
 // Русский текст для истинно JS-ошибок выполнения фронта (ReferenceError/TypeError/
@@ -77,7 +92,11 @@ const copied = ref(false)
 const techExpanded = ref<string | null>(null)  // collapsed by default
 
 function handleApiError(e: Event) {
-  error.value = (e as CustomEvent<ErrorPayload>).detail
+  const detail = (e as CustomEvent<ErrorPayload>).detail
+  error.value = {
+    ...detail,
+    actionContext: detail.actionContext ?? describeLastAction(),
+  }
   show.value = true
   copied.value = false
   techExpanded.value = null  // reset to collapsed on each error
@@ -95,6 +114,7 @@ function handleJsError(e: ErrorEvent) {
     message: CLIENT_ERROR_MESSAGE,
     details: buildClientErrorDetails(err),
     correlation_id: '',
+    actionContext: describeLastAction(),
   }
   show.value = true
   copied.value = false
@@ -113,6 +133,7 @@ function handleUnhandledRejection(e: PromiseRejectionEvent) {
     message: CLIENT_ERROR_MESSAGE,
     details: buildClientErrorDetails(reason),
     correlation_id: '',
+    actionContext: describeLastAction(),
   }
   show.value = true
   copied.value = false
@@ -130,8 +151,25 @@ onUnmounted(() => {
   window.removeEventListener('unhandledrejection', handleUnhandledRejection)
 })
 
+// «Технические детали» и текст кнопки «Скопировать» начинаются с тех же
+// строк, что и видимая actionContext, плюс браузер — первыми, до стека: кто
+// бы ни читал стек минифицированной библиотеки, сначала видит, после чего
+// это случилось и в каком браузере, а не только голый TypeError.
+function detailsHeaderLines(): string[] {
+  return [
+    error.value?.actionContext || '',
+    `Браузер: ${shortUserAgent()}`,
+  ].filter(Boolean)
+}
+
+const techDetailsText = computed(() => {
+  const header = detailsHeaderLines().join('\n')
+  return error.value?.details ? `${header}\n\n${error.value.details}` : header
+})
+
 async function copyDetails() {
   const text = [
+    ...detailsHeaderLines(),
     `Код: ${error.value?.code}`,
     `Сообщение: ${error.value?.message}`,
     error.value?.correlation_id ? `Correlation ID: ${error.value.correlation_id}` : '',

@@ -16,14 +16,14 @@
     </div>
     <Transition name="chart-fade" mode="out-in">
       <div v-if="donutView === 'donut'" key="donut">
-        <apexchart v-if="donutReady" type="donut" height="270" :options="donutOptions" :series="donutSeries" />
+        <apexchart v-if="donutReady && chartAlive" type="donut" height="270" :options="donutOptions" :series="donutSeries" />
         <div v-else class="chart-empty">
           <v-icon icon="mdi-chart-donut" size="48" color="grey-lighten-2" />
           <div class="text-caption text-medium-emphasis mt-2">Нет данных о бюджете</div>
         </div>
       </div>
       <div v-else key="breakdown">
-        <apexchart type="bar" height="270" :options="breakdownBarOptions" :series="breakdownBarSeries" />
+        <apexchart v-if="chartAlive" type="bar" height="270" :options="breakdownBarOptions" :series="breakdownBarSeries" />
       </div>
     </Transition>
   </div>
@@ -31,10 +31,15 @@
 
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
+import { useKeepAliveChartGuard } from '@/composables/dashboard/useKeepAliveChartGuard'
 
 // vue3-apexcharts больше не регистрируется глобально (main.ts) — тяжёлая
 // библиотека тянется динамически только там, где реально есть <apexchart>.
 const apexchart = defineAsyncComponent(() => import('vue3-apexcharts').then(m => m.default))
+// chartAlive: честно размонтирует <apexchart> при деактивации страницы под
+// <keep-alive> (см. useKeepAliveChartGuard.ts) — иначе зомби-экземпляр
+// ApexCharts роняет приложение на другой странице.
+const chartAlive = useKeepAliveChartGuard()
 
 defineProps<{
   donutReady: boolean

@@ -49,6 +49,7 @@
 import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { deferChartAction } from '@/composables/dashboard/deferChartAction'
 
 // vue3-apexcharts больше не регистрируется глобально (main.ts) — тяжёлая
 // библиотека тянется динамически только там, где реально есть <apexchart>.
@@ -156,10 +157,14 @@ function formatCell(v: any) {
 function onRowClick(row: any) {
   if (row?._id) router.push(`/orders/${row._id}/edit`)
 }
+// deferChartAction: router.push уводит со страницы и размонтирует именно
+// этот <apexchart> — нельзя делать это синхронно изнутри его собственного
+// обработчика клика (см. хелпер deferChartAction).
 function onChartClick(_event: any, _ctx: any, config: any) {
   const idx = config?.dataPointIndex
   if (idx !== undefined && result.value?.rows?.[idx]?._id) {
-    router.push(`/orders/${result.value.rows[idx]._id}/edit`)
+    const id = result.value.rows[idx]._id
+    deferChartAction(() => router.push(`/orders/${id}/edit`))
   }
 }
 </script>

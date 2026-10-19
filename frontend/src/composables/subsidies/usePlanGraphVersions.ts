@@ -37,6 +37,16 @@ const exportSelectedIds = ref<number[]>([])
 const exportIncludeCurrent = ref(true)        // current live FEO preselected
 const exportRunning = ref(false)              // during download
 
+// Столбцы «Выгрузить ФЭО» (владелец 20.10.2026) — ТОЛЬКО для «Текущая (живая)
+// ФЭО» (exportFeoToExcel ниже бьёт в GET /api/feo-categories/export, который
+// один умеет ?columns=; выгрузка/сравнение редакций — другой эндпоинт, выбора
+// столбцов не поддерживает, колонки сюда не пробрасываются). Каталог
+// (ПРАВИЛО №6 — тот же приём, что ExportColumnsDialog.vue: default с сервера,
+// не второй список здесь) грузится одним вызовом вместе со списком редакций.
+export interface FeoExportColumn { key: string; label: string; group: string; default?: boolean }
+const feoExportColumnsCatalog = ref<FeoExportColumn[]>([])
+const feoExportSelectedColumns = ref<string[]>([])
+
 // ── Save version state ──
 const showSaveVersionDialog = ref(false)
 const saveVersionEffectiveDate = ref('') // YYYY-MM-DD
@@ -113,6 +123,10 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
     exportIncludeCurrent.value = true
     try {
       exportVersionsList.value = await apiFetch<any[]>(`/subsidies/${ctx.selectedId.value}/plan-graph/versions`)
+      if (feoExportColumnsCatalog.value.length === 0) {
+        feoExportColumnsCatalog.value = await apiFetch<FeoExportColumn[]>('/feo-categories/export/columns')
+        feoExportSelectedColumns.value = feoExportColumnsCatalog.value.filter(c => c.default).map(c => c.key)
+      }
     } finally {
       exportVersionsLoading.value = false
     }
@@ -129,7 +143,9 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
   // случай «выбрана только текущая, без сохранённых редакций».
   async function exportFeoToExcel() {
     if (!ctx?.selectedId.value) return
-    const res = await fetch(`/api/feo-categories/export?subsidy_id=${ctx.selectedId.value}`, {
+    const cols = feoExportSelectedColumns.value.join(',')
+    const colsParam = cols ? `&columns=${encodeURIComponent(cols)}` : ''
+    const res = await fetch(`/api/feo-categories/export?subsidy_id=${ctx.selectedId.value}${colsParam}`, {
       headers: {},
     })
     if (!res.ok) { showSnack('Ошибка экспорта', 'error'); return }
@@ -301,6 +317,7 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
     selectedVersionSnapshot, showVersionSnapshotDialog, compareSelected, compareLoading,
     showExportVersionsDialog, exportVersionsLoading, exportVersionsList, exportSelectedIds,
     exportIncludeCurrent, exportRunning,
+    feoExportColumnsCatalog, feoExportSelectedColumns,
     showSaveVersionDialog, saveVersionEffectiveDate, saveVersionNote, saveVersionLoading,
     loadVersionHistory, openVersionHistory, viewVersionSnapshot, downloadVersionExcel,
     formatEditionDate, openExportVersionsDialog, toggleExportId, exportFeoToExcel,

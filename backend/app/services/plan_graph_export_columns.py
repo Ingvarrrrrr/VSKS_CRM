@@ -22,6 +22,12 @@ from __future__ import annotations
 
 from typing import Optional
 
+from app.services.export_columns_catalog import (
+    column_index as _shared_column_index,
+    columns_catalog as _shared_columns_catalog,
+    headers_and_widths as _shared_headers_and_widths,
+    resolve_selected_keys as _shared_resolve_selected_keys,
+)
 from app.services.purchase_export_cells import ALL_EXPORT_COLUMNS as _PURCHASE_COLUMNS
 
 # Ключи группы «Договор и оплата» — подписи берутся из _PURCHASE_COLUMNS
@@ -152,10 +158,7 @@ def columns_catalog() -> list[dict]:
     columns — порядок фиксирован (см. PLAN_GRAPH_COLUMNS), совпадает с
     порядком вывода в файле. `default` — входит ли столбец в набор по
     умолчанию (когда ?columns= не передан)."""
-    return [
-        {"key": k, "label": label, "group": group, "default": is_default}
-        for k, label, group, _w, is_default in PLAN_GRAPH_COLUMNS
-    ]
+    return _shared_columns_catalog(PLAN_GRAPH_COLUMNS)
 
 
 def resolve_selected_keys(columns: Optional[str]) -> list:
@@ -163,27 +166,19 @@ def resolve_selected_keys(columns: Optional[str]) -> list:
     ФИКСИРОВАННОМ порядке PLAN_GRAPH_COLUMNS; неизвестные ключи игнорируются;
     `name` всегда присутствует (владелец — «наименование показываем всегда»).
     Пусто/None → ТОЛЬКО столбцы по умолчанию (DEFAULT_KEYS) — новая группа
-    «Договор и оплата» в выгрузку не попадает, пока её не выбрали явно."""
-    if not columns:
-        return list(DEFAULT_KEYS)
-    requested = {c.strip() for c in columns.split(",") if c.strip()}
-    requested.add("name")
-    selected = [k for k in ALL_KEYS if k in requested]
-    return selected or list(DEFAULT_KEYS)
+    «Договор и оплата» в выгрузку не попадает, пока её не выбрали явно.
+    Алгоритм — общий app.services.export_columns_catalog (ПРАВИЛО №6,
+    тот же приём, что и app.services.feo_export_columns)."""
+    return _shared_resolve_selected_keys(PLAN_GRAPH_COLUMNS, columns, always=("name",))
 
 
 def headers_and_widths(selected_keys: list) -> tuple:
     """(headers, widths) для выбранных ключей, в их порядке."""
-    headers = [_BY_KEY[k][0] for k in selected_keys]
-    widths = [_BY_KEY[k][2] for k in selected_keys]
-    return headers, widths
+    return _shared_headers_and_widths(_BY_KEY, selected_keys)
 
 
 def column_index(selected_keys: list, key: str) -> Optional[int]:
     """1-based индекс столбца `key` среди выбранных, или None, если столбец
     не выбран (вызывающий код пропускает запись в него — напр. гиперссылка
     «Открыть» в docs, если docs не выбран)."""
-    try:
-        return selected_keys.index(key) + 1
-    except ValueError:
-        return None
+    return _shared_column_index(selected_keys, key)

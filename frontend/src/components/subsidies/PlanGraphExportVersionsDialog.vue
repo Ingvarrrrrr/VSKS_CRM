@@ -13,6 +13,32 @@
         <v-progress-linear v-if="v.exportVersionsLoading.value" indeterminate color="primary" class="mb-3" />
         <div class="text-caption text-medium-emphasis mb-3">Выберите одну или несколько редакций. Несколько редакций выгрузятся в один документ — колонки рядом.</div>
         <v-checkbox v-model="v.exportIncludeCurrent.value" density="compact" hide-details label="Текущая (живая) ФЭО" class="mb-2" />
+
+        <!-- Столбцы «Выгрузить ФЭО» (владелец 20.10.2026) — действуют ТОЛЬКО
+             на «Текущая (живая) ФЭО»; на выгрузку/сравнение сохранённых
+             редакций не влияют (другой эндпоинт, выбора столбцов не несёт). -->
+        <v-expansion-panels v-if="v.exportIncludeCurrent.value && v.feoExportColumnsCatalog.value.length" variant="accordion" class="mb-3">
+          <v-expansion-panel title="Столбцы текущей (живой) ФЭО">
+            <v-expansion-panel-text>
+              <div v-for="group in feoColumnGroups" :key="group.name" class="mb-2">
+                <div class="text-caption font-weight-bold text-medium-emphasis text-uppercase mb-1">{{ group.name }}</div>
+                <div class="d-flex flex-wrap gap-1">
+                  <v-checkbox
+                    v-for="col in group.cols" :key="col.key"
+                    v-model="v.feoExportSelectedColumns.value"
+                    :value="col.key"
+                    :label="col.label"
+                    density="compact"
+                    hide-details
+                    :disabled="col.key === 'name'"
+                    style="min-width:180px; max-width:240px"
+                  />
+                </div>
+              </div>
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
+
         <v-table density="compact">
           <thead>
             <tr>
@@ -64,8 +90,18 @@
 <script setup lang="ts">
 // Экспорт редакций ФЭО — вынесен из SubsidiesView.vue. Состояние/логика — в
 // usePlanGraphVersions.ts (singleton, общий с остальными диалогами версий).
+import { computed } from 'vue'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
-import { usePlanGraphVersions } from '@/composables/subsidies/usePlanGraphVersions'
+import { usePlanGraphVersions, type FeoExportColumn } from '@/composables/subsidies/usePlanGraphVersions'
 
 const v = usePlanGraphVersions(useSubsidyDetailCtx())
+
+const feoColumnGroups = computed(() => {
+  const map: Record<string, FeoExportColumn[]> = {}
+  for (const col of v.feoExportColumnsCatalog.value) {
+    if (!map[col.group]) map[col.group] = []
+    map[col.group]!.push(col)
+  }
+  return Object.entries(map).map(([name, cols]) => ({ name, cols }))
+})
 </script>

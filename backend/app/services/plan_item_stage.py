@@ -74,6 +74,14 @@ _STATUS_STAGE: dict[str, str] = {
 
 _PAYMENT_EPS = 0.01
 
+# «Поставлено и дальше» — для признака segments[].delivered (выгрузка ФЭО,
+# задача владельца 20.10.2026, не меняет `stage`): закупка, у которой товар
+# точно поставлен — статусы 'delivered' и 'paid' (оплата в этой модели
+# наступает после поставки, см. _STATUS_STAGE выше — оба статуса уже сливаются
+# в STAGE_ORDERED). ПРАВИЛО №6: второй список статусов не заводим — это
+# подмножество PLANNED_STATUSES (_active_statuses), а не новая шкала.
+_DELIVERED_STATUSES: set = {"delivered", "paid"}
+
 
 def _active_statuses() -> set:
     # Локальный импорт — избегаем цикла роутер↔сервис (тот же приём, что и в
@@ -116,6 +124,12 @@ def _build_segments(groups: dict[tuple, dict], denom_qty: float, denom_amount: f
             "share": share,
             "quantity": agg["quantity"],
             "amount": agg["amount"],
+            # «Товар поставлен» (выгрузка ФЭО, задача владельца 20.10.2026) —
+            # НЕ влияет на `stage` (полосы дерева ФЭО по-прежнему сливают
+            # delivered в ordered, см. _resolve_stage) — отдельный признак по
+            # статусу закупки «поставлено и дальше» (delivered, paid — тот же
+            # порядок статусов, что и PLANNED_STATUSES выше по шкале ordered).
+            "delivered": bool(agg.get("delivered")),
         })
     total_share = sum(s["share"] for s in segments)
     overflow = total_share > 1 + 1e-6
@@ -206,7 +220,10 @@ async def planned_item_stage_segments(
         final_groups: dict[tuple, dict] = {}
         for (purchase_id, registry_number, _placeholder), agg in by_key.items():
             stage = _resolve_stage(agg.get("_status"), agg["amount"], agg["_marked"], agg["_confirmed"])
-            final_groups[(purchase_id, registry_number, stage)] = {"quantity": agg["quantity"], "amount": agg["amount"]}
+            final_groups[(purchase_id, registry_number, stage)] = {
+                "quantity": agg["quantity"], "amount": agg["amount"],
+                "delivered": agg.get("_status") in _DELIVERED_STATUSES,
+            }
         dq, da = denom.get(planned_item_id, (0.0, 0.0))
         result[planned_item_id] = _build_segments(final_groups, dq, da)
     return result
@@ -282,7 +299,10 @@ async def category_plan_stage_segments(
         final_groups: dict[tuple, dict] = {}
         for (purchase_id, registry_number, _placeholder), agg in by_key.items():
             stage = _resolve_stage(agg.get("_status"), agg["amount"], agg["_marked"], agg["_confirmed"])
-            final_groups[(purchase_id, registry_number, stage)] = {"quantity": agg["quantity"], "amount": agg["amount"]}
+            final_groups[(purchase_id, registry_number, stage)] = {
+                "quantity": agg["quantity"], "amount": agg["amount"],
+                "delivered": agg.get("_status") in _DELIVERED_STATUSES,
+            }
         dq, da = denom.get(category_id, (0.0, 0.0))
         result[category_id] = _build_segments(final_groups, dq, da)
     return result

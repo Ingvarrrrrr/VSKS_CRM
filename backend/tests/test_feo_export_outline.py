@@ -1,10 +1,17 @@
 """GET /api/feo-categories/export (backend/app/routers/feo_import_export.py) —
 выгрузка теперь включает плановые позиции ФЭО и группировку Excel (плюсики).
 
+ИЗМЕНЕНО (владелец 20.10.2026): столбцы выбираемые (app.services.
+feo_export_columns), заголовок переехал на строку 3 (строки 1-2 — «Итого
+всего»/«Итого по фильтру», см. app.services.feo_export_xlsx), колонка
+«Финансирование по ФЭО» теперь B (ключ "feo", по умолчанию name,feo,plan,...),
+формула категории — SUBTOTAL(9, ...) по прямым детям (функция 9 — считает и
+скрытые строки позиций), не SUM.
+
 Проверяет:
   - позиции, запланированные ПО ФЭО (feo_amount задан, активна) — выведены;
     чисто внутренний план (is_internal_plan, feo_amount=NULL) — не выведен;
-  - формулы в D ссылаются РОВНО на строки ПРЯМЫХ детей (не внуков);
+  - формулы в колонке «feo» ссылаются РОВНО на строки ПРЯМЫХ детей (не внуков);
   - outline_level: категория 1-го уровня = 0, подкатегория = 1, позиции под
     ней = 2; категория без детей — число, не формула;
   - строки позиций hidden=True, ws.sheet_properties.outlinePr.summaryBelow
@@ -96,7 +103,7 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
     assert "Только внутренний план" not in names
 
     def _find_row(name_contains):
-        for row in ws.iter_rows(min_row=2):
+        for row in ws.iter_rows(min_row=4):
             v = row[0].value
             if v and name_contains in v:
                 return row[0].row
@@ -119,25 +126,27 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
     assert ws.row_dimensions[r_item1].hidden is True
     assert ws.row_dimensions[r_item2].hidden is True
 
-    # D у позиций — числа (feo_amount), E — числа (amount, "план").
-    assert ws.cell(r_item1, 4).value == 1000.0
-    assert ws.cell(r_item1, 5).value == 900.0
-    assert ws.cell(r_item2, 4).value == 2000.0
-    assert ws.cell(r_item2, 5).value == 1800.0
+    # По умолчанию столбец B = "feo" (Финансирование по ФЭО), C = "plan"
+    # (Запланировано) — см. app.services.feo_export_columns.DEFAULT_KEYS.
+    assert ws.cell(r_item1, 2).value == 1000.0
+    assert ws.cell(r_item1, 3).value == 900.0
+    assert ws.cell(r_item2, 2).value == 2000.0
+    assert ws.cell(r_item2, 3).value == 1800.0
 
-    # D подкатегории — формула SUM по её прямым детям (две позиции, не внуки).
-    d_sub = ws.cell(r_sub, 4).value
-    assert isinstance(d_sub, str) and d_sub.startswith("=SUM(")
-    assert f"D{r_item1}" in d_sub and f"D{r_item2}" in d_sub
-    # Ровно два слагаемых (не более — никаких внуков/чужих строк).
-    assert d_sub.count("D") == 2
+    # B подкатегории — формула SUBTOTAL(9,...) по её прямым детям (две
+    # позиции, не внуки) — функция 9 учитывает и скрытые строки позиций.
+    b_sub = ws.cell(r_sub, 2).value
+    assert isinstance(b_sub, str) and b_sub.startswith("=SUBTOTAL(9,")
+    assert f"B{r_item1}" in b_sub and f"B{r_item2}" in b_sub
+    refs_sub = b_sub[len("=SUBTOTAL(9,"):-1].split(",")
+    assert len(refs_sub) == 2
 
-    # D корня — формула SUM по его прямым детям (подкатегория + категория без
-    # детей), НЕ по внукам (позициям).
-    d_root = ws.cell(r_root, 4).value
-    assert isinstance(d_root, str) and d_root.startswith("=SUM(")
-    assert f"D{r_sub}" in d_root and f"D{r_leaf}" in d_root
-    assert f"D{r_item1}" not in d_root and f"D{r_item2}" not in d_root
+    # B корня — формула SUBTOTAL(9,...) по его прямым детям (подкатегория +
+    # категория без детей), НЕ по внукам (позициям).
+    b_root = ws.cell(r_root, 2).value
+    assert isinstance(b_root, str) and b_root.startswith("=SUBTOTAL(9,")
+    assert f"B{r_sub}" in b_root and f"B{r_leaf}" in b_root
+    assert f"B{r_item1}" not in b_root and f"B{r_item2}" not in b_root
 
     # Категория без детей — число (budget), не формула.
-    assert ws.cell(r_leaf, 4).value == 77000.0
+    assert ws.cell(r_leaf, 2).value == 77000.0

@@ -175,25 +175,8 @@
         )">
         Что ещё заказать
       </v-btn>
-      <!-- «Свернуть категории-дубли» (владелец, задача 3) — categoryCollapse.ts,
-           счётчик считается лениво при открытии субсидии (watch на ctx.selectedId
-           ниже), кнопка скрыта при 0 кандидатов. -->
-      <v-btn v-if="feoCollapse.candidatesCount.value > 0" size="small" variant="outlined" color="blue-grey-darken-1"
-        prepend-icon="mdi-arrow-collapse-up"
-        @click="feoCollapse.openBulkDialog(ctx.selectedId.value!)">
-        Свернуть категории-дубли ({{ feoCollapse.candidatesCount.value }})
-      </v-btn>
       <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
       <template v-if="ctx.canEditFeo.value">
-        <v-tooltip location="bottom" max-width="320">
-          <template #activator="{ props: feoTemplateTooltipProps }">
-            <v-btn v-bind="feoTemplateTooltipProps" size="small" variant="outlined" prepend-icon="mdi-download-outline"
-              @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">Шаблон</v-btn>
-          </template>
-          <!-- Решение владельца 05.10.2026: субсидию, у которой часть закупок
-               уже прошла, грузят ОДНИМ файлом — необязательный блок «Факт». -->
-          Если часть закупок уже прошла — заполните блок «Факт»: после загрузки плана система предложит загрузить их.
-        </v-tooltip>
         <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт ФЭО</v-btn>
         <!-- «Импорт факта» (план breezy-mixing-lovelace.md, Часть 2) — уже
              совершённые закупки из таблиц ведения субсидии. Та же видимость,
@@ -216,37 +199,6 @@
           </v-list>
         </v-menu>
       </template>
-      <!-- 12-04: Version history -->
-      <v-btn size="small" variant="text" color="blue-grey" prepend-icon="mdi-history" @click="openVersionHistory">
-        История
-      </v-btn>
-      <!-- «Приравнять ФЭО к плану по всем статьям» (владелец 07.10.2026,
-           решение №4, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md
-           шаг 3-5) — тот же гейт canSaveVersion, что у одиночного «Приравнять»
-           в FeoTreeRow.vue (org_admin и выше). Подтверждение — отдельный
-           диалог AlignBudgetAllDialog.vue (Правило №5, новая логика). -->
-      <v-btn
-        v-if="canSaveVersion"
-        size="small"
-        variant="outlined"
-        color="blue-grey"
-        prepend-icon="mdi-equal-box"
-        title="ФЭО каждой статьи субсидии станет равным её полной плановой сумме"
-        @click="ctx.selectedId.value && alignAllDialog?.open(ctx.selectedId.value)"
-      >
-        Приравнять ФЭО к плану по всем статьям
-      </v-btn>
-      <!-- 12-05: Save version -->
-      <v-btn
-        v-if="canSaveVersion"
-        size="small"
-        variant="text"
-        color="success"
-        prepend-icon="mdi-content-save"
-        @click="openSaveVersionDialog"
-      >
-        Сохранить редакцию
-      </v-btn>
       <!-- 12-04: Export dropdown -->
       <v-menu>
         <template #activator="{ props: menuProps }">
@@ -273,6 +225,59 @@
                   @change="(e: any) => { if (e.target.files[0]) uploadTemplate(e.target.files[0]) }" />
               </label>
             </v-list-item-title>
+          </v-list-item>
+        </v-list>
+      </v-menu>
+      <!-- «Ещё» (владелец, 20.10.2026): редкие действия дерева ФЭО собраны в
+           одно меню на всех ширинах экрана — раньше занимали 2-3 ряда тулбара.
+           Каждый пункт — та же видимость/действие, что была у отдельной кнопки
+           (см. комментарии у пунктов ниже и в docstring'ах composables выше),
+           логика не продублирована, только перенесена. -->
+      <v-menu>
+        <template #activator="{ props: moreMenuProps }">
+          <v-btn size="small" variant="outlined" color="blue-grey" prepend-icon="mdi-dots-horizontal"
+            append-icon="mdi-chevron-down" v-bind="moreMenuProps">
+            Ещё
+          </v-btn>
+        </template>
+        <v-list density="compact">
+          <!-- «Свернуть категории-дубли» (задача 3) — categoryCollapse.ts,
+               счётчик считается лениво при открытии субсидии (watch на
+               ctx.selectedId выше), пункт скрыт при 0 кандидатов. -->
+          <v-list-item v-if="feoCollapse.candidatesCount.value > 0" prepend-icon="mdi-arrow-collapse-up"
+            @click="feoCollapse.openBulkDialog(ctx.selectedId.value!)">
+            <v-list-item-title>Свернуть категории-дубли ({{ feoCollapse.candidatesCount.value }})</v-list-item-title>
+          </v-list-item>
+          <v-list-item v-if="ctx.canEditFeo.value" prepend-icon="mdi-download-outline"
+            @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">
+            <v-list-item-title>Шаблон</v-list-item-title>
+            <!-- Решение владельца 05.10.2026: субсидию, у которой часть закупок
+                 уже прошла, грузят ОДНИМ файлом — необязательный блок «Факт». -->
+            <v-list-item-subtitle style="white-space:normal">Если часть закупок уже прошла — заполните блок «Факт»: после загрузки плана система предложит загрузить их.</v-list-item-subtitle>
+          </v-list-item>
+          <!-- 12-04: Version history -->
+          <v-list-item prepend-icon="mdi-history" @click="openVersionHistory">
+            <v-list-item-title>История</v-list-item-title>
+          </v-list-item>
+          <v-divider v-if="canSaveVersion" />
+          <!-- «Приравнять ФЭО к плану по всем статьям» (владелец 07.10.2026,
+               решение №4, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md
+               шаг 3-5) — тот же гейт canSaveVersion, что у одиночного
+               «Приравнять» в FeoTreeRow.vue (org_admin и выше). Подтверждение —
+               отдельный диалог AlignBudgetAllDialog.vue (Правило №5). -->
+          <v-list-item v-if="canSaveVersion" prepend-icon="mdi-equal-box"
+            @click="ctx.selectedId.value && alignAllDialog?.open(ctx.selectedId.value)">
+            <v-list-item-title>Приравнять ФЭО к плану по всем статьям</v-list-item-title>
+            <v-list-item-subtitle style="white-space:normal">ФЭО каждой статьи субсидии станет равным её полной плановой сумме</v-list-item-subtitle>
+          </v-list-item>
+          <!-- 12-05: Save version -->
+          <v-list-item v-if="canSaveVersion" prepend-icon="mdi-content-save" @click="openSaveVersionDialog">
+            <v-list-item-title>Сохранить редакцию</v-list-item-title>
+          </v-list-item>
+          <!-- «Убрать номера строк файла» — см. docstring у плашки подтверждения
+               ниже в шаблоне (confirmClearSourceRows). -->
+          <v-list-item v-if="canSaveVersion" prepend-icon="mdi-label-off-outline" @click="clearSourceRowsConfirming = true">
+            <v-list-item-title>Убрать номера строк файла</v-list-item-title>
           </v-list-item>
         </v-list>
       </v-menu>
@@ -310,24 +315,17 @@
        только администратору организации и выше — тот же canSaveVersion,
        что и у «Приравнять ФЭО к плану»/«Сохранить редакцию» выше (ПРАВИЛО
        №6, второй гейт роли не заводим). -->
-  <div v-if="canSaveVersion" class="feo-clear-source-rows-bar">
-    <template v-if="!clearSourceRowsConfirming">
-      <v-btn size="x-small" variant="text" color="blue-grey" prepend-icon="mdi-label-off-outline"
-        @click="clearSourceRowsConfirming = true"
-      >Убрать номера строк файла</v-btn>
-    </template>
-    <template v-else>
-      <span class="text-caption text-medium-emphasis">
-        У всех плановых позиций субсидии исчезнут подписи «строка N файла» (закупки,
-        привязанные к частям объединённых позиций, не затрагиваются). Продолжить?
-      </span>
-      <v-btn size="x-small" variant="flat" color="error" class="ml-2" :loading="clearSourceRowsLoading"
-        @click="confirmClearSourceRows"
-      >Да, убрать</v-btn>
-      <v-btn size="x-small" variant="text" class="ml-1" :disabled="clearSourceRowsLoading"
-        @click="clearSourceRowsConfirming = false"
-      >Отмена</v-btn>
-    </template>
+  <div v-if="canSaveVersion && clearSourceRowsConfirming" class="feo-clear-source-rows-bar">
+    <span class="text-caption text-medium-emphasis">
+      У всех плановых позиций субсидии исчезнут подписи «строка N файла» (закупки,
+      привязанные к частям объединённых позиций, не затрагиваются). Продолжить?
+    </span>
+    <v-btn size="x-small" variant="flat" color="error" class="ml-2" :loading="clearSourceRowsLoading"
+      @click="confirmClearSourceRows"
+    >Да, убрать</v-btn>
+    <v-btn size="x-small" variant="text" class="ml-1" :disabled="clearSourceRowsLoading"
+      @click="clearSourceRowsConfirming = false"
+    >Отмена</v-btn>
   </div>
 
   <!-- Подсказка режима выбора (владелец, лист 2 №7) — одной строкой под тулбаром,

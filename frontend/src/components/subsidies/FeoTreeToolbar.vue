@@ -175,64 +175,12 @@
         )">
         Что ещё заказать
       </v-btn>
-      <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
-      <template v-if="ctx.canEditFeo.value">
-        <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт ФЭО</v-btn>
-        <!-- «Импорт факта» (план breezy-mixing-lovelace.md, Часть 2) — уже
-             совершённые закупки из таблиц ведения субсидии. Та же видимость,
-             что у «Импорт» выше (ctx.canEditFeo). Журнал прогонов — пункт
-             меню рядом с запуском нового импорта, не отдельная кнопка. -->
-        <v-menu>
-          <template #activator="{ props: factImportMenuProps }">
-            <v-btn size="small" variant="outlined" color="deep-orange" prepend-icon="mdi-file-swap-outline"
-              append-icon="mdi-chevron-down" v-bind="factImportMenuProps">
-              Импорт факта
-            </v-btn>
-          </template>
-          <v-list density="compact">
-            <v-list-item prepend-icon="mdi-upload-outline" @click="openFactImport">
-              <v-list-item-title>Новый импорт факта</v-list-item-title>
-            </v-list-item>
-            <v-list-item prepend-icon="mdi-history" @click="openFactImportRuns">
-              <v-list-item-title>Журнал импорта факта</v-list-item-title>
-            </v-list-item>
-          </v-list>
-        </v-menu>
-      </template>
-      <!-- 12-04: Export dropdown -->
-      <v-menu>
-        <template #activator="{ props: menuProps }">
-          <v-btn size="small" variant="outlined" color="teal" prepend-icon="mdi-export" append-icon="mdi-chevron-down" v-bind="menuProps">
-            Экспорт
-          </v-btn>
-        </template>
-        <v-list density="compact">
-          <v-list-item prepend-icon="mdi-microsoft-excel" @click="exportPlanGraphExcel">
-            <v-list-item-title>Excel (.xlsx)</v-list-item-title>
-          </v-list-item>
-          <v-list-item prepend-icon="mdi-microsoft-word" @click="exportPlanGraphDocx">
-            <v-list-item-title>Word (шаблон)</v-list-item-title>
-          </v-list-item>
-          <v-list-item prepend-icon="mdi-file-pdf-box" @click="exportFeoPdf">
-            <v-list-item-title>PDF (как на экране)</v-list-item-title>
-          </v-list-item>
-          <v-divider />
-          <v-list-item prepend-icon="mdi-upload-outline">
-            <v-list-item-title>
-              <label style="cursor:pointer">
-                Загрузить шаблон .docx
-                <input type="file" accept=".docx" style="display:none"
-                  @change="(e: any) => { if (e.target.files[0]) uploadTemplate(e.target.files[0]) }" />
-              </label>
-            </v-list-item-title>
-          </v-list-item>
-        </v-list>
-      </v-menu>
-      <!-- «Ещё» (владелец, 20.10.2026): редкие действия дерева ФЭО собраны в
-           одно меню на всех ширинах экрана — раньше занимали 2-3 ряда тулбара.
-           Каждый пункт — та же видимость/действие, что была у отдельной кнопки
-           (см. комментарии у пунктов ниже и в docstring'ах composables выше),
-           логика не продублирована, только перенесена. -->
+      <!-- «Ещё» (владелец, 20.10.2026, правка того же дня): редкие действия
+           дерева ФЭО собраны в одно плоское меню с подзаголовками групп —
+           «Выгрузить ФЭО»/«Импорт ФЭО»/«Импорт факта»/«Экспорт» перестали быть
+           отдельными кнопками/вложенными меню на панели, их пункты перенесены
+           сюда без изменения видимости/действия (см. комментарии у пунктов
+           ниже и в docstring'ах composables выше), логика не продублирована. -->
       <v-menu>
         <template #activator="{ props: moreMenuProps }">
           <v-btn size="small" variant="outlined" color="blue-grey" prepend-icon="mdi-dots-horizontal"
@@ -240,7 +188,61 @@
             Ещё
           </v-btn>
         </template>
-        <v-list density="compact">
+        <v-list density="compact" style="max-width: 420px">
+          <!-- Группа «Загрузка» — та же видимость, что была у кнопок «Импорт
+               ФЭО»/«Импорт факта» (ctx.canEditFeo); группа целиком скрыта,
+               если пунктов нет (Правило №8, п.8 докстринга задачи). -->
+          <template v-if="ctx.canEditFeo.value">
+            <v-list-subheader>Загрузка</v-list-subheader>
+            <v-list-item prepend-icon="mdi-upload-outline" @click="feoImport.show = true">
+              <v-list-item-title>Импорт ФЭО</v-list-item-title>
+            </v-list-item>
+            <!-- «Импорт факта» (план breezy-mixing-lovelace.md, Часть 2) — уже
+                 совершённые закупки из таблиц ведения субсидии. -->
+            <v-list-item prepend-icon="mdi-file-swap-outline" @click="openFactImport">
+              <v-list-item-title>Новый импорт факта</v-list-item-title>
+            </v-list-item>
+            <v-list-item prepend-icon="mdi-history" @click="openFactImportRuns">
+              <v-list-item-title>Журнал импорта факта</v-list-item-title>
+            </v-list-item>
+            <v-list-item prepend-icon="mdi-download-outline"
+              @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">
+              <v-list-item-title>Шаблон</v-list-item-title>
+              <!-- Решение владельца 05.10.2026: субсидию, у которой часть закупок
+                   уже прошла, грузят ОДНИМ файлом — необязательный блок «Факт». -->
+              <v-list-item-subtitle style="white-space:normal">Если часть закупок уже прошла — заполните блок «Факт»: после загрузки плана система предложит загрузить их.</v-list-item-subtitle>
+            </v-list-item>
+            <v-divider />
+          </template>
+
+          <!-- Группа «Выгрузка» — та же видимость/действия, что были у кнопки
+               «Выгрузить ФЭО» и меню «Экспорт» (всем пользователям). -->
+          <v-list-subheader>Выгрузка</v-list-subheader>
+          <v-list-item prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">
+            <v-list-item-title>Выгрузить ФЭО</v-list-item-title>
+          </v-list-item>
+          <v-list-item prepend-icon="mdi-microsoft-excel" @click="exportPlanGraphExcel">
+            <v-list-item-title>Экспорт в Excel (.xlsx)</v-list-item-title>
+          </v-list-item>
+          <v-list-item prepend-icon="mdi-microsoft-word" @click="exportPlanGraphDocx">
+            <v-list-item-title>Экспорт в Word (шаблон)</v-list-item-title>
+          </v-list-item>
+          <v-list-item prepend-icon="mdi-file-pdf-box" @click="exportFeoPdf">
+            <v-list-item-title>Экспорт в PDF (как на экране)</v-list-item-title>
+          </v-list-item>
+          <!-- Загрузка шаблона .docx — раньше <label><input type=file></label>
+               внутри пункта; v-menu закрывается по клику на пункт раньше, чем
+               открывается системный выбор файла, поэтому input вынесен ЗА
+               пределы v-menu (конец <template> ниже) и открывается через ref. -->
+          <v-list-item prepend-icon="mdi-upload-outline" @click="templateFileInput?.click()">
+            <v-list-item-title>Загрузить шаблон .docx</v-list-item-title>
+          </v-list-item>
+          <v-divider />
+
+          <!-- Группа «Прочее» — «Свернуть категории-дубли»/«История»/
+               «Приравнять»/«Сохранить редакцию»/«Убрать номера строк файла» —
+               те же гейты, что были на отдельных пунктах прежнего меню «Ещё». -->
+          <v-list-subheader>Прочее</v-list-subheader>
           <!-- «Свернуть категории-дубли» (задача 3) — categoryCollapse.ts,
                счётчик считается лениво при открытии субсидии (watch на
                ctx.selectedId выше), пункт скрыт при 0 кандидатов. -->
@@ -248,18 +250,10 @@
             @click="feoCollapse.openBulkDialog(ctx.selectedId.value!)">
             <v-list-item-title>Свернуть категории-дубли ({{ feoCollapse.candidatesCount.value }})</v-list-item-title>
           </v-list-item>
-          <v-list-item v-if="ctx.canEditFeo.value" prepend-icon="mdi-download-outline"
-            @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">
-            <v-list-item-title>Шаблон</v-list-item-title>
-            <!-- Решение владельца 05.10.2026: субсидию, у которой часть закупок
-                 уже прошла, грузят ОДНИМ файлом — необязательный блок «Факт». -->
-            <v-list-item-subtitle style="white-space:normal">Если часть закупок уже прошла — заполните блок «Факт»: после загрузки плана система предложит загрузить их.</v-list-item-subtitle>
-          </v-list-item>
           <!-- 12-04: Version history -->
           <v-list-item prepend-icon="mdi-history" @click="openVersionHistory">
             <v-list-item-title>История</v-list-item-title>
           </v-list-item>
-          <v-divider v-if="canSaveVersion" />
           <!-- «Приравнять ФЭО к плану по всем статьям» (владелец 07.10.2026,
                решение №4, план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md
                шаг 3-5) — тот же гейт canSaveVersion, что у одиночного
@@ -281,6 +275,8 @@
           </v-list-item>
         </v-list>
       </v-menu>
+      <input ref="templateFileInput" type="file" accept=".docx" style="display:none"
+        @change="(e: any) => { if (e.target.files[0]) uploadTemplate(e.target.files[0]) }" />
       <v-btn v-if="ctx.canEditFeo.value" size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="ctx.openAddFeoDialog(null)">Добавить</v-btn>
     </div>
   </div>
@@ -487,6 +483,10 @@ function openFactImportRuns() {
 const { exportScreenshotPdf: _exportFeoScreenshotPdf } = useRegistryExport()
 
 const subsidyExportDialog = ref<InstanceType<typeof SubsidyExportDialog> | null>(null)
+// «Загрузить шаблон .docx» в меню «Ещё» — input вынесен за пределы v-menu
+// (меню закрывается раньше, чем открывается системный выбор файла), пункт
+// меню вызывает templateFileInput.value?.click().
+const templateFileInput = ref<HTMLInputElement | null>(null)
 
 function exportPlanGraphExcel() {
   if (!ctx.selectedId.value) return

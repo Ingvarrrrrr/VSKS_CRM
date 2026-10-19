@@ -42,6 +42,7 @@ async def export_feo_to_excel(
         raise HTTPException(500, "openpyxl не установлен")
     from app.models.subsidy import Subsidy
     from app.models.purchase import Purchase
+    from app.services.subsidy_budget import _active_feo_items_with_amount
 
     sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
     if not sub:
@@ -60,6 +61,17 @@ async def export_feo_to_excel(
     )).all()
     purchase_totals = {r.feo_category_id: float(r.total) for r in pt_rows}
 
+    # Плановые позиции, запланированные ПО ФЭО (признак — тот же, что и у
+    # "бюджета субсидии из дерева ФЭО": активна + feo_amount задан, см.
+    # app.services.subsidy_budget._active_feo_items_with_amount — ПРАВИЛО №6,
+    # второй фильтр не заводим. Позиция, у которой feo_amount==NULL, — чисто
+    # внутренний план (is_internal_plan без ФЭО-части) и в выгрузку ФЭО не идёт.
+    cat_ids = [c.id for c in cats]
+    feo_items = await _active_feo_items_with_amount(db, cat_ids)
+    items_by_cat: dict[int, list] = {}
+    for it in sorted(feo_items, key=lambda x: (x.sort_order is None, x.sort_order or 0, x.id)):
+        items_by_cat.setdefault(it.feo_category_id, []).append(it)
+
     # Build tree
     by_id = {c.id: {"cat": c, "children": []} for c in cats}
     roots = []
@@ -68,13 +80,6 @@ async def export_feo_to_excel(
             by_id[c.parent_id]["children"].append(by_id[c.id])
         else:
             roots.append(by_id[c.id])
-
-    def calc_budget(node):
-        c = node["cat"]
-        if not node["children"]:
-            return float(c.budget) if c.budget is not None else None
-        child_sum = sum(v for ch in node["children"] if (v := calc_budget(ch)) is not None)
-        return child_sum if any(calc_budget(ch) is not None for ch in node["children"]) else (float(c.budget) if c.budget is not None else None)
 
     def calc_purchased(node):
         c = node["cat"]
@@ -85,6 +90,9 @@ async def export_feo_to_excel(
     wb = Workbook()
     ws = wb.active
     ws.title = sub.name[:31]
+    # Плюсики над группой (а не под ней) — категория-родитель стоит ПЕРЕД
+    # своими детьми в листе, "итоговая" строка сверху.
+    ws.sheet_properties.outlinePr.summaryBelow = False
 
     header_fill = PatternFill(start_color="1D4ED8", end_color="1D4ED8", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True, size=11)
@@ -92,6 +100,7 @@ async def export_feo_to_excel(
     l2_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
     bold_font = Font(bold=True)
     semi_font = Font(bold=False)
+    item_font = Font(italic=True, color="475569")
 
     ws.append(["Наименование", "Код", "Прил.", "Финансирование по ФЭО (₽)", "Фактически запланировано (₽)", "Активна"])
     for cell in ws[1]:
@@ -100,16 +109,43 @@ async def export_feo_to_excel(
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     ws.row_dimensions[1].height = 32
 
+    _MAX_OUTLINE = 7
+
+    def write_item_row(item, depth):
+        """Строка плановой позиции ФЭО. D — её сумма по ФЭО (feo_amount),
+        E — её плановая/внутренняя сумма (amount) — то же поле amount, что
+        читают compute_feo_plan_tree/assert_tz_not_over_plan (ПРАВИЛО №6: не
+        считаем вторую формулу суммы позиции)."""
+        indent = "  " * depth
+        feo_amount = float(item.feo_amount) if item.feo_amount is not None else None
+        plan_amount = float(item.amount) if item.amount is not None else None
+        row = [
+            indent + item.name,
+            "",
+            "",
+            feo_amount if feo_amount is not None else "",
+            plan_amount if plan_amount is not None else "",
+            "Да" if item.is_active else "Нет",
+        ]
+        ws.append(row)
+        r = ws.max_row
+        for col in (4, 5):
+            ws.cell(r, col).number_format = '#,##0.00'
+        for col in range(1, 7):
+            ws.cell(r, col).font = item_font
+        ws.row_dimensions[r].outline_level = min(depth, _MAX_OUTLINE)
+        ws.row_dimensions[r].hidden = True
+        return r
+
     def write_node(node, depth=0):
         c = node["cat"]
         indent = "  " * depth
-        budget = calc_budget(node)
         purchased = calc_purchased(node)
         row = [
             indent + c.name,
             c.code or "",
             c.appendix or "",
-            budget if budget is not None else "",
+            None,
             purchased if purchased > 0 else "",
             "Да" if c.is_active else "Нет",
         ]
@@ -122,10 +158,27 @@ async def export_feo_to_excel(
             if fill:
                 cell.fill = fill
             cell.font = font
-            if col in (4, 5) and isinstance(cell.value, float):
+            if col == 5 and isinstance(cell.value, float):
                 cell.number_format = '#,##0.00'
-        for ch in node["children"]:
-            write_node(ch, depth + 1)
+        if depth > 0:
+            ws.row_dimensions[r].outline_level = min(depth, _MAX_OUTLINE)
+
+        # Собственные позиции категории (выводимые по ФЭО) — строками ПЕРЕД
+        # подкатегориями, затем сами подкатегории; обе группы — прямые дети
+        # узла для формулы SUM в D (не внуки — иначе задвоение).
+        child_rows = [write_item_row(it, depth + 1) for it in items_by_cat.get(c.id, [])]
+        child_rows += [write_node(ch, depth + 1) for ch in node["children"]]
+
+        cell_d = ws.cell(r, 4)
+        if child_rows:
+            cell_d.value = "=SUM(" + ",".join(f"D{cr}" for cr in child_rows) + ")"
+        else:
+            cell_d.value = float(c.budget) if c.budget is not None else ""
+        cell_d.number_format = '#,##0.00'
+        if fill:
+            cell_d.fill = fill
+        cell_d.font = font
+        return r
 
     for root in roots:
         write_node(root)

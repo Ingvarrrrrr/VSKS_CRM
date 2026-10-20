@@ -62,6 +62,7 @@ from app.services.documents.contractor_override import (
     load_contractor_override,
     merge_contractor_override,
 )
+from app.services.documents.contexts_org_people import add_chief_accountant_context
 from app.services.documents.stages_receipts import build_contract_items_and_receipts_context
 from app.services.documents.stages_render import render_template
 from app.services.documents.stages_postprocess import build_final_buffer
@@ -169,6 +170,10 @@ async def generate_document_bytes(
     add_phase28_context(context, subsidy, c, p, can_view_pii=_can_view_pii)
     add_genitive_forms(context, p, resolved_responsible)
     add_customer_context(context, customer_org, customer_ctr)
+    # Главный бухгалтер Заказчика — единственный расчёт (ПРАВИЛО №6), см.
+    # contexts_org_people.add_chief_accountant_context (тот же вызывается из
+    # fabrikant_package.py).
+    await add_chief_accountant_context(context, db, customer_org)
     await add_fabrikant_context(context, db, p)
     add_misc_purchase_context(context, p, subsidy)
     add_contractor_signatory_context(context, c)

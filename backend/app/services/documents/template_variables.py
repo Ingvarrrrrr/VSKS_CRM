@@ -51,7 +51,12 @@ TEMPLATE_VARIABLES = [
     # customer_short_name пуст.
     ("{{customer_full_name}}", "Полное наименование Заказчика (поле «Полное наименование» карточки)", "{{customer_full_name}}", "Автономная некоммерческая организация «ВСКС»"),
     ("{{customer_short_name}}", "Краткое наименование Заказчика (поле «Краткое наименование» карточки)", "{{customer_short_name}}", "АНО «ВСКС»"),
+    ("{{customer_full_name_genitive}}", "Полное наименование Заказчика в родительном падеже (хвост с кавычками/аббревиатурами не склоняется)", "{{customer_full_name_genitive}}", "Автономной некоммерческой организации «ВСКС»"),
+    ("{{customer_full_name_dative}}", "Полное наименование Заказчика в дательном падеже", "{{customer_full_name_dative}}", "Автономной некоммерческой организации «ВСКС»"),
+    ("{{customer_short_name_genitive}}", "Краткое наименование Заказчика в родительном падеже", "{{customer_short_name_genitive}}", "АНО «ВСКС»"),
+    ("{{customer_short_name_dative}}", "Краткое наименование Заказчика в дательном падеже", "{{customer_short_name_dative}}", "АНО «ВСКС»"),
     ("{{customer_address}}", "Юридический адрес", "{{customer_address}}", "г. Москва, ул. Ленина, д. 1"),
+    ("{{customer_city}}", "Город из юридического адреса Заказчика, без «г.» (не путать с contract_city — местом заключения договора)", "{{customer_city}}", "Москва"),
     ("{{customer_postal_address}}", "Почтовый адрес", "{{customer_postal_address}}", "г. Москва, ул. Ленина, д. 1"),
     ("{{customer_inn}}", "ИНН Заказчика", "{{customer_inn}}", "7700000001"),
     ("{{customer_kpp}}", "КПП Заказчика", "{{customer_kpp}}", "770001001"),
@@ -75,6 +80,14 @@ TEMPLATE_VARIABLES = [
     ("{{customer_signatory_name_initials}}", "Инициалы впереди (для строки подписи)", "{{customer_signatory_name_initials}}", "Е.В. Козеев"),
     ("{{customer_signatory_basis}}", "Основание полномочий", "{{customer_signatory_basis}}", "Устава"),
     ("{{contract_city}}", "Город заключения договора", "{{contract_city}}", "Москва"),
+    # ── Главный бухгалтер Заказчика ──
+    ("", "ГЛАВНЫЙ БУХГАЛТЕР ЗАКАЗЧИКА", "", ""),
+    ("{{chief_accountant_name}}", "ФИО сотрудника Заказчика с должностью «Главный бухгалтер» (им.падеж); нет такого сотрудника — пусто", "{{chief_accountant_name}}", "Петрова Ирина Сергеевна"),
+    ("{{chief_accountant_name_genitive}}", "ФИО главного бухгалтера в родительном падеже", "{{chief_accountant_name_genitive}}", "Петровой Ирины Сергеевны"),
+    ("{{chief_accountant_name_dative}}", "ФИО главного бухгалтера в дательном падеже", "{{chief_accountant_name_dative}}", "Петровой Ирине Сергеевне"),
+    ("{{chief_accountant_initials}}", "Фамилия + инициалы", "{{chief_accountant_initials}}", "Петрова И.С."),
+    ("{{chief_accountant_initials_genitive}}", "Фамилия (род.падеж) + инициалы", "{{chief_accountant_initials_genitive}}", "Петровой И.С."),
+    ("{{chief_accountant_initials_dative}}", "Фамилия (дат.падеж) + инициалы", "{{chief_accountant_initials_dative}}", "Петровой И.С."),
     # ── Контрагент ──
     ("", "КОНТРАГЕНТ (ИСПОЛНИТЕЛЬ)", "", ""),
     # Владелец (16.10.2026): {{contractor_name}} убран — дублировал
@@ -294,6 +307,9 @@ TEMPLATE_VARIABLES = [
     ("{{initiator_position_gen}}", "Должность инициатора в родительном падеже", "{{initiator_position_gen}}", "начальника отдела"),
     ("{{initiator_dept_gen}}", "Отдел инициатора в родительном падеже (с авто-удалением дубля «Отдел» если он уже есть в должности)", "{{initiator_dept_gen}}", "мто"),
     ("{{responsible_name_gen}}", "ФИО ответственного в родительном падеже", "{{responsible_name_gen}}", "Петрова П.П."),
+    ("{{responsible_name_dat}}", "ФИО ответственного в дательном падеже", "{{responsible_name_dat}}", "Петрову П.П."),
+    ("{{responsible_initials_gen}}", "Фамилия (род.падеж) + инициалы ответственного", "{{responsible_initials_gen}}", "Петрова П.П."),
+    ("{{responsible_initials_dat}}", "Фамилия (дат.падеж) + инициалы ответственного", "{{responsible_initials_dat}}", "Петрову П.П."),
     ("{{responsible_position_gen}}", "Должность ответственного в родительном падеже", "{{responsible_position_gen}}", "главного специалиста"),
     ("{{a.full_name_gen}}", "ФИО согласующего в родительном падеже (внутри цикла)", "{{a.full_name_gen}}", "Сидорова С.С."),
     ("{{a.role_name_gen}}", "Должность согласующего в родительном падеже (внутри цикла)", "{{a.role_name_gen}}", "директора по правовым вопросам"),

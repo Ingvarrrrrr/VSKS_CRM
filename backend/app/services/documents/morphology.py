@@ -220,7 +220,19 @@ def _to_case_position(phrase: str, case: str) -> str:
         is_prtf = False
         if morph:
             try:
-                tag = morph.parse(word.lower())[0].tag
+                # Средний род / неодуш. слова («отделение», «Региональное») —
+                # им. и вин. падеж пишутся одинаково, и pymorphy3 нередко
+                # ранжирует вин. выше (видел на практике: «отделение» →
+                # top-parse accs 0.6 против nomn 0.4). Смотрим все разборы
+                # слова, а не только первый по score — тот же приём, что уже
+                # применяется в `_inflect_phrase_genitive` ниже (ПРАВИЛО №6,
+                # не второй алгоритм, та же идея "искать разбор с nomn").
+                # Склоняем через `decline_word` всё равно по топ-разбору —
+                # pymorphy инфлектит из любого падежа в целевой правильно
+                # (лексема одна), это лишь переопределяет ДЕТЕКЦИЮ "можно
+                # склонять".
+                parses = morph.parse(word.lower())
+                tag = next((pr.tag for pr in parses if 'nomn' in pr.tag), parses[0].tag)
                 is_prtf = 'PRTF' in tag
                 is_adj_or_prtf = ('ADJF' in tag or is_prtf) and 'nomn' in tag
                 is_noun = 'NOUN' in tag and 'nomn' in tag
@@ -394,12 +406,21 @@ def _to_dat_fio(full_name: str) -> str:
     return _to_case_fio(full_name, 'DATIVE')
 
 
-def _to_dat_fio_initials(full_name: str) -> str:
-    """«Фамилия И.О.» в дательном падеже: фамилия склоняется (petrovich),
-    инициалы имени/отчества — как в `formatting._fio_to_initials` (тот же
-    расчёт инициалов, ПРАВИЛО №6 — не дублируем вторым алгоритмом).
+def _to_case_fio_initials(full_name: str, case_name: str) -> str:
+    """«Фамилия И.О.» в падеже *case_name* ('GENITIVE'/'DATIVE'): фамилия
+    склоняется (petrovich), инициалы имени/отчества — как в
+    `formatting._fio_to_initials` (тот же расчёт инициалов, ПРАВИЛО №6 — не
+    дублируем вторым алгоритмом).
 
-    «Артеева Анна Игоревна» → «Артеевой А.И.»
+    ПРАВИЛО №6: единственный расчёт — `_to_gen_fio_initials`/
+    `_to_dat_fio_initials` ниже тонкие обёртки над этой функцией (обобщена
+    из исходной `_to_dat_fio_initials`, второй копии для родительного падежа
+    не заводим).
+
+    «Артеева Анна Игоревна» (DATIVE) → «Артеевой А.И.»
+    «Артеева Анна Игоревна» (GENITIVE) → «Артеевой А.И.» (у фамилий на -а/-я
+    родительный и дательный часто совпадают по окончанию — это ожидаемо,
+    не баг).
     Неклассическое ФИО или недоступный petrovich — возвращается
     `_fio_to_initials(full_name)` без падежа (лучше неизменённые инициалы,
     чем выдуманное окончание).
@@ -422,17 +443,33 @@ def _to_dat_fio_initials(full_name: str) -> str:
         return nominative_initials
 
     petro, Case, Gender = petro_pack
+    case = getattr(Case, case_name)
     try:
         gender = Gender.FEMALE if parts[2].lower().endswith(('вна', 'чна', 'ична')) else Gender.MALE
-        last_dative = petro.lastname(parts[0], Case.DATIVE, gender)
+        last_declined = petro.lastname(parts[0], case, gender)
     except Exception:
         return nominative_initials
 
     nom_words = nominative_initials.split(maxsplit=1)
     if len(nom_words) == 2:
-        out = f"{last_dative} {nom_words[1]}"
+        out = f"{last_declined} {nom_words[1]}"
     else:
-        out = last_dative
+        out = last_declined
     if parts[0][0].isupper():
         out = out[0].upper() + out[1:]
     return out
+
+
+def _to_gen_fio_initials(full_name: str) -> str:
+    """«Фамилия И.О.» в родительном падеже — тонкая обёртка над
+    `_to_case_fio_initials` (см. её докстринг)."""
+    return _to_case_fio_initials(full_name, 'GENITIVE')
+
+
+def _to_dat_fio_initials(full_name: str) -> str:
+    """«Фамилия И.О.» в дательном падеже — тонкая обёртка над
+    `_to_case_fio_initials` (см. её докстринг).
+
+    «Артеева Анна Игоревна» → «Артеевой А.И.»
+    """
+    return _to_case_fio_initials(full_name, 'DATIVE')

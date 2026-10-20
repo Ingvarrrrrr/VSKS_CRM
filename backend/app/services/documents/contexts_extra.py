@@ -16,7 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.purchase import Purchase
-from app.services.documents.formatting import _fmt_date, _clean_id, _fio_to_initials_prefix, _signatory_position, _normalize_signatory_position
+from app.services.documents.formatting import (
+    _fmt_date, _clean_id, _fio_to_initials_prefix, _signatory_position,
+    _normalize_signatory_position, _extract_city_from_address,
+)
 from app.services.documents.morphology import (
     _to_gen_fio, _to_gen_phrase, _inflect_phrase_genitive,
     _to_dat_fio, _to_dat_fio_initials, _to_dat_position,
@@ -24,6 +27,9 @@ from app.services.documents.morphology import (
 from app.services.documents.contexts import _signatory_split
 from app.services.documents.contract_terms import warranty_period_text
 from app.services.contractor_pii import contractor_pii_doc_fields
+from app.services.documents.contexts_org_people import (
+    responsible_case_context, _to_gen_org_name, _to_dat_org_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +103,10 @@ def add_genitive_forms(context: dict, p: Purchase, resolved_responsible: str) ->
     # Phase 26-V: родительный падеж для инициатора и ответственного
     context["initiator_name_gen"] = _to_gen_fio(context.get("initiator_name", ""))
     context["initiator_position_gen"] = _to_gen_phrase(context.get("initiator_role", ""))
-    context["responsible_name_gen"] = _to_gen_fio(resolved_responsible)
+    # responsible_name_gen/_dat + сокращённые инициалы — единственный расчёт
+    # (ПРАВИЛО №6), см. contexts_org_people.responsible_case_context — тот же
+    # вызывается из fabrikant_package.py, второй копии не заводим.
+    context.update(responsible_case_context(resolved_responsible))
     context["responsible_position_gen"] = _to_gen_phrase(p.responsible_position or "" if hasattr(p, "responsible_position") else "")
 
     # Phase 27.2-10: дедуп тавтологии "отдел Отдела ..." + gent для отдела
@@ -162,7 +171,19 @@ def add_customer_context(context: dict, customer_org, customer_ctr) -> None:
         # organization.py) либо, если org не передана — contractor.name.
         "customer_short_name":   _g(customer_org.name if customer_org else None,
                                     customer_ctr.name if customer_ctr else None),
+        # Падежи названия Заказчика (владелец, 20.10.2026) — единственный
+        # разбор _to_case_position, см. contexts_org_people._to_case_org_name.
+        "customer_full_name_genitive":  _to_gen_org_name(_cust_req.get('full_name') or ""),
+        "customer_full_name_dative":    _to_dat_org_name(_cust_req.get('full_name') or ""),
+        "customer_short_name_genitive": _to_gen_org_name(_g(customer_org.name if customer_org else None,
+                                                             customer_ctr.name if customer_ctr else None)),
+        "customer_short_name_dative":   _to_dat_org_name(_g(customer_org.name if customer_org else None,
+                                                             customer_ctr.name if customer_ctr else None)),
         "customer_address":      _g(_cust_req.get('address')),
+        # Город из юридического адреса (владелец, 20.10.2026) — см.
+        # formatting._extract_city_from_address. НЕ contract_city (ниже) —
+        # разные показатели, contract_city не трогаем.
+        "customer_city":         _extract_city_from_address(_cust_req.get('address') or ""),
         "customer_postal_address": _g(customer_ctr.postal_address if customer_ctr else None,
                                       _cust_req.get('address')),
         "customer_inn":          _clean_id(_g(_cust_req.get('inn'))),

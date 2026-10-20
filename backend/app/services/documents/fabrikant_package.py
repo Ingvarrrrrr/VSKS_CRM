@@ -42,7 +42,7 @@ from app.services.item_amounts import vat_included_amount as _vat_included_amoun
 # той же логики приоритета (ниже — tech_spec_request и цикл рендера пакета).
 from .templates import _resolve_vat_exemption_basis, _vat_exemption_missing_hint, _resolve_doc_template_path, _purchase_method_label
 from .doc_types import _PURCHASE_METHOD_LABELS
-from .morphology import _to_gen_fio, _inflect_phrase_genitive
+from .morphology import _inflect_phrase_genitive
 from .docx_post import strip_template_legend
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
 from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
@@ -56,6 +56,7 @@ from .contexts_extra import (
     add_contractor_signatory_context,
     add_customer_context,
 )
+from .contexts_org_people import responsible_case_context, add_chief_accountant_context
 from app.services.contractor_pii import contractor_pii_doc_fields, user_can_view_contractor_pii
 
 import logging
@@ -506,13 +507,20 @@ async def render_fabrikant_package_files(
     add_subsidy_agreement_context(context, subsidy)
     add_contractor_signatory_context(context, c)
     add_customer_context(context, customer_org, customer_ctr)
+    # Главный бухгалтер Заказчика — единственный расчёт (ПРАВИЛО №6), см.
+    # contexts_org_people.add_chief_accountant_context (тот же вызывается из
+    # generate.py).
+    await add_chief_accountant_context(context, db, customer_org)
     # contractor_name — недокументированный алиас (ПРАВИЛО №6: один источник —
     # contractor_short_name, см. то же в contexts_build.py::build_base_context_part2);
     # 39 загруженных на проде шаблонов используют {{contractor_name}}.
     context["contractor_name"] = context["contractor_short_name"]
     context["initiator_name_gen"] = ""
     context["initiator_position_gen"] = ""
-    context["responsible_name_gen"] = _to_gen_fio(resolved_responsible)
+    # responsible_name_gen/_dat + инициалы — единственный расчёт (ПРАВИЛО №6),
+    # см. contexts_org_people.responsible_case_context (тот же вызывается из
+    # add_genitive_forms в contexts_extra.py на пути generate.py).
+    context.update(responsible_case_context(resolved_responsible))
     context["responsible_position_gen"] = ""
     context["initiator_dept_gen"] = ""
     context["service_name_gen"] = _inflect_phrase_genitive(p.subject or "")

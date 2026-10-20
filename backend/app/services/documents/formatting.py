@@ -218,6 +218,47 @@ def _resolve_responsible_person_update(current_value: Optional[str], responsible
     return new_value
 
 
+_CITY_PREFIX_RE = re.compile(r'(?:^|,)\s*г(?:\.\s*|\s+)([^,]+?)\s*(?:,|$)', re.IGNORECASE)
+_CITY_WORD_RE = re.compile(r'(?:^|,)\s*город\s+([^,]+?)\s*(?:,|$)', re.IGNORECASE)
+_FEDERAL_CITIES = ("Москва", "Санкт-Петербург", "Севастополь")
+
+
+def _extract_city_from_address(address: str) -> str:
+    """Город из адреса для шаблона {{customer_city}} (владелец, 20.10.2026).
+
+    Разбирает ЮРИДИЧЕСКИЙ адрес заказчика: ищет «г. X», «г.X» или «город X»
+    (X — до следующей запятой или конца строки), возвращает X БЕЗ префикса
+    «г.»/«город». Если такого фрагмента нет, но в адресе целиком встречается
+    город федерального значения (Москва/Санкт-Петербург/Севастополь) без
+    префикса — возвращается он. Ничего не нашли — "".
+
+    НЕ путать с `contract_city` (Organization.contract_city — отдельное
+    поле «место заключения договора», этот разбор его не трогает и не
+    заменяет, ПРАВИЛО №6 про него не нарушается — разные показатели).
+
+    Примеры:
+        "г. Донецк, ул. Артёма, д. 1"                           → "Донецк"
+        "г.Донецк, ул. Артёма, д. 1"                             → "Донецк"
+        "город Москва, Тверская ул., д. 1"                       → "Москва"
+        "140100, Московская обл., г. Раменское, ул. Чугунова"    → "Раменское"
+        "Санкт-Петербург, Невский пр-т, д. 1"                    → "Санкт-Петербург"
+        "ул. Ленина, д. 5" (город не определить)                 → ""
+        "" / None                                                → ""
+    """
+    if not address or not address.strip():
+        return ""
+    m = _CITY_PREFIX_RE.search(address)
+    if m:
+        return m.group(1).strip()
+    m = _CITY_WORD_RE.search(address)
+    if m:
+        return m.group(1).strip()
+    for fed in _FEDERAL_CITIES:
+        if re.search(r'(?:^|[,\s])' + re.escape(fed) + r'(?:[,\s]|$)', address):
+            return fed
+    return ""
+
+
 def _fio_to_initials(name_full: str) -> str:
     """Return "Фамилия И.О." form; falls back to name_full when < 2 words."""
     words = name_full.split() if name_full else []

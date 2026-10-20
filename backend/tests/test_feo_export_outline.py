@@ -126,32 +126,40 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
     assert ws.row_dimensions[r_item1].hidden is True
     assert ws.row_dimensions[r_item2].hidden is True
 
-    # По умолчанию столбец B = "feo" (Финансирование по ФЭО), C = "plan"
-    # (Запланировано) — см. app.services.feo_export_columns.DEFAULT_KEYS.
-    assert ws.cell(r_item1, 2).value == 1000.0
-    assert ws.cell(r_item1, 3).value == 900.0
-    assert ws.cell(r_item2, 2).value == 2000.0
-    assert ws.cell(r_item2, 3).value == 1800.0
+    # Столбцы теперь ищем по заголовку — новые колонки «Кол-во по ФЭО»/«Цена
+    # за ед. по ФЭО»/«Кол-во по плану»/«Цена за ед. по плану» (задача
+    # владельца 20.10.2026, часть 4) сдвинули «Финансирование по ФЭО»/
+    # «Запланировано» с жёстких B/C (app.services.feo_export_columns.DEFAULT_KEYS).
+    headers0 = [c.value for c in ws[3]]
+    ci_feo = headers0.index("Финансирование по ФЭО (₽)") + 1
+    ci_plan = headers0.index("Запланировано (₽)") + 1
+    feo_col_letter = ws.cell(row=3, column=ci_feo).column_letter
 
-    # B подкатегории — формула SUM(...) по её прямым детям (две позиции, не
-    # внуки) — НЕ SUBTOTAL: SUBTOTAL(9,...) игнорирует ячейки, которые сами
-    # результат другого SUBTOTAL/формулы-агрегата, и категория с детьми
-    # получала бы 0 (баг владельца, исправлен 20.10.2026).
-    b_sub = ws.cell(r_sub, 2).value
+    assert ws.cell(r_item1, ci_feo).value == 1000.0
+    assert ws.cell(r_item1, ci_plan).value == 900.0
+    assert ws.cell(r_item2, ci_feo).value == 2000.0
+    assert ws.cell(r_item2, ci_plan).value == 1800.0
+
+    # Столбец «Финансирование по ФЭО» подкатегории — формула SUM(...) по её
+    # прямым детям (две позиции, не внуки) — НЕ SUBTOTAL: SUBTOTAL(9,...)
+    # игнорирует ячейки, которые сами результат другого SUBTOTAL/формулы-
+    # агрегата, и категория с детьми получала бы 0 (баг владельца, исправлен
+    # 20.10.2026).
+    b_sub = ws.cell(r_sub, ci_feo).value
     assert isinstance(b_sub, str) and b_sub.startswith("=SUM(")
-    assert f"B{r_item1}" in b_sub and f"B{r_item2}" in b_sub
+    assert f"{feo_col_letter}{r_item1}" in b_sub and f"{feo_col_letter}{r_item2}" in b_sub
     refs_sub = b_sub[len("=SUM("):-1].split(",")
     assert len(refs_sub) == 2
 
-    # B корня — формула SUM(...) по его прямым детям (подкатегория +
-    # категория без детей), НЕ по внукам (позициям).
-    b_root = ws.cell(r_root, 2).value
+    # Тот же столбец у корня — формула SUM(...) по его прямым детям
+    # (подкатегория + категория без детей), НЕ по внукам (позициям).
+    b_root = ws.cell(r_root, ci_feo).value
     assert isinstance(b_root, str) and b_root.startswith("=SUM(")
-    assert f"B{r_sub}" in b_root and f"B{r_leaf}" in b_root
-    assert f"B{r_item1}" not in b_root and f"B{r_item2}" not in b_root
+    assert f"{feo_col_letter}{r_sub}" in b_root and f"{feo_col_letter}{r_leaf}" in b_root
+    assert f"{feo_col_letter}{r_item1}" not in b_root and f"{feo_col_letter}{r_item2}" not in b_root
 
     # Категория без детей — число (budget), не формула.
-    assert ws.cell(r_leaf, 2).value == 77000.0
+    assert ws.cell(r_leaf, ci_feo).value == 77000.0
 
     # Колонка «Тип строки» — последняя из дефолтных; категория с детьми =
     # «Категория», позиция = «Позиция», лист без детей = «Категория без

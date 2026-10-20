@@ -36,13 +36,25 @@ STAGE_DEFS: list[tuple] = [
 ]
 
 # (key, label, group, ширина, default)
+#
+# ПОЛЯ МОДЕЛИ (задача владельца 20.10.2026, часть «колонки цены/количества по
+# плану»): у FeoPlannedItem ДВА независимых комплекта чисел (см. докстринг
+# feo_quantity/feo_unit_price/feo_amount в app.models.feo_planned_item) —
+# «по ФЭО» (feo_quantity/feo_unit_price/feo_amount) и «план»
+# (quantity/unit_price/amount). Единица измерения — ОДНО общее поле `unit`
+# (отдельного feo_unit/plan_unit у позиции в модели нет), поэтому колонка
+# «Ед.» одна на оба количества. feo_qty/feo_unit ниже default=True (были
+# выключены по умолчанию) — владелец просил видеть количество по ФЭО сразу.
 FEO_EXPORT_COLUMNS: list[tuple] = [
     ("name", "Наименование", "Основное", 45, True),
     ("code", "Код", "Основное", 12, False),
     ("app", "Прил.", "Основное", 10, False),
-    ("feo_qty", "Кол-во по ФЭО", "Основное", 12, False),
-    ("feo_unit", "Ед.", "Основное", 8, False),
+    ("feo_qty", "Кол-во по ФЭО", "Основное", 12, True),
+    ("feo_unit", "Ед.", "Основное", 8, True),
+    ("feo_unit_price", "Цена за ед. по ФЭО (₽)", "Основное", 18, True),
     ("feo", "Финансирование по ФЭО (₽)", "Основное", 20, True),
+    ("plan_qty", "Кол-во по плану", "Основное", 12, True),
+    ("plan_unit_price", "Цена за ед. по плану (₽)", "Основное", 18, True),
     ("plan", "Запланировано (₽)", "Основное", 20, True),
     ("ordered", "Заказано (₽)", "Основное", 18, True),
     ("to_order", "Надо заказать (₽)", "Основное", 18, True),
@@ -76,7 +88,7 @@ FEO_EXPORT_COLUMNS: list[tuple] = [
 _BY_KEY = {k: (label, group, width) for k, label, group, width, _d in FEO_EXPORT_COLUMNS}
 ALL_KEYS: list = [k for k, *_ in FEO_EXPORT_COLUMNS]
 DEFAULT_KEYS: list = [k for k, _l, _g, _w, is_default in FEO_EXPORT_COLUMNS if is_default]
-MONEY_KEYS: set = {"feo", "plan", "ordered", "to_order", "residual"} | {f"{k}_amt" for k, _ in STAGE_DEFS}
+MONEY_KEYS: set = {"feo", "plan", "ordered", "to_order", "residual", "feo_unit_price", "plan_unit_price"} | {f"{k}_amt" for k, _ in STAGE_DEFS}
 # Текстовые Да/Частично/Нет столбцы по стадиям — у строк категорий остаются
 # пустыми (владелец: «у категорий текстовые стадии — пусто»).
 STAGE_TEXT_KEYS: tuple = tuple(k for k, _ in STAGE_DEFS)

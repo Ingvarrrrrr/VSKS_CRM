@@ -122,15 +122,24 @@ async def _apply_category_row(db, user, subsidy_id, rr: ResolvedRow, parent_id, 
 
 
 async def _apply_item_row(db, user, rr: ResolvedRow, parent_id, parent_cat, run_id):
+    """ДВА независимых комплекта чисел позиции (см. докстринг FeoPlannedItem и
+    diff.py::_diff_item_fields) — «по ФЭО» (feo_quantity/feo_unit_price/
+    feo_amount) и «план» (quantity/unit_price/amount), `unit` общий.
+    rr.resolved_feo_amount/resolved_plan_amount — уже сведённые build_preview
+    суммы (кол-во×цена, если сама сумма пуста/расходится — см.
+    amount_resolve.resolve_amount), второй раз здесь не считаем (ПРАВИЛО №6)."""
     p = rr.parsed
     if rr.is_new:
         data = FeoPlannedItemCreate(
             feo_category_id=parent_id,
             name=p.name,
-            quantity=p.feo_qty,
+            quantity=p.plan_qty,
             unit=p.feo_unit,
-            amount=p.plan_amount,
-            feo_amount=p.feo_amount,
+            unit_price=p.plan_unit_price,
+            amount=rr.resolved_plan_amount,
+            feo_quantity=p.feo_qty,
+            feo_unit_price=p.feo_unit_price,
+            feo_amount=rr.resolved_feo_amount,
             is_active=p.is_active if p.is_active is not None else True,
         )
         if parent_cat is None:
@@ -144,10 +153,13 @@ async def _apply_item_row(db, user, rr: ResolvedRow, parent_id, parent_cat, run_
     item = await db.get(FeoPlannedItem, rr.entity_id)
     did_move = item.feo_category_id != parent_id
 
-    merged_quantity = p.feo_qty if p.feo_qty is not None else item.quantity
+    merged_feo_quantity = p.feo_qty if p.feo_qty is not None else item.feo_quantity
     merged_unit = p.feo_unit if p.feo_unit is not None else item.unit
-    merged_amount = p.plan_amount if p.plan_amount is not None else item.amount
-    merged_feo_amount = p.feo_amount if p.feo_amount is not None else item.feo_amount
+    merged_feo_unit_price = p.feo_unit_price if p.feo_unit_price is not None else item.feo_unit_price
+    merged_feo_amount = rr.resolved_feo_amount if rr.resolved_feo_amount is not None else item.feo_amount
+    merged_quantity = p.plan_qty if p.plan_qty is not None else item.quantity
+    merged_unit_price = p.plan_unit_price if p.plan_unit_price is not None else item.unit_price
+    merged_amount = rr.resolved_plan_amount if rr.resolved_plan_amount is not None else item.amount
     # Имя переписываем только при РЕАЛЬНОМ отличии (не пробелы) — иначе апдейт
     # по другому полю (напр. feo_amount) заодно переписал бы cat/item.name
     # вариантом пробелов из файла, не тронув смысл (ПРАВИЛО №6, та же
@@ -157,10 +169,13 @@ async def _apply_item_row(db, user, rr: ResolvedRow, parent_id, parent_cat, run_
 
     changed = (
         _norm_name(merged_name) != _norm_name(item.name)
-        or _dec_changed(merged_quantity, item.quantity)
+        or _dec_changed(merged_feo_quantity, item.feo_quantity)
         or (merged_unit or None) != (item.unit or None)
-        or _dec_changed(merged_amount, item.amount)
+        or _dec_changed(merged_feo_unit_price, item.feo_unit_price)
         or _dec_changed(merged_feo_amount, item.feo_amount)
+        or _dec_changed(merged_quantity, item.quantity)
+        or _dec_changed(merged_unit_price, item.unit_price)
+        or _dec_changed(merged_amount, item.amount)
         or merged_active != item.is_active
         or did_move
     )
@@ -172,10 +187,12 @@ async def _apply_item_row(db, user, rr: ResolvedRow, parent_id, parent_cat, run_
         name=merged_name,
         quantity=merged_quantity,
         unit=merged_unit,
+        unit_price=merged_unit_price,
         amount=merged_amount,
+        feo_quantity=merged_feo_quantity,
+        feo_unit_price=merged_feo_unit_price,
         feo_amount=merged_feo_amount,
         is_active=merged_active,
-        unit_price=item.unit_price,
         notes=item.notes,
         item_type=item.item_type,
         sort_order=item.sort_order,

@@ -235,9 +235,15 @@ async def test_roundtrip_noop_export_then_import_without_edits(db_session, test_
     cat1 = FeoCategory(name="  Leading Space Rent", subsidy_id=sub.id, level=1, is_active=True, budget=100000)
     db_session.add(cat1)
     await db_session.flush()
+    # Все четыре числа (ФЭО-комплект + план-комплект, задача владельца
+    # 20.10.2026, часть 4) заполнены и СОГЛАСОВАНЫ (кол-во × цена == сумма),
+    # чтобы выгрузка->загрузка без правок не породила предупреждений/диффов
+    # по новым колонкам «Кол-во по ФЭО»/«Цена за ед. по ФЭО»/«Кол-во по
+    # плану»/«Цена за ед. по плану».
     item_with_feo = FeoPlannedItem(
         feo_category_id=cat1.id, name="Jacket", quantity=10, unit="pcs",
-        amount=50000, feo_amount=50000, is_active=True,
+        unit_price=5000, amount=50000,
+        feo_quantity=10, feo_unit_price=5000, feo_amount=50000, is_active=True,
     )
     # Позиция без feo_amount (план без ФЭО) — выгрузка её не печатает строкой.
     item_no_feo = FeoPlannedItem(
@@ -261,3 +267,6 @@ async def test_roundtrip_noop_export_then_import_without_edits(db_session, test_
     assert preview["moved"] == [], preview["moved"]
     assert preview["missing"] == [], preview["missing"]
     assert preview["errors"] == [], preview["errors"]
+    # Новые колонки (Кол-во/Цена за ед. по ФЭО и по плану) согласованы —
+    # 0 предупреждений «сумма не совпадает с кол-во × цена».
+    assert preview["warnings"] == [], preview["warnings"]

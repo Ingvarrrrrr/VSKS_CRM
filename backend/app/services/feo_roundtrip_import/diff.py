@@ -27,6 +27,7 @@ from sqlalchemy import select
 from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.services.subsidy_budget import _active_feo_items_with_amount
+from app.services.feo_roundtrip_import.amount_resolve import resolve_amount
 from app.services.feo_roundtrip_import.parse import (
     CATEGORY_TYPES, FORMAT_VERSION, MetaInfo, ParsedRow, POSITION_TYPE,
 )
@@ -46,6 +47,12 @@ class ResolvedRow:
     entity_id: Optional[int] = None    # существующая сущность (по row_id)
     is_new: bool = True
     error: Optional[str] = None
+    # Эффективные суммы позиции (после сведения «сумма vs кол-во×цена» —
+    # см. amount_resolve.resolve_amount), считаются ОДИН раз в build_preview
+    # и переиспользуются apply.py (ПРАВИЛО №6 — второй расчёт не заводим).
+    # Только для kind == KIND_POSITION.
+    resolved_feo_amount: Optional[Decimal] = None
+    resolved_plan_amount: Optional[Decimal] = None
 
 
 @dataclass
@@ -176,6 +183,23 @@ async def build_preview(
 
     resolved = build_hierarchy(parsed_rows)
     result.resolved = resolved
+
+    # Сведение «сумма vs кол-во × цена за единицу» (задача владельца, п.3) —
+    # считается ОДИН раз для каждой строки-позиции, ДО диффа и ДО apply
+    # (apply.py переиспользует rr.resolved_feo_amount/resolved_plan_amount,
+    # второй расчёт там не заводится).
+    for rr in resolved:
+        if rr.kind != KIND_POSITION:
+            continue
+        p = rr.parsed
+        feo_amt, feo_warn = resolve_amount(p.feo_qty, p.feo_unit_price, p.feo_amount)
+        plan_amt, plan_warn = resolve_amount(p.plan_qty, p.plan_unit_price, p.plan_amount)
+        rr.resolved_feo_amount = feo_amt
+        rr.resolved_plan_amount = plan_amt
+        if feo_warn:
+            result.warnings.append({"row": p.row_num, "message": f"Строка {p.row_num}: «{p.name}» — по ФЭО {feo_warn}"})
+        if plan_warn:
+            result.warnings.append({"row": p.row_num, "message": f"Строка {p.row_num}: «{p.name}» — по плану {plan_warn}"})
 
     # --- существующие категории/позиции субсидии (для missing + сопоставления) ---
     cats = (await db.execute(select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id))).scalars().all()
@@ -352,16 +376,28 @@ def _diff_category_fields(rr: ResolvedRow, cat: FeoCategory, result: PreviewResu
 
 
 def _diff_item_fields(rr: ResolvedRow, item: FeoPlannedItem, result: PreviewResult) -> None:
+    """ДВА независимых комплекта чисел позиции (см. докстринг FeoPlannedItem):
+    feo_qty/feo_unit_price/resolved_feo_amount -> feo_quantity/feo_unit_price/
+    feo_amount («по ФЭО»); plan_qty/plan_unit_price/resolved_plan_amount ->
+    quantity/unit_price/amount («план»). `unit` — общее поле, одна колонка
+    «Ед.» на оба количества. resolved_* — уже сведённые кол-во×цена/сумма
+    (см. build_preview выше, amount_resolve.resolve_amount)."""
     p = rr.parsed
     if p.name and _norm_name(p.name) != _norm_name(item.name):
         result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "name", "old": item.name, "new": p.name})
-    if p.feo_qty is not None and not _num_eq(p.feo_qty, item.quantity):
-        result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "quantity", "old": float(item.quantity) if item.quantity is not None else None, "new": float(p.feo_qty)})
+    if p.feo_qty is not None and not _num_eq(p.feo_qty, item.feo_quantity):
+        result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "feo_quantity", "old": float(item.feo_quantity) if item.feo_quantity is not None else None, "new": float(p.feo_qty)})
     if p.feo_unit is not None and (p.feo_unit or None) != (item.unit or None):
         result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "unit", "old": item.unit, "new": p.feo_unit})
-    if p.feo_amount is not None and not _num_eq(p.feo_amount, item.feo_amount):
-        result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "feo_amount", "old": float(item.feo_amount) if item.feo_amount is not None else None, "new": float(p.feo_amount)})
-    if p.plan_amount is not None and not _num_eq(p.plan_amount, item.amount):
-        result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "amount", "old": float(item.amount) if item.amount is not None else None, "new": float(p.plan_amount)})
+    if p.feo_unit_price is not None and not _num_eq(p.feo_unit_price, item.feo_unit_price):
+        result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "feo_unit_price", "old": float(item.feo_unit_price) if item.feo_unit_price is not None else None, "new": float(p.feo_unit_price)})
+    if rr.resolved_feo_amount is not None and not _num_eq(rr.resolved_feo_amount, item.feo_amount):
+        result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "feo_amount", "old": float(item.feo_amount) if item.feo_amount is not None else None, "new": float(rr.resolved_feo_amount)})
+    if p.plan_qty is not None and not _num_eq(p.plan_qty, item.quantity):
+        result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "quantity", "old": float(item.quantity) if item.quantity is not None else None, "new": float(p.plan_qty)})
+    if p.plan_unit_price is not None and not _num_eq(p.plan_unit_price, item.unit_price):
+        result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "unit_price", "old": float(item.unit_price) if item.unit_price is not None else None, "new": float(p.plan_unit_price)})
+    if rr.resolved_plan_amount is not None and not _num_eq(rr.resolved_plan_amount, item.amount):
+        result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "amount", "old": float(item.amount) if item.amount is not None else None, "new": float(rr.resolved_plan_amount)})
     if p.is_active is not None and p.is_active != item.is_active:
         result.changes.append({"row": p.row_num, "kind": "position", "id": item.id, "name": item.name, "field": "is_active", "old": item.is_active, "new": p.is_active})

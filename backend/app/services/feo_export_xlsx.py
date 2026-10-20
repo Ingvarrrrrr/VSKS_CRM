@@ -242,15 +242,25 @@ def render_feo_tree_sheet(
     def write_item_row(item, depth):
         feo_amount = float(item.feo_amount) if item.feo_amount is not None else None
         plan_amount = float(item.amount) if item.amount is not None else 0.0
+        feo_unit_price = getattr(item, "feo_unit_price", None)
+        plan_unit_price = getattr(item, "unit_price", None)
+        feo_quantity = getattr(item, "feo_quantity", None)
         segments = item_segments_map.get(item.id, {}).get("segments", [])
         stage_vals = compute_row_stage_values(segments, plan_amount)
         ordered_amt = stage_vals["ordered"]
         to_order = stage_vals["to_order"]
         values = {
             "name": "  " * depth + item.name,
-            "feo_qty": float(item.quantity) if item.quantity is not None else "",
+            # «Кол-во по ФЭО»/«Цена за ед. по ФЭО» — ВТОРОЙ, независимый
+            # комплект чисел (feo_quantity/feo_unit_price, см. докстринг
+            # FeoPlannedItem) — НЕ quantity/unit_price (те — план, колонки
+            # ниже). «Ед.» — общее поле `unit`, одно на оба количества.
+            "feo_qty": float(feo_quantity) if feo_quantity is not None else "",
             "feo_unit": item.unit or "",
+            "feo_unit_price": float(feo_unit_price) if feo_unit_price is not None else "",
             "feo": feo_amount if feo_amount is not None else "",
+            "plan_qty": float(item.quantity) if item.quantity is not None else "",
+            "plan_unit_price": float(plan_unit_price) if plan_unit_price is not None else "",
             "plan": plan_amount,
             "active": "Да" if item.is_active else "Нет",
             "row_type": "Позиция",
@@ -451,13 +461,24 @@ def build_feo_roundtrip_template_workbook():
 
     from app.services.feo_export_columns import resolve_selected_keys
 
-    selected_keys = resolve_selected_keys("code,app,feo_qty,feo_unit,feo,plan,active")
+    selected_keys = resolve_selected_keys(
+        "code,app,feo_qty,feo_unit,feo_unit_price,feo,plan_qty,plan_unit_price,plan,active"
+    )
 
     def _cat(id_, name, level, *, code="", appendix="", budget=None, active=True):
         return SimpleNamespace(id=id_, name=name, code=code, appendix=appendix, budget=budget, is_active=active, level=level)
 
-    def _item(id_, name, *, qty, unit, feo, plan, active=True):
-        return SimpleNamespace(id=id_, name=name, quantity=qty, unit=unit, feo_amount=feo, amount=plan, is_active=active)
+    def _item(
+        id_, name, *, unit, feo_qty, feo_unit_price, feo, plan_qty, plan_unit_price, plan, active=True,
+    ):
+        # ДВА независимых комплекта чисел — «по ФЭО» (feo_quantity/
+        # feo_unit_price/feo_amount) и «план» (quantity/unit_price/amount),
+        # см. докстринг FeoPlannedItem — ЕД. (unit) общая на оба количества.
+        return SimpleNamespace(
+            id=id_, name=name, unit=unit, is_active=active,
+            feo_quantity=feo_qty, feo_unit_price=feo_unit_price, feo_amount=feo,
+            quantity=plan_qty, unit_price=plan_unit_price, amount=plan,
+        )
 
     cat_lager = _cat(-1, "Оснащение полевого лагеря", 1)
     cat_tents = _cat(-2, "Палатки и спальное", 2)
@@ -470,16 +491,19 @@ def build_feo_roundtrip_template_workbook():
 
     items_by_cat = {
         cat_tents.id: [
-            _item(-101, "Палатка 4-местная", qty=5, unit="шт", feo=250000, plan=250000),
-            _item(-102, "Спальник", qty=20, unit="шт", feo=100000, plan=90000),
+            _item(-101, "Палатка 4-местная", unit="шт", feo_qty=5, feo_unit_price=50000, feo=250000, plan_qty=5, plan_unit_price=50000, plan=250000),
+            # Пример расхождения плана с ФЭО (владелец, п.4): по ФЭО 20 шт, в
+            # плане решили закупить меньше — 18 шт, цена за ед. та же.
+            _item(-102, "Спальник", unit="шт", feo_qty=20, feo_unit_price=5000, feo=100000, plan_qty=18, plan_unit_price=5000, plan=90000),
         ],
         cat_kitchen.id: [
-            _item(-103, "Казан походный", qty=3, unit="шт", feo=27000, plan=27000),
-            _item(-104, "Горелка газовая", qty=4, unit="шт", feo=18000, plan=18000, active=False),
+            _item(-103, "Казан походный", unit="шт", feo_qty=3, feo_unit_price=9000, feo=27000, plan_qty=3, plan_unit_price=9000, plan=27000),
+            _item(-104, "Горелка газовая", unit="шт", feo_qty=4, feo_unit_price=4500, feo=18000, plan_qty=4, plan_unit_price=4500, plan=18000, active=False),
         ],
         cat_training_org.id: [
-            _item(-105, "Аренда зала", qty=3, unit="дн.", feo=120000, plan=120000),
-            _item(-106, "Печать методичек", qty=200, unit="шт", feo=45000, plan=40000),
+            _item(-105, "Аренда зала", unit="дн.", feo_qty=3, feo_unit_price=40000, feo=120000, plan_qty=3, plan_unit_price=40000, plan=120000),
+            # Пример расхождения цены за ед. (то же количество, план дешевле).
+            _item(-106, "Печать методичек", unit="шт", feo_qty=200, feo_unit_price=225, feo=45000, plan_qty=200, plan_unit_price=200, plan=40000),
         ],
     }
 
@@ -531,9 +555,15 @@ def _write_feo_roundtrip_howto_sheet(wb) -> None:
         "  — группировкой Excel (выделите строки → Данные → Группировать) — предпочтительно, так же сделан этот шаблон;",
         "  — ИЛИ отступом: 2 пробела в начале «Наименования» на каждый уровень вложенности (если группировку не ставили).",
         "",
-        "Какие колонки загружаются: Наименование, Код, Прил., Кол-во по ФЭО, Ед., «Финансирование по ФЭО» (у позиций и у «Категория без позиций»), "
-        "«Запланировано» (только у позиций), Активна (Да/Нет). Суммы категорий с детьми — формулы, считаются сами, их трогать не нужно. "
+        "Какие колонки загружаются: Наименование, Код, Прил., Кол-во по ФЭО, Ед., «Цена за ед. по ФЭО», «Финансирование по ФЭО» "
+        "(у позиций и у «Категория без позиций»), «Кол-во по плану», «Цена за ед. по плану», «Запланировано» (три последних — только у позиций), "
+        "Активна (Да/Нет). Суммы категорий с детьми — формулы, считаются сами, их трогать не нужно. "
         "Колонки заказов и стадий закупки в этот шаблон не включены — их считает система, в загрузке они не участвуют.",
+        "",
+        "Сумма (по ФЭО и по плану) и кол-во/цена за единицу — связаны: можно указать кол-во и цену за единицу, "
+        "а сумма посчитается сама (кол-во × цена); можно указать только сумму, не заполняя кол-во/цену. "
+        "Если заполнены и сумма, и кол-во с ценой, и они не сходятся — загрузка не ошибётся, но предупредит об этом в предпросмотре "
+        "и запишет именно ту сумму, что указана в файле.",
         "",
         "«№ в системе» — скрытая служебная колонка. В выгрузке УЖЕ существующей субсидии по ней строки находят себя в базе при повторной загрузке; "
         "в этом шаблоне она пустая у всех строк — все строки примера новые. Не копируйте номер из одной строки в другую.",

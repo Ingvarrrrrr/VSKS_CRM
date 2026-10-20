@@ -30,7 +30,8 @@ from app.services.feo_import_common import to_dec
 # Заказано/Надо заказать/Остаток/шесть стадий — литералы/формулы,
 # вычисленные на экспорте, игнорируются при чтении, задача владельца, п.2).
 READABLE_KEYS = (
-    "name", "code", "app", "feo_qty", "feo_unit", "feo", "plan", "active",
+    "name", "code", "app", "feo_qty", "feo_unit", "feo_unit_price", "feo",
+    "plan_qty", "plan_unit_price", "plan", "active",
     "row_type", "row_id",
 )
 _LABEL_BY_KEY = {k: label for k, label, _g, _w, _d in FEO_EXPORT_COLUMNS if k in READABLE_KEYS}
@@ -55,7 +56,10 @@ class ParsedRow:
     appendix: Optional[str] = None
     feo_qty: Optional[Decimal] = None
     feo_unit: Optional[str] = None
+    feo_unit_price: Optional[Decimal] = None
     feo_amount: Optional[Decimal] = None
+    plan_qty: Optional[Decimal] = None
+    plan_unit_price: Optional[Decimal] = None
     plan_amount: Optional[Decimal] = None
     is_active: Optional[bool] = None  # None = ячейка пуста ("не менять"/дефолт)
     row_type_raw: str = ""  # как в файле (может быть пустым — тип выводится)
@@ -215,7 +219,10 @@ def parse_roundtrip_workbook(content: bytes) -> ParseResult:
             appendix=_cell_str("app"),
             feo_qty=_cell_dec("feo_qty"),
             feo_unit=_cell_str("feo_unit"),
+            feo_unit_price=_cell_dec("feo_unit_price"),
             feo_amount=_cell_dec("feo"),
+            plan_qty=_cell_dec("plan_qty"),
+            plan_unit_price=_cell_dec("plan_unit_price"),
             plan_amount=_cell_dec("plan"),
             is_active=is_active,
             row_type_raw=row_type_raw,

@@ -1,26 +1,4 @@
 <template>
-  <!-- Общий переключатель РАСКРЫТИЯ комментариев ФЭО — ОДИН на всю субсидию
-       (правка 2026-09-14, жалоба владельца: раньше прятал саму иконку —
-       «должна быть видна постоянно», переключатель обязан только разворачивать
-       /сворачивать все ветки разом). UI-точка одна физическая: рисуется только
-       в самой первой видимой строке дерева (см. isFirstVisibleRow ниже), а не
-       в каждой строке. Строка ВСЕГДА видима независимо от текущего значения. -->
-  <tr v-if="isFirstVisibleRow" class="feo-comments-visibility-bar">
-    <td colspan="8" style="padding:4px 8px">
-      <div class="d-flex align-center" style="gap:6px">
-        <v-icon icon="mdi-comment-text-multiple-outline" size="14" color="grey-darken-1" />
-        <span class="text-caption text-medium-emphasis">Комментарии к плану ФЭО:</span>
-        <v-switch
-          :model-value="feoComments.isVisibleCached(subsidyId)"
-          density="compact" hide-details color="teal" style="flex:0 0 auto"
-          :label="feoComments.isVisibleCached(subsidyId) ? 'все развёрнуты' : 'все свёрнуты'"
-          @update:model-value="onToggleCommentsVisible"
-        />
-        <span class="text-caption text-medium-emphasis">— разворачивает/сворачивает сразу все ветки; иконка комментария видна всегда</span>
-      </div>
-    </td>
-  </tr>
-
   <tr
     v-if="ctx.isNodeVisible(node) && !(ctx.plannedBase.value === 'requests' && ctx.isManualPosLeaf(node)) && !hiddenByFullyPurchasedFilter"
     class="feo-tr"
@@ -871,7 +849,7 @@
                ветку комментариев в отдельной строке ниже (см. FeoCommentThread.vue
                ниже). Правка 2026-09-14: иконка видна ВСЕГДА (общий переключатель
                наверху таблицы больше не прячет её — он лишь массово раскрывает/
-               сворачивает ветки, см. докстринг isFirstVisibleRow строки выше).
+               сворачивает ветки, см. переключатель в FeoTreeToolbar.vue).
                Правка 2026-09-15 (жалоба владельца — «раскрыть всё» открывало
                пустые карточки «Комментариев пока нет»): счётчик рядом с иконкой
                ВИДЕН ДО раскрытия — по нему сразу понятно, есть ли комментарии и
@@ -948,7 +926,6 @@ import { useFeoComments } from '@/composables/subsidies/useFeoComments'
 import { usePlanToRequest, RESIDUAL_SELECTION_TOOLTIP } from '@/composables/subsidies/usePlanToRequest'
 import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCollapse'
 import FeoCategoryEconomyNote from '@/components/subsidies/FeoCategoryEconomyNote.vue'
-import { useToast } from '@/composables/useToast'
 import type { FeoNode } from '@/composables/subsidies/types'
 import FeoCommentThread from './FeoCommentThread.vue'
 import RevisionCellBadge from './RevisionCellBadge.vue'
@@ -990,8 +967,7 @@ const props = defineProps<{ node: FeoNode }>()
 // без полной перезагрузки страницы. toRef(props, 'node') — реактивная ссылка
 // НА ТЕКУЩЕЕ значение props.node; шаблон Vue автоматически разворачивает
 // топ-level ref (node.name работает как раньше, без node.value.*) — единственное
-// исключение — node.id внутри <script setup> (isFirstVisibleRow ниже), там
-// разворачивание ручное. Баг был и до стека отмены (обычная правка направления
+// исключение — node.id внутри <script setup>, там разворачивание ручное. Баг был и до стека отмены (обычная правка направления
 // через диалог тоже не обновляла дерево без Ctrl+F5) — не только для undo/redo.
 const node = toRef(props, 'node')
 
@@ -1110,18 +1086,11 @@ const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'acco
 
 // Комментарии к плану ФЭО (владелец, Волна 4, п.16) — переиспользуем ОДИН
 // FeoCommentThread.vue (та же копия, что и у плановых позиций в
-// FeoLevel5Panel.vue, см. её докстринг) + один общий переключатель видимости
-// на всю субсидию, рисуемый ровно в первой видимой строке дерева.
+// FeoLevel5Panel.vue, см. её докстринг); общий переключатель видимости на всю
+// субсидию перенесён в FeoTreeToolbar.vue (2026-10-20).
 const feoComments = useFeoComments()
-const toast = useToast()
 const commentsExpanded = ref(false)
 const subsidyId = computed(() => ctx.selectedId.value)
-
-// «Первая видимая строка» — единственное место, где рисуется общий
-// переключатель (см. шаблон выше): ctx.visibleFeoNodes — тот же поток узлов,
-// что рендерит FeoTreeTable.vue через v-for (Правило №6, ничего не пересчитываем
-// заново), просто сверяем id первого элемента с id текущего узла.
-const isFirstVisibleRow = computed(() => ctx.visibleFeoNodes.value[0]?.id === node.value.id)
 
 // Счётчик комментариев ЭТОЙ категории (владелец, 2026-09-15) — читает
 // уже загруженный общесубсидийный кэш (см. loadCounts в onMounted ниже),
@@ -1245,15 +1214,4 @@ watch(() => feoComments.expandAllSignal.version, () => {
   // индивидуальным кликом по иконке.
   commentsExpanded.value = expanded ? categoryCommentCount.value > 0 : false
 })
-
-async function onToggleCommentsVisible(val: boolean | null) {
-  if (subsidyId.value == null) return
-  const next = !!val
-  try {
-    await feoComments.setVisibility(subsidyId.value, next)
-    feoComments.broadcastExpandAll(subsidyId.value, next)
-  } catch (e: any) {
-    toast.addToast(e?.payload?.message || e?.detail || e?.message || 'Не удалось изменить видимость комментариев', 'error')
-  }
-}
 </script>

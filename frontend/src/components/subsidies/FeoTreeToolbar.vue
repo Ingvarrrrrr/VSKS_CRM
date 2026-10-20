@@ -320,6 +320,21 @@
       density="compact" hide-details color="success" class="ml-4" style="flex:0 0 auto"
       :label="hideFullyPurchased.hideFullyPurchased.value ? 'скрыты' : 'скрыть закупленные полностью'"
     />
+    <!-- Общий переключатель РАСКРЫТИЯ комментариев ФЭО (перенесён из FeoTreeRow.vue
+         2026-10-20, владелец — должен быть виден всегда, не только при наличии
+         строк дерева). Один на всю субсидию, рисуется один раз в панели над
+         деревом, не в первой строке таблицы. -->
+    <span class="d-flex align-center" style="gap:6px"
+      title="разворачивает/сворачивает сразу все ветки; иконка комментария видна всегда">
+      <v-icon icon="mdi-comment-text-multiple-outline" size="14" color="grey-darken-1" class="ml-4" />
+      <span class="text-caption text-medium-emphasis">Комментарии:</span>
+      <v-switch
+        :model-value="feoComments.isVisibleCached(ctx.selectedId.value)"
+        density="compact" hide-details color="teal" style="flex:0 0 auto"
+        :label="feoComments.isVisibleCached(ctx.selectedId.value) ? 'все развёрнуты' : 'все свёрнуты'"
+        @update:model-value="onToggleCommentsVisible"
+      />
+    </span>
   </div>
 
   <!-- «Убрать номера строк файла» (владелец, 12.10.2026, план
@@ -408,8 +423,10 @@ import SubsidyExportDialog from '@/components/subsidies/SubsidyExportDialog.vue'
 import FeoRoundtripImportDialog from '@/components/subsidies/FeoRoundtripImportDialog.vue'
 import { filenameFromContentDisposition } from '@/utils/contentDisposition'
 import { STAGE_ORDER, PLAN_STAGE_META } from '@/constants/planStageScale'
+import { useFeoComments } from '@/composables/subsidies/useFeoComments'
 
 const ctx = useSubsidyDetailCtx()
+const feoComments = useFeoComments()
 const alignAllDialog = ref<InstanceType<typeof AlignBudgetAllDialog> | null>(null)
 const planToRequest = usePlanToRequest()
 const feoCollapse = useFeoCategoryCollapse()
@@ -448,6 +465,20 @@ watch(() => ctx.selectedId.value, (id, prevId) => {
     planToRequest.clearSelection(id)
   }
 })
+
+// Переключатель «Комментарии к плану ФЭО: все развёрнуты/свёрнуты» — перенесён
+// из FeoTreeRow.vue (onToggleCommentsVisible, 2026-10-20), логика без изменений.
+async function onToggleCommentsVisible(val: boolean | null) {
+  const subsidyId = ctx.selectedId.value
+  if (subsidyId == null) return
+  const next = !!val
+  try {
+    await feoComments.setVisibility(subsidyId, next)
+    feoComments.broadcastExpandAll(subsidyId, next)
+  } catch (e: any) {
+    toast.addToast(e?.payload?.message || e?.detail || e?.message || 'Не удалось изменить видимость комментариев', 'error')
+  }
+}
 
 // Состояние кнопки «Вся смета»/«Снять всё» (задача 1) — тот же источник, что и
 // чекбоксы категорий (usePlanToRequest.ts::wholeSmetaSelection, Правило №6).

@@ -82,6 +82,7 @@ FIELDS: dict[str, FieldDef] = {
     'subsidy_name': FieldDef('subsidy_name', 'Источник финансирования (субсидия)', 'string', 'subsidy', 'subsidies.name', 'ФЭО'),
     'subsidy_basis_doc_number': FieldDef('subsidy_basis_doc_number', 'Номер соглашения о субсидии', 'string', 'subsidy', 'subsidies.basis_doc_number', 'ФЭО'),
     'subsidy_basis_doc_date': FieldDef('subsidy_basis_doc_date', 'Дата соглашения о субсидии', 'date', 'subsidy', 'subsidies.basis_doc_date', 'ФЭО'),
+    'subsidy_procurement_regulation_date': FieldDef('subsidy_procurement_regulation_date', 'Дата утверждения Положения о закупках', 'date', 'subsidy', 'subsidies.procurement_regulation_date', 'ФЭО'),
     'subsidy_year': FieldDef('subsidy_year', 'Год субсидии', 'number', 'subsidy', 'subsidies.year', 'ФЭО'),
     'subsidy_budget': FieldDef('subsidy_budget', 'Объём субсидии', 'currency', 'subsidy', 'subsidies.budget', 'ФЭО', format='rub', is_measure=True, agg_default='sum'),
     'feo_category_id': FieldDef('feo_category_id', 'ФЭО категория (id)', 'number', 'feo_category', 'feo_categories.id', 'ФЭО', drillable=True),

@@ -27,6 +27,9 @@ class Subsidy(Base):
     # Phase 22: № и дата документа-основания (соглашения о субсидии) — для матчинга с банковской выпиской
     basis_doc_number = Column(String(100), nullable=True)
     basis_doc_date = Column(Date, nullable=True)
+    # Дата утверждения Положения о закупках (20.10.2026) — переменная шаблона
+    # {{procurement_regulation_date}}, см. app/services/documents/contexts_extra.py
+    procurement_regulation_date = Column(Date, nullable=True)
     # Phase 28: Реквизиты грантодателя для шаблонов договоров
     grantor_name = Column(String(200), nullable=True)    # "Российская Федерация" / "Тверская область"
     ministry_name = Column(String(300), nullable=True)   # "МИНИСТЕРСТВОМ МОЛОДЕЖНОЙ ПОЛИТИКИ РФ"

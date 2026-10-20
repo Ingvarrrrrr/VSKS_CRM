@@ -26,6 +26,8 @@ class SubsidyCreate(BaseModel):
     # Phase 22: № и дата документа-основания
     basis_doc_number: Optional[str] = None
     basis_doc_date: Optional[_Date] = None
+    # Дата утверждения Положения о закупках (20.10.2026): {{procurement_regulation_date}}
+    procurement_regulation_date: Optional[_Date] = None
     # Phase 28: реквизиты грантодателя для шаблонов договоров
     grantor_name: Optional[str] = None
     ministry_name: Optional[str] = None
@@ -39,7 +41,7 @@ class SubsidyCreate(BaseModel):
     # Владелец (2026-08-30): порог предупреждения о подходе к потолку субсидии (%)
     ceiling_warn_percent: Optional[float] = None
 
-    @field_validator('basis_doc_date', mode='before')
+    @field_validator('basis_doc_date', 'procurement_regulation_date', mode='before')
     @classmethod
     def empty_str_to_none_date(cls, v):
         if v == '' or v is None:
@@ -75,6 +77,8 @@ class SubsidyUpdate(BaseModel):
     # Phase 22: № и дата документа-основания
     basis_doc_number: Optional[str] = None
     basis_doc_date: Optional[_Date] = None
+    # Дата утверждения Положения о закупках (20.10.2026): {{procurement_regulation_date}}
+    procurement_regulation_date: Optional[_Date] = None
     # Phase 28: реквизиты грантодателя для шаблонов договоров
     grantor_name: Optional[str] = None
     ministry_name: Optional[str] = None
@@ -87,7 +91,7 @@ class SubsidyUpdate(BaseModel):
     # Владелец (2026-08-30): порог предупреждения о подходе к потолку субсидии (%)
     ceiling_warn_percent: Optional[float] = None
 
-    @field_validator('basis_doc_date', mode='before')
+    @field_validator('basis_doc_date', 'procurement_regulation_date', mode='before')
     @classmethod
     def empty_str_to_none_date(cls, v):
         if v == '' or v is None:
@@ -125,6 +129,8 @@ class SubsidyOut(BaseModel):
     # Phase 22
     basis_doc_number: Optional[str] = None
     basis_doc_date: Optional[_Date] = None
+    # Дата утверждения Положения о закупках (20.10.2026): {{procurement_regulation_date}}
+    procurement_regulation_date: Optional[_Date] = None
     # Phase 28: реквизиты грантодателя для шаблонов договоров
     grantor_name: Optional[str] = None
     ministry_name: Optional[str] = None

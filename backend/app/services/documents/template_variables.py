@@ -37,6 +37,7 @@ TEMPLATE_VARIABLES = [
     ("{{subsidy_budget}}", "Бюджет субсидии", "{{subsidy_budget}}", "15 500 000,00 ₽"),
     ("{{subsidy_agreement_number}}", "Номер соглашения о субсидии (карточка субсидии, поле «Номер документа-основания»)", "{{subsidy_agreement_number}}", "091-10-2025-032"),
     ("{{subsidy_agreement_date}}", "Дата соглашения о субсидии (карточка субсидии, «Дата документа-основания»)", "{{subsidy_agreement_date}}", "15.01.2026"),
+    ("{{procurement_regulation_date}}", "Дата утверждения Положения о закупках (карточка субсидии)", "{{procurement_regulation_date}}", "20.12.2025"),
     ("{{subsidy_grantor_name}}", "Грантодатель субсидии", "{{subsidy_grantor_name}}", "Федеральное агентство по делам молодёжи"),
     ("{{subsidy_ministry_name}}", "Министерство/ведомство субсидии", "{{subsidy_ministry_name}}", "Министерство труда и социальной защиты РФ"),
     ("{{subsidy_extra_clause_1}}", "Дополнительный пункт договора №1 из карточки субсидии", "{{subsidy_extra_clause_1}}", "Раздельный учёт средств субсидии обязателен."),

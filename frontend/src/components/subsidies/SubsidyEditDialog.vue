@@ -40,6 +40,16 @@
               variant="outlined" density="compact"
             />
           </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.procurement_regulation_date"
+              label="Дата утверждения Положения о закупках"
+              type="date"
+              hint="Переменная шаблона {{procurement_regulation_date}}"
+              persistent-hint
+              variant="outlined" density="compact"
+            />
+          </v-col>
         </v-row>
       </v-card-text>
       <v-card-actions class="px-4 pb-4">
@@ -99,6 +109,16 @@
               label="Дата соглашения о субсидии"
               type="date"
               hint="Переменная шаблона {{subsidy_agreement_date}}"
+              persistent-hint
+              variant="outlined" density="compact"
+            />
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="editForm.procurement_regulation_date"
+              label="Дата утверждения Положения о закупках"
+              type="date"
+              hint="Переменная шаблона {{procurement_regulation_date}}"
               persistent-hint
               variant="outlined" density="compact"
             />
@@ -238,8 +258,8 @@ const saving = ref(false)
 // budget: null (не 0) — «ещё не определено» отличается от «определён и равен
 // нулю» (владелец, 2026-09-15). Пустое поле формы даёт null через numOrNull
 // при сборке payload ниже (тот же паттерн, что ceiling_warn_percent).
-const form = ref({ name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean, ceiling_warn_percent: 90 as number | null })
+const form = ref({ name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, procurement_regulation_date: '' as string })
+const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, procurement_regulation_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean, ceiling_warn_percent: 90 as number | null })
 // Снимок «до» (волна 3B, корректировка субсидии через проверку) — ПОЛНЫЙ, не
 // только бюджет: координатор, доп. пробел «SubsidyEditDialog теряет правки» —
 // в корректировку по решению владельца входят И бюджет, И реквизиты, одним
@@ -273,6 +293,7 @@ async function startEdit(s: SubsidyRow) {
     agreement_text: full.agreement_text || '',
     basis_doc_number: full.basis_doc_number || '',
     basis_doc_date: full.basis_doc_date || '',
+    procurement_regulation_date: full.procurement_regulation_date || '',
     grantor_name: full.grantor_name || '',
     ministry_name: full.ministry_name || '',
     extra_contract_clause_1: full.extra_contract_clause_1 ?? null,
@@ -289,14 +310,14 @@ async function addSubsidy() {
   try {
     const res = await apiFetch<any>('/subsidies/', {
       method: 'POST',
-      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: numOrNull(form.value.budget), description: form.value.description || null, contractor_id: form.value.contractor_id, agreement_text: form.value.agreement_text || null, basis_doc_number: form.value.basis_doc_number || null, basis_doc_date: form.value.basis_doc_date || null })
+      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: numOrNull(form.value.budget), description: form.value.description || null, contractor_id: form.value.contractor_id, agreement_text: form.value.agreement_text || null, basis_doc_number: form.value.basis_doc_number || null, basis_doc_date: form.value.basis_doc_date || null, procurement_regulation_date: form.value.procurement_regulation_date || null })
     })
     ctx.allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0, plan_schedule: 0, ordered: 0, work: 0, contracts: 0, delivered: 0, delivered_unpaid: 0 })
     // Показать созданную карточку сразу, даже если она попала в другой год,
     // чем сейчас открытая вкладка (см. докстринг у selectedYear выше).
     if (res.year !== selectedYear.value) selectedYear.value = res.year
     addOpen.value = false
-    form.value = { name: '', year: new Date().getFullYear(), budget: null, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '' }
+    form.value = { name: '', year: new Date().getFullYear(), budget: null, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '', procurement_regulation_date: '' }
     showSnack('Субсидия добавлена')
     emit('saved')
     // Тихий фон досчитает поля, которых POST не возвращает (contractor_name/
@@ -316,7 +337,7 @@ async function updateSubsidy() {
   saving.value = true
   try {
     const newBudget = numOrNull(editForm.value.budget)
-    const fullBody = { name: editForm.value.name, year: editForm.value.year, budget: newBudget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) }
+    const fullBody = { name: editForm.value.name, year: editForm.value.year, budget: newBudget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, procurement_regulation_date: editForm.value.procurement_regulation_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) }
     const putDirect = () => apiFetch<any>(`/subsidies/${editForm.value.id}`, { method: 'PUT', body: JSON.stringify(fullBody) })
 
     if (isRevisionMode(editForm.value.id)) {
@@ -370,6 +391,7 @@ async function updateSubsidy() {
         contractor_id: res.contractor_id ?? editForm.value.contractor_id,
         basis_doc_number: res.basis_doc_number ?? (editForm.value.basis_doc_number || null),
         basis_doc_date: res.basis_doc_date ?? (editForm.value.basis_doc_date || null),
+        procurement_regulation_date: res.procurement_regulation_date ?? (editForm.value.procurement_regulation_date || null),
         require_planned_dates: res.require_planned_dates ?? editForm.value.require_planned_dates,
         ceiling_warn_percent: res.ceiling_warn_percent ?? numOrNull(editForm.value.ceiling_warn_percent),
       })

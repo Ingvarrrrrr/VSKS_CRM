@@ -260,6 +260,10 @@ def add_subsidy_agreement_context(context: dict, subsidy) -> None:
     context["subsidy_agreement_date"] = (
         _fmt_date(subsidy.basis_doc_date) if (subsidy and subsidy.basis_doc_date) else ""
     )
+    context["procurement_regulation_date"] = (
+        _fmt_date(subsidy.procurement_regulation_date)
+        if (subsidy and getattr(subsidy, 'procurement_regulation_date', None)) else ""
+    )
 
 
 def add_misc_purchase_context(context: dict, p: Purchase, subsidy) -> None:

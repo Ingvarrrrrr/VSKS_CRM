@@ -197,6 +197,7 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     await _ensure_needed_dates(wish, db, wish_items)
     await _auto_assign_planned_items(
         wish_items, wish.feo_category_id, db, note=f"повторным согласованием заявки №{wish.id}",
+        per_item_mode=bool(getattr(wish, "feo_per_item", False)),
     )
     # Владелец (2026-09-02): ТЗ дороже своей плановой позиции больше НЕ 409 здесь —
     # согласование заявки не блокируется, превышение регистрируется как запрос на
@@ -415,6 +416,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 await _auto_assign_planned_items(
                     adv_items, wish.feo_category_id, db,
                     note=f"авансовым отчётом (заявка №{wish.id})",
+                    per_item_mode=bool(getattr(wish, "feo_per_item", False)),
                 )
                 await db.flush()
             # Владелец (02.10.2026, quick-план «Деньги субсидии», шаг 6,
@@ -619,6 +621,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     # выполнение уходит в ветку `if existing:` выше, до сюда не доходя (идемпотентность).
     await _auto_assign_planned_items(
         items_full, wish.feo_category_id, db, note=f"заявкой №{wish.id}",
+        per_item_mode=bool(getattr(wish, "feo_per_item", False)),
     )
 
     # Шаг 5 «ТЗ не выше плана» (владелец, 2026-08-07, план zany-fluttering-mountain.md):

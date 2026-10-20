@@ -267,6 +267,7 @@ async def convert_wish(
     from app.services.plan_autoassign import auto_assign_planned_items as _auto_assign_planned_items
     await _auto_assign_planned_items(
         items_full, wish.feo_category_id, db, note=f"заявкой №{wish.id} (/convert)",
+        per_item_mode=bool(getattr(wish, "feo_per_item", False)),
     )
     # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): накопление по общей
     # плановой позиции в пределах ЭТОЙ заявки — та же группировка, что у

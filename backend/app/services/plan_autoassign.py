@@ -25,7 +25,8 @@ from app.services import feo_history
 
 
 async def auto_assign_planned_items(
-    items, fallback_category_id: Optional[int], db: AsyncSession, *, note: str = "автозаведением плана",
+    items, fallback_category_id: Optional[int], db: AsyncSession, *,
+    note: str = "автозаведением плана", per_item_mode: bool = True,
 ) -> None:
     """Инвариант «закупки вне плана не бывает» (владелец, 2026-08-07, план
     zany-fluttering-mountain.md шаг 3): КАЖДАЯ позиция без явной привязки
@@ -54,6 +55,23 @@ async def auto_assign_planned_items(
     Дублирует логику дедупа импорта Excel Ур.5 (feo_categories.py), но с
     нормализацией — источник тут свободный ввод (заявка/авансовый отчёт), а не
     структурированный файл.
+
+    `per_item_mode` (владелец, прод-баг заявки №206/закупки РЕЕ-2026-04252,
+    20.10.2026) — режим «одна категория на весь документ» (False, значение
+    Wish.feo_per_item/Purchase.feo_per_item у ВЫЗЫВАЮЩЕГО документа) против
+    «своя категория у каждой позиции» (True). ПО УМОЛЧАНИЮ True — сохраняет
+    прежнее поведение для вызывающих, которые не передают флаг явно (старые
+    тесты, случайно забытые места). При per_item_mode=False эффективная
+    категория позиции ВСЕГДА fallback_category_id (категория шапки) —
+    см. app/services/feo_effective_category.py::effective_item_feo_category_id
+    (ТО ЖЕ правило, что purchase_feo_checks.py::_item_feo_mismatch применяет
+    при ЧТЕНИИ; раньше оно здесь, при ЗАПИСИ, не применялось вовсе — позиция
+    с протухшей feo_category_id заводила новую FeoPlannedItem в протухшей
+    категории товара, хотя документ целиком живёт в одной категории шапки).
+    Собственная feo_category_id позиции при этом тоже подтягивается к
+    fallback_category_id (самоисправление протухшего значения — иначе оно
+    потом копируется дальше, например при конвертации заявки в закупку, и
+    рождает «Расхождение категории ФЭО» уже на закупке).
 
     `items` — любые объекты с атрибутами item_name/quantity/unit/total_price/
     feo_category_id/feo_planned_item_id/over_plan — подходят и WishItem, и
@@ -93,6 +111,7 @@ async def auto_assign_planned_items(
     from app.services.feo_import_common import resolve_origin_flags
     from app.services.text_match import normalize
     from app.services.feo_plan_duplicate_match import find_unique_feo_plan_match
+    from app.services.feo_effective_category import effective_item_feo_category_id
     from app.services import feo_history
 
     # cat_id -> {normalize(name): fpi_id}; загружается лениво, один раз на категорию.
@@ -111,9 +130,19 @@ async def auto_assign_planned_items(
     for it in items:
         if getattr(it, "feo_planned_item_id", None):
             continue
-        eff_cat_id = getattr(it, "feo_category_id", None) or fallback_category_id
+        eff_cat_id = effective_item_feo_category_id(
+            per_item_mode, fallback_category_id, getattr(it, "feo_category_id", None),
+        )
         if not eff_cat_id:
             continue
+        # Самоисправление протухшей собственной категории (см. docstring
+        # per_item_mode выше) — только для позиций БЕЗ собственной плановой
+        # позиции (они сюда и попадают, see `continue` выше): у позиции с уже
+        # проставленным feo_planned_item_id категорию трогает другой механизм
+        # (move_or_detach_planned_item / sync_items_to_header_category), не
+        # дублируем здесь.
+        if not per_item_mode and hasattr(it, "feo_category_id") and getattr(it, "feo_category_id", None) != eff_cat_id:
+            it.feo_category_id = eff_cat_id
         norm_name = normalize(getattr(it, "item_name", None) or "")
         if not norm_name:
             continue
@@ -189,7 +218,15 @@ async def auto_assign_planned_items(
                     # сама идея, что и move_or_detach_planned_item, но здесь
                     # позиция ещё ни на что не ссылалась, переносить нечего,
                     # кроме самой feo_category_id.
-                    if hasattr(it, "feo_category_id") and matched_cat_id != eff_cat_id:
+                    # per_item_mode=False (20.10.2026) — НЕ переносим: у документа
+                    # «одна категория на всё» позиция обязана остаться в категории
+                    # шапки (eff_cat_id уже и есть эта категория); перенос в
+                    # matched_cat_id (категорию дубля-совпадения из другой части
+                    # субсидии) снова развёл бы feo_category_id позиции с шапкой —
+                    # ровно тот прод-баг, который эта правка устраняет. Сам
+                    # matched_fpi_id всё равно используется ниже как привязка
+                    # FeoPlannedItem — только категория позиции не переезжает.
+                    if hasattr(it, "feo_category_id") and matched_cat_id != eff_cat_id and per_item_mode:
                         it.feo_category_id = matched_cat_id
 
             if matched_fpi_id is not None:

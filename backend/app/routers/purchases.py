@@ -1309,6 +1309,7 @@ async def update_purchase(
         await auto_assign_planned_items(
             items_data, p.feo_category_id, db,
             note=f"закупкой №{p.purchase_number or p.id} (правка вне заявки)",
+            per_item_mode=bool(p.feo_per_item),
         )
 
     # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана

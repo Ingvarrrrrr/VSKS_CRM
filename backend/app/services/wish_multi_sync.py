@@ -108,6 +108,7 @@ async def sync_multi_purchase_from_wish(wish, purchases: list, db: AsyncSession)
     await _ensure_needed_dates(wish, db, wish_items)
     await _auto_assign_planned_items(
         wish_items, wish.feo_category_id, db, note=f"повторным согласованием заявки №{wish.id}",
+        per_item_mode=bool(getattr(wish, "feo_per_item", False)),
     )
     # Собранное здесь читает вызывающий код (_distribute_wish_to_purchases) ПОСЛЕ
     # возврата — та же точка расширения, что и у одиночной ветки.

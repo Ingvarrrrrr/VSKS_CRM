@@ -526,6 +526,13 @@ async def update_wish(
         from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
         await assert_subsidy_approved_for_binding(db, body.subsidy_id)
 
+    # Прод-баг (заявка №206/закупка РЕЕ-2026-04252, 20.10.2026) — тот же
+    # дефект, что в wish_transitions.py::patch_wish_execution (см. комментарий
+    # там): смена категории ФЭО шапки должна сразу тащить за собой позиции,
+    # когда feo_per_item=False. Снимок ДО setattr-цикла ниже (он же переставит
+    # wish.feo_category_id).
+    _old_header_cat_id_for_sync = wish.feo_category_id
+
     update_data = body.model_dump(exclude_none=True, exclude={'items'})
     for field, value in update_data.items():
         setattr(wish, field, value)
@@ -627,6 +634,27 @@ async def update_wish(
     # предупреждения, когда привязку пришлось снять вместо переезда (см. ветку
     # non-draft ниже) — возвращаются в ответе, не проглатываются молча.
     _plan_transfer_warnings: list[str] = []
+
+    # «Позиции следуют за шапкой» при feo_per_item=False (см. комментарий у
+    # _old_header_cat_id_for_sync выше) — ОБЩАЯ функция с wish_transitions.py
+    # (Правило №6, не вторая копия). Выполняется ДО построчных правок ниже
+    # (draft: delete+recreate из body.items; non-draft: body.items с явной
+    # feo_category_id по позиции), чтобы явные построчные значения из ЭТОГО
+    # же запроса побеждали массовый перенос — цикл ниже читает item_data,
+    # присланный пользователем, а не wi.feo_category_id, который этот вызов
+    # меняет, так что порядок вызова этой функции относительно цикла здесь не
+    # мешает явным построчным правкам (они просто применяются следом).
+    # draft пропускается: там ниже позиции ВСЕГДА полностью удаляются и
+    # создаются заново из body.items (см. ветку old_status == "draft" ниже) —
+    # старые WishItem, к которым мы бы здесь применили перенос, всё равно
+    # исчезнут, а move_or_detach_planned_item внутри зря бы отвязывал план от
+    # строк, которых через секунду не будет.
+    if old_status != "draft" and wish.feo_category_id != _old_header_cat_id_for_sync:
+        from app.services.feo_effective_category import sync_items_to_header_category
+        _plan_transfer_warnings.extend(await sync_items_to_header_category(
+            wish.items or [], _old_header_cat_id_for_sync, wish.feo_category_id,
+            bool(getattr(wish, "feo_per_item", False)), db,
+        ))
 
     if body.items is not None:
         if old_status == "draft":

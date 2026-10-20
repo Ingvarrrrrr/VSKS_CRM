@@ -352,9 +352,20 @@ async def patch_purchase_item(
             # название/кол-во/цену (мутируются НИЖЕ), новая плановая позиция (если
             # заводится с нуля) фиксирует снимок ДО этих правок; для типичного
             # случая «просто перенести позицию в другую категорию» разницы нет.
+            # Фолбэк — категория ШАПКИ закупки (не it.feo_category_id, только что
+            # проставленной выше из body): при per_item_mode=False (feo_per_item
+            # выключен) effective_item_feo_category_id внутри обязана дать именно
+            # категорию шапки и САМОИСПРАВИТЬ it.feo_category_id на неё — иначе
+            # пользователь мог бы задать позиции свою категорию в режиме «одна
+            # категория на всю закупку» (тот же прод-баг класс, что у заявки
+            # №206, см. feo_effective_category.py). При per_item_mode=True
+            # (обычный случай) результат не меняется: it.feo_category_id уже
+            # равен нужному значению, fallback используется только если бы он
+            # был пуст.
             await auto_assign_planned_items(
-                [it], it.feo_category_id, db,
+                [it], p.feo_category_id, db,
                 note=f"переносом позиции в закупке №{p.purchase_number or p.id}",
+                per_item_mode=bool(p.feo_per_item),
             )
     else:
         from app.models.feo_planned_item import FeoPlannedItem as _FPIExplicit

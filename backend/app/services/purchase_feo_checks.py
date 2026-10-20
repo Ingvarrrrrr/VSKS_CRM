@@ -154,10 +154,9 @@ async def _item_feo_mismatch(
     # effectiveCategoryId в ItemsCardsView.vue/ItemsTableFlat.vue/
     # ItemsTableStages.vue/ItemsTableWish.vue — держать в синхроне, дублирование
     # этого правила уже стоило прод-инцидента.
-    effective_cat_id = (
-        purchase.feo_category_id
-        if not purchase.feo_per_item
-        else (item.feo_category_id or purchase.feo_category_id)
+    from app.services.feo_effective_category import effective_item_feo_category_id
+    effective_cat_id = effective_item_feo_category_id(
+        purchase.feo_per_item, purchase.feo_category_id, item.feo_category_id,
     )
     reasons: list[str] = []
 

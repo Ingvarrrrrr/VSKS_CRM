@@ -423,8 +423,26 @@ async def patch_wish_execution(
         from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
         await assert_subsidy_approved_for_binding(db, body.subsidy_id)
         wish.subsidy_id = body.subsidy_id
+    # Прод-баг (заявка №206/закупка РЕЕ-2026-04252, 20.10.2026): согласующий
+    # сменил категорию ФЭО шапки заявки здесь, а 14 WishItem.feo_category_id
+    # остались со старой — при feo_per_item=False («одна категория на всю
+    # заявку») позиции ОБЯЗАНЫ следовать за шапкой; без этого конвертация в
+    # закупку заводила новые плановые позиции в протухшей категории и давала
+    # «Расхождение категории ФЭО» на всех товарах. Снимок ДО присвоения новой
+    # категории — старое значение нужно, чтобы отличить реальную смену от
+    # повторной отправки того же значения. Общая функция (Правило №6) —
+    # app/routers/wishes.py::update_wish использует ТУ ЖЕ, не копию.
+    _old_header_cat_id = wish.feo_category_id
     if body.feo_category_id is not None:
         wish.feo_category_id = body.feo_category_id
+    if body.feo_category_id is not None and _old_header_cat_id != body.feo_category_id:
+        from app.services.feo_effective_category import sync_items_to_header_category
+        _header_sync_warnings = await sync_items_to_header_category(
+            wish.items or [], _old_header_cat_id, body.feo_category_id,
+            bool(getattr(wish, "feo_per_item", False)), db,
+        )
+    else:
+        _header_sync_warnings = []
     # W2: assigned_to меняется без сброса цепочки согласования
     if body.assigned_to is not None:
         wish.assigned_to = body.assigned_to
@@ -462,7 +480,7 @@ async def patch_wish_execution(
     # плановую позицию по каждой строке он вправе перераспределить. Здесь —
     # ТОЛЬКО эти два поля, никогда item_name/quantity/unit_price/total_price/
     # unit/country_origin и без добавления/удаления строк.
-    _plan_transfer_warnings: list[str] = []
+    _plan_transfer_warnings: list[str] = list(_header_sync_warnings)
     # W1 (прод, заявка №88 / закупка РЕЕ-2026-00962, 2026-09-30): позиции,
     # чью привязку к ФЭО меняем в этом цикле, — если они компаньон авансового
     # отчёта, у них есть связанная строка закупки (purchase_items.wish_item_id,

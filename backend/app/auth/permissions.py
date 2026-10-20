@@ -58,6 +58,34 @@ async def remove_user_org_access(
         await db.delete(existing)
 
 
+async def get_owned_organization_ids(user_id: int, db: AsyncSession) -> list[int]:
+    """Организации, хозяином которых числится user_id (Organization.owner_user_id).
+
+    ЕДИНЫЙ источник расчёта «это последний хозяин аккаунта» (Правило №6).
+    Аудит безопасности 2026-10-20 (поведенческий фаззинг, bt_b_owner): DELETE
+    /api/users/{свой_id} вернул 204 и обнулил organizations.owner_user_id —
+    аккаунт остался без хозяина. Вызывающий код (delete_user, update_user при
+    смене role, remove_user_from_organization) использует этот хелпер, а не
+    копирует запрос к Organization.owner_user_id."""
+    from app.models.organization import Organization
+    rows = (await db.execute(
+        select(Organization.id).where(Organization.owner_user_id == user_id)
+    )).scalars().all()
+    return [int(x) for x in rows]
+
+
+async def assert_not_last_account_owner(user_id: int, db: AsyncSession, *, action: str) -> None:
+    """409 если user_id — хозяин хотя бы одной организации (owner_user_id):
+    `action` нельзя совершить, пока владение не передано другому пользователю.
+    Один хелпер на все пути той же дыры — см. get_owned_organization_ids."""
+    if await get_owned_organization_ids(user_id, db):
+        raise HTTPException(
+            409,
+            f"Это хозяин аккаунта — сначала передайте владение другому "
+            f"пользователю, прежде чем {action}.",
+        )
+
+
 # B4 (2026-09-01): экшен-ключи, которые ОПАСНО вливать из пер-субсидийного
 # гранта (user_subsidy_access) в ГЛОБАЛЬНЫЙ набор прав пользователя. Грант на
 # ОДНУ субсидию не должен превращаться во власть над write-действиями во ВСЕХ
@@ -369,6 +397,17 @@ async def assert_can_manage_user_access(
     target_user = await db.get(User, target_user_id)
     if target_user is None:
         raise HTTPException(404, "Пользователь не найден")
+
+    # Аудит безопасности 2026-10-20: для НЕ-account_owner/superadmin здесь
+    # была ТОЛЬКО ранговая проверка роли (ниже) — она не знает об аккаунтах.
+    # admin аккаунта А мог редактировать override/роль/доступ к субсидии
+    # пользователя аккаунта Б, если ранг target'а оказывался ниже ранга
+    # actor'а. Контур — тот же канонический get_account_contour_org_ids, что
+    # и в assert_target_in_owner_account (Правило №6, второй механизм не
+    # заводим). 404, не 403 — не раскрываем сам факт существования чужого
+    # пользователя.
+    await assert_target_user_visible(current_user, target_user, db)
+
     actor_rank = await get_user_rank(current_user, db, org_id)
     target_role_name = await _resolve_role_for_org(target_user, db, org_id)
     target_rank = _ROLE_PRIORITY.get(target_role_name, 1)
@@ -424,6 +463,43 @@ async def assert_target_in_owner_account(
         raise HTTPException(
             403, "Сотрудник не относится к организациям вашего аккаунта"
         )
+
+
+async def assert_target_user_visible(
+    current_user: User, target_user: User, db: AsyncSession
+) -> None:
+    """404 если target_user вне контура аккаунта current_user.
+
+    Аудит безопасности 2026-10-20 (поведенческий фаззинг + ручная проверка):
+    GET/PATCH/DELETE /api/users/{id} и соседи с тем же `{user_id}`/`{uid}`
+    (фото, скан-удостоверения, учётки площадок, членство в организациях,
+    оклад, подчинённые) были защищены ТОЛЬКО `require_action('user.manage')`
+    / `require_tab('staff')` — эти проверки отвечают «есть ли у actor'а вообще
+    такое право хоть где-то», а не «принадлежит ли ИМЕННО ЭТОТ target тому же
+    аккаунту». admin/account_owner/org_admin ЛЮБОГО аккаунта могли читать и
+    писать карточку чужого пользователя по известному id.
+
+    Один канонический контур — get_account_contour_org_ids (тот же расчёт,
+    что в assert_target_in_owner_account/assert_can_manage_user_access,
+    Правило №6: второй механизм не заводим). superadmin — без ограничений;
+    сам себе — всегда можно (самообслуживание). 404, не 403 — не раскрываем
+    факт существования чужого пользователя (тот же принцип, что
+    app.auth.object_visibility)."""
+    if current_user.role == "superadmin" or current_user.id == target_user.id:
+        return
+    target_org_ids: set[int] = set()
+    if target_user.org_id:
+        target_org_ids.add(target_user.org_id)
+    uoa_org_ids = (await db.execute(
+        select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == target_user.id)
+    )).scalars().all()
+    target_org_ids.update(int(x) for x in uoa_org_ids)
+    if not target_org_ids:
+        return
+    from app.auth.visibility import get_account_contour_org_ids
+    account_org_ids = await get_account_contour_org_ids(current_user, db)
+    if not (target_org_ids & account_org_ids):
+        raise HTTPException(404, "Пользователь не найден")
 
 
 def assert_all_orgs_access_assignable(current_user: User) -> None:

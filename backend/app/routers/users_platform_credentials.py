@@ -39,6 +39,18 @@ async def _assert_platform_access(current_user, user_id: int, db: AsyncSession, 
     """
     if current_user.id == user_id:
         return  # сам себе — всегда можно
+
+    # Аудит безопасности 2026-10-20: ниже проверялось только наличие вкладки
+    # 'staff' ХОТЬ ГДЕ-ТО (require_tab-подобная проверка) — не то, что target
+    # принадлежит ТОМУ ЖЕ аккаунту. admin аккаунта А читал/менял/удалял
+    # учётки площадок пользователя аккаунта Б по id. Общий хелпер (Правило
+    # №6) — тот же канонический контур, что и везде.
+    from app.auth.permissions import assert_target_user_visible
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, target, db)
+
     from app.auth.permissions import get_effective_tabs, _active_org
     active_org = _active_org(current_user)
     effective = await get_effective_tabs(current_user, db, active_org)

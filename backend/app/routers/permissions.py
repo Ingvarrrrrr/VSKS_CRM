@@ -23,6 +23,7 @@ from app.auth.jwt import get_current_user
 from app.auth.permissions import (
     require_tab, ensure_user_org_access,
     assert_can_manage_user_access, assert_role_assignable,
+    assert_target_user_visible,
     get_user_rank, ROLE_LABELS_RU, _ROLE_PRIORITY,
 )
 from app.schemas.schemas import (
@@ -144,8 +145,12 @@ async def list_overrides(
     user_id: int,
     org_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_tab("staff")),
+    current_user: User = Depends(require_tab("staff")),
 ):
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    _target = await db.get(User, user_id)
+    if _target is not None:
+        await assert_target_user_visible(current_user, _target, db)
     uoa = await db.execute(
         select(UserOrgAccess).where(
             UserOrgAccess.user_id == user_id,
@@ -341,9 +346,13 @@ async def update_overrides(
 async def get_user_org_roles(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_tab("staff")),
+    current_user: User = Depends(require_tab("staff")),
 ):
     """Return per-org role (uoa.role) for each org the user is attached to."""
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    _target = await db.get(User, user_id)
+    if _target is not None:
+        await assert_target_user_visible(current_user, _target, db)
     rows = (await db.execute(
         select(UserOrgAccess).where(UserOrgAccess.user_id == user_id)
     )).scalars().all()
@@ -443,8 +452,12 @@ async def delete_override(
 async def get_user_subsidy_access(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_tab("staff")),
+    current_user: User = Depends(require_tab("staff")),
 ):
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    _target = await db.get(User, user_id)
+    if _target is not None:
+        await assert_target_user_visible(current_user, _target, db)
     rows = (await db.execute(
         select(UserSubsidyAccess.subsidy_id, UserSubsidyAccess.role, Subsidy.name)
         .join(Subsidy, Subsidy.id == UserSubsidyAccess.subsidy_id)
@@ -508,8 +521,12 @@ async def list_subsidy_overrides(
     user_id: int,
     subsidy_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_tab("staff")),
+    current_user: User = Depends(require_tab("staff")),
 ):
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    _target = await db.get(User, user_id)
+    if _target is not None:
+        await assert_target_user_visible(current_user, _target, db)
     grant = (await db.execute(
         select(UserSubsidyAccess).where(
             UserSubsidyAccess.user_id == user_id,

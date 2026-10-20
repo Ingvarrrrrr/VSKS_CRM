@@ -81,8 +81,13 @@ def _can_see_vehicle(vehicle: Vehicle, current_user: User) -> bool:
 @router.get("")
 async def list_trips(
     vehicle_id: Optional[int] = Query(None),
-    date_from: Optional[str] = Query(None),
-    date_to: Optional[str] = Query(None),
+    # Аудит безопасности 2026-10-20 (поведенческий фаззинг): date_from=мусор
+    # как Optional[str] + ручной date.fromisoformat ронял 500 ValueError.
+    # Типизировано как date — FastAPI/Pydantic сам отдаёт 422 на невалидную
+    # строку, до входа в тело ручки (_coerce_date остаётся для вызовов этого
+    # хелпера с уже распарсенным/иным форматом, если появятся).
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
     status: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -98,9 +103,9 @@ async def list_trips(
     if vehicle_id is not None:
         q = q.where(Trip.vehicle_id == vehicle_id)
     if date_from:
-        q = q.where(Trip.date >= _coerce_date(date_from))
+        q = q.where(Trip.date >= date_from)
     if date_to:
-        q = q.where(Trip.date <= _coerce_date(date_to))
+        q = q.where(Trip.date <= date_to)
     if status:
         q = q.where(Trip.status == status)
 

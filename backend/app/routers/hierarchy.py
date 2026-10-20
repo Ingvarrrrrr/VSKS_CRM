@@ -14,7 +14,10 @@ from sqlalchemy import select, update as sa_update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES
-from app.auth.permissions import require_tab, ensure_user_org_access, remove_user_org_access
+from app.auth.permissions import (
+    require_tab, ensure_user_org_access, remove_user_org_access,
+    assert_target_user_visible,
+)
 from app.database import get_db
 from app.models.department import Department
 from app.models.manager_department import ManagerDepartment
@@ -567,6 +570,8 @@ async def get_user_organizations(
     user = await db.get(User, uid)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    await assert_target_user_visible(current_user, user, db)
 
     rows = (await db.execute(
         select(UserOrganization, Organization).join(
@@ -604,6 +609,11 @@ async def add_user_to_organization(
     current_user: User = Depends(require_tab('staff')),
 ):
     """Add user to an extra organization (or update position if already a member)."""
+    target_user = await db.get(User, uid)
+    if not target_user:
+        raise HTTPException(404, "Пользователь не найден")
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    await assert_target_user_visible(current_user, target_user, db)
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(404, "Организация не найдена")
@@ -648,6 +658,12 @@ async def update_user_org_position(
     current_user: User = Depends(require_tab('staff')),
 ):
     """Update user's position in a specific extra organization."""
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    target_user = await db.get(User, uid)
+    if not target_user:
+        raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, target_user, db)
+
     # Use UPDATE ... WHERE to avoid MultipleResultsFound when user has several
     # dept rows for the same org (multi-dept case, e.g. Цыганов in org_id=1).
     values: dict = {}
@@ -700,7 +716,17 @@ async def get_user_salary(
             except HTTPException:
                 can_view = False
     if not can_view and current_user.role in ("org_admin", "admin"):
-        can_view = True  # org admins can see their org members' salary
+        # Аудит безопасности 2026-10-20: было true безусловно — org_admin/
+        # admin аккаунта А видел оклад любого пользователя аккаунта Б по id.
+        # Контур — тот же канонический get_account_contour_org_ids (Правило
+        # №6), как и в assert_target_in_owner_account/assert_target_user_visible.
+        target_user = await db.get(User, uid)
+        if target_user is not None:
+            try:
+                await assert_target_user_visible(current_user, target_user, db)
+                can_view = True
+            except HTTPException:
+                can_view = False
     if not can_view:
         # Check if current user is chief accountant (by position)
         own_memberships = (await db.execute(
@@ -770,7 +796,19 @@ async def remove_user_from_organization(
     7c: Cascade — удаляет ВСЕ строки user_organizations с этим org_id.
     """
     user = await db.get(User, uid)
-    is_primary = user and user.org_id == org_id
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    await assert_target_user_visible(current_user, user, db)
+    is_primary = user.org_id == org_id
+
+    # Аудит безопасности 2026-10-20: тот же тупик headless-аккаунта, что и
+    # DELETE /api/users/{self} — сотрудник мог выйти из организации, хозяином
+    # которой числится (Organization.owner_user_id), не передав владение.
+    # Общий хелпер (Правило №6), как в users.py delete_user/update_user.
+    if uid == current_user.id:
+        from app.auth.permissions import assert_not_last_account_owner
+        await assert_not_last_account_owner(uid, db, action="выйти из организации")
 
     # 7c: Load ALL rows for this user+org (may be multiple due to multi-dept)
     all_rows = (await db.execute(
@@ -814,6 +852,10 @@ async def patch_user_org_membership_row(
     row = await db.get(UserOrganization, row_id)
     if not row or row.user_id != uid:
         raise HTTPException(404, "Запись не найдена")
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    target_user = await db.get(User, uid)
+    if target_user:
+        await assert_target_user_visible(current_user, target_user, db)
     if "position" in body:
         new_position = body["position"] or None
         position_changed = new_position != row.position
@@ -889,6 +931,10 @@ async def remove_user_org_membership_row(
     row = await db.get(UserOrganization, row_id)
     if not row or row.user_id != uid:
         raise HTTPException(404, "Запись не найдена")
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    target_user_check = await db.get(User, uid)
+    if target_user_check:
+        await assert_target_user_visible(current_user, target_user_check, db)
 
     org_id = row.org_id
     await db.delete(row)
@@ -924,6 +970,12 @@ async def get_task_authority(
                    + all users in orgs where user is ManagerOrganization
     can_receive_from: users who have uid as subordinate in UserHierarchy
     """
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    target_user = await db.get(User, uid)
+    if not target_user:
+        raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, target_user, db)
+
     # Direct subordinates
     uu_subs = (await db.execute(
         select(UserHierarchy).where(UserHierarchy.manager_id == uid)

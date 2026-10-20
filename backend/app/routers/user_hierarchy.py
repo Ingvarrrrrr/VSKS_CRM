@@ -17,7 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from app.auth.jwt import get_current_user, require_role
-from app.auth.permissions import require_tab
+from app.auth.permissions import require_tab, assert_target_user_visible
 from app.database import get_db
 from app.models.user import User
 from app.models.user_hierarchy import UserHierarchy
@@ -57,8 +57,13 @@ async def get_all_subordinate_ids(manager_id: int, db: AsyncSession) -> list[int
 async def list_subordinates(
     uid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    target_user = await db.get(User, uid)
+    if not target_user:
+        raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, target_user, db)
     rows = (await db.execute(
         select(UserHierarchy).where(UserHierarchy.manager_id == uid)
     )).scalars().all()
@@ -74,8 +79,13 @@ async def list_subordinates(
 async def list_all_subordinates(
     uid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    target_user = await db.get(User, uid)
+    if not target_user:
+        raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, target_user, db)
     ids = await get_all_subordinate_ids(uid, db)
     if not ids:
         return []
@@ -88,7 +98,7 @@ async def add_subordinate(
     uid: int,
     body: AddSubordinateBody,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('staff')),
+    current_user: User = Depends(require_tab('staff')),
 ):
     if uid == body.subordinate_id:
         raise HTTPException(400, "Пользователь не может быть подчинённым самого себя")
@@ -101,6 +111,10 @@ async def add_subordinate(
     subordinate = (await db.execute(select(User).where(User.id == body.subordinate_id))).scalar_one_or_none()
     if not manager or not subordinate:
         raise HTTPException(404, "Пользователь не найден")
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе
+    # ни для менеджера, ни для подчинённого.
+    await assert_target_user_visible(current_user, manager, db)
+    await assert_target_user_visible(current_user, subordinate, db)
 
     existing = (await db.execute(
         select(UserHierarchy).where(
@@ -120,8 +134,12 @@ async def remove_subordinate(
     uid: int,
     sid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('staff')),
+    current_user: User = Depends(require_tab('staff')),
 ):
+    # Аудит безопасности 2026-10-20: не было проверки контура аккаунта вовсе.
+    manager = await db.get(User, uid)
+    if manager:
+        await assert_target_user_visible(current_user, manager, db)
     h = (await db.execute(
         select(UserHierarchy).where(
             UserHierarchy.manager_id == uid,

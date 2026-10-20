@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.auth.jwt import get_current_user
-from app.auth.permissions import require_action, require_tab
+from app.auth.permissions import require_action, require_tab, assert_target_user_visible
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -28,6 +28,7 @@ async def get_user_photo(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, user, db)
     return {"photo_url": user.profile_photo}
 
 
@@ -41,6 +42,7 @@ async def set_user_photo(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, user, db)
     photo_url = body.get("photo_url")
     if not photo_url or not isinstance(photo_url, str):
         raise HTTPException(422, "photo_url required")
@@ -58,6 +60,7 @@ async def delete_user_photo(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, user, db)
     user.profile_photo = None
     await db.commit()
     return {"ok": True}
@@ -72,6 +75,7 @@ async def get_user_license_scan(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, user, db)
     return {"license_scan": user.license_scan}
 
 
@@ -85,6 +89,7 @@ async def set_user_license_scan(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, user, db)
     scan = body.get("license_scan")
     if not scan or not isinstance(scan, str) or not scan.startswith("data:image/"):
         raise HTTPException(422, "Скан должен быть data:image/...;base64,...")
@@ -104,6 +109,7 @@ async def delete_user_license_scan(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, user, db)
     user.license_scan = None
     await db.commit()
     return {"ok": True}
@@ -123,6 +129,7 @@ async def sync_user_to_contractor(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    await assert_target_user_visible(current_user, user, db)
     if not user.full_name and not user.inn:
         raise HTTPException(400, "У сотрудника нет ни ФИО, ни ИНН — нечего записывать")
 

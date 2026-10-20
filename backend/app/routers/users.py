@@ -333,6 +333,11 @@ async def get_user(
         raise HTTPException(404, "Пользователь не найден")
     if user.role == "superadmin" and current_user.role != "superadmin":
         raise HTTPException(404, "Пользователь не найден")
+    # Аудит безопасности 2026-10-20: GET /{user_id} не проверял вообще ничего
+    # про принадлежность аккаунту — любой залогиненный читал чужую карточку
+    # по id. Общий хелпер (Правило №6).
+    from app.auth.permissions import assert_target_user_visible
+    await assert_target_user_visible(current_user, user, db)
     from app.services.user_position import resolve_user_position, bulk_load_memberships
     memberships_map = await bulk_load_memberships(db, [user.id])
     user.position = resolve_user_position(user, memberships=memberships_map.get(user.id))
@@ -349,8 +354,17 @@ async def update_user(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    # Аудит безопасности 2026-10-20: ветка ниже раньше проверяла контур ТОЛЬКО
+    # для account_owner — admin (require_action('user.manage') не знает про
+    # аккаунты) мог PATCH'ить пользователя чужого аккаунта по id. Общий
+    # хелпер (Правило №6): account_owner — прежняя 403-проверка (не менять,
+    # test_account_owner_patch_user_cross_org.py фиксирует её текст), остальные
+    # роли (кроме superadmin) — новая 404-проверка контура.
     if current_user.role == 'account_owner':
         await assert_target_in_owner_account(current_user, user, db)
+    else:
+        from app.auth.permissions import assert_target_user_visible
+        await assert_target_user_visible(current_user, user, db)
 
     update_data = data.dict(exclude_unset=True)
 
@@ -366,6 +380,15 @@ async def update_user(
     if "role" in update_data:
         assert_role_assignable(current_user, update_data["role"])
         await assert_can_manage_user_access(current_user, user_id, db, org_id=None)
+        # Аудит безопасности 2026-10-20: assert_can_manage_user_access выше
+        # намеренно пропускает account_owner, меняющего СВОЮ роль (self-edit
+        # guard для этой роли снят владельцем 2026-10-06, «владелец может
+        # всё»), а смена role != account_owner здесь же лишает его
+        # привилегий — тот же тупик headless-аккаунта, что и DELETE себя.
+        # Тот же общий хелпер (Правило №6), что и в delete_user.
+        if user_id == current_user.id and update_data["role"] != current_user.role:
+            from app.auth.permissions import assert_not_last_account_owner
+            await assert_not_last_account_owner(user_id, db, action="сменить свою роль")
 
     # Аудит безопасности 2026-10-20: та же дыра, что в create_user — PATCH
     # пропускал all_orgs_access=True через общий цикл setattr без проверки.
@@ -654,9 +677,31 @@ async def delete_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
+
+    # Аудит безопасности 2026-10-20 (координатор подтвердил по коду): это
+    # место проверяло ТОЛЬКО require_action('user.manage') (есть ли право
+    # user.manage ХОТЬ ГДЕ-ТО) + узкую org_admin-ветку ниже — admin/
+    # account_owner ЛЮБОГО аккаунта удалял любого пользователя по id.
+    # Контур — тот же канонический get_account_contour_org_ids (Правило №6).
+    if current_user.role == 'account_owner':
+        await assert_target_in_owner_account(current_user, user, db)
+    else:
+        from app.auth.permissions import assert_target_user_visible
+        await assert_target_user_visible(current_user, user, db)
+
     # Org-admin ограничен своей орг; account_owner/admin/superadmin — по всей учётке.
     if current_user.role == 'org_admin' and user.org_id != current_user.org_id:
         raise HTTPException(403, "Удалять можно только сотрудников своей организации.")
+
+    # Аудит безопасности 2026-10-20 (поведенческий фаззинг bt_b_owner):
+    # DELETE /api/users/{свой_id} отдавал 204 для ЛЮБОЙ роли — организация
+    # оставалась без owner_user_id. Самоудаление запрещено безусловно, а
+    # удаление «последнего хозяина аккаунта» (кем бы его ни удаляли) —
+    # отдельным общим хелпером (Правило №6, assert_not_last_account_owner).
+    if user_id == current_user.id:
+        raise HTTPException(409, "Нельзя удалить себя.")
+    from app.auth.permissions import assert_not_last_account_owner
+    await assert_not_last_account_owner(user_id, db, action="удалить сотрудника")
 
     # Удаление карточки в контексте орг = открепление от этой орг, а не
     # глобальное удаление аккаунта (инцидент с Филипповым 2026-07-06).

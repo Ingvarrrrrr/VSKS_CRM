@@ -1,5 +1,5 @@
 """Purchases and purchase items schemas (extracted from schemas.py)."""
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, List, Any
 from datetime import date, datetime
 from decimal import Decimal
@@ -15,20 +15,25 @@ class PurchaseStop(BaseModel):
 
 # PurchaseItem
 class PurchaseItemCreate(BaseModel):
+    # Аудит безопасности 20.10.2026 (п.5): минус бессмыслен для количества и
+    # цены/суммы позиции (на стенде 0 строк с отрицательными значениями в
+    # этих колонках, код их не пишет) — ge=0. Денежные поля, где минус
+    # ЗАКОННО возможен (оплаты/возвраты, корректировки выписки — Payment.amount,
+    # BankPayment.amount), этим правилом НЕ трогаем (владелец, аудит п.5).
     product_id: Optional[int] = None
     item_name: str
     item_type: Optional[str] = None
-    quantity: Optional[Decimal] = None
+    quantity: Optional[Decimal] = Field(None, ge=0)
     unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    total_price: Optional[Decimal] = None
-    final_unit_price: Optional[Decimal] = None
-    final_total: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = Field(None, ge=0)
+    total_price: Optional[Decimal] = Field(None, ge=0)
+    final_unit_price: Optional[Decimal] = Field(None, ge=0)
+    final_total: Optional[Decimal] = Field(None, ge=0)
     # Снимок плана (Шаг 1 «план ≠ факт») — обычно заполняется сервером, но поле
     # оставлено настраиваемым на входе на случай явной установки (импорт/скрипт).
-    planned_quantity: Optional[Decimal] = None
-    planned_unit_price: Optional[Decimal] = None
-    planned_total: Optional[Decimal] = None
+    planned_quantity: Optional[Decimal] = Field(None, ge=0)
+    planned_unit_price: Optional[Decimal] = Field(None, ge=0)
+    planned_total: Optional[Decimal] = Field(None, ge=0)
     country_origin: Optional[str] = None
     match_confirmed: bool = True
     contractor_id: Optional[int] = None
@@ -54,7 +59,7 @@ class PurchaseItemCreate(BaseModel):
     # Стадия «Приняли» (5-я стадия жизненного цикла позиции): заполняется автоматически
     # при переходе закупки в delivered, правится вручную — см. purchase_transitions.py.
     accepted_name: Optional[str] = None
-    accepted_quantity: Optional[Decimal] = None
+    accepted_quantity: Optional[Decimal] = Field(None, ge=0)
     accepted_unit: Optional[str] = None
     # item-forms-accommodation-transport.md: поля спец-формы позиции («Проживание»/
     # «Перевозки», см. app/services/item_forms.py) — форма выводится из
@@ -168,13 +173,16 @@ class PurchaseCreate(BaseModel):
     item_type: Optional[str] = None
     item_name: Optional[str] = None
     contractor_id: Optional[int] = None
-    planned_quantity: Optional[Decimal] = None
+    # Аудит безопасности 20.10.2026 (п.5): та же причина, что у PurchaseItemCreate
+    # выше — минус бессмыслен для количества/цены/суммы ТЗ (на стенде 0 строк
+    # с отрицательными значениями, код их не пишет).
+    planned_quantity: Optional[Decimal] = Field(None, ge=0)
     unit: Optional[str] = None
-    planned_unit_price: Optional[Decimal] = None
-    planned_total_price: Optional[Decimal] = None
+    planned_unit_price: Optional[Decimal] = Field(None, ge=0)
+    planned_total_price: Optional[Decimal] = Field(None, ge=0)
     confirmed: Optional[bool] = False
-    final_unit_price: Optional[Decimal] = None
-    final_total_amount: Optional[Decimal] = None
+    final_unit_price: Optional[Decimal] = Field(None, ge=0)
+    final_total_amount: Optional[Decimal] = Field(None, ge=0)
     delivery_payment_amount: Optional[Decimal] = None
     contract_id: Optional[int] = None
     subsidy_id: Optional[int] = None
@@ -321,13 +329,14 @@ class PurchaseUpdate(BaseModel):
     item_type: Optional[str] = None
     item_name: Optional[str] = None
     contractor_id: Optional[int] = None
-    planned_quantity: Optional[Decimal] = None
+    # Аудит безопасности 20.10.2026 (п.5) — см. PurchaseCreate выше.
+    planned_quantity: Optional[Decimal] = Field(None, ge=0)
     unit: Optional[str] = None
-    planned_unit_price: Optional[Decimal] = None
-    planned_total_price: Optional[Decimal] = None
+    planned_unit_price: Optional[Decimal] = Field(None, ge=0)
+    planned_total_price: Optional[Decimal] = Field(None, ge=0)
     confirmed: Optional[bool] = None
-    final_unit_price: Optional[Decimal] = None
-    final_total_amount: Optional[Decimal] = None
+    final_unit_price: Optional[Decimal] = Field(None, ge=0)
+    final_total_amount: Optional[Decimal] = Field(None, ge=0)
     delivery_payment_amount: Optional[Decimal] = None
     contract_id: Optional[int] = None
     subsidy_id: Optional[int] = None

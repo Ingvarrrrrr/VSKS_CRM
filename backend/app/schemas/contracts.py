@@ -1,6 +1,6 @@
 """Contractors, contracts, and contract items schemas (extracted from schemas.py)."""
 import re
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, List, Any
 from datetime import date, datetime
 from decimal import Decimal
@@ -90,14 +90,16 @@ class ContractCreate(BaseModel):
     contractor_id: Optional[int] = None
     subsidy_id: Optional[int] = None
     subject: Optional[str] = None
-    max_amount: Optional[Decimal] = None
+    # Аудит безопасности 20.10.2026 (п.5): минус бессмыслен для суммы договора
+    # (на стенде 0 договоров с max_amount<0, код их не пишет) — ge=0.
+    max_amount: Optional[Decimal] = Field(None, ge=0)
     status: str = "active"
     notes: Optional[str] = None
     start_date: Optional[_Date] = None
     end_date: Optional[_Date] = None
     purchase_method: Optional[str] = None
     item_type: Optional[str] = None  # товар / услуга
-    planned_monthly: Optional[Decimal] = None
+    planned_monthly: Optional[Decimal] = Field(None, ge=0)
     extra_subsidy_ids: List[int] = []
 
 class ContractOut(ContractCreate):

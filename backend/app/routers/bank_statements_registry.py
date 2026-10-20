@@ -34,6 +34,10 @@ from app.services.purchase_payments import (
     create_payments_from_bank,
     unlink_bank_payment,
 )
+from app.services.payment_object_access import (
+    ensure_purchase_payment_access,
+    ensure_purchase_matches_bank_payment_org,
+)
 from app.schemas.schemas import (
     BankPaymentOut,
     BankPaymentMatchUpdate,
@@ -362,20 +366,44 @@ async def match_bank_payment(
     if bp.matched_confirmed:
         raise HTTPException(status_code=409, detail="Платёж уже подтверждён — сначала откатите (unbind)")
 
+    # Аудит безопасности 20.10.2026 (п.4): contract_id/contractor_id из тела
+    # раньше не проверялись на принадлежность той же организации, что и
+    # банковский платёж (bp.org_id) — можно было привязать строку выписки к
+    # договору/контрагенту чужой орги. bp.org_id=None (соглашение не опознано)
+    # проверку пропускает — сама строка и так доступна только account-admin
+    # ролям (_row_visible выше).
     if body.contract_id is not None:
+        from app.models.contract import Contract
+        from app.models.subsidy import Subsidy
+        c_result = await db.execute(select(Contract).where(Contract.id == body.contract_id))
+        contract = c_result.scalar_one_or_none()
+        if not contract:
+            raise HTTPException(status_code=404, detail="Договор не найден")
+        if bp.org_id is not None and contract.subsidy_id is not None:
+            subsidy = await db.get(Subsidy, contract.subsidy_id)
+            if subsidy and subsidy.org_id is not None and subsidy.org_id != bp.org_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Договор принадлежит другой организации — не относится к этому платежу",
+                )
         bp.matched_contract_id = body.contract_id
         # Если contractor_id не передан явно — попробуем вытащить из контракта
         if body.contractor_id is not None:
             bp.matched_contractor_id = body.contractor_id
         else:
-            from app.models.contract import Contract
-            c_result = await db.execute(select(Contract).where(Contract.id == body.contract_id))
-            contract = c_result.scalar_one_or_none()
-            if contract:
-                bp.matched_contractor_id = contract.contractor_id
+            bp.matched_contractor_id = contract.contractor_id
 
     elif body.contractor_id is not None:
         bp.matched_contractor_id = body.contractor_id
+
+    if body.contractor_id is not None:
+        from app.models.contractor import Contractor
+        contractor = await db.get(Contractor, body.contractor_id)
+        if not contractor:
+            raise HTTPException(status_code=404, detail="Контрагент не найден")
+        # Организацию контрагента НЕ сверяем: контрагенты — общая база
+        # (поиск по всей базе, правило владельца), поставщик, заведённый
+        # одной организацией, законно получает оплату и от другой.
 
     await db.commit()
     await db.refresh(bp)
@@ -498,6 +526,16 @@ async def confirm_bank_payment(
         raise HTTPException(status_code=422, detail="BankPayment не привязан к контракту — выполните /match сначала")
     if not body.purchase_ids:
         raise HTTPException(status_code=422, detail="Список purchase_ids не может быть пустым")
+
+    # Аудит безопасности 20.10.2026 (п.3): purchase_ids из тела раньше не
+    # проверялись на принадлежность той же организации, что и банковский
+    # платёж — любая видимая строка выписки могла быть подтверждена на чужую
+    # закупку (create_payments_from_bank ставит confirmed_by_statement=True).
+    # ensure_purchase_payment_access — тот же гейт видимости/права, что и везде
+    # (ПРАВИЛО №6); ensure_purchase_matches_bank_payment_org добивает орг-скоуп.
+    for pid in body.purchase_ids:
+        purchase = await ensure_purchase_payment_access(current_user, db, pid, "payment.confirm")
+        await ensure_purchase_matches_bank_payment_org(purchase, db, bp.org_id)
 
     # План 2026-10-04-fadm-statement, п.2: bp.matched_confirmed — ОДИН общий флаг
     # на строку выписки, но строка может принадлежать НЕСКОЛЬКИМ субсидиям с

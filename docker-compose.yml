@@ -31,11 +31,20 @@ x-backend-common: &backend-common
     DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-vsks}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vsks_crm}
     SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
     SUBSIDY_LIMIT: "26128070"
-    SMTP_HOST: smtp.yandex.ru
-    SMTP_PORT: "587"
-    SMTP_USER: z@vsks.ru
-    SMTP_PASSWORD: ${SMTP_PASSWORD:?Set SMTP_PASSWORD in .env}
-    SMTP_FROM: z@vsks.ru
+    # Почта (backend/app/utils/email.py, backend/app/config.py): EMAIL_MODE пуст по умолчанию
+    # (см. .env.example) — тогда режим определяется наличием SMTP_USER, как раньше (не ломаем
+    # текущий логин через Яндекс). На проде .env (вне git) задаёт EMAIL_MODE=relay и переводит
+    # SMTP_HOST/SMTP_USER/SMTP_PASSWORD/SMTP_FROM на свой релей (см. mail/README.md, раздел 4) —
+    # значения ниже остаются дефолтом для локального стенда (режим login через Яндекс).
+    EMAIL_MODE: ${EMAIL_MODE:-}
+    SMTP_HOST: ${SMTP_HOST:-smtp.yandex.ru}
+    SMTP_PORT: ${SMTP_PORT:-587}
+    SMTP_USER: ${SMTP_USER:-z@vsks.ru}
+    # Было ${SMTP_PASSWORD:?...} (обязательна всегда) — relay-режим (mail/README.md) работает
+    # без логина/пароля, пароль обязателен только для режима login (SMTP_USER непустой);
+    # backend/app/utils/email.py сам требует пароль только когда реально логинится по SMTP.
+    SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    SMTP_FROM: ${SMTP_FROM:-z@vsks.ru}
     # Захардкожено: на хосте .env держит устаревший http://85.239.53.155 и
     # перебивал бы ${BASE_URL:-...}; ссылки в письмах должны вести на домен.
     BASE_URL: https://galaa.ru
@@ -116,6 +125,29 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # mail — ТОЛЬКО отправка почты (Postfix+OpenDKIM), письма восстановления пароля/подтверждения
+  # email (backend/app/utils/email.py, mail/README.md), по образцу FOODSIZO server/mail-relay/.
+  # Без ports: — порт 25 доступен ТОЛЬКО внутри сети этого compose-проекта, наружу не
+  # публикуется (правило №4 CLAUDE.md: наружу только 80/443+22). Входящая почта не принимается.
+  # Намеренно БЕЗ depends_on у backend_a/backend_b — почта не должна блокировать их холодный
+  # старт (backend шлёт письма асинхронно и переживает недоступность relay — см. try/except в
+  # email.py); mail сам не зависит ни от кого и стартует параллельно.
+  mail:
+    build: ./mail
+    image: vsks-crm-mail:latest
+    restart: unless-stopped
+    volumes:
+      # DKIM-ключ переживает пересоздание контейнера (entrypoint.sh генерирует его только если
+      # файла здесь ещё нет) — удаление этого volume требует заново опубликовать TXT-запись DNS
+      # (см. mail/README.md).
+      - mail-dkim:/etc/opendkim/keys
+    healthcheck:
+      test: ["CMD-SHELL", "postfix status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   backend_a:
     <<: *backend-common
@@ -302,3 +334,4 @@ volumes:
   pgdata:
   n8n_data:
   uploads:
+  mail-dkim:

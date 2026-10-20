@@ -1,0 +1,73 @@
+# mail/main.cf — Postfix: ТОЛЬКО relay для backend_a/backend_b (GALA) внутри docker-сети
+# этого проекта, НЕ принимает почту снаружи и НЕ открыт как open relay (по образцу FOODSIZO
+# server/mail-relay/main.cf). Порт 25 проброшен только внутри docker-сети (docker-compose.yml:
+# сервис `mail` без ports:) — если контейнер каким-то образом окажется доступен снаружи,
+# mynetworks ниже всё равно отклонит релей от кого угодно, кроме docker-подсетей (правило №4
+# CLAUDE.md: глубина защиты, не рассчитывать только на отсутствие ports:).
+
+myhostname = mail.galaa.ru
+mydomain = galaa.ru
+myorigin = $mydomain
+
+# Эта машина НЕ принимает письма ДЛЯ себя/домена (входящая почта не нужна) — relay-транспорт
+# для чужих писем, mydestination оставлен пустым намеренно.
+mydestination =
+
+# relayhost пуст — Postfix сам резолвит MX получателя и доставляет напрямую (обычный исходящий
+# SMTP), а не через чужой relay.
+relayhost =
+
+# Кто имеет право слать ЧЕРЕЗ этот сервер (relay). Docker bridge-сети по умолчанию — 172.16/12 и
+# 192.168/16; добавлены обе стандартные докеровские подсети плюс loopback. Если сеть проекта
+# получит другой диапазон — проверить `docker network inspect vsks-crm_default` и дополнить при
+# необходимости (это НЕ меняет факта, что порт 25 не публикуется наружу — вторая линия защиты).
+mynetworks = 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+
+# Явный запрет relay для всех, кто не попал в mynetworks выше.
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
+
+# Отправитель (envelope-from) обязан быть в домене galaa.ru — задача прямо требует не
+# подписывать/не принимать письма с чужим From (это внутренний relay только для своего backend,
+# не open relay для произвольных доменов). reject_unverified_sender был бы избыточен (делает
+# встречный коннект к MX адресу отправителя — не нужно внутреннему relay); вместо этого —
+# простая проверка домена через restriction class ниже.
+#
+# ⚠️ НЕ добавлять сюда permit_mynetworks: единственные клиенты, которые вообще МОГУТ сюда
+# подключиться, — это и есть докер-сеть из mynetworks (порт 25 не опубликован, main.cf выше),
+# так что permit_mynetworks первым пунктом пропустил бы ЛЮБОЙ From до проверки домена —
+# обнаружено вживую при проверке со стенда (2026-10-20): x@evil.com проходил с 250 Ok, пока
+# permit_mynetworks стоял первым. Кто вообще имеет право слать через этот relay — уже решает
+# smtpd_relay_restrictions/smtpd_recipient_restrictions ниже (permit_mynetworks там).
+smtpd_sender_restrictions =
+    reject_non_fqdn_sender,
+    check_sender_access regexp:/etc/postfix/sender_domain_check,
+    reject
+
+# Эта сторона не принимает чужие письма (mydestination пуст), но smtpd слушает — ограничим
+# простыми правилами на случай, если кто-то всё же достучится (глубина защиты, см. mynetworks).
+smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination
+smtpd_client_restrictions =
+smtpd_helo_required = yes
+
+# TLS исходящий — opportunistic (пробовать STARTTLS, но не требовать: часть почтовых серверов
+# его не поддерживает, и письмо не должно проваливаться только из-за этого).
+smtp_tls_security_level = may
+smtp_tls_note_starttls_offer = yes
+
+# TLS входящий (от backend внутри docker-сети) — тоже opportunistic, но не обязателен: это
+# внутренняя сеть, и backend/email.py в режиме relay сам пробует STARTTLS только если сервер
+# его предложит (has_extn), иначе шлёт как есть — mynetworks уже ограничивает, кто подключается.
+smtpd_tls_security_level = may
+
+# Милтер OpenDKIM — подпись исходящих писем (entrypoint.sh поднимает opendkim на localhost:8891
+# раньше postfix).
+milter_protocol = 6
+milter_default_action = accept
+smtpd_milters = inet:127.0.0.1:8891
+non_smtpd_milters = inet:127.0.0.1:8891
+
+# Обычные таймауты/лимиты по умолчанию достаточны для низкого объёма (письма восстановления
+# пароля, подтверждение email) — не переопределяем.
+inet_interfaces = all
+inet_protocols = ipv4
+mail_owner = postfix

@@ -11,7 +11,15 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 43200  # 30 days
     SUBSIDY_LIMIT: float = 26128070.0
-    # Email (SMTP) — if SMTP_USER is empty, links are logged to console (dev mode)
+    # Email (SMTP) — режим определяет EMAIL_MODE (backend/app/utils/email.py,
+    # _effective_email_mode — единственное место, где это решается, Правило №6):
+    #   ""       (по умолчанию) — авто: SMTP_USER пуст → "console", иначе → "login"
+    #             (старое поведение, оставлено для обратной совместимости).
+    #   "console" — письма не отправляются, только логируются (dev-стенд).
+    #   "login"   — STARTTLS + логин/пароль (внешний провайдер, например Яндекс).
+    #   "relay"   — без логина, STARTTLS только если сервер сам предложит (свой контейнер
+    #               mail/ внутри docker-сети, см. mail/README.md).
+    EMAIL_MODE: str = ""
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_USER: str = ""

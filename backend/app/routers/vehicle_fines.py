@@ -185,7 +185,17 @@ async def get_fine(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab("vehicles")),
 ):
-    result = await db.execute(select(VehicleFine).where(VehicleFine.id == fine_id))
+    # _fine_to_out читает fine.vehicle напрямую (без await) — vehicle_fine.py
+    # (модель) грузит driver_user/driver_external сама (lazy="joined"), но
+    # vehicle — обычный lazy="select", без eager load это MissingGreenlet
+    # (500) вместо честного ответа. list_fines (строка 143) уже грузит vehicle
+    # тем же selectinload, здесь не хватало ровно этого (находка С4).
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(VehicleFine)
+        .options(selectinload(VehicleFine.vehicle))
+        .where(VehicleFine.id == fine_id)
+    )
     fine = result.scalars().first()
     if not fine:
         raise HTTPException(status_code=404, detail="Штраф не найден")

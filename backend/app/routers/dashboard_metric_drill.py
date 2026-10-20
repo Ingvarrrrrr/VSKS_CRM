@@ -36,23 +36,11 @@ from app.services.metric_drill_rows import (
     not_committed_level_drill,
     paid_drill,
 )
+from app.utils.parse_ids import parse_id_set as _parse_subsidy_ids
 
 router = APIRouter(prefix="/metric-drill", tags=["dashboard"])
 
 _METRIC_REGEX = "^(" + "|".join(METRICS) + ")$"
-
-
-def _parse_subsidy_ids(raw: Optional[str]) -> Optional[set]:
-    """'1,2,3' → {1,2,3}; пусто/None → None — та же мелкая обёртка, что в
-    остальных drill-роутерах."""
-    if not raw:
-        return None
-    out: set = set()
-    for part in raw.split(","):
-        part = part.strip()
-        if part:
-            out.add(int(part))
-    return out or None
 
 
 @router.get("")

@@ -28,22 +28,9 @@ from app.models.user import User
 from app.routers.dashboard import _apply_purchase_org_filter
 from app.routers.purchase_transitions import STATUS_LABELS
 from app.services.paid_over_delivered import paid_over_delivered_by_subsidy, paid_over_delivered_rows
+from app.utils.parse_ids import parse_id_set as _parse_subsidy_ids
 
 router = APIRouter(prefix="/paid-over-delivered-drill", tags=["dashboard"])
-
-
-def _parse_subsidy_ids(raw: Optional[str]) -> Optional[set]:
-    """'1,2,3' → {1,2,3}; пусто/None → None (та же мелкая обёртка, что
-    dashboard_type_drill.py/dashboard_contracts_drill.py — Правило №5 не
-    требует общий модуль ради 8-строчной функции без побочных эффектов)."""
-    if not raw:
-        return None
-    out: set = set()
-    for part in raw.split(","):
-        part = part.strip()
-        if part:
-            out.add(int(part))
-    return out or None
 
 
 @router.get("")

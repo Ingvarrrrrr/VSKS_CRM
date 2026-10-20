@@ -32,21 +32,9 @@ from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.services.redistributable_raw import not_committed_raw_rows
 from app.services.subsidy_money_summary import subsidy_money_summary
+from app.utils.parse_ids import parse_id_set as _parse_subsidy_ids
 
 router = APIRouter(prefix="/redistributable-drill", tags=["dashboard"])
-
-
-def _parse_subsidy_ids(raw: Optional[str]) -> Optional[set]:
-    """'1,2,3' → {1,2,3}; пусто/None → None — та же мелкая обёртка, что и в
-    dashboard_contracts_drill.py/dashboard_type_drill.py."""
-    if not raw:
-        return None
-    out: set = set()
-    for part in raw.split(","):
-        part = part.strip()
-        if part:
-            out.add(int(part))
-    return out or None
 
 
 @router.get("")
@@ -77,7 +65,22 @@ async def dashboard_redistributable_drill(
     else:
         sid_list = list(visible_subsidy_ids)
 
-    rows_by_sid = await not_committed_raw_rows(db, sid_list)
+    # Сверка с карточкой «Можно перераспределить» (НЕ второй расчёт, ПРАВИЛО
+    # №6) — та же subsidy_money_summary, что читает SubsidyMoneyCards.vue.
+    # Карточка СОЗНАТЕЛЬНО гасит redistributable_by_kind в None, когда у
+    # субсидии feo_entered=False («ФЭО не введено», решение владельца
+    # 07.10.2026, см. subsidy_money_summary.py:392-397) — окно обязано
+    # повторить тот же гейт, а не показывать построчно то, что карточка
+    # считает пустым (иначе Σ rows расходится с card_total — находка С3,
+    # tests/behavior/REPORT.md). Поэтому строки субсидий без feo_entered
+    # ЗДЕСЬ ЖЕ отбрасываются, до построения rows, а не после сверки сумм.
+    summary = await subsidy_money_summary(db, sid_list)
+    entered_ids = {
+        sid for sid in sid_list
+        if summary.get(sid, {}).get("redistributable_by_kind") is not None
+    }
+
+    rows_by_sid = await not_committed_raw_rows(db, list(entered_ids))
     rows = [
         {**row, "subsidy_id": sid}
         for sid, item_rows in rows_by_sid.items()
@@ -97,9 +100,6 @@ async def dashboard_redistributable_drill(
         r["subsidy_name"] = subsidy_names.get(r["subsidy_id"])
 
     total = sum(r["raw"] for r in rows)
-    # Сверка с карточкой «Можно перераспределить» (НЕ второй расчёт, ПРАВИЛО
-    # №6) — та же subsidy_money_summary, что читает SubsidyMoneyCards.vue.
-    summary = await subsidy_money_summary(db, sid_list)
     card_total = sum(
         (summary.get(sid, {}).get("redistributable_by_kind") or {}).get(kind, 0.0)
         for sid in sid_list

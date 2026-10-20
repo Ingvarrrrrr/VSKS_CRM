@@ -42,6 +42,7 @@ from app.services.dashboard_type_split import STAGE_KEYS, compute_type_split_det
 # см. докстринг delivered_unpaid_residual.py.
 from app.services.delivered_unpaid_residual import delivered_unpaid_residual_detail
 from app.services.purchase_drill_text import purchase_drill_texts
+from app.utils.parse_ids import parse_id_set as _parse_subsidy_ids
 
 router = APIRouter(prefix="/type-drill", tags=["dashboard"])
 
@@ -50,18 +51,6 @@ _STAGE_REGEX = "^(" + "|".join(STAGE_KEYS) + ")$"
 # карточка стадии («Ведётся работа»/«Заказано»/…) нажимается ЦЕЛИКОМ, без
 # деления на товары/услуги: все строки стадии, без фильтра по kind.
 _KIND_REGEX = "^(goods|services|unspecified|all)$"
-
-
-def _parse_subsidy_ids(raw: Optional[str]) -> Optional[set]:
-    """'1,2,3' → {1,2,3}; пусто/None → None (без доп. сужения)."""
-    if not raw:
-        return None
-    out: set = set()
-    for part in raw.split(","):
-        part = part.strip()
-        if part:
-            out.add(int(part))
-    return out or None
 
 
 @router.get("")

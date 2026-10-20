@@ -818,7 +818,7 @@ async def get_staff(
 @router.get("/search")
 async def search_messages(
     q: str = Query(..., min_length=2),
-    limit: int = Query(20, le=50),
+    limit: int = Query(20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

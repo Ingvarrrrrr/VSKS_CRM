@@ -18,6 +18,7 @@ from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.visibility import get_visible_subsidy_ids
 from app.routers.dashboard import _UNSET
 from app.services.purchase_economy import purchase_economy_bulk, purchase_economy_by_method
+from app.utils.parse_ids import parse_id_list
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -96,7 +97,7 @@ async def analytics(
     dash_sids = _UNSET
     if scope == "dashboard":
         dash_sids = await get_visible_subsidy_ids(current_user, db, "dashboard")
-    sid_filter = [int(x) for x in subsidy_ids.split(",") if x.strip()] if subsidy_ids else None
+    sid_filter = parse_id_list(subsidy_ids)
 
     # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
     # /analytics — дашборд-виджеты, единый предикат (ПРАВИЛО №6). sid_filter

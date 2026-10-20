@@ -28,6 +28,7 @@ from app.models.entity_change import EntityChange, EntityFieldSeen  # ensure ent
 
 from app.startup import lifespan
 from app.errors import register_error_handlers
+from app.errors_db import register_db_error_handlers
 from app.routes import register_routes
 from app.auth.csrf_protection import CsrfProtectionMiddleware
 
@@ -51,4 +52,5 @@ async def add_correlation_id(request: Request, call_next):
 
 
 register_error_handlers(app)
+register_db_error_handlers(app)
 register_routes(app)

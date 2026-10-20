@@ -28,23 +28,9 @@ from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.services.dashboard_contracts_drill import contracts_drill_rows
 from app.services.stage_cumulative import contracted_total_by_subsidy
+from app.utils.parse_ids import parse_id_set as _parse_subsidy_ids
 
 router = APIRouter(prefix="/contracts-drill", tags=["dashboard"])
-
-
-def _parse_subsidy_ids(raw: Optional[str]) -> Optional[set]:
-    """'1,2,3' → {1,2,3}; пусто/None → None — та же мелкая обёртка, что
-    dashboard_type_drill.py::_parse_subsidy_ids (Правило №5 не требует общий
-    модуль ради 8-строчной функции без побочных эффектов, но формула разбора
-    идентична: trim/int/непустые)."""
-    if not raw:
-        return None
-    out: set = set()
-    for part in raw.split(","):
-        part = part.strip()
-        if part:
-            out.add(int(part))
-    return out or None
 
 
 @router.get("")

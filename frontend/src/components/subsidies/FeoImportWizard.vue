@@ -665,8 +665,9 @@ const FEO_TO_FACT_FIELD_MAP: Record<string, string> = {
   lvl5: 'plan_item_name', item_type: 'item_type',
   row_plan_unit: 'unit', row_plan_qty: 'plan_qty', row_plan_price: 'plan_price', row_plan_sum: 'plan_amount',
   comment: 'comment',
-  fact_status: 'status', fact_qty: 'fact_qty', fact_price: 'fact_price', fact_amount: 'fact_amount',
-  fact_paid: 'paid', fact_contracted: 'contracted', fact_supplier: 'supplier', fact_purchase_no: 'purchase_no',
+  // «Правильный статус» — status_raw, как в автоподборе historical_fact_import/columns.py (20.10.2026)
+  fact_status: 'status_raw', fact_qty: 'fact_qty', fact_price: 'fact_price', fact_amount: 'fact_amount',
+  fact_paid: 'paid', fact_advance: 'advance', fact_contracted: 'contracted', fact_supplier: 'supplier', fact_purchase_no: 'purchase_no',
 }
 function goToFactImport() {
   const file = feoImport.file

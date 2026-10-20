@@ -406,24 +406,27 @@ export interface FactImportRollbackCheck {
 
 // ---- Поля маппинга (ImportMappingGrid) ------------------------------------
 
+// Подписи карточек = названия колонок шаблона (historical_fact_import/columns.py::TEMPLATE_HEADER,
+// feo_import_template.py), владелец 20.10.2026.
 export const FACT_IMPORT_TARGET_FIELDS: ImportMappingTargetField[] = [
-  { key: 'path_l2', label: 'Направление (Ур.2)' },
-  { key: 'path_l3', label: 'Подраздел (Ур.3)' },
-  { key: 'path_l4', label: 'Категория (Ур.4)' },
-  { key: 'path_l5', label: 'Уровень 5' },
-  { key: 'plan_item_name', label: 'Наименование плановой позиции', required: true },
+  { key: 'path_l2', label: 'Уровень 2 (Направление расходов по ФЭО)' },
+  { key: 'path_l3', label: 'Уровень 3 (Тип расходов по ФЭО)' },
+  { key: 'path_l4', label: 'Уровень 4 (Конкретизированный)' },
+  { key: 'path_l5', label: 'Уровень 5 (категория)' },
+  { key: 'plan_item_name', label: 'Плановая позиция (папка НЕ создаётся)', required: true },
   { key: 'item_type', label: 'Товар/услуга/работа' },
-  { key: 'unit', label: 'Единица' },
-  { key: 'plan_qty', label: 'План: количество' },
-  { key: 'plan_price', label: 'План: цена' },
-  { key: 'plan_amount', label: 'План: сумма' },
-  { key: 'fact_qty', label: 'Факт: количество' },
-  { key: 'fact_price', label: 'Факт: цена' },
-  { key: 'fact_amount', label: 'Факт: сумма', hint: 'Это сумма договора' },
+  { key: 'unit', label: 'Ед. изм. плана' },
+  { key: 'plan_qty', label: 'Плановое количество' },
+  { key: 'plan_price', label: 'Плановая цена за единицу' },
+  { key: 'plan_amount', label: 'Сумма плана' },
+  { key: 'fact_qty', label: 'Факт: Количество' },
+  { key: 'fact_price', label: 'Факт: Цена' },
+  { key: 'fact_amount', label: 'Факт: Сумма', hint: 'Это сумма договора' },
   { key: 'paid', label: 'Оплачено' },
+  { key: 'advance', label: 'Аванс (да/нет)' },
   { key: 'contracted', label: 'Законтрактовано' },
-  { key: 'status', label: 'Правильный статус' },
-  { key: 'status_raw', label: 'Статус (как в файле)' },
+  { key: 'status_raw', label: 'Правильный статус' },
+  { key: 'status', label: 'Статус' },
   { key: 'purchase_no', label: '№ Закупки' },
   { key: 'supplier', label: 'Поставщик' },
   { key: 'comment', label: 'Комментарий' },
@@ -529,6 +532,20 @@ export function useFactImport() {
     factImport.show = true
   }
 
+  // Багфикс 20.10.2026 (владелец: «карточки сдвинуты после смены листа») —
+  // mapping/decisions/preview строятся по заголовкам КОНКРЕТНОГО файла/листа;
+  // при смене файла или листа старые индексы колонок не имеют смысла для
+  // нового набора заголовков и должны быть сброшены ДО следующего
+  // loadPreview(), иначе autoопределение в loadPreview() увидит непустой
+  // mapping и промолчит, оставив чужие индексы (FactImportStepFile.vue::
+  // onFilePicked/onSheetChange).
+  function resetForSourceChange() {
+    factImport.mapping = {}
+    factImport.decisions = emptyDecisions()
+    factImport.groupsDirty = false
+    factImport.preview = null
+  }
+
   // Решение владельца 05.10.2026: после успешной загрузки шаблона ФЭО
   // (блок «Факт» заполнен хоть в одной строке — has_fact_columns/fact_rows,
   // см. FeoImportResult) мастер ФЭО предлагает перейти сюда С ТЕМ ЖЕ файлом
@@ -620,7 +637,10 @@ export function useFactImport() {
       if (!hasMapping) {
         const m: Record<string, number | null> = {}
         for (const col of data.columns) {
-          if (col.field) m[col.field] = col.index
+          // Багфикс 20.10.2026: если поле найдено в ДВУХ колонках — берём
+          // ПЕРВУЮ (как backend rows.py::by_field.setdefault), иначе экран
+          // показывал не ту колонку, что реально читается.
+          if (col.field && m[col.field] == null) m[col.field] = col.index
         }
         factImport.mapping = m
       }
@@ -924,6 +944,7 @@ export function useFactImport() {
     openWizard,
     openWizardWithFile,
     resetWizard,
+    resetForSourceChange,
     loadSheets,
     loadPreview,
     queuePreviewRefresh,

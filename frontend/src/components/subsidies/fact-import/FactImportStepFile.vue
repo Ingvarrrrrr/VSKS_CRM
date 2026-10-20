@@ -35,7 +35,7 @@
 import { ref } from 'vue'
 import { useFactImport } from '@/composables/subsidies/useFactImport'
 
-const { factImport, loadSheets, loadPreview, downloadTemplate } = useFactImport()
+const { factImport, loadSheets, loadPreview, downloadTemplate, resetForSourceChange } = useFactImport()
 const fileList = ref<File[]>([])
 
 async function onFilePicked(files: File | File[] | null) {
@@ -43,12 +43,20 @@ async function onFilePicked(files: File | File[] | null) {
   factImport.file = file
   factImport.sheets = []
   factImport.selectedSheet = null
-  factImport.preview = null
+  // Багфикс 20.10.2026: новый файл — старый mapping/preview от предыдущего
+  // файла не имеет смысла для его заголовков (иначе карточки на шаге 2
+  // сдвинуты, см. useFactImport.ts::resetForSourceChange).
+  resetForSourceChange()
   if (file) await loadSheets()
 }
 
 async function onSheetChange(name: string) {
   factImport.selectedSheet = name
+  // Багфикс 20.10.2026: смена листа — ПЕРЕД новым предпросмотром сбрасываем
+  // mapping, иначе loadPreview() видит непустой mapping (построенный по
+  // ПЕРВОМУ листу в loadSheets()) и накладывает его индексы на заголовки
+  // другого листа.
+  resetForSourceChange()
   await loadPreview()
 }
 </script>

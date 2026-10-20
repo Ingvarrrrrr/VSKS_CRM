@@ -11,7 +11,7 @@
     @update:model-value="onMappingChange"
   />
   <v-alert v-if="!mappingValid" type="warning" density="compact" icon="mdi-alert" class="mt-3">
-    Сопоставьте столбец «Наименование плановой позиции» — без него строки не сопоставятся с планом.
+    Сопоставьте столбец «Плановая позиция (папка НЕ создаётся)» — без него строки не сопоставятся с планом.
   </v-alert>
 </template>
 

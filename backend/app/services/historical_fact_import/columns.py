@@ -378,15 +378,63 @@ def build_columns(detected: dict) -> list:
 
 
 def apply_mapping_override(columns: list, mapping: Optional[dict]) -> list:
-    """decisions/mapping может переопределить field конкретных колонок по
-    индексу (фронт дал пользователю исправить автоопределение)."""
-    if not mapping:
+    """decisions/mapping может переопределить field конкретных колонок —
+    фронт дал пользователю исправить автоопределение (шаг 2 мастера «Импорт
+    факта», ImportMappingGrid).
+
+    Две формы на входе:
+    - старая `{"columns": {индекс: поле}}` — по индексу колонки, прямое
+      присвоение field (ключ "columns" — признак этой формы);
+    - 20.10.2026 (баг: владелец — «карточки сдвинуты после смены листа»):
+      форма, которую реально шлёт фронт, `{поле: индекс|null}`
+      (useFactImport.ts::buildFormData) — по ПОЛЮ, а не по индексу колонки;
+      старая форма эту не принимала вовсе, ручные перетаскивания терялись.
+      Ключи — строки из FIELDS, неизвестные ключи игнорируются. Правило по
+      каждому полю f:
+        * null — снять f со всех колонок;
+        * idx, и колонка index==idx уже имеет field==f (совпало с автоопре-
+          делением) — не трогать (не терять вторую колонку того же поля,
+          если человек её не трогал);
+        * иначе — снять f со всех колонок, поставить колонке index==idx
+          field=f (её прежнее поле заменяется).
+      Индекс вне диапазона/не int — игнорируется. Сначала выполняются ВСЕ
+      null-снятия, потом все назначения (иначе порядок ключей словаря мог
+      бы снять поле, которое другой ключ только что назначил)."""
+    if not mapping or not isinstance(mapping, dict):
         return columns
-    overrides = mapping.get("columns") if isinstance(mapping, dict) else None
-    if not overrides:
+    overrides = mapping.get("columns")
+    if overrides:
+        by_index = {int(k): v for k, v in overrides.items()}
+        for c in columns:
+            if c["index"] in by_index:
+                c["field"] = by_index[c["index"]] or None
         return columns
-    by_index = {int(k): v for k, v in overrides.items()}
-    for c in columns:
-        if c["index"] in by_index:
-            c["field"] = by_index[c["index"]] or None
+
+    by_idx = {c["index"]: c for c in columns}
+    nulls = []
+    assigns = []
+    for field, idx in mapping.items():
+        if field == "columns" or field not in FIELDS:
+            continue
+        if idx is None:
+            nulls.append(field)
+            continue
+        if not isinstance(idx, int) or idx not in by_idx:
+            continue
+        assigns.append((field, idx))
+
+    for field in nulls:
+        for c in columns:
+            if c.get("field") == field:
+                c["field"] = None
+
+    for field, idx in assigns:
+        col = by_idx[idx]
+        if col.get("field") == field:
+            continue  # совпало с автоопределением — вторую колонку того же поля не трогаем
+        for c in columns:
+            if c.get("field") == field:
+                c["field"] = None
+        col["field"] = field
+
     return columns

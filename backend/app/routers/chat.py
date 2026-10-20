@@ -17,7 +17,6 @@ from typing import Optional, List
 from PIL import Image
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
 import jwt
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import and_, delete, func, or_, select
@@ -906,11 +905,14 @@ async def download_file(
     if not os.path.exists(msg.file_path):
         raise HTTPException(status_code=404, detail="Файл не найден на диске")
 
-    return FileResponse(
-        path=msg.file_path,
-        filename=msg.file_name,
-        media_type=msg.file_mime,
-    )
+    # Аудит безопасности 2026-10-20: msg.file_mime — content_type клиента при
+    # загрузке вложения, не проверен сервером. Без этого disposition был
+    # "attachment" по умолчанию (Starlette сам ставит его при filename=), но
+    # media_type оставался произвольным — тот же общий хелпер, что у
+    # purchase_files.py (ПРАВИЛО №6), на всякий случай подменяет опасные типы
+    # (text/html, image/svg+xml и т.п.) на application/octet-stream.
+    from app.utils.safe_file_response import safe_file_response
+    return safe_file_response(msg.file_path, msg.file_name, msg.file_mime, "attachment")
 
 
 # ────────────────────────────── WebSocket ──────────────────────────────────

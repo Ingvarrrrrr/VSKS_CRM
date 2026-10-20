@@ -128,12 +128,17 @@ def register_error_handlers(app: FastAPI) -> None:
         details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         await _save_incident(request, "Внутренняя ошибка сервера", details,
                              "INTERNAL_ERROR", correlation_id)
+        # Аудит безопасности 2026-10-20: трейсбек (пути на сервере, SQL,
+        # внутренние имена модулей) раньше уходил клиенту в поле "details" —
+        # теперь только в SystemIncident (_save_incident выше). Клиент
+        # получает code/message/correlation_id, по correlation_id инцидент
+        # ищется в журнале (SystemIncidentsView.vue) тем, у кого есть доступ.
         return JSONResponse(
             status_code=500,
             content={
                 "code": "INTERNAL_ERROR",
                 "message": "Внутренняя ошибка сервера",
-                "details": details,
+                "details": None,
                 "correlation_id": correlation_id,
             },
         )

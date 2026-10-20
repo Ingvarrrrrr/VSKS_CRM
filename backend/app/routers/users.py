@@ -47,6 +47,8 @@ from app.auth.permissions import (
     require_action, ensure_user_org_access,
     assert_can_manage_user_access, assert_role_assignable,
     assert_target_in_owner_account,
+    assert_new_user_role_allowed, split_new_user_role,
+    assert_all_orgs_access_assignable,
 )
 from typing import List, Optional
 
@@ -259,6 +261,19 @@ async def create_user(
     if not await db.get(Organization, org_id):
         raise HTTPException(400, f"Организация (id={org_id}) не найдена — возможно, была объединена. Выберите организацию из списка.")
 
+    # Правило №1/№6 (дыра в правах, задача «Администратор организации» в
+    # списке ролей при создании сотрудника, 2026-10-16): create_user раньше
+    # вообще не проверял, вправе ли current_user назначить выбранную роль —
+    # assert_role_assignable вызывался только в PATCH. Единая проверка
+    # (назначаемость роли + ранг для org_admin) — assert_new_user_role_allowed.
+    await assert_new_user_role_allowed(current_user, data.role, org_id, db)
+    global_role, org_role = split_new_user_role(data.role)
+
+    # Аудит безопасности 2026-10-20: all_orgs_access=True из тела запроса
+    # принимался без проверки — см. docstring assert_all_orgs_access_assignable.
+    if data.all_orgs_access:
+        assert_all_orgs_access_assignable(current_user)
+
     # ФИО: last_name/first_name — источник истины, full_name пересобирается
     # (обратная совместимость со старыми клиентами — одна строка через split_fio).
     last_name, first_name, middle_name, full_name = resolve_user_name_input(
@@ -273,7 +288,7 @@ async def create_user(
     user = User(
         username=username,
         password_hash=hash_password(data.password),
-        role=data.role,
+        role=global_role,
         last_name=last_name,
         first_name=first_name,
         middle_name=middle_name,
@@ -293,9 +308,12 @@ async def create_user(
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    # Phase 17.1-05: sync primary org access entry
+    # Phase 17.1-05: sync primary org access entry.
+    # org_role (не user.role) — для org_admin глобальная роль пользователя
+    # 'employee', а UOA этой орги должен получить именно 'org_admin'
+    # (split_new_user_role выше, Правило №6).
     if user.org_id:
-        await ensure_user_org_access(user.id, user.org_id, user.role, db)
+        await ensure_user_org_access(user.id, user.org_id, org_role, db)
         await db.commit()
     # Sync to department if set (свежий пользователь — членств ещё нет, org_id
     # известен однозначно, никакой неоднозначности при записи должности).
@@ -348,6 +366,13 @@ async def update_user(
     if "role" in update_data:
         assert_role_assignable(current_user, update_data["role"])
         await assert_can_manage_user_access(current_user, user_id, db, org_id=None)
+
+    # Аудит безопасности 2026-10-20: та же дыра, что в create_user — PATCH
+    # пропускал all_orgs_access=True через общий цикл setattr без проверки.
+    # Только ВКЛЮЧЕНИЕ флага: форма присылает его и при обычной правке
+    # сотрудника, у которого он уже стоит.
+    if update_data.get("all_orgs_access") and not user.all_orgs_access:
+        assert_all_orgs_access_assignable(current_user)
 
     if "password" in update_data:
         pwd = update_data.pop("password")

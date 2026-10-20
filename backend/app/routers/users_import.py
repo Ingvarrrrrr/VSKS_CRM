@@ -8,6 +8,7 @@
 """
 from io import BytesIO
 from urllib.parse import quote as _url_quote
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -18,12 +19,40 @@ from app.database import get_db
 from app.models.user import User
 from app.services.fio import resolve_user_name_input
 from app.auth.jwt import hash_password, get_single_org_id
-from app.auth.permissions import require_action
+from app.auth.permissions import (
+    require_action, ensure_user_org_access,
+    assert_new_user_role_allowed, split_new_user_role, ROLE_LABELS_RU,
+)
 from app.services.password_policy import validate_new_password
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
-VALID_ROLES = ("employee", "manager", "admin", "account_owner")
+# org_admin добавлен задачей «Администратор организации в списке ролей при
+# создании сотрудника» (2026-10-16) — везде, где создаётся сотрудник, включая
+# импорт. superadmin сюда НЕ входит намеренно (служебная SaaS-роль, строкой
+# файла её назначить нельзя) — см. assert_new_user_role_allowed.
+VALID_ROLES = ("employee", "manager", "org_admin", "admin", "account_owner")
+
+# Русское название → код роли (для колонки «Роль» в файле импорта, Правило №6 —
+# подписи только из ROLE_LABELS_RU, здесь просто обратный индекс, не вторая
+# таблица с текстами).
+_ROLE_RU_TO_CODE = {
+    label.lower(): code
+    for code, label in ROLE_LABELS_RU.items()
+    if code != "superadmin"
+}
+
+
+def _normalize_import_role(raw: str) -> Optional[str]:
+    """Код роли ('org_admin') ИЛИ русское название ('Администратор организации',
+    регистр/пробелы не важны) → код роли. None — если не распозналось."""
+    v = (raw or "").strip()
+    if not v:
+        return None
+    low = v.lower()
+    if low in VALID_ROLES:
+        return low
+    return _ROLE_RU_TO_CODE.get(low)
 
 
 @router.get("/import/template")
@@ -32,6 +61,7 @@ async def users_import_template(_=Depends(require_action('user.manage'))):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.worksheet.datavalidation import DataValidation
     except ImportError:
         raise HTTPException(500, "openpyxl не установлен")
 
@@ -52,16 +82,31 @@ async def users_import_template(_=Depends(require_action('user.manage'))):
         cell.fill = req_fill if h in required else header_fill
         cell.alignment = Alignment(horizontal="center")
 
-    # Example row
+    # Example row. Роль в примере — русским названием (как ждёт выпадающий
+    # список ниже), а не кодом 'employee': владелец попросил писать словами
+    # владельца, не внутренними названиями полей.
     example = [
         "Иванов Иван Иванович", "ivanov@example.com", "ivanov",
-        "Password123", "employee", "Москва",
+        "Password123", ROLE_LABELS_RU["employee"], "Москва",
     ]
     for ci, val in enumerate(example, 1):
         ws.cell(row=2, column=ci, value=val)
 
-    # Role hint row
-    ws.cell(row=3, column=5, value="Допустимые роли: employee, manager, admin, account_owner")
+    # Допустимые роли — русские названия (Правило №6: подписи только из
+    # ROLE_LABELS_RU, тот же порядок, что и в getCreateRoleItems на фронте).
+    role_labels_ordered = [
+        ROLE_LABELS_RU["account_owner"], ROLE_LABELS_RU["admin"],
+        ROLE_LABELS_RU["org_admin"], ROLE_LABELS_RU["manager"],
+        ROLE_LABELS_RU["employee"],
+    ]
+    ws.cell(row=3, column=5, value=f"Допустимые роли: {', '.join(role_labels_ordered)}")
+
+    # Выпадающий список в колонке «Роль» (E2:E500) — подсказывает те же 5
+    # названий без необходимости помнить их наизусть.
+    dv_formula = '"' + ','.join(role_labels_ordered) + '"'
+    dv = DataValidation(type="list", formula1=dv_formula, allow_blank=True)
+    ws.add_data_validation(dv)
+    dv.add(f"E2:E500")
 
     col_widths = [35, 30, 20, 20, 20, 20]
     for ci, w in enumerate(col_widths, 1):
@@ -182,10 +227,25 @@ async def import_users_excel(
             errors_list.append({"row": row_idx, "error": f"{detail} («{full_name}»)"})
             continue
 
-        # Validate role
-        role = role.lower().strip()
-        if role not in VALID_ROLES:
-            errors_list.append({"row": row_idx, "error": f"Недопустимая роль «{role}» для «{full_name}». Допустимые: {', '.join(VALID_ROLES)}"})
+        # Validate role — код ('org_admin') или русское название ('Администратор
+        # организации', регистр/пробелы не важны), см. _normalize_import_role.
+        role_code = _normalize_import_role(role)
+        if role_code is None:
+            allowed_ru = ', '.join(
+                ROLE_LABELS_RU[r] for r in ("account_owner", "admin", "org_admin", "manager", "employee")
+            )
+            errors_list.append({"row": row_idx, "error": f"Недопустимая роль «{role}» для «{full_name}». Допустимые роли: {allowed_ru}"})
+            continue
+
+        # Единая проверка «вправе ли current_user назначить эту роль в этой
+        # орге» (Правило №6, та же функция, что в create_user) — раньше импорт
+        # вообще не проверял assert_role_assignable/ранг для org_admin, строка
+        # падала бы в errors только через необработанное исключение.
+        try:
+            await assert_new_user_role_allowed(current_user, role_code, org_id, db)
+        except HTTPException as _role_exc:
+            detail = _role_exc.detail if isinstance(_role_exc.detail, str) else "Роль недопустима для вас"
+            errors_list.append({"row": row_idx, "error": f"{detail} («{full_name}»)"})
             continue
 
         # Dedup
@@ -196,11 +256,13 @@ async def import_users_excel(
             skipped += 1
             continue
 
+        global_role, org_role = split_new_user_role(role_code)
+
         row_last, row_first, row_middle, row_full = resolve_user_name_input(None, None, None, full_name)
         user = User(
             username=username,
             password_hash=hash_password(password),
-            role=role,
+            role=global_role,
             last_name=row_last,
             first_name=row_first,
             middle_name=row_middle,
@@ -211,6 +273,12 @@ async def import_users_excel(
             org_id=org_id,
         )
         db.add(user)
+        await db.flush()
+        # Phase 17.1-05 (выровнено с create_user, Правило №6): импорт раньше
+        # вообще не писал user_org_access — сотрудник, импортированный с ролью
+        # org_admin, не получал орг-роль, только пустой глобальный 'employee'.
+        if org_id:
+            await ensure_user_org_access(user.id, org_id, org_role, db)
         existing_emails.add(email.lower())
         existing_usernames.add(username.lower())
         created += 1

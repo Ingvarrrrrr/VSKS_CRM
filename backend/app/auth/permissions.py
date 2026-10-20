@@ -426,6 +426,28 @@ async def assert_target_in_owner_account(
         )
 
 
+def assert_all_orgs_access_assignable(current_user: User) -> None:
+    """403 если current_user не вправе ВКЛЮЧИТЬ all_orgs_access другому
+    пользователю (доступ ко всем организациям аккаунта, роль не меняется).
+
+    Аудит безопасности 2026-10-20: ни create_user (POST /api/users/), ни
+    update_user (PATCH /api/users/{id}) не проверяли, кто вправе выставить
+    этот флаг — all_orgs_access=True в теле запроса от кого угодно с правом
+    user.manage (напр. менеджер) давало доступ ко ВСЕМ организациям аккаунта.
+    В проекте нет отдельного правила для ЭТОГО конкретного флага (грепнуто
+    all_orgs_access по routers/auth — есть только потребители флага, не
+    проверка, кто его ставит) — по умолчанию ограничиваем той же парой ролей,
+    что управляет назначением account_owner (assert_role_assignable, Правило
+    №6: не вводим третью формулу «кто может что-то максимально привилегированное»).
+    Единая точка для ОБОИХ путей (create_user и update_user)."""
+    if current_user.role not in ("superadmin", "account_owner"):
+        raise HTTPException(
+            403,
+            "Доступ ко всем организациям аккаунта (all_orgs_access) может "
+            "включить только владелец аккаунта. Обратитесь к владельцу аккаунта.",
+        )
+
+
 def assert_role_assignable(current_user: User, new_role: str) -> None:
     """403 если current_user не вправе НАЗНАЧИТЬ роль new_role кому-либо.
 
@@ -445,6 +467,57 @@ def assert_role_assignable(current_user: User, new_role: str) -> None:
         raise HTTPException(
             403,
             "Роль «Владелец аккаунта» может назначить только действующий владелец аккаунта.",
+        )
+
+
+def split_new_user_role(role: str) -> tuple[str, str]:
+    """Разбивает выбранную при создании роль на (глобальная роль User.role,
+    орг-роль UserOrgAccess.role) — Правило №6, единая точка для create_user
+    (routers/users.py) и импорта (routers/users_import.py).
+
+    org_admin — РОЛЬ ВНУТРИ ОДНОЙ организации (не глобальная, см. _ROLE_PRIORITY/
+    ROLE_LABELS_RU выше): User.role='employee', а в UOA той орги, куда создаём
+    сотрудника, — role='org_admin'. Остальные роли (employee/manager/admin/
+    account_owner) — как раньше, одна и та же роль в оба места.
+    """
+    if role == "org_admin":
+        return ("employee", "org_admin")
+    return (role, role)
+
+
+async def assert_new_user_role_allowed(
+    current_user: User, role: str, org_id: Optional[int], db: AsyncSession
+) -> None:
+    """403/400 если current_user не вправе создать сотрудника с ролью `role`
+    в организации org_id. Единая точка для create_user и импорта (Правило №6).
+
+    - Неизвестная роль (не из _ROLE_PRIORITY, либо 'superadmin' — служебная
+      SaaS-роль, её через эти формы не назначить) → 400 с перечнем допустимых
+      русских названий.
+    - account_owner — только superadmin/действующий account_owner, см.
+      assert_role_assignable (общее правило для ВСЕХ путей назначения роли).
+    - ЛЮБАЯ роль (аудит безопасности 2026-10-20 — дыра: раньше ранговая
+      проверка стояла только у org_admin, менеджер (ранг 2) с правом
+      user.manage мог без единой проверки создать 'admin' (ранг 4)):
+      назначить роль можно только если ранг actor'а В ЭТОЙ орге
+      (get_user_rank) ≥ рангу назначаемой роли (_ROLE_PRIORITY). superadmin
+      проходит сам — его ранг (6) выше любой роли, назначаемой через эту
+      форму, отдельной строки-обхода не требуется.
+    """
+    if role == "superadmin" or role not in _ROLE_PRIORITY:
+        allowed_labels = ", ".join(
+            ROLE_LABELS_RU[r] for r in ("account_owner", "admin", "org_admin", "manager", "employee")
+        )
+        raise HTTPException(400, f"Недопустимая роль. Допустимые роли: {allowed_labels}")
+    assert_role_assignable(current_user, role)
+    actor_rank = await get_user_rank(current_user, db, org_id)
+    target_rank = _ROLE_PRIORITY[role]
+    if actor_rank < target_rank:
+        target_label = ROLE_LABELS_RU.get(role, role)
+        raise HTTPException(
+            403,
+            f"Недостаточно прав: назначить роль «{target_label}» может только "
+            "пользователь с таким рангом или выше. Обратитесь к владельцу аккаунта.",
         )
 
 

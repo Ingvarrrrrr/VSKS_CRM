@@ -146,7 +146,9 @@ async def _handle(request: Request, exc: Exception) -> JSONResponse:
             content={
                 "code": "INTERNAL_ERROR",
                 "message": "Внутренняя ошибка сервера",
-                "details": details,
+                # Трейсбек — только в SystemIncident, клиенту не отдаём
+                # (аудит безопасности 2026-10-20, как в app.errors).
+                "details": None,
                 "correlation_id": correlation_id,
             },
         )

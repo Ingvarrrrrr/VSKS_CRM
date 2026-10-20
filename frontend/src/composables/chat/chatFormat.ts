@@ -71,11 +71,31 @@ export function fileUrl(roomId: number | undefined, msgId: number): string {
   return `/api/chat/rooms/${roomId}/files/${msgId}`
 }
 
+// XSS-фикс (аудит 2026-10-20): содержимое сообщения — текст от ЛЮБОГО
+// пользователя чата, вставляется через v-html (ChatMessageList.vue) —
+// без экранирования `<img src=x onerror=alert(1)>` исполнялся у всех
+// участников комнаты. Единая точка экранирования HTML для всего чата
+// (Правило №6) — highlightSearch здесь и renderMentions в ChatEmbed.vue
+// переиспользуют именно эту функцию, второй escape не пишем.
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+}
+
+export function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (ch) => HTML_ESCAPE_MAP[ch])
+}
+
 export function highlightSearch(text: string, query: string): string {
+  const escaped = escapeHtml(text)
   const q = query.trim()
-  if (!q) return text
-  const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
-  return text.replace(regex, '<mark>$1</mark>')
+  if (!q) return escaped
+  const escapedQuery = escapeHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const regex = new RegExp(`(${escapedQuery})`, 'gi')
+  return escaped.replace(regex, '<mark>$1</mark>')
 }
 
 /** Строит ленту сообщений с разделителями дат и признаком показа аватара —

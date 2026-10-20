@@ -146,6 +146,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { onChatEvent, roomParticipantCounts } from '@/composables/useChat'
 import { apiFetch } from '@/api'
+import { escapeHtml } from '@/composables/chat/chatFormat'
 
 const props = defineProps<{
   entityType: 'purchase' | 'task'
@@ -227,7 +228,10 @@ function fileUrl(msgId: number) {
 }
 
 function renderMentions(text: string) {
-  return text.replace(/@([\w\u0400-\u04FF][\w\u0400-\u04FF ]*)/g,
+  // XSS-\u0444\u0438\u043A\u0441 (\u0430\u0443\u0434\u0438\u0442 2026-10-20): text \u2014 \u0441\u043E\u043E\u0431\u0449\u0435\u043D\u0438\u0435 \u043B\u044E\u0431\u043E\u0433\u043E \u0443\u0447\u0430\u0441\u0442\u043D\u0438\u043A\u0430 \u0447\u0430\u0442\u0430,
+  // \u0432\u0441\u0442\u0430\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u0447\u0435\u0440\u0435\u0437 v-html \u0432\u044B\u0448\u0435. \u042D\u043A\u0440\u0430\u043D\u0438\u0440\u0443\u0435\u043C \u0414\u041E \u0432\u0441\u0442\u0430\u0432\u043A\u0438 span (\u0442\u043E\u0442 \u0436\u0435
+  // escapeHtml, \u0447\u0442\u043E \u0438 highlightSearch \u0432 chatFormat.ts \u2014 \u041F\u0440\u0430\u0432\u0438\u043B\u043E \u21166).
+  return escapeHtml(text).replace(/@([\w\u0400-\u04FF][\w\u0400-\u04FF ]*)/g,
     '<span class="chat-mention">@$1</span>')
 }
 

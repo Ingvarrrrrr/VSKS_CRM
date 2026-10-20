@@ -17,7 +17,7 @@ from app.models.contractor import Contractor
 from app.schemas.schemas import PurchaseFileOut
 from app.auth.jwt import get_current_user
 from app.auth.permissions import _has_key_in_any_org
-from app.utils.http import content_disposition as _content_disposition
+from app.utils.safe_file_response import safe_file_response
 from typing import List, Optional, Dict, Any
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-files"])
@@ -730,8 +730,11 @@ async def download_file(
     # (см. view_file ниже — та же причина, тот же общий RFC5987-хелпер
     # content_disposition, ПРАВИЛО №6, не второй способ). filename= в
     # FileResponse больше не передаём — заголовок собираем сами.
-    return FileResponse(pf.filepath, media_type=pf.mime_type or "application/octet-stream",
-                        headers={"Content-Disposition": _content_disposition(pf.filename)})
+    # Аудит безопасности 2026-10-20: disposition/media_type теперь выбирает
+    # ОДНА функция (app/utils/safe_file_response.py) — mime_type клиента вне
+    # безопасного списка (напр. "text/html") уходит как application/octet-stream,
+    # даже под attachment, плюс X-Content-Type-Options: nosniff.
+    return safe_file_response(pf.filepath, pf.filename, pf.mime_type, "attachment")
 
 
 @router.get("/{pid}/files/{fid}/view")
@@ -763,8 +766,19 @@ async def view_file(
     # влезает. RFC 5987 (filename= ASCII-fallback + filename*=UTF-8'') — тот
     # же общий хелпер, что уже используют документы/экспорт (ПРАВИЛО №6, см.
     # app/utils/http.py::content_disposition), второй механизм не заводим.
-    return FileResponse(pf.filepath, media_type=pf.mime_type or "application/octet-stream",
-                        headers={"Content-Disposition": _content_disposition(pf.filename, "inline")})
+    #
+    # Аудит безопасности 2026-10-20 (XSS через вложение): pf.mime_type — это
+    # file.content_type КЛИЕНТА при загрузке, не проверялся сервером. "Да
+    # будет text/html" в ALLOWED_MIME (для чеков proverkacheka.com) здесь
+    # означало, что загруженный .html открывался inline КАК СТРАНИЦА САЙТА —
+    # встроенный <script> исполнялся в origin приложения. safe_file_response
+    # (app/utils/safe_file_response.py) — inline остаётся только для
+    # растровых изображений и PDF, всё остальное понижается до attachment +
+    # application/octet-stream (плюс X-Content-Type-Options: nosniff).
+    # Просмотр в браузере для text/html/SVG больше не предлагается — файл
+    # остаётся прикреплённым (загрузка не запрещена), но скачивается, не
+    # рендерится как сайт.
+    return safe_file_response(pf.filepath, pf.filename, pf.mime_type, "inline")
 
 
 @router.delete("/{pid}/files/{fid}")

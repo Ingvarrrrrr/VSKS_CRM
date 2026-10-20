@@ -28,6 +28,7 @@ from app.routers.purchase_budget import FRAMEWORK_TYPES
 # import ensure_contract_linked` на уровне модуля.
 from app.routers.contracts_approval import _build_approval_purchase_fields  # noqa: F401
 from app.services.contracts_linking import ensure_contract_linked  # noqa: F401
+from app.services.contract_delete import assert_contract_deletable_and_unlink
 
 async def _enrich_contract_from_purchases(c: Contract, db: AsyncSession) -> int:
     """Auto-fill ПУСТЫЕ optional fields на Contract из любой связанной Purchase.
@@ -521,6 +522,9 @@ async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depend
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Not found")
+    # Правило №5/№6: вся логика связанных записей — в отдельном модуле
+    # app/services/contract_delete.py, не дописана сюда.
+    await assert_contract_deletable_and_unlink(db, cid)
     await db.delete(c)
     await db.commit()
     return {"ok": True}

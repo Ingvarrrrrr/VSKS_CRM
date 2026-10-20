@@ -133,20 +133,33 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
     assert ws.cell(r_item2, 2).value == 2000.0
     assert ws.cell(r_item2, 3).value == 1800.0
 
-    # B подкатегории — формула SUBTOTAL(9,...) по её прямым детям (две
-    # позиции, не внуки) — функция 9 учитывает и скрытые строки позиций.
+    # B подкатегории — формула SUM(...) по её прямым детям (две позиции, не
+    # внуки) — НЕ SUBTOTAL: SUBTOTAL(9,...) игнорирует ячейки, которые сами
+    # результат другого SUBTOTAL/формулы-агрегата, и категория с детьми
+    # получала бы 0 (баг владельца, исправлен 20.10.2026).
     b_sub = ws.cell(r_sub, 2).value
-    assert isinstance(b_sub, str) and b_sub.startswith("=SUBTOTAL(9,")
+    assert isinstance(b_sub, str) and b_sub.startswith("=SUM(")
     assert f"B{r_item1}" in b_sub and f"B{r_item2}" in b_sub
-    refs_sub = b_sub[len("=SUBTOTAL(9,"):-1].split(",")
+    refs_sub = b_sub[len("=SUM("):-1].split(",")
     assert len(refs_sub) == 2
 
-    # B корня — формула SUBTOTAL(9,...) по его прямым детям (подкатегория +
+    # B корня — формула SUM(...) по его прямым детям (подкатегория +
     # категория без детей), НЕ по внукам (позициям).
     b_root = ws.cell(r_root, 2).value
-    assert isinstance(b_root, str) and b_root.startswith("=SUBTOTAL(9,")
+    assert isinstance(b_root, str) and b_root.startswith("=SUM(")
     assert f"B{r_sub}" in b_root and f"B{r_leaf}" in b_root
     assert f"B{r_item1}" not in b_root and f"B{r_item2}" not in b_root
 
     # Категория без детей — число (budget), не формула.
     assert ws.cell(r_leaf, 2).value == 77000.0
+
+    # Колонка «Тип строки» — последняя из дефолтных; категория с детьми =
+    # «Категория», позиция = «Позиция», лист без детей = «Категория без
+    # позиций».
+    headers = [c.value for c in ws[3]]
+    ci_row_type = headers.index("Тип строки") + 1
+    assert ws.cell(r_root, ci_row_type).value == "Категория"
+    assert ws.cell(r_sub, ci_row_type).value == "Категория"
+    assert ws.cell(r_leaf, ci_row_type).value == "Категория без позиций"
+    assert ws.cell(r_item1, ci_row_type).value == "Позиция"
+    assert ws.cell(r_item2, ci_row_type).value == "Позиция"

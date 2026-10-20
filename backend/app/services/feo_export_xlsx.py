@@ -196,6 +196,7 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
             "feo": feo_amount if feo_amount is not None else "",
             "plan": plan_amount,
             "active": "Да" if item.is_active else "Нет",
+            "row_type": "Позиция",
             **stage_vals,
         }
         row_idx = _write_row(values, None, ITEM_FONT)
@@ -216,10 +217,12 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
         return row_idx
 
     def _money_subtotal(row_idx: int, child_rows: list) -> None:
-        """Денежные/стадийные столбцы строки-категории = SUBTOTAL(9, ...) по
-        строкам ПРЯМЫХ детей (функция 9 — считает и скрытые строки, владелец
-        20.10.2026, п.5: строки позиций скрыты группировкой и ДОЛЖНЫ
-        учитываться)."""
+        """Денежные/стадийные столбцы строки-категории = SUM(прямые дети).
+        НЕ SUBTOTAL: SUBTOTAL(9,...) игнорирует ячейки, которые сами —
+        результат другого SUBTOTAL (Excel пропускает вложенные subtotal-
+        формулы при агрегации), поэтому категория с подкатегориями получала
+        0 — баг владельца 20.10.2026 (п.1). SUM считает обычные ссылки на
+        ячейки честно, независимо от того, что там — число или формула."""
         keys = ("feo", "plan", "ordered", "to_order", "residual") + STAGE_AMOUNT_KEYS
         for key in keys:
             ci = column_index(selected_keys, key)
@@ -229,7 +232,7 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
                 continue
             col_letter = ws.cell(row=row_idx, column=ci).column_letter
             refs = ",".join(f"{col_letter}{cr}" for cr in child_rows)
-            cell = ws.cell(row_idx, ci, value=f"=SUBTOTAL(9,{refs})")
+            cell = ws.cell(row_idx, ci, value=f"=SUM({refs})")
             cell.number_format = NUM_FMT
 
     def write_node(node, depth=0):
@@ -257,6 +260,12 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
             "app": c.appendix or "",
             "feo": float(c.budget) if c.budget is not None else "",
             "active": "Да" if c.is_active else "Нет",
+            # «Категория» — есть дети (подкатегории и/или собственные
+            # плановые позиции, т.е. в строке будет SUM-формула по ним);
+            # «Категория без позиций» — лист без детей (значения — литералы
+            # budget/stage_vals выше), см. колонку row_type в
+            # feo_export_columns.py.
+            "row_type": "Категория без позиций" if is_leaf else "Категория",
         }
         if is_leaf:
             values["plan"] = own_plan
@@ -291,9 +300,21 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
     top_rows = [write_node(root) for root in roots]
     last_row = row_num - 1
 
-    # Строка 1 «Итого всего» — SUM по корневым категориям; строка 2
-    # «Итого по фильтру» — SUBTOTAL(9, весь столбец данных) (владелец, п.5).
+    # Строка 1 «Итого всего» — SUM по корневым категориям верхнего уровня
+    # (их собственные значения — уже SUM по всем потомкам рекурсивно).
+    #
+    # Строка 2 «Итого по фильтру» — НЕ SUBTOTAL(9, весь_столбец): это
+    # задвоило бы суммы (строки категорий сами содержат SUM по детям, и
+    # SUBTOTAL(9,...) сложил бы и категорию, и её же позиции ещё раз).
+    # SUMPRODUCT(SUBTOTAL(9,OFFSET(...)),--(тип<>"Категория")) — считает
+    # по каждой строке данных отдельный SUBTOTAL(9, одна ячейка) (= 0, если
+    # строка скрыта автофильтром «по фильтру», иначе — значение ячейки) и
+    # умножает на 1/0 по столбцу «Тип строки» (row_type): складываются
+    # только «Позиция» и «Категория без позиций», категории с SUM-формулой
+    # исключены, чтобы не задваивать.
     money_keys = ("feo", "plan", "ordered", "to_order", "residual") + STAGE_AMOUNT_KEYS
+    ci_row_type = column_index(selected_keys, "row_type")
+    row_type_col_letter = ws.cell(row=1, column=ci_row_type).column_letter if ci_row_type else None
     for key in money_keys:
         ci = column_index(selected_keys, key)
         if ci is None:
@@ -302,8 +323,16 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
         if top_rows:
             refs = ",".join(f"{col_letter}{r}" for r in top_rows)
             ws.cell(row=1, column=ci, value=f"=SUM({refs})").font = TOTAL_FONT
-        if last_row >= DATA_FIRST_ROW:
-            ws.cell(row=2, column=ci, value=f"=SUBTOTAL(9,{col_letter}{DATA_FIRST_ROW}:{col_letter}{last_row})").font = TOTAL_FONT
+        if last_row >= DATA_FIRST_ROW and row_type_col_letter:
+            first_cell = f"{col_letter}{DATA_FIRST_ROW}"
+            formula = (
+                f"=SUMPRODUCT(SUBTOTAL(9,OFFSET({first_cell},"
+                f"ROW({col_letter}{DATA_FIRST_ROW}:{col_letter}{last_row})-ROW({first_cell}),0)),"
+                f"--(${row_type_col_letter}${DATA_FIRST_ROW}:${row_type_col_letter}${last_row}<>\"Категория\"))"
+            )
+            ws.cell(row=2, column=ci, value=formula).font = TOTAL_FONT
+        ws.cell(row=1, column=ci).number_format = NUM_FMT
+        ws.cell(row=2, column=ci).number_format = NUM_FMT
 
     last_col_letter = ws.cell(row=HEADER_ROW, column=n_cols).column_letter
     ws.auto_filter.ref = f"A{HEADER_ROW}:{last_col_letter}{max(last_row, HEADER_ROW)}"

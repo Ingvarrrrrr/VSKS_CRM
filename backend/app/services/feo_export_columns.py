@@ -55,6 +55,15 @@ FEO_EXPORT_COLUMNS: list[tuple] = [
         (key, label, "Стадии", 16, True),
         (f"{key}_amt", f"{label}, ₽", "Стадии", 16, True),
     )
+] + [
+    # Обязательная служебная колонка (всегда включена, см.
+    # resolve_selected_keys ниже) — нужна формуле «Итого по фильтру» в
+    # feo_export_xlsx.py (SUMPRODUCT по SUBTOTAL с исключением строк
+    # категорий, чтобы не задваивать суммы — у категорий сами денежные
+    # ячейки уже SUM по прямым детям). Значения: «Категория» (есть дети),
+    # «Позиция» (плановая позиция), «Категория без позиций» (лист без детей
+    # и без плановых позиций — budget/значения заданы литералом).
+    ("row_type", "Тип строки", "Служебное", 22, True),
 ]
 
 _BY_KEY = {k: (label, group, width) for k, label, group, width, _d in FEO_EXPORT_COLUMNS}
@@ -72,7 +81,7 @@ def columns_catalog() -> list[dict]:
 
 
 def resolve_selected_keys(columns: Optional[str]) -> list:
-    return _resolve_selected_keys(FEO_EXPORT_COLUMNS, columns, always=("name",))
+    return _resolve_selected_keys(FEO_EXPORT_COLUMNS, columns, always=("name", "row_type"))
 
 
 def headers_and_widths(selected_keys: list) -> tuple:

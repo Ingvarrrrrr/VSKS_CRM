@@ -21,10 +21,11 @@ async def test_columns_catalog(client, admin_headers):
     assert r.status_code == 200, r.text
     cols = r.json()
     keys = {c["key"] for c in cols}
-    assert {"name", "feo", "plan", "ordered", "to_order", "residual", "ordered_flag", "ordered_flag_amt"} <= keys
+    assert {"name", "feo", "plan", "ordered", "to_order", "residual", "ordered_flag", "ordered_flag_amt", "row_type"} <= keys
     by_key = {c["key"]: c for c in cols}
     assert by_key["name"]["default"] is True
     assert by_key["code"]["default"] is False
+    assert by_key["row_type"]["default"] is True
 
 
 @pytest.mark.asyncio
@@ -88,7 +89,8 @@ async def test_item_partial_ordered_and_category_subtotal(client, db_session, ad
     assert ws.cell(r_item, ci["Надо заказать (₽)"]).value == pytest.approx(100000.0)
 
     # Категория-лист (без детей-категорий, но с плановой позицией) —
-    # SUBTOTAL(9, ...) по строке позиции, не литерал.
+    # SUM(...) по строке позиции, не литерал (не SUBTOTAL — см. докстринг
+    # _money_subtotal в feo_export_xlsx.py).
     feo_leaf = ws.cell(r_leaf, ci["Финансирование по ФЭО (₽)"]).value
-    assert isinstance(feo_leaf, str) and feo_leaf.startswith("=SUBTOTAL(9,")
+    assert isinstance(feo_leaf, str) and feo_leaf.startswith("=SUM(")
     assert f"{ws.cell(r_leaf, ci['Финансирование по ФЭО (₽)']).column_letter}{r_item}" in feo_leaf

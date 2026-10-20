@@ -10,15 +10,28 @@
 """
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, require_superadmin
 from app.database import async_session
 
-router = APIRouter(prefix="/api/diag", tags=["diag"])
+# Аудит безопасности 2026-10-20: advance-overview / recompute отдавали и
+# пересчитывали закупки ВСЕХ аккаунтов любому вошедшему, а «admin» в
+# проверках ниже — роль внутри одного аккаунта. Весь раздел — только
+# суперадмин, одной зависимостью на роутере (фронт /api/diag не вызывает).
+router = APIRouter(prefix="/api/diag", tags=["diag"], dependencies=[Depends(require_superadmin())])
 
 
 @router.get("/version")
-async def diag_version():
-    """Phase 26-BB: маркер фазы + git sha + runtime checks (колонка, backfill)."""
+async def diag_version(current_user=Depends(get_current_user)):
+    """Phase 26-BB: маркер фазы + git sha + runtime checks (колонка, backfill).
+
+    Аудит безопасности 2026-10-20: эндпоинт был полностью публичным (без
+    Depends) и отдавал git sha + счётчики из БД (linked_count,
+    advance_purchases, advance_null_contractor_items) кому угодно без входа.
+    Ни фронт, ни autodeploy/webhook его не вызывают (grep по frontend/src,
+    deploy/, *.sh — только TASKS.md и этот файл); используется вручную
+    разработчиком в браузере после входа для проверки выкатки — закрываем
+    входом целиком (Правило №8, п.1 — закрыто по умолчанию), счётчики
+    отдельно не выделяем."""
     import os as _os, subprocess as _sp
     from sqlalchemy import text as _text
     git_sha = "unknown"

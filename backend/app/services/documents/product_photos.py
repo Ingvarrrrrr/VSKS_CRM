@@ -143,10 +143,14 @@ def _resolve_from_photo_url(url: str, uploads_dir: str) -> Optional[str]:
         return None
     if url.startswith("http://") or url.startswith("https://"):
         try:
-            import urllib.request as _ur
-            with _ur.urlopen(url, timeout=5) as r:
-                ct = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
-                raw = r.read()
+            # SSRF-гейт (аудит безопасности 2026-10-20, Правило №6 — тот же
+            # хелпер, что services/product_photo_fetch.py и routers/wish_export.py):
+            # photo_url — ввод пользователя, голый urlopen() без проверки адреса
+            # бил бы во внутреннюю сеть (127.0.0.1/172.17.0.1/169.254.169.254/
+            # docker-имена). Переиспользуем общий низкоуровневый загрузчик с
+            # ручными редиректами вместо второй копии проверки.
+            from app.services.product_photo_fetch import _http_get
+            raw, ct, _final_url = _http_get(url)
             raw, suffix = _resize_image_bytes(raw, ct)
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
             tmp.write(raw)

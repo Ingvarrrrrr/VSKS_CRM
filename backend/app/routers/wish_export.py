@@ -63,11 +63,28 @@ async def export_wish_xlsx(
             return bytes(p.photo_data)
         url = (p.photo_url or p.photo_link) if p is not None else None
         if url and str(url).startswith("http"):
+            # SSRF-гейт (аудит безопасности 2026-10-20, Правило №6 — тот же
+            # хелпер, что services/product_photo_fetch.py): ссылка на фото —
+            # ввод пользователя, httpx(follow_redirects=True) без проверки
+            # адреса бил бы во внутреннюю сеть (127.0.0.1/172.17.0.1/169.254...).
+            # Редиректы — вручную, каждая цель через assert_safe_url.
+            from app.utils.safe_url import MAX_REDIRECTS, assert_safe_url
+            current = str(url)
             try:
-                async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as cl:
-                    resp = await cl.get(url)
-                    if resp.status_code == 200 and resp.content:
-                        return resp.content
+                async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as cl:
+                    for _ in range(MAX_REDIRECTS + 1):
+                        assert_safe_url(current)
+                        resp = await cl.get(current)
+                        if resp.status_code in (301, 302, 303, 307, 308):
+                            location = resp.headers.get("location")
+                            if not location:
+                                return None
+                            import urllib.parse as _urlparse
+                            current = _urlparse.urljoin(current, location)
+                            continue
+                        if resp.status_code == 200 and resp.content:
+                            return resp.content
+                        return None
             except Exception:
                 return None
         return None

@@ -24,14 +24,25 @@ JPEG_BYTES = b"\xff\xd8\xff" + b"\x00" * 20
 WEBP_BYTES = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 20
 
 
-def _mock_response(raw: bytes, content_type: str, final_url: str = "https://example.com/x"):
+def _mock_response(raw: bytes, content_type: str, final_url: str = "https://example.com/x", status: int = 200):
     resp = MagicMock()
     resp.__enter__ = MagicMock(return_value=resp)
     resp.__exit__ = MagicMock(return_value=False)
     resp.headers = {"Content-Type": content_type}
+    resp.status = status
     resp.geturl.return_value = final_url
     resp.read.return_value = raw
     return resp
+
+
+@pytest.fixture(autouse=True)
+def _no_ssrf_dns_lookup():
+    """SSRF-гейт (app/utils/safe_url.py, аудит безопасности 2026-10-20)
+    резолвит DNS реального хоста — в этих тестах хосты фиктивные (shop.ru,
+    cdn.shop.ru), сеть замокана целиком. Проверка самого гейта — отдельный
+    файл test_safe_url_ssrf_gate.py; здесь просто не мешаем."""
+    with patch("app.services.product_photo_fetch.assert_safe_url", lambda url: None):
+        yield
 
 
 class TestNormalizeUrl:
@@ -114,14 +125,14 @@ class TestGoogleDriveResolve:
 
 
 class TestFetchPhotoBytes:
-    @patch("app.services.product_photo_fetch.urllib.request.urlopen")
+    @patch("app.services.product_photo_fetch._NO_REDIRECT_OPENER.open")
     def test_direct_image_url_returns_bytes(self, mock_urlopen):
         mock_urlopen.return_value = _mock_response(PNG_BYTES, "image/png")
         raw, mime = fetch_photo_bytes("https://cdn.shop.ru/a.png")
         assert raw == PNG_BYTES
         assert mime == "image/png"
 
-    @patch("app.services.product_photo_fetch.urllib.request.urlopen")
+    @patch("app.services.product_photo_fetch._NO_REDIRECT_OPENER.open")
     def test_html_page_with_og_image_follows_through(self, mock_urlopen):
         html = b'<html><head><meta property="og:image" content="https://cdn.shop.ru/real.jpg"></head></html>'
         mock_urlopen.side_effect = [
@@ -132,7 +143,7 @@ class TestFetchPhotoBytes:
         assert raw == JPEG_BYTES
         assert mime == "image/jpeg"
 
-    @patch("app.services.product_photo_fetch.urllib.request.urlopen")
+    @patch("app.services.product_photo_fetch._NO_REDIRECT_OPENER.open")
     def test_html_page_without_og_image_raises_html_no_image(self, mock_urlopen):
         html = "<html><head><title>Товар без картинки</title></head></html>".encode("utf-8")
         mock_urlopen.return_value = _mock_response(html, "text/html")
@@ -140,7 +151,7 @@ class TestFetchPhotoBytes:
             fetch_photo_bytes("https://shop.ru/product/2")
         assert exc.value.reason == "html_no_image"
 
-    @patch("app.services.product_photo_fetch.urllib.request.urlopen")
+    @patch("app.services.product_photo_fetch._NO_REDIRECT_OPENER.open")
     def test_http_403_maps_to_reason(self, mock_urlopen):
         mock_urlopen.side_effect = urllib.error.HTTPError(
             "https://shop.ru/x", 403, "Forbidden", {}, io.BytesIO(b"")
@@ -149,7 +160,7 @@ class TestFetchPhotoBytes:
             fetch_photo_bytes("https://shop.ru/x")
         assert exc.value.reason == "http_403"
 
-    @patch("app.services.product_photo_fetch.urllib.request.urlopen")
+    @patch("app.services.product_photo_fetch._NO_REDIRECT_OPENER.open")
     def test_http_404_maps_to_reason(self, mock_urlopen):
         mock_urlopen.side_effect = urllib.error.HTTPError(
             "https://shop.ru/x", 404, "Not Found", {}, io.BytesIO(b"")
@@ -158,21 +169,21 @@ class TestFetchPhotoBytes:
             fetch_photo_bytes("https://shop.ru/x")
         assert exc.value.reason == "http_404"
 
-    @patch("app.services.product_photo_fetch.urllib.request.urlopen")
+    @patch("app.services.product_photo_fetch._NO_REDIRECT_OPENER.open")
     def test_timeout_maps_to_reason(self, mock_urlopen):
         mock_urlopen.side_effect = urllib.error.URLError("timed out")
         with pytest.raises(PhotoFetchError) as exc:
             fetch_photo_bytes("https://shop.ru/x")
         assert exc.value.reason == "timeout"
 
-    @patch("app.services.product_photo_fetch.urllib.request.urlopen")
+    @patch("app.services.product_photo_fetch._NO_REDIRECT_OPENER.open")
     def test_unsupported_format_without_magic_or_known_ct(self, mock_urlopen):
         mock_urlopen.return_value = _mock_response(b"not an image", "application/octet-stream")
         with pytest.raises(PhotoFetchError) as exc:
             fetch_photo_bytes("https://shop.ru/x.bin")
         assert exc.value.reason == "unsupported_format"
 
-    @patch("app.services.product_photo_fetch.urllib.request.urlopen")
+    @patch("app.services.product_photo_fetch._NO_REDIRECT_OPENER.open")
     def test_quoted_url_is_normalized_before_fetch(self, mock_urlopen):
         mock_urlopen.return_value = _mock_response(PNG_BYTES, "image/png")
         raw, mime = fetch_photo_bytes('"https://cdn.shop.ru/a.png "')

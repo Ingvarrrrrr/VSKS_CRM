@@ -62,8 +62,15 @@ services:
     restart: always
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-admin123}
+      # Аудит безопасности 2026-10-20: дефолт admin/admin123 публичен (виден в
+      # этом файле). Этот compose-файл на проде НЕ используется (прод поднят
+      # из docker-compose.yml), но дефолт здесь — ровно такой же риск, если
+      # этот файл когда-нибудь применят по ошибке. Как в docker-compose.yml:
+      # логин — фиксированная строка "admin" (не секрет, не из .env), пароль
+      # обязателен — без него контейнер не запустится, а не тихо встанет с
+      # admin123.
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:?Set N8N_BASIC_AUTH_PASSWORD in .env}
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
       - N8N_PROTOCOL=http

@@ -166,3 +166,12 @@ e2e/_tmp_*
 # Правовые документы — .docx собираются legal/build.py, не хранятся в git
 legal/out/
 backend/tests/_fact_import_samples/
+
+# Аудит безопасности 2026-10-20: репозиторий публичный — эти файлы не должны
+# попадать в git (реальные договоры прода, дампы схемы с чувствительными
+# данными, отчёты аудита с подробностями дыр, кэш schemathesis).
+backend/scripts/_dnr_copy_data/
+*.stackdump
+backend/alembic/versions/local_dev_*.sql
+.schemathesis/
+SECURITY_AUDIT_*.md

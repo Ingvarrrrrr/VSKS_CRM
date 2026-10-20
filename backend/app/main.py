@@ -31,8 +31,21 @@ from app.errors import register_error_handlers
 from app.errors_db import register_db_error_handlers
 from app.routes import register_routes
 from app.auth.csrf_protection import CsrfProtectionMiddleware
+from app.config import settings
 
-app = FastAPI(title="VSKS CRM API", version="1.0.0", lifespan=lifespan)
+# Аудит безопасности 2026-10-20: /docs, /redoc, /openapi.json были доступны
+# всем на проде (полная схема API + все пути без входа). ENVIRONMENT — та же
+# переменная, что отличает прод от стенда (см. config.py); на стенде и в
+# tests/behavior (schemathesis читает openapi.json) документация остаётся.
+_docs_enabled = settings.ENVIRONMENT != "production"
+app = FastAPI(
+    title="VSKS CRM API",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 
 # JWT теперь в httpOnly-cookie (gala_session, app/auth/session_cookie.py) —
 # браузер шлёт её на любой запрос к нашему домену сам, в т.ч. с чужой
@@ -54,3 +67,14 @@ async def add_correlation_id(request: Request, call_next):
 register_error_handlers(app)
 register_db_error_handlers(app)
 register_routes(app)
+
+
+@app.get("/api/health")
+async def health_check():
+    """Публичный health-пробник для docker healthcheck (compose + Dockerfile).
+
+    Раньше healthcheck проверял GET /docs == 200 — с ENVIRONMENT=production
+    /docs выключен (см. выше), и healthcheck вечно считал бы контейнер
+    unhealthy. Этот эндпоинт не раскрывает ничего (просто "приложение
+    поднято"), доступен независимо от _docs_enabled."""
+    return {"status": "ok"}

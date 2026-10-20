@@ -47,6 +47,11 @@ x-backend-common: &backend-common
     FABRIKANT_LOGIN: ${FABRIKANT_LOGIN:-}
     FABRIKANT_PASSWORD: ${FABRIKANT_PASSWORD:-}
     PLATFORM_CRED_KEY: ${PLATFORM_CRED_KEY:-}
+    # Аудит безопасности 2026-10-20: /docs, /redoc, /openapi.json выключаются
+    # в app/main.py при ENVIRONMENT=production. По умолчанию (локальный
+    # стенд) — "local", документация включена. На сервере задать
+    # ENVIRONMENT=production в .env (вне git).
+    ENVIRONMENT: ${ENVIRONMENT:-local}
     # Корректировка утверждённой субсидии через проверку (02.10.2026): правки
     # без права «Править субсидию напрямую» идут на проверку. Выключить без
     # правки кода: SUBSIDY_REVISION_ENABLED=0 в .env на сервере.
@@ -58,12 +63,14 @@ x-backend-common: &backend-common
     - ./backend/templates:/app/templates
     - ./backend/check_schema.py:/app/check_schema.py
     - ./backend/seed_data:/app/seed_data:ro
-  # Реальная готовность, а не факт запуска процесса: GET /docs у FastAPI
+  # Реальная готовность, а не факт запуска процесса: GET /api/health у FastAPI
   # отвечает 200 ТОЛЬКО когда ASGI-приложение полностью поднято (lifespan
   # startup завершён) — а до этого момента процесс уже пережил `migrate.py &&
   # init_db.py` (см. backend/Dockerfile CMD), т.е. миграции к этому моменту
-  # уже применены. Не заводили отдельный /api/health, чтобы не трогать
-  # backend/app/** без необходимости — /docs встроен во FastAPI из коробки.
+  # уже применены. Раньше здесь был GET /docs — после аудита безопасности
+  # 2026-10-20 /docs выключается на проде (ENVIRONMENT=production, см.
+  # app/main.py), поэтому healthcheck переведён на отдельный /api/health,
+  # который не зависит от этого флага.
   #
   # start_period/retries подобраны ПОД ХОЛОДНЫЙ СТАРТ, не только под рутинный
   # rolling-редеплой: при `docker compose down && up -d` backend_a стартует
@@ -78,7 +85,7 @@ x-backend-common: &backend-common
   # start: ... is unhealthy" — compose не переспрашивает после unhealthy).
   # 75s общего окна (15s+20×3s) — с большим запасом под пиковую нагрузку.
   healthcheck:
-    test: ["CMD", "python3", "-c", "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://localhost:8000/docs', timeout=2).getcode()==200 else 1)"]
+    test: ["CMD", "python3", "-c", "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://localhost:8000/api/health', timeout=2).getcode()==200 else 1)"]
     interval: 3s
     timeout: 2s
     retries: 20

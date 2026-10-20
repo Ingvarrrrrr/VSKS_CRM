@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # telegram_webhook.py, app/services/staff_location_requests.py (Правило №6:
     # один выключатель, не плодить свои флаги в каждом файле).
     TELEGRAM_ENABLED: bool = False
+    # Аудит безопасности 2026-10-20: /docs, /redoc, /openapi.json были открыты
+    # всем на проде. Единственная переменная, которой прод (docker-compose.yml
+    # + .env на сервере) отличается от локального стенда (.env в репозитории/
+    # по умолчанию) — её и используем, вторую не завели (Правило №6). На
+    # стенде и в tests/behavior (schemathesis читает openapi.json) оставляем
+    # документацию включённой (default "local").
+    ENVIRONMENT: str = "local"
 
 try:
     settings = Settings()

@@ -38,6 +38,8 @@ import urllib.parse
 import urllib.request
 from typing import Optional
 
+from app.utils.safe_url import MAX_REDIRECTS, UnsafeUrlError, assert_safe_url
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -63,6 +65,7 @@ REASON_LABELS = {
     "unsupported_format": "По ссылке не картинка (неизвестный формат)",
     "too_large": "Файл больше 10 МБ",
     "no_source": "Нет ссылки на фото",
+    "unsafe_url": "Ссылка указывает на внутренний адрес — запрещено (SSRF-защита)",
 }
 
 
@@ -170,33 +173,66 @@ def _extract_og_image(html: str, base_url: str) -> Optional[str]:
     return None
 
 
+class _PassThroughRedirects(urllib.request.HTTPErrorProcessor):
+    """Заменяет стандартный HTTPErrorProcessor: 3xx возвращается КАК ОБЫЧНЫЙ
+    ответ (не исключение), чтобы редирект обрабатывался вручную в _http_get —
+    каждая цель проходит SSRF-гейт отдельно, вместо слепого автоследования
+    urllib (урок аудита 2026-10-20)."""
+
+    def http_response(self, request, response):
+        if 300 <= response.status < 400:
+            return response
+        return super().http_response(request, response)
+
+    https_response = http_response
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_PassThroughRedirects)
+
+
 def _http_get(url: str) -> tuple[bytes, str, str]:
-    """GET с браузерным UA. urllib следует редиректам (301/302/303) сам.
+    """GET с браузерным UA. Редиректы (301/302/303/307/308) обрабатываются
+    ВРУЧНУЮ — каждая цель проходит тот же SSRF-гейт (assert_safe_url), что и
+    исходный URL (Правило №6: одна проверка, не дублируется на каждый вызов).
 
     Returns (raw_bytes, content_type_lower, final_url).
     """
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as r:
-            ct = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            final_url = r.geturl()
-            raw = r.read(MAX_BYTES + 1)
-    except urllib.error.HTTPError as e:
-        if e.code == 403:
-            raise PhotoFetchError("http_403", "Доступ запрещён (403)") from e
-        if e.code == 404:
-            raise PhotoFetchError("http_404", "Не найдено (404)") from e
-        raise PhotoFetchError("http_error", f"HTTP {e.code}") from e
-    except urllib.error.URLError as e:
-        reason = str(getattr(e, "reason", "") or e)
-        if "timed out" in reason.lower():
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        try:
+            assert_safe_url(current)
+        except UnsafeUrlError as e:
+            raise PhotoFetchError("unsafe_url", e.message) from e
+        req = urllib.request.Request(current, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
+        try:
+            with _NO_REDIRECT_OPENER.open(req, timeout=TIMEOUT_SECONDS) as r:
+                status = getattr(r, "status", 200)
+                if 300 <= status < 400:
+                    location = r.headers.get("Location")
+                    if not location:
+                        raise PhotoFetchError("http_error", f"HTTP {status} без Location")
+                    current = urllib.parse.urljoin(current, location)
+                    continue
+                ct = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                final_url = r.geturl()
+                raw = r.read(MAX_BYTES + 1)
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                raise PhotoFetchError("http_403", "Доступ запрещён (403)") from e
+            if e.code == 404:
+                raise PhotoFetchError("http_404", "Не найдено (404)") from e
+            raise PhotoFetchError("http_error", f"HTTP {e.code}") from e
+        except urllib.error.URLError as e:
+            reason = str(getattr(e, "reason", "") or e)
+            if "timed out" in reason.lower():
+                raise PhotoFetchError("timeout", "Таймаут") from e
+            raise PhotoFetchError("network_error", reason) from e
+        except TimeoutError as e:
             raise PhotoFetchError("timeout", "Таймаут") from e
-        raise PhotoFetchError("network_error", reason) from e
-    except TimeoutError as e:
-        raise PhotoFetchError("timeout", "Таймаут") from e
-    if len(raw) > MAX_BYTES:
-        raise PhotoFetchError("too_large", "Файл > 10MB")
-    return raw, ct, final_url
+        if len(raw) > MAX_BYTES:
+            raise PhotoFetchError("too_large", "Файл > 10MB")
+        return raw, ct, final_url
+    raise PhotoFetchError("http_error", "Слишком много редиректов")
 
 
 def _looks_like_html(ct: str, raw: bytes) -> bool:

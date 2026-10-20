@@ -119,7 +119,7 @@
               <tr v-if="!isPlannedRowHidden(planned)"
                 style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id"
                 :class="{ 'feo-stage-row': !!rowStageBackground(planned), 'feo-search-highlight-row': ctx.isFeoSearchHighlighted(`p-${planned.id}`) }"
-                :style="rowStageBackground(planned) ? { backgroundImage: rowStageBackground(planned)! } : {}"
+                :style="rowStageBackground(planned) || {}"
                 :title="rowStageTooltip(planned) || undefined"
               >
                 <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
@@ -851,7 +851,7 @@ import { formatCurrency } from '@/composables/subsidies/format'
 import { leftGroupInfo, withNameColumnFloor } from '@/composables/subsidies/feoCategoryUtils'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { purchaseStatusLabel, purchaseStatusColor, PURCHASE_STATUS_ORDER } from '@/constants/purchaseStatus'
-import { planStageBackground, planStageTooltip } from '@/utils/planStageBackground'
+import { planStageBackground, planStageTooltip, type PlanStageStyle } from '@/utils/planStageBackground'
 import { planStageLabel } from '@/constants/planStageScale'
 import type { FeoNode, FeoPlannedItem } from '@/composables/subsidies/types'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
@@ -973,7 +973,7 @@ function rowStageSegments(planned: FeoPlannedItem & { isManual?: boolean }) {
     ? planToRequest.categoryPlanStageSegments(node.id)
     : planToRequest.plannedItemStageSegments(planned.id)
 }
-function rowStageBackground(planned: FeoPlannedItem & { isManual?: boolean }): string | null {
+function rowStageBackground(planned: FeoPlannedItem & { isManual?: boolean }): PlanStageStyle | null {
   return planStageBackground(rowStageSegments(planned))
 }
 function rowStageTooltip(planned: FeoPlannedItem & { isManual?: boolean }): string {

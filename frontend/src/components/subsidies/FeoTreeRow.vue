@@ -13,7 +13,7 @@
       excessDrilldown.isCurrentExcessTarget(node.id) ? 'feo-excess-target-row--current' : '',
       ctx.isFeoSearchHighlighted(`c-${node.id}`) ? 'feo-search-highlight-row' : '',
     ]"
-    :style="categoryStageBackground ? { backgroundImage: categoryStageBackground } : {}"
+    :style="categoryStageBackground || {}"
     :title="categoryStageTooltip || undefined"
     :draggable="ctx.canEditFeo.value"
     @dragstart="ctx.canEditFeo.value && ctx.onDragStart($event, node)"
@@ -952,7 +952,7 @@ import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFull
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 import { useFeoRowContractTotals } from '@/composables/subsidies/useFeoRowContractTotals'
 import { useFeoRowDrill, FEO_ROW_DRILL_LABELS, type FeoRowDrillKind } from '@/composables/subsidies/useFeoRowDrill'
-import { planStageBackground, planStageTooltip } from '@/utils/planStageBackground'
+import { planStageBackground, planStageTooltip, type PlanStageStyle } from '@/utils/planStageBackground'
 
 const funding = useFundingSources()
 

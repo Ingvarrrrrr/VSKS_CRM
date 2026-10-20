@@ -104,7 +104,13 @@ async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: 
     позиций (_active_feo_items_with_amount), один вызов
     planned_item_stage_segments на ВСЕ позиции субсидии и один вызов
     category_plan_stage_segments на ВСЕ листовые категории (не в цикле —
-    задача владельца, п.3: «одним вызовом на все позиции субсидии»)."""
+    задача владельца, п.3: «одним вызовом на все позиции субсидии»).
+
+    Само рисование дерева по готовым данным (без обращения к БД) — в
+    render_feo_tree_sheet ниже, ПРАВИЛО №6: шаблон «Загрузить выгрузку ФЭО»
+    (app.routers.feo_roundtrip_import, GET .../roundtrip/template) зовёт ТОТ
+    ЖЕ render_feo_tree_sheet с вымышленным деревом в памяти вместо второй
+    копии оформления/формул."""
     if Workbook is None:
         raise RuntimeError("openpyxl не установлен")
 
@@ -141,8 +147,44 @@ async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: 
     cat_segments_map = await category_plan_stage_segments(db, leaf_cat_ids)
 
     wb = Workbook()
+    ws, top_rows, last_row = render_feo_tree_sheet(
+        wb, sub.name[:31], selected_keys, roots, items_by_cat,
+        item_segments_map, cat_segments_map, totals_label=f"{sub.name} — итого всего",
+    )
+
+    if with_summary:
+        from app.services.feo_export_summary import write_feo_summary_and_dashboard
+        top_rows_info = [{"name": root["cat"].name, "row": tr} for root, tr in zip(roots, top_rows)]
+        write_feo_summary_and_dashboard(wb, sub, ws.title, selected_keys, top_rows_info)
+
+    _write_roundtrip_meta_sheet(wb, sub.id)
+
+    return wb
+
+
+def render_feo_tree_sheet(
+    wb, sheet_title: str, selected_keys: list, roots: list,
+    items_by_cat: dict, item_segments_map: dict, cat_segments_map: dict,
+    *, totals_label: str, include_row_ids: bool = True,
+):
+    """Рисует дерево категорий/позиций на активном листе новой книги `wb` —
+    ЕДИНСТВЕННОЕ место, которое знает оформление/формулы выгрузки «Выгрузить
+    ФЭО» (ПРАВИЛО №6). Без обращения к БД: `roots`/`items_by_cat` — те же
+    структуры, что строит build_feo_export_workbook (`cat`-объекты нужны
+    атрибуты name/code/appendix/budget/is_active/level/id; `item`-объекты —
+    name/quantity/unit/feo_amount/amount/is_active/id), `item_segments_map`/
+    `cat_segments_map` — {id: {"segments": [...]}}  (пустой словарь — у строк
+    просто не будет накопленных стадий, безопасно для вымышленного дерева
+    шаблона). `id` объекта нужен настоящим (хотя бы синтетическим уникальным),
+    чтобы items_by_cat.get(c.id)/сегменты работали, НО колонка «№ в системе»
+    в файле всё равно пишется пустой у всех строк — пример в шаблоне
+    «Загрузить выгрузку ФЭО» (GET .../roundtrip/template) весь состоит из
+    НОВЫХ строк (include_row_ids=False, см. app.routers.feo_roundtrip_import).
+
+    Возвращает (ws, top_rows, last_row) — top_rows/last_row нужны вызывающему
+    коду только для необязательных листов «Сводная»/«Дашборд» выгрузки."""
     ws = wb.active
-    ws.title = sub.name[:31]
+    ws.title = sheet_title
     ws.sheet_properties.outlinePr.summaryBelow = False
 
     HEADER_FILL = PatternFill(start_color="1D4ED8", end_color="1D4ED8", fill_type="solid")
@@ -161,7 +203,7 @@ async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: 
     headers, widths = headers_and_widths(selected_keys)
     n_cols = len(selected_keys)
 
-    ws.cell(row=1, column=1, value=f"{sub.name} — итого всего").font = TOTAL_FONT
+    ws.cell(row=1, column=1, value=totals_label).font = TOTAL_FONT
     ws.cell(row=2, column=1, value="Итого по фильтру").font = TOTAL_FONT
 
     for col_idx, (header, width) in enumerate(zip(headers, widths), 1):
@@ -212,7 +254,7 @@ async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: 
             "plan": plan_amount,
             "active": "Да" if item.is_active else "Нет",
             "row_type": "Позиция",
-            "row_id": f"p{item.id}",
+            "row_id": (f"p{item.id}" if item.id is not None else "") if include_row_ids else "",
             **stage_vals,
         }
         row_idx = _write_row(values, None, ITEM_FONT)
@@ -282,7 +324,7 @@ async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: 
             # budget/stage_vals выше), см. колонку row_type в
             # feo_export_columns.py.
             "row_type": "Категория без позиций" if is_leaf else "Категория",
-            "row_id": f"c{c.id}",
+            "row_id": (f"c{c.id}" if c.id is not None else "") if include_row_ids else "",
         }
         if is_leaf:
             values["plan"] = own_plan
@@ -361,20 +403,10 @@ async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: 
     last_col_letter = ws.cell(row=HEADER_ROW, column=n_cols).column_letter
     ws.auto_filter.ref = f"A{HEADER_ROW}:{last_col_letter}{max(last_row, HEADER_ROW)}"
 
-    # Листы «Сводная»/«Дашборд» (владелец 20.10.2026, часть 3) — по флагу
-    # `with_summary`, строит app.services.feo_export_summary (ПРАВИЛО №5 —
-    # точечный вызов, сама логика — в отдельном модуле).
-    if with_summary:
-        from app.services.feo_export_summary import write_feo_summary_and_dashboard
-        top_rows_info = [{"name": root["cat"].name, "row": tr} for root, tr in zip(roots, top_rows)]
-        write_feo_summary_and_dashboard(wb, sub, ws.title, selected_keys, top_rows_info)
-
-    _write_roundtrip_meta_sheet(wb, sub.id)
-
-    return wb
+    return ws, top_rows, last_row
 
 
-def _write_roundtrip_meta_sheet(wb, subsidy_id: int) -> None:
+def _write_roundtrip_meta_sheet(wb, subsidy_id: Optional[int]) -> None:
     """Скрытый лист `_meta` — subsidy_id/дата выгрузки/версия формата, чтобы
     app.services.feo_roundtrip_import.parse могла при загрузке назад
     отличить «файл этой субсидии» от «файл другой субсидии» (см. докстринг
@@ -392,3 +424,125 @@ def _write_roundtrip_meta_sheet(wb, subsidy_id: int) -> None:
     meta["B2"] = datetime.now(timezone.utc).isoformat()
     meta["A3"] = "format_version"
     meta["B3"] = ROUNDTRIP_FORMAT_VERSION
+
+
+def build_feo_roundtrip_template_workbook():
+    """Шаблон формата «Выгрузить ФЭО» для загрузки обратно (GET
+    .../roundtrip/template, задача владельца 20.10.2026, часть «шаблон»).
+    Строится ТЕМ ЖЕ render_feo_tree_sheet, что и настоящая выгрузка (ПРАВИЛО
+    №6) — дерево ниже вымышленное (волонтёрская тематика, никаких реальных
+    субсидий/организаций), БД не трогаем вовсе (синхронная функция).
+
+    Колонки — Наименование/Код/Прил./Кол-во по ФЭО/Ед./Финансирование по
+    ФЭО/Запланировано/Активна/Тип строки (+ скрытая «№ в системе», всегда
+    пустая — include_row_ids=False, строки примера «новые»). Колонки заказов/
+    стадий сюда не включаем (задача владельца, п.2) — их нет в
+    READABLE_KEYS (feo_roundtrip_import/parse.py), шаблон человек заполняет
+    руками, стадии считает система.
+
+    _meta пишется с subsidy_id=None — check_meta_mismatch (feo_roundtrip_
+    import/diff.py) не отклоняет файл ни для какой субсидии (мета без
+    subsidy_id трактуется как «не привязан», это НЕ второй случай
+    расхождения, которое там же жёстко отклоняется)."""
+    if Workbook is None:
+        raise RuntimeError("openpyxl не установлен")
+
+    from types import SimpleNamespace
+
+    from app.services.feo_export_columns import resolve_selected_keys
+
+    selected_keys = resolve_selected_keys("code,app,feo_qty,feo_unit,feo,plan,active")
+
+    def _cat(id_, name, level, *, code="", appendix="", budget=None, active=True):
+        return SimpleNamespace(id=id_, name=name, code=code, appendix=appendix, budget=budget, is_active=active, level=level)
+
+    def _item(id_, name, *, qty, unit, feo, plan, active=True):
+        return SimpleNamespace(id=id_, name=name, quantity=qty, unit=unit, feo_amount=feo, amount=plan, is_active=active)
+
+    cat_lager = _cat(-1, "Оснащение полевого лагеря", 1)
+    cat_tents = _cat(-2, "Палатки и спальное", 2)
+    cat_kitchen_parent = _cat(-3, "Освещение и кухня", 2)
+    cat_kitchen = _cat(-4, "Кухонный инвентарь", 3)
+    cat_power = _cat(-5, "Электроснабжение", 2, budget=80000)
+
+    cat_training = _cat(-6, "Обучение добровольцев", 1)
+    cat_training_org = _cat(-7, "Организация обучения", 2)
+
+    items_by_cat = {
+        cat_tents.id: [
+            _item(-101, "Палатка 4-местная", qty=5, unit="шт", feo=250000, plan=250000),
+            _item(-102, "Спальник", qty=20, unit="шт", feo=100000, plan=90000),
+        ],
+        cat_kitchen.id: [
+            _item(-103, "Казан походный", qty=3, unit="шт", feo=27000, plan=27000),
+            _item(-104, "Горелка газовая", qty=4, unit="шт", feo=18000, plan=18000, active=False),
+        ],
+        cat_training_org.id: [
+            _item(-105, "Аренда зала", qty=3, unit="дн.", feo=120000, plan=120000),
+            _item(-106, "Печать методичек", qty=200, unit="шт", feo=45000, plan=40000),
+        ],
+    }
+
+    node_tents = {"cat": cat_tents, "children": []}
+    node_kitchen = {"cat": cat_kitchen, "children": []}
+    node_kitchen_parent = {"cat": cat_kitchen_parent, "children": [node_kitchen]}
+    node_power = {"cat": cat_power, "children": []}
+    node_lager = {"cat": cat_lager, "children": [node_tents, node_kitchen_parent, node_power]}
+
+    node_training_org = {"cat": cat_training_org, "children": []}
+    node_training = {"cat": cat_training, "children": [node_training_org]}
+
+    roots = [node_lager, node_training]
+
+    wb = Workbook()
+    render_feo_tree_sheet(
+        wb, "Шаблон", selected_keys, roots, items_by_cat, {}, {},
+        totals_label="Шаблон — итого всего", include_row_ids=False,
+    )
+
+    _write_feo_roundtrip_howto_sheet(wb)
+    _write_roundtrip_meta_sheet(wb, None)
+
+    wb.active = 0
+    return wb
+
+
+def _write_feo_roundtrip_howto_sheet(wb) -> None:
+    """Лист «Как заполнять» шаблона «Выгрузить ФЭО» (загрузка обратно) —
+    текстовые правила, см. docstring build_feo_roundtrip_template_workbook."""
+    ws = wb.create_sheet("Как заполнять")
+    ws.column_dimensions["A"].width = 115
+    rules = [
+        "Как заполнять шаблон «Выгрузить ФЭО» (загрузка обратно)",
+        "",
+        "Этот файл — тот же формат, что скачивается через «Ещё» → «Выгрузить ФЭО». "
+        "Загружается обратно через «Ещё» → «Загрузить выгрузку ФЭО»: сначала показывается предпросмотр "
+        "(что изменится/что создастся), и только после подтверждения — запись в систему.",
+        "",
+        "Примеры на листе «Шаблон» ВЫМЫШЛЕННЫЕ («Оснащение полевого лагеря», «Обучение добровольцев» и т.п.) — "
+        "удалите их и впишите свои направления/категории/позиции.",
+        "",
+        "«Тип строки»:",
+        "  Категория — у строки есть вложенные строки (подкатегории и/или плановые позиции); суммы в такой строке считаются формулой по детям, вручную их менять не нужно.",
+        "  Категория без позиций — лист дерева без вложенных строк, но сам несёт сумму по ФЭО (например «Электроснабжение» в примере).",
+        "  Позиция — конкретный товар/услуга внутри категории (у неё есть количество/ед./сумма по ФЭО и план).",
+        "",
+        "Уровень вложенности задаётся ОДНИМ из двух способов:",
+        "  — группировкой Excel (выделите строки → Данные → Группировать) — предпочтительно, так же сделан этот шаблон;",
+        "  — ИЛИ отступом: 2 пробела в начале «Наименования» на каждый уровень вложенности (если группировку не ставили).",
+        "",
+        "Какие колонки загружаются: Наименование, Код, Прил., Кол-во по ФЭО, Ед., «Финансирование по ФЭО» (у позиций и у «Категория без позиций»), "
+        "«Запланировано» (только у позиций), Активна (Да/Нет). Суммы категорий с детьми — формулы, считаются сами, их трогать не нужно. "
+        "Колонки заказов и стадий закупки в этот шаблон не включены — их считает система, в загрузке они не участвуют.",
+        "",
+        "«№ в системе» — скрытая служебная колонка. В выгрузке УЖЕ существующей субсидии по ней строки находят себя в базе при повторной загрузке; "
+        "в этом шаблоне она пустая у всех строк — все строки примера новые. Не копируйте номер из одной строки в другую.",
+        "",
+        "Числа — без знака «₽», пробелы-разделители тысяч и запятая вместо точки допускаются.",
+        "",
+        "Строки, которые вы удалите из файла перед загрузкой, в системе НЕ удаляются — чтобы отключить существующую категорию/позицию, "
+        "поставьте ей «Активна = Нет», а не убирайте строку из файла.",
+    ]
+    for line in rules:
+        ws.append([line])
+    ws["A1"].font = Font(bold=True, size=12)

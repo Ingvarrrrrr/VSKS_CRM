@@ -13,7 +13,10 @@ workbook + diff.build_preview) — apply выполняет тот же план
 preview (файл передаётся заново, план не кэшируется между запросами: между
 preview и apply БД могла измениться, apply обязан видеть актуальное
 состояние, не то, что было секунду назад)."""
+from io import BytesIO
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -22,8 +25,33 @@ from app.auth.permissions import require_tab
 from app.routers import feo_categories as fc
 from app.services.feo_roundtrip_import.parse import parse_roundtrip_workbook
 from app.services.feo_roundtrip_import.diff import build_preview, check_meta_mismatch
+from app.utils.http import content_disposition
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
+
+
+@router.get("/roundtrip/template")
+async def roundtrip_template(
+    current_user=Depends(require_tab('feo_categories')),
+):
+    """Шаблон формата «Выгрузить ФЭО» для загрузки обратно — ТОТ ЖЕ гейт
+    видимости, что у preview/apply (require_tab('feo_categories')), но БЕЗ
+    привязки к конкретной субсидии (владелец, 20.10.2026: «нужен шаблон,
+    чтобы люди скачали и поняли, как заполнять» — до того, как субсидия
+    выбрана/создана). Содержимое строит app.services.feo_export_xlsx.
+    build_feo_roundtrip_template_workbook (ПРАВИЛО №6 — тот же рендер
+    дерева, что настоящая выгрузка)."""
+    from app.services.feo_export_xlsx import build_feo_roundtrip_template_workbook
+
+    wb = build_feo_roundtrip_template_workbook()
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": content_disposition("Шаблон_выгрузки_ФЭО.xlsx")},
+    )
 
 
 async def _require_write(current_user, db: AsyncSession, subsidy_id: int) -> None:

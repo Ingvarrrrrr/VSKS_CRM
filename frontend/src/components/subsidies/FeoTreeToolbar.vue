@@ -207,7 +207,7 @@
             </v-list-item>
             <v-list-item prepend-icon="mdi-download-outline"
               @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">
-              <v-list-item-title>Шаблон</v-list-item-title>
+              <v-list-item-title>Шаблон старого импорта ФЭО</v-list-item-title>
               <!-- Решение владельца 05.10.2026: субсидию, у которой часть закупок
                    уже прошла, грузят ОДНИМ файлом — необязательный блок «Факт». -->
               <v-list-item-subtitle style="white-space:normal">Если часть закупок уже прошла — заполните блок «Факт»: после загрузки плана система предложит загрузить их.</v-list-item-subtitle>
@@ -219,6 +219,16 @@
             <v-list-item prepend-icon="mdi-file-upload-outline" @click="roundtripImportDialog?.open()">
               <v-list-item-title>Загрузить выгрузку ФЭО</v-list-item-title>
               <v-list-item-subtitle style="white-space:normal">Файл из «Выгрузить ФЭО»: изменённые суммы и названия, новые строки. Для новой субсидии — выгрузите пустой файл, заполните и загрузите.</v-list-item-subtitle>
+            </v-list-item>
+            <!-- «Шаблон выгрузки ФЭО (с примером)» (владелец, 20.10.2026,
+                 часть «шаблон») — отдельный от «Загрузить выгрузку ФЭО»
+                 пункт: скачивает пример формата roundtrip (GET
+                 .../roundtrip/template, см. downloadFeoRoundtripTemplate
+                 ниже), чтобы человек понял, как заполнить файл перед
+                 загрузкой, не привязан к конкретной субсидии. -->
+            <v-list-item prepend-icon="mdi-file-document-outline" @click="downloadFeoRoundtripTemplate">
+              <v-list-item-title>Шаблон выгрузки ФЭО (с примером)</v-list-item-title>
+              <v-list-item-subtitle style="white-space:normal">Формат «Загрузить выгрузку ФЭО» с вымышленным примером и листом «Как заполнять».</v-list-item-subtitle>
             </v-list-item>
             <v-divider />
           </template>
@@ -577,6 +587,28 @@ onBeforeUnmount(() => {
   toolbarResizeObserver?.disconnect()
   toolbarResizeObserver = null
 })
+
+// «Шаблон выгрузки ФЭО (с примером)» (владелец, 20.10.2026) — тот же приём
+// скачивания файла, что exportPlanGraphDocx выше (fetch + blob + <a download>,
+// ошибку показывать текстом ответа), не второй механизм (ПРАВИЛО №6).
+async function downloadFeoRoundtripTemplate() {
+  const token = localStorage.getItem('auth_token') || ''
+  const r = await fetch('/api/feo-categories/roundtrip/template', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}))
+    showSnack(err.message || err.detail || 'Не удалось скачать шаблон', 'error')
+    return
+  }
+  const blob = await r.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filenameFromContentDisposition(r.headers.get('Content-Disposition'), 'Шаблон_выгрузки_ФЭО.xlsx')
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 async function uploadTemplate(file: File) {
   const fd = new FormData()

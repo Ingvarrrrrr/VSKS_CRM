@@ -46,11 +46,14 @@ async def get_feo_export_columns(_=Depends(require_tab('feo_categories'))):
 async def export_feo_to_excel(
     subsidy_id: int = Query(...),
     columns: str | None = Query(None),
+    with_summary: bool = Query(False, description="Включать листы «Сводная»/«Дашборд»"),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_tab('feo_categories')),
 ):
     """Экспорт дерева категорий ФЭО в Excel. `columns` — через запятую
-    (пусто/не передан → столбцы по умолчанию, см. feo_export_columns)."""
+    (пусто/не передан → столбцы по умолчанию, см. feo_export_columns).
+    `with_summary` (владелец 20.10.2026, часть 3) — листы «Сводная»/«Дашборд»,
+    см. app.services.feo_export_summary."""
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     from app.models.subsidy import Subsidy
@@ -60,7 +63,7 @@ async def export_feo_to_excel(
         raise HTTPException(404, "Субсидия не найдена")
 
     selected_keys = resolve_selected_keys(columns)
-    wb = await build_feo_export_workbook(db, sub, selected_keys)
+    wb = await build_feo_export_workbook(db, sub, selected_keys, with_summary=with_summary)
 
     buf = BytesIO()
     wb.save(buf)

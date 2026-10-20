@@ -39,6 +39,11 @@ from app.services.plan_item_stage import _STAGE_RANK
 
 HEADER_ROW = 3
 DATA_FIRST_ROW = 4
+# Формат выгрузки «туда-обратно» (задача владельца 20.10.2026) — лист _meta
+# несёт версию формата, читает app.services.feo_roundtrip_import.parse
+# (ПРАВИЛО №6: одна константа версии на экспорт и импорт, не дублировать
+# строкой по месту).
+ROUNDTRIP_FORMAT_VERSION = "feo-export-1"
 _ORDERED_RANK = _STAGE_RANK["ordered"]
 _DONE_EPS = 0.999
 
@@ -92,7 +97,7 @@ def compute_row_stage_values(segments: list, plan_amount: float) -> dict:
     return out
 
 
-async def build_feo_export_workbook(db, sub, selected_keys: list):
+async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: bool = False):
     """Строит openpyxl.Workbook «Выгрузить ФЭО» по субсидии `sub` (столбцы —
     `selected_keys`, см. app.services.feo_export_columns). Единственная точка
     обращения к БД для этой выгрузки — одна выборка категорий, одна выборка
@@ -142,8 +147,10 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
 
     HEADER_FILL = PatternFill(start_color="1D4ED8", end_color="1D4ED8", fill_type="solid")
     HEADER_FONT = Font(color="FFFFFF", bold=True, size=11)
-    L1_FILL = PatternFill(start_color="EFF6FF", end_color="EFF6FF", fill_type="solid")
-    L2_FILL = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+    L1_FILL = PatternFill(start_color="9DC3E6", end_color="9DC3E6", fill_type="solid")
+    L2_FILL = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
+    L3_FILL = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
+    L4_FILL = PatternFill(start_color="EEF4FB", end_color="EEF4FB", fill_type="solid")
     BOLD_FONT = Font(bold=True)
     SEMI_FONT = Font(bold=False)
     ITEM_FONT = Font(italic=True, color="475569")
@@ -165,6 +172,14 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
         ws.column_dimensions[cell.column_letter].width = width
     ws.row_dimensions[HEADER_ROW].height = 32
     ws.freeze_panes = f"A{DATA_FIRST_ROW}"
+
+    # Загрузка обратно (владелец 20.10.2026): колонка «№ в системе» всегда
+    # есть в файле (row_id — в DEFAULT_KEYS, см. feo_export_columns.py), но
+    # скрыта от человека — несёт только id для app.services.
+    # feo_roundtrip_import.parse при обратной загрузке.
+    ci_row_id = column_index(selected_keys, "row_id")
+    if ci_row_id is not None:
+        ws.column_dimensions[ws.cell(row=HEADER_ROW, column=ci_row_id).column_letter].hidden = True
 
     row_num = DATA_FIRST_ROW
 
@@ -197,6 +212,7 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
             "plan": plan_amount,
             "active": "Да" if item.is_active else "Нет",
             "row_type": "Позиция",
+            "row_id": f"p{item.id}",
             **stage_vals,
         }
         row_idx = _write_row(values, None, ITEM_FONT)
@@ -266,11 +282,19 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
             # budget/stage_vals выше), см. колонку row_type в
             # feo_export_columns.py.
             "row_type": "Категория без позиций" if is_leaf else "Категория",
+            "row_id": f"c{c.id}",
         }
         if is_leaf:
             values["plan"] = own_plan
             values.update(stage_vals)
-        fill = L1_FILL if c.level == 1 else (L2_FILL if c.level == 2 else None)
+        if c.level == 1:
+            fill = L1_FILL
+        elif c.level == 2:
+            fill = L2_FILL
+        elif c.level == 3:
+            fill = L3_FILL
+        else:
+            fill = L4_FILL
         font = BOLD_FONT if c.level == 1 else SEMI_FONT
         row_idx = _write_row(values, fill, font)
         if depth > 0:
@@ -337,4 +361,34 @@ async def build_feo_export_workbook(db, sub, selected_keys: list):
     last_col_letter = ws.cell(row=HEADER_ROW, column=n_cols).column_letter
     ws.auto_filter.ref = f"A{HEADER_ROW}:{last_col_letter}{max(last_row, HEADER_ROW)}"
 
+    # Листы «Сводная»/«Дашборд» (владелец 20.10.2026, часть 3) — по флагу
+    # `with_summary`, строит app.services.feo_export_summary (ПРАВИЛО №5 —
+    # точечный вызов, сама логика — в отдельном модуле).
+    if with_summary:
+        from app.services.feo_export_summary import write_feo_summary_and_dashboard
+        top_rows_info = [{"name": root["cat"].name, "row": tr} for root, tr in zip(roots, top_rows)]
+        write_feo_summary_and_dashboard(wb, sub, ws.title, selected_keys, top_rows_info)
+
+    _write_roundtrip_meta_sheet(wb, sub.id)
+
     return wb
+
+
+def _write_roundtrip_meta_sheet(wb, subsidy_id: int) -> None:
+    """Скрытый лист `_meta` — subsidy_id/дата выгрузки/версия формата, чтобы
+    app.services.feo_roundtrip_import.parse могла при загрузке назад
+    отличить «файл этой субсидии» от «файл другой субсидии» (см. докстринг
+    модуля parse.py — расхождение subsidy_id там жёстко отклоняется, без
+    флага-обхода). Пустая субсидия (нет категорий) экспортируется тем же
+    кодом ВЫШЕ без единой строки данных — лист _meta пишется всегда, это и
+    есть «шаблон для заполнения с нуля» из задачи владельца."""
+    from datetime import datetime, timezone
+
+    meta = wb.create_sheet("_meta")
+    meta.sheet_state = "hidden"
+    meta["A1"] = "subsidy_id"
+    meta["B1"] = subsidy_id
+    meta["A2"] = "exported_at"
+    meta["B2"] = datetime.now(timezone.utc).isoformat()
+    meta["A3"] = "format_version"
+    meta["B3"] = ROUNDTRIP_FORMAT_VERSION

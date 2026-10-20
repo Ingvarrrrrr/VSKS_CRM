@@ -64,6 +64,13 @@ FEO_EXPORT_COLUMNS: list[tuple] = [
     # «Позиция» (плановая позиция), «Категория без позиций» (лист без детей
     # и без плановых позиций — budget/значения заданы литералом).
     ("row_type", "Тип строки", "Служебное", 22, True),
+    # Загрузка обратно (задача владельца 20.10.2026): скрытая служебная
+    # колонка-идентификатор — «c<id>» категория / «p<id>» плановая позиция.
+    # Всегда включена (см. always= ниже) и всегда СКРЫТА на листе
+    # (column_dimensions[...].hidden=True в feo_export_xlsx.py) — не
+    # показывается в каталоге выбора столбцов пользователю (см.
+    # columns_catalog() ниже, единственный фильтр, не второй список).
+    ("row_id", "№ в системе", "Служебное", 14, True),
 ]
 
 _BY_KEY = {k: (label, group, width) for k, label, group, width, _d in FEO_EXPORT_COLUMNS}
@@ -74,14 +81,19 @@ MONEY_KEYS: set = {"feo", "plan", "ordered", "to_order", "residual"} | {f"{k}_am
 # пустыми (владелец: «у категорий текстовые стадии — пусто»).
 STAGE_TEXT_KEYS: tuple = tuple(k for k, _ in STAGE_DEFS)
 STAGE_AMOUNT_KEYS: tuple = tuple(f"{k}_amt" for k, _ in STAGE_DEFS)
+# Служебная колонка-идентификатор — никогда не показывается в окне выбора
+# столбцов (columns_catalog), но всегда пишется в файл (см. resolve_selected_
+# keys always= ниже) и читается обратно загрузкой
+# (app/services/feo_roundtrip_import/parse.py).
+HIDDEN_CATALOG_KEYS: set = {"row_id"}
 
 
 def columns_catalog() -> list[dict]:
-    return _columns_catalog(FEO_EXPORT_COLUMNS)
+    return [c for c in _columns_catalog(FEO_EXPORT_COLUMNS) if c["key"] not in HIDDEN_CATALOG_KEYS]
 
 
 def resolve_selected_keys(columns: Optional[str]) -> list:
-    return _resolve_selected_keys(FEO_EXPORT_COLUMNS, columns, always=("name", "row_type"))
+    return _resolve_selected_keys(FEO_EXPORT_COLUMNS, columns, always=("name", "row_type", "row_id"))
 
 
 def headers_and_widths(selected_keys: list) -> tuple:

@@ -212,6 +212,14 @@
                    уже прошла, грузят ОДНИМ файлом — необязательный блок «Факт». -->
               <v-list-item-subtitle style="white-space:normal">Если часть закупок уже прошла — заполните блок «Факт»: после загрузки плана система предложит загрузить их.</v-list-item-subtitle>
             </v-list-item>
+            <!-- «Загрузить выгрузку ФЭО» (владелец, 20.10.2026) — обратная
+                 загрузка файла «Выгрузить ФЭО»: изменённые суммы/названия,
+                 новые строки — через POST /feo-categories/roundtrip/preview
+                 и /apply (FeoRoundtripImportDialog.vue, конец шаблона). -->
+            <v-list-item prepend-icon="mdi-file-upload-outline" @click="roundtripImportDialog?.open()">
+              <v-list-item-title>Загрузить выгрузку ФЭО</v-list-item-title>
+              <v-list-item-subtitle style="white-space:normal">Файл из «Выгрузить ФЭО»: изменённые суммы и названия, новые строки. Для новой субсидии — выгрузите пустой файл, заполните и загрузите.</v-list-item-subtitle>
+            </v-list-item>
             <v-divider />
           </template>
 
@@ -346,6 +354,12 @@
     :subsidy-name="ctx.selectedSubsidy.value?.name"
     :show-snack="showSnack"
   />
+  <FeoRoundtripImportDialog
+    ref="roundtripImportDialog"
+    :subsidy-id="ctx.selectedId.value ?? null"
+    :show-snack="showSnack"
+    :on-applied="() => ctx.selectedId.value != null && ctx.loadFeo(ctx.selectedId.value)"
+  />
 </template>
 
 <script setup lang="ts">
@@ -379,6 +393,9 @@ import PlanToOrderDialog from '@/components/subsidies/PlanToOrderDialog.vue'
 // докстринг кнопки/компонента выше.
 import AlignBudgetAllDialog from '@/components/subsidies/AlignBudgetAllDialog.vue'
 import SubsidyExportDialog from '@/components/subsidies/SubsidyExportDialog.vue'
+// «Загрузить выгрузку ФЭО» (владелец, 20.10.2026) — см. докстринг пункта
+// меню «Загрузка» в шаблоне выше.
+import FeoRoundtripImportDialog from '@/components/subsidies/FeoRoundtripImportDialog.vue'
 import { filenameFromContentDisposition } from '@/utils/contentDisposition'
 import { STAGE_ORDER, PLAN_STAGE_META } from '@/constants/planStageScale'
 
@@ -483,6 +500,7 @@ function openFactImportRuns() {
 const { exportScreenshotPdf: _exportFeoScreenshotPdf } = useRegistryExport()
 
 const subsidyExportDialog = ref<InstanceType<typeof SubsidyExportDialog> | null>(null)
+const roundtripImportDialog = ref<InstanceType<typeof FeoRoundtripImportDialog> | null>(null)
 // «Загрузить шаблон .docx» в меню «Ещё» — input вынесен за пределы v-menu
 // (меню закрывается раньше, чем открывается системный выбор файла), пункт
 // меню вызывает templateFileInput.value?.click().

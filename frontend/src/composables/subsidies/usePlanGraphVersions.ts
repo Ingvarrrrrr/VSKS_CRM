@@ -46,6 +46,10 @@ const exportRunning = ref(false)              // during download
 export interface FeoExportColumn { key: string; label: string; group: string; default?: boolean }
 const feoExportColumnsCatalog = ref<FeoExportColumn[]>([])
 const feoExportSelectedColumns = ref<string[]>([])
+// Галочка «Сводная и дашборд» (владелец 20.10.2026, часть 3) — тот же вид,
+// что withSummary в SubsidyExportDialog.vue; действует ТОЛЬКО на «Текущая
+// (живая) ФЭО» (exportFeoToExcel ниже), как и feoExportSelectedColumns.
+const feoExportWithSummary = ref(true)
 
 // ── Save version state ──
 const showSaveVersionDialog = ref(false)
@@ -145,7 +149,8 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
     if (!ctx?.selectedId.value) return
     const cols = feoExportSelectedColumns.value.join(',')
     const colsParam = cols ? `&columns=${encodeURIComponent(cols)}` : ''
-    const res = await fetch(`/api/feo-categories/export?subsidy_id=${ctx.selectedId.value}${colsParam}`, {
+    const summaryParam = `&with_summary=${feoExportWithSummary.value ? '1' : '0'}`
+    const res = await fetch(`/api/feo-categories/export?subsidy_id=${ctx.selectedId.value}${colsParam}${summaryParam}`, {
       headers: {},
     })
     if (!res.ok) { showSnack('Ошибка экспорта', 'error'); return }

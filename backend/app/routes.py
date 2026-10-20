@@ -115,6 +115,11 @@ from app.routers import feo_import
 from app.routers import feo_import_template
 from app.routers import feo_import_preview
 from app.routers import feo_import_export
+# Загрузка обратно «Выгрузить ФЭО» (владелец, 20.10.2026) — POST /api/
+# feo-categories/roundtrip/preview и /roundtrip/apply, те же статичные
+# литеральные пути на /api/feo-categories, та же причина порядка (ДО
+# catch-all feo_categories.router).
+from app.routers import feo_roundtrip_import
 from app.routers import feo_tree_ops
 # Разрезание purchases.py (Правило №5, сессия 2026-09-06): purchase_duplicates,
 # purchase_lists, purchase_payment_matching, purchase_ops содержат статические
@@ -391,6 +396,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(feo_import_template.router)
     app.include_router(feo_import_preview.router)
     app.include_router(feo_import_export.router)
+    app.include_router(feo_roundtrip_import.router)
     app.include_router(feo_tree_ops.router)
     app.include_router(feo_tree_ops.router_subsidy_feo)
     app.include_router(feo_categories.router)

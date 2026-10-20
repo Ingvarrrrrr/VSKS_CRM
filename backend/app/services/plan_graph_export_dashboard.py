@@ -28,11 +28,13 @@ from __future__ import annotations
 from typing import Optional
 
 try:
-    from openpyxl.chart import BarChart, DoughnutChart, Reference, Series
+    from openpyxl.chart import Reference
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.worksheet.datavalidation import DataValidation
 except ImportError:  # pragma: no cover — openpyxl отсутствует, роутер уже отказал раньше
     pass
+
+from app.services.export_dashboard_charts import build_bar_chart, build_doughnut_chart
 
 _COL_N = 14  # колонка N — начало блока дашборда
 _COL_O = 15
@@ -130,51 +132,32 @@ def write_dashboard(
     # ── Графики — якорь в колонке T, вертикально друг под другом ──────────
     anchor_col_letter = sm.cell(row=1, column=_COL_T).column_letter
 
-    chart1 = BarChart()
-    chart1.type = "col"
-    chart1.title = "Деньги по стадиям"
-    chart1.y_axis.title = "₽"
-    chart1.legend = None
-    chart1.width, chart1.height = 16, 8
     cats1 = Reference(sm, min_col=_COL_N, min_row=_HELPER_FIRST_ROW, max_row=_HELPER_FIRST_ROW + 4)
     data1 = Reference(sm, min_col=_COL_O, min_row=_HELPER_FIRST_ROW, max_row=_HELPER_FIRST_ROW + 4)
-    chart1.add_data(data1, titles_from_data=False)
-    chart1.set_categories(cats1)
+    chart1 = build_bar_chart(title="Деньги по стадиям", cats_ref=cats1, data_refs=[(data1, None)], show_legend=False)
     sm.add_chart(chart1, f"{anchor_col_letter}2")
 
-    chart2 = DoughnutChart()
-    chart2.title = "Куда ушёл бюджет ФЭО"
-    chart2.width, chart2.height = 16, 8
     ring_first = _HELPER_FIRST_ROW + 4  # «Оплачено» — общая строка с графиком 1
     ring_last = _HELPER_FIRST_ROW + 8   # «Свободно»
     cats2 = Reference(sm, min_col=_COL_N, min_row=ring_first, max_row=ring_last)
     data2 = Reference(sm, min_col=_COL_O, min_row=ring_first, max_row=ring_last)
-    chart2.add_data(data2, titles_from_data=False)
-    chart2.set_categories(cats2)
+    chart2 = build_doughnut_chart(title="Куда ушёл бюджет ФЭО", cats_ref=cats2, data_ref=data2)
     sm.add_chart(chart2, f"{anchor_col_letter}20")
 
-    chart3 = BarChart()
-    chart3.type = "col"
-    chart3.grouping = "stacked"
-    chart3.overlap = 100
-    chart3.title = "Запланированные траты по видам"
-    chart3.width, chart3.height = 16, 8
     cats3 = Reference(sm, min_col=1, min_row=first_data_row, max_row=last_data_row)
-    for col, label in ((5, "Ежемесячные"), (6, "Реальные"), (7, "Выдуманные")):
-        ref = Reference(sm, min_col=col, min_row=first_data_row, max_row=last_data_row)
-        series = Series(ref, title=label)
-        chart3.series.append(series)
-    chart3.set_categories(cats3)
+    data_refs3 = [
+        (Reference(sm, min_col=col, min_row=first_data_row, max_row=last_data_row), label)
+        for col, label in ((5, "Ежемесячные"), (6, "Реальные"), (7, "Выдуманные"))
+    ]
+    chart3 = build_bar_chart(
+        title="Запланированные траты по видам", cats_ref=cats3, data_refs=data_refs3, stacked=True,
+    )
     sm.add_chart(chart3, f"{anchor_col_letter}38")
 
-    chart4 = BarChart()
-    chart4.type = "bar"  # горизонтальные столбцы
-    chart4.title = "По направлениям"
-    chart4.width, chart4.height = 16, 8
     cats4 = Reference(sm, min_col=_COL_N, min_row=dir_first_row, max_row=dir_last_row)
-    for col, label in ((_COL_N + 1, "ФЭО"), (_COL_N + 2, "План"), (_COL_N + 3, "Заказано"), (_COL_N + 4, "Оплачено")):
-        ref = Reference(sm, min_col=col, min_row=dir_first_row, max_row=dir_last_row)
-        series = Series(ref, title=label)
-        chart4.series.append(series)
-    chart4.set_categories(cats4)
+    data_refs4 = [
+        (Reference(sm, min_col=col, min_row=dir_first_row, max_row=dir_last_row), label)
+        for col, label in ((_COL_N + 1, "ФЭО"), (_COL_N + 2, "План"), (_COL_N + 3, "Заказано"), (_COL_N + 4, "Оплачено"))
+    ]
+    chart4 = build_bar_chart(title="По направлениям", cats_ref=cats4, data_refs=data_refs4, bar_type="bar")
     sm.add_chart(chart4, f"{anchor_col_letter}56")

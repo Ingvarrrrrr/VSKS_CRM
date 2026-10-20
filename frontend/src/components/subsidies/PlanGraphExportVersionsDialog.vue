@@ -13,6 +13,14 @@
         <v-progress-linear v-if="v.exportVersionsLoading.value" indeterminate color="primary" class="mb-3" />
         <div class="text-caption text-medium-emphasis mb-3">Выберите одну или несколько редакций. Несколько редакций выгрузятся в один документ — колонки рядом.</div>
         <v-checkbox v-model="v.exportIncludeCurrent.value" density="compact" hide-details label="Текущая (живая) ФЭО" class="mb-2" />
+        <v-checkbox
+          v-if="v.exportIncludeCurrent.value"
+          v-model="v.feoExportWithSummary.value"
+          density="compact"
+          hide-details
+          label="Сводная и дашборд"
+          class="mb-2 ml-6"
+        />
 
         <!-- Столбцы «Выгрузить ФЭО» (владелец 20.10.2026) — действуют ТОЛЬКО
              на «Текущая (живая) ФЭО»; на выгрузку/сравнение сохранённых

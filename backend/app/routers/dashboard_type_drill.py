@@ -50,7 +50,7 @@ _STAGE_REGEX = "^(" + "|".join(STAGE_KEYS) + ")$"
 # kind=all (15.10.2026, план abstract-noodling-pelican.md, п.1 техчасти) —
 # карточка стадии («Ведётся работа»/«Заказано»/…) нажимается ЦЕЛИКОМ, без
 # деления на товары/услуги: все строки стадии, без фильтра по kind.
-_KIND_REGEX = "^(goods|services|unspecified|all)$"
+_KIND_REGEX = "^(goods|services|payroll|unspecified|all)$"
 
 
 @router.get("")

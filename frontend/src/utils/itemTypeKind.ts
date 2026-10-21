@@ -8,12 +8,19 @@
 // 'payroll' добавлен 07.10.2026 (план .planning/quick/2026-10-07-dnr-feo-cards/
 // PLAN.md задача 1) — корзина «ФОТ и выплаты персоналу», отдельная от
 // goods/services/unspecified. Считается ТОЛЬКО бэкендом (app.services.
-// feo_payroll.payroll_category_ids — принадлежность категории к ФОТ, не тип
-// позиции), сюда просто доведена как 4-й вариант значения для карточек
-// «Бюджет (ФЭО)»/«Запланировано»/«Свободно» (budget/plan_schedule/free) —
-// kindOf()/purchaseTypeShares() ниже её НЕ возвращают (этапы закупок
-// work/ordered/contracts/delivered/delivered_unpaid/paid payroll не имеют,
-// см. задание владельца).
+// feo_payroll.purchase_payroll_map/payroll_category_ids — принадлежность
+// закупки/категории к ФОТ, не тип позиции), сюда просто доведена как 4-й
+// вариант значения. kindOf()/purchaseTypeShares() ниже её НЕ возвращают (эти
+// две функции — fallback-деление ПО ИМЕНИ ТИПА позиции, payroll определяется
+// категорией закупки, не item_type) — читать payroll из ответа сервера
+// (widgets[stage][`${stage}_payroll`], paid_declared_by_kind.payroll и т.п.).
+// ИСПРАВЛЕНО (задача владельца 21.10.2026, ХРО_2026): раньше здесь было
+// написано, что этапы закупок (work/ordered/contracts/delivered/
+// delivered_unpaid/paid) payroll не имеют — неверно, payroll теперь протянут
+// через dashboard_type_split.py/paid_over_delivered.py/
+// delivered_unpaid_residual.py/subsidy_paid_breakdown.py на ВСЕХ стадиях
+// (3 закупки ХРО_2026 на статье ФОТ были целиком невидимы в разбивке
+// «Оплачено» — ни goods, ни services, ни unspecified их не показывали).
 export type ItemTypeKind = 'goods' | 'services' | 'payroll' | 'unspecified'
 
 export const KIND_GOODS: ItemTypeKind = 'goods'

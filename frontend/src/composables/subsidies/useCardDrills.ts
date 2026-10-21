@@ -82,8 +82,10 @@ function buildCardDrills(ctx: CardDrillsCtx) {
   // ── MetricDrillDialog (НОВЫЙ, GET /dashboard/metric-drill) ─────────────────
   const metricDrillVisible = ref(false)
   const metricDrillMetric = ref<MetricDrillMetric>('paid_declared')
-  const metricDrillKind = ref<'goods' | 'services' | null>(null)
-  function openMetric(metric: MetricDrillMetric, kind?: 'goods' | 'services' | null) {
+  // 'payroll'/'unspecified' — задача владельца 21.10.2026 (ХРО_2026): карточка
+  // «Оплачено» добавила чипы ФОТ/«без типа», кликабельные той же дорожкой.
+  const metricDrillKind = ref<'goods' | 'services' | 'payroll' | 'unspecified' | null>(null)
+  function openMetric(metric: MetricDrillMetric, kind?: 'goods' | 'services' | 'payroll' | 'unspecified' | null) {
     if (!ctx.selectedId.value) return
     metricDrillMetric.value = metric
     metricDrillKind.value = kind ?? null

@@ -26,7 +26,9 @@ from typing import Iterable
 _PAYROLL_RE = re.compile(
     r"(^|[^а-яёa-z])фот([^а-яёa-z]|$)"       # «ФОТ» отдельным словом (не «фото-»)
     r"|оплат[а-яё]*\s+труда"                   # «оплата труда», «оплату труда»...
-    r"|выплат[а-яё]*\s+персонал",              # «выплаты персоналу», «выплата персоналу»...
+    r"|выплат[а-яё]*\s+персонал"                # «выплаты персоналу», «выплата персоналу»...
+    r"|зар[ао]б[ао]тн[а-яё]*\s+плат"           # «заработная/заробатная/зароботная плата» (опечатки владельца)
+    r"|зарплат",                                # «зарплата» слитно
     re.IGNORECASE,
 )
 
@@ -80,3 +82,60 @@ async def payroll_category_ids(db, subsidy_ids: Iterable[int]) -> set:
         return result
 
     return {r.id for r in rows if _effective(r.id)}
+
+
+async def purchase_payroll_map(db, purchase_ids: Iterable[int]) -> dict:
+    """{purchase_id: True/False} — эффективная статья закупки ФОТ (решение
+    владельца 21.10.2026, ХРО_2026: закупки «ЗП»/«Отчисления»/«Командировочные»
+    несут статью ФОТ на purchases.feo_category_id, у позиции item_type=NULL и
+    своей feo_category_id нет — карточки «В работе/Оплачено» должны всё равно
+    увидеть их как ФОТ, не «без типа»).
+
+    ЕДИНСТВЕННАЯ проверка «закупка — ФОТ» (ПРАВИЛО №6) — используется везде,
+    где разбивка по виду позиции (goods/services/payroll/unspecified) должна
+    знать про ФОТ на уровне ЗАКУПКИ целиком (а не только статьи отдельной
+    позиции, см. item_type_split.kind_of_for_category для уровня позиции):
+    app.services.dashboard_type_split, app.services.paid_over_delivered,
+    app.services.subsidy_paid_breakdown, app.services.metric_drill_rows.
+
+    Закупка — ФОТ, если ХОТЯ БЫ один из источников эффективной категории ---
+    покупка (Purchase.feo_category_id), любая её позиция (PurchaseItem.
+    feo_category_id) ИЛИ категория плановой позиции этой строки
+    (PurchaseItem.feo_planned_item_id → FeoPlannedItem.feo_category_id) ---
+    попадает в payroll_category_ids() (себя или предка) соответствующей
+    субсидии."""
+    from sqlalchemy import select
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    purchase_ids = list(purchase_ids)
+    if not purchase_ids:
+        return {}
+
+    purchase_rows = (await db.execute(
+        select(Purchase.id, Purchase.subsidy_id, Purchase.feo_category_id)
+        .where(Purchase.id.in_(purchase_ids))
+    )).all()
+    subsidy_ids = {r.subsidy_id for r in purchase_rows if r.subsidy_id is not None}
+    payroll_ids = await payroll_category_ids(db, subsidy_ids)
+
+    result = {r.id: bool(r.feo_category_id in payroll_ids) for r in purchase_rows}
+
+    item_rows = (await db.execute(
+        select(
+            PurchaseItem.purchase_id, PurchaseItem.feo_category_id,
+            FeoPlannedItem.feo_category_id.label("plan_category_id"),
+        )
+        .outerjoin(FeoPlannedItem, PurchaseItem.feo_planned_item_id == FeoPlannedItem.id)
+        .where(PurchaseItem.purchase_id.in_(purchase_ids))
+    )).all()
+    for r in item_rows:
+        if result.get(r.purchase_id):
+            continue
+        if r.feo_category_id in payroll_ids or r.plan_category_id in payroll_ids:
+            result[r.purchase_id] = True
+
+    for pid in purchase_ids:
+        result.setdefault(pid, False)
+    return result

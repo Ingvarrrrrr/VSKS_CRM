@@ -137,7 +137,10 @@ const props = withDefaults(defineProps<{
   visible: boolean
   subsidyId: number | null
   metric: MetricDrillMetric
-  kind?: 'goods' | 'services' | null
+  // 'payroll'/'unspecified' добавлены 21.10.2026 (задача владельца, ХРО_2026) —
+  // карточка «Оплачено» теперь показывает чипы ФОТ/«без типа», оба кликабельны
+  // той же дорожкой, что товары/услуги (см. KIND_SUFFIX ниже).
+  kind?: 'goods' | 'services' | 'payroll' | 'unspecified' | null
   scope?: 'dashboard' | 'managed'
 }>(), {
   kind: null,
@@ -157,7 +160,9 @@ const METRIC_TITLES: Record<MetricDrillMetric, string> = {
   balance_confirmed: 'Остаток субсидии по выписке',
   economy: 'Экономия по закупкам',
 }
-const KIND_SUFFIX: Record<'goods' | 'services', string> = { goods: ' — товары', services: ' — услуги' }
+const KIND_SUFFIX: Record<'goods' | 'services' | 'payroll' | 'unspecified', string> = {
+  goods: ' — товары', services: ' — услуги', payroll: ' — ФОТ', unspecified: ' — без типа',
+}
 const title = computed(() => METRIC_TITLES[props.metric] + (props.kind ? KIND_SUFFIX[props.kind] : ''))
 
 const loading = ref(false)

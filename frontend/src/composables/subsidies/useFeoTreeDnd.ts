@@ -123,6 +123,8 @@ export function buildCategoryFullPayload(cat: FeoCategory, overrides: Record<str
     unit: cat.unit ?? null,
     plan_source: cat.plan_source || 'planned_items',
     manual_plan_amount: cat.manual_plan_amount ?? null,
+    // ФОТ и иные выплаты персоналу (задача владельца 21.10.2026, ХРО_2026).
+    is_payroll: cat.is_payroll ?? false,
     ...overrides,
   }
 }

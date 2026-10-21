@@ -925,3 +925,40 @@ async def test_preview_breakdown_sums_match_totals(
     assert skipped_total_rows == totals["skipped"]
     reason_rows = sum(len(r["rows"]) for r in breakdown["skipped_by_reason"])
     assert reason_rows == totals["skipped"]
+
+
+async def test_commit_payroll_row_with_payment_becomes_paid(
+    client, auth_headers, test_user, db_session, subsidy_with_plan,
+):
+    """Задача владельца 21.10.2026 (ХРО_2026) — строка на статье ФОТ
+    (feo_category.is_payroll=True) с оплатой > 0 и исходным «Правильный
+    статус» = «В работе» (без договора, без промежуточных стадий — так
+    строила их ЗП-строка файла владельца) выходит из импорта факта сразу
+    «Оплачено», а не «В работе». row["is_payroll"] решается preview.py по
+    payroll_category_ids той же плановой позиции; commit.py поднимает ранг
+    строки до 'paid' (см. _collect_items)."""
+    from app.models.permission import RolePermission
+    db_session.add(RolePermission(role_name="employee", key="subsidy.edit", granted=True))
+    await db_session.commit()
+
+    subsidy, cat, item_paid, item_wip = subsidy_with_plan
+    cat.is_payroll = True
+    await db_session.commit()
+
+    content = _build_ho_workbook([
+        _row("Аренда оборудования", 80000, 80000, 80000, paid=80000, status_raw="В работе", purchase_no="42", supplier="ООО Ромашка"),
+    ])
+    resp = await client.post(
+        f"/api/subsidies/{subsidy.id}/fact-import/commit",
+        files={"file": ("test.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"decisions": json.dumps({"include_payroll": True})},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["purchases_created"] == 1
+
+    from app.models.purchase import Purchase
+    purchases = (await db_session.execute(select(Purchase).where(Purchase.subsidy_id == subsidy.id))).scalars().all()
+    assert len(purchases) == 1
+    assert purchases[0].status == "paid"

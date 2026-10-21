@@ -591,7 +591,11 @@ const filteredTypeDrillRows = computed(() => {
 // работа»/«Заказано»/«Поставлено»/«Поставлено, не оплачено»). Группировка
 // готовых строк, не вторая формула (Правило №6) — r.kind уже посчитан
 // бэкендом (dashboard_type_drill.py, тот же compute_type_split_detail).
-const GROUP_ORDER: ItemTypeKind[] = ['goods', 'services', 'unspecified']
+// 'payroll' добавлен 21.10.2026 (задача владельца, ХРО_2026) — backend теперь
+// отдаёт r.kind='payroll' и для стадийных drill (dashboard_type_drill.py,
+// compute_type_split_detail), без него такие строки молча падали в «без
+// типа» (GROUP_ORDER.includes проверка выше).
+const GROUP_ORDER: ItemTypeKind[] = ['goods', 'services', 'payroll', 'unspecified']
 const groupedTypeDrillRows = computed(() => {
   const buckets = new Map<ItemTypeKind, typeof filteredTypeDrillRows.value>()
   for (const r of filteredTypeDrillRows.value) {

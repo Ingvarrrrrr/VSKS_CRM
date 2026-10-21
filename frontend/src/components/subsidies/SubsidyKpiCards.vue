@@ -281,6 +281,13 @@
               <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
                 <span class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_declared', 'goods')"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidDeclaredByKind.goods) }}</span>
                 <span class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_declared', 'services')"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidDeclaredByKind.services) }}</span>
+                <!-- ФОТ (задача владельца 21.10.2026, ХРО_2026) — третий чип,
+                     только если сумма есть (та же видимость >0.5, что у
+                     остальных карточек, см. splitRowsFor). -->
+                <span v-if="Math.abs(paidDeclaredByKind.payroll || 0) > 0.5" class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_declared', 'payroll')"><span class="kpi-split-dot kpi-split-dot-payroll" />ФОТ {{ formatCurrency(paidDeclaredByKind.payroll || 0) }}</span>
+                <!-- «без типа» (та же причина владельца — раньше эта сумма
+                     в «Оплачено» вообще не была видна). -->
+                <span v-if="Math.abs(paidDeclaredByKind.unspecified || 0) > 0.5" class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_declared', 'unspecified')"><span class="kpi-split-dot kpi-split-dot-unspecified" />без типа {{ formatCurrency(paidDeclaredByKind.unspecified || 0) }}</span>
               </div>
               <div class="kpi-paid-dual-row kpi-paid-dual-row-clickable" @click.stop="cardDrills.openMetric('paid_confirmed')">
                 <span class="kpi-paid-dual-label">подтверждено выпиской:</span>
@@ -289,6 +296,8 @@
               <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
                 <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidConfirmedByKind.goods) }}</span>
                 <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidConfirmedByKind.services) }}</span>
+                <span v-if="Math.abs(paidConfirmedByKind.payroll || 0) > 0.5" class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-payroll" />ФОТ {{ formatCurrency(paidConfirmedByKind.payroll || 0) }}</span>
+                <span v-if="Math.abs(paidConfirmedByKind.unspecified || 0) > 0.5" class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-unspecified" />без типа {{ formatCurrency(paidConfirmedByKind.unspecified || 0) }}</span>
               </div>
               <div v-if="paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
                 <span class="kpi-paid-dual-label">расхождение:</span>
@@ -669,8 +678,8 @@ const kpiSubTarget_paid              = computed(() => Number(ctx.selectedSubsidy
 // разницу локально (declared − confirmed) для обратной совместимости.
 const paidDeclaredTotal = computed(() => Number(ctx.selectedSubsidy.value?.paid_declared ?? 0))
 const paidConfirmedTotal = computed(() => Number(ctx.selectedSubsidy.value?.paid_confirmed ?? 0))
-const paidDeclaredByKind = computed(() => ctx.selectedSubsidy.value?.paid_declared_by_kind ?? { goods: 0, services: 0, unspecified: 0 })
-const paidConfirmedByKind = computed(() => ctx.selectedSubsidy.value?.paid_confirmed_by_kind ?? { goods: 0, services: 0, unspecified: 0 })
+const paidDeclaredByKind = computed(() => ctx.selectedSubsidy.value?.paid_declared_by_kind ?? { goods: 0, services: 0, payroll: 0, unspecified: 0 })
+const paidConfirmedByKind = computed(() => ctx.selectedSubsidy.value?.paid_confirmed_by_kind ?? { goods: 0, services: 0, payroll: 0, unspecified: 0 })
 const paidDiff = computed(() => {
   const explicit = ctx.selectedSubsidy.value?.paid_diff
   if (explicit != null) return Number(explicit)
@@ -788,13 +797,19 @@ function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; p
   if (stage === 'delivered_unpaid') {
     const k = ctx.selectedSubsidy.value?.delivered_unpaid_declared_by_kind
     if (!k) return null
-    return { goods: Number(k.goods) || 0, services: Number(k.services) || 0, unspecified: Number(k.unspecified) || 0 }
+    return { goods: Number(k.goods) || 0, services: Number(k.services) || 0, payroll: Number((k as any).payroll) || 0, unspecified: Number(k.unspecified) || 0 }
   }
   const w = (ctx.selectedSubsidy.value?.widget as any)?.[stage]
   if (!w) return null
   const g = w[`${stage}_goods`]
   if (g === undefined) return null
-  return { goods: Number(g) || 0, services: Number(w[`${stage}_services`]) || 0, unspecified: Number(w[`${stage}_unspecified`]) || 0 }
+  // ФОТ на карточках-этапах (задача владельца 21.10.2026, ХРО_2026) — те же
+  // widget[stage][`${stage}_payroll`], что backend теперь кладёт на ВСЕХ
+  // этапах (dashboard_type_split.py, см. комментарий в itemTypeKind.ts).
+  return {
+    goods: Number(g) || 0, services: Number(w[`${stage}_services`]) || 0,
+    payroll: Number(w[`${stage}_payroll`]) || 0, unspecified: Number(w[`${stage}_unspecified`]) || 0,
+  }
 }
 
 function splitRowsFor(stage: SplitStageKey): SplitRow[] | null {

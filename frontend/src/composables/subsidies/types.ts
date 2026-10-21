@@ -23,8 +23,8 @@ export interface SubsidyRow {
   // по имени backend-поля напрямую, остальные потребители — через paid выше).
   paid_declared?: number
   paid_confirmed?: number
-  paid_declared_by_kind?: { goods: number; services: number; unspecified: number } | null
-  paid_confirmed_by_kind?: { goods: number; services: number; unspecified: number } | null
+  paid_declared_by_kind?: { goods: number; services: number; payroll?: number; unspecified: number } | null
+  paid_confirmed_by_kind?: { goods: number; services: number; payroll?: number; unspecified: number } | null
   // Квик-план 06.10.2026 (statement-control): готовая разница paid_declared −
   // paid_confirmed от бэкенда (dashboard_charts.py::subsidy_stats) — карточка
   // «Оплачено» (SubsidyKpiCards.vue) берёт отсюда, не считает заново (Правило
@@ -52,14 +52,14 @@ export interface SubsidyRow {
   // по отметке сотрудников» (paid_declared), не ниже 0 — см. backend
   // app/routers/dashboard_charts.py::total_delivered_unpaid (ПРАВИЛО №6).
   delivered_unpaid: number
-  delivered_unpaid_declared_by_kind?: { goods: number; services: number; unspecified: number } | null
+  delivered_unpaid_declared_by_kind?: { goods: number; services: number; payroll?: number; unspecified: number } | null
   // Плашка «Оплачено больше, чем поставлено» (владелец, 07.10.2026, прод
   // id=74 «ЛНР») — Σ excess ПО ЗАКУПКАМ (max(0, оплачено−поставлено) на
   // уровне одной закупки), см. backend app/services/paid_over_delivered.py
   // (ПРАВИЛО №6, одна функция для карточки и для drill-списка).
   paid_over_delivered?: number
   paid_over_delivered_prepayment?: number
-  paid_over_delivered_by_kind?: { goods: number; services: number; unspecified: number } | null
+  paid_over_delivered_by_kind?: { goods: number; services: number; payroll?: number; unspecified: number } | null
   // Раздел B/C (план ancient-prancing-music.md, 21.09): та же накопительная
   // корзина закупок, что и work/ordered/contracts/delivered/delivered_unpaid/
   // paid выше, но по стадиям (`${stage}_amount` = w.amount и т.п.) плюс
@@ -203,6 +203,11 @@ export interface FeoCategory {
   // «по плановым позициям» / «по вручную заданной сумме».
   plan_source?: 'planned_items' | 'manual_sum'
   manual_plan_amount?: number | null
+  // ФОТ и иные выплаты персоналу (задача владельца 21.10.2026, ХРО_2026) —
+  // ручной переключатель; подкатегории наследуют (см. backend
+  // app.services.feo_payroll.payroll_category_ids), сама колонка хранит
+  // только собственное значение этой статьи.
+  is_payroll?: boolean
 }
 
 export interface FeoNode extends FeoCategory {

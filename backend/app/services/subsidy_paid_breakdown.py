@@ -54,12 +54,20 @@ from app.services.dashboard_type_split import reconcile_split
 from app.services.item_type_split import TypeShares, purchase_type_shares
 from app.services.purchase_amounts import aggregate_scope_expr
 from sqlalchemy import or_ as sqlor
+# ФОТ (задача владельца 21.10.2026, ХРО_2026: закупки «ЗП»/«Отчисления»/
+# «Командировочные» на статье ФОТ были целиком невидимы в разбивке «Оплачено»
+# — ни товары, ни услуги их не показывали, вся сумма пропадала) —
+# ЕДИНСТВЕННАЯ проверка «закупка — ФОТ» (ПРАВИЛО №6, см. docstring
+# purchase_payroll_map), та же, что dashboard_type_split.py/
+# paid_over_delivered.py/delivered_unpaid_residual.py.
+from app.services.feo_payroll import purchase_payroll_map
 
 PLANNED_STATUSES: set = {"plan_schedule", "work_in_progress", "contracted", "ordered", "delivered", "paid"}
 
 
 def _zero3() -> List[Decimal]:
-    return [Decimal(0), Decimal(0), Decimal(0)]
+    """[goods, services, payroll, unspecified] — 4 корзины (ALL_KINDS)."""
+    return [Decimal(0), Decimal(0), Decimal(0), Decimal(0)]
 
 
 async def paid_breakdown_rows(db: AsyncSession, subsidy_ids: List[int]) -> List[dict]:
@@ -95,6 +103,8 @@ async def paid_breakdown_rows(db: AsyncSession, subsidy_ids: List[int]) -> List[
     for row in (await db.execute(items_q)).all():
         items_by_purchase.setdefault(row.purchase_id, []).append(row)
 
+    payroll_map = await purchase_payroll_map(db, purchase_ids)
+
     rows_out: List[dict] = []
     for r in purchases:
         declared = Decimal(str(r.payment_amount or 0)) + Decimal(str(r.payment_amount_declared or 0))
@@ -107,6 +117,7 @@ async def paid_breakdown_rows(db: AsyncSession, subsidy_ids: List[int]) -> List[
             "declared": declared,
             "confirmed": confirmed,
             "items": items_by_purchase.get(r.purchase_id, []),
+            "is_payroll": payroll_map.get(r.purchase_id, False),
         })
     return rows_out
 
@@ -142,11 +153,15 @@ async def paid_breakdown_by_subsidy(db: AsyncSession, subsidy_ids: List[int]) ->
         t["declared"] += declared
         t["confirmed"] += confirmed
 
-        shares: TypeShares = purchase_type_shares(r["items"])
-        for acc, amt in ((t["raw_declared"], declared), (t["raw_confirmed"], confirmed)):
-            acc[0] += amt * shares.goods
-            acc[1] += amt * shares.services
-            acc[2] += amt * shares.unspecified
+        if r.get("is_payroll"):
+            for acc, amt in ((t["raw_declared"], declared), (t["raw_confirmed"], confirmed)):
+                acc[2] += amt
+        else:
+            shares: TypeShares = purchase_type_shares(r["items"])
+            for acc, amt in ((t["raw_declared"], declared), (t["raw_confirmed"], confirmed)):
+                acc[0] += amt * shares.goods
+                acc[1] += amt * shares.services
+                acc[3] += amt * shares.unspecified
 
     for sid, t in totals.items():
         result[sid] = {

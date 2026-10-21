@@ -49,10 +49,14 @@ from app.services.dashboard_type_split import reconcile_split
 from app.services.delivered_unpaid_residual import DELIVERED_UNPAID_STATUSES
 from app.services.item_type_split import TypeShares, purchase_type_shares
 from app.services.purchase_amounts import aggregate_scope_expr, effective_amount_expr
+# ФОТ (задача владельца 21.10.2026, ХРО_2026) — ЕДИНСТВЕННАЯ проверка
+# «закупка — ФОТ» (ПРАВИЛО №6, см. docstring purchase_payroll_map).
+from app.services.feo_payroll import purchase_payroll_map
 
 
 def _zero3() -> List[Decimal]:
-    return [Decimal(0), Decimal(0), Decimal(0)]
+    """[goods, services, payroll, unspecified] — 4 корзины (ALL_KINDS)."""
+    return [Decimal(0), Decimal(0), Decimal(0), Decimal(0)]
 
 
 def _delivered_amount_expr():
@@ -143,6 +147,8 @@ async def paid_over_delivered_by_subsidy(db: AsyncSession, subsidy_ids: List[int
     for row in (await db.execute(items_q)).all():
         items_by_purchase.setdefault(row.purchase_id, []).append(row)
 
+    payroll_map = await purchase_payroll_map(db, purchase_ids)
+
     totals: Dict[int, dict] = {}
     for r, delivered_amt, paid_amt, excess in rows:
         t = totals.setdefault(r.subsidy_id, {"total": Decimal(0), "prepayment_total": Decimal(0), "raw": _zero3()})
@@ -150,10 +156,13 @@ async def paid_over_delivered_by_subsidy(db: AsyncSession, subsidy_ids: List[int
         if r.is_prepayment:
             t["prepayment_total"] += excess
 
-        shares: TypeShares = purchase_type_shares(items_by_purchase.get(r.purchase_id, []))
-        t["raw"][0] += excess * shares.goods
-        t["raw"][1] += excess * shares.services
-        t["raw"][2] += excess * shares.unspecified
+        if payroll_map.get(r.purchase_id, False):
+            t["raw"][2] += excess
+        else:
+            shares: TypeShares = purchase_type_shares(items_by_purchase.get(r.purchase_id, []))
+            t["raw"][0] += excess * shares.goods
+            t["raw"][1] += excess * shares.services
+            t["raw"][3] += excess * shares.unspecified
 
     for sid, t in totals.items():
         result[sid] = {

@@ -51,8 +51,11 @@ async def dashboard_metric_drill(
         None, description="через запятую — доп. сужение ПОВЕРХ видимости scope",
     ),
     kind: Optional[str] = Query(
-        None, regex="^(goods|services)$",
-        description="только для paid_declared/paid_confirmed — разбивка товар/услуга",
+        None, regex="^(goods|services|payroll|unspecified)$",
+        description=(
+            "только для paid_declared/paid_confirmed — разбивка по виду "
+            "(товар/услуга/ФОТ/без типа, задача владельца 21.10.2026)"
+        ),
     ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),

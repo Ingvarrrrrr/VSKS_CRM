@@ -55,6 +55,23 @@ class TestIsPayrollName:
         assert is_payroll_name("") is False
         assert is_payroll_name(None) is False
 
+    def test_zarabotnaya_plata_variants(self):
+        """Прод ХРО_2026 (21.10.2026): «заработная/заробатная плата» (в т.ч.
+        опечатка владельца «заробатная») и слитное «зарплата»."""
+        assert is_payroll_name("Заработная плата работников") is True
+        assert is_payroll_name("Заробатная плата и иные выплаты") is True
+        assert is_payroll_name(
+            "Обязательные начисления на заработную плату работников 7,8%"
+        ) is True
+        assert is_payroll_name("Зарплата") is True
+
+    def test_zarabotnaya_plata_false_cases(self):
+        assert is_payroll_name("Зарубежная платформа") is False
+        assert is_payroll_name(
+            "Расходы на приобретение основных средств (оргтехника, фото-, видеотехники)"
+        ) is False
+        assert is_payroll_name("Прочие услуги") is False
+
 
 def test_kind_of_for_category_overrides_item_type():
     """Позиция статьи с is_payroll получает вид payroll НЕЗАВИСИМО от

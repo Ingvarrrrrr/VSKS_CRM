@@ -312,16 +312,22 @@ async def paid_drill(db: AsyncSession, subsidy_ids: list[int], metric: str, kind
             for r in rows
         ]
     else:
-        from app.services.item_type_split import purchase_type_shares
+        from app.services.item_type_split import KIND_PAYROLL, purchase_type_shares
         card_total = sum(float((breakdown.get(sid, {}).get(by_kind_field) or {}).get(kind, 0.0)) for sid in subsidy_ids)
         # Группируем «сырые» (нераскруглённые) суммы по субсидии, затем
         # подгоняем построчно к card_total той же субсидии (см. _reconcile_rows)
         # — так Σ строк остаётся РОВНО card_total, как и у реконсиляции по типу
-        # на самой карточке (dashboard_type_split.reconcile_split).
+        # на самой карточке (dashboard_type_split.reconcile_split). ФОТ (задача
+        # владельца 21.10.2026, ХРО_2026) — закупка с r["is_payroll"]=True несёт
+        # ВСЮ свою сумму в payroll (share=1), ноль в goods/services/unspecified
+        # (тот же collapse, что и у карточки — см. subsidy_paid_breakdown.py).
         by_subsidy: dict[int, list[tuple[dict, Decimal]]] = {}
         for r in rows:
-            shares = purchase_type_shares(r["items"])
-            share = {"goods": shares.goods, "services": shares.services}.get(kind)
+            if r.get("is_payroll"):
+                share = Decimal(1) if kind == KIND_PAYROLL else Decimal(0)
+            else:
+                shares = purchase_type_shares(r["items"])
+                share = {"goods": shares.goods, "services": shares.services, "unspecified": shares.unspecified}.get(kind)
             if share is None or share == 0:
                 continue
             by_subsidy.setdefault(r["subsidy_id"], []).append((r, r[field] * share))

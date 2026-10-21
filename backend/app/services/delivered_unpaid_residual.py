@@ -52,12 +52,17 @@ from app.models.purchase_item import PurchaseItem
 from app.services.dashboard_type_split import reconcile_split
 from app.services.item_type_split import TypeShares, purchase_type_shares
 from app.services.purchase_amounts import aggregate_scope_expr, effective_amount_expr
+# ФОТ (задача владельца 21.10.2026, ХРО_2026) — ЕДИНСТВЕННАЯ проверка
+# «закупка — ФОТ» (ПРАВИЛО №6, см. docstring purchase_payroll_map), та же,
+# что dashboard_type_split.py/paid_over_delivered.py/subsidy_paid_breakdown.py.
+from app.services.feo_payroll import purchase_payroll_map
 
 DELIVERED_UNPAID_STATUSES: tuple = ("delivered", "paid")
 
 
 def _zero3() -> List[Decimal]:
-    return [Decimal(0), Decimal(0), Decimal(0)]
+    """[goods, services, payroll, unspecified] — 4 корзины (ALL_KINDS)."""
+    return [Decimal(0), Decimal(0), Decimal(0), Decimal(0)]
 
 
 async def _residual_rows(
@@ -114,6 +119,8 @@ async def delivered_unpaid_residual_by_subsidy(db: AsyncSession, subsidy_ids: Li
     for row in (await db.execute(items_q)).all():
         items_by_purchase.setdefault(row.purchase_id, []).append(row)
 
+    payroll_map = await purchase_payroll_map(db, purchase_ids)
+
     totals: Dict[int, dict] = {}
     for r in rows:
         delivered_amt = Decimal(str(r.delivered_amt)) if r.delivered_amt is not None else Decimal(0)
@@ -125,10 +132,13 @@ async def delivered_unpaid_residual_by_subsidy(db: AsyncSession, subsidy_ids: Li
         t = totals.setdefault(r.subsidy_id, {"total": Decimal(0), "raw": _zero3()})
         t["total"] += residual
 
-        shares: TypeShares = purchase_type_shares(items_by_purchase.get(r.purchase_id, []))
-        t["raw"][0] += residual * shares.goods
-        t["raw"][1] += residual * shares.services
-        t["raw"][2] += residual * shares.unspecified
+        if payroll_map.get(r.purchase_id, False):
+            t["raw"][2] += residual
+        else:
+            shares: TypeShares = purchase_type_shares(items_by_purchase.get(r.purchase_id, []))
+            t["raw"][0] += residual * shares.goods
+            t["raw"][1] += residual * shares.services
+            t["raw"][3] += residual * shares.unspecified
 
     for sid, t in totals.items():
         result[sid] = {
@@ -178,6 +188,8 @@ async def delivered_unpaid_residual_detail(
         for row in (await db.execute(items_q)).all():
             items_by_purchase.setdefault(row.purchase_id, []).append(row)
 
+    payroll_map = await purchase_payroll_map(db, purchase_ids)
+
     out_rows: List[dict] = []
     raw = _zero3()
     for r in rows:
@@ -186,6 +198,9 @@ async def delivered_unpaid_residual_detail(
         residual = delivered_amt - paid_amt
         if residual <= 0:
             continue
-        _emit_item_rows(out_rows, raw, purchase_id=r.id, amt=residual, items=items_by_purchase.get(r.id, ()))
+        _emit_item_rows(
+            out_rows, raw, purchase_id=r.id, amt=residual, items=items_by_purchase.get(r.id, ()),
+            is_payroll=payroll_map.get(r.id, False),
+        )
 
     return {"raw": raw, "rows": out_rows}

@@ -73,10 +73,18 @@ from app.services.stage_cumulative import (
     committed_uncounted_expr, single_fwa_rows_by_contract_subsidy, reserved_child_predicate,
 )
 from app.services.item_type_split import (
-    KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED,
-    TypeShares, kind_of, purchase_type_shares, split_amount_by_shares,
+    ALL_KINDS, KIND_GOODS, KIND_PAYROLL, KIND_SERVICES, KIND_UNSPECIFIED,
+    TypeShares, kind_of, purchase_type_shares, split_amount_by_kind_pool,
 )
 from app.services.purchase_amounts import effective_amount_expr, aggregate_scope_expr
+# Четвёртая корзина «ФОТ» на карточках-этапах (задача владельца 21.10.2026,
+# ХРО_2026) — ЕДИНСТВЕННАЯ проверка «закупка — ФОТ» (ПРАВИЛО №6), см.
+# докстринг purchase_payroll_map: эффективная категория закупки/её позиций/
+# её плановых позиций, с наследованием по дереву. ФОТ закупки перебивает
+# item_type её позиций целиком (collapse, не делится между goods/services) —
+# тот же принцип, что item_type_split.collapse_kind_dict_to_payroll на
+# уровне статьи ФЭО, здесь применяется на уровне закупки дашборда.
+from app.services.feo_payroll import purchase_payroll_map
 
 STAGE_KEYS: tuple = (
     "plan_schedule", "work", "ordered", "contracts", "delivered", "delivered_unpaid", "paid",
@@ -85,37 +93,40 @@ STAGE_KEYS: tuple = (
 _CENT = Decimal("0.01")
 
 
-def _zero3() -> List[Decimal]:
-    return [Decimal(0), Decimal(0), Decimal(0)]
+def _zero4() -> List[Decimal]:
+    """[goods, services, payroll, unspecified] — порядок ALL_KINDS (item_type_
+    split.py), 4 корзины (задача владельца 21.10.2026, ХРО_2026)."""
+    return [Decimal(0), Decimal(0), Decimal(0), Decimal(0)]
 
 
-def _add3(acc: List[Decimal], amt: Decimal, shares: TypeShares) -> None:
+def _add4(acc: List[Decimal], amt: Decimal, is_payroll: bool, shares: TypeShares) -> None:
+    """ФОТ закупки (is_payroll=True, см. purchase_payroll_map) перебивает
+    item_type её позиций — вся amt целиком в payroll (тот же принцип, что
+    item_type_split.collapse_kind_dict_to_payroll). Иначе — как раньше,
+    goods/services/unspecified по shares (purchase_type_shares)."""
+    if is_payroll:
+        acc[2] += amt
+        return
     acc[0] += amt * shares.goods
     acc[1] += amt * shares.services
-    acc[2] += amt * shares.unspecified
+    acc[3] += amt * shares.unspecified
 
 
 def reconcile_split(raw: List[Decimal], target) -> Dict[str, float]:
-    """raw = [raw_goods, raw_services, raw_unspecified] (Decimal, нераскруглённые).
-    target — уже посчитанное (существующее) значение этапа (float/Decimal/None).
-    Возвращает {"goods","services","unspecified"} (float), сумма которых РОВНО
-    target (до копейки) — через split_amount_by_shares (item_type_split.py,
-    единственная формула округления с сохранением суммы)."""
+    """raw = [raw_goods, raw_services, raw_payroll, raw_unspecified] (Decimal,
+    нераскруглённые). target — уже посчитанное (существующее) значение этапа
+    (float/Decimal/None). Возвращает {"goods","services","payroll",
+    "unspecified"} (float), сумма которых РОВНО target (до копейки) — через
+    split_amount_by_kind_pool (item_type_split.py, единственная формула
+    4-корзинного округления с сохранением суммы, ПРАВИЛО №6: та же функция,
+    что используется в feo_plan_tree.py для своих rollup-ов)."""
     target_dec = Decimal(str(target)) if target is not None else Decimal(0)
-    raw_total = raw[0] + raw[1] + raw[2]
-    if raw_total == 0:
-        # Ни одна закупка/договор этапа не дала распознаваемой доли по типу
-        # (нет позиций/нет данных) — вся сумма «без типа» (purchase_type_shares).
-        return {"goods": 0.0, "services": 0.0, "unspecified": float(target_dec)}
-    goods_share = raw[0] / raw_total
-    services_share = raw[1] / raw_total
-    shares = TypeShares(
-        goods=goods_share,
-        services=services_share,
-        unspecified=Decimal(1) - goods_share - services_share,
-    )
-    g, s, u = split_amount_by_shares(target_dec, shares)
-    return {"goods": float(g), "services": float(s), "unspecified": float(u)}
+    pool = {
+        KIND_GOODS: float(raw[0]), KIND_SERVICES: float(raw[1]),
+        KIND_PAYROLL: float(raw[2]), KIND_UNSPECIFIED: float(raw[3]),
+    }
+    split = split_amount_by_kind_pool(target_dec, pool)
+    return {k: float(split[k]) for k in ALL_KINDS}
 
 
 async def _resolve_contract_subsidy_ids(
@@ -212,14 +223,18 @@ def _split_amount_across_items(amount: Decimal, weights: List[Decimal]) -> List[
 def _emit_item_rows(
     rows: List[dict], raw_acc: List[Decimal], *,
     purchase_id: Optional[int], amt: Decimal, items, contract_id: Optional[int] = None,
+    is_payroll: bool = False,
 ) -> None:
     """Строит по одной строке на каждую позицию items, деля amt между ними
     пропорционально total_price (_split_amount_across_items) — либо ОДНУ
-    строку «без позиции» (kind=unspecified, вся сумма), если позиций нет или
-    Σ total_price == 0 (тот же случай, что purchase_type_shares трактует как
-    «без типа»). raw_acc — триплет [goods,services,unspecified], копится тем
-    же способом, что global_split в compute_type_split_raw (для самопроверки/
-    отладки на стороне вызывающего)."""
+    строку «без позиции» (kind=unspecified/payroll, вся сумма), если позиций
+    нет или Σ total_price == 0 (тот же случай, что purchase_type_shares
+    трактует как «без типа»). raw_acc — 4-корзинный аккумулятор
+    [goods,services,payroll,unspecified] (см. _zero4), копится тем же
+    способом, что global_split в compute_type_split_raw (для самопроверки/
+    отладки на стороне вызывающего). is_payroll=True (закупка — ФОТ, см.
+    purchase_payroll_map) — ВСЕ строки этой закупки идут с kind=payroll,
+    item_type позиций не играет роли (collapse, как у _add4)."""
     item_list = list(items)
     weights = [
         Decimal(str(it.total_price)) if getattr(it, "total_price", None) is not None else Decimal(0)
@@ -227,26 +242,29 @@ def _emit_item_rows(
     ]
     total_sum = sum(weights) if weights else Decimal(0)
     if not item_list or total_sum == 0:
-        raw_acc[2] += amt
+        k = KIND_PAYROLL if is_payroll else KIND_UNSPECIFIED
+        raw_acc[2 if is_payroll else 3] += amt
         rows.append({
             "purchase_id": purchase_id,
             "contract_id": contract_id,
             "item_id": None,
             "item_name": "— (без позиции)",
             "item_type": None,
-            "kind": KIND_UNSPECIFIED,
+            "kind": k,
             "amount": amt,
         })
         return
     parts = _split_amount_across_items(amt, weights)
     for it, part in zip(item_list, parts):
-        k = kind_of(getattr(it, "item_type", None))
+        k = KIND_PAYROLL if is_payroll else kind_of(getattr(it, "item_type", None))
         if k == KIND_GOODS:
             raw_acc[0] += part
         elif k == KIND_SERVICES:
             raw_acc[1] += part
-        else:
+        elif k == KIND_PAYROLL:
             raw_acc[2] += part
+        else:
+            raw_acc[3] += part
         rows.append({
             "purchase_id": getattr(it, "purchase_id", purchase_id),
             "contract_id": contract_id,
@@ -278,14 +296,14 @@ async def compute_type_split_raw(
     запроса фильтруются НЕ через apply_filter, а напрямую по Contract/Purchase —
     та же логика видимости, продублированная и в самом dashboard_charts.py
     для каждого из shared-запросов)."""
-    global_split: Dict[str, List[Decimal]] = {stage: _zero3() for stage in STAGE_KEYS}
+    global_split: Dict[str, List[Decimal]] = {stage: _zero4() for stage in STAGE_KEYS}
     per_subsidy_split: Dict[int, Dict[str, List[Decimal]]] = {}
 
     def _sid_bucket(sid) -> Optional[Dict[str, List[Decimal]]]:
         if sid is None:
             return None
         if sid not in per_subsidy_split:
-            per_subsidy_split[sid] = {stage: _zero3() for stage in STAGE_KEYS}
+            per_subsidy_split[sid] = {stage: _zero4() for stage in STAGE_KEYS}
         return per_subsidy_split[sid]
 
     # ── Покупки, попадающие хотя бы в одну корзину (те же 6, что basket_q) ──
@@ -365,32 +383,41 @@ async def compute_type_split_raw(
         *[pid for pid, _cid, _psid in linked_purchase_rows],
     })
     items_by_purchase = await _items_by_purchase(db, all_purchase_ids)
+    # ФОТ закупки (задача владельца 21.10.2026, ХРО_2026) — ЕДИНСТВЕННАЯ
+    # проверка purchase_payroll_map (ПРАВИЛО №6, см. импорт выше), один запрос
+    # на весь набор id этого вызова.
+    payroll_map = await purchase_payroll_map(db, all_purchase_ids)
 
     # ── 6-корзинная раскладка (см. widgets в dashboard_charts.py) — статус →
     # {stage: amt} из ЕДИНОГО источника _stage_contributions (Правило №6, тот
     # же, что читает compute_type_split_detail). ──
     for r in purchase_rows:
         shares = purchase_type_shares(items_by_purchase.get(r.id, ()))
+        is_payroll = payroll_map.get(r.id, False)
         sid_bucket = _sid_bucket(r.subsidy_id)
         plan_amt = Decimal(str(r.planned_total_price)) if r.planned_total_price is not None else Decimal(0)
         eff_amt = Decimal(str(r.effective)) if r.effective is not None else Decimal(0)
 
         for stage, amt in _stage_contributions(r.status, plan_amt, eff_amt).items():
-            _add3(global_split[stage], amt, shares)
+            _add4(global_split[stage], amt, is_payroll, shares)
             if sid_bucket is not None:
-                _add3(sid_bucket[stage], amt, shares)
+                _add4(sid_bucket[stage], amt, is_payroll, shares)
 
     # ── «Заключено договоров»: framework_cumulative ──
     for r in fc_rows:
         shares = purchase_type_shares(items_by_purchase.get(r.id, ()))
+        is_payroll = payroll_map.get(r.id, False)
         amt = Decimal(str(r.effective)) if r.effective is not None else Decimal(0)
-        _add3(global_split["contracts"], amt, shares)
+        _add4(global_split["contracts"], amt, is_payroll, shares)
         sid_bucket = _sid_bucket(r.subsidy_id)
         if sid_bucket is not None:
-            _add3(sid_bucket["contracts"], amt, shares)
+            _add4(sid_bucket["contracts"], amt, is_payroll, shares)
 
     # ── «Заключено договоров»: single/framework_with_amount (greatest(лимит,
-    # факт) + топ-ап уже внутри bucket["amount"], см. комментарий выше) ──
+    # факт) + топ-ап уже внутри bucket["amount"], см. комментарий выше).
+    # ФОТ — если ХОТЯ БЫ одна из пулированных закупок договора ФОТ (несколько
+    # закупок на один рамочный договор с разными статьями — редкий случай;
+    # упрощение: вся сумма договора в payroll, не делится дальше). ──
     for (cid, sid), bucket in fwa_buckets.items():
         amt = Decimal(str(bucket["amount"]))
         if amt == 0:
@@ -399,11 +426,12 @@ async def compute_type_split_raw(
         pooled_items: list = []
         for pid in linked_ids:
             pooled_items.extend(items_by_purchase.get(pid, ()))
+        is_payroll = any(payroll_map.get(pid, False) for pid in linked_ids)
         shares = purchase_type_shares(pooled_items)
-        _add3(global_split["contracts"], amt, shares)
+        _add4(global_split["contracts"], amt, is_payroll, shares)
         sid_bucket = _sid_bucket(sid)
         if sid_bucket is not None:
-            _add3(sid_bucket["contracts"], amt, shares)
+            _add4(sid_bucket["contracts"], amt, is_payroll, shares)
 
     # ── «Заключено договоров»: committed-закупки, НЕ покрытые активным
     # Contract известного типа (владелец, 05.10.2026) — добавочное слагаемое,
@@ -427,13 +455,15 @@ async def compute_type_split_raw(
     contractless_rows = (await db.execute(contractless_q)).all()
     if contractless_rows:
         _cl_items = await _items_by_purchase(db, [r.id for r in contractless_rows])
+        _cl_payroll_map = await purchase_payroll_map(db, [r.id for r in contractless_rows])
         for r in contractless_rows:
             shares = purchase_type_shares(_cl_items.get(r.id, ()))
+            is_payroll = _cl_payroll_map.get(r.id, False)
             amt = Decimal(str(r.effective)) if r.effective is not None else Decimal(0)
-            _add3(global_split["contracts"], amt, shares)
+            _add4(global_split["contracts"], amt, is_payroll, shares)
             sid_bucket = _sid_bucket(r.subsidy_id)
             if sid_bucket is not None:
-                _add3(sid_bucket["contracts"], amt, shares)
+                _add4(sid_bucket["contracts"], amt, is_payroll, shares)
 
     return {
         "global": global_split,
@@ -469,7 +499,7 @@ async def compute_type_split_detail(
         raise ValueError(f"unknown stage {stage!r}")
 
     rows: List[dict] = []
-    raw = _zero3()
+    raw = _zero4()
 
     if stage == "contracts":
         # framework_cumulative — тот же контур, что compute_type_split_raw
@@ -512,10 +542,14 @@ async def compute_type_split_detail(
             *[pid for pid, _cid, _psid in linked_purchase_rows],
         })
         items_by_purchase = await _items_by_purchase(db, all_purchase_ids)
+        payroll_map = await purchase_payroll_map(db, all_purchase_ids)
 
         for r in fc_rows:
             amt = Decimal(str(r.effective)) if r.effective is not None else Decimal(0)
-            _emit_item_rows(rows, raw, purchase_id=r.id, amt=amt, items=items_by_purchase.get(r.id, ()))
+            _emit_item_rows(
+                rows, raw, purchase_id=r.id, amt=amt, items=items_by_purchase.get(r.id, ()),
+                is_payroll=payroll_map.get(r.id, False),
+            )
 
         for (cid, sid), bucket in fwa_buckets.items():
             amt = Decimal(str(bucket["amount"]))
@@ -529,8 +563,13 @@ async def compute_type_split_detail(
             # закупкам ЭТОЙ субсидии (может быть больше одной), поэтому
             # purchase_id=None здесь: каждая строка ниже несёт СВОЙ
             # purchase_id (из items), только строка «без позиции» (пустой
-            # пул) остаётся без закупки.
-            _emit_item_rows(rows, raw, purchase_id=None, amt=amt, items=pooled_items, contract_id=cid)
+            # пул) остаётся без закупки. ФОТ — если хотя бы одна из
+            # пулированных закупок ФОТ (см. compute_type_split_raw выше).
+            is_payroll = any(payroll_map.get(pid, False) for pid in linked_ids)
+            _emit_item_rows(
+                rows, raw, purchase_id=None, amt=amt, items=pooled_items, contract_id=cid,
+                is_payroll=is_payroll,
+            )
 
         # ── committed-закупки, НЕ покрытые активным Contract известного типа
         # (владелец, 05.10.2026) — НЕДОСТАЮЩЕЕ слагаемое (ИСПРАВЛЕНО
@@ -555,9 +594,13 @@ async def compute_type_split_detail(
         contractless_rows = (await db.execute(contractless_q)).all()
         if contractless_rows:
             _cl_items = await _items_by_purchase(db, [r.id for r in contractless_rows])
+            _cl_payroll_map = await purchase_payroll_map(db, [r.id for r in contractless_rows])
             for r in contractless_rows:
                 amt = Decimal(str(r.effective)) if r.effective is not None else Decimal(0)
-                _emit_item_rows(rows, raw, purchase_id=r.id, amt=amt, items=_cl_items.get(r.id, ()))
+                _emit_item_rows(
+                    rows, raw, purchase_id=r.id, amt=amt, items=_cl_items.get(r.id, ()),
+                    is_payroll=_cl_payroll_map.get(r.id, False),
+                )
 
         return {"raw": raw, "rows": rows}
 
@@ -577,6 +620,7 @@ async def compute_type_split_detail(
     base_q = apply_filter(base_q)
     purchase_rows = (await db.execute(base_q)).all()
     items_by_purchase = await _items_by_purchase(db, [r.id for r in purchase_rows])
+    payroll_map = await purchase_payroll_map(db, [r.id for r in purchase_rows])
 
     for r in purchase_rows:
         plan_amt = Decimal(str(r.planned_total_price)) if r.planned_total_price is not None else Decimal(0)
@@ -584,6 +628,9 @@ async def compute_type_split_detail(
         amt = _stage_contributions(r.status, plan_amt, eff_amt).get(stage)
         if amt is None:
             continue
-        _emit_item_rows(rows, raw, purchase_id=r.id, amt=amt, items=items_by_purchase.get(r.id, ()))
+        _emit_item_rows(
+            rows, raw, purchase_id=r.id, amt=amt, items=items_by_purchase.get(r.id, ()),
+            is_payroll=payroll_map.get(r.id, False),
+        )
 
     return {"raw": raw, "rows": rows}

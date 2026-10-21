@@ -128,6 +128,16 @@
             variant="outlined" density="compact" hide-details
           />
         </div>
+        <!-- ФОТ и иные выплаты персоналу (задача владельца 21.10.2026,
+             ХРО_2026) — ручной переключатель, подкатегории считаются ФОТ
+             автоматически (наследование по дереву на бэкенде). -->
+        <v-checkbox
+          v-model="feoForm.is_payroll"
+          label="ФОТ и выплаты персоналу"
+          density="compact" hide-details class="mt-2"
+          hint="Подстатьи считаются ФОТ автоматически"
+          persistent-hint
+        />
       </v-card-text>
       <v-card-actions class="px-4 pb-4">
         <v-spacer />
@@ -334,6 +344,21 @@
           </template>
         </div>
         <v-checkbox v-model="feoEditForm.is_active" label="Активна" density="compact" hide-details class="mt-2" />
+        <!-- ФОТ и иные выплаты персоналу (задача владельца 21.10.2026,
+             ХРО_2026) — ручной переключатель; feoEditPayrollInheritedFrom
+             показывает, что статья уже ФОТ по предку (наследование на
+             бэкенде, app.services.feo_payroll.payroll_category_ids), не
+             дублирует проверку. -->
+        <v-checkbox
+          v-model="feoEditForm.is_payroll"
+          label="ФОТ и выплаты персоналу"
+          density="compact" hide-details class="mt-2"
+          hint="Подстатьи считаются ФОТ автоматически"
+          persistent-hint
+        />
+        <div v-if="feoEditPayrollInheritedFrom" class="text-caption text-medium-emphasis mt-1">
+          ФОТ — по статье «{{ feoEditPayrollInheritedFrom }}»
+        </div>
 
         <!-- История изменений (волна 3, 26.09) — тот же FeoItemHistory.vue,
              что и у плановой позиции (PlannedItemEditDialog.vue), только с
@@ -404,8 +429,8 @@ const ctx = useSubsidyDetailCtx()
 
 const savingFeo = ref(false)
 
-const feoForm = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null })
-const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null })
+const feoForm = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null, is_payroll: false })
+const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null, is_payroll: false })
 
 const feoEditTarget = ref<FeoCategory | null>(null)
 
@@ -502,9 +527,31 @@ function openEdit(node: FeoNode) {
     feo_amount: node.feo_amount ?? '',
     planSource: node.plan_source || 'planned_items',
     manual_plan_amount: node.manual_plan_amount ?? null,
+    is_payroll: !!node.is_payroll,
   }
   editOpen.value = true
 }
+
+// ФОТ по предку (задача владельца 21.10.2026, ХРО_2026) — показывает «ФОТ —
+// по статье «…»» под галочкой, когда СВОЁ is_payroll у статьи не стоит, но
+// какой-то предок уже ФОТ (наследование — backend app.services.feo_payroll.
+// payroll_category_ids). Дёшево: обычный обход parent_id по уже загруженному
+// плоскому списку категорий, без похода на сервер.
+const feoEditPayrollInheritedFrom = computed<string | null>(() => {
+  if (!feoEditTarget.value) return null
+  if (feoEditForm.value.is_payroll) return null
+  let parentId = feoEditTarget.value.parent_id ?? null
+  const byId = new Map(ctx.feoCategories.value.map((c: FeoCategory) => [c.id, c]))
+  const seen = new Set<number>()
+  while (parentId != null && !seen.has(parentId)) {
+    seen.add(parentId)
+    const parent = byId.get(parentId)
+    if (!parent) break
+    if (parent.is_payroll) return parent.name
+    parentId = parent.parent_id ?? null
+  }
+  return null
+})
 
 // Правка 2Б (2026-08-11): из диалога редактирования категории — план не задан вовсе →
 // сразу открыть форму «Добавить плановую позицию» на той же категории (переиспользует
@@ -646,10 +693,12 @@ async function addFeoCategory() {
       // уходит введённая сумма, при 'planned_items' поле обнуляется (истина в позициях).
       plan_source: feoForm.value.planSource,
       manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? numOrNull(feoForm.value.manual_plan_amount) : null,
+      // ФОТ и иные выплаты персоналу (задача владельца 21.10.2026, ХРО_2026).
+      is_payroll: feoForm.value.is_payroll,
     }, ctx.selectedSubsidy.value.id, feoForm.value.parentId || null)
     if (!isRevisionMode(ctx.selectedSubsidy.value.id)) ctx.feoCategories.value.push(res)
     addOpen.value = false
-    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '', feo_quantity: null, feo_unit: '', description: '', feo_amount: '', planSource: 'planned_items', manual_plan_amount: null }
+    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '', feo_quantity: null, feo_unit: '', description: '', feo_amount: '', planSource: 'planned_items', manual_plan_amount: null, is_payroll: false }
     showSnack('Направление добавлено')
     if (ctx.selectedId.value) await ctx.loadFeo(ctx.selectedId.value)
     ctx.syncFeoFilled()
@@ -734,6 +783,8 @@ async function updateFeoCategory() {
       // у того же поля в addFeoCategory выше.
       plan_source: feoEditForm.value.planSource,
       manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? numOrNull(feoEditForm.value.manual_plan_amount) : null,
+      // ФОТ и иные выплаты персоналу (задача владельца 21.10.2026, ХРО_2026).
+      is_payroll: feoEditForm.value.is_payroll,
     }
     const putRes = await putCategoryFull(targetId, afterPayload, feoEditTarget.value.subsidy_id)
     if (!putRes.ok) throw new Error(putRes.error)

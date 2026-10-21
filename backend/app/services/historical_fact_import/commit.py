@@ -355,6 +355,18 @@ async def commit_import(
                 if row.get("is_advance"):
                     group_is_advance = True
 
+                # Задача владельца (21.10.2026, ХРО_2026) — строка ФОТ
+                # (row["is_payroll"], решён ТАМ же, где единственный раз
+                # решается ФОТ строки — preview.py, см. docstring выше про
+                # _cat_id/payroll_cat_ids, ПРАВИЛО №6) с оплатой > 0 выходит
+                # сразу «Оплачено»: выплата ЗП исполнена в момент
+                # перечисления, промежуточных стадий (договор/заказано/
+                # поставлено) у неё не бывает. Поднимаем ранг СТРОКИ до
+                # максимального ('paid') перед общей ранжировкой ниже —
+                # второй механизм выбора статуса не завели.
+                if row.get("is_payroll") and _dec(row.get("paid")):
+                    row_status = "paid"
+
                 if row_status and (target_status is None or _RANK.get(row_status, 0) > _RANK.get(target_status, 0)):
                     target_status = row_status
 

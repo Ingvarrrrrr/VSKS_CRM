@@ -508,8 +508,8 @@ async def dashboard_charts(
             # полей выше, второй источник не заводится.
             # «по отметке − по выписке» (план 2026-10-06 п.1; фронт показывает так же).
             "paid_diff": round(_paid_breakdown_map_entry.get("declared", 0.0) - _paid_breakdown_map_entry.get("confirmed", 0.0), 2),
-            "paid_declared_by_kind": _paid_breakdown_map_entry.get("declared_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
-            "paid_confirmed_by_kind": _paid_breakdown_map_entry.get("confirmed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+            "paid_declared_by_kind": _paid_breakdown_map_entry.get("declared_by_kind") or {"goods": 0.0, "services": 0.0, "payroll": 0.0, "unspecified": 0.0},
+            "paid_confirmed_by_kind": _paid_breakdown_map_entry.get("confirmed_by_kind") or {"goods": 0.0, "services": 0.0, "payroll": 0.0, "unspecified": 0.0},
             # «Остаток субсидии» (владелец, 06.10.2026) — budget − оплачено,
             # ДВЕ версии (по отметке/по выписке). Σ paid_marked/paid_confirmed
             # КОРНЕЙ дерева ФЭО — источник subsidy_money_summary (см. докстринг
@@ -626,7 +626,7 @@ async def dashboard_charts(
             # Теперь — Σ остатков ПО ЗАКУПКЕ (delivered_unpaid_residual.py,
             # ПРАВИЛО №6 — одна функция и для карточки, и для drill/Excel).
             "delivered_unpaid_declared_by_kind": (delivered_unpaid_residual_map.get(row.id) or {}).get(
-                "by_kind", {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+                "by_kind", {"goods": 0.0, "services": 0.0, "payroll": 0.0, "unspecified": 0.0},
             ),
             "total_delivered": float(row.w_delivered) + float(row.w_paid),
             # total_delivered_unpaid — единственный потребитель SubsidiesView.vue →
@@ -641,7 +641,7 @@ async def dashboard_charts(
             "paid_over_delivered": (paid_over_delivered_map.get(row.id) or {}).get("total", 0.0),
             "paid_over_delivered_prepayment": (paid_over_delivered_map.get(row.id) or {}).get("prepayment_total", 0.0),
             "paid_over_delivered_by_kind": (paid_over_delivered_map.get(row.id) or {}).get(
-                "by_kind", {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+                "by_kind", {"goods": 0.0, "services": 0.0, "payroll": 0.0, "unspecified": 0.0},
             ),
             # Per-subsidy widget basket (зеркало формул глобального widgets dict)
             "widget": {
@@ -892,11 +892,12 @@ async def dashboard_charts(
                 visible_subsidy_ids=sandbox_ids_in_scope, org_ids=None,
             )
             raw_split["per_subsidy"].update(sandbox_split["per_subsidy"])
-        _zero_raw = [Decimal(0), Decimal(0), Decimal(0)]
+        _zero_raw = [Decimal(0), Decimal(0), Decimal(0), Decimal(0)]
         for stage in STAGE_KEYS:
             reconciled = reconcile_split(raw_split["global"].get(stage, _zero_raw), widgets[stage]["amount"])
             widgets[stage][f"{stage}_goods"] = reconciled["goods"]
             widgets[stage][f"{stage}_services"] = reconciled["services"]
+            widgets[stage][f"{stage}_payroll"] = reconciled["payroll"]
             widgets[stage][f"{stage}_unspecified"] = reconciled["unspecified"]
 
         # «Бюджет (ФЭО)» и «Запланировано» по типу — per-subsidy, через
@@ -921,6 +922,7 @@ async def dashboard_charts(
                 reconciled = reconcile_split(per_sub_raw.get(stage, _zero_raw), row["widget"][stage]["amount"])
                 row["widget"][stage][f"{stage}_goods"] = reconciled["goods"]
                 row["widget"][stage][f"{stage}_services"] = reconciled["services"]
+                row["widget"][stage][f"{stage}_payroll"] = reconciled["payroll"]
                 row["widget"][stage][f"{stage}_unspecified"] = reconciled["unspecified"]
             # delivered_unpaid_declared_by_kind уже заполнен выше (ПРАВИЛО №6,
             # delivered_unpaid_residual_by_subsidy — одна точка расчёта

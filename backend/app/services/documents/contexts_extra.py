@@ -129,9 +129,10 @@ def add_genitive_forms(context: dict, p: Purchase, resolved_responsible: str) ->
 def add_customer_context(context: dict, customer_org, customer_ctr) -> None:
     # ── Phase 23: Заказчик (Customer = Organization владелец субсидии + linked Contractor) ──
     # Правило №6: реквизиты (full_name/inn/kpp/ogrn/address/подписант) — ОДИН
-    # источник через org_requisites() (Contractor, если org.contractor_id задан
-    # и контрагент найден; иначе deprecated-колонки Organization на переходный
-    # период). Раньше здесь был свой inline-коалесинг "org, иначе ctr" — при
+    # источник — карточка контрагента, к которой привязана организация
+    # (org_requisites(); с миграции w6x7y8z9a0b1 16.10.2026 у организации
+    # своих реквизитов нет, запасного источника нет: пусто в карточке
+    # контрагента — пусто в документе). Раньше здесь был свой inline-коалесинг "org, иначе ctr" — при
     # правке контрагента отдельно от org это расходилось с тем, что видно в
     # карточке организации (баг волны Правило №6, 2026-09).
     from app.services.org_requisites import org_requisites

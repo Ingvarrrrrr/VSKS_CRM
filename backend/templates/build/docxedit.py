@@ -251,6 +251,46 @@ def _make_para(text: str, ppr: etree._Element | None = None) -> etree._Element:
     return p
 
 
+def clone_para_with_text(p: etree._Element, text: str) -> etree._Element:
+    """
+    Клонирует абзац p целиком (pPr — включая w:numPr/отступы/w:jc, и rPr
+    первого прямого w:r — шрифт/размер), заменяя видимый текст на text.
+    Используется для вставки новых пунктов договора с тем же оформлением
+    и (если у p есть w:numPr) той же автонумерацией, что у абзаца-образца.
+    Лишние прямые w:r (если у образца их несколько) удаляются — весь новый
+    текст попадает в один run.
+    """
+    import copy
+    new_p = copy.deepcopy(p)
+    runs = new_p.findall(f"{_W}r")
+
+    if not runs:
+        ppr = new_p.find(f"{_W}pPr")
+        rpr = None
+        if ppr is not None:
+            src_rpr = ppr.find(f"{_W}rPr")
+            if src_rpr is not None:
+                rpr = copy.deepcopy(src_rpr)
+        r = etree.SubElement(new_p, f"{_W}r")
+        if rpr is not None:
+            r.append(rpr)
+        t = etree.SubElement(r, f"{_W}t")
+        t.text = text
+        t.set(f"{{{XML}}}space", "preserve")
+        return new_p
+
+    first = runs[0]
+    for extra in runs[1:]:
+        new_p.remove(extra)
+    for child in list(first):
+        if child.tag != f"{_W}rPr":
+            first.remove(child)
+    t = etree.SubElement(first, f"{_W}t")
+    t.text = text
+    t.set(f"{{{XML}}}space", "preserve")
+    return new_p
+
+
 def insert_para_before(p: etree._Element, text: str) -> etree._Element:
     parent = p.getparent()
     idx = list(parent).index(p)

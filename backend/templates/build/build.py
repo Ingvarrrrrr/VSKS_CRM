@@ -34,6 +34,10 @@ from backend.templates.build.rules_payment import (
     apply_services_delivery_rules,
 )
 from backend.templates.build.rules_methodology import apply_methodology_rules
+from backend.templates.build.rules_subsidy_clauses import (
+    apply_subsidy_agreement_clause,
+    apply_subsidy_extra_clauses,
+)
 from backend.templates.build.rules_common import (
     RULES as COMMON_RULES,
     apply_common_rules,
@@ -471,6 +475,15 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
     if doc_type == "contract_repair_framework":
         apply_t4_repair_tables(root, counts)
 
+    # SUB: пункты из карточки субсидии — ссылка на соглашение (конец
+    # раздела «Предмет договора») + два доп. пункта (конец раздела перед
+    # реквизитами сторон). После T4/R-правил — список абзацев пересобираем,
+    # чтобы искать заголовки по актуальному дереву.
+    paragraphs = root.findall(".//w:p", ns)
+    apply_subsidy_agreement_clause(doc_type, paragraphs, counts)
+    paragraphs = root.findall(".//w:p", ns)
+    apply_subsidy_extra_clauses(doc_type, paragraphs, counts)
+
     n_paras = _count_paras(root)
     n_blanks = _count_blanks(root)
 
@@ -496,6 +509,10 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
         "T4_vat_rate_replaced",
         "CS_methodology_cut",
         "CS_vat_rate_change_insert",
+        "SUB_01_agreement_text_clause",
+        "SUB_02_extra_clause_1",
+        "SUB_03_extra_clause_2",
+        "SUB_04_appendix_header_renumbered",
     ]
     hit_rows = []
     zero_rows = []

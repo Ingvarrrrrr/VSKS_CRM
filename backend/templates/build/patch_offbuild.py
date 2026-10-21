@@ -173,6 +173,99 @@ def _make_contract_offbuild_rules():
 CONTRACT_RULES = _make_contract_offbuild_rules()
 
 
+_CONTRACT_AGREEMENT_CLAUSE_RE = re.compile(
+    r"^1\.4\.\s*Договор заключ[её]н в рамках реализации\s*\{\{\s*subsidy_agreement_text\s*\}\}\.?\s*$"
+)
+_CONTRACT_FINAL_HEADING_RE = re.compile(r"АДРЕСА И РЕКВИЗИТЫ СТОРОН", re.I)
+
+
+def _apply_contract_subsidy_clauses(root) -> int:
+    """
+    contract.docx (вне SOURCES): владелец 21.10.2026 — пункт 1.4 «Договор
+    заключён в рамках реализации {{subsidy_agreement_text}}.» уже есть в
+    этом файле (в отличие от 7 собираемых форм, см.
+    rules_subsidy_clauses.py), его только оборачивают в {%p if
+    subsidy_agreement_text %} / {%p endif %} (не дублируют). Плюс — два
+    доп. пункта {{subsidy_extra_clause_1}}/{{subsidy_extra_clause_2}}
+    последними пунктами раздела 6 «СРОК ДЕЙСТВИЯ И ПОРЯДОК РАСТОРЖЕНИЯ
+    ДОГОВОРА» (последний раздел перед «7. АДРЕСА И РЕКВИЗИТЫ СТОРОН» —
+    текстовая нумерация, следующие номера 6.3/6.4).
+
+    Идемпотентно: текст 1.4 не меняется при обёртке, поэтому регэксп сам по
+    себе совпал бы и на уже обёрнутом абзаце — проверяем явно предыдущего
+    соседа (если это уже «{%p if subsidy_agreement_text %}», повторно не
+    оборачиваем). Финальные пункты — по наличию уже вставленного
+    {{subsidy_extra_clause_1}} где-либо в документе, повторный --install
+    их не дублирует.
+    """
+    from backend.templates.build import docxedit
+
+    ns = {"w": W}
+    n = 0
+    paragraphs = root.findall(".//w:p", ns)
+
+    agreement_p = None
+    for p in paragraphs:
+        if _CONTRACT_AGREEMENT_CLAUSE_RE.match(docxedit.para_text(p).strip()):
+            agreement_p = p
+            break
+    if agreement_p is not None:
+        parent = agreement_p.getparent()
+        siblings = list(parent)
+        idx = siblings.index(agreement_p)
+        prev_text = None
+        for i in range(idx - 1, -1, -1):
+            if siblings[i].tag == f"{{{W}}}p":
+                prev_text = docxedit.para_text(siblings[i]).strip()
+                break
+        if prev_text != "{%p if subsidy_agreement_text %}":
+            docxedit.insert_para_before(agreement_p, "{%p if subsidy_agreement_text %}")
+            docxedit.insert_para_after(agreement_p, "{%p endif %}")
+            n += 1
+
+    paragraphs = root.findall(".//w:p", ns)
+    heading_p = None
+    for p in paragraphs:
+        text = docxedit.para_text(p).strip()
+        if len(text) < 60 and _CONTRACT_FINAL_HEADING_RE.search(text):
+            heading_p = p
+            break
+    if heading_p is not None:
+        already = False
+        for p in paragraphs:
+            if "subsidy_extra_clause_1" in docxedit.para_text(p):
+                already = True
+                break
+        if not already:
+            parent = heading_p.getparent()
+            idx = list(parent).index(heading_p)
+            siblings = list(parent)
+            template_p = None
+            for i in range(idx - 1, -1, -1):
+                if siblings[i].tag == f"{{{W}}}p":
+                    template_p = siblings[i]
+                    break
+            if template_p is not None:
+                new_p2 = docxedit.clone_para_with_text(
+                    template_p,
+                    "{% if subsidy_extra_clause_1 %}6.4{% else %}6.3{% endif %}."
+                    " {{subsidy_extra_clause_2}}",
+                )
+                parent.insert(idx, new_p2)
+                docxedit.insert_para_before(new_p2, "{%p if subsidy_extra_clause_2 %}")
+                docxedit.insert_para_after(new_p2, "{%p endif %}")
+
+                new_p1 = docxedit.clone_para_with_text(
+                    template_p, "6.3. {{subsidy_extra_clause_1}}",
+                )
+                parent.insert(idx, new_p1)
+                docxedit.insert_para_before(new_p1, "{%p if subsidy_extra_clause_1 %}")
+                docxedit.insert_para_after(new_p1, "{%p endif %}")
+                n += 1
+
+    return n
+
+
 _RULES_BY_FILE = {
     "service_note.docx": SERVICE_NOTE_RULES,
     "service_note_advance.docx": SERVICE_NOTE_RULES,
@@ -299,6 +392,11 @@ def patch_file(path: pathlib.Path) -> dict[str, int]:
         n_moved = _fix_service_note_delivery_tr_placement(root)
         if n_moved:
             counts["SND_01_tr_rows_moved_into_table"] = n_moved
+
+    if path.name == "contract.docx":
+        n_sub = _apply_contract_subsidy_clauses(root)
+        if n_sub:
+            counts["OFF_08_subsidy_clauses"] = n_sub
 
     for p in root.findall(".//w:p", ns):
         for rule_id, pattern, repl in rules:

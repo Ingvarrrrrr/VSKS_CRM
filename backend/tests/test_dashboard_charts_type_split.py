@@ -180,7 +180,12 @@ class TestDashboardChartsTypeSplit:
         widgets = resp.json()["widgets"]
         for stage in STAGE_KEYS:
             w = widgets[stage]
-            total = w[f"{stage}_goods"] + w[f"{stage}_services"] + w[f"{stage}_unspecified"]
+            # Σ 4 корзин (goods/services/payroll/unspecified) — payroll
+            # добавлен 21.10.2026 (задача владельца, ХРО_2026); раньше сумма
+            # из 3 корзин совпадала с amount только потому, что payroll был
+            # всегда 0 — теперь в БД могут быть реальные закупки на статье
+            # ФОТ, инвариант обязан держаться по всем 4 корзинам.
+            total = w[f"{stage}_goods"] + w[f"{stage}_services"] + w.get(f"{stage}_payroll", 0) + w[f"{stage}_unspecified"]
             assert total == pytest.approx(w["amount"]), stage
 
     async def test_no_flag_means_no_new_keys_and_unchanged_shape(self, client, superadmin_headers, db_session):

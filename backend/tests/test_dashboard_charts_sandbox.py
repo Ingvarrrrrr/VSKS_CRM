@@ -145,7 +145,7 @@ async def test_sandbox_copy_type_split_matches_original_not_all_unspecified(
             ow = orig_row["widget"][stage]
             cw = copy_row["widget"][stage]
             assert cw["amount"] == ow["amount"], stage
-            for kind in ("goods", "services", "unspecified"):
+            for kind in ("goods", "services", "payroll", "unspecified"):
                 key = f"{stage}_{kind}"
                 assert cw[key] == ow[key], f"{stage}/{kind}: копия {cw[key]} != оригинал {ow[key]}"
             # «paid» этапа копии должен иметь реальную разбивку товар/услуга
@@ -159,7 +159,9 @@ async def test_sandbox_copy_type_split_matches_original_not_all_unspecified(
         # Σ(goods+services+unspecified) == amount по-прежнему держится.
         for stage in ("work", "ordered", "paid", "contracts"):
             w = data["widgets"][stage]
-            total = w[f"{stage}_goods"] + w[f"{stage}_services"] + w[f"{stage}_unspecified"]
+            # Σ 4 корзин — payroll добавлен 21.10.2026 (задача владельца,
+            # ХРО_2026), см. тот же комментарий в test_dashboard_charts_type_split.py.
+            total = w[f"{stage}_goods"] + w[f"{stage}_services"] + w.get(f"{stage}_payroll", 0) + w[f"{stage}_unspecified"]
             assert total == pytest.approx(w["amount"]), stage
     finally:
         del_resp = await client.delete(f"/api/subsidies/{copy_id}/sandbox", headers=superadmin_headers)

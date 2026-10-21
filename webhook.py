@@ -8,15 +8,19 @@ VSKS CRM autodeploy webhook.
 - Per-connection socket timeout so a stuck client can't park a worker forever.
 - /healthz endpoint for liveness probes (GET, no auth).
 - Structured logging to stdout (captured by systemd-journald).
-- autodeploy.sh is spawned detached; we never wait for it.
+- autodeploy.sh is spawned detached in its own systemd scope (see do_POST); we
+  never wait for it.
 """
 import hashlib
 import hmac
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import ThreadingMixIn
 
@@ -79,8 +83,30 @@ class Handler(BaseHTTPRequestHandler):
             if ref == "refs/heads/claude":
                 log.info("dispatching deploy for %s", ref)
                 # Detached — never wait. Own stdout so systemd journal doesn't hold pipes open.
+                # Запускаем в отдельном transient scope (не service!), чтобы autodeploy.sh
+                # жил в своей cgroup, а не в cgroup этой службы: иначе параллельный
+                # `systemctl restart vsks-deploy.service` (routine hang prevention в
+                # autodeploy.sh) молча убивает второй запущенный деплой вместе со службой.
+                # scope живёт, пока в нём есть процессы — service так не умеет.
+                unit_name = f"vsks-autodeploy-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+                if shutil.which("systemd-run"):
+                    cmd = [
+                        "systemd-run",
+                        "--scope",
+                        "--quiet",
+                        "--collect",
+                        f"--unit={unit_name}",
+                        "/bin/bash",
+                        DEPLOY_SCRIPT,
+                    ]
+                    log.info("launching deploy via systemd-run scope unit=%s", unit_name)
+                else:
+                    cmd = ["/bin/bash", DEPLOY_SCRIPT]
+                    log.warning(
+                        "systemd-run not found, falling back to plain Popen (no scope isolation)"
+                    )
                 subprocess.Popen(
-                    ["/bin/bash", DEPLOY_SCRIPT],
+                    cmd,
                     stdout=open(LOG_PATH, "a"),
                     stderr=subprocess.STDOUT,
                     start_new_session=True,

@@ -180,7 +180,7 @@ _COMMENT_DOC_TYPES = frozenset({
 def _apply_comments_and_report(doc_type: str, out_path: pathlib.Path) -> None:
     if doc_type not in _COMMENT_DOC_TYPES:
         return
-    n_comments, uncovered = rules_comments.apply_comments_to_file(out_path)
+    n_comments, uncovered = rules_comments.apply_comments_to_file(out_path, doc_type=doc_type)
     print(f"    комментариев Word повешено: {n_comments}")
     for raw in uncovered:
         print(f"    WARN тег без пояснения в comments_ru.py: {raw}")
@@ -512,7 +512,6 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
         "SUB_01_agreement_text_clause",
         "SUB_02_extra_clause_1",
         "SUB_03_extra_clause_2",
-        "SUB_04_appendix_header_renumbered",
     ]
     hit_rows = []
     zero_rows = []

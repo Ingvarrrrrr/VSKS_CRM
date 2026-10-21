@@ -443,10 +443,12 @@ def attach_hints(path: pathlib.Path) -> tuple[int, list[str]]:
     """Вешает Word-комментарии (подсказки) на теги уже зачищенного файла —
     тот же механизм, что build.py использует для 7 форм договора +
     order_purchase (rules_comments.apply_comments_to_file, словарь
-    comments_ru.py)."""
+    comments_ru.py). doc_type = имя файла без .docx — для PER_DOC_VAR_COMMENTS
+    (contract.docx: номера 6.3/6.4 в подсказке — см. comments_ru.py)."""
     from backend.templates.build import rules_comments
 
-    return rules_comments.apply_comments_to_file(path)
+    doc_type = path.stem
+    return rules_comments.apply_comments_to_file(path, doc_type=doc_type)
 
 
 def patch_all(templates_dir: pathlib.Path) -> dict[str, dict]:

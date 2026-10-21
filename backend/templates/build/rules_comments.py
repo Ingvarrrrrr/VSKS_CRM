@@ -28,6 +28,7 @@ from docx import Document
 from backend.templates.build.comments_ru import (
     BLANK_COMMENTS,
     COND_COMMENTS,
+    PER_DOC_VAR_COMMENTS,
     VAR_COMMENTS,
 )
 
@@ -104,13 +105,21 @@ def _all_runs(p) -> list:
     return [Run(r, p) for r in p._p.findall(".//" + qn("w:r"))]
 
 
-def apply_comments(doc: Document) -> tuple[int, list[str]]:
+def apply_comments(doc: Document, doc_type: str | None = None) -> tuple[int, list[str]]:
     """Проходит все абзацы/ячейки документа, вешает комментарии на теги.
+
+    doc_type (опционально) — ключ в PER_DOC_VAR_COMMENTS (comments_ru.py):
+    для переменных, чей осмысленный текст подсказки зависит от конкретного
+    шаблона (разные номера пунктов — например subsidy_extra_clause_1/2,
+    где итоговый номер пункта разный в каждой форме договора), проверяется
+    ПЕРЕД общим VAR_COMMENTS (переопределяет его для этого doc_type, а не
+    дублирует словарь — ПРАВИЛО №6).
 
     Возвращает (число_повешенных_комментариев, список_непокрытых_тегов).
     Документ модифицируется на месте (комментарии добавляются через
     doc.add_comment). Сохранение — забота вызывающего кода.
     """
+    per_doc_vars = PER_DOC_VAR_COMMENTS.get(doc_type, {}) if doc_type else {}
     n_comments = 0
     uncovered: list[str] = []
 
@@ -147,7 +156,9 @@ def apply_comments(doc: Document) -> tuple[int, list[str]]:
             if raw.startswith("{{"):
                 vm = _VAR_NAME_RE.match(raw)
                 name = vm.group(1) if vm else None
-                comment_text = VAR_COMMENTS.get(name) if name else None
+                comment_text = per_doc_vars.get(name) if name else None
+                if comment_text is None:
+                    comment_text = VAR_COMMENTS.get(name) if name else None
                 if comment_text is None:
                     uncovered.append(raw)
                     continue
@@ -195,11 +206,11 @@ def _resave_deterministic(doc: Document, out_path: str | pathlib.Path) -> None:
             zout.writestr(zi, entries[name])
 
 
-def apply_comments_to_file(path: str | pathlib.Path) -> tuple[int, list[str]]:
+def apply_comments_to_file(path: str | pathlib.Path, doc_type: str | None = None) -> tuple[int, list[str]]:
     """Открывает готовый .docx по пути `path`, вешает комментарии, сохраняет
     обратно в тот же файл (детерминированно). Возвращает
     (число_комментариев, список_непокрытых_тегов)."""
     doc = Document(str(path))
-    n_comments, uncovered = apply_comments(doc)
+    n_comments, uncovered = apply_comments(doc, doc_type=doc_type)
     _resave_deterministic(doc, path)
     return n_comments, uncovered

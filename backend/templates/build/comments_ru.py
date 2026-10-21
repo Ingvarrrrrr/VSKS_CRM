@@ -229,3 +229,105 @@ COND_COMMENTS: dict[str, str] = {
     'tr endfor': "Конец повторяющейся строки таблицы",
     'tr for item in items': "Эта строка таблицы повторится для КАЖДОЙ позиции закупки. Удалять её нельзя — иначе позиции не напечатаются",
 }
+
+
+def _extra_clause_hint(which: int, n1: str, n2: str) -> str:
+    """Текст подсказки для subsidy_extra_clause_1/2 в формах с ТЕКСТОВОЙ
+    нумерацией — владелец, 21-22.10.2026 (ревью doc-формата доп. пунктов)."""
+    var = f"subsidy_extra_clause_{which}"
+    return (
+        f"Пункт из карточки субсидии («Дополнительный пункт договора №{which}»). "
+        f"Если в карточке пусто — пункта в договоре нет. Перенести в другой раздел: "
+        f"выделите три строки — {{%p if {var} %}}, сам пункт и {{%p endif %}} — "
+        f"вырежьте и вставьте в КОНЕЦ нужного раздела, затем замените номер «{n1}» "
+        f"на следующий после последнего пункта этого раздела. Для пункта №2 номер "
+        f"записан двумя числами: {{% if subsidy_extra_clause_1 %}}{n2}{{% else %}}{n1}"
+        f"{{% endif %}} — первое число на 2 больше последнего пункта раздела, второе "
+        f"на 1 больше. Строки с {{%p ... %}} не удалять и не разрывать. Вставлять "
+        f"лучше в конец раздела: если вставить в середину, номера следующих пунктов "
+        f"придётся сдвигать вручную, и они останутся сдвинутыми, даже когда поле "
+        f"в карточке пустое."
+    )
+
+
+def _extra_clause_hint_auto(which: int) -> str:
+    """Текст подсказки для subsidy_extra_clause_1/2 в формах с автонумерацией
+    Word (ГПХ, w:numPr) — номер проставляется сам, менять вручную не нужно."""
+    var = f"subsidy_extra_clause_{which}"
+    return (
+        f"Пункт из карточки субсидии («Дополнительный пункт договора №{which}»). "
+        f"Если в карточке пусто — пункта в договоре нет. Нумерация в этом шаблоне "
+        f"автоматическая (список Word) — при переносе в другой раздел выделите три "
+        f"строки — {{%p if {var} %}}, сам пункт и {{%p endif %}} — и вставьте их туда "
+        f"одним блоком, в конец нужного раздела. Номер проставится сам, вручную "
+        f"менять не нужно. Строки с {{%p ... %}} не удалять и не разрывать."
+    )
+
+
+def _agreement_hint(number: str | None) -> str:
+    """Текст подсказки для subsidy_agreement_text в формах, где это
+    ОТДЕЛЬНЫЙ пункт раздела «Предмет договора» (не внутри другого пункта)."""
+    where = f"({number}.)" if number else "(автонумерация Word)"
+    return (
+        f"Текст соглашения о предоставлении субсидии — из карточки субсидии "
+        f"(поле «Текст соглашения»). Печатается последним пунктом раздела "
+        f"«Предмет договора» {where}. Если поле пустое — пункт не печатается "
+        f"совсем (абзац, включая номер, в документе отсутствует)."
+    )
+
+
+_AGREEMENT_HINT_DEDUP_SERVICES = (
+    "Текст соглашения о предоставлении субсидии — из карточки субсидии "
+    "(поле «Текст соглашения»). Печатается ВНУТРИ существующего пункта 1.3 "
+    "(не отдельным пунктом): если поле заполнено — пункт 1.3 печатает "
+    "короткую форму с этой переменной; если поле пустое — пункт 1.3 "
+    "печатается в прежней формулировке (через {{ customer_short_name }} и "
+    "номер/дату соглашения из карточки субсидии)."
+)
+
+# Переопределения VAR_COMMENTS по doc_type (ключ — имя файла без .docx) —
+# нужны там, где осмысленный текст подсказки зависит от конкретного
+# шаблона (итоговый номер пункта разный в каждой форме договора). См.
+# rules_comments.apply_comments()/apply_comments_to_file(doc_type=...).
+PER_DOC_VAR_COMMENTS: dict[str, dict[str, str]] = {
+    "contract_goods_single": {
+        "subsidy_agreement_text": _agreement_hint("1.5"),
+        "subsidy_extra_clause_1": _extra_clause_hint(1, "4.8", "4.9"),
+        "subsidy_extra_clause_2": _extra_clause_hint(2, "4.8", "4.9"),
+    },
+    "contract_services": {
+        "subsidy_agreement_text": _AGREEMENT_HINT_DEDUP_SERVICES,
+        "subsidy_extra_clause_1": _extra_clause_hint(1, "4.7", "4.8"),
+        "subsidy_extra_clause_2": _extra_clause_hint(2, "4.7", "4.8"),
+    },
+    "contract_services_food": {
+        "subsidy_agreement_text": _AGREEMENT_HINT_DEDUP_SERVICES,
+        "subsidy_extra_clause_1": _extra_clause_hint(1, "4.7", "4.8"),
+        "subsidy_extra_clause_2": _extra_clause_hint(2, "4.7", "4.8"),
+    },
+    "contract_repair_framework": {
+        "subsidy_agreement_text": _agreement_hint("1.4"),
+        "subsidy_extra_clause_1": _extra_clause_hint(1, "4.10", "4.11"),
+        "subsidy_extra_clause_2": _extra_clause_hint(2, "4.10", "4.11"),
+    },
+    "contract_repair_vehicle": {
+        "subsidy_agreement_text": _agreement_hint("1.4"),
+        "subsidy_extra_clause_1": _extra_clause_hint(1, "4.10", "4.11"),
+        "subsidy_extra_clause_2": _extra_clause_hint(2, "4.10", "4.11"),
+    },
+    "contract_gph_individual": {
+        "subsidy_agreement_text": _agreement_hint(None),
+        "subsidy_extra_clause_1": _extra_clause_hint_auto(1),
+        "subsidy_extra_clause_2": _extra_clause_hint_auto(2),
+    },
+    "contract_gph_individual_rid": {
+        "subsidy_agreement_text": _agreement_hint(None),
+        "subsidy_extra_clause_1": _extra_clause_hint_auto(1),
+        "subsidy_extra_clause_2": _extra_clause_hint_auto(2),
+    },
+    "contract": {
+        "subsidy_agreement_text": _agreement_hint("1.4"),
+        "subsidy_extra_clause_1": _extra_clause_hint(1, "6.3", "6.4"),
+        "subsidy_extra_clause_2": _extra_clause_hint(2, "6.3", "6.4"),
+    },
+}

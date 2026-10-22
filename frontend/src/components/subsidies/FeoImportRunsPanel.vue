@@ -82,9 +82,9 @@
                     <template v-else-if="ch.is_deleted"> — удалена</template>
                     <template v-else>
                       — {{ fieldLabel(ch.field_name) }}:
-                      <span class="text-error text-decoration-line-through">{{ ch.old_value ?? '—' }}</span>
+                      <span class="text-error text-decoration-line-through">{{ fieldValue(ch.field_name, ch.old_value) }}</span>
                       <v-icon icon="mdi-arrow-right" size="10" class="mx-1" />
-                      <span class="text-success">{{ ch.new_value ?? '—' }}</span>
+                      <span class="text-success">{{ fieldValue(ch.field_name, ch.new_value) }}</span>
                     </template>
                   </div>
                 </div>
@@ -123,6 +123,7 @@
 import { ref, watch, onMounted } from 'vue'
 import { apiFetch } from '@/api'
 import { feoHistoryFieldLabel } from '@/constants/feoHistoryFieldLabels'
+import { formatFeoHistoryValue } from '@/constants/feoHistoryValueFormat'
 import { ADMIN_ROLES } from '@/constants/roles'
 
 const props = defineProps<{ subsidyId: number | null | undefined; panelOpen: boolean }>()
@@ -172,6 +173,10 @@ const changesError = ref<Map<number, string>>(new Map())
 
 function fieldLabel(f: string): string {
   return feoHistoryFieldLabel(f)
+}
+
+function fieldValue(f: string, raw: string | null): string {
+  return formatFeoHistoryValue(f, raw)
 }
 
 function formatDate(s: string | null): string {

@@ -21,7 +21,7 @@ from app.models.feo_category import FeoCategory
 from app.services.feo_import_common import (
     QUANT, ZERO, build_level_name_index, find_or_create_category, find_uniformly_empty_levels, format_rows,
     get_cell, level_label, normalize_need_level_cell, resolve_origin_flags, resolve_target_subsidy_id,
-    row_feo_money, row_is_position, row_plan_money, to_bool, to_dec,
+    row_feo_money, row_is_position, row_plan_money, to_bool, to_dec, to_dec_money,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
@@ -814,7 +814,7 @@ async def apply_rows(state) -> None:
                     # незаданное количество подставлялось единицей.
                     _orphan_qty = to_dec(get_cell(row, c_qty))
                     _orphan_unit = get_cell(row, c_unit)
-                    _orphan_price = to_dec(get_cell(row, c_item_price))
+                    _orphan_price = to_dec_money(get_cell(row, c_item_price))
                     warnings.append({
                         "kind": "item_attached_to_previous_node",
                         "row": row_num,
@@ -955,7 +955,7 @@ async def apply_rows(state) -> None:
                     code_amount_matches.append((row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, _code_dec))
                     code = None
         appendix  = get_cell(row, c_appendix)
-        budget    = to_dec(get_cell(row, c_budget))
+        budget    = to_dec_money(get_cell(row, c_budget))
         is_active = to_bool(get_cell(row, c_active))
 
         # Раздельные комплекты чисел позиции (Ур.5) — ПЛАН и ФЭО (боевой
@@ -974,8 +974,8 @@ async def apply_rows(state) -> None:
         item_plan_unit   = _check_unit_shift(
             item_plan_unit, row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, f"Ед. изм. ({level_label(6)})"
         )
-        item_plan_amount = to_dec(get_cell(row, c_item_amt))
-        item_plan_price  = to_dec(get_cell(row, c_item_price)) if c_item_price is not None else None
+        item_plan_amount = to_dec_money(get_cell(row, c_item_amt))
+        item_plan_price  = to_dec_money(get_cell(row, c_item_price)) if c_item_price is not None else None
         item_feo_qty = item_feo_unit = item_feo_price = item_feo_amount = None
 
         raw_item_type = get_cell(row, c_item_type) if c_item_type is not None else None
@@ -1002,36 +1002,36 @@ async def apply_rows(state) -> None:
                 "name": lvl2_name,
                 "feo_qty":  to_dec(get_cell(row, c_feo_qty_lvl2))  if c_feo_qty_lvl2  is not None else None,
                 "feo_unit": get_cell(row, c_feo_unit_lvl2) if c_feo_unit_lvl2 is not None else get_cell(row, c_unit_lvl2),
-                "feo_amt":  to_dec(get_cell(row, c_feo_amt_lvl2))  if c_feo_amt_lvl2  is not None else None,
-                "feo_sum":  to_dec(get_cell(row, c_feo_sum_lvl2))  if c_feo_sum_lvl2  is not None else None,
+                "feo_amt":  to_dec_money(get_cell(row, c_feo_amt_lvl2))  if c_feo_amt_lvl2  is not None else None,
+                "feo_sum":  to_dec_money(get_cell(row, c_feo_sum_lvl2))  if c_feo_sum_lvl2  is not None else None,
                 "plan_qty": to_dec(get_cell(row, c_qty_lvl2))      if c_qty_lvl2      is not None else None,
                 "plan_unit":get_cell(row, c_unit_lvl2)             if c_unit_lvl2     is not None else None,
-                "plan_amt": to_dec(get_cell(row, c_amt_lvl2))      if c_amt_lvl2      is not None else None,
-                "plan_sum": to_dec(get_cell(row, c_plan_sum_lvl2)) if c_plan_sum_lvl2 is not None else None,
+                "plan_amt": to_dec_money(get_cell(row, c_amt_lvl2))      if c_amt_lvl2      is not None else None,
+                "plan_sum": to_dec_money(get_cell(row, c_plan_sum_lvl2)) if c_plan_sum_lvl2 is not None else None,
             },
             {
                 "level_src": 3,
                 "name": lvl3_name,
                 "feo_qty":  to_dec(get_cell(row, c_feo_qty_lvl3))  if c_feo_qty_lvl3  is not None else None,
                 "feo_unit": get_cell(row, c_feo_unit_lvl3) if c_feo_unit_lvl3 is not None else get_cell(row, c_unit_lvl3),
-                "feo_amt":  to_dec(get_cell(row, c_feo_amt_lvl3))  if c_feo_amt_lvl3  is not None else None,
-                "feo_sum":  to_dec(get_cell(row, c_feo_sum_lvl3))  if c_feo_sum_lvl3  is not None else None,
+                "feo_amt":  to_dec_money(get_cell(row, c_feo_amt_lvl3))  if c_feo_amt_lvl3  is not None else None,
+                "feo_sum":  to_dec_money(get_cell(row, c_feo_sum_lvl3))  if c_feo_sum_lvl3  is not None else None,
                 "plan_qty": to_dec(get_cell(row, c_qty_lvl3))      if c_qty_lvl3      is not None else None,
                 "plan_unit":get_cell(row, c_unit_lvl3)             if c_unit_lvl3     is not None else None,
-                "plan_amt": to_dec(get_cell(row, c_amt_lvl3))      if c_amt_lvl3      is not None else None,
-                "plan_sum": to_dec(get_cell(row, c_plan_sum_lvl3)) if c_plan_sum_lvl3 is not None else None,
+                "plan_amt": to_dec_money(get_cell(row, c_amt_lvl3))      if c_amt_lvl3      is not None else None,
+                "plan_sum": to_dec_money(get_cell(row, c_plan_sum_lvl3)) if c_plan_sum_lvl3 is not None else None,
             },
             {
                 "level_src": 4,
                 "name": lvl4_name,
                 "feo_qty":  to_dec(get_cell(row, c_feo_qty_lvl4))  if c_feo_qty_lvl4  is not None else None,
                 "feo_unit": get_cell(row, c_feo_unit_lvl4) if c_feo_unit_lvl4 is not None else get_cell(row, c_unit_lvl4),
-                "feo_amt":  to_dec(get_cell(row, c_feo_amt_lvl4))  if c_feo_amt_lvl4  is not None else None,
-                "feo_sum":  to_dec(get_cell(row, c_feo_sum_lvl4))  if c_feo_sum_lvl4  is not None else None,
+                "feo_amt":  to_dec_money(get_cell(row, c_feo_amt_lvl4))  if c_feo_amt_lvl4  is not None else None,
+                "feo_sum":  to_dec_money(get_cell(row, c_feo_sum_lvl4))  if c_feo_sum_lvl4  is not None else None,
                 "plan_qty": to_dec(get_cell(row, c_qty_lvl4))      if c_qty_lvl4      is not None else None,
                 "plan_unit":get_cell(row, c_unit_lvl4)             if c_unit_lvl4     is not None else None,
-                "plan_amt": to_dec(get_cell(row, c_amt_lvl4))      if c_amt_lvl4      is not None else None,
-                "plan_sum": to_dec(get_cell(row, c_plan_sum_lvl4)) if c_plan_sum_lvl4 is not None else None,
+                "plan_amt": to_dec_money(get_cell(row, c_amt_lvl4))      if c_amt_lvl4      is not None else None,
+                "plan_sum": to_dec_money(get_cell(row, c_plan_sum_lvl4)) if c_plan_sum_lvl4 is not None else None,
             },
             # 🟡 Правка 16.10.2026 (задача 1): 4-й настраиваемый уровень
             # категории (c_lvl4b) — у него пока нет СВОИХ per-level колонок
@@ -1066,12 +1066,12 @@ async def apply_rows(state) -> None:
         # (с явными per-level колонками) ведут себя ровно как раньше.
         _row_feo_qty   = to_dec(get_cell(row, c_row_feo_qty))   if c_row_feo_qty   is not None else None
         _row_feo_unit  = get_cell(row, c_row_feo_unit)          if c_row_feo_unit  is not None else None
-        _row_feo_price = to_dec(get_cell(row, c_row_feo_price)) if c_row_feo_price is not None else None
-        _row_feo_sum   = to_dec(get_cell(row, c_row_feo_sum))   if c_row_feo_sum   is not None else None
+        _row_feo_price = to_dec_money(get_cell(row, c_row_feo_price)) if c_row_feo_price is not None else None
+        _row_feo_sum   = to_dec_money(get_cell(row, c_row_feo_sum))   if c_row_feo_sum   is not None else None
         _row_plan_qty   = to_dec(get_cell(row, c_row_plan_qty))   if c_row_plan_qty   is not None else None
         _row_plan_unit  = get_cell(row, c_row_plan_unit)          if c_row_plan_unit  is not None else None
-        _row_plan_price = to_dec(get_cell(row, c_row_plan_price)) if c_row_plan_price is not None else None
-        _row_plan_sum   = to_dec(get_cell(row, c_row_plan_sum))   if c_row_plan_sum   is not None else None
+        _row_plan_price = to_dec_money(get_cell(row, c_row_plan_price)) if c_row_plan_price is not None else None
+        _row_plan_sum   = to_dec_money(get_cell(row, c_row_plan_sum))   if c_row_plan_sum   is not None else None
 
         # Происхождение позиции этой строки (Правило №6, единственный источник —
         # resolve_origin_flags в feo_import_common.py): считаем ОДИН раз на

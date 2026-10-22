@@ -190,7 +190,9 @@
         />
       </div>
       <div v-else-if="ctx.isAutoNode(node)" class="feo-amount-cell text-right" :class="{ 'feo-amount-cell--readonly': !ctx.canEditFeo.value }" @click="ctx.canEditFeo.value && ctx.startInlineBudget(node)"
-        :title="ctx.canEditFeo.value ? 'Расчёт: ручное ФЭО дочерних; без ФЭО — факт (поставлено/оплачено), иначе план. Кликните, чтобы задать вручную' : 'Расчёт: ручное ФЭО дочерних; без ФЭО — факт (поставлено/оплачено), иначе план'"
+        :title="(node.hasChildren
+          ? 'Расчёт: ручное ФЭО дочерних; без ФЭО — факт (поставлено/оплачено), иначе план.'
+          : 'Расчёт: без своего ФЭО — факт (поставлено/оплачено), иначе план.') + (ctx.canEditFeo.value ? ' Кликните, чтобы задать вручную' : '')"
       >
         <template v-if="ctx.feoEffectiveFor(node) > 0">
           <span class="feo-amount text-medium-emphasis">{{ formatCurrency(ctx.feoEffectiveFor(node)) }}</span>
@@ -311,8 +313,22 @@
 
     <!-- Плановая сумма: ручной план ФЭО и/или позиции заявок (по переключателю) -->
     <td class="feo-td feo-td-num" style="vertical-align:top">
+      <!-- ИСПРАВЛЕНИЕ (задача владельца 22.10.2026, ДНР_2026 id 105): раньше
+           красным становилось ЛЮБОЕ «Запланировано», где feoPlannedDisplayFor
+           превышает feoDisplayedFor — а у узла БЕЗ своего ФЭО feoDisplayedFor
+           это РАСЧЁТНАЯ оценка (feoEffectiveFor), не настоящий лимит, и такое
+           «превышение» не считается превышением ни сервером, ни feoFinDiff
+           (она же гасит объяснение «надо убрать X» для такого узла — красное
+           число оставалось БЕЗ строки-пояснения). Теперь красный — ТОЛЬКО при
+           настоящем превышении: feoFinDiff(node) уже < 0 РОВНО когда у узла
+           задано своё ФЭО (feoBudgetIsSet) и план больше него (см. её
+           докстринг в useFeoTreeAmounts.ts), ИЛИ сервер считает узел
+           превысившим (feoIsOverBudget — excess_over_feo/excess_amount),
+           ИЛИ превышает подкатегория с ФЭО (feoHasOverspentDescendant — у неё
+           уже есть своя строка-пояснение ниже). Второй формулы не вводим —
+           три готовые функции, один OR. -->
       <span v-if="ctx.feoPlannedDisplayFor(node) > 0" class="feo-amount"
-        :style="(ctx.feoDisplayedFor(node) > 0 && ctx.feoPlannedDisplayFor(node) > ctx.feoDisplayedFor(node)) || ctx.feoHasOverspentDescendant(node) ? 'color:#EF4444;font-weight:700' : ''"
+        :style="ctx.feoFinDiff(node) < -0.005 || ctx.feoIsOverBudget(node) || ctx.feoHasOverspentDescendant(node) ? 'color:#EF4444;font-weight:700' : ''"
         :title="ctx.plannedSumBase.value === 'all' ? `Ручные ${formatCurrency(ctx.feoPlannedTotalFor(node))} + из заявок ${formatCurrency(ctx.feoPlannedRequestsFor(node))}` : ''"
       >{{ formatCurrency(ctx.feoPlannedDisplayFor(node)) }}</span>
       <span v-else class="feo-amount-empty">—</span>
@@ -356,10 +372,16 @@
       >
         в т.ч. на самом направлении {{ formatCurrency(ctx.feoOwnDirectionPlanFor(node)) }}
       </div>
+      <!-- Клик (только когда реально красным — есть чем объяснить и куда
+           раскрыть, задача владельца 22.10.2026) ведёт к ПОЗИЦИИ-виновнику
+           через jumpToExcessCulprit — тот же приём, что и ниже у
+           feoHasOverspentDescendant, второй механизм не заводим. -->
       <div v-if="ctx.feoDisplayedFor(node) > 0 && (node.budget != null || ctx.feoPlannedDisplayFor(node) > 0) && Math.abs(ctx.feoFinDiff(node)) > 0.005"
         class="feo-plan-note"
-        :style="ctx.feoFinDiff(node) > 0 ? 'color:#16A34A' : 'color:#EF4444'"
+        :class="{ 'feo-plan-note--link': ctx.feoFinDiff(node) < 0 }"
+        :style="(ctx.feoFinDiff(node) > 0 ? 'color:#16A34A' : 'color:#EF4444;cursor:pointer')"
         :title="`Финансирование по ФЭО (бюджет, заложенный в документе ФЭО): ${formatCurrency(ctx.feoDisplayedFor(node))}. Плановая сумма (сколько уже расписано по плану/заявкам): ${formatCurrency(ctx.feoPlannedDisplayFor(node))}`"
+        @click="ctx.feoFinDiff(node) < 0 && jumpToExcessCulprit(node)"
       >
         {{ ctx.feoFinDiff(node) > 0 ? `по плану можно добавить ещё ${formatCurrency(ctx.feoFinDiff(node))} до финансирования ФЭО (это остаток по плану, не по факту закупок)` : `надо убрать ${formatCurrency(-ctx.feoFinDiff(node))}, чтобы уложиться в ФЭО` }}
         <div v-if="ctx.feoRemainingWithPurchasesNote(node)"
@@ -496,8 +518,12 @@
           @click.stop="subsidyId != null && funding.openFundingSources({ subsidyId, categoryId: node.id, amount: ctx.excessFor(node)!.amount })"
         >Где взять деньги</v-btn>
       </div>
-      <!-- «Заметный сигнал превышения» — виновная закупка, из-за которой всё превысило. -->
-      <div v-if="ctx.excessCulpritFor(node)" class="feo-excess-culprit">
+      <!-- «Заметный сигнал превышения» — виновная закупка/позиция, из-за которой
+           всё превысило. Клик по тексту (не по кнопке «Открыть закупку» —
+           там @click.stop) — раскрывает дерево до строки-виновника, та же
+           jumpToExcessCulprit, что и у «надо убрать X» выше (второй механизм
+           не заводим). -->
+      <div v-if="ctx.excessCulpritFor(node)" class="feo-excess-culprit" style="cursor:pointer" @click="jumpToExcessCulprit(node)">
         <v-icon size="16" icon="mdi-alert-decagram" class="mr-1" />
         {{ ctx.excessCulpritText(node) }}
         <v-btn v-if="ctx.excessCulpritFor(node)!.purchase_id" size="x-small" variant="flat" color="red"
@@ -1007,6 +1033,34 @@ const excessDrilldown = useExcessDrilldown()
 const feoTreeAmounts2 = useFeoTreeAmounts()
 const feoRowContractTotals = useFeoRowContractTotals()
 const feoRowDrill = useFeoRowDrill()
+
+// Клик по строке-пояснению превышения («надо убрать X…»/чип виновника,
+// владелец 22.10.2026) — раскрыть дерево до ПОЗИЦИИ-виновника, а не только до
+// категории. Переиспользует ДВА уже существующих механизма (второй не
+// заводим): ctx.goToFeoSearchResult (тот же приём, что у поиска по субсидии,
+// FeoTreeToolbar.vue — раскрывает предков, открывает панель «Плановые
+// позиции» владельца, скроллит и подсвечивает строку по data-feo-planned-item-id)
+// для culprits с planned_item_id; иначе — старый excessDrilldown('total') —
+// раскрытие/скролл до категории целиком (как и раньше у feoHasOverspentDescendant).
+function jumpToExcessCulprit(target: FeoNode) {
+  const info = feoTreeExcess.excessCulpritFor(target)
+  const list = info?.culprits && info.culprits.length
+    ? info.culprits
+    : (info ? [{ planned_item_id: null, category_id: target.id, purchase_id: info.purchase_id, purchase_number: info.purchase_number, purchase_item_id: null, item_name: info.item_name, amount: info.amount_at_crossing }] : [])
+  const withItem = list.find(c => c.planned_item_id != null)
+  if (withItem && withItem.planned_item_id != null) {
+    ctx.goToFeoSearchResult({
+      key: `p-${withItem.planned_item_id}`,
+      kind: 'planned_item',
+      id: withItem.planned_item_id,
+      name: withItem.item_name || '',
+      path: '',
+      categoryId: withItem.category_id ?? target.id,
+    })
+    return
+  }
+  excessDrilldown.activate('total', { direction: 'over' })
+}
 
 // Клик по любой сумме столбика «В закупках/законтрактовано/заказано/резерв/не
 // распределено» — открывает FeoRowDrillDialog.vue (singleton, см. её

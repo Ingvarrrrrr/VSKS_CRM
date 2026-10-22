@@ -83,6 +83,34 @@ def to_dec(v: str | None):
         return None
 
 
+def to_dec_money(v: str | None):
+    """`to_dec`, но для ДЕНЕЖНЫХ ячеек импорта ФЭО (суммы/цены — Правило №6,
+    один источник чтения денег: budget, item_plan_amount/price, per-level
+    feo_amt/feo_sum/plan_amt/plan_sum, построчные feo/plan price/sum,
+    see feo_import_apply.py) — КОЛИЧЕСТВО этой функцией не читается (qty
+    остаётся на `to_dec`, см. ниже).
+
+    Повод (прод, 22.10.2026, субсидия ДНР_2026 id 105): ячейка «Сумма» листа
+    хранит результат формулы Excel кол-во×цена — `50*34.2` даёт не 1710, а
+    1710.0000000000002 (двоичная арифметика float), `3*45452.63` — не
+    136357.89, а 136357.88999999998. Колонка numeric(15,2) в БД такое число
+    всё равно хранит как 1710.00 — но `_upsert_one` (feo_import_duplicates.py)
+    сравнивает СЫРОЕ `Decimal('1710.0000000000002')` из файла с уже
+    округлённым `Decimal('1710.00')` из БД, видит неравенство и на КАЖДОМ
+    повторном импорте того же файла пишет «обновлено» и лишнюю запись в
+    историю, хотя по смыслу сумма не менялась.
+
+    Округление до копейки — ЗДЕСЬ, в точке чтения ячейки, а не в месте
+    сравнения: тогда и сравнение в `_upsert_one`, и запись в БД, и любой
+    другой код, читающий эти поля дальше по циклу (budget-конфликты,
+    collected_plan, предупреждения mismatch), видят одно и то же уже верное
+    число — второго места округления не завели (Правило №6)."""
+    v = to_dec(v)
+    if v is None:
+        return None
+    return v.quantize(QUANT)
+
+
 def fmt(v) -> str:
     """Число для читаемых предупреждений: разряды — пробелом, дробная часть —
     запятой (владелец, 10.10.2026: «10 954,41», не «10 954.41» — русский
@@ -252,7 +280,7 @@ def row_feo_money(
     for col in (c_row_feo_sum, c_feo_sum_lvl2, c_feo_sum_lvl3, c_feo_sum_lvl4, c_budget):
         if col is None:
             continue
-        v = to_dec(get_cell(row, col))
+        v = to_dec_money(get_cell(row, col))
         if v:
             return v
     return None
@@ -278,7 +306,7 @@ def row_plan_money(
     for col in (c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4):
         if col is None:
             continue
-        v = to_dec(get_cell(row, col))
+        v = to_dec_money(get_cell(row, col))
         if v:
             return v
     return None

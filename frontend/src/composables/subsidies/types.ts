@@ -370,6 +370,11 @@ export interface FeoPlannedItem {
   // позиция заведена в GALA вручную либо подписи сняты кнопкой «Убрать
   // номера строк файла».
   source_row?: number | null
+  // Значок дубля строки листа (бэкенд, задача владельца 22.10.2026) — непусто,
+  // когда ЭТА ЖЕ строка файла (source_row) заведена ещё и в другой категории
+  // ФЭО. Поле может пока отсутствовать на бэкенде (раздельная выкладка фронта/
+  // бэкенда) — undefined читается как «нет дублей», чип не рисуется.
+  source_duplicates?: { item_id: number; category_id: number; category_name: string }[]
 }
 
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
@@ -511,6 +516,24 @@ export interface ExcessCulprit {
   // (backend/app/services/feo_plan_excess.py) — оттуда и приходят эти поля.
   total_plan_amount: number
   total_excess: number
+  // Задача владельца 22.10.2026, дословно: «должно подсвечивать красным
+  // последнее добавленное, из-за чего произошёл переход через лимит плана
+  // или ФЭО» — пример: чайник и термопот, добавленные в «Бытовую технику».
+  // Поля выше (purchase_id/item_name/amount_before/...) называют ТОЛЬКО
+  // первую пересекшую границу позицию — culprits ниже отдаёт ВСЮ цепочку
+  // (от пересекающей ВКЛЮЧИТЕЛЬНО и до конца, в порядке добавления), чтобы
+  // подсветить КАЖДУЮ строку, а не только одну. Может отсутствовать на
+  // старом бэкенде (undefined) — фронт в этом случае ведёт себя как раньше
+  // (один виновник через purchase_id/item_name).
+  culprits?: {
+    planned_item_id: number | null
+    purchase_id: number | null
+    purchase_number: string | number | null
+    purchase_item_id: number | null
+    category_id: number | null
+    item_name: string | null
+    amount: number
+  }[]
 }
 export interface ExcessPlanItemPurchase {
   id: number

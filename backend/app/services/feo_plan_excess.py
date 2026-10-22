@@ -356,6 +356,7 @@ async def find_excess_culprit(
             _floor_name = cat_row_floor.name if cat_row_floor else f"#{nid}"
             contributors.append({
                 "amount": Decimal(str(_floor_added)), "purchase_id": None, "purchase_number": None,
+                "purchase_item_id": None, "planned_item_id": None, "category_id": nid,
                 "item_name": (
                     f"пол «договор входит в план»: законтрактовано без/сверх плановой "
                     f"позиции по категории «{_floor_name}»"
@@ -375,6 +376,7 @@ async def find_excess_culprit(
             cat_row = await db.get(FeoCategory, nid)
             contributors.append({
                 "amount": Decimal(str(contribution)), "purchase_id": None, "purchase_number": None,
+                "purchase_item_id": None, "planned_item_id": None, "category_id": nid,
                 "item_name": f"плановое значение категории «{cat_row.name if cat_row else nid}»",
                 "created_at": None, "sort_key": (0, nid),
             })
@@ -390,25 +392,33 @@ async def find_excess_culprit(
         # excess_culprit_order (plan_changed_at_sort_key — тот же ключ, что
         # и у app.services.feo_card_drill._excess_culprit_items).
         fpi_rows = (await db.execute(
-            select(FeoPlannedItem.id, FeoPlannedItem.name, FeoPlannedItem.amount, FeoPlannedItem.plan_changed_at)
+            select(
+                FeoPlannedItem.id, FeoPlannedItem.name, FeoPlannedItem.amount, FeoPlannedItem.plan_changed_at,
+                FeoPlannedItem.feo_category_id,
+            )
             .where(FeoPlannedItem.feo_category_id.in_(itemized_node_ids))
             .where(FeoPlannedItem.is_active.is_(True))
             .order_by(FeoPlannedItem.plan_changed_at.asc(), FeoPlannedItem.id.asc())
         )).all()
         fpi_ids = [r.id for r in fpi_rows]
+        # purchase_item_id добавлен (задача владельца 22.10.2026, «подсветить
+        # красным САМУ СТРОКУ плановой позиции/закупки») — фронту нужен не
+        # только id закупки, но и id конкретной строки закупки, чтобы найти
+        # точную строку в FeoLevel5Panel.vue (та же строка, что рисует
+        # isExcessCulpritActual по purchase_item_id).
         linked_purchase_by_fpi: dict[int, tuple] = {}
         if fpi_ids:
             link_rows = (await db.execute(
-                select(PurchaseItem.feo_planned_item_id, Purchase.id, Purchase.purchase_number)
+                select(PurchaseItem.feo_planned_item_id, Purchase.id, Purchase.purchase_number, PurchaseItem.id)
                 .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
                 .where(PurchaseItem.feo_planned_item_id.in_(fpi_ids))
                 .order_by(PurchaseItem.feo_planned_item_id, Purchase.id.asc())
             )).all()
-            for _fpi_id, _pur_id, _pur_num in link_rows:
+            for _fpi_id, _pur_id, _pur_num, _pur_item_id in link_rows:
                 if _fpi_id not in linked_purchase_by_fpi:
-                    linked_purchase_by_fpi[_fpi_id] = (_pur_id, _pur_num)
+                    linked_purchase_by_fpi[_fpi_id] = (_pur_id, _pur_num, _pur_item_id)
         for i, r in enumerate(fpi_rows):
-            pur_id, pur_num = linked_purchase_by_fpi.get(r.id, (None, None))
+            pur_id, pur_num, pur_item_id = linked_purchase_by_fpi.get(r.id, (None, None, None))
             # Шаг 2 плана (02.10.2026): сумма позиции — её КОНТРИБЬЮЦИЯ с учётом
             # замещения savings (per_item_contribution, ТА ЖЕ точка, что и у
             # compute_feo_plan_tree), а не голое FeoPlannedItem.amount — иначе
@@ -419,6 +429,7 @@ async def find_excess_culprit(
                 continue
             contributors.append({
                 "amount": amt, "purchase_id": pur_id, "purchase_number": pur_num,
+                "purchase_item_id": pur_item_id, "planned_item_id": r.id, "category_id": r.feo_category_id,
                 "item_name": r.name, "plan_changed_at": r.plan_changed_at, "sort_key": (1, i),
             })
 
@@ -488,6 +499,8 @@ async def find_excess_culprit(
                     continue
                 contributors.append({
                     "amount": fact_amount, "purchase_id": p.id, "purchase_number": p.purchase_number,
+                    "purchase_item_id": pi.id, "planned_item_id": None,
+                    "category_id": pi.feo_category_id if pi.feo_category_id is not None else p.feo_category_id,
                     "item_name": pi.item_name, "created_at": None, "sort_key": (1.5, k),
                 })
 
@@ -504,6 +517,7 @@ async def find_excess_culprit(
             PurchaseItem.id.label("item_id"), PurchaseItem.item_name.label("item_name"),
             amount_expr.label("amount"), Purchase.id.label("purchase_id"),
             Purchase.purchase_number.label("purchase_number"),
+            cat_col.label("category_id"),
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(cat_col.in_(node_ids))
@@ -523,6 +537,7 @@ async def find_excess_culprit(
             continue
         contributors.append({
             "amount": amt, "purchase_id": r.purchase_id, "purchase_number": r.purchase_number,
+            "purchase_item_id": r.item_id, "planned_item_id": None, "category_id": r.category_id,
             "item_name": r.item_name, "created_at": None, "sort_key": (2, j),
         })
 
@@ -533,24 +548,61 @@ async def find_excess_culprit(
     total_plan_amount = sum((c["amount"] for c in contributors), Decimal("0"))
     total_excess = total_plan_amount - budget_d
     cumulative = Decimal("0")
-    for c in contributors:
+    crossing_idx: Optional[int] = None
+    crossing_before = Decimal("0")
+    crossing_cumulative = Decimal("0")
+    for idx, c in enumerate(contributors):
         before = cumulative
         cumulative += c["amount"]
-        if cumulative - budget_d > Decimal("0.005"):
-            return {
-                "purchase_id": c["purchase_id"],
-                "purchase_number": c["purchase_number"],
-                "item_name": c["item_name"],
-                "amount_before": float(before),
-                "amount_at_crossing": float(c["amount"]),
-                "cumulative_after": float(cumulative),
-                # Задача владельца п.13: та же итоговая сумма/превышение, что
-                # compute_feo_plan_tree.full_display/excess_amount узла — см.
-                # docstring выше и test_feo_excess_culprit_matches_control.py.
-                "total_plan_amount": float(total_plan_amount),
-                "total_excess": float(total_excess),
-            }
-    return None
+        if crossing_idx is None and cumulative - budget_d > Decimal("0.005"):
+            crossing_idx = idx
+            crossing_before = before
+            crossing_cumulative = cumulative
+    if crossing_idx is None:
+        return None
+
+    c = contributors[crossing_idx]
+    # «culprits» (задача владельца 22.10.2026, дословно: «должно подсвечивать
+    # красным последнее добавленное, из-за чего произошёл переход через лимит
+    # плана или ФЭО» — пример: чайник и термопот, добавленные в «Бытовую
+    # технику») — раньше называлась только ОДНА, ПЕРВАЯ позиция, пересёкшая
+    # границу (поля purchase_id/item_name/... ниже — оставлены как есть, их
+    # читают старые тесты/фронт). Владельцу этого мало: он хочет красной ВСЮ
+    # цепочку позиций НАЧИНАЯ с пересекающей и ДО КОНЦА (в реальном примере —
+    # две позиции, добавленные последними, вместе перевели категорию за
+    # лимит) —culprits ниже отдаёт именно этот срез contributors, в том же
+    # порядке (plan_changed_at = «по времени добавления», порядок не меняем).
+    # planned_item_id/category_id/purchase_item_id (ПРАВИЛО №6, добавлены тем
+    # же проходом, что строит contributors выше, вторая выборка не заводится)
+    # — фронт матчит ими конкретную СТРОКУ плановой позиции/закупки, а не
+    # только категорию целиком (прежняя проблема — у плановой позиции
+    # purchase_id был None, строку на фронте найти было нечем).
+    culprits = [
+        {
+            "planned_item_id": x.get("planned_item_id"),
+            "purchase_id": x.get("purchase_id"),
+            "purchase_number": x.get("purchase_number"),
+            "purchase_item_id": x.get("purchase_item_id"),
+            "category_id": x.get("category_id"),
+            "item_name": x.get("item_name"),
+            "amount": float(x["amount"]),
+        }
+        for x in contributors[crossing_idx:]
+    ]
+    return {
+        "purchase_id": c["purchase_id"],
+        "purchase_number": c["purchase_number"],
+        "item_name": c["item_name"],
+        "amount_before": float(crossing_before),
+        "amount_at_crossing": float(c["amount"]),
+        "cumulative_after": float(crossing_cumulative),
+        # Задача владельца п.13: та же итоговая сумма/превышение, что
+        # compute_feo_plan_tree.full_display/excess_amount узла — см.
+        # docstring выше и test_feo_excess_culprit_matches_control.py.
+        "total_plan_amount": float(total_plan_amount),
+        "total_excess": float(total_excess),
+        "culprits": culprits,
+    }
 
 
 async def assert_no_unapproved_excess(

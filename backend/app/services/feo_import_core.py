@@ -266,6 +266,16 @@ class FeoImportState:
     # №6, один источник вместо построчного запроса в каждом из двух мест.
     planned_items_by_category: dict = field(default_factory=dict)
 
+    # --- Перенос позиции при повторном импорте (владелец, 22.10.2026, ПРАВИЛО
+    # №6 — см. docstring app.services.feo_item_source_duplicates): subsidy_id ->
+    # {(source_row, нормализованное имя): [{"item_id", "category_id",
+    # "category_name"}, ...]} — ОДИН запрос на субсидию (не по каждой строке),
+    # прогревается лениво `_cross_category_index` в feo_import_duplicates.py
+    # ПЕРЕД finalize_lvl5_items; удаляет из записи элемент, который сам же
+    # перенёс (чтобы вторая такая же строка файла не нашла уже перенесённую
+    # позицию снова).
+    cross_category_source_row_index: dict = field(default_factory=dict)
+
     # --- Задача владельца 22.09: колонка «Комментарий» шаблона — уходит в
     # ленту комментариев (feo_comments), не в notes (см. app/services/
     # feo_import_comments.py — единственное место, пишущее FeoComment из

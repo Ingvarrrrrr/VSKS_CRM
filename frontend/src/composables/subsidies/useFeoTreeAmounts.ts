@@ -9,6 +9,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { FeoNode, FeoReqItem, PlanTreeEntry, SubsidyRow } from './types'
 import { formatCurrency as fmtLocal } from './format'
 import { makeCtxSingleton } from './ctxSingleton'
+import { computeFeoEffective, feoBudgetIsSet as feoBudgetIsSetValue, isEstimatedNode } from './feoEffectiveFormula'
 
 interface FeoTreeAmountsCtx {
   purchaseTotals: Ref<Record<number, number>>
@@ -74,7 +75,7 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   // потребители уже получают её эффект через feoEffectiveFor/feoDisplayedFor/
   // isAutoNode ниже.
   function feoBudgetIsSet(node: FeoNode): boolean {
-    return node.budget != null && Number(node.budget) !== 0
+    return feoBudgetIsSetValue(node.budget)
   }
 
   // Для АРИФМЕТИКИ (суммирование по дереву) ноль как слагаемое безопасен — эта
@@ -120,19 +121,33 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   // официального лимита), а не второй источник бюджета ФЭО: как только у
   // узла (сам он или кто-то из поддерева) появляется реальное финансирование
   // по ФЭО, именно оно становится единственным источником (ветка выше).
+  // Собственный прямой вклад узла (лист ИЛИ группа) в расчётную оценку — факт
+  // закупок, размещённых НАПРЯМУЮ на узле, иначе план: feoPlannedTotalFor для
+  // листа, feoOwnDirectionPlanFor (та же сумма, что подпись «в т.ч. на самом
+  // направлении») для группы — доступна здесь по hoisting объявления function
+  // в той же замыкающей функции. Передаётся в общую формулу computeFeoEffective
+  // (feoEffectiveFormula.ts, ПРАВИЛО №6 — та же форма рекурсии, что и у
+  // FeoCategoriesView.vue::feoEffectiveFor, второй источник «вклада» там
+  // объяснён в докстринге модуля — другой контекст данных).
+  function feoOwnContributionFor(node: FeoNode): number {
+    const fact = purchaseTotals.value[node.id] || 0
+    if (fact > 0) return fact
+    return node.hasChildren ? feoOwnDirectionPlanFor(node) : feoPlannedTotalFor(node)
+  }
+
   function feoEffectiveFor(node: FeoNode): number {
     const fromTree = feoEffectiveFromTree(node)
     const ownBudget = feoBudgetFor(node)
     const hasServerBudget = (fromTree != null && fromTree > 0.005) || ownBudget > 0.005
     if (hasServerBudget) return fromTree != null ? fromTree : ownBudget
     // Нет серверного бюджета (ни своего, ни по дереву feo_goods/services/
-    // unspecified) — прежняя оценочная формула, без изменений.
-    if (feoBudgetIsSet(node)) return Number(node.budget)
-    if (!node.hasChildren) {
-      const fact = purchaseTotals.value[node.id] || 0
-      return fact > 0 ? fact : feoPlannedTotalFor(node)
-    }
-    return node.children.reduce((acc, child) => acc + feoEffectiveFor(child), 0)
+    // unspecified) — budgetIsSet здесь всегда false (hasServerBudget уже
+    // проверил feoBudgetIsSet эквивалент выше), поэтому computeFeoEffective
+    // сразу идёт в ветку «лист → свой вклад» / «группа → Σ детей + свой
+    // вклад» (ИСПРАВЛЕНИЕ, задача владельца 22.10.2026, ДНР_2026 id 105 —
+    // раньше группа без бюджета теряла собственные позиции, заведённые прямо
+    // на направлении, см. докстринг feoEffectiveFormula.ts).
+    return computeFeoEffective(node, feoOwnContributionFor, () => false)
   }
 
   function manualChildFeoSum(node: FeoNode): number {
@@ -146,9 +161,18 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return node.children.some(walk)
   }
 
+  // ИСПРАВЛЕНИЕ (задача владельца 22.10.2026): раньше лист (!node.hasChildren)
+  // был исключён из «авто» ветки безусловно (return false) — строка листа БЕЗ
+  // своего ФЭО всегда показывала «Не задано», даже когда он, как и группа,
+  // входит в ИТОГО/ту же feoEffectiveFor СВОЕЙ расчётной оценкой (факт, иначе
+  // план) — находка на ДНР_2026 id 105, корень-лист «ФОТ» (budget пуст, 4
+  // позиции): строка «Не задано», а ИТОГО дерева его план уже учитывало,
+  // расходясь с суммой самих строк. Теперь isAutoNode = «нет своего ФЭО» для
+  // ЛЮБОГО узла — FeoTreeRow.vue рисует feoEffectiveFor(node) с чипом «расчёт»
+  // одинаково для листа и группы; клик для ввода ФЭО (startInlineBudget)
+  // остаётся прежним в обоих случаях.
   function isAutoNode(node: FeoNode): boolean {
-    if (!node.hasChildren) return false
-    return !feoBudgetIsSet(node)
+    return isEstimatedNode(node)
   }
 
   // ИСПРАВЛЕНИЕ (ревью координатора, та же сессия 2026-09-05): node.feo_amount —

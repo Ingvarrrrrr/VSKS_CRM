@@ -146,6 +146,15 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     # у позиции; read-only, пишет только загрузка плана (feo_import_
     # duplicates.py) либо обнуляет кнопка «Убрать номера строк файла».
     source_row: Optional[int] = None
+    # Значок «дубль строки N» (задача владельца 22.10.2026) — ТА ЖЕ форма, что
+    # уже отдаёт GET /feo-categories/plan-positions (app.services.
+    # feo_item_source_duplicates.find_source_row_duplicates, ПРАВИЛО №6,
+    # второй расчёт совпадения здесь не заводим). [] — дублей нет/subsidy_id
+    # не передан вызывающим (см. get_comparison). ⚠️ ЭТА схема (FeoPlannedItemOut)
+    # используется и в других эндпоинтах роутера feo_planned_items.py — им
+    # заполнять это поле не обязательно (дефолт [] безопасен), только
+    # get_comparison ниже реально его считает.
+    source_duplicates: list[dict] = []
     model_config = {"from_attributes": True}
 
 

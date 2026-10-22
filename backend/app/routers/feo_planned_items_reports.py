@@ -397,6 +397,22 @@ async def get_comparison(
     _parts_fpi_ids = [r.id for r in planned_rows if r.parts]
     _part_purchases = await planned_item_part_purchases(db, _parts_fpi_ids, exclude_purchase_id)
 
+    # ИСПРАВЛЕНИЕ (QA-находка на стенде, 22.10.2026, дефект B): значок «дубль
+    # строки N» считался ТОЛЬКО в GET /feo-categories/plan-positions
+    # (app.services.feo_item_source_duplicates.find_source_row_duplicates) —
+    # но FeoLevel5Panel.vue реально грузит плановые позиции из ЭТОГО
+    # эндпоинта (/feo-planned-items/comparison, см. useFeoLevel5.ts::
+    # refreshComparison/toggleItemPanel), а не из plan-positions (тот нужен
+    # только поиску по субсидии, useFeoTreeSearch.ts). FeoPlannedItemOut не
+    # заводит вторую формулу совпадения — читает ТОТ ЖЕ готовый индекс
+    # (ПРАВИЛО №6). subsidy_id здесь Optional (старые вызовы без него) —
+    # без него посчитать дубли субсидии нельзя, map остаётся пустым (undefined-
+    # safe на фронте, см. докстринг source_duplicates в schemas/feo.py).
+    source_duplicates_map: dict[int, list[dict]] = {}
+    if subsidy_id is not None:
+        from app.services.feo_item_source_duplicates import find_source_row_duplicates
+        source_duplicates_map = await find_source_row_duplicates(db, subsidy_id)
+
     planned_out: list[FeoPlannedItemOut] = []
     for r in planned_rows:
         out = FeoPlannedItemOut.model_validate(r)
@@ -413,6 +429,7 @@ async def get_comparison(
                 {**part, "purchases": _part_purchases.get(r.id, {}).get(part.get("key"), [])}
                 for part in r.parts
             ]
+        out.source_duplicates = source_duplicates_map.get(r.id, [])
         planned_out.append(out)
 
     return FeoComparisonOut(

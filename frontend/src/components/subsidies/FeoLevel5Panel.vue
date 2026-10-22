@@ -198,7 +198,17 @@
                       title="Показать/скрыть закупки, привязанные к этой плановой позиции"
                       @click="ctx.togglePlannedItemFolder(planned.id)"
                     />
-                    <span>{{ planned.name }}</span>
+                    <!-- Подсветка строки-виновника превышения (владелец, 22.10.2026,
+                         дословно: «должно подсвечивать красным последнее добавленное,
+                         из-за чего произошёл переход через лимит плана или ФЭО» —
+                         пример: чайник и термопот, добавленные в «Бытовую технику»).
+                         plannedItemExcessHit читает ЦЕПОЧКУ culprits (не только
+                         первую позицию) со ВСЕХ узлов-предков — см. docstring
+                         excessCulpritIndex в useFeoTreeExcess.ts. -->
+                    <span :style="excessCulpritHit(planned.id) ? 'color:#DC2626;font-weight:600' : ''">{{ planned.name }}</span>
+                    <v-chip v-if="excessCulpritHit(planned.id)" size="x-small" color="red" variant="flat"
+                      style="font-size:9px;height:16px" :title="excessCulpritHitTooltip(planned.id)"
+                    ><v-icon icon="mdi-alert-decagram" size="10" class="mr-1" />перебор</v-chip>
                   </div>
                   <!-- Шильдики происхождения (владелец, Волна 5, 2026-09-14): «от
                        статусов остались только обрезанные слова» — в узкой (плотной,
@@ -229,6 +239,14 @@
                     <v-chip v-if="!planned.isManual && planned.need_level === 'nice_to_have'" size="x-small" color="deep-orange" variant="tonal" style="font-size:9px;height:16px"
                       :title="NEED_LEVEL_LABELS.nice_to_have"
                     >{{ NEED_LEVEL_SHORT_LABELS.nice_to_have }}</v-chip>
+                    <!-- Значок дубля строки листа (задача владельца 22.10.2026) —
+                         эта же строка файла (source_row) заведена ещё и в
+                         другой(их) категории(ях) ФЭО. Поле undefined-safe
+                         (бэкенд может пока не отдавать source_duplicates) —
+                         см. докстринг типа в composables/subsidies/types.ts. -->
+                    <v-chip v-if="planned.source_duplicates && planned.source_duplicates.length" size="x-small" color="red" variant="flat" style="font-size:9px;height:16px"
+                      :title="`Эта строка листа заведена ещё и в: ${planned.source_duplicates.map(d => `«${d.category_name}»`).join(', ')}`"
+                    ><v-icon icon="mdi-content-duplicate" size="10" class="mr-1" />дубль строки{{ planned.source_row != null ? ` ${planned.source_row}` : '' }}</v-chip>
                   </div>
                   <!-- Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4г): вместо
                        нумерации «2.»/«4.» (убрана выше) — мелкая подпись «строка N файла»,
@@ -675,8 +693,12 @@
                                 <v-img :src="actual.product_photo" cover />
                               </v-avatar>
                               <div>{{ actual.item_name }}</div>
-                              <v-chip v-if="ctx.isExcessCulpritActual(node, actual)" size="x-small" color="red" variant="flat" class="ml-1"
-                                style="font-size:9px;height:16px" :title="ctx.excessCulpritChipTooltip(node)"
+                              <!-- Подсветка ЛЮБОЙ позиции из цепочки culprits (не только
+                                   первой) — purchaseItemExcessHit ищет по ВСЕМ узлам
+                                   дерева, не только по node этой панели (владелец,
+                                   22.10.2026, «ЛЮБОГО узла-предка»). -->
+                              <v-chip v-if="ctx.purchaseItemExcessHit(actual)" size="x-small" color="red" variant="flat" class="ml-1"
+                                style="font-size:9px;height:16px" :title="excessHitTooltip(ctx.purchaseItemExcessHit(actual)!, ctx.feoCategories.value)"
                               ><v-icon icon="mdi-alert-decagram" size="10" class="mr-1" />из-за неё превышение</v-chip>
                             </div>
                             <a
@@ -875,11 +897,22 @@ import RevisionCellBadge from './RevisionCellBadge.vue'
 // диалог сам смонтирован ОДИН раз в FeoTreeTable.vue (см. её докстринг и
 // FeoPlannedItemPartEditDialog.vue), здесь — только открытие по клику на карандаш.
 import { useFeoPlannedItemPartEditDialog } from '@/composables/subsidies/useFeoPlannedItemPartEditDialog'
+import { excessHitTooltip } from '@/composables/subsidies/useFeoTreeExcess'
 
 const props = defineProps<{ node: FeoNode }>()
 const node = props.node
 
 const ctx = useSubsidyDetailCtx()
+
+// Подсветка строки-виновника плановой позиции (владелец, 22.10.2026) — тонкая
+// обёртка над ctx.plannedItemExcessHit, см. докстринги в useFeoTreeExcess.ts.
+function excessCulpritHit(plannedItemId: number) {
+  return ctx.plannedItemExcessHit(plannedItemId)
+}
+function excessCulpritHitTooltip(plannedItemId: number): string {
+  const hit = ctx.plannedItemExcessHit(plannedItemId)
+  return hit ? excessHitTooltip(hit, ctx.feoCategories.value) : ''
+}
 const partEditDialog = useFeoPlannedItemPartEditDialog(ctx)
 // Волна 3B, доп. пробел: «Было | Станет» у строк плановых позиций (кол-во/
 // цена/сумма) — тот же приём, что и в FeoTreeRow.vue (revPair ниже), только

@@ -10,11 +10,26 @@ import { apiFetch } from '@/api'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import { useToast, type ToastType } from '@/composables/useToast'
 import type {
-  ExcessCulprit, ExcessPlanItem, ExcessPlanItemPurchase, FeoNode, PlanExcessApprovalDto, PlanExcessStep,
+  ExcessCulprit, ExcessPlanItem, ExcessPlanItemPurchase, FeoCategory, FeoNode, PlanExcessApprovalDto, PlanExcessStep,
   PlanTreeEntry, SubsidyTypeExcess, TypeExcessInfo, TypeExcessKind,
 } from './types'
 import { formatCurrency } from './format'
 import { makeCtxSingleton } from './ctxSingleton'
+
+// Подсказка строки-виновника (плановая позиция/закупка) — задача владельца
+// 22.10.2026: «добавлена после того, как сумма статьи «…» дошла до ФЭО X;
+// превышение статьи Y». Чистая функция (НЕ метод buildFeoTreeExcess) — ей
+// нужен только список категорий для имени, не весь ctx, и FeoTreeRow.vue/
+// FeoLevel5Panel.vue оба зовут её напрямую с ctx.feoCategories.value (Правило
+// №6 — единственный текст, второй не пишем ни в одном из двух файлов).
+export function excessHitTooltip(
+  hit: { nodeId: number; totalExcess: number; budget: number | null },
+  categories: Pick<FeoCategory, 'id' | 'name'>[],
+): string {
+  const name = categories.find(c => c.id === hit.nodeId)?.name || `#${hit.nodeId}`
+  const budgetText = hit.budget != null ? formatCurrency(hit.budget) : '—'
+  return `добавлена после того, как сумма статьи «${name}» дошла до ФЭО ${budgetText}; превышение статьи ${formatCurrency(hit.totalExcess)}`
+}
 
 interface FeoTreeExcessCtx {
   planTreeByCat: Ref<Record<number, PlanTreeEntry>>
@@ -96,6 +111,61 @@ function buildFeoTreeExcess(ctx: FeoTreeExcessCtx) {
     return planTreeByCat.value[node.id]?.excess_culprit ?? null
   }
 
+  // ИСПРАВЛЕНИЕ (задача владельца 22.10.2026, дословно: «должно подсвечивать
+  // красным последнее добавленное, из-за чего произошёл переход через лимит
+  // плана или ФЭО» — пример: чайник и термопот, добавленные в «Бытовую
+  // технику») — раньше подсвечивалась/называлась только ОДНА, первая пересекшая
+  // границу позиция (excess_culprit.purchase_id/item_name). Бэкенд теперь
+  // отдаёт excess_culprit.culprits — ВСЮ цепочку контрибьюторов от пересекающего
+  // лимит и до конца (backend/app/services/feo_plan_excess.py::find_excess_culprit),
+  // каждый с planned_item_id/category_id/purchase_item_id. excessCulpritIndex —
+  // ЕДИНСТВЕННОЕ место, которое строит из них плоские карты для подсветки
+  // конкретной СТРОКИ (плановой позиции или позиции закупки) — FeoLevel5Panel.vue
+  // читает только эти карты, второй обход planTreeByCat не заводит.
+  //
+  // Сканирует ВСЕ узлы planTreeByCat (не только node.id, под которым рисуется
+  // строка) — узел с превышением (ancestor-группа) и узел, где физически лежит
+  // виновная плановая позиция (вложенный лист), часто РАЗНЫЕ: задание владельца
+  // «ЛЮБОГО узла-предка» прямо про это.
+  interface ExcessCulpritHit { nodeId: number; totalExcess: number; budget: number | null }
+  const excessCulpritIndex = computed(() => {
+    const byPlannedItem = new Map<number, ExcessCulpritHit>()
+    const byPurchaseItem = new Map<number, ExcessCulpritHit>()
+    const byPurchaseFallback = new Map<string, ExcessCulpritHit>()
+    for (const [key, entry] of Object.entries(planTreeByCat.value)) {
+      const nodeId = Number(key)
+      if (!Number.isFinite(nodeId)) continue // 'subsidy_type_excess'/'subsidy_type_totals' — не узлы
+      const t = entry as any
+      const c = t?.excess_culprit as ExcessCulprit | null | undefined
+      if (!c) continue
+      const hit: ExcessCulpritHit = { nodeId, totalExcess: c.total_excess, budget: Number(t?.budget ?? 0) || null }
+      // Фолбэк (старый бэкенд без culprits) — та же единственная позиция, что
+      // раньше показывал excessCulpritChipTooltip/excessCulpritText.
+      const list = (c.culprits && c.culprits.length) ? c.culprits : [{
+        planned_item_id: null, purchase_id: c.purchase_id, purchase_number: c.purchase_number,
+        purchase_item_id: null, category_id: nodeId, item_name: c.item_name, amount: c.amount_at_crossing,
+      }]
+      for (const x of list) {
+        if (x.planned_item_id != null) byPlannedItem.set(x.planned_item_id, hit)
+        if (x.purchase_item_id != null) {
+          byPurchaseItem.set(x.purchase_item_id, hit)
+        } else if (x.purchase_id != null) {
+          byPurchaseFallback.set(`${x.purchase_id}:${x.item_name || ''}`, hit)
+        }
+      }
+    }
+    return { byPlannedItem, byPurchaseItem, byPurchaseFallback }
+  })
+
+  // Плановая позиция — виновник (сама строка, по id), независимо от того, на
+  // каком узле дерева «висит» превышение (ancestor или сам лист).
+  function plannedItemExcessHit(plannedItemId: number): ExcessCulpritHit | null {
+    return excessCulpritIndex.value.byPlannedItem.get(plannedItemId) ?? null
+  }
+  function isExcessCulpritPlannedItem(plannedItemId: number): boolean {
+    return excessCulpritIndex.value.byPlannedItem.has(plannedItemId)
+  }
+
   function excessCulpritText(node: FeoNode): string {
     const c = excessCulpritFor(node)
     if (!c) return ''
@@ -117,10 +187,30 @@ function buildFeoTreeExcess(ctx: FeoTreeExcessCtx) {
     return `из-за чего: ${source} — первая позиция, из-за которой план по категории перевалил за ФЭО (не единственная причина всего превышения). До неё было выбрано ${formatCurrency(c.amount_before)}, она добавила ${formatCurrency(c.amount_at_crossing)} — накопленным итогом на тот момент стало ${formatCurrency(c.cumulative_after)} при ФЭО ${budget}. Дальше план продолжил расти и дошёл до ${formatCurrency(c.total_plan_amount)} — итоговое превышение ${formatCurrency(c.total_excess)}`
   }
 
-  function isExcessCulpritActual(node: FeoNode, actual: { purchase_id: number; item_name: string }): boolean {
-    const c = excessCulpritFor(node)
-    if (!c || c.purchase_id == null) return false
-    return c.purchase_id === actual.purchase_id && (c.item_name || '') === (actual.item_name || '')
+  // ИСПРАВЛЕНИЕ (та же задача 22.10.2026): раньше сверялась ТОЛЬКО с excess_culprit
+  // САМОГО узла node (а не ЛЮБОГО узла-предка) и только с ОДНОЙ, первой пересекшей
+  // границу позицией — теперь ищет по ГЛОБАЛЬНОМУ индексу excessCulpritIndex (все
+  // culprits со всех узлов дерева), покрывая и случай, когда превышение «висит»
+  // на узле-предке, а виновная позиция закупки лежит в его листе. purchase_item_id
+  // (если передан вызывающим — FeoLevel5Panel.vue его знает) сравнивается первым,
+  // точнее purchase_id+item_name; старый фолбэк (purchase_id+item_name) остаётся
+  // для culprits со старого бэкенда (без purchase_item_id).
+  function purchaseItemExcessHit(
+    actual: { purchase_id: number; item_name: string; purchase_item_id?: number | null },
+  ): { nodeId: number; totalExcess: number; budget: number | null } | null {
+    const idx = excessCulpritIndex.value
+    if (actual.purchase_item_id != null) {
+      const hit = idx.byPurchaseItem.get(actual.purchase_item_id)
+      if (hit) return hit
+    }
+    return idx.byPurchaseFallback.get(`${actual.purchase_id}:${actual.item_name || ''}`) ?? null
+  }
+
+  function isExcessCulpritActual(
+    _node: FeoNode,
+    actual: { purchase_id: number; item_name: string; purchase_item_id?: number | null },
+  ): boolean {
+    return purchaseItemExcessHit(actual) != null
   }
 
   function excessCulpritChipTooltip(node: FeoNode): string {
@@ -423,6 +513,9 @@ function buildFeoTreeExcess(ctx: FeoTreeExcessCtx) {
   return {
     isSaas, currentUserId, excessRequestLoading, excessDecideLoading,
     excessFor, excessCulpritFor, excessCulpritText, isExcessCulpritActual, excessCulpritChipTooltip,
+    // Задача владельца 22.10.2026 — подсветка ВСЕХ позиций цепочки виновников,
+    // не только первой (см. докстринги excessCulpritIndex/plannedItemExcessHit выше).
+    plannedItemExcessHit, isExcessCulpritPlannedItem, purchaseItemExcessHit,
     excessFactFor, excessPlanFor, excessPlanItemPurchaseTitle, excessPlanApprovalPermanent,
     excessApprovalFor, excessPendingNames, excessMyPendingStep, excessResolvedByName, excessResolvedDate,
     loadPlanExcessApprovals, requestPlanExcessApproval, decidePlanExcess,

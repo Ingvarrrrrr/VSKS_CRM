@@ -71,9 +71,9 @@
           </div>
           <div v-for="f in ev.fields" :key="f.field_name" class="feo-history-field text-caption mb-1">
             <span class="font-weight-medium">{{ fieldLabel(f.field_name) }}:</span>
-            <span class="text-error text-decoration-line-through ml-1">{{ f.old_value ?? '—' }}</span>
+            <span class="text-error text-decoration-line-through ml-1">{{ fieldValue(f.field_name, f.old_value) }}</span>
             <v-icon icon="mdi-arrow-right" size="11" class="mx-1" />
-            <span class="text-success">{{ f.new_value ?? '—' }}</span>
+            <span class="text-success">{{ fieldValue(f.field_name, f.new_value) }}</span>
           </div>
         </template>
 
@@ -97,6 +97,7 @@ import { ref, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { feoHistoryFieldLabel } from '@/constants/feoHistoryFieldLabels'
+import { formatFeoHistoryValue } from '@/constants/feoHistoryValueFormat'
 
 const props = defineProps<{
   entityType: 'feo_item' | 'feo_category'
@@ -156,6 +157,10 @@ function sourceLabel(s: string): string {
 
 function fieldLabel(f: string): string {
   return feoHistoryFieldLabel(f)
+}
+
+function fieldValue(f: string, raw: string | null): string {
+  return formatFeoHistoryValue(f, raw)
 }
 
 function formatDate(s: string | null): string {

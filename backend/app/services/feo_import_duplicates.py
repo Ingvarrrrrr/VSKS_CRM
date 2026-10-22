@@ -51,6 +51,7 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.services.feo_import_common import QUANT, ZERO, format_rows, level_label, norm
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_comments import record_item_id
+from app.services.feo_item_source_duplicates import build_source_row_index
 from app.services import feo_history
 
 def _sum_qty(rows: list) -> Decimal | None:
@@ -380,7 +381,117 @@ async def _matching_items(state, leaf_id: int, name: str) -> list:
     return sorted((it for it in rows if norm(it.name or "") == target), key=lambda it: it.id)
 
 
-async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None, matches: list) -> FeoPlannedItem:
+async def _get_cross_category_index(state, subsidy_id: int) -> dict:
+    """Индекс «строка листа → позиции с тем же source_row/именем в субсидии»
+    (ОДИН запрос на субсидию, прогревается лениво при первой нужде) — Правило
+    №6, единственная реализация (app.services.feo_item_source_duplicates.
+    build_source_row_index), используемая и для переноса позиции ниже, и для
+    признака `source_duplicates` на экране (GET /api/feo-categories/
+    plan-positions, отдельный вызов того же модуля, см. feo_plan_reads_tree.py).
+
+    Прогрет ОДИН раз за весь импорт на субсидию — читает состояние БД ДО
+    применения переносов этого запуска (повторный импорт того же файла:
+    кандидат на перенос — позиция из ПРЕДЫДУЩЕГО запуска, а не только что
+    созданная этим же). `_consume_transfer_candidate` ниже вычёркивает
+    использованного кандидата из уже прогретого индекса, чтобы вторая строка
+    файла с тем же (source_row, имя) в этом же запуске не нашла его повторно."""
+    cache = state.cross_category_source_row_index
+    if subsidy_id not in cache:
+        cache[subsidy_id] = await build_source_row_index(state.db, subsidy_id)
+    return cache[subsidy_id]
+
+
+def _consume_transfer_candidate(state, subsidy_id: int, key: tuple, item_id: int) -> None:
+    idx = state.cross_category_source_row_index.get(subsidy_id)
+    if idx is None:
+        return
+    idx[key] = [c for c in idx.get(key, []) if c["item_id"] != item_id]
+
+
+async def _find_transfer_candidate(state, leaf, name: str, source_row) -> tuple:
+    """Решение владельца 22.10.2026 (боевой инцидент, субсидия ДНР_2026 id
+    105, строки 253/254 «Чайник электрический»/«Термопот») — повторный импорт
+    ТОЙ ЖЕ строки листа в ДРУГУЮ статью ПЕРЕНОСИТ существующую активную
+    позицию, а не заводит вторую: `_matching_items` выше ищет совпадение
+    ВНУТРИ своей статьи (как раньше); если там пусто — эта функция ищет
+    активную позицию ТОЙ ЖЕ субсидии с тем же `source_row` И тем же
+    нормализованным именем (правило — `build_source_row_index`, то же, что у
+    признака `source_duplicates` экрана, Правило №6) в ДРУГОЙ статье.
+
+    source_row=None (позиция без номера строки — заведена в GALA вручную или
+    подписи сняты кнопкой «Убрать номера строк файла») никогда не переносит —
+    без source_row «та же строка листа» не определена.
+
+    Возвращает (item_or_None, info):
+      - (FeoPlannedItem, {"category_id", "category_name"}) — РОВНО один
+        кандидат найден, вызывающий код переносит её;
+      - (None, warning_dict) — найдено НЕСКОЛЬКО кандидатов (в разных
+        статьях) — перенос не делаем автоматически (решение владельца:
+        однозначный случай переносим сами, неоднозначный — предупреждение
+        человеку), создаём как обычно;
+      - (None, None) — кандидатов нет вовсе (обычная новая позиция)."""
+    if source_row is None or leaf.subsidy_id is None:
+        return None, None
+    key = (source_row, norm(name))
+    index = await _get_cross_category_index(state, leaf.subsidy_id)
+    candidates = [c for c in index.get(key, []) if c["category_id"] != leaf.id]
+    if not candidates:
+        return None, None
+    if len(candidates) > 1:
+        _names = ", ".join(f"«{c['category_name']}»" for c in candidates)
+        return None, {
+            "kind": "source_row_transfer_ambiguous",
+            "row": source_row,
+            "name": name,
+            "message": (
+                f"Строка {source_row} файла («{name}») уже встречается в {len(candidates)} "
+                f"других статьях ({_names}) — перенос не сделан автоматически, проверьте вручную"
+            ),
+        }
+    cand = candidates[0]
+    item = (await state.db.execute(
+        select(FeoPlannedItem).where(FeoPlannedItem.id == cand["item_id"])
+    )).scalar_one_or_none()
+    if item is None or not item.is_active:
+        _consume_transfer_candidate(state, leaf.subsidy_id, key, cand["item_id"])
+        return None, None
+    return item, cand
+
+
+async def _resolve_matches_with_transfer(state, leaf, name: str, source_row) -> tuple[list, str | None]:
+    """Обёртка над `_matching_items` (совпадение ВНУТРИ своей статьи, как и
+    раньше) + `_find_transfer_candidate` (перенос существующей позиции из
+    ДРУГОЙ статьи при повторном импорте той же строки листа, см. её
+    докстринг) — единая точка для одиночной (не дублирующейся) позиции
+    (`finalize_lvl5_items` ниже), Правило №6."""
+    matches = await _matching_items(state, leaf.id, name)
+    if matches:
+        return matches, None
+    cand_item, info = await _find_transfer_candidate(state, leaf, name, source_row)
+    if cand_item is None:
+        if info is not None:
+            state.warnings.append(info)
+        return matches, None
+    from app.services.plan_autoassign import move_planned_item_to_category
+    _old_cat_id = info["category_id"]
+    _old_cat_name = info["category_name"]
+    # record_history — только на боевом прогоне (import_run_id задан), как и
+    # у остальных записей истории в этом модуле/файле (dry-run предпросмотра
+    # истории не пишет).
+    await move_planned_item_to_category(
+        state.db, cand_item, leaf.id, record_history=state.import_run_id is not None,
+        source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id,
+    )
+    invalidate_planned_items_cache(state, _old_cat_id)
+    invalidate_planned_items_cache(state, leaf.id)
+    _consume_transfer_candidate(state, leaf.subsidy_id, (source_row, norm(name)), cand_item.id)
+    _reason = f"перенесена из «{_old_cat_name}» (строка {source_row})"
+    return [cand_item], _reason
+
+
+async def _upsert_one(
+    state, leaf, item_data: dict, *, extra_reason: str | None, matches: list, transferred: bool = False,
+) -> FeoPlannedItem:
     """Создаёт/обновляет ОДНУ FeoPlannedItem — общий хвост и для обычной
     (не-дублирующейся) позиции, и для объединённой группы. `matches` — уже
     посчитанный список существующих позиций с этим именем в категории
@@ -502,7 +613,20 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
     _new_source_row = item_data.get("source_row", row_num)
     if hasattr(existing_item, "source_row") and existing_item.source_row != _new_source_row:
         existing_item.source_row = _new_source_row; ch2 = True
-    if ch2:
+    # ИСПРАВЛЕНИЕ (регрессия, найдена координатором): `extra_reason is not
+    # None` сюда не годится — `_upsert_merge` ВСЕГДА передаёт свой extra_reason
+    # («объединено из N строк…»), даже когда повторный импорт того же файла
+    # ничего не меняет (_tracked поля совпали) — получалось ложное «обновлено»
+    # + строка истории без изменений, ровно баг, который чинит пункт 1.
+    # Явный флаг `transferred` — true ТОЛЬКО когда _upsert_one вызван для
+    # позиции, перенесённой `_resolve_matches_with_transfer` между статьями
+    # (см. finalize_lvl5_items ниже): перенос меняет feo_category_id, который
+    # этот диф (_tracked) не отслеживает, поэтому без явного флага
+    # перенесённая, но иначе не изменившаяся, позиция молча попадала бы в
+    # «без изменений» и reason переноса терялся бы. `_upsert_merge`/
+    # `_upsert_keep_separate` флаг не передают (default False) — их
+    # extra_reason сам по себе больше не считается изменением.
+    if ch2 or transferred:
         state.updated += 1
         reason = extra_reason or "обновлена позиция — значения перезаписаны из файла"
         state.updated_details.append({"row": row_num, "name": name, "reason": reason})
@@ -606,8 +730,12 @@ async def finalize_lvl5_items(state) -> None:
         name = rows[0]["name"]
 
         if len(rows) == 1:
-            matches = await _matching_items(state, leaf.id, name)
-            item = await _upsert_one(state, leaf, rows[0], extra_reason=None, matches=matches)
+            _source_row = rows[0].get("source_row", rows[0]["row"])
+            matches, _transfer_reason = await _resolve_matches_with_transfer(state, leaf, name, _source_row)
+            item = await _upsert_one(
+                state, leaf, rows[0], extra_reason=_transfer_reason, matches=matches,
+                transferred=_transfer_reason is not None,
+            )
             record_item_id(state, rows[0]["row"], item.id)
             continue
 

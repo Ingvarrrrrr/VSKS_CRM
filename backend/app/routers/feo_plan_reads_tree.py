@@ -579,6 +579,12 @@ async def get_plan_positions(
             .where(FeoPlannedItem.is_active == True)
             .order_by(FeoPlannedItem.id)
         )).scalars().all()
+        # Значок «дубль строки листа» (владелец, 22.10.2026) — одна БД-выборка
+        # на всю субсидию, см. app.services.feo_item_source_duplicates
+        # (ПРАВИЛО №6, то же правило совпадения, что переносит позицию при
+        # повторном импорте того же файла, feo_import_duplicates.py).
+        from app.services.feo_item_source_duplicates import find_source_row_duplicates
+        source_duplicates_map = await find_source_row_duplicates(db, subsidy_id)
         if fpi_rows:
             fpi_ids = [it.id for it in fpi_rows]
             fpi_cons = await planned_item_consumption(db, fpi_ids, exclude_purchase_id, exclude_wish_id)
@@ -661,6 +667,10 @@ async def get_plan_positions(
                     # None — позиция заведена в GALA вручную либо подписи
                     # сняты кнопкой «Убрать номера строк файла».
                     "source_row": it.source_row,
+                    # Контракт с фронтом (FeoLevel5Panel.vue/types.ts,
+                    # FeoActualItem.source_duplicates) — [], если дублей нет,
+                    # а не отсутствие ключа.
+                    "source_duplicates": source_duplicates_map.get(it.id, []),
                     "consumed": consumed,
                     "consumed_quantity": consumed_qty,
                     "residual": planned_total - consumed,

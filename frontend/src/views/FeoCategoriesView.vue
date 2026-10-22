@@ -449,6 +449,7 @@ import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import { ACTIONS } from '@/constants/permissionActions'
 import { numOrNull } from '@/utils/numberFormat'
+import { computeFeoEffective, isEstimatedNode } from '@/composables/subsidies/feoEffectiveFormula'
 
 const { mobile } = useDisplay()
 const authStore = useAuthStore()
@@ -612,15 +613,27 @@ const toggleExpand = (id: number) => {
 // Решение 14.07: финансирование по ФЭО — ТОЛЬКО ручное значение узла (без авто-суммы)
 const feoBudgetFor = (node: FeoNode): number | null => node.budget ?? null
 
-// Расчётная справка: ручное ФЭО, если задано; иначе факт закупок; группа — Σ по детям
-const feoEffectiveFor = (node: FeoNode): number => {
-  if (node.budget != null) return Number(node.budget)
-  if (!node.hasChildren) return purchaseTotals.value[node.id] ?? 0
-  return node.children.reduce((acc, c) => acc + feoEffectiveFor(c), 0)
-}
+// Расчётная справка: ручное ФЭО, если задано; иначе факт закупок; группа — Σ
+// по детям + СВОЙ факт закупок, размещённых напрямую на направлении (не в
+// подкатегориях). ИСПРАВЛЕНИЕ (ПРАВИЛО №6, задача владельца 22.10.2026) —
+// раньше у группы без budget собственные закупки, заведённые прямо на
+// направлении, терялись (считалась ТОЛЬКО Σ детей) — та же находка, что в
+// useFeoTreeAmounts.ts::feoEffectiveFor (дерево ФЭО на странице субсидии,
+// ДНР_2026 id 105). Общая ФОРМА рекурсии (budget первичен, иначе лист/группа
+// + собственный вклад) вынесена в computeFeoEffective (feoEffectiveFormula.ts)
+// — единственный источник этой формы для обеих страниц; «собственный вклад»
+// здесь — ТОЛЬКО факт закупок (эта страница не грузит план/plan-tree вовсе,
+// см. докстринг модуля про то, почему страницы не объединены целиком).
+const feoEffectiveFor = (node: FeoNode): number => computeFeoEffective(node, (n) => purchaseTotals.value[n.id] ?? 0)
 
-// Группа без ручной суммы — показываем расчёт серым (редактирование доступно)
-const isAutoNode = (node: FeoNode): boolean => node.hasChildren && node.budget == null
+// Узел (лист ИЛИ группа) без своего ФЭО — показываем расчёт серым
+// (редактирование доступно). ИСПРАВЛЕНИЕ (QA, 22.10.2026, ПРАВИЛО №6): раньше
+// своя копия `node.hasChildren && node.budget == null` держала лист без ФЭО
+// вечно в ветке «Задать/—», хотя его расчёт всё равно входит в ИТОГО
+// (feoEffectiveFor выше) — isEstimatedNode (feoEffectiveFormula.ts) теперь
+// единственный источник правила «нет своего ФЭО» (0 и null — оба «не
+// задано»), тот же, что и useFeoTreeAmounts.ts::isAutoNode.
+const isAutoNode = (node: FeoNode): boolean => isEstimatedNode(node)
 
 // Отображаемое ФЭО: ручное, для групп без ручного — расчёт (для сравнений с фактом)
 const feoDisplayedFor = (node: FeoNode): number | null => {
@@ -932,13 +945,33 @@ async function doFeoImport() {
 }
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
-const formatCurrency = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₽'
-const formatCurrencyShort = (v: number) => {
-  if (Math.abs(v) >= 1_000_000) return (v / 1_000_000).toFixed(1).replace('.', ',') + ' млн ₽'
-  if (Math.abs(v) >= 1_000) return (v / 1_000).toFixed(0) + ' тыс ₽'
-  return v.toLocaleString('ru-RU') + ' ₽'
+// ИСПРАВЛЕНИЕ (найдено на стенде, 22.10.2026): субсидии с «Бюджет не
+// определён» отдают s.budget/planned/paid = null — formatCurrency(null)
+// звал null.toLocaleString() и ронял страницу целиком (TypeError). Общий
+// форматтер проекта (composables/subsidies/format.ts) даёт ДРУГОЙ вид (всегда
+// 2 знака после запятой у formatCurrency, точка вместо запятой в «млн» у
+// formatCurrencyShort, без млрд-порога тут не нужного) — переключать страницу
+// на него означало бы заодно поменять внешний вид, что не просили; null/
+// undefined теперь даёт «—» (бюджет НЕ определён — это не то же самое, что
+// «0 ₽», который ввёл бы в заблуждение), остальной вид не менялся.
+const formatCurrency = (v: number | string | null | undefined) => {
+  if (v == null) return '—'
+  const n = Number(v)
+  return (Number.isFinite(n) ? n : 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₽'
 }
-const pct = (a: number, b: number) => b > 0 ? Math.round((a / b) * 100) : 0
+const formatCurrencyShort = (v: number | string | null | undefined) => {
+  if (v == null) return '—'
+  const n = Number(v)
+  const val = Number.isFinite(n) ? n : 0
+  if (Math.abs(val) >= 1_000_000) return (val / 1_000_000).toFixed(1).replace('.', ',') + ' млн ₽'
+  if (Math.abs(val) >= 1_000) return (val / 1_000).toFixed(0) + ' тыс ₽'
+  return val.toLocaleString('ru-RU') + ' ₽'
+}
+const pct = (a: number | string | null | undefined, b: number | string | null | undefined) => {
+  const bn = b == null ? 0 : Number(b)
+  const an = a == null ? 0 : Number(a)
+  return bn > 0 ? Math.round((an / bn) * 100) : 0
+}
 const progressColor = (p: number) => p >= 100 ? '#EF4444' : p >= 80 ? '#F59E0B' : '#22C55E'
 
 loadSubsidies()

@@ -114,3 +114,68 @@ describe('useFeoTreeAmounts — ПРАВКА А: превышение тольк
     expect(api.feoOverspentDescendantText(root)).toBe('2 подкатегорий превышают ФЭО, всего на 70,00 ₽')
   })
 })
+
+// Задача владельца 22.10.2026 (ДНР_2026 id 105) — потери «расчёта» ФЭО и
+// ложный красный «Запланировано» без пояснения.
+describe('useFeoTreeAmounts — ДНР_2026: расчёт группы с собственными позициями и честный красный флаг', () => {
+  it('группа без своего ФЭО: расчёт = Σ детей + собственные позиции (827 425 + 16 500 = 843 925)', () => {
+    const child = makeNode({ id: 20, name: 'Подкатегория', parent_id: 2, budget: null })
+    const group = makeNode({ id: 2, name: 'Расходы на приобретение основных средств', parent_id: 1, budget: null, children: [child] })
+    const planTreeByCat: Record<number, Partial<PlanTreeEntry>> = {
+      20: { plan_manual: 827425 },
+      2: { plan_manual: 843925 },
+    }
+    const ctx = buildCtx(planTreeByCat, [group])
+    const api = useFeoTreeAmounts(ctx)
+
+    expect(api.feoEffectiveFor(child)).toBe(827425)
+    expect(api.feoOwnDirectionPlanFor(group)).toBe(16500)
+    expect(api.feoEffectiveFor(group)).toBe(843925)
+  })
+
+  it('лист без своего ФЭО: isAutoNode=true, расчёт = план своих позиций (входит в ИТОГО тем же числом)', () => {
+    const leaf = makeNode({ id: 30, name: 'ФОТ', parent_id: null, budget: null })
+    const planTreeByCat: Record<number, Partial<PlanTreeEntry>> = {
+      30: { plan_manual: 33881012.80 },
+    }
+    const ctx = buildCtx(planTreeByCat, [leaf])
+    const api = useFeoTreeAmounts(ctx)
+
+    expect(api.isAutoNode(leaf)).toBe(true)
+    expect(api.feoEffectiveFor(leaf)).toBe(33881012.80)
+    expect(api.totalFeoEffective.value).toBe(33881012.80)
+  })
+
+  it('узел без своего ФЭО с планом больше расчёта — не настоящее превышение (feoFinDiff=0, feoIsOverBudget=false)', () => {
+    const node = makeNode({ id: 40, name: 'Без ФЭО', parent_id: null, budget: null })
+    const planTreeByCat: Record<number, Partial<PlanTreeEntry>> = {
+      40: { plan_manual: 100000, excess_over_feo: 0, excess_amount: 0 },
+    }
+    const ctx = buildCtx(planTreeByCat, [node])
+    const api = useFeoTreeAmounts(ctx)
+
+    // feoDisplayedFor(node) без budget = feoEffectiveFor = 0 (нет фактов/плана
+    // на самом узле с детьми; тут лист без фактов и без собственного budget —
+    // возвращает feoPlannedTotalFor, т.е. тот же план) — проверяем именно
+    // «не красный», а не конкретные цифры расчёта.
+    expect(api.feoFinDiff(node)).toBe(0)
+    expect(api.feoIsOverBudget(node)).toBe(false)
+    expect(api.feoHasOverspentDescendant(node)).toBe(false)
+  })
+
+  it('узел со своим ФЭО, план больше budget — настоящее превышение: feoFinDiff<0 (красный) и есть чем объяснить', () => {
+    const node = makeNode({ id: 50, name: 'С ФЭО', parent_id: null, budget: 800000 })
+    const planTreeByCat: Record<number, Partial<PlanTreeEntry>> = {
+      // display — та же плановая сумма, что читает feoPlannedDisplayFor в
+      // режиме plannedBase='all' (умолчание buildCtx) — без неё тест читал бы
+      // 0 вместо реального плана и не воспроизвёл бы находку владельца.
+      50: { plan_manual: 843925, display: 843925, excess_over_feo: 43925, excess_amount: 43925 },
+    }
+    const ctx = buildCtx(planTreeByCat, [node])
+    const api = useFeoTreeAmounts(ctx)
+
+    expect(api.feoFinDiff(node)).toBeLessThan(0)
+    expect(Math.abs(api.feoFinDiff(node))).toBeGreaterThan(0.005)
+    expect(api.feoIsOverBudget(node)).toBe(true)
+  })
+})

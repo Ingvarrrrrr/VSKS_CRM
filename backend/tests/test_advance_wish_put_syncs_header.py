@@ -30,16 +30,29 @@ from app.models.wish import Wish
 from app.models.purchase import Purchase
 
 
-async def _make_subsidy(db_session, budget=8_000_000):
+async def _make_subsidy(db_session, test_org, test_user, budget=8_000_000):
+    """org_id/грант (22.10.2026, QA после фикса видимости субсидии, ПРАВИЛО №8
+    п.2): PUT /wishes/{id} со сменой subsidy_id теперь проверяет видимость
+    субсидии (ensure_subsidy_visible) — субсидия без org_id не матчит ни одну
+    организацию и невидима никому, кроме superadmin. На проде у всех 13
+    субсидий org_id задан, поэтому org_id=test_org.id — реалистичная
+    заготовка, не ослабление теста. Грант UserSubsidyAccess(role='org_admin')
+    для test_user — тот же приём, что test_plan_to_wish.py::_make_subsidy_with_leaf
+    (test_user как employee без этого гранта не видит вкладку 'subsidies' даже
+    в своей орге)."""
     from app.models.subsidy import Subsidy
+    from app.models.user_subsidy_access import UserSubsidyAccess
     s = Subsidy(
         name=f"TestSubsidy-{uuid.uuid4().hex[:8]}",
         year=2026,
         budget=budget,
+        org_id=test_org.id,
         require_planned_dates=False,
         status="approved",  # assert_subsidy_approved_for_binding гейтит PUT
     )
     db_session.add(s)
+    await db_session.flush()
+    db_session.add(UserSubsidyAccess(user_id=test_user.id, subsidy_id=s.id, role="org_admin"))
     await db_session.commit()
     await db_session.refresh(s)
     return s
@@ -67,7 +80,7 @@ async def _create_advance_purchase(client, auth_headers, price=500):
 
 @pytest.mark.asyncio
 async def test_put_wish_subsidy_syncs_to_advance_companion_purchase(
-    client, auth_headers, db_session,
+    client, auth_headers, db_session, test_org, test_user,
 ):
     data = await _create_advance_purchase(client, auth_headers)
     wish_id = data["wish_id"]
@@ -81,7 +94,7 @@ async def test_put_wish_subsidy_syncs_to_advance_companion_purchase(
     assert wish.source == "advance_report"
     assert wish.subsidy_id is None
 
-    subsidy = await _make_subsidy(db_session)
+    subsidy = await _make_subsidy(db_session, test_org, test_user)
 
     resp = await client.put(
         f"/api/wishes/{wish_id}",
@@ -105,13 +118,13 @@ async def test_put_wish_subsidy_syncs_to_advance_companion_purchase(
 
 @pytest.mark.asyncio
 async def test_put_regular_wish_subsidy_does_not_touch_unrelated_purchase(
-    client, auth_headers, db_session, test_org,
+    client, auth_headers, db_session, test_org, test_user,
 ):
     """Контроль: обычная (не-авансовая) заявка не связана с закупкой через
     этот механизм — мирроящий блок в update_wish гейтится source=='advance_report'
     и не должен задевать посторонние закупки."""
-    subsidy = await _make_subsidy(db_session)
-    other_subsidy = await _make_subsidy(db_session)
+    subsidy = await _make_subsidy(db_session, test_org, test_user)
+    other_subsidy = await _make_subsidy(db_session, test_org, test_user)
 
     # Несвязанная закупка (НЕ авансовая, НЕ привязана к заявке ниже) с уже
     # проставленной своей субсидией — сторож того, что мирроящий блок никого

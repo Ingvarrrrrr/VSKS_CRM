@@ -79,12 +79,22 @@ async def create_advance_companion_wish(
     wish_title = f"Возмещение по авансовому отчёту {purchase.registry_number or f'#{purchase.id}'}"
     estimated_price = purchase.total_nmck if purchase.total_nmck is not None else purchase.contract_price
 
+    # Прод-баг (заявка №209, 22.10.2026): org_id компаньона = org_id субсидии
+    # закупки, если она задана — тот же источник правила, что и
+    # routers/wishes.py::create_wish (ПРАВИЛО №6, app/services/wish_org.py).
+    # Без проверки видимости — purchase.subsidy_id не вход от пользователя
+    # этого вызова, закупка уже существует и уже прошла свои собственные
+    # проверки; `org_id`, переданный вызывающим, остаётся фолбэком, когда у
+    # субсидии закупки org_id не задан (общая/NULL).
+    from app.services.wish_org import wish_org_id_for_subsidy_or_fallback
+    resolved_org_id = await wish_org_id_for_subsidy_or_fallback(db, purchase.subsidy_id, org_id)
+
     wish = Wish(
         source="advance_report",
         status=status,
         title=wish_title[:499],
         created_by=created_by,
-        org_id=org_id,
+        org_id=resolved_org_id,
         subsidy_id=purchase.subsidy_id,
         feo_category_id=purchase.feo_category_id,
         event_id=purchase.event_id,

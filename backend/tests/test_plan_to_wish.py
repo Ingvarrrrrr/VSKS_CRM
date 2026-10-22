@@ -26,16 +26,33 @@ from app.services.plan_to_wish import (
 )
 
 
-async def _make_subsidy_with_leaf(db_session, name: str) -> tuple[Subsidy, FeoCategory]:
+async def _make_subsidy_with_leaf(
+    db_session, name: str, org_id: int | None = None, visible_to_user_id: int | None = None,
+) -> tuple[Subsidy, FeoCategory]:
     """Утверждённая (status='approved') субсидия с одной листовой категорией ФЭО —
     create_wish (вызывается изнутри create_wish_from_plan) отклоняет привязку к
     черновой субсидии (assert_subsidy_approved_for_binding), поэтому тестовая
-    субсидия обязана быть 'approved', а не полагаться на server_default='draft'."""
-    subsidy = Subsidy(name=name, year=2026, budget=0, status="approved", require_planned_dates=False)
+    субсидия обязана быть 'approved', а не полагаться на server_default='draft'.
+
+    org_id/visible_to_user_id (22.10.2026, прод-баг заявка №209,
+    app/services/wish_org.py): создание заявки теперь проверяет видимость
+    субсидии ДО использования её org_id (ensure_subsidy_visible) — субсидия
+    без org_id не матчит ни одну организацию пользователя и становится
+    невидимой никому, кроме superadmin; а обычный 'employee' по умолчанию без
+    org_admin-гранта не видит вкладку 'subsidies' даже в своей орге. Вызовы,
+    которые действительно создают заявку (create_wish_from_plan), обязаны
+    передать и org_id=test_org.id, и visible_to_user_id=test_user.id (даёт
+    индивидуальный грант UserSubsidyAccess(role='org_admin') — тот же приём,
+    что test_service_note_initiators.py), иначе получат 404 вместо прежнего
+    200/409."""
+    subsidy = Subsidy(name=name, year=2026, budget=0, status="approved", require_planned_dates=False, org_id=org_id)
     db_session.add(subsidy)
     await db_session.flush()
     cat = FeoCategory(subsidy_id=subsidy.id, level=3, name="Прочее")
     db_session.add(cat)
+    if visible_to_user_id is not None:
+        from app.models.user_subsidy_access import UserSubsidyAccess
+        db_session.add(UserSubsidyAccess(user_id=visible_to_user_id, subsidy_id=subsidy.id, role="org_admin"))
     await db_session.commit()
     await db_session.refresh(subsidy)
     await db_session.refresh(cat)
@@ -425,8 +442,8 @@ async def test_candidates_linked_purchase_initiator_name(db_session, test_admin_
 
 
 @pytest.mark.asyncio
-async def test_create_wish_two_items_catalog_and_manual(db_session, test_user):
-    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-create")
+async def test_create_wish_two_items_catalog_and_manual(db_session, test_user, test_org):
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-create", org_id=test_org.id, visible_to_user_id=test_user.id)
     planned1 = await _make_planned_item(db_session, cat, "Мышь компьютерная", quantity=Decimal("10"), unit_price=Decimal("500"), amount=Decimal("5000"))
     planned2 = await _make_planned_item(db_session, cat, "Клавиатура", quantity=Decimal("10"), unit_price=Decimal("1500"), amount=Decimal("15000"))
 
@@ -472,8 +489,8 @@ async def test_create_wish_two_items_catalog_and_manual(db_session, test_user):
 
 
 @pytest.mark.asyncio
-async def test_create_wish_price_fallback_when_catalog_price_missing(db_session, test_user):
-    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-fallback")
+async def test_create_wish_price_fallback_when_catalog_price_missing(db_session, test_user, test_org):
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-fallback", org_id=test_org.id, visible_to_user_id=test_user.id)
     planned = await _make_planned_item(db_session, cat, "Флешка USB", quantity=Decimal("20"), unit_price=Decimal("400"), amount=Decimal("8000"))
 
     product = Product(name="Флешка USB Kingston 32GB", category="Оргтехника", price=None, is_active=True)
@@ -555,7 +572,7 @@ async def test_create_wish_200_when_only_in_unapproved_wish(db_session, test_use
     """Позиция лежит только в НЕсогласованной заявке (draft) — план не
     резервируется (решение владельца 2026-08-17), выбор/создание разрешены,
     200 (никакого 409)."""
-    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-draftonly")
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-draftonly", org_id=test_org.id, visible_to_user_id=test_user.id)
     planned = await _make_planned_item(db_session, cat, "Стол офисный", quantity=Decimal("2"), unit_price=Decimal("3000"), amount=Decimal("6000"))
 
     other_wish = Wish(org_id=test_org.id, title="Другая заявка", status="submitted", created_by=test_user.id)
@@ -575,9 +592,9 @@ async def test_create_wish_200_when_only_in_unapproved_wish(db_session, test_use
 
 
 @pytest.mark.asyncio
-async def test_create_wish_200_within_partial_residual(db_session, test_user):
+async def test_create_wish_200_within_partial_residual(db_session, test_user, test_org):
     """Частичный остаток — запрос В ПРЕДЕЛАХ остатка проходит без 409."""
-    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-withinresidual")
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-withinresidual", org_id=test_org.id, visible_to_user_id=test_user.id)
     planned = await _make_planned_item(db_session, cat, "Тонер для принтера 2", quantity=Decimal("5"), unit_price=Decimal("2000"), amount=Decimal("10000"))
 
     purchase = Purchase(status="plan_schedule", item_type="товар", item_name="Тонер", registry_number="РЕЕ-2026-00970")
@@ -653,12 +670,12 @@ async def test_create_wish_409_when_leaf_category_plan_fully_taken(db_session, t
 
 
 @pytest.mark.asyncio
-async def test_create_wish_multi_category_sets_feo_per_item(db_session, test_user):
+async def test_create_wish_multi_category_sets_feo_per_item(db_session, test_user, test_org):
     """Блокер владельца (2026-09-20): позиции из ДВУХ категорий ФЭО → заявка
     заводится с feo_per_item=True (режим «своя категория у каждого товара»),
     а не с обнулённой шапочной feo_category_id без объяснения. У каждой
     позиции при этом свой feo_category_id (её плановой позиции)."""
-    subsidy, cat_a = await _make_subsidy_with_leaf(db_session, "Subsidy-multicat")
+    subsidy, cat_a = await _make_subsidy_with_leaf(db_session, "Subsidy-multicat", org_id=test_org.id, visible_to_user_id=test_user.id)
     cat_b = FeoCategory(subsidy_id=subsidy.id, level=3, name="Прочее-Б")
     db_session.add(cat_b)
     await db_session.commit()
@@ -695,10 +712,10 @@ async def test_create_wish_multi_category_sets_feo_per_item(db_session, test_use
 
 
 @pytest.mark.asyncio
-async def test_create_wish_single_category_no_feo_per_item(db_session, test_user):
+async def test_create_wish_single_category_no_feo_per_item(db_session, test_user, test_org):
     """Позиции из ОДНОЙ категории → feo_category_id заявки = эта категория,
     feo_per_item остаётся False (обычный режим, без изменений поведения)."""
-    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-singlecat")
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-singlecat", org_id=test_org.id, visible_to_user_id=test_user.id)
     planned1 = await _make_planned_item(db_session, cat, "Позиция 1", quantity=Decimal("5"), unit_price=Decimal("100"), amount=Decimal("500"))
     planned2 = await _make_planned_item(db_session, cat, "Позиция 2", quantity=Decimal("5"), unit_price=Decimal("200"), amount=Decimal("1000"))
 

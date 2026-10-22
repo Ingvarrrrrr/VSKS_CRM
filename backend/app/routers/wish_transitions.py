@@ -422,7 +422,23 @@ async def patch_wish_execution(
     if body.subsidy_id is not None:
         from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
         await assert_subsidy_approved_for_binding(db, body.subsidy_id)
+        # Доработка после ревью (22.10.2026): фронт шлёт subsidy_id в каждом
+        # запросе, даже без правки — снимок ДО присвоения ниже, иначе
+        # сравнение всегда было бы "не изменилось" (см. тот же приём и
+        # причину в routers/wishes.py::update_wish).
+        _subsidy_changed = body.subsidy_id != wish.subsidy_id
         wish.subsidy_id = body.subsidy_id
+        if _subsidy_changed:
+            # Прод-баг (заявка №209, 22.10.2026) — тот же хелпер, что
+            # routers/wishes.py::update_wish/create_wish (ПРАВИЛО №6,
+            # app/services/wish_org.py::resolve_wish_org_id): смена субсидии здесь
+            # (согласующий правит ФЭО заявки) тоже переносит её в организацию
+            # субсидии. ensure_subsidy_visible внутри — subsidy_id пришёл из тела
+            # этого PATCH, видимость обязана быть проверена (ПРАВИЛО №8 п.2).
+            # Только при РЕАЛЬНОЙ смене — иначе согласующий, видящий заявку, но
+            # не карточку субсидии, получал бы 404 на обычное сохранение.
+            from app.services.wish_org import resolve_wish_org_id
+            wish.org_id = await resolve_wish_org_id(db, current_user, body.subsidy_id)
     # Прод-баг (заявка №206/закупка РЕЕ-2026-04252, 20.10.2026): согласующий
     # сменил категорию ФЭО шапки заявки здесь, а 14 WishItem.feo_category_id
     # остались со старой — при feo_per_item=False («одна категория на всю

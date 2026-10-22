@@ -224,8 +224,14 @@ async def copy_wish(
     всегда создаётся в статусе 'draft' (как в create_wish), автор — текущий
     пользователь.
 
-    org_id и subsidy_id копируются «как есть» — это рамка (организация и
-    бюджет), в которой человек работает, а не «куда что идёт» внутри неё.
+    subsidy_id копируется «как есть» — это рамка (бюджет), в которой человек
+    работает, а не «куда что идёт» внутри неё. org_id берётся из субсидии
+    (если она задана — ПРАВИЛО №6, тот же источник, что и create_wish/
+    update_wish, app/services/wish_org.py), иначе — org_id исходной заявки;
+    видимость субсидии здесь ПОВТОРНО не проверяется — исходная заявка уже
+    прошла проверку доступа чуть выше (ensure_wish_read_access внутри
+    видимости копирования), а субсидия, на неё ссылающаяся, видна тому, кто
+    видит заявку.
 
     Права: та же проверка видимости, что в GET /{wish_id} (без доп. ролевых
     ограничений сверх неё — копировать может любой, кто видит заявку).
@@ -255,8 +261,11 @@ async def copy_wish(
     from app.schemas.wishes import _clamp_title
     new_title = _clamp_title(f"{wish.title} (копия)")
 
+    from app.services.wish_org import wish_org_id_for_subsidy_or_fallback
+    new_org_id = await wish_org_id_for_subsidy_or_fallback(db, wish.subsidy_id, wish.org_id)
+
     new_wish = Wish(
-        org_id=wish.org_id,
+        org_id=new_org_id,
         title=new_title,
         subsidy_id=wish.subsidy_id,
         status="draft",
@@ -294,8 +303,11 @@ async def create_wish(
     from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
     await assert_subsidy_approved_for_binding(db, body.subsidy_id)
 
-    org_ids = get_org_filter(current_user)
-    org_id = org_ids[0] if org_ids else current_user.org_id
+    # Прод-баг (заявка №209, 22.10.2026): org_id заявки с субсидией = org_id
+    # субсидии, не произвольный элемент get_org_filter (ПРАВИЛО №6, единственный
+    # источник — app/services/wish_org.py::resolve_wish_org_id).
+    from app.services.wish_org import resolve_wish_org_id
+    org_id = await resolve_wish_org_id(db, current_user, body.subsidy_id)
 
     wish = Wish(
         org_id=org_id,
@@ -525,6 +537,22 @@ async def update_wish(
     if body.subsidy_id is not None:
         from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
         await assert_subsidy_approved_for_binding(db, body.subsidy_id)
+        # Доработка после ревью (22.10.2026): фронт (buildWishPayload) шлёт
+        # subsidy_id в КАЖДОМ PUT, даже когда субсидия не менялась — пересчёт
+        # org_id (и, значит, ensure_subsidy_visible) только когда субсидия
+        # РЕАЛЬНО меняется, иначе согласующий, видящий заявку, но не карточку
+        # субсидии, получал бы 404 на обычное сохранение без единой правки
+        # субсидии (регрессия прошлого фикса заявки №209). Снимок wish.subsidy_id
+        # здесь — ЕЩЁ старое значение (setattr-цикл update_data ниже его не
+        # трогал, body.subsidy_id применяется тем же циклом позже).
+        if body.subsidy_id != wish.subsidy_id:
+            # Прод-баг (заявка №209, 22.10.2026) — тот же хелпер, что create_wish:
+            # смена субсидии правкой заявки переносит её в организацию субсидии
+            # (ПРАВИЛО №6, app/services/wish_org.py::resolve_wish_org_id).
+            # ensure_subsidy_visible внутри — subsidy_id пришёл из тела запроса
+            # этого PUT, видимость обязана быть проверена (ПРАВИЛО №8 п.2).
+            from app.services.wish_org import resolve_wish_org_id
+            wish.org_id = await resolve_wish_org_id(db, current_user, body.subsidy_id)
 
     # Прод-баг (заявка №206/закупка РЕЕ-2026-04252, 20.10.2026) — тот же
     # дефект, что в wish_transitions.py::patch_wish_execution (см. комментарий

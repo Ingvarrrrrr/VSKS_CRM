@@ -400,7 +400,8 @@ async def compute_feo_plan_tree(
     from app.services.item_type_split import (
         KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, KIND_PAYROLL, ALL_KINDS,
         kind_of, kind_of_by_category_id, empty_kind_dict,
-        collapse_kind_dict_to_payroll, split_amount_by_kind_pool, is_budget_aligned_to_plan,
+        collapse_kind_dict_to_payroll, split_amount_by_kind_pool,
+        pick_aligned_pool,
     )
     # Четвёртая корзина «payroll» (владелец, 07.10.2026, план .planning/
     # quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2) — единственный резолвер
@@ -1023,8 +1024,16 @@ async def compute_feo_plan_tree(
                 val = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: float(_raw_b)}
             else:
                 _remainder = max(_remainder, 0.0)
-                if is_budget_aligned_to_plan(_remainder, _pool):
-                    _own_split = {k: float(v) for k, v in split_amount_by_kind_pool(_remainder, _pool).items()}
+                # ИСПРАВЛЕНИЕ (22.10.2026, прод ДНР_2026 id 104, ПРАВИЛО №6) —
+                # «приравнено к плану» проверяется не только по голой Σ
+                # плановых позиций (_pool), но и по плану С УЧЁТОМ договоров
+                # (_plan_with_contracts_pool_by_kind — то, что реально пишет
+                # кнопка «Приравнять ФЭО к плану»); см. pick_aligned_pool.
+                _pool_used = pick_aligned_pool(
+                    _remainder, _pool, _plan_with_contracts_pool_by_kind(cat_id)
+                )
+                if _pool_used is not None:
+                    _own_split = {k: float(v) for k, v in split_amount_by_kind_pool(_remainder, _pool_used).items()}
                 else:
                     _own_split = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: _remainder}
                 val = {k: _own_split[k] + _budgeted_children_feo[k] for k in ALL_KINDS}
@@ -1088,9 +1097,12 @@ async def compute_feo_plan_tree(
         # «из чего бюджет вида» теперь существует ТОЛЬКО когда ФЭО приравнено
         # к плану (is_budget_aligned_to_plan); «своя сумма» не делится вообще,
         # значит и подписи-долям у неё нет — None вместо info с нулевым pool.
-        if not is_budget_aligned_to_plan(_raw_b, _pool):
+        # ИСПРАВЛЕНИЕ (22.10.2026, ПРАВИЛО №6) — «приравнено» теперь проверяет
+        # и план с учётом договоров (см. _feo_by_kind выше, pick_aligned_pool).
+        _pool_used = pick_aligned_pool(_raw_b, _pool, _plan_with_contracts_pool_by_kind(cat_id))
+        if _pool_used is None:
             return None
-        return {"budget": float(_raw_b), "pool": {k: float(v) for k, v in _pool.items()}, "aligned": True}
+        return {"budget": float(_raw_b), "pool": {k: float(v) for k, v in _pool_used.items()}, "aligned": True}
 
     # ── Раздел E1 продолжение (исправление 2026-09-21, ПРАВИЛО №6) ──────────
     # Инвариант владельца: plan_goods+plan_services+plan_unspecified узла
@@ -1216,6 +1228,40 @@ async def compute_feo_plan_tree(
         _result = (own_after_total, own_after_kind, floor_total, floor_kind)
         _own_plan_floor_memo[cid] = _result
         return _result
+
+    _plan_contracts_pool_memo: dict[int, dict] = {}
+
+    def _plan_with_contracts_pool_by_kind(cat_id: int) -> dict:
+        """ДОБАВЛЕНО 22.10.2026 (прод ДНР_2026 id 104, ПРАВИЛО №6) — та же
+        рекурсия, что и _plan_items_pool_by_kind (своя часть + поддеревья
+        подкатегорий БЕЗ своего явного budget; подкатегория со своим budget
+        пропускается — она получит свой split сама), но «своя часть» —
+        ПЛАН С УЧЁТОМ ДОГОВОРОВ по типу, то самое, что кнопка «Приравнять ФЭО
+        к плану» (feo_tree_write.align_budget_to_plan) пишет в budget как
+        node["plan"]+node["over"]: own-часть _plan_by_kind
+        (_own_plan_floor(cid)[1], ПОСЛЕ «пола» договоров) + own-часть
+        «сверх плана» по типу (own over_{kind} из over_consumption.get(cid),
+        та же own-сумма, что и в _over_by_kind — вторую формулу over не
+        заводить). Используется ТОЛЬКО как второй кандидат-пул в
+        item_type_split.pick_aligned_pool — если budget узла совпал с ЭТИМ
+        пулом (а не с голой Σ плановых позиций _plan_items_pool_by_kind),
+        делим по его доле. Для листа без детей Σ пула == node['plan']+
+        node['over'] этого же узла (инвариант, см. тест
+        test_feo_align_with_contracts_type_split.py)."""
+        if cat_id in _plan_contracts_pool_memo:
+            return _plan_contracts_pool_memo[cat_id]
+        _, own_plan_kind, _, _ = _own_plan_floor(cat_id)
+        _own_over_cons = over_consumption.get(cat_id) or {}
+        own_over_kind = {k: _own_over_cons.get(f"over_{k}", 0.0) for k in ALL_KINDS}
+        val = {k: own_plan_kind.get(k, 0.0) + own_over_kind.get(k, 0.0) for k in ALL_KINDS}
+        for _kid in children_map.get(cat_id, []):
+            if normalize_feo_category_budget(by_id[_kid].budget) is not None:
+                continue  # у подкатегории свой явный budget — её позиции не входят в пул родителя
+            _kv = _plan_with_contracts_pool_by_kind(_kid)
+            for k in ALL_KINDS:
+                val[k] += _kv[k]
+        _plan_contracts_pool_memo[cat_id] = val
+        return val
 
     _plan_manual_by_kind_memo: dict[int, dict] = {}
 

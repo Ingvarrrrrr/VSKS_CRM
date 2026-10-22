@@ -213,6 +213,37 @@ def is_budget_aligned_to_plan(budget, pool: Dict[str, float]) -> bool:
     return abs(_b - _pool_sum) <= Decimal("0.50")
 
 
+def pick_aligned_pool(
+    budget, items_pool: Dict[str, float], plan_pool: Dict[str, float]
+) -> Optional[Dict[str, float]]:
+    """ДОБАВЛЕНО 22.10.2026 (прод ДНР_2026 id 104) — кнопка «Приравнять ФЭО к
+    плану» (feo_tree_write.align_budget_to_plan/_all) пишет
+    budget := node["plan"] + node["over"] — план статьи С УЧЁТОМ ДОГОВОРОВ
+    (позиция, закрытая договором по количеству, считается по сумме договора;
+    плюс «пол» договоров и сверхплановые). is_budget_aligned_to_plan сравнивал
+    budget ТОЛЬКО с items_pool — голой Σ amount плановых позиций
+    (feo_plan_tree._plan_items_pool_by_kind), без договоров. На трёх статьях
+    субсидии (503 551,50 / 4 474 560,00 / 3 127 375,19, Σ позиций меньше на
+    12 892 / 16 400 / 224 848) budget «не приравнен» → ВСЁ ФЭО статьи уходило
+    в «без типа» → ФЭО товаров занижено, ложное превышение плана над ФЭО по
+    товарам на 8 105 486,69 (compute_subsidy_type_summary).
+
+    ПРАВИЛО №6 — одно место решения «каким пулом делить budget по типу»:
+    сначала items_pool (поведение НЕ меняется для уже работающих статей —
+    budget == голая Σ позиций, тот же результат, что и раньше); не совпало —
+    plan_pool (budget == план С УЧЁТОМ договоров, см.
+    feo_plan_tree._plan_with_contracts_pool_by_kind) — оба варианта законные
+    «ФЭО приравнено к плану», просто с разных источников плана. Не совпало ни
+    с одним — budget это СВОЯ сумма владельца (решение 14.10.2026, субсидия
+    «ДНР_Правильная» id 98) — None, вызывающий код обязан бросить всё
+    в unspecified, не делить по типу."""
+    if is_budget_aligned_to_plan(budget, items_pool):
+        return items_pool
+    if is_budget_aligned_to_plan(budget, plan_pool):
+        return plan_pool
+    return None
+
+
 def sum_by_kind(rows: Iterable[Tuple[Optional[str], Optional[Decimal]]]) -> Dict[str, Decimal]:
     """{'goods': Σ, 'services': Σ, 'unspecified': Σ} по парам (item_type, amount) —
     для плановых позиций/строк ФЭО (используется расчётом контролей превышения

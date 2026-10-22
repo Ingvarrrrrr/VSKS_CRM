@@ -236,7 +236,6 @@ from app.routers import purchase_receipts
 from app.routers import purchase_receipts_recompute
 from app.routers import purchase_receipts_import
 from app.routers import purchase_receipts_export
-from app.routers import install as install_router
 from app.routers import analytics as analytics_router
 from app.routers import report_configs as report_configs_router
 from app.routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_attachments
@@ -378,7 +377,6 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(purchase_receipts.router)
     app.include_router(purchase_receipts_import.router)
     app.include_router(purchase_receipts_export.router)
-    app.include_router(install_router.router, prefix="/api")
     # bank_statements MUST be registered BEFORE payments.router:
     # /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
     app.include_router(bank_statements.router)

@@ -39,6 +39,9 @@
 #   STAGING_HTTP_PORT / STAGING_HTTPS_PORT — запасные порты репетиции (default 8080/8443)
 #   PRE_SPLIT_REF    — git-ref ДО разреза, источник файлов для rollback (default HEAD~1)
 #   SKIP_SYSTEMD     — если "1", не трогает systemctl (используется локальным стендом)
+#   GALAA_GATE_PASSWORD — пароль страницы /__gate.html (galaa.ru), нужен ТОЛЬКО
+#                     при первом запуске, когда secrets/galaa_gate.conf ещё нет
+#                     (см. STEP 4a); дальше install.sh существующий файл не трогает
 # ═══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -218,6 +221,22 @@ cmd_switch() {
         log "WARN: ADMINER_HTPASSWD не задан в $VSKS_DIR/.env — adminer будет честно отдавать 401 (неподходящий хеш), как и раньше при пустой переменной"
         RANDOM_PW=$(openssl rand -hex 20 2>/dev/null || echo "disabled-$(date +%s)")
         echo "disabled:$(openssl passwd -apr1 "$RANDOM_PW" 2>/dev/null || echo "*")" > "$EDGE_LIVE/secrets/adminer.htpasswd"
+    fi
+
+    # ── STEP 4a-2: пароль страницы /__gate.html (galaa.ru) — ТОЛЬКО если
+    #    secrets/galaa_gate.conf ещё нет (первый запуск). Если файл уже
+    #    существует — не трогаем: владелец мог поменять пароль руками на
+    #    сервере, повторный install.sh не должен его затирать.
+    if [ ! -f "$EDGE_LIVE/secrets/galaa_gate.conf" ]; then
+        [ -n "${GALAA_GATE_PASSWORD:-}" ] || die "secrets/galaa_gate.conf не найден и GALAA_GATE_PASSWORD не задан — задай пароль страницы /__gate.html: GALAA_GATE_PASSWORD='...' bash $0"
+        case "$GALAA_GATE_PASSWORD" in
+            *'"'*|*'\'*|*';'*) die "GALAA_GATE_PASSWORD содержит запрещённый символ (\", \\ или ;) — он ломает map в nginx.conf, выбери другой пароль" ;;
+        esac
+        printf 'map $cookie_gala_gate $galaa_gate_cookie_ok {\n    "%s" 1;\n    default 0;\n}\n' "$GALAA_GATE_PASSWORD" > "$EDGE_LIVE/secrets/galaa_gate.conf"
+        chmod 600 "$EDGE_LIVE/secrets/galaa_gate.conf"
+        log "secrets/galaa_gate.conf записан из GALAA_GATE_PASSWORD (права 600)"
+    else
+        log "secrets/galaa_gate.conf уже существует — не трогаю"
     fi
 
     # ── STEP 4b: сертификат — если реального ещё нет (свежий стенд/первая

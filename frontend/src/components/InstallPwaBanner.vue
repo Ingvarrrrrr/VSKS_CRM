@@ -13,7 +13,7 @@
     </div>
   </div>
 
-  <v-dialog v-model="iosDialog" max-width="420" persistent>
+  <v-dialog v-model="iosDialog" max-width="420">
     <v-card>
       <v-card-title class="d-flex align-center">
         <v-icon start>mdi-apple</v-icon>
@@ -23,40 +23,25 @@
       </v-card-title>
       <v-card-text>
         <p class="text-body-2 mb-3">
-          Нажмите «Установить профиль». Дальше iPhone сам проведёт через 3 шага в Настройках — просто нажимайте кнопки которые он предлагает.
+          Три нажатия в Safari — и значок GALA окажется на главном экране.
         </p>
-        <v-stepper v-model="iosStep" non-linear hide-actions>
-          <v-stepper-header>
-            <v-stepper-item :value="1" :complete="iosStep > 1" title="Скачать" />
-            <v-divider />
-            <v-stepper-item :value="2" :complete="iosStep > 2" title="Настройки" />
-            <v-divider />
-            <v-stepper-item :value="3" title="Готово" />
-          </v-stepper-header>
-        </v-stepper>
-        <v-list density="compact" class="mt-3 text-body-2">
-          <v-list-item :class="{ 'text-medium-emphasis': iosStep > 1 }">
+        <v-list density="compact" class="text-body-2">
+          <v-list-item>
             <template #prepend><v-icon size="20">mdi-numeric-1-circle</v-icon></template>
-            Нажмите «Установить профиль» — Safari спросит: «Разрешить загрузку профиля?» → <strong>Разрешить</strong>
+            Нажмите кнопку <strong>«Поделиться»</strong> (<v-icon size="16">mdi-export-variant</v-icon>) на панели Safari. Если внизу только кнопка «⋯» — нажмите её, затем «Поделиться»
           </v-list-item>
-          <v-list-item :class="{ 'text-medium-emphasis': iosStep > 2 }">
+          <v-list-item>
             <template #prepend><v-icon size="20">mdi-numeric-2-circle</v-icon></template>
-            Откройте <strong>Настройки</strong> → вверху появится «Профиль загружен» → откройте → <strong>Установить</strong> (введите код-пароль)
+            Пролистайте список вниз и выберите <strong>«На экран «Домой»»</strong> (<v-icon size="16">mdi-plus-box-outline</v-icon>)
           </v-list-item>
           <v-list-item>
             <template #prepend><v-icon size="20">mdi-numeric-3-circle</v-icon></template>
-            Готово — на главном экране появится иконка <strong>GALA</strong>
+            Нажмите <strong>«Добавить»</strong> — на экране появится значок <strong>GALA</strong>, он открывается как отдельное приложение, без адресной строки
           </v-list-item>
         </v-list>
-        <v-alert v-if="iosStep === 1" type="warning" variant="tonal" density="compact" class="mt-3 text-caption">
-          iOS покажет красную надпись «Не подписан» — это нормально, профиль безопасен.
-        </v-alert>
       </v-card-text>
       <v-card-actions class="px-4 pb-4">
-        <v-btn v-if="iosStep === 1" color="primary" variant="flat" block size="large" @click="downloadProfile">
-          <v-icon start>mdi-download</v-icon>Установить профиль
-        </v-btn>
-        <v-btn v-else color="primary" variant="tonal" block @click="iosDialog = false">
+        <v-btn color="primary" variant="tonal" block @click="iosDialog = false">
           Понятно
         </v-btn>
       </v-card-actions>
@@ -114,20 +99,10 @@ const DISMISS_DAYS = 7
 
 const visible = ref(false)
 const iosDialog = ref(false)
-const iosStep = ref(1)
 const isIos = ref(false)
 const iosNeedsSafari = ref(false)  // iOS-устройство, но браузер не Safari (Chrome/Firefox)
 const safariDialog = ref(false)
 const linkCopied = ref(false)
-
-function downloadProfile() {
-  iosStep.value = 2
-  // Trigger profile download — Safari opens the .mobileconfig install flow.
-  // Передаём origin: за nginx бэкенд не видит публичный хост → иначе webclip
-  // указывал бы на http://localhost:80/ и ярлык был бы мёртвый.
-  const base = encodeURIComponent(window.location.origin)
-  window.location.href = `/api/install.mobileconfig?base=${base}`
-}
 
 let deferredPrompt: any = null
 
@@ -180,7 +155,6 @@ async function onInstall() {
     return
   }
   if (isIos.value) {
-    iosStep.value = 1
     iosDialog.value = true
     return
   }

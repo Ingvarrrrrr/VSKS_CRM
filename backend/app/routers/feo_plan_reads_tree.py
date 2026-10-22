@@ -189,6 +189,10 @@ async def get_feo_plan_tree(
             "plan_goods": node["plan_goods"],
             "plan_services": node["plan_services"],
             "plan_unspecified": node["plan_unspecified"],
+            # ПРАВИЛО №6 (22.10.2026) — typed-базис excess_plan_over_feo_*
+            # (НЕ «Запланировано»/«Бюджет», см. compute_feo_plan_tree).
+            "plan_typed_goods": node["plan_typed_goods"],
+            "plan_typed_services": node["plan_typed_services"],
             "feo_goods": node["feo_goods"],
             "feo_services": node["feo_services"],
             "feo_unspecified": node["feo_unspecified"],
@@ -283,6 +287,7 @@ async def get_feo_plan_tree(
             "excess_approval_plan_before", "excess_approval_plan_after",
             # Раздел E — «товары/услуги» и 4 контроля по типу, те же деньги.
             "plan_goods", "plan_services", "plan_unspecified",
+            "plan_typed_goods", "plan_typed_services",
             "feo_goods", "feo_services", "feo_unspecified",
             "fact_goods", "fact_services", "fact_unspecified",
             "excess_plan_over_feo_goods", "excess_plan_over_feo_services",

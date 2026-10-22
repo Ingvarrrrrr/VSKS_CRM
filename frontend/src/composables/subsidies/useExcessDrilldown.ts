@@ -58,18 +58,41 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+type UpperField = 'plan_typed_goods' | 'plan_typed_services' | 'plan_goods' | 'plan_services' | 'fact_goods' | 'fact_services'
+
+// ИСПРАВЛЕНИЕ (координатор, 22.10.2026) — upperField видов plan_over_feo_*
+// ниже теперь читает plan_typed_goods/plan_typed_services (тот же typed-план,
+// от которого бэкенд считает excess_plan_over_feo_* и plan_over_feo_* на
+// уровне субсидии, см. backend/app/services/feo_type_excess_basis.py) — иначе
+// панель «Где превышение» показывала бы ДРУГОЙ план, чем сама сумма
+// превышения (голый plan_goods, без вычета «своей суммы» ФЭО статьи). На
+// время выкатки backend мог ещё не отдавать новое поле — фолбэк на голый
+// plan_goods/plan_services ОДНИМ хелпером, не размазывая проверку undefined
+// по compositionTargetIds/buildCompositionMessage/targetRows (Правило №6).
+const UPPER_FIELD_FALLBACK: Partial<Record<UpperField, 'plan_goods' | 'plan_services'>> = {
+  plan_typed_goods: 'plan_goods',
+  plan_typed_services: 'plan_services',
+}
+function amountOfUpperField(entry: PlanTreeEntry | undefined, upperField: UpperField): number {
+  const fallback = UPPER_FIELD_FALLBACK[upperField]
+  if (fallback && (entry as any)?.[upperField] === undefined) {
+    return amountOfField(entry, fallback)
+  }
+  return amountOfField(entry, upperField)
+}
+
 // Единственная карта «какие два поля PlanTreeEntry сравнивает этот вид
 // превышения, и какими словами их называть по-русски» — читают и
 // compositionTargetIds/excessDiffLine здесь, и ExcessDrilldownBar.vue (список
 // статей, Дефект 2 приёмки 06.10.2026). Не копируем isGoods/isPlanOverFeo по
 // разным функциям (было до этой правки — Правило №6).
 export const METRIC_FIELDS: Record<TypeExcessKind, {
-  upperField: 'plan_goods' | 'plan_services' | 'fact_goods' | 'fact_services'
+  upperField: UpperField
   lowerField: 'feo_goods' | 'feo_services' | 'plan_goods' | 'plan_services'
   upperWord: string; lowerWord: string; lowerWordGen: string; typeWord: string
 }> = {
-  plan_over_feo_goods:     { upperField: 'plan_goods',   lowerField: 'feo_goods',    upperWord: 'план',    lowerWord: 'ФЭО',  lowerWordGen: 'ФЭО',   typeWord: 'товарам' },
-  plan_over_feo_services:  { upperField: 'plan_services', lowerField: 'feo_services', upperWord: 'план',    lowerWord: 'ФЭО',  lowerWordGen: 'ФЭО',   typeWord: 'услугам' },
+  plan_over_feo_goods:     { upperField: 'plan_typed_goods',    lowerField: 'feo_goods',    upperWord: 'план',    lowerWord: 'ФЭО',  lowerWordGen: 'ФЭО',   typeWord: 'товарам' },
+  plan_over_feo_services:  { upperField: 'plan_typed_services', lowerField: 'feo_services', upperWord: 'план',    lowerWord: 'ФЭО',  lowerWordGen: 'ФЭО',   typeWord: 'услугам' },
   fact_over_plan_goods:    { upperField: 'fact_goods',   lowerField: 'plan_goods',   upperWord: 'закупки', lowerWord: 'план', lowerWordGen: 'плана', typeWord: 'товарам' },
   fact_over_plan_services: { upperField: 'fact_services', lowerField: 'plan_services', upperWord: 'закупки', lowerWord: 'план', lowerWordGen: 'плана', typeWord: 'услугам' },
 }
@@ -213,8 +236,38 @@ export function compositionTargetIds(
   const { roots } = buildTreeIndex(categories)
   return roots.filter(id => {
     const entry = planTreeByCat[id]
-    return amountOfField(entry, upperField) > 0.005 || amountOfField(entry, lowerField) > 0.005
+    return amountOfUpperField(entry, upperField) > 0.005 || amountOfField(entry, lowerField) > 0.005
   })
+}
+
+// Дефект 1 приёмки 06.10.2026 — заголовок панели для composition-режима.
+// «ФЭО (или план) по направлениям не разнесено» — только если нижняя
+// величина сосредоточена на ОДНОМ корне, или лежит на корнях, где верхней
+// величины вовсе нет (не смешана с планом на одном и том же направлении);
+// иначе — нейтральная формулировка (задание, п.1, уточнение в скобках).
+// Вынесена отдельной экспортируемой функцией (не методом buildExcessDrilldown)
+// — чтобы текст, который реально видит владелец, проверялся тестом по
+// готовым totals/planTreeByCat, без монтирования ctx/Vue (см. __tests__/
+// useExcessDrilldown.spec.ts: upperField теперь plan_typed_goods/services с
+// фолбэком, см. amountOfUpperField выше, Правило №6 — вторая формула «верхней
+// суммы» здесь не заводится).
+export function buildCompositionMessageForKind(
+  kind: TypeExcessKind,
+  categories: Pick<FeoCategory, 'id' | 'parent_id'>[],
+  planTreeByCat: Record<number, PlanTreeEntry>,
+  totals: SubsidyTypeTotals | undefined,
+): string {
+  const { upperField, lowerField, upperWord, lowerWord, typeWord } = METRIC_FIELDS[kind]
+  const upperTotal = totals ? amountOfUpperField(totals as any, upperField) : 0
+  const lowerTotal = totals ? Number((totals as any)[lowerField] || 0) : 0
+  const { roots } = buildTreeIndex(categories)
+  const lowerRoots = roots.filter(id => amountOfField(planTreeByCat[id], lowerField) > 0.005)
+  const concentrated = lowerRoots.length === 1
+    || lowerRoots.every(id => amountOfUpperField(planTreeByCat[id], upperField) <= 0.005)
+  const tail = concentrated
+    ? `${capitalize(lowerWord)} по ${typeWord} по направлениям не разнесено — стрелками показаны статьи, где лежит ${upperWord} и где лежит ${lowerWord}.`
+    : 'Стрелками показаны статьи, из которых складывается итог.'
+  return `Превышение только в итоге субсидии: ${upperWord} по ${typeWord} ${formatCurrency(upperTotal)} при ${lowerWord} по ${typeWord} ${formatCurrency(lowerTotal)}. ${tail}`
 }
 
 // Сумма превышения по найденным целям (excessTargetIds) — для подписи панели
@@ -378,24 +431,8 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
     return 'по отдельным статьям расхождение план/ФЭО не найдено'
   }
 
-  // Дефект 1 приёмки 06.10.2026 — заголовок панели для composition-режима.
-  // «ФЭО (или план) по направлениям не разнесено» — только если нижняя
-  // величина сосредоточена на ОДНОМ корне, или лежит на корнях, где верхней
-  // величины вовсе нет (не смешана с планом на одном и том же направлении);
-  // иначе — нейтральная формулировка (задание, п.1, уточнение в скобках).
   function buildCompositionMessage(kind: TypeExcessKind): string {
-    const { upperField, lowerField, upperWord, lowerWord, typeWord } = METRIC_FIELDS[kind]
-    const totals = subsidyTotals()
-    const upperTotal = totals ? Number(totals[upperField] || 0) : 0
-    const lowerTotal = totals ? Number(totals[lowerField] || 0) : 0
-    const { roots } = buildTreeIndex(ctx.feoCategories.value)
-    const lowerRoots = roots.filter(id => amountOfField(ctx.planTreeByCat.value[id], lowerField) > 0.005)
-    const concentrated = lowerRoots.length === 1
-      || lowerRoots.every(id => amountOfField(ctx.planTreeByCat.value[id], upperField) <= 0.005)
-    const tail = concentrated
-      ? `${capitalize(lowerWord)} по ${typeWord} по направлениям не разнесено — стрелками показаны статьи, где лежит ${upperWord} и где лежит ${lowerWord}.`
-      : 'Стрелками показаны статьи, из которых складывается итог.'
-    return `Превышение только в итоге субсидии: ${upperWord} по ${typeWord} ${formatCurrency(upperTotal)} при ${lowerWord} по ${typeWord} ${formatCurrency(lowerTotal)}. ${tail}`
+    return buildCompositionMessageForKind(kind, ctx.feoCategories.value, ctx.planTreeByCat.value, subsidyTotals())
   }
 
   // Тот же composition-заголовок для 'total' — верхняя/нижняя величина корня
@@ -583,7 +620,7 @@ function buildExcessDrilldown(ctx: ExcessDrilldownCtx) {
       return {
         id,
         name: nameOf(id),
-        upper: amountOfField(entry, upperField),
+        upper: amountOfUpperField(entry, upperField),
         lower: amountOfField(entry, lowerField),
         excess: amountOfField(entry, excessField),
       }

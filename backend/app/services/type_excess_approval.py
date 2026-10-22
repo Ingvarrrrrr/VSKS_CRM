@@ -58,15 +58,24 @@ from app.services import plan_excess_kinds as PEK
 # уровня (категория/субсидия) используют ОДНИ И ТЕ ЖЕ имена полей (compute_
 # feo_plan_tree.node и compute_subsidy_type_summary.totals используют
 # одинаковые ключи plan_goods/feo_goods/... нарочно, см. их докстринги).
+#
+# ИСПРАВЛЕНИЕ (22.10.2026, ПРАВИЛО №6) — PLAN_OVER_FEO_GOODS/SERVICES читают
+# «сверху» plan_typed_goods/plan_typed_services, а не голый plan_goods/
+# plan_services: это ТО ЖЕ число, которое excess_plan_over_feo_* (узел) и
+# plan_over_feo_* (субсидия) реально сравнивают с ФЭО (см.
+# app.services.feo_type_excess_basis/feo_plan_tree.py::compute_feo_plan_tree)
+# — иначе текст предупреждения «план X, ФЭО Y» не совпадал бы с excess_amount
+# на статьях «своей суммой» (см. docstring модуля feo_type_excess_basis).
+# FACT_OVER_PLAN_* не трогаются — у них своя формула, план там «снизу».
 _NODE_SPECS = (
-    (PEK.PLAN_OVER_FEO_GOODS, "excess_plan_over_feo_goods", "plan_goods", "feo_goods"),
-    (PEK.PLAN_OVER_FEO_SERVICES, "excess_plan_over_feo_services", "plan_services", "feo_services"),
+    (PEK.PLAN_OVER_FEO_GOODS, "excess_plan_over_feo_goods", "plan_typed_goods", "feo_goods"),
+    (PEK.PLAN_OVER_FEO_SERVICES, "excess_plan_over_feo_services", "plan_typed_services", "feo_services"),
     (PEK.FACT_OVER_PLAN_GOODS, "excess_fact_over_plan_goods", "fact_goods", "plan_goods"),
     (PEK.FACT_OVER_PLAN_SERVICES, "excess_fact_over_plan_services", "fact_services", "plan_services"),
 )
 _SUMMARY_SPECS = (
-    (PEK.PLAN_OVER_FEO_GOODS, "plan_over_feo_goods", "plan_goods", "feo_goods"),
-    (PEK.PLAN_OVER_FEO_SERVICES, "plan_over_feo_services", "plan_services", "feo_services"),
+    (PEK.PLAN_OVER_FEO_GOODS, "plan_over_feo_goods", "plan_typed_goods", "feo_goods"),
+    (PEK.PLAN_OVER_FEO_SERVICES, "plan_over_feo_services", "plan_typed_services", "feo_services"),
     (PEK.FACT_OVER_PLAN_GOODS, "fact_over_plan_goods", "fact_goods", "plan_goods"),
     (PEK.FACT_OVER_PLAN_SERVICES, "fact_over_plan_services", "fact_services", "plan_services"),
 )

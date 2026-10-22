@@ -3,9 +3,11 @@
 // превышения (узлы дерева хранят АГРЕГАТ поддерева, см. докстринг функции и
 // backend/app/services/feo_plan_tree.py). Тест — чистая логика, без Vue/ctx.
 import { describe, expect, it } from 'vitest'
-import { compositionTargetIds, excessDiffLine, excessTargetIds, excessTargetsTotal } from '../useExcessDrilldown'
+import {
+  buildCompositionMessageForKind, compositionTargetIds, excessDiffLine, excessTargetIds, excessTargetsTotal,
+} from '../useExcessDrilldown'
 import { formatCurrency } from '../format'
-import type { FeoCategory, PlanTreeEntry } from '../types'
+import type { FeoCategory, PlanTreeEntry, SubsidyTypeTotals } from '../types'
 
 type Cat = Pick<FeoCategory, 'id' | 'parent_id'>
 
@@ -104,6 +106,32 @@ describe('compositionTargetIds (резервный режим, когда excess
       2: { plan_goods: 0, feo_goods: 0 },
     })
     expect(compositionTargetIds(categories, planTreeByCat, 'plan_over_feo_goods')).toEqual([1])
+  })
+})
+
+// Доработка координатора (22.10.2026): upperField видов plan_over_feo_* теперь
+// plan_typed_goods/plan_typed_services (тот же typed-план, от которого
+// бэкенд считает сам excess, см. backend/app/services/feo_type_excess_basis.py)
+// — панель «Где превышение» обязана брать ТОТ ЖЕ план, что и чип превышения,
+// а не голый plan_goods (который включает и «свою сумму» ФЭО статьи, уже не
+// участвующую в контроле). Фолбэк на plan_goods/plan_services — пока backend
+// не отдаёт новое поле (undefined).
+describe('buildCompositionMessageForKind (upperField = plan_typed_goods с фолбэком)', () => {
+  it('plan_typed_goods есть — текст берёт его, а не голый plan_goods', () => {
+    const categories: Cat[] = [cat(1, null)]
+    const totals = { plan_goods: 1000, plan_typed_goods: 300, feo_goods: 300 } as unknown as SubsidyTypeTotals
+    const planTreeByCat = tree({ 1: { plan_goods: 1000, plan_typed_goods: 300, feo_goods: 300 } })
+    const msg = buildCompositionMessageForKind('plan_over_feo_goods', categories, planTreeByCat, totals)
+    expect(msg).toContain(`план по товарам ${formatCurrency(300)}`)
+    expect(msg).not.toContain(formatCurrency(1000))
+  })
+
+  it('plan_typed_goods нет (backend ещё не отдаёт поле) — фолбэк на голый plan_goods', () => {
+    const categories: Cat[] = [cat(1, null)]
+    const totals = { plan_goods: 1000, feo_goods: 300 } as unknown as SubsidyTypeTotals
+    const planTreeByCat = tree({ 1: { plan_goods: 1000, feo_goods: 300 } })
+    const msg = buildCompositionMessageForKind('plan_over_feo_goods', categories, planTreeByCat, totals)
+    expect(msg).toContain(`план по товарам ${formatCurrency(1000)}`)
   })
 })
 

@@ -562,6 +562,13 @@ export interface PlanTreeEntry {
   // feo_plan_tree.py:1091-1099): goods+services+unspecified == соответствующему
   // итогу узла (plan/budget-эквивалент/fact) — тест test_feo_plan_tree_type_split.py.
   plan_goods?: number; plan_services?: number; plan_unspecified?: number
+  // ИСПРАВЛЕНИЕ (22.10.2026, ПРАВИЛО №6, backend/app/services/
+  // feo_type_excess_basis.py) — typed-базис excess_plan_over_feo_* (НЕ
+  // «Запланировано»/«Бюджет», те читают plan_goods/plan_services выше без
+  // изменений): plan_<kind> минус та часть, что гарантированно осела в
+  // unspecified ФЭО статьи «своей суммой». excess_plan_over_feo_goods/services
+  // (ниже) УЖЕ посчитаны backend'ом от этого поля — фронт не пересчитывает.
+  plan_typed_goods?: number; plan_typed_services?: number
   feo_goods?: number; feo_services?: number; feo_unspecified?: number
   fact_goods?: number; fact_services?: number; fact_unspecified?: number
   // Задача владельца «Б, продолжение» (13.10.2026) — null, если у узла нет
@@ -673,6 +680,12 @@ export interface SubsidyTypeTotals {
   // же backend/app/services/type_totals.py (_EMPTY_TOTALS уже включает эти
   // поля всегда, не опционально).
   plan_payroll: number; feo_payroll: number
+  // ИСПРАВЛЕНИЕ (22.10.2026, ПРАВИЛО №6) — typed-базис plan_over_feo_* на
+  // уровне субсидии (см. комментарий у plan_typed_goods выше в узле дерева) —
+  // Σ plan_typed_<kind> корневых узлов (compute_subsidy_type_summary).
+  // Опциональны — старый кэш/моки без этих полей не ломаются, читающий код
+  // фолбэкает на plan_goods/plan_services (см. freeByKindFromTypeTotals).
+  plan_typed_goods?: number; plan_typed_services?: number
 }
 export type SubsidyTypeExcess = Record<TypeExcessKind, { amount: number; pending: boolean; approved: boolean }>
 

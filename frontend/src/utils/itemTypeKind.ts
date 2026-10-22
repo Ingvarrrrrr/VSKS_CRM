@@ -87,17 +87,35 @@ export interface TypeShares { goods: number; services: number; unspecified: numb
 export interface FeoPlanTypeTotals {
   feo_goods?: number | null; feo_services?: number | null; feo_payroll?: number | null
   plan_goods?: number | null; plan_services?: number | null; plan_payroll?: number | null
+  // ИСПРАВЛЕНИЕ (22.10.2026, ПРАВИЛО №6, backend/app/services/
+  // feo_type_excess_basis.py) — typed-базис: plan_<kind> МИНУС та часть, что
+  // гарантированно осела в unspecified ФЭО статьи «своей суммой» (budget не
+  // приравнен ни к одному пулу плана, см. compute_subsidy_type_summary).
+  // Опционально — фолбэк на plan_goods/plan_services ниже, если backend ещё
+  // не отдаёт поле (старый кэш ответа).
+  plan_typed_goods?: number | null; plan_typed_services?: number | null
 }
 
+// «Свободно» по товарам/услугам считается от plan_typed_<kind> (не голого
+// plan_<kind>) — та же формула, которой backend уже посчитал
+// excess_plan_over_feo_goods/services (ПРАВИЛО №6, один источник на бэке и
+// фронте, см. docstring плана «что сделать», п.3). Повод: статья ФЭО «своей
+// суммой» (budget не приравнен к плану) по правилу владельца 14.10.2026 НЕ
+// делится по типу — её typed-план больше НЕ входит в сравнение с feo_<kind>,
+// иначе «Свободно» показывало то же ложное «превышение» (отрицательное
+// «свободно»), что и карточка контроля. payroll — исключение, у него нет
+// typed-базиса (своя корзина, см. docstring выше), сравнение как раньше.
 export function freeByKindFromTypeTotals(
   totals: FeoPlanTypeTotals, round: (v: number) => number = (v) => v,
 ): { goods: number | null; services: number | null; payroll: number | null } {
   const feoGoods = totals.feo_goods || 0
   const feoServices = totals.feo_services || 0
   const feoPayroll = totals.feo_payroll || 0
+  const planGoods = totals.plan_typed_goods ?? totals.plan_goods ?? 0
+  const planServices = totals.plan_typed_services ?? totals.plan_services ?? 0
   return {
-    goods: feoGoods > 0 ? round(feoGoods - (totals.plan_goods || 0)) : null,
-    services: feoServices > 0 ? round(feoServices - (totals.plan_services || 0)) : null,
+    goods: feoGoods > 0 ? round(feoGoods - planGoods) : null,
+    services: feoServices > 0 ? round(feoServices - planServices) : null,
     payroll: feoPayroll > 0 ? round(feoPayroll - (totals.plan_payroll || 0)) : null,
   }
 }

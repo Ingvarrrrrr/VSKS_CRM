@@ -142,10 +142,18 @@ async def compute_subsidy_type_summary(db: AsyncSession, subsidy_id: int, tree: 
         for metric in ("plan", "feo", "fact")
         for kind in ALL_KINDS  # теперь включает payroll (план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2)
     }
+    # ПРАВИЛО №6 (22.10.2026) — typed-базис excess plan_over_feo_* на уровне
+    # субсидии (Σ plan_typed_<kind> корней, то же поле узла, см.
+    # compute_feo_plan_tree/app.services.feo_type_excess_basis). plan_goods/
+    # plan_services в totals выше НЕ меняются (их читает КPI «Запланировано»,
+    # см. app.services.subsidy_money_summary) — это ОТДЕЛЬНЫЕ ключи только для
+    # excess ниже.
+    totals["plan_typed_goods"] = sum(float(n.get("plan_typed_goods", 0.0) or 0.0) for n in roots)
+    totals["plan_typed_services"] = sum(float(n.get("plan_typed_services", 0.0) or 0.0) for n in roots)
 
     _specs = (
-        (_pek.PLAN_OVER_FEO_GOODS, "plan_over_feo_goods", f"plan_{KIND_GOODS}", f"feo_{KIND_GOODS}", True),
-        (_pek.PLAN_OVER_FEO_SERVICES, "plan_over_feo_services", f"plan_{KIND_SERVICES}", f"feo_{KIND_SERVICES}", True),
+        (_pek.PLAN_OVER_FEO_GOODS, "plan_over_feo_goods", "plan_typed_goods", f"feo_{KIND_GOODS}", True),
+        (_pek.PLAN_OVER_FEO_SERVICES, "plan_over_feo_services", "plan_typed_services", f"feo_{KIND_SERVICES}", True),
         (_pek.FACT_OVER_PLAN_GOODS, "fact_over_plan_goods", f"fact_{KIND_GOODS}", f"plan_{KIND_GOODS}", False),
         (_pek.FACT_OVER_PLAN_SERVICES, "fact_over_plan_services", f"fact_{KIND_SERVICES}", f"plan_{KIND_SERVICES}", False),
     )
@@ -402,6 +410,11 @@ async def compute_feo_plan_tree(
         kind_of, kind_of_by_category_id, empty_kind_dict,
         collapse_kind_dict_to_payroll, split_amount_by_kind_pool,
         pick_aligned_pool,
+    )
+    # ПРАВИЛО №6/№5 (22.10.2026) — typed-базис excess_plan_over_feo_*, чистая
+    # арифметика вынесена в отдельный модуль, см. его докстринг.
+    from app.services.feo_type_excess_basis import (
+        covered_plan_for_own_sum_node, rollup_exclusion_for_node, typed_plan_amount,
     )
     # Четвёртая корзина «payroll» (владелец, 07.10.2026, план .planning/
     # quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 2) — единственный резолвер
@@ -903,6 +916,19 @@ async def compute_feo_plan_tree(
     # пул родителя — иначе будет посчитано дважды).
     _plan_pool_memo: dict[int, dict] = {}
 
+    # ПРАВИЛО №6 (22.10.2026, прод, read-only замер — ложное превышение «план
+    # по товарам/услугам над ФЭО по товарам/услугам» на статьях «своей суммой»,
+    # см. app.services.feo_type_excess_basis за полным описанием) — множество
+    # id узлов с явным budget, которому pick_aligned_pool (ниже, в
+    # _feo_by_kind) вернул None (budget — своя сумма владельца, НЕ приравненная
+    # ни к одному из пулов плана), заполняется здесь СРАЗУ в момент того же
+    # решения, второй проверки не заводим. Само ЗНАЧЕНИЕ «покрытого плана»
+    # этого узла (typed-базис исключения) считается позже, в _visit, от ЕГО
+    # ЖЕ plan_<kind> (node['plan_goods'/...]) — не от пула позиций (см.
+    # ИСПРАВЛЕНИЕ в докстринге feo_type_excess_basis.py: пул недооценивал
+    # исключение там, где план узла поднят договором выше Σ позиций).
+    _own_sum_unaligned_ids: set[int] = set()
+
     def _plan_items_pool_by_kind(cat_id: int) -> dict:
         if cat_id in _plan_pool_memo:
             return _plan_pool_memo[cat_id]
@@ -1021,6 +1047,10 @@ async def compute_feo_plan_tree(
                 # перекрывают budget родителя) — честно не разбиваем вообще,
                 # как раньше (без кредита детям — это РЕДКИЙ, заведомо
                 # противоречивый случай, не боевая цель этого исправления).
+                # Как и ветка pick_aligned_pool is None ниже — «не делится»,
+                # узел помечен как own-sum для typed-базиса (см. докстринг
+                # _own_sum_unaligned_ids выше).
+                _own_sum_unaligned_ids.add(cat_id)
                 val = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: float(_raw_b)}
             else:
                 _remainder = max(_remainder, 0.0)
@@ -1035,6 +1065,12 @@ async def compute_feo_plan_tree(
                 if _pool_used is not None:
                     _own_split = {k: float(v) for k, v in split_amount_by_kind_pool(_remainder, _pool_used).items()}
                 else:
+                    # «Своя сумма», не приравненная ни к одному пулу плана
+                    # (решение владельца 14.10.2026) — запоминаем узел для
+                    # typed-базиса excess_plan_over_feo_* (см. докстринг
+                    # _own_sum_unaligned_ids выше и app.services.
+                    # feo_type_excess_basis), второй проверки не заводим.
+                    _own_sum_unaligned_ids.add(cat_id)
                     _own_split = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: _remainder}
                 val = {k: _own_split[k] + _budgeted_children_feo[k] for k in ALL_KINDS}
         else:
@@ -1765,11 +1801,50 @@ async def compute_feo_plan_tree(
             _feo_kind[KIND_PAYROLL], _feo_kind[KIND_UNSPECIFIED],
         )
 
+        # plan_typed_{goods,services} — ИСПРАВЛЕНИЕ (22.10.2026, прод, ПРАВИЛО
+        # №6, см. app.services.feo_type_excess_basis за полным описанием):
+        # typed-план узла+поддерева БЕЗ той части, что гарантированно осела в
+        # unspecified ФЭО (статьи «своей суммой», не приравненной к плану —
+        # _own_sum_unaligned_ids, заполняется внутри _feo_by_kind выше).
+        # excess_plan_over_feo_{goods,services} ниже читает ЭТО поле, а не
+        # голый plan_goods/plan_services — те НЕ меняются (их показывают
+        # карточки «Запланировано»/«Бюджет», см. узел ниже).
+        #
+        # «Покрытый план» own-sum узла — ЕГО ЖЕ plan_<kind> (_display_kind
+        # выше, уже с договорами/полом/клэмпом budget — ТО ЖЕ число, что идёт
+        # в node['plan_goods'/'plan_services']), минус Σ plan_<kind> ПРЯМЫХ
+        # детей cat_id со своим явным budget — их узел уже готов (kids
+        # посещены раньше родителя, см. child_nodes выше/_visit docstring),
+        # читаем ГОТОВОЕ result[_kid] (НЕ _plan_items_pool_by_kind — пул
+        # недооценивал исключение там, где план узла поднят договором выше Σ
+        # плановых позиций, см. ИСПРАВЛЕНИЕ в докстринге feo_type_excess_basis.py).
+        _direct_budgeted_children_plan_kind = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0}
+        for _kid in kids:
+            if normalize_feo_category_budget(by_id[_kid].budget) is not None:
+                _kid_node = result.get(_kid) or {}
+                _direct_budgeted_children_plan_kind[KIND_GOODS] += float(_kid_node.get("plan_goods", 0.0) or 0.0)
+                _direct_budgeted_children_plan_kind[KIND_SERVICES] += float(_kid_node.get("plan_services", 0.0) or 0.0)
+        if cat_id in _own_sum_unaligned_ids:
+            _own_covered_kind = covered_plan_for_own_sum_node(
+                _display_kind, _direct_budgeted_children_plan_kind, (KIND_GOODS, KIND_SERVICES),
+            )
+        else:
+            _own_covered_kind = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0}
+        # exclusion(cat_id) = covered(cat_id) + Σ exclusion(kid) по ВСЕМ прямым
+        # детям (бюджетным и нет) — kid уже посещён (post-order), его запись в
+        # _own_sum_exclusion_memo гарантированно есть.
+        _exclusion_kind = rollup_exclusion_for_node(
+            _own_covered_kind, [_own_sum_exclusion_memo[_kid] for _kid in kids],
+        )
+        _own_sum_exclusion_memo[cat_id] = _exclusion_kind
+        plan_typed_goods = typed_plan_amount(_display_kind, _exclusion_kind, KIND_GOODS)
+        plan_typed_services = typed_plan_amount(_display_kind, _exclusion_kind, KIND_SERVICES)
+
         # excess_plan_over_feo_{goods,services} — только если типизированное
         # ФЭО по этому типу ЕСТЬ (feo_goods/feo_services > 0) — владелец: «на
         # категории без типизированного ФЭО контроль не срабатывает».
-        excess_plan_over_feo_goods = max(plan_goods - feo_goods, 0.0) if feo_goods > 0.005 else 0.0
-        excess_plan_over_feo_services = max(plan_services - feo_services, 0.0) if feo_services > 0.005 else 0.0
+        excess_plan_over_feo_goods = max(plan_typed_goods - feo_goods, 0.0) if feo_goods > 0.005 else 0.0
+        excess_plan_over_feo_services = max(plan_typed_services - feo_services, 0.0) if feo_services > 0.005 else 0.0
         # excess_fact_over_plan_{goods,services} — ВСЕГДА (план по типу есть
         # всегда, см. _plan_by_kind).
         excess_fact_over_plan_goods = max(fact_goods - plan_goods, 0.0)
@@ -1849,6 +1924,11 @@ async def compute_feo_plan_tree(
             "plan_services": plan_services,
             "plan_payroll": plan_payroll,
             "plan_unspecified": plan_unspecified,
+            # ПРАВИЛО №6 (22.10.2026) — typed-базис excess_plan_over_feo_*
+            # (НЕ «Запланировано»/«Бюджет», те читают plan_goods/plan_services
+            # выше без изменений) — см. app.services.feo_type_excess_basis.
+            "plan_typed_goods": plan_typed_goods,
+            "plan_typed_services": plan_typed_services,
             "feo_goods": feo_goods,
             "feo_services": feo_services,
             "feo_payroll": feo_payroll,
@@ -1955,6 +2035,23 @@ async def compute_feo_plan_tree(
         }
         result[cat_id] = node
         return node
+
+    # ПРАВИЛО №6 (22.10.2026) — принудительный проход _feo_by_kind по ВСЕМ
+    # категориям ДО основного обхода _visit: own-сумма «не делится» (см.
+    # _own_sum_unaligned_pool выше) может сидеть на ЛЮБОМ узле поддерева, а не
+    # только на прямом ребёнке — своя же ветка own-sum-узла в _feo_by_kind
+    # рекурсирует ТОЛЬКО в БЮДЖЕТНЫХ прямых детей (_budgeted_children_feo), не
+    # во все. Без этого прохода typed-базис ниже мог бы не увидеть вложенный
+    # own-sum узел, если _visit дойдёт до предка раньше потомка (порядок
+    # `for cid in by_id` не гарантирует «снизу вверх»). _feo_by_kind
+    # мемоизирована — повторные вызовы из _visit ничего не пересчитывают.
+    for cid in by_id:
+        _feo_by_kind(cid)
+    # exclusion(cat_id) по поддереву (см. app.services.feo_type_excess_basis)
+    # накапливается ИНКРЕМЕНТАЛЬНО внутри _visit (own-часть требует уже
+    # готового node['plan_<kind>'] прямых бюджетных детей — см. комментарий
+    # там же), поэтому здесь только memo-словарь, без отдельного прохода.
+    _own_sum_exclusion_memo: dict[int, dict] = {}
 
     for cid in by_id:
         _visit(cid)

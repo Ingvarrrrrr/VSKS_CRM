@@ -39,7 +39,7 @@ router = APIRouter(prefix="/redistributable-drill", tags=["dashboard"])
 
 @router.get("")
 async def dashboard_redistributable_drill(
-    kind: str = Query(..., regex="^(goods|services)$"),
+    kind: str = Query(..., regex="^(goods|services|payroll)$"),
     scope: str = Query("managed", regex="^(dashboard|managed)$"),
     subsidy_ids: Optional[str] = Query(
         None, description="через запятую — доп. сужение ПОВЕРХ видимости scope",
@@ -80,6 +80,15 @@ async def dashboard_redistributable_drill(
         if summary.get(sid, {}).get("redistributable_by_kind") is not None
     }
 
+    # kind=payroll (владелец 21.10.2026, часть 1 — «Видеть ФОТ»): субсидии, где
+    # у user нет subsidy.view_payroll, не отдают ФОТ-строки/card_total ЭТОГО
+    # окна — ЕДИНАЯ проверка payroll_visibility.payroll_visible_subsidy_ids
+    # (ПРАВИЛО №6, не вторая проверка права). Для goods/services это не нужно —
+    # ФОТ-позиции туда не попадают (kind-фильтр ниже).
+    if kind == "payroll" and entered_ids:
+        from app.services.payroll_visibility import payroll_visible_subsidy_ids
+        entered_ids = await payroll_visible_subsidy_ids(current_user, db, entered_ids)
+
     rows_by_sid = await not_committed_raw_rows(db, list(entered_ids))
     rows = [
         {**row, "subsidy_id": sid}
@@ -100,9 +109,17 @@ async def dashboard_redistributable_drill(
         r["subsidy_name"] = subsidy_names.get(r["subsidy_id"])
 
     total = sum(r["raw"] for r in rows)
+    # kind=payroll — card_total считаем только по entered_ids (уже сузили
+    # payroll_visible_subsidy_ids выше); summary здесь строится НАПРЯМУЮ
+    # (subsidy_money_summary), её НЕ проходит scrub_payroll_from_dashboard_
+    # charts (та функция — пост-обработка ответа /dashboard/charts, не этого
+    # окна), поэтому для goods/services (где скрывать нечего) используем
+    # sid_list как раньше, а для payroll — card_total считанный только по
+    # видимым субсидиям, иначе он утёк бы без права.
+    _card_total_sids = entered_ids if kind == "payroll" else sid_list
     card_total = sum(
         (summary.get(sid, {}).get("redistributable_by_kind") or {}).get(kind, 0.0)
-        for sid in sid_list
+        for sid in _card_total_sids
     )
 
     rows.sort(key=lambda r: (r["subsidy_id"] or 0, r["category_path"], r["name"] or ""))

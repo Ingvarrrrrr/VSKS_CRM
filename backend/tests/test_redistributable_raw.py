@@ -30,6 +30,7 @@ from app.services.committed_amounts import subsidy_committed_totals
 from app.services.feo_plan import compute_feo_plan_tree
 from app.services.redistributable_raw import (
     not_committed_raw_by_subsidy,
+    not_committed_raw_rows,
     over_plan_categories_by_subsidy,
 )
 from app.services.stage_cumulative import (
@@ -108,6 +109,64 @@ async def test_not_committed_raw_matches_tree_total_without_miscategorization(db
     assert len(over_rows) == 1
     assert over_rows[0]["category_id"] == cat.id
     assert over_rows[0]["excess_amount"] == pytest.approx(700_000.0)
+
+
+@pytest.mark.asyncio
+async def test_unlinked_category_purchase_reduces_own_kind_raw(db_session, test_org):
+    """ИСПРАВЛЕНО (D2, живая приёмка 21.10.2026, ХРО_2026 id 55): закупка
+    привязана К СТАТЬЕ (Purchase/PurchaseItem.feo_category_id), но БЕЗ ЛЮБОЙ
+    плановой позиции (PurchaseItem.feo_planned_item_id=None) — 3 закупки ФОТ
+    ХРО_2026 («ЗП»/«Отчисления»/«Командировочные») заведены ровно так.
+    committed такой закупки уже входит в «законтрактовано» дерева/субсидии
+    (compute_feo_plan_tree/subsidy_committed_totals), но раньше не вычиталось
+    из raw-разбивки по виду (ни в карточке, ни в расшифровке) — Σ строк была
+    БОЛЬШЕ итога карточки ровно на эту сумму."""
+    from app.models.feo_category import FeoCategory as _FC
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    payroll_cat = await _make_category(db_session, subsidy.id, name="ФОТ", budget=Decimal("500000"))
+    await db_session.execute(
+        _FC.__table__.update().where(_FC.id == payroll_cat.id).values(is_payroll=True)
+    )
+    await db_session.commit()
+    # quantity=5 (НЕ 1) — нарочно НЕ совпадает с quantity закупки ниже:
+    # order_substituted_plan (feo_plan_tree.py, замещение «план → факт
+    # договора» по СОВПАДАЮЩЕМУ количеству в категории, независимо от
+    # feo_planned_item_id) иначе подменил бы node['plan'] категории на сумму
+    # закупки САМ (другой, более старый механизм, не предмет этой правки) —
+    # тест должен бить ТОЧНО по D2 (committed_by_planned_item/raw), не по
+    # этому соседнему механизму.
+    item_nice = await _make_planned_item(db_session, payroll_cat.id, "Резерв ФОТ", 5, 500_000)
+    item_nice.need_level = "nice_to_have"
+    await db_session.commit()
+
+    # Закупка на статью ФОТ — НЕ привязана ни к одной плановой позиции.
+    await _make_linked_purchase(db_session, subsidy.id, payroll_cat.id, None, 1, 200_000)
+
+    rows_map = await not_committed_raw_rows(db_session, [subsidy.id])
+    unlinked_rows = [r for r in rows_map[subsidy.id] if r["planned_item_id"] is None]
+    assert len(unlinked_rows) == 1
+    assert unlinked_rows[0]["kind"] == "payroll"
+    assert unlinked_rows[0]["raw"] == pytest.approx(-200_000.0)
+
+    raw_map = await not_committed_raw_by_subsidy(db_session, [subsidy.id])
+    row = raw_map[subsidy.id]
+    # Плановая позиция ФОТ не тронута (её собственный committed_by_planned_item==0).
+    assert row["nice_raw"] == pytest.approx(500_000.0)
+    # Закупка без плановой позиции уходит в likely (своего вида — payroll),
+    # отрицательной строкой — не задвоена со своей плановой позицией.
+    assert row["likely_raw"] == pytest.approx(-200_000.0)
+    assert row["by_kind"]["payroll"] == pytest.approx(300_000.0)  # 500 000 - 200 000
+
+    # Карточка: redistributable_by_kind['payroll'] читает ТУ ЖЕ Σ (не вторая
+    # формула) — тот же контракт «строка расшифровки = число карточки», что
+    # test_redistributable_drill.py проверяет для обычных (линкованных)
+    # позиций. Σ by_kind здесь без дополнительной «не запланировано»-надбавки
+    # (budget==planned в этом фикстурном сценарии), поэтому сверяется напрямую.
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    card = summary[subsidy.id]
+    by_kind = card["redistributable_by_kind"]
+    assert by_kind["payroll"] == pytest.approx(300_000.0)
 
 
 @pytest.mark.asyncio

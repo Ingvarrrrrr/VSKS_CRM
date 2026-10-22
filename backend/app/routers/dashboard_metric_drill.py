@@ -36,6 +36,7 @@ from app.services.metric_drill_rows import (
     not_committed_level_drill,
     paid_drill,
 )
+from app.services.payroll_visibility import strip_invisible_payroll_drill_rows
 from app.utils.parse_ids import parse_id_set as _parse_subsidy_ids
 
 router = APIRouter(prefix="/metric-drill", tags=["dashboard"])
@@ -93,4 +94,8 @@ async def dashboard_metric_drill(
     else:  # pragma: no cover — regex Query уже отсекает неизвестные значения
         raise HTTPException(status_code=400, detail=f"Неизвестная метрика: {metric}")
 
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 2) — строки ФОТ субсидий
+    # без subsidy.view_payroll убираются из расшифровки (app.services.
+    # payroll_visibility, ПРАВИЛО №6).
+    result = await strip_invisible_payroll_drill_rows(current_user, db, sid_list, result)
     return result

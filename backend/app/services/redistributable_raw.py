@@ -68,16 +68,23 @@ monthly_future_not_started_raw — строка 4 карточки «Можно 
 """
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, or_ as sqlor, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
-from app.services.committed_amounts import committed_by_planned_item, planned_item_contributions
-from app.services.item_type_split import empty_kind_dict, kind_of_by_category_id
+from app.models.subsidy import Subsidy
+from app.services.committed_amounts import (
+    committed_by_planned_item,
+    committed_status_predicate,
+    planned_item_contributions,
+)
+from app.services.feo_plan_fact import fact_amounts_for_rows
+from app.services.item_type_split import ALL_KINDS, empty_kind_dict, kind_of_by_category_id
 from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE, is_reserve_need_level, normalize_need_level
+from app.services.purchase_amounts import aggregate_scope_expr
 
 _ZERO_EPS = 0.005
 
@@ -194,7 +201,88 @@ async def not_committed_raw_rows(
             "committed": committed_amt,
             "raw": raw,
             "monthly_future_not_started": r.id in flagged_ids,
+            "purchase_id": None,
         })
+
+    # ИСПРАВЛЕНО (D2, живая приёмка 21.10.2026, ХРО_2026 id 55): закупка может
+    # быть законтрактована НАПРЯМУЮ НА СТАТЬЮ (Purchase.feo_category_id/
+    # PurchaseItem.feo_category_id), БЕЗ ЛЮБОЙ привязки к плановой позиции
+    # (PurchaseItem.feo_planned_item_id IS NULL — 3 закупки ФОТ ХРО_2026 на
+    # 9 008 664,07, «ЗП»/«Отчисления»/«Командировочные», заведены ровно так).
+    # subsidy_committed_totals/compute_feo_plan_tree УЖЕ учитывают эти деньги в
+    # «законтрактовано» узла/субсидии целиком (committed_consumption_by_category
+    # считает ВСЕ позиции узла, линкованные и нет), поэтому redistributable =
+    # budget_basis − committed уже меньше на эту сумму — а raw выше (Σ по
+    # плановым позициям, через committed_by_planned_item) её не видит вовсе:
+    # ни одна плановая позиция не несёт её как свой committed. Поэтому Σ по
+    # строкам (by_kind/nice/likely) была БОЛЬШЕ итога карточки ровно на неё.
+    #
+    # НАРОЧНО УЖЕ feo_planned_item_id IS NULL, а НЕ более широкое условие
+    # «привязка невалидна/к чужой категории» (как у committed_consumption_by_
+    # category(exclude_planned_item_linked=True), используется ПОРОГОМ
+    # замещения плана, другая задача) — позиция, привязанная к СУЩЕСТВУЮЩЕЙ
+    # активной плановой позиции (даже физически в другой категории, см.
+    # test_not_committed_raw_isolates_miscategorized_overspend), УЖЕ полностью
+    # учтена committed_by_planned_item на уровне ЭТОЙ позиции — добавлять её
+    # здесь ещё раз было бы ЗАДВОЕНИЕМ (committed вычтен и из её raw, и из
+    # синтетической строки чужой категории), а не недосчётом.
+    #
+    # Строка — ОТРИЦАТЕЛЬНАЯ, на категорию+вид (kind_of_by_category_id — ТОТ ЖЕ
+    # классификатор, что и у позиций выше, payroll по категории ловится так же),
+    # need_level='likely' (нет конкретной плановой позиции, чей need_level
+    # читать — та же трактовка, что committed_consumption_by_category даёт
+    # невалидной/отсутствующей привязке, см. её докстринг _valid_link). Строка
+    # видна и в расшифровке (dashboard_redistributable_drill.py читает ТЕ ЖЕ
+    # not_committed_raw_rows), и в агрегате (not_committed_raw_by_subsidy ниже
+    # просто суммирует строки) — Σ снова РОВНО совпадает с redistributable.
+    _unlinked_cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    _unlinked_stmt = (
+        select(PurchaseItem, Purchase, _unlinked_cat_col.label("cat_id"))
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .join(FeoCategory, FeoCategory.id == _unlinked_cat_col)
+        .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
+        .where(PurchaseItem.feo_planned_item_id.is_(None))
+        .where(committed_status_predicate(Purchase, subsidy_year_col=Subsidy.year))
+        .where(Purchase.stopped_at.is_(None))
+        .where(PurchaseItem.over_plan.is_(False))
+        .where(FeoCategory.subsidy_id.in_(subsidy_ids))
+        .where(sqlor(Purchase.subsidy_id == FeoCategory.subsidy_id, Purchase.subsidy_id.is_(None)))
+        .where(aggregate_scope_expr())
+    )
+    unlinked_rows = (await db.execute(_unlinked_stmt)).all()
+    if unlinked_rows:
+        fact_by_item = await fact_amounts_for_rows(db, unlinked_rows)
+        bucket_by_cat: dict[int, dict] = {}
+        for r2 in unlinked_rows:
+            pi2 = r2.PurchaseItem
+            fact_amount2 = fact_by_item.get(pi2.id)
+            if fact_amount2 is None:
+                amt2 = float(pi2.planned_total if pi2.planned_total is not None else (pi2.total_price or 0))
+            else:
+                amt2 = float(fact_amount2)
+            kind2 = kind_of_by_category_id(pi2.item_type, r2.cat_id, _payroll_ids)
+            bucket_by_cat.setdefault(r2.cat_id, _empty_kind_bucket())[kind2] += amt2
+        for cat_id, bucket in bucket_by_cat.items():
+            sid = sid_by_cat.get(cat_id)
+            if sid not in result:
+                continue
+            for kind in ALL_KINDS:
+                amt = bucket.get(kind, 0.0)
+                if abs(amt) < _ZERO_EPS:
+                    continue
+                result[sid].append({
+                    "planned_item_id": None,
+                    "name": "Закупки без привязки к плановой позиции",
+                    "feo_category_id": cat_id,
+                    "category_path": _category_path(cat_id, cats),
+                    "kind": kind,
+                    "need_level": "likely",
+                    "contribution": 0.0,
+                    "committed": amt,
+                    "raw": -amt,
+                    "monthly_future_not_started": False,
+                    "purchase_id": None,
+                })
     return result
 
 
@@ -202,9 +290,11 @@ async def not_committed_raw_by_subsidy(
     db: AsyncSession, subsidy_ids: list[int], *, today=None,
 ) -> dict[int, dict]:
     """{subsidy_id: {"nice_raw": float, "likely_raw": float, "by_kind": {goods,
-    services, unspecified}, "monthly_future_not_started_raw": float}} — Σ
-    not_committed_raw_rows по need_level/kind (ПРАВИЛО №6 — raw одной позиции
-    считается ТОЛЬКО там, эта функция — чистая агрегация, не вторая формула).
+    services, unspecified}, "monthly_future_not_started_raw": float,
+    "nice_payroll_raw", "likely_payroll_raw", "monthly_future_not_started_payroll_raw"}}
+    — Σ not_committed_raw_rows по need_level/kind (ПРАВИЛО №6 — raw одной
+    позиции считается ТОЛЬКО там, эта функция — чистая агрегация, не вторая
+    формула).
 
     Строки с monthly_future_not_started=True исключены из nice_raw/likely_raw
     (их raw идёт в monthly_future_not_started_raw — строка 4 карточки «Можно
@@ -213,11 +303,22 @@ async def not_committed_raw_by_subsidy(
     `by_kind` (находка координатора 06.10.2026, не отменена: «Можно
     перераспределить по типам» — отдельная раскладка ВСЕЙ суммы redistributable
     по товар/услуга, она не делится на need_level/«ещё уйдёт» — иначе Σ
-    by_kind разошлась бы с redistributable, см. test_redistributable_drill.py)."""
+    by_kind разошлась бы с redistributable, см. test_redistributable_drill.py).
+
+    *_payroll_raw (D7, живая приёмка 21.10.2026, ДНР id 61) — ТА ЖЕ Σ, но
+    ТОЛЬКО по строкам kind=='payroll', параллельно nice_raw/likely_raw/
+    monthly_future_not_started_raw (не вторая формула — тот же проход по
+    строкам, что и выше, просто ещё один накопитель). Нужна
+    payroll_visibility.scrub_payroll_from_dashboard_charts, чтобы вычесть
+    payroll-долю подстрок карточки «Можно перераспределить» («не
+    запланировано»/«хотелось бы»/«скорее всего»/«ещё уйдёт помесячно») у
+    пользователя без subsidy.view_payroll — см. её докстринг."""
     result: dict[int, dict] = {
         sid: {
             "nice_raw": 0.0, "likely_raw": 0.0, "by_kind": _empty_kind_bucket(),
             "monthly_future_not_started_raw": 0.0,
+            "nice_payroll_raw": 0.0, "likely_payroll_raw": 0.0,
+            "monthly_future_not_started_payroll_raw": 0.0,
         }
         for sid in subsidy_ids
     }
@@ -231,13 +332,20 @@ async def not_committed_raw_by_subsidy(
             continue
         for row in rows:
             d["by_kind"][row["kind"]] += row["raw"]
+            is_payroll_row = row["kind"] == "payroll"
             if row["monthly_future_not_started"]:
                 d["monthly_future_not_started_raw"] += row["raw"]
+                if is_payroll_row:
+                    d["monthly_future_not_started_payroll_raw"] += row["raw"]
                 continue
             if is_reserve_need_level(row["need_level"]):  # 🟡 nice_to_have + unforeseen
                 d["nice_raw"] += row["raw"]
+                if is_payroll_row:
+                    d["nice_payroll_raw"] += row["raw"]
             else:
                 d["likely_raw"] += row["raw"]
+                if is_payroll_row:
+                    d["likely_payroll_raw"] += row["raw"]
     return result
 
 

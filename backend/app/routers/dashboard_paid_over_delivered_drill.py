@@ -28,6 +28,7 @@ from app.models.user import User
 from app.routers.dashboard import _apply_purchase_org_filter
 from app.routers.purchase_transitions import STATUS_LABELS
 from app.services.paid_over_delivered import paid_over_delivered_by_subsidy, paid_over_delivered_rows
+from app.services.payroll_visibility import strip_invisible_payroll_drill_rows
 from app.utils.parse_ids import parse_id_set as _parse_subsidy_ids
 
 router = APIRouter(prefix="/paid-over-delivered-drill", tags=["dashboard"])
@@ -71,6 +72,12 @@ async def dashboard_paid_over_delivered_drill(
         }
     for r in detail["rows"]:
         r["subsidy_name"] = subsidy_names.get(r.get("subsidy_id"))
+
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 3) — строки ФОТ субсидий
+    # без subsidy.view_payroll убираются (ПРАВИЛО №6, app.services.payroll_visibility).
+    detail = await strip_invisible_payroll_drill_rows(
+        current_user, db, subsidy_ids_needed, detail, amount_key="excess",
+    )
 
     # Сверка с картой дашборда (НЕ второй расчёт — та же функция
     # paid_over_delivered_by_subsidy, что dashboard_charts.py использует для

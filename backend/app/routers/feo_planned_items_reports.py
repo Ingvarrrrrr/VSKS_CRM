@@ -605,7 +605,7 @@ async def get_feo_residuals(
     exclude_purchase_id: Optional[int] = Query(None),
     exclude_wish_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """
     Returns per-FeoPlannedItem residual for a given subsidy.
@@ -638,6 +638,15 @@ async def get_feo_residuals(
     )
     rows = (await db.execute(items_q)).all()
 
+    if not rows:
+        return []
+
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 4) — плановые позиции
+    # ФОТ-категорий без subsidy.view_payroll не отдаются (ПРАВИЛО №6).
+    from app.services.payroll_visibility import hidden_payroll_category_ids
+    hidden = await hidden_payroll_category_ids(current_user, db, [subsidy_id])
+    if hidden:
+        rows = [r for r in rows if r.cat_id not in hidden]
     if not rows:
         return []
 

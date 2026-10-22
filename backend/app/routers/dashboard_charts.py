@@ -68,6 +68,11 @@ from app.routers.dashboard_metric_drill import router as metric_drill_router
 # докстринг app.services.feo_plan_tree_cache); декоратор не трогает тело
 # обработчика ниже (минимальный дифф в большом файле).
 from app.services.feo_plan_tree_cache import with_feo_plan_tree_cache
+# Право «Видеть ФОТ» (владелец, решение 21.10.2026, план part1/2) — ЕДИНСТВЕННОЕ
+# место, где /charts решает видимость ФОТ (app.services.payroll_visibility,
+# ПРАВИЛО №6), применяется пост-обработкой payload ПОСЛЕ того, как все числа
+# выше посчитаны обычным путём (без своей копии формул).
+from app.services.payroll_visibility import scrub_payroll_from_dashboard_charts
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 router.include_router(type_drill_router)
@@ -999,6 +1004,11 @@ async def dashboard_charts(
         "widgets": widgets,
         "subsidies_near_ceiling": subsidies_near_ceiling,
     }
+    # Гигиена (находка координатора 21.10.2026): payload.update(dashboard_type_totals)
+    # вызывался ДВА раза — до scrub (бессмысленно, тут же перезатирался) и после
+    # (нужное). Оставлен ОДИН раз, после scrub — budget_payroll/planned_payroll
+    # в payload обязаны быть уже вычищенными суммами.
+    await scrub_payroll_from_dashboard_charts(current_user, db, subsidy_stats, widgets, dashboard_type_totals)
     if dashboard_type_totals is not None:
         payload.update(dashboard_type_totals)
     return payload

@@ -59,4 +59,16 @@ async def get_card_drill(
     if not can_view_amounts:
         raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра сумм ФЭО")
 
-    return await card_drill_rows(db, subsidy_id, card, kind)
+    result = await card_drill_rows(db, subsidy_id, card, kind)
+
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 3) — kind='payroll'
+    # строки (голые и внутри kind='all') без subsidy.view_payroll не отдаются,
+    # total пересчитывается без них (ПРАВИЛО №6, app.services.payroll_visibility).
+    if kind in ("all", "payroll"):
+        from app.services.payroll_visibility import can_view_subsidy_payroll
+        if not await can_view_subsidy_payroll(current_user, db, subsidy_id):
+            removed = sum(r.get("amount", 0.0) or 0.0 for r in result["rows"] if r.get("kind") == "payroll")
+            if removed:
+                result["rows"] = [r for r in result["rows"] if r.get("kind") != "payroll"]
+                result["total"] = round((result.get("total") or 0.0) - removed, 2)
+    return result

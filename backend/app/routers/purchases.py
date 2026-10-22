@@ -302,6 +302,11 @@ async def list_purchases(
         if is_org_lead:
             clause = or_(clause, Purchase.assigned_user_id.is_(None))
         q = q.where(clause)
+    # Право «Видеть ФОТ» (владелец, 21.10.2026): закупки ФОТ субсидий без
+    # subsidy.view_payroll не попадают в реестр вообще — фильтр в SQL до LIMIT
+    # (одно место: app.services.payroll_visibility.exclude_hidden_payroll_purchases).
+    from app.services.payroll_visibility import exclude_hidden_payroll_purchases as _exclude_hidden_payroll
+    q = await _exclude_hidden_payroll(q, current_user, db)
     if contract_id:
         q = q.where(Purchase.contract_id == contract_id)
     if feo_category_id:

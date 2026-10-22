@@ -146,7 +146,7 @@ async def export_purchases_to_excel(
     status: Optional[str] = Query(None),
     columns: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
@@ -163,6 +163,10 @@ async def export_purchases_to_excel(
         q = q.where(Purchase.subsidy_id == subsidy_id)
     if status:
         q = q.where(Purchase.status == status)
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 6/найдено у выгрузки
+    # реестра) — ЕДИНАЯ точка (ПРАВИЛО №6), см. purchases.py::list_purchases.
+    from app.services.payroll_visibility import exclude_hidden_payroll_purchases
+    q = await exclude_hidden_payroll_purchases(q, current_user, db)
     purchases = (await db.execute(q)).scalars().all()
 
     ctx = await build_purchase_export_ctx(db, purchases)

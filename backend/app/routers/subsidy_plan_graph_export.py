@@ -96,9 +96,16 @@ async def export_plan_graph_excel(
     if org_ids is not None and sub.org_id not in org_ids:
         raise HTTPException(403, "Нет доступа")
 
-    data = await gather_live_plan_graph_data(db, subsidy_id)
+    data = await gather_live_plan_graph_data(db, subsidy_id, current_user)
     selected_keys = resolve_selected_keys(columns)
     summary_by_kind = await subsidy_summary_by_kind(db, subsidy_id) if summary else None
+    # Право «Видеть ФОТ» (владелец 21.10.2026, часть 4) — лист «Сводная»
+    # зануляет корзину payroll целиком без subsidy.view_payroll (ПРАВИЛО №6,
+    # тот же hidden_payroll_category_ids, что уже отфильтровал cats/feo_items
+    # выше — не вторая проверка права).
+    from app.services.payroll_visibility import hidden_payroll_category_ids
+    if summary_by_kind is not None and await hidden_payroll_category_ids(current_user, db, [subsidy_id]):
+        summary_by_kind["payroll"] = {k: 0.0 for k in summary_by_kind["payroll"]}
 
     base_url = str(request.base_url).rstrip("/")
     wb = build_live_plan_graph_xlsx(
@@ -112,7 +119,7 @@ async def export_plan_graph_excel(
             wb, data, selected_keys, base_url, title=f"{sub.name} ({sub.year}) — итого всего",
         )
     if contracts:
-        contracts_data = await gather_contracts_sheet_data(db, subsidy_id)
+        contracts_data = await gather_contracts_sheet_data(db, subsidy_id, current_user)
         write_contracts_sheet(wb, contracts_data, title=f"{sub.name} ({sub.year}) — итого всего")
 
     buf = io.BytesIO()

@@ -256,7 +256,15 @@ async def list_categories(
     if is_active is not None:
         q = q.where(FeoCategory.is_active == is_active)
     result = await db.execute(q.order_by(FeoCategory.sort_order.nulls_last(), FeoCategory.id))
-    return result.scalars().all()
+    cats = result.scalars().all()
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 4) — статьи ФОТ (себя +
+    # поддерево) без subsidy.view_payroll не отдаются (ПРАВИЛО №6,
+    # app.services.payroll_visibility.hidden_payroll_category_ids).
+    from app.services.payroll_visibility import hidden_payroll_category_ids
+    hidden = await hidden_payroll_category_ids(current_user, db, {c.subsidy_id for c in cats})
+    if hidden:
+        cats = [c for c in cats if c.id not in hidden]
+    return cats
 
 
 def _category_has_plan(cat, cats_with_plan_items: set) -> bool:
@@ -409,6 +417,14 @@ async def category_tree(
         q = q.join(Subsidy, FeoCategory.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
     result = await db.execute(q.order_by(FeoCategory.level, FeoCategory.sort_order.nulls_last(), FeoCategory.id))
     all_cats = result.scalars().all()
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 4) — статьи ФОТ (себя +
+    # поддерево) вырезаются ДО построения дерева: payroll_category_ids уже
+    # включает потомков, так что дети ФОТ-узла пропадают вместе с ним, без
+    # осиротевших "roots" (ПРАВИЛО №6, app.services.payroll_visibility).
+    from app.services.payroll_visibility import hidden_payroll_category_ids
+    hidden = await hidden_payroll_category_ids(current_user, db, {c.subsidy_id for c in all_cats})
+    if hidden:
+        all_cats = [c for c in all_cats if c.id not in hidden]
     by_id = {c.id: {"id": c.id, "parent_id": c.parent_id, "subsidy_id": c.subsidy_id,
                     "level": c.level, "name": c.name, "code": c.code,
                     "appendix": c.appendix, "is_active": c.is_active,
@@ -550,6 +566,12 @@ async def create_category(
     await _require_feo_category_write(current_user, db, category_data.subsidy_id)
     from app.services.subsidy_revision_guard import assert_direct_edit
     await assert_direct_edit(db, current_user, category_data.subsidy_id)
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 4) — завести ФОТ-статью
+    # может только тот, кто сам видит ФОТ (ПРАВИЛО №6, app.services.payroll_visibility).
+    if category_data.is_payroll:
+        from app.services.payroll_visibility import can_view_subsidy_payroll
+        if not await can_view_subsidy_payroll(current_user, db, category_data.subsidy_id):
+            raise HTTPException(status_code=403, detail="Нет права отмечать статью как ФОТ")
 
     new_category = await feo_category_write.create_category(db, current_user, category_data)
     await db.commit()
@@ -574,12 +596,19 @@ async def update_category(
     await _require_feo_category_write(current_user, db, cat.subsidy_id)
     from app.services.subsidy_revision_guard import assert_direct_edit
     await assert_direct_edit(db, current_user, cat.subsidy_id)
-    # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — включать
-    # is_payroll на статье, где уже лежат товары/услуги/работы, нельзя.
-    # Снятие признака не проверяем — снятие ФОТ с товарами никому не вредит.
-    if category_data.is_payroll and not cat.is_payroll:
-        from app.services.payroll_category_guard import assert_category_can_become_payroll
-        await assert_category_can_become_payroll(db, cat_id)
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 4) — менять is_payroll
+    # (ставить ИЛИ снимать) может только тот, кто сам видит ФОТ (ПРАВИЛО №6).
+    if bool(category_data.is_payroll) != bool(cat.is_payroll):
+        from app.services.payroll_visibility import can_view_subsidy_payroll
+        if not await can_view_subsidy_payroll(current_user, db, cat.subsidy_id):
+            raise HTTPException(status_code=403, detail="Нет права менять признак «ФОТ» у статьи")
+        # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — включать
+        # is_payroll на статье, где уже лежат товары/услуги/работы, нельзя
+        # (то же нарушение в обратную сторону). Снятие признака не проверяем —
+        # снятие ФОТ с товарами никому не вредит.
+        if category_data.is_payroll and not cat.is_payroll:
+            from app.services.payroll_category_guard import assert_category_can_become_payroll
+            await assert_category_can_become_payroll(db, cat_id)
 
     result = await feo_category_write.update_category(db, current_user, cat, category_data)
     warning = result["warning"]
@@ -635,6 +664,11 @@ async def get_category_subtree(
     if cat.subsidy_id is not None:
         from app.auth.object_visibility import ensure_subsidy_visible
         await ensure_subsidy_visible(current_user, cat.subsidy_id, db)
+        # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 4) — статья ФОТ по
+        # id отдаётся как несуществующая без права (ПРАВИЛО №8 п.2).
+        from app.services.payroll_visibility import hidden_payroll_category_ids
+        if cat_id in await hidden_payroll_category_ids(current_user, db, [cat.subsidy_id]):
+            raise HTTPException(status_code=404, detail="Категория не найдена")
     ids = await _collect_subtree_ids(cat_id, db)
     planned_items_count = (await db.execute(
         select(func.count()).select_from(FeoPlannedItem).where(FeoPlannedItem.feo_category_id.in_(ids))

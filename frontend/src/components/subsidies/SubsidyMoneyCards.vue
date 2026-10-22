@@ -162,7 +162,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { formatCurrency } from '@/composables/subsidies/format'
-import { KIND_LABELS, type ItemTypeKind } from '@/utils/itemTypeKind'
+import { KIND_LABELS, KIND_SHORT_LABELS, type ItemTypeKind } from '@/utils/itemTypeKind'
 import { formatEconomyUnmeasuredText } from '@/utils/economyUnmeasured'
 import type { SubsidyRow } from '@/composables/subsidies/types'
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
@@ -229,6 +229,16 @@ const splitRows = computed<SplitRow[]>(() => {
     { kind: 'goods', label: KIND_LABELS.goods, amount: k.goods },
     { kind: 'services', label: KIND_LABELS.services, amount: k.services },
   ]
+  // ФОТ — отдельная строка, как «товары»/«услуги» (найдено владельцем
+  // 21.10.2026, ХРО_2026: раньше k.payroll не читался вовсе, сумма терялась
+  // в «без типа», см. backend subsidy_money_summary.py). Без права «Видеть
+  // ФОТ» бэкенд уже зануляет k.payroll (payroll_visibility.scrub_payroll_
+  // from_dashboard_charts, ПРАВИЛО №6) — здесь просто не показываем строку
+  // с нулём, вторая проверка права не вводится. Короткая подпись «ФОТ»
+  // (KIND_SHORT_LABELS), не полная «ФОТ и выплаты персоналу» (KIND_LABELS) —
+  // та же подпись, что у остальных карточек-этапов (SubsidyKpiCards.vue
+  // splitRowsFor), владелец 21.10.2026.
+  if (Math.abs(k.payroll || 0) > 0.5) rows.push({ kind: 'payroll', label: KIND_SHORT_LABELS.payroll ?? KIND_LABELS.payroll, amount: k.payroll })
   if (Math.abs(k.unspecified || 0) > 0.5) rows.push({ kind: 'unspecified', label: KIND_LABELS.unspecified, amount: k.unspecified })
   return rows
 })
@@ -354,6 +364,7 @@ const splitRows = computed<SplitRow[]>(() => {
 }
 .kpi-split-dot-goods { background: #3B82F6; }
 .kpi-split-dot-services { background: #A855F7; }
+.kpi-split-dot-payroll { background: #F59E0B; }
 .kpi-split-dot-unspecified { background: #94A3B8; }
 .kpi-split-loading {
   opacity: 0.6;

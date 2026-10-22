@@ -91,6 +91,26 @@ async def ensure_purchase_visible(user: User, purchase_id: int, db: AsyncSession
     if user.role == "superadmin":
         return p
 
+    async def _payroll_gate(purchase: Purchase) -> Purchase:
+        # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 3): закупка ФОТ
+        # (feo_payroll.purchase_payroll_map — ЕДИНСТВЕННАЯ формула «закупка —
+        # ФОТ») субсидии без subsidy.view_payroll отдаётся как несуществующая
+        # (ПРАВИЛО №8 п.2 — скрытая сущность = 404, не раскрываем сам факт
+        # существования закупки ЗП/отчислений тому, кому её не положено видеть).
+        if purchase.subsidy_id is None:
+            return purchase
+        from app.services.feo_payroll import purchase_payroll_map, subsidy_ids_with_payroll
+        from app.services.payroll_visibility import can_view_subsidy_payroll
+        # Перф (координатор, 21.10.2026): короткий выход ДО purchase_payroll_map
+        # (3 запроса — purchase/items/plan items) — если в субсидии вообще
+        # нет ни одной ФОТ-статьи, закупка заведомо не ФОТ.
+        if not await subsidy_ids_with_payroll(db, [purchase.subsidy_id]):
+            return purchase
+        pmap = await purchase_payroll_map(db, [purchase.id])
+        if pmap.get(purchase.id) and not await can_view_subsidy_payroll(user, db, purchase.subsidy_id):
+            raise HTTPException(404, "Закупка не найдена")
+        return purchase
+
     # Путь 1: именная причастность (всегда достаточно, независимо от вкладки).
     named_match = (await db.execute(
         select(Purchase.id).where(
@@ -103,7 +123,7 @@ async def ensure_purchase_visible(user: User, purchase_id: int, db: AsyncSession
         )
     )).scalar_one_or_none()
     if named_match is not None:
-        return p
+        return await _payroll_gate(p)
 
     # Путь 2: субсидия видна по вкладке ИЛИ точечный грант.
     sub_ids = await _purchase_visibility_subsidy_ids(user, db)
@@ -122,7 +142,7 @@ async def ensure_purchase_visible(user: User, purchase_id: int, db: AsyncSession
     # тот же порядок, что list_purchases (именную причастность уже проверили выше).
     clause = await build_visibility_clause(user, db, "purchase")
     if clause is None:
-        return p  # SaaS-роль — фильтр не нужен (сюда не дойдёт для superadmin, defensive)
+        return await _payroll_gate(p)  # SaaS-роль — фильтр не нужен (сюда не дойдёт для superadmin, defensive)
 
     vuids = await get_visible_user_ids(user, db)
     is_org_lead = user.role in ADMIN_ROLES or (vuids is not None and len(vuids) > 1)
@@ -133,7 +153,7 @@ async def ensure_purchase_visible(user: User, purchase_id: int, db: AsyncSession
         select(Purchase.id).where(Purchase.id == purchase_id, clause)
     )).scalar_one_or_none()
     if match is not None:
-        return p
+        return await _payroll_gate(p)
 
     raise HTTPException(404, "Закупка не найдена")
 

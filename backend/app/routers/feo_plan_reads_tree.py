@@ -306,6 +306,25 @@ async def get_feo_plan_tree(
         result["subsidy_type_totals"] = None
         result["subsidy_type_excess"] = None
 
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 4) — статьи ФОТ (себя +
+    # поддерево) без subsidy.view_payroll вырезаются из ответа целиком, И
+    # вычитаются из сумм предков/корня (ИСПРАВЛЕНО 21.10.2026, часть 3 —
+    # раньше суммы предков оставались «с ФОТ внутри», хотя сами ФОТ-узлы уже
+    # не отдавались — Σ видимых строк расходилась с итогом дерева). См.
+    # app.services.payroll_visibility.strip_hidden_payroll_from_tree_result
+    # (вычитание ТОЛЬКО аддитивных денежных полей узла, не вторая формула) и
+    # strip_hidden_payroll_from_type_totals (subsidy_type_totals.*_payroll).
+    from app.services.payroll_visibility import (
+        hidden_payroll_category_ids, strip_hidden_payroll_from_tree_result,
+        strip_hidden_payroll_from_type_totals,
+    )
+    hidden = await hidden_payroll_category_ids(current_user, db, [subsidy_id])
+    if hidden:
+        strip_hidden_payroll_from_tree_result(tree, result, hidden)
+        strip_hidden_payroll_from_type_totals(result.get("subsidy_type_totals"), True)
+    for cat_id in hidden:
+        result.pop(cat_id, None)
+
     return result
 
 
@@ -560,6 +579,12 @@ async def get_plan_positions(
             .where(FeoPlannedItem.is_active == True)
             .order_by(FeoPlannedItem.id)
         )).scalars().all()
+        # Значок «дубль строки листа» (владелец, 22.10.2026) — одна БД-выборка
+        # на всю субсидию, см. app.services.feo_item_source_duplicates
+        # (ПРАВИЛО №6, то же правило совпадения, что переносит позицию при
+        # повторном импорте того же файла, feo_import_duplicates.py).
+        from app.services.feo_item_source_duplicates import find_source_row_duplicates
+        source_duplicates_map = await find_source_row_duplicates(db, subsidy_id)
         if fpi_rows:
             fpi_ids = [it.id for it in fpi_rows]
             fpi_cons = await planned_item_consumption(db, fpi_ids, exclude_purchase_id, exclude_wish_id)
@@ -642,6 +667,10 @@ async def get_plan_positions(
                     # None — позиция заведена в GALA вручную либо подписи
                     # сняты кнопкой «Убрать номера строк файла».
                     "source_row": it.source_row,
+                    # Контракт с фронтом (FeoLevel5Panel.vue/types.ts,
+                    # FeoActualItem.source_duplicates) — [], если дублей нет,
+                    # а не отсутствие ключа.
+                    "source_duplicates": source_duplicates_map.get(it.id, []),
                     "consumed": consumed,
                     "consumed_quantity": consumed_qty,
                     "residual": planned_total - consumed,

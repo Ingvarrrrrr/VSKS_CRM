@@ -85,6 +85,83 @@ async def _subsidy_names(db: AsyncSession, subsidy_ids) -> dict[int, str]:
     return {r.id: r.name for r in rows}
 
 
+def _category_path_str(cat_id: Optional[int], cats: dict[int, dict]) -> str:
+    """'Направление › Тип расходов › Позиция' — путь от корня до cat_id
+    включительно, по parent_id. Та же схема построения пути, что и в
+    redistributable_raw._category_path/feo_card_drill._category_path
+    (ПРАВИЛО №5/№6: путь строится по дереву категорий данной субсидии, не
+    вторая формула категории — только локальный обход уже загруженного
+    словаря cats)."""
+    if cat_id is None or cat_id not in cats:
+        return ""
+    names: list[str] = []
+    seen: set = set()
+    cur = cat_id
+    while cur is not None and cur in cats and cur not in seen:
+        seen.add(cur)
+        names.append(cats[cur]["name"] or "")
+        cur = cats[cur]["parent_id"]
+    return " › ".join(reversed(names))
+
+
+async def _purchase_category_paths(db: AsyncSession, purchase_ids) -> dict[int, str]:
+    """{purchase_id: "Направление › ... › Статья"} — дефект MetricDrillDialog.vue
+    (план owner 21.10.2026, часть 0б): колонка «Направление ФЭО» была пустой
+    для закупок, у которых статья указана на САМОЙ закупке (Purchase.
+    feo_category_id), а не у позиции — так у закупок ФОТ ХРО_2026 (ЗП/
+    Отчисления/Командировочные, item_type=NULL, своей feo_category_id у
+    позиции нет). Фолбэк для эффективной категории закупки: статья первой
+    позиции с заполненной feo_category_id → статья плановой позиции этой
+    строки → статья самой закупки (Purchase.feo_category_id)."""
+    from app.models.feo_category import FeoCategory
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+
+    purchase_ids = [pid for pid in dict.fromkeys(purchase_ids) if pid is not None]
+    if not purchase_ids:
+        return {}
+
+    purchases = (await db.execute(
+        select(Purchase.id, Purchase.subsidy_id, Purchase.feo_category_id)
+        .where(Purchase.id.in_(purchase_ids))
+    )).all()
+    subsidy_of = {r.id: r.subsidy_id for r in purchases}
+    purchase_cat = {r.id: r.feo_category_id for r in purchases}
+
+    item_rows = (await db.execute(
+        select(
+            PurchaseItem.purchase_id, PurchaseItem.id, PurchaseItem.feo_category_id,
+            FeoPlannedItem.feo_category_id.label("plan_category_id"),
+        )
+        .outerjoin(FeoPlannedItem, PurchaseItem.feo_planned_item_id == FeoPlannedItem.id)
+        .where(PurchaseItem.purchase_id.in_(purchase_ids))
+        .order_by(PurchaseItem.id)
+    )).all()
+
+    effective_cat: dict[int, int] = {}
+    for r in item_rows:
+        if r.purchase_id in effective_cat:
+            continue
+        cid = r.feo_category_id or r.plan_category_id
+        if cid is not None:
+            effective_cat[r.purchase_id] = cid
+    for pid in purchase_ids:
+        if pid not in effective_cat and purchase_cat.get(pid) is not None:
+            effective_cat[pid] = purchase_cat[pid]
+
+    subsidy_ids = {sid for sid in subsidy_of.values() if sid is not None}
+    cats: dict[int, dict] = {}
+    if subsidy_ids:
+        cat_rows = (await db.execute(
+            select(FeoCategory.id, FeoCategory.parent_id, FeoCategory.name)
+            .where(FeoCategory.subsidy_id.in_(subsidy_ids))
+        )).all()
+        cats = {r.id: {"parent_id": r.parent_id, "name": r.name} for r in cat_rows}
+
+    return {pid: _category_path_str(effective_cat.get(pid), cats) for pid in purchase_ids}
+
+
 def _reconcile_rows(raw: list[Decimal], target: Decimal) -> list[Decimal]:
     """Округление списка сумм построчно с подгонкой по модулю наибольшей
     строки к `target` — тот же приём, что dashboard_type_split.reconcile_split,
@@ -104,19 +181,29 @@ def _reconcile_rows(raw: list[Decimal], target: Decimal) -> list[Decimal]:
 
 
 async def _purchase_row(db_texts: dict, purchases: dict, contractor_names: dict,
-                         subsidy_names: dict, purchase_id: int, amount: float) -> dict:
+                         subsidy_names: dict, purchase_id: int, amount: float,
+                         category_paths: Optional[dict] = None) -> dict:
     p = purchases.get(purchase_id)
     text = db_texts.get(purchase_id, {})
+    # Фолбэк «Предмет» (владелец 21.10.2026, ХРО_2026: закупки импорта факта
+    # ФОТ — Purchase.subject/item_name пустые, но у позиции есть название —
+    # «ЗП»/«Отчисления»/«Командировочные») — items_text уже собирает
+    # PurchaseItem.item_name (purchase_drill_text.purchase_drill_texts,
+    # ПРАВИЛО №6, не вторая сборка названий позиций).
+    _subject = (p.subject or p.item_name) if p else None
+    if not _subject:
+        _subject = text.get("items_text") or None
     return {
         "row_type": "purchase",
         "purchase_id": purchase_id,
         "purchase_number": (p.purchase_number if p and p.purchase_number is not None else purchase_id),
-        "subject": (p.subject or p.item_name) if p else None,
+        "subject": _subject,
         "supplier": text.get("supplier") or (contractor_names.get(p.contractor_id) if p and p.contractor_id else None),
         "items_text": text.get("items_text", ""),
         "status": p.status if p else None,
         "subsidy_id": p.subsidy_id if p else None,
         "subsidy_name": subsidy_names.get(p.subsidy_id) if p else None,
+        "category_path": (category_paths or {}).get(purchase_id, ""),
         "amount": amount,
     }
 
@@ -238,6 +325,7 @@ async def monthly_future_not_started_drill(db: AsyncSession, subsidy_ids: list[i
             "planned_item_id": row["planned_item_id"],
             "name": row["name"],
             "category_path": row["category_path"],
+            "feo_category_id": row.get("feo_category_id"),
             "subsidy_id": row["subsidy_id"],
             "subsidy_name": subsidy_names.get(row["subsidy_id"]),
             "amount": row["raw"],
@@ -280,6 +368,7 @@ async def not_committed_level_drill(db: AsyncSession, subsidy_ids: list[int], me
         "planned_item_id": r["planned_item_id"],
         "name": r["name"],
         "category_path": r["category_path"],
+        "feo_category_id": r.get("feo_category_id"),
         "subsidy_id": r["subsidy_id"],
         "subsidy_name": subsidy_names.get(r["subsidy_id"]),
         "contribution": r["contribution"],
@@ -304,11 +393,12 @@ async def paid_drill(db: AsyncSession, subsidy_ids: list[int], metric: str, kind
     contractor_names = await _contractor_names(db, (p.contractor_id for p in purchases.values()))
     subsidy_names = await _subsidy_names(db, subsidy_ids)
     texts = await purchase_drill_texts(db, (r["purchase_id"] for r in rows))
+    category_paths = await _purchase_category_paths(db, (r["purchase_id"] for r in rows))
 
     if kind is None:
         card_total = sum(float(breakdown.get(sid, {}).get(field, 0.0) or 0.0) for sid in subsidy_ids)
         rows_out = [
-            await _purchase_row(texts, purchases, contractor_names, subsidy_names, r["purchase_id"], float(r[field]))
+            await _purchase_row(texts, purchases, contractor_names, subsidy_names, r["purchase_id"], float(r[field]), category_paths)
             for r in rows
         ]
     else:
@@ -340,6 +430,7 @@ async def paid_drill(db: AsyncSession, subsidy_ids: list[int], metric: str, kind
                     continue
                 rows_out.append(await _purchase_row(
                     texts, purchases, contractor_names, subsidy_names, r["purchase_id"], float(amt_rounded),
+                    category_paths,
                 ))
     total = sum(r["amount"] for r in rows_out)
     return {"metric": metric, "total": total, "card_total": card_total, "rows": rows_out}
@@ -371,6 +462,7 @@ async def balance_drill(db: AsyncSession, subsidy_ids: list[int], metric: str) -
     contractor_names = await _contractor_names(db, (p.contractor_id for p in purchases.values()))
     subsidy_names = await _subsidy_names(db, entered_ids)
     texts = await purchase_drill_texts(db, by_purchase.keys())
+    category_paths = await _purchase_category_paths(db, by_purchase.keys())
 
     rows_out = []
     for sid in entered_ids:
@@ -389,7 +481,7 @@ async def balance_drill(db: AsyncSession, subsidy_ids: list[int], metric: str) -
         if abs(amount) < 0.005:
             continue
         sid = purchase_subsidy.get(pid)
-        row = await _purchase_row(texts, purchases, contractor_names, subsidy_names, pid, -amount)
+        row = await _purchase_row(texts, purchases, contractor_names, subsidy_names, pid, -amount, category_paths)
         row["subsidy_id"] = sid
         row["subsidy_name"] = subsidy_names.get(sid)
         rows_out.append(row)
@@ -419,11 +511,12 @@ async def economy_drill(db: AsyncSession, subsidy_ids: list[int]) -> dict:
     subsidy_names = await _subsidy_names(db, subsidy_ids)
     measured_ids = [pid for pid, bucket in econ.items() if bucket.get("economy") is not None]
     texts = await purchase_drill_texts(db, measured_ids)
+    category_paths = await _purchase_category_paths(db, measured_ids)
 
     rows_out = []
     for pid in measured_ids:
         bucket = econ[pid]
-        row = await _purchase_row(texts, purchases, contractor_names, subsidy_names, pid, float(bucket["economy"]))
+        row = await _purchase_row(texts, purchases, contractor_names, subsidy_names, pid, float(bucket["economy"]), category_paths)
         row["plan_amount"] = float(bucket["planned_sum"])
         row["contract_amount"] = float(bucket["fact_sum"])
         rows_out.append(row)

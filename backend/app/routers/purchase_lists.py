@@ -20,6 +20,10 @@ from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.schemas.schemas import PurchaseOutFull
 from app.auth.jwt import get_current_user, get_org_filter
+# Право «Видеть ФОТ» (владелец, 21.10.2026, часть 6) — ЕДИНСТВЕННАЯ точка,
+# добавляющая фильтр ФОТ-закупок скрытых субсидий на select(Purchase)
+# (ПРАВИЛО №6, та же функция, что app.routers.purchases::list_purchases).
+from app.services.payroll_visibility import exclude_hidden_payroll_purchases as _exclude_hidden_payroll_purchases
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
@@ -53,6 +57,7 @@ async def my_tasks(
     if not include_archive:
         q = q.where(Purchase.status != "paid")
     q = q.order_by(Purchase.execution_term.asc().nulls_last(), Purchase.id.desc())
+    q = await _exclude_hidden_payroll_purchases(q, current_user, db)
     result = await db.execute(q)
     purchases = result.scalars().all()
 
@@ -108,6 +113,7 @@ async def kanban_all(
     if org_ids is not None:
         q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
     q = q.order_by(Purchase.assigned_user_id, Purchase.execution_term.asc().nulls_last())
+    q = await _exclude_hidden_payroll_purchases(q, current_user, db)
     result = await db.execute(q)
     purchases = result.scalars().all()
 

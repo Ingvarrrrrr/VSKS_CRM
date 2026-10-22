@@ -588,6 +588,47 @@ async def _purchase_tz_waive_action():
         logging.getLogger(__name__).warning(f"purchase.tz_waive action seed skipped (non-fatal): {e}")
 
 
+async def _subsidy_view_payroll_action():
+    # Владелец (решение 21.10.2026, план part1 ФОТ-видимость): «для того чтобы
+    # в статистике ФОТ отображался у человека должна быть отдельная галочка.
+    # Если её нет, то он видит только товары и услуги» — на вопрос «где
+    # прятать» ответ «Везде» (карточки дашборда, реестр закупок, дерево ФЭО,
+    # выгрузка в Excel). Единственная проверка «видит ли пользователь ФОТ
+    # субсидии» — app.services.payroll_visibility.payroll_visible_subsidy_ids
+    # (has_org_key(..., 'subsidy.view_payroll', subsidy_id=...)), везде, где
+    # нужно решить видимость — звать её, а не has_org_key напрямую (ПРАВИЛО №6).
+    # Дефолт: superadmin/account_owner=TRUE (зарплаты видят только верхние
+    # роли по умолчанию); admin/org_admin/manager/employee=FALSE — владелец
+    # раздаст индивидуально через UserOrgPermissionOverride, где нужно.
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'subsidy.view_payroll'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Видеть ФОТ (выплаты персоналу): суммы в статистике, статьи в дереве ФЭО, закупки в реестре',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', False), ('org_admin', False),
+                ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"subsidy.view_payroll action seed skipped (non-fatal): {e}")
+
+
 async def _advance_payment_decision_action():
     # Quick-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б):
     # отдельная галочка-право на финальное решение директора по авансовому
@@ -810,6 +851,7 @@ async def run():
     await _staff_directory_tab()
     await _staff_location_view_action()
     await _purchase_tz_waive_action()
+    await _subsidy_view_payroll_action()
     await _advance_payment_decision_action()
     await _subsidy_correct_action()
     await _purchase_copy_to_subsidy_action()

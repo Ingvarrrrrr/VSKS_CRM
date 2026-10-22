@@ -132,6 +132,7 @@
              ХРО_2026) — ручной переключатель, подкатегории считаются ФОТ
              автоматически (наследование по дереву на бэкенде). -->
         <v-checkbox
+          v-if="canViewPayroll"
           v-model="feoForm.is_payroll"
           label="ФОТ и выплаты персоналу"
           density="compact" hide-details class="mt-2"
@@ -350,6 +351,7 @@
              бэкенде, app.services.feo_payroll.payroll_category_ids), не
              дублирует проверку. -->
         <v-checkbox
+          v-if="canViewPayroll"
           v-model="feoEditForm.is_payroll"
           label="ФОТ и выплаты персоналу"
           density="compact" hide-details class="mt-2"
@@ -406,6 +408,15 @@ import { createCategoryRaw, deleteCategoryRaw, putCategoryFull, buildCategoryFul
 import { isRevisionMode } from '@/composables/subsidies/feoWriteAdapter'
 import type { FeoCategory, FeoNode } from '@/composables/subsidies/types'
 import FeoItemHistory from '@/components/subsidies/FeoItemHistory.vue'
+import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
+
+// Право «Видеть ФОТ» (владелец, 21.10.2026, часть 4) — галочка «ФОТ и
+// выплаты персоналу» видна/доступна только с subsidy.view_payroll (кто не
+// видит ФОТ в статистике — не должен и заводить новые ФОТ-статьи вручную,
+// бэкенд feo_category_write.py гейтит запись тем же правом).
+const authStore = useAuthStore()
+const canViewPayroll = computed(() => authStore.hasAction(ACTIONS.SUBSIDY_VIEW_PAYROLL))
 
 // Снимок «до» правки — payload из ИСХОДНОЙ категории в момент открытия диалога
 // (openEdit ниже), нужен только стеку отмены (доп. волна 2026-09-14: «отмена

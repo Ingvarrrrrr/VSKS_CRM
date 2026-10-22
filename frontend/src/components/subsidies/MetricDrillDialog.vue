@@ -68,7 +68,7 @@
                 <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.subject || '—' }}</td>
                 <td class="px-4 text-caption">{{ r.supplier || r.contractor || '—' }}</td>
                 <td class="px-4 text-caption" style="max-width:220px;white-space:normal">{{ r.category_path || '—' }}</td>
-                <td class="px-4 text-caption">{{ r.status || '—' }}</td>
+                <td class="px-4 text-caption">{{ r.row_type === 'purchase' ? (purchaseStatusLabel(r.status) || '—') : (r.status || '—') }}</td>
                 <td class="text-right px-4 font-weight-medium" :class="r.row_type === 'budget' ? 'font-weight-bold' : 'text-primary'">
                   {{ formatCurrency(r.amount) }}
                 </td>
@@ -110,6 +110,7 @@ import { formatCurrency } from '@/composables/subsidies/format'
 import { useDrillSearch } from '@/composables/useDrillSearch'
 import { textOfMetricDrillRow } from '@/components/drill/drillRowText'
 import DrillSearchField from '@/components/drill/DrillSearchField.vue'
+import { purchaseStatusLabel } from '@/constants/purchaseStatus'
 import type { MetricDrillMetric } from '@/composables/subsidies/useCardDrills'
 
 const { mobile } = useDisplay()

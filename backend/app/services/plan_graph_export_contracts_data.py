@@ -185,14 +185,20 @@ async def _items_by_purchase(db: AsyncSession, purchase_ids: list) -> dict:
     return result
 
 
-async def gather_contracts_sheet_data(db: AsyncSession, subsidy_id: int) -> list:
+async def gather_contracts_sheet_data(db: AsyncSession, subsidy_id: int, current_user=None) -> list:
     """[{head: {...}, orders: [{...}, ...]}, ...] — отсортировано по № закупки
     головы/разовой закупки по возрастанию (владелец: «по номеру закупки»).
     head/orders несут "items" — список позиций (PurchaseItem) этой строки,
     [] если позиций нет. У РАЗОВОЙ закупки с позициями каждая позиция несёт
     СВОИ "order_sum"/"order_delivered"/"order_paid" (владелец, замечание 2) —
     рендерер пишет их в столбцы уровня ЗАЯВКИ строки «Позиция», а не в
-    строку договора."""
+    строку договора.
+
+    `current_user` — право «Видеть ФОТ» (владелец 21.10.2026, часть 4): без
+    subsidy.view_payroll закупки-договоры на статье ФОТ (payroll_category_ids,
+    ПРАВИЛО №6, тот же резолвер, что и у item_kind_label ниже) вырезаются из
+    реестра целиком — ДО сборки голова/заявки, иначе рамочная голова без
+    своих заказов осталась бы пустой строкой."""
     # ПРАВИЛО №6: предикат «входит в реестр договоров» — ОДИН, из
     # contract_balances.contract_scope_predicate.
     rows = (await db.execute(
@@ -203,6 +209,17 @@ async def gather_contracts_sheet_data(db: AsyncSession, subsidy_id: int) -> list
     )).scalars().all()
     if not rows:
         return []
+
+    if current_user is not None:
+        from app.services.payroll_visibility import hidden_payroll_category_ids
+        _hidden = await hidden_payroll_category_ids(current_user, db, [subsidy_id])
+        if _hidden:
+            from app.services.feo_payroll import payroll_purchase_ids_for_subsidies
+            _hidden_purchase_ids = await payroll_purchase_ids_for_subsidies(db, [subsidy_id])
+            if _hidden_purchase_ids:
+                rows = [p for p in rows if p.id not in _hidden_purchase_ids]
+            if not rows:
+                return []
 
     cats = (await db.execute(
         select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)

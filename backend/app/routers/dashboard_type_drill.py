@@ -42,6 +42,7 @@ from app.services.dashboard_type_split import STAGE_KEYS, compute_type_split_det
 # см. докстринг delivered_unpaid_residual.py.
 from app.services.delivered_unpaid_residual import delivered_unpaid_residual_detail
 from app.services.purchase_drill_text import purchase_drill_texts
+from app.services.payroll_visibility import payroll_visible_subsidy_ids
 from app.utils.parse_ids import parse_id_set as _parse_subsidy_ids
 
 router = APIRouter(prefix="/type-drill", tags=["dashboard"])
@@ -197,8 +198,21 @@ async def dashboard_type_drill(
         })
         rows_out.append(row_out)
 
-    total = sum((r["amount"] for r in matched), Decimal(0))
-    purchases_count = len({r["purchase_id"] for r in matched if r["purchase_id"] is not None})
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 3) — kind='payroll'
+    # строки (и kind='all', где они перемешаны с остальными) субсидий без
+    # subsidy.view_payroll не отдаются. r["kind"]=='payroll' — уже итог ТОЙ ЖЕ
+    # формулы collapse (compute_type_split_detail/_add4), второй проверки
+    # «это ФОТ» не нужно (ПРАВИЛО №6) — достаточно спросить право по subsidy_id.
+    if kind in ("all", "payroll"):
+        payroll_sids = {r["subsidy_id"] for r in rows_out if r.get("subsidy_id") is not None}
+        visible_payroll_sids = await payroll_visible_subsidy_ids(current_user, db, payroll_sids)
+        rows_out = [
+            r for r in rows_out
+            if r.get("kind") != "payroll" or r.get("subsidy_id") in visible_payroll_sids
+        ]
+
+    total = sum((Decimal(str(r["stage_amount"])) for r in rows_out), Decimal(0))
+    purchases_count = len({r["purchase_id"] for r in rows_out if r["purchase_id"] is not None})
 
     return {
         "stage": stage,

@@ -202,8 +202,16 @@ async def _can_edit_feo_origin(current_user, db: AsyncSession) -> bool:
 async def list_planned_items(
     feo_category_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 4) — плановые позиции
+    # ФОТ-категории без subsidy.view_payroll не отдаются (ПРАВИЛО №6).
+    from app.services.payroll_visibility import hidden_payroll_category_ids
+    _cat_sid = (await db.execute(
+        select(FeoCategory.subsidy_id).where(FeoCategory.id == feo_category_id)
+    )).scalar_one_or_none()
+    if _cat_sid is not None and feo_category_id in await hidden_payroll_category_ids(current_user, db, [_cat_sid]):
+        return []
     rows = (await db.execute(
         select(FeoPlannedItem)
         .where(FeoPlannedItem.feo_category_id == feo_category_id)

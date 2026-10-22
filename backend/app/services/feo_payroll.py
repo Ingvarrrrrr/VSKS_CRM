@@ -21,7 +21,7 @@ e3f5g7h9i1j3 (разовый backfill) и импорт ФЭО (feo_import_apply.
 начало/конец строки), а не `\b` (между кириллицей и границей слова `\b`
 может вести себя непредсказуемо в зависимости от локали движка regex)."""
 import re
-from typing import Iterable
+from typing import Iterable, Optional
 
 _PAYROLL_RE = re.compile(
     r"(^|[^а-яёa-z])фот([^а-яёa-z]|$)"       # «ФОТ» отдельным словом (не «фото-»)
@@ -40,6 +40,32 @@ def is_payroll_name(name: str | None) -> bool:
     if not name:
         return False
     return bool(_PAYROLL_RE.search(name))
+
+
+async def subsidy_ids_with_payroll(db, subsidy_ids: Optional[Iterable[int]] = None) -> set:
+    """Subsidy id, у которых есть хотя бы ОДНА СОБСТВЕННАЯ FeoCategory.
+    is_payroll=True (БЕЗ наследования по дереву — для факта «в субсидии
+    вообще есть ФОТ» наследование не нужно: у потомка is_payroll=True
+    эффективно, только если у какого-то предка стоит собственный флаг, т.е.
+    хотя бы одна строка с is_payroll=True в этой субсидии гарантированно
+    есть). Координатор (21.10.2026, замер на проде): на сотни субсидий
+    аккаунтов таких ~4 — используется ДО дорогой проверки права
+    subsidy.view_payroll (app.services.payroll_visibility), чтобы не гонять
+    has_org_key по каждой субсидии каждого аккаунта (routers/purchases.py
+    список, dashboard_charts scrub, object_visibility._payroll_gate).
+    subsidy_ids=None — по ВСЕМ субсидиям (не нужно сперва грузить полный
+    список Subsidy.id — сразу фильтр по FeoCategory, которых меньше)."""
+    from sqlalchemy import select
+    from app.models.feo_category import FeoCategory
+
+    q = select(FeoCategory.subsidy_id).where(FeoCategory.is_payroll == True).distinct()  # noqa: E712
+    if subsidy_ids is not None:
+        subsidy_ids = list(subsidy_ids)
+        if not subsidy_ids:
+            return set()
+        q = q.where(FeoCategory.subsidy_id.in_(subsidy_ids))
+    rows = (await db.execute(q)).scalars().all()
+    return set(rows)
 
 
 async def payroll_category_ids(db, subsidy_ids: Iterable[int]) -> set:
@@ -139,3 +165,50 @@ async def purchase_payroll_map(db, purchase_ids: Iterable[int]) -> dict:
     for pid in purchase_ids:
         result.setdefault(pid, False)
     return result
+
+
+async def payroll_purchase_ids_for_subsidies(db, subsidy_ids: Iterable[int]) -> set:
+    """Set purchase_id, эффективно ФОТ, для заданных субсидий — та же ТРОЙКА
+    источников эффективной категории (purchase.feo_category_id / позиция /
+    плановая позиция), что и purchase_payroll_map, ПРАВИЛО №6 — одна формула
+    «закупка — ФОТ», но результат как SQL-пригодный set id, а не dict по уже
+    выбранному списку purchase_id. Нужна там, где фильтр должен встать В
+    ЗАПРОС ДО пагинации/LIMIT/COUNT (app.routers.purchases::list_purchases,
+    часть 3 плана владельца 21.10.2026 — «Видеть ФОТ»), а не постфактум в
+    Python над уже выбранной страницей."""
+    from sqlalchemy import select
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    subsidy_ids = list(subsidy_ids)
+    if not subsidy_ids:
+        return set()
+    payroll_ids = await payroll_category_ids(db, subsidy_ids)
+    if not payroll_ids:
+        return set()
+
+    own = (await db.execute(
+        select(Purchase.id).where(
+            Purchase.subsidy_id.in_(subsidy_ids),
+            Purchase.feo_category_id.in_(payroll_ids),
+        )
+    )).scalars().all()
+    via_item = (await db.execute(
+        select(PurchaseItem.purchase_id)
+        .join(Purchase, Purchase.id == PurchaseItem.purchase_id)
+        .where(
+            Purchase.subsidy_id.in_(subsidy_ids),
+            PurchaseItem.feo_category_id.in_(payroll_ids),
+        )
+    )).scalars().all()
+    via_plan = (await db.execute(
+        select(PurchaseItem.purchase_id)
+        .join(Purchase, Purchase.id == PurchaseItem.purchase_id)
+        .join(FeoPlannedItem, PurchaseItem.feo_planned_item_id == FeoPlannedItem.id)
+        .where(
+            Purchase.subsidy_id.in_(subsidy_ids),
+            FeoPlannedItem.feo_category_id.in_(payroll_ids),
+        )
+    )).scalars().all()
+    return set(own) | set(via_item) | set(via_plan)

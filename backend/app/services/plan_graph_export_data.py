@@ -103,14 +103,26 @@ def _act_number(acc_number, acc_docs) -> str:
     return ""
 
 
-async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict:
+async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int, current_user=None) -> dict:
     """Собирает все данные, нужные для построения живой книги плана-графика.
 
     Возвращает dict:
       cats, item_ids, cat_ids, items_by_cat, used_map, contractor_map,
       purchased_by_item, cat_status_map, cat_monthly_map, cat_contractor_map,
       purchased_by_cat, unlinked_purchases.
-    """
+
+    `current_user` — право «Видеть ФОТ» (владелец, 21.10.2026, часть 4 плана
+    «Видеть ФОТ»): без subsidy.view_payroll статьи ФОТ (себя + поддерево) и
+    их плановые позиции вырезаются из `cats`/`feo_items` ДО всех остальных
+    запросов этой функции (все производные — item_ids/cat_ids/items_by_cat/
+    cat_status_map и т.п. — строятся ПОСЛЕ фильтра, поэтому автоматически не
+    видят ФОТ, ПРАВИЛО №6 — один фильтр у входа, не точечные вставки по
+    каждой из ~10 секций ниже). Единственное место, которое категория сама
+    по себе не закрывает, — покупки, классифицированные напрямую как ФОТ
+    через Purchase.feo_category_id, попадающие в секцию «без категории ФЭО»
+    по общему subsidy_id-фильтру (см. hidden-проверку у pl_rows ниже).
+    `current_user=None` (снапшоты версий, тесты) — поведение прежнее,
+    ничего не фильтруется."""
     from app.models.feo_planned_item import FeoPlannedItem as _FPI
     from app.models.purchase_item import PurchaseItem as _PI
     from app.models.purchase import Purchase as _P
@@ -121,6 +133,13 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
         .order_by(FeoCategory.level, FeoCategory.id)
     )).scalars().all()
 
+    hidden_cat_ids: set = set()
+    if current_user is not None:
+        from app.services.payroll_visibility import hidden_payroll_category_ids
+        hidden_cat_ids = await hidden_payroll_category_ids(current_user, db, [subsidy_id])
+        if hidden_cat_ids:
+            cats = [c for c in cats if c.id not in hidden_cat_ids]
+
     feo_items = (await db.execute(
         select(_FPI)
         .join(FeoCategory, _FPI.feo_category_id == FeoCategory.id)
@@ -128,6 +147,8 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
         .where(_FPI.is_active == True)
         .order_by(_FPI.id)
     )).scalars().all()
+    if hidden_cat_ids:
+        feo_items = [i for i in feo_items if i.feo_category_id not in hidden_cat_ids]
 
     item_ids = [i.id for i in feo_items]
     # «Товар / услуга» (владелец 08.10.2026, замечание 1) — payroll-категории
@@ -411,6 +432,12 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
     # поставлено/оплачено берёт факт (JSONB acceptance_docs), до договора — план.
     _amounts_by_pid = await load_purchase_amounts(db, [r.purchase_id for r in pl_rows])
     for r in pl_rows:
+        # Право «Видеть ФОТ» — закупка напрямую на скрытой статье ФОТ НЕ
+        # должна провалиться в «без категории ФЭО» (feo_category_id не в
+        # отфильтрованном cat_ids → ниже код иначе отнёс бы её туда, см.
+        # комментарий у hidden_cat_ids выше).
+        if r.feo_category_id in hidden_cat_ids:
+            continue
         _pa = _amounts_by_pid.get(r.purchase_id)
         amount = float(_pa.effective) if _pa and _pa.effective is not None else 0.0
         qty = float(r.planned_quantity or 0)

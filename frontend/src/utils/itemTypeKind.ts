@@ -63,6 +63,47 @@ export function kindOf(itemType?: string | null): ItemTypeKind {
   return KIND_UNSPECIFIED
 }
 
+export interface TypeClassifiableItem {
+  item_type?: string | null
+  item_name?: string | null
+  total_price?: number | string | null
+}
+
+// Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — ЕДИНСТВЕННЫЙ
+// фронтовый классификатор «в документе есть товар/услуга/работа» (зеркалит
+// backend/app/services/payroll_category_guard.py::is_goods_or_services, та
+// же нормализация kindOf). Используется, чтобы серить статьи ФОТ в
+// FeoTreeSelect (`blockPayroll`) ТОЛЬКО когда реально есть что блокировать —
+// закупка/заявка «ЗП» без единого товара/услуги обязана свободно выбрать
+// статью ФОТ (QA-дефект 22.10.2026: blockPayroll был включён безусловно).
+//
+// Пустые строки-заготовки (без названия И без суммы — свежая строка формы,
+// ещё не заполненная) не учитываются — иначе одна лишняя пустая строка в
+// самом конце таблицы делала бы ФОТ недоступным зря.
+//
+// emptyMeansGoods: у заявки (WishItem) отсутствие/пустота item_type на
+// сервере трактуется как 'товар' (app.services.payroll_category_guard.
+// default_wish_item_type) — передавать true для wishForm.items; у закупки
+// (PurchaseItem.item_type Optional[str]=None, без форсированного дефолта)
+// оставлять false/не передавать.
+function isMeaningfulForTypeCheck(item: TypeClassifiableItem): boolean {
+  const name = (item.item_name || '').toString().trim()
+  const amount = Number(item.total_price) || 0
+  return !!name || amount > 0
+}
+
+export function hasGoodsOrServices(
+  items: TypeClassifiableItem[] | null | undefined,
+  options?: { emptyMeansGoods?: boolean },
+): boolean {
+  return (items || []).some((it) => {
+    if (!isMeaningfulForTypeCheck(it)) return false
+    if (options?.emptyMeansGoods && !it.item_type) return true
+    const k = kindOf(it.item_type)
+    return k === KIND_GOODS || k === KIND_SERVICES
+  })
+}
+
 export interface TypeShares { goods: number; services: number; unspecified: number }
 
 // freeByKindFromTypeTotals() — ЕДИНСТВЕННАЯ формула «Свободно по типу» =

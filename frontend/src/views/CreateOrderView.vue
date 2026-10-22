@@ -487,7 +487,7 @@
                 :readonly="isFeoHeaderLocked"
                 :current-purchase-amount="feoCurrentCategoryOwnAmount"
                 :node-amounts="feoHeaderNodeAmounts"
-                block-payroll
+                :block-payroll="purchaseHasGoodsOrServices"
                 @pick-unallocated="onFeoPickUnallocated"
               />
               <!-- Замок категории (владелец, 2026-09-20): «категория закупки из
@@ -2111,6 +2111,7 @@ import { useFeoTreeNodes } from '@/composables/useFeoTreeNodes'
 import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { numOrNull } from '@/utils/numberFormat'
+import { hasGoodsOrServices } from '@/utils/itemTypeKind'
 // item-forms-accommodation-transport.md: contractFormOptions — единственный
 // источник item_forms.json::contract_forms (Правило №6), см. composables/items/useItemForm.ts.
 import { contractFormOptions as contractFormOptionsFromDict } from '@/composables/items/useItemForm'
@@ -2943,6 +2944,13 @@ function activeDescription(item: OrderItem): string | undefined {
 interface EventItem { id: number; subsidy_id: number; name: string; is_active: boolean }
 
 const items = ref<OrderItem[]>([])
+
+// Правило владельца (22.10.2026, заявка №209), QA-дефект того же дня: серить
+// статьи ФОТ в FeoTreeSelect (blockPayroll ниже) ТОЛЬКО когда в закупке
+// реально есть товар/услуга/работа — закупка «ЗП» (позиции без типа) обязана
+// свободно выбрать статью ФОТ. emptyMeansGoods НЕ передаём — у позиции
+// закупки пустой item_type не форсируется в 'товар' (в отличие от заявки).
+const purchaseHasGoodsOrServices = computed(() => hasGoodsOrServices(items.value))
 
 // Phase 27.1 D-04: contract_items side-by-side
 const contractItemsState = ref<ContractItem[]>([])

@@ -501,7 +501,7 @@
                       :readonly="!isWishEditable && !canEditWishFeo || hasPlanLinkedItems"
                       :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo) && !hasPlanLinkedItems)"
                       :root-label="selectedSubsidyName"
-                      block-payroll
+                      :block-payroll="wishHasGoodsOrServices"
                       @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                     />
                   </template>
@@ -665,7 +665,7 @@
                   :readonly="!isWishEditable && !canEditWishFeo || hasPlanLinkedItems"
                   :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo) && !hasPlanLinkedItems)"
                   :root-label="selectedSubsidyName"
-                  block-payroll
+                  :block-payroll="wishHasGoodsOrServices"
                   @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                 />
               </template>
@@ -1660,6 +1660,7 @@ import type { Wish } from '@/composables/wishes/wishTypes'
 // CreateOrderView.vue (contractFormOptions), см. composables/items/useItemForm.ts
 // (Правило №6 — единственный источник item_forms.json::contract_forms).
 import { contractFormOptions as contractFormOptionsFromDict } from '@/composables/items/useItemForm'
+import { hasGoodsOrServices } from '@/utils/itemTypeKind'
 
 const contractFormOptions = contractFormOptionsFromDict()
 
@@ -1823,6 +1824,15 @@ const {
 // внутри useWishForm.ts (showValidationArrows/pointArrowsTo) они читаются постоянно.
 void wishFormRef
 void wishSubmitBtnRef
+
+// Правило владельца (22.10.2026, заявка №209), QA-дефект того же дня: серить
+// статьи ФОТ в FeoTreeSelect (blockPayroll на обоих деревьях ниже) ТОЛЬКО
+// когда в заявке реально есть товар/услуга/работа — заявка «ЗП» (позиции без
+// типа) обязана свободно выбрать статью ФОТ. emptyMeansGoods=true — у
+// заявки отсутствие/пустота item_type на сервере трактуется как 'товар'
+// (app.services.payroll_category_guard.default_wish_item_type), иначе
+// серая подсветка разошлась бы с реальным 422 сервера.
+const wishHasGoodsOrServices = computed(() => hasGoodsOrServices(wishForm.value.items, { emptyMeansGoods: true }))
 
 const {
   wishMembers, participantToAdd, addWishMember, removeWishMember,

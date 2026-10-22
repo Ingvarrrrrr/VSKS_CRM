@@ -142,11 +142,11 @@
                 'feo-tree-row--selected': !item.pseudo && !item.root && item.node!.id === modelValue,
                 'feo-tree-row--pseudo': item.pseudo,
                 'feo-tree-row--root': item.root,
-                'feo-tree-row--blocked': !item.pseudo && !item.root && isNodeBlocked(item.node!),
+                'feo-tree-row--blocked': item.pseudo ? !!item.blocked : (!item.root && isNodeBlocked(item.node!)),
               }"
               :data-node-id="!item.pseudo && !item.root ? item.node!.id : undefined"
-              :title="!item.pseudo && !item.root && isNodeBlocked(item.node!) ? 'ФОТ — товары и услуги сюда нельзя' : undefined"
-              @click="item.root ? toggleRootExpand() : (item.pseudo ? onPickUnallocated(item.parentId ?? null) : onNodeClick(item.node!))"
+              :title="(item.pseudo ? item.blocked : (!item.root && isNodeBlocked(item.node!))) ? 'ФОТ — товары и услуги сюда нельзя' : undefined"
+              @click="item.root ? toggleRootExpand() : (item.pseudo ? (item.blocked ? undefined : onPickUnallocated(item.parentId ?? null)) : onNodeClick(item.node!))"
             >
               <!-- Направляющие линии предков (пустые/вертикальные ячейки по глубине) -->
               <span
@@ -610,6 +610,10 @@ interface FlatItem {
   node?: FeoNode
   name?: string
   parts?: { text: string; hit: boolean }[]
+  /** Псевдо-узел «Не определена» под статьёй ФОТ при blockPayroll (владелец,
+   *  22.10.2026) — серый и не кликается, тем же правилом, что и обычные
+   *  узлы (isNodeBlocked родителя): «Не определена» под ФОТ — это тоже ФОТ. */
+  blocked?: boolean
 }
 
 const flatTree = computed((): FlatItem[] => {
@@ -685,7 +689,12 @@ const flatTree = computed((): FlatItem[] => {
       }
     })
     if (hasPseudo) {
-      result.push({ key: `u-${pseudoParentId}`, depth, pseudo: true, parentId: pseudoParentId, isLast: true, ancestorLines })
+      const _parentNode = pseudoParentId != null ? nodeById.value.get(pseudoParentId) : undefined
+      const _pseudoBlocked = !!_parentNode && isNodeBlocked(_parentNode)
+      result.push({
+        key: `u-${pseudoParentId}`, depth, pseudo: true, parentId: pseudoParentId,
+        isLast: true, ancestorLines, blocked: _pseudoBlocked,
+      })
     }
   }
 

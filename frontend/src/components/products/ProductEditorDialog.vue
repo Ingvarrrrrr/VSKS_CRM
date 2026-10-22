@@ -54,6 +54,7 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import ProductFormDialog from '@/components/products/ProductFormDialog.vue'
 import { useProductsForm } from '@/composables/products/useProductsForm'
+import { useProductOptions } from '@/composables/products/useProductOptions'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import { ACTIONS } from '@/constants/permissionActions'
@@ -109,11 +110,25 @@ async function load() {
   await loadFor(searchedFor)
 }
 
+// Баг владельца (22.10.2026): подсказки строились ТОЛЬКО из products.value
+// (≤20 товаров узкого поиска по имени редактируемого товара, см. loadFor
+// выше) — там обычно только сам товар, выпадающий список пуст. Теперь это
+// объединение (Set, без дублей) с /products/options — категориями/типами
+// по ВСЕМУ каталогу (productOptions.load(), useProductOptions.ts).
+// useProductsData.ts (страница «Товары») не трогаем — у неё свой контракт
+// (весь каталог грузится иначе), второй механизм не заводим (Правило №6).
+const productOptions = useProductOptions()
 const typeOptions = computed(() =>
-  [...new Set(products.value.map(p => p.product_type).filter(Boolean) as string[])].sort(),
+  [...new Set([
+    ...products.value.map(p => p.product_type).filter(Boolean) as string[],
+    ...productOptions.types.value,
+  ])].sort(),
 )
 const categoryOptions = computed(() =>
-  [...new Set(products.value.map(p => p.category).filter(Boolean) as string[])].sort(),
+  [...new Set([
+    ...products.value.map(p => p.category).filter(Boolean) as string[],
+    ...productOptions.categories.value,
+  ])].sort(),
 )
 
 const form = useProductsForm({
@@ -131,6 +146,9 @@ interface ProductEditorOpenOptions {
 }
 
 async function open(opts: ProductEditorOpenOptions = {}) {
+  // Не кешируем между открытиями — категория, заведённая прошлым сохранением
+  // (в т.ч. из другого окна/вкладки), должна сразу попасть в подсказки.
+  void productOptions.load()
   if (opts.productId) {
     // Узкая подсказка по имени товара, затем полноценная карточка — тем же
     // путём, что openQuickProductEdit() раньше делал в useItemsCatalog.ts.

@@ -69,6 +69,10 @@ from app.routers import products_match
 from app.routers import products_photos
 from app.routers import products_import
 from app.routers import products_price
+# Подсказки категории/типа товара по всему каталогу (владелец, 22.10.2026) —
+# GET "/options", один литеральный сегмент, тот же порядок регистрации, что
+# у products_summary (ДО products.router) и остальных products_*-соседей.
+from app.routers import products_options
 # Средняя цена по региону и партии (план clever-bouncing-lantern.md, Часть 2,
 # 14.10.2026): GET "/{product_id}/avg-price", POST "/avg-price/bulk" — оба
 # минимум на сегмент длиннее catch-all "/{product_id}" или многосегментные,
@@ -435,6 +439,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(products_photos.router)
     app.include_router(products_import.router)
     app.include_router(products_price.router)
+    app.include_router(products_options.router)
     app.include_router(products_avg_price.router)
     app.include_router(product_description.router)
     app.include_router(products.router)

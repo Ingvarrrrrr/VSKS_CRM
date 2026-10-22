@@ -304,6 +304,33 @@ export function useWishForm(deps: {
     return ctx.users.value
   })
 
+  // «На чьё имя заявка» (Wish.assigned_to) — только штат организации
+  // субсидии заявки (Правило владельца, 22.10.2026; бэкенд проверяет то же
+  // самое при сохранении — app/services/service_note_people.py::
+  // assert_wish_assigned_to_in_staff). Тот же эндпоинт, что у списка «Кому»
+  // служебки закупки (CreateOrderView.vue::loadStaffUsers), с staff_only=1.
+  const staffMembers = ref<import('./wishTypes').User[]>([])
+  async function loadStaffMembers(sid: number | null) {
+    staffMembers.value = []
+    if (!sid) return
+    try {
+      staffMembers.value = await apiFetch<import('./wishTypes').User[]>(`/users/?subsidy_id=${sid}&staff_only=1`)
+    } catch { staffMembers.value = [] }
+  }
+  // Без субсидии — прежний общий список (orgUsers); текущее значение,
+  // которого нет в штате (старые заявки), подмешиваем отдельно, не выбрасываем —
+  // иначе v-autocomplete не найдёт объект для отображения уже выбранного.
+  const staffUsers = computed(() => {
+    if (!wishForm.value.subsidy_id) return ctx.users.value
+    const base = staffMembers.value.length ? staffMembers.value : orgUsers.value
+    const current = wishForm.value.assigned_to
+    if (current && !base.find((u: any) => u.id === current)) {
+      const fallback = ctx.users.value.find((u: any) => u.id === current) || orgMembers.value.find((u: any) => u.id === current)
+      if (fallback) return [fallback, ...base]
+    }
+    return base
+  })
+
   // Должность сотрудника: per-org → fallback на legacy User.position/department
   function resolveUserPosition(u: any): string {
     if (!u) return ''
@@ -617,7 +644,7 @@ export function useWishForm(deps: {
     document.removeEventListener('focusout', _wishFocusoutHandler, true)
   })
 
-  watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid) }, { immediate: true })
+  watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid); loadStaffMembers(sid) }, { immediate: true })
   // Договор заявки: «сначала договоры этой субсидии и выбранного контрагента»
   // (владелец, 12.10.2026) — тот же бэкенд-приём ранжирования (prefer_subsidy_id),
   // что уже используется в useFrameworkContracts.ts для закупок. Перезагружаем
@@ -742,6 +769,7 @@ export function useWishForm(deps: {
     wishForm.value.title = wish.title || ''
     wishForm.value.subsidy_id = wish.subsidy_id ?? null
     loadOrgMembers(wishForm.value.subsidy_id)
+    loadStaffMembers(wishForm.value.subsidy_id)
     wishForm.value.feo_category_id = wish.feo_category_id ?? null
     wishForm.value.assigned_to = wish.assigned_to ?? null
     wishForm.value.event_id = (wish as any).event_id ?? null
@@ -1252,6 +1280,7 @@ export function useWishForm(deps: {
     wishFeoSelected, wishFeoPerItemDisableDialog, wishFeoPerItemDisableCount,
     onWishFeoPerItemChange, cancelWishFeoPerItemDisable, confirmWishFeoPerItemDisable,
     orgMembers, loadOrgMembers, orgUsers, resolveUserPosition,
+    staffMembers, loadStaffMembers, staffUsers,
     wishContractorInitial, onWishContractorSelect, onContractorNameInput,
     wishContractOptions, wishContractLoading, wishContractInitial, loadWishFrameworkContracts,
     wishFeoLeaves, wishFeoNodes, wishFeoTreeNodes, wishFeoTreeRawNodes, wishNodeAmounts,

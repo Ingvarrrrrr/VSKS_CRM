@@ -707,7 +707,7 @@
                 <v-col cols="12">
                   <v-autocomplete
                     v-model="wishForm.assigned_to"
-                    :items="orgUsers"
+                    :items="staffUsers"
                     item-title="full_name"
                     item-value="id"
                     label="На чьё имя будет заявка"
@@ -1172,7 +1172,7 @@
                 <v-col cols="12">
                   <v-autocomplete
                     v-model="wishForm.assigned_to"
-                    :items="orgUsers"
+                    :items="staffUsers"
                     item-title="full_name"
                     item-value="id"
                     label="На чьё имя заявка"
@@ -1795,7 +1795,7 @@ const {
   highlightMissingFeoCategory, saving, serverFieldErrors, wishForm, selectedSubsidyName, selectedSubsidyOrgId, eventsForSubsidy,
   wishFeoSelected, wishFeoPerItemDisableDialog, wishFeoPerItemDisableCount,
   onWishFeoPerItemChange, cancelWishFeoPerItemDisable, confirmWishFeoPerItemDisable,
-  orgUsers, resolveUserPosition, wishContractorInitial, onWishContractorSelect, onContractorNameInput,
+  orgUsers, staffUsers, resolveUserPosition, wishContractorInitial, onWishContractorSelect, onContractorNameInput,
   wishContractOptions, wishContractLoading, wishContractInitial,
   wishFeoLeaves, wishFeoTreeNodes, wishNodeAmounts, pickWishUnallocated,
   wishPlannedResiduals, onWishPlannedItemCreated,

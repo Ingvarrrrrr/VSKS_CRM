@@ -460,6 +460,14 @@ async def patch_wish_execution(
     else:
         _header_sync_warnings = []
     # W2: assigned_to меняется без сброса цепочки согласования
+    # Правило владельца (22.10.2026): «На чьё имя заявка» — только штат
+    # организации субсидии ЗАЯВКИ (ПРАВИЛО №6, та же формула, что у служебки
+    # закупки — app/services/service_note_people.py::assert_wish_assigned_to_in_staff).
+    # Только при реальной смене значения; wish.subsidy_id здесь уже НОВОЕ
+    # (присвоено чуть выше, если субсидия менялась в этом же запросе).
+    if body.assigned_to is not None and body.assigned_to != wish.assigned_to:
+        from app.services.service_note_people import assert_wish_assigned_to_in_staff
+        await assert_wish_assigned_to_in_staff(db, wish.subsidy_id, body.assigned_to)
     if body.assigned_to is not None:
         wish.assigned_to = body.assigned_to
     # Договор заявки (владелец, 12.10.2026, план lazy-swimming-hollerith.md,

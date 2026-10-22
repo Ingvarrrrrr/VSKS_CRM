@@ -53,29 +53,31 @@ SERVICE_NOTE_PEOPLE_FIELDS: dict[str, str] = {
 }
 
 
-async def assert_service_note_people_in_staff(
+async def assert_people_in_subsidy_staff(
     db: AsyncSession,
-    purchase,
-    changes: dict,
+    subsidy_id: Optional[int],
+    people: dict,
 ) -> None:
-    """changes — {field: новое_значение_user_id}, ТОЛЬКО реально меняющиеся
-    поля (вызывающий уже сверил со старым значением p.<field> — см. вызовы в
-    purchases.py). Поля без записи в `changes` не проверяются.
+    """Общее ядро (ПРАВИЛО №6 — единственный источник формулы «штат субсидии»):
+    people — {человекочитаемая подпись поля: новое_значение_user_id}, ТОЛЬКО
+    реально меняющиеся поля (вызывающий уже сверил со старым значением —
+    см. assert_service_note_people_in_staff и вызовы в wishes.py/
+    wish_transitions.py). None-значения в people не проверяются.
 
     Субсидии нет или у неё нет org_id — штата не существует, проверка
     пропускается (та же логика фолбэка, что в initiator_candidate_ids).
+
+    Расширение 22.10.2026 (Правило владельца): раньше проверяло только три
+    поля служебки/приказа закупки (service_note_by/to_user_id). Теперь то же
+    ядро использует и Wish.assigned_to («На чьё имя заявка») — одна формула
+    штата, не копия.
     """
-    relevant = {
-        field: val
-        for field, val in (changes or {}).items()
-        if field in SERVICE_NOTE_PEOPLE_FIELDS and val is not None
-    }
+    relevant = {label: val for label, val in (people or {}).items() if val is not None}
     if not relevant:
         return
 
     from app.models.subsidy import Subsidy
 
-    subsidy_id = getattr(purchase, "subsidy_id", None)
     subsidy: Optional[Subsidy] = await db.get(Subsidy, subsidy_id) if subsidy_id else None
     org_id = getattr(subsidy, "org_id", None) if subsidy else None
     if not org_id:
@@ -87,17 +89,56 @@ async def assert_service_note_people_in_staff(
     org = await db.get(Organization, org_id)
     org_name = getattr(org, "name", "") if org else ""
 
-    for field, user_id in relevant.items():
+    for role_label, user_id in relevant.items():
         if user_id in staff:
             continue
-        role_label = SERVICE_NOTE_PEOPLE_FIELDS[field]
+        from app.models.user import User as _User
+        person = await db.get(_User, user_id)
+        person_name = getattr(person, "full_name", None) or f"id={user_id}"
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "SERVICE_NOTE_PERSON_NOT_STAFF",
                 "message": (
-                    f"{role_label} должен быть сотрудником организации"
+                    f"{role_label}: {person_name} не сотрудник организации"
                     + (f" «{org_name}»" if org_name else "")
                 ),
             },
         )
+
+
+async def assert_service_note_people_in_staff(
+    db: AsyncSession,
+    purchase,
+    changes: dict,
+) -> None:
+    """changes — {field: новое_значение_user_id}, ТОЛЬКО реально меняющиеся
+    поля (вызывающий уже сверил со старым значением p.<field> — см. вызовы в
+    purchases.py). Поля без записи в `changes` не проверяются.
+    """
+    relevant = {
+        field: val
+        for field, val in (changes or {}).items()
+        if field in SERVICE_NOTE_PEOPLE_FIELDS and val is not None
+    }
+    if not relevant:
+        return
+
+    subsidy_id = getattr(purchase, "subsidy_id", None)
+    people = {SERVICE_NOTE_PEOPLE_FIELDS[field]: val for field, val in relevant.items()}
+    await assert_people_in_subsidy_staff(db, subsidy_id, people)
+
+
+async def assert_wish_assigned_to_in_staff(
+    db: AsyncSession,
+    subsidy_id: Optional[int],
+    assigned_to: Optional[int],
+) -> None:
+    """«На чьё имя заявка» (Wish.assigned_to) — только штат организации
+    субсидии ЗАЯВКИ (Правило владельца, 22.10.2026). Вызывающий (wishes.py/
+    wish_transitions.py) передаёт сюда НОВОЕ значение только когда оно
+    реально устанавливается/меняется — см. докстринги вызовов.
+    """
+    await assert_people_in_subsidy_staff(
+        db, subsidy_id, {"На чьё имя заявка": assigned_to}
+    )

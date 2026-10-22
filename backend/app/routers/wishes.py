@@ -309,6 +309,13 @@ async def create_wish(
     from app.services.wish_org import resolve_wish_org_id
     org_id = await resolve_wish_org_id(db, current_user, body.subsidy_id)
 
+    # Правило владельца (22.10.2026): «На чьё имя заявка» — только штат
+    # организации субсидии ЗАЯВКИ. Та же формула, что у служебки закупки
+    # (ПРАВИЛО №6) — app/services/service_note_people.py::assert_wish_assigned_to_in_staff.
+    if body.assigned_to is not None:
+        from app.services.service_note_people import assert_wish_assigned_to_in_staff
+        await assert_wish_assigned_to_in_staff(db, body.subsidy_id, body.assigned_to)
+
     wish = Wish(
         org_id=org_id,
         title=body.title,
@@ -553,6 +560,18 @@ async def update_wish(
             # этого PUT, видимость обязана быть проверена (ПРАВИЛО №8 п.2).
             from app.services.wish_org import resolve_wish_org_id
             wish.org_id = await resolve_wish_org_id(db, current_user, body.subsidy_id)
+
+    # Правило владельца (22.10.2026): «На чьё имя заявка» — только штат
+    # организации субсидии ЗАЯВКИ (ПРАВИЛО №6, та же формула, что у служебки
+    # закупки — app/services/service_note_people.py::assert_wish_assigned_to_in_staff).
+    # Проверяем ТОЛЬКО при реальной смене значения (старые заявки не ломаем —
+    # фронт шлёт это поле в каждом PUT). Если субсидия и assigned_to меняются
+    # одновременно — проверяем по НОВОЙ субсидии: body.subsidy_id уже пришёл,
+    # wish.subsidy_id ещё старое (setattr-цикл ниже его применит позже).
+    if body.assigned_to is not None and body.assigned_to != wish.assigned_to:
+        from app.services.service_note_people import assert_wish_assigned_to_in_staff
+        _new_subsidy_id_for_assignee = body.subsidy_id if body.subsidy_id is not None else wish.subsidy_id
+        await assert_wish_assigned_to_in_staff(db, _new_subsidy_id_for_assignee, body.assigned_to)
 
     # Прод-баг (заявка №206/закупка РЕЕ-2026-04252, 20.10.2026) — тот же
     # дефект, что в wish_transitions.py::patch_wish_execution (см. комментарий

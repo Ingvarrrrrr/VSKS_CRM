@@ -77,21 +77,29 @@ async def sync_items_to_header_category(
       массовый перенос ВСЕХ позиций в «без категории» слишком разрушителен,
       оставляем вызывающему явно обработать по месту, как раньше).
 
+    Позиции с feo_planned_item_id (загружены из Плана закупок или явно
+    привязаны к плановой позиции) — владелец (22.10.2026, заявка №209):
+    «категория позиции по плану не меняется, даже когда меняется категория
+    шапки» — пропускаются целиком: ни feo_category_id, ни привязка к плану не
+    трогаются. Прод-баг был ровно в обратном: такая позиция переезжала в
+    категорию шапки, move_or_detach_planned_item снимал привязку к плану, а
+    «освобождённая» позиция без feo_planned_item_id дальше ложно считалась
+    дублем чужой закупки той же (новой) категории (см.
+    app/services/plan_duplicate_warning.py, app/services/
+    wish_item_category_guard.py — единственное место правила, ПРАВИЛО №6).
+
     Commit не делает — это на вызывающем.
     """
     if per_item_mode or old_header_cat_id == new_header_cat_id or new_header_cat_id is None:
         return []
-    from app.services.plan_autoassign import move_or_detach_planned_item
 
     warnings: list[str] = []
     for it in items:
         if not hasattr(it, "feo_category_id"):
             continue
+        if getattr(it, "feo_planned_item_id", None) is not None:
+            continue
         if it.feo_category_id == new_header_cat_id:
             continue
         it.feo_category_id = new_header_cat_id
-        if getattr(it, "feo_planned_item_id", None) is not None:
-            w = await move_or_detach_planned_item(db, it, new_header_cat_id)
-            if w:
-                warnings.append(w)
     return warnings

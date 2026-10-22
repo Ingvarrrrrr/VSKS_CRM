@@ -46,9 +46,13 @@ async def test_patch_execution_header_category_change_moves_items_and_plan(
     client, db_session, test_org, test_user, make_user,
 ):
     """feo_per_item=False, категория A → B через PATCH /execution (без items в
-    теле — только шапка, ровно как смог бы сделать согласующий): обе позиции
-    заявки переезжают в B вместе с шапкой; у позиции с СОБСТВЕННОЙ auto_created
-    плановой позицией (единственный владелец) план переезжает тоже."""
+    теле — только шапка, ровно как смог бы сделать согласующий): позиция БЕЗ
+    плановой позиции переезжает в B вместе с шапкой; позиция С
+    feo_planned_item_id остаётся в своей категории (A) вместе со своим
+    планом — владелец (22.10.2026, заявка №209) развернул прежнее поведение
+    (позиция по плану раньше переезжала за шапкой и теряла привязку к плану
+    при чужом владении — именно это рождало ложные «дубли», см.
+    app/services/wish_item_category_guard.py)."""
     subsidy = Subsidy(name=f"TestHeaderSync-{id(db_session)}", year=2026, budget=0, require_planned_dates=False)
     db_session.add(subsidy)
     await db_session.flush()
@@ -109,11 +113,11 @@ async def test_patch_execution_header_category_change_moves_items_and_plan(
     await db_session.refresh(fpi)
 
     assert w.feo_category_id == cat_b.id
-    assert item_with_plan.feo_category_id == cat_b.id, "позиция без явной построчной правки обязана следовать за шапкой"
-    assert item_without_plan.feo_category_id == cat_b.id
-    # auto_created-план, единственный владелец — переехал вместе с позицией.
-    assert fpi.feo_category_id == cat_b.id
-    assert item_with_plan.feo_planned_item_id == fpi.id, "привязка к плану не должна слетать при тихом переезде"
+    assert item_with_plan.feo_category_id == cat_a.id, "позиция с feo_planned_item_id не переезжает за шапкой"
+    assert item_without_plan.feo_category_id == cat_b.id, "позиция без плановой позиции следует за шапкой, как раньше"
+    # План не трогается — он не был пропущен через move_or_detach вовсе.
+    assert fpi.feo_category_id == cat_a.id
+    assert item_with_plan.feo_planned_item_id == fpi.id, "привязка к плану не трогается"
 
 
 @pytest.mark.asyncio

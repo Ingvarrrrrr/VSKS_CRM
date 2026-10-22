@@ -20,15 +20,14 @@ from app.services.item_contractor import set_item_contractor
 from app.services.item_amounts import line_total, apply_item_amounts, effective_vat_on_top, effective_vat_rate
 from app.services.feo_item_lock import assert_item_price_not_locked
 from app.services.item_forms import item_form_for_wish_item
-# _move_or_detach_planned_item/_deactivate_if_orphaned нужны только update_wish
-# (ниже) — остальные хелперы автозаведения плана (_auto_assign_planned_items/
-# _backfill_item_type_from_plan) переехали в app/services/wish_distribution.py
-# вместе с _distribute_wish_to_purchases/_sync_purchase_from_wish, которые их
-# используют (Правило №5, сессия 2026-09-06).
-from app.services.plan_autoassign import (
-    move_or_detach_planned_item as _move_or_detach_planned_item,
-    deactivate_if_orphaned as _deactivate_if_orphaned,
-)
+# Владелец (22.10.2026, заявка №209): move_or_detach_planned_item/
+# deactivate_if_orphaned больше не вызываются из update_wish — смена категории
+# позиции по плану теперь всегда идёт через единственный гейт
+# assert_wish_item_category_from_plan (422), см. app/services/
+# wish_item_category_guard.py. Остальные хелперы автозаведения плана
+# (_auto_assign_planned_items/_backfill_item_type_from_plan) переехали в
+# app/services/wish_distribution.py вместе с _distribute_wish_to_purchases/
+# _sync_purchase_from_wish, которые их используют (Правило №5, сессия 2026-09-06).
 from app.services.wish_item_category_guard import assert_wish_item_category_from_plan
 from decimal import Decimal
 # Перенос заявки в План закупок и обратно (Правило №5, сессия 2026-09-06,
@@ -316,6 +315,13 @@ async def create_wish(
         from app.services.service_note_people import assert_wish_assigned_to_in_staff
         await assert_wish_assigned_to_in_staff(db, body.subsidy_id, body.assigned_to)
 
+    # Владелец (22.10.2026, заявка №209): только рамочный договор субсидии
+    # заявки/другой субсидии ТОЙ ЖЕ организации (ПРАВИЛО №6, единственная
+    # проверка — app/services/contract_subsidy_scope.py::ensure_wish_contract_allowed).
+    if body.contract_id is not None:
+        from app.services.contract_subsidy_scope import ensure_wish_contract_allowed
+        await ensure_wish_contract_allowed(db, body.contract_id, body.subsidy_id)
+
     wish = Wish(
         org_id=org_id,
         title=body.title,
@@ -541,6 +547,10 @@ async def update_wish(
         for wi in (wish.items or [])
     }
 
+    # Снимок ДО мутации — нужен ensure_wish_contract_allowed ниже, чтобы
+    # проверять только РЕАЛЬНУЮ смену договора (заявка №209, 22.10.2026).
+    _old_contract_id = wish.contract_id
+
     if body.subsidy_id is not None:
         from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
         await assert_subsidy_approved_for_binding(db, body.subsidy_id)
@@ -650,6 +660,14 @@ async def update_wish(
     # null» от «ключа не было».
     if 'contract_id' in body.model_fields_set:
         wish.contract_id = body.contract_id
+        # Владелец (22.10.2026, заявка №209): только рамочный договор субсидии
+        # заявки/другой субсидии ТОЙ ЖЕ организации (ПРАВИЛО №6, единственная
+        # проверка — app/services/contract_subsidy_scope.py::ensure_wish_contract_allowed).
+        # Против ИТОГОВОЙ субсидии: setattr-цикл выше уже применил body.subsidy_id
+        # к wish.subsidy_id. Только при реальной смене договора.
+        if body.contract_id != _old_contract_id:
+            from app.services.contract_subsidy_scope import ensure_wish_contract_allowed
+            await ensure_wish_contract_allowed(db, body.contract_id, wish.subsidy_id)
 
     # Владелец (01.10, прод: закупка РЕЕ-2026-00975/заявка №98, инцидент см.
     # ПРАВИЛО №6): шапка (subsidy_id/feo_category_id/event_id) заявки-компаньона
@@ -825,28 +843,15 @@ async def update_wish(
                     # Явный выбор плановой позиции с фронта (в т.ч. её очистка) —
                     # доверяем как есть, автоперенос ниже не запускаем.
                     wi.feo_planned_item_id = item_data['feo_planned_item_id']
-                elif _wi_cat_changing and wi.feo_planned_item_id is not None:
-                    # Плановые позиции следуют за сменой категории (владелец,
-                    # 2026-08-17): payload сменил feo_category_id позиции, но не
-                    # прислал новый feo_planned_item_id явно — старая привязка
-                    # осталась указывать на прежнюю категорию. Если позиция —
-                    # единственный владелец своей плановой строки, строка
-                    # переезжает вместе с ней; если план общий с другими
-                    # закупками/заявками — привязка снимается и предупреждение
-                    # копится в _plan_transfer_warnings (возвращается в ответе).
-                    if wi.feo_category_id is not None:
-                        _w = await _move_or_detach_planned_item(db, wi, wi.feo_category_id)
-                        if _w:
-                            _plan_transfer_warnings.append(_w)
-                    else:
-                        # Категория очищена целиком — плановой позиции
-                        # переезжать некуда, привязка просто снимается.
-                        from app.models.feo_planned_item import FeoPlannedItem as _FPI2
-                        from app.services.plan_autoassign import deactivate_if_orphaned as _deactivate_if_orphaned
-                        _old_fpi2 = await db.get(_FPI2, wi.feo_planned_item_id)
-                        wi.feo_planned_item_id = None
-                        wi.over_plan = False
-                        await _deactivate_if_orphaned(db, _old_fpi2)
+                # Владелец (22.10.2026, заявка №209): смена категории позиции
+                # по плану без переприсылки feo_planned_item_id — тот же
+                # единственный гейт (422), что у wish_items.py::patch_wish_item/
+                # wish_transitions.py::patch_wish_execution/update_wish (draft),
+                # см. app/services/wish_item_category_guard.py. Раньше здесь
+                # тихо переезжала/отвязывалась плановая позиция
+                # (_move_or_detach_planned_item) — владелец это отменил.
+                if _wi_cat_changing and wi.feo_planned_item_id is not None:
+                    await assert_wish_item_category_from_plan(db, wi, wi.feo_category_id)
                 if 'over_plan' in item_data:
                     wi.over_plan = item_data['over_plan']
                 if 'needed_date' in item_data:

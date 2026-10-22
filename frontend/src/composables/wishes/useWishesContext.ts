@@ -178,7 +178,7 @@ export interface WishesContext {
   assignableIds: Ref<Set<number>>
   allOrgs: Ref<{ id: number; name: string; root_org_id?: number | null; parent_org_id?: number | null }[]>
   requiresConsent: (userId: number | null | undefined) => boolean
-  showSnack: (text: string, color?: ToastType, opts?: { duration?: number }) => void
+  showSnack: (text: string, color?: ToastType, opts?: { duration?: number; links?: { label: string; to: string }[] }) => void
   clearStaleSuccessToasts: () => void
   formatPrice: typeof formatPrice
   formatDate: typeof formatDate
@@ -239,7 +239,7 @@ export function provideWishesContext(): WishesContext {
   // пользователя (согласование, сохранение, ошибка) должен быть прочитан, а не
   // пропасть за 3-4 секунды. Стек не затирает предыдущие — новые тосты копятся.
   const toast = useToast()
-  function showSnack(text: string, color: ToastType = 'success', opts?: { duration?: number }) {
+  function showSnack(text: string, color: ToastType = 'success', opts?: { duration?: number; links?: { label: string; to: string }[] }) {
     toast.addToast(text, color, opts)
   }
   // Владелец (2026-09-04, п.5 задачи заявки №54): «уведомления от предыдущей заявки
@@ -297,10 +297,21 @@ export function provideWishesContext(): WishesContext {
       return `Категория «${w.category_name}»: план превышает ФЭО на ${formatPrice(w.excess_amount ?? 0)}${itemsText ? ` (позиции: ${itemsText})` : ''}`
     })
     if (duplicateWarnings.length) {
+      // Владелец (пакет 2, 22.10.2026): номер закупки в предупреждении о
+      // дубле — ссылка на карточку закупки (та же навигация, что
+      // goToMatchedPurchase/goToPurchase выше, см. `purchases` в wishTypes.ts
+      // ExcessWarning — читаем его, не парсим текст message).
+      const links = duplicateWarnings
+        .flatMap(w => w.purchases || [])
+        .filter(p => p.id != null)
+        .map(p => ({
+          label: p.registry_number || `закупка №${p.id}`,
+          to: `/orders/${p.id}/edit`,
+        }))
       showSnack(
         duplicateWarnings.map(w => w.message).filter(Boolean).join(' '),
         'warning',
-        { duration: 0 },
+        { duration: 0, links: links.length ? links : undefined },
       )
     }
     if (!parts.length) return

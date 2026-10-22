@@ -71,7 +71,7 @@
                 v-if="item.feo_category_id != null"
                 :category-id="item.feo_category_id"
                 :nodes="feoNodes || []"
-                :locked="isItemFeoCategoryLocked(item)"
+                :locked="isItemFeoCategoryLocked(item) || isWishItemCategoryLockedByPlan(item, !!isWishStage)"
                 class="mt-1"
               />
             </td>
@@ -409,7 +409,7 @@
                                       :leaves="feoLeaves"
                                       :plan-positions="plannedItems || []"
                                       :node-amounts="nodeAmounts"
-                                      :readonly="feoReadonly || isItemFeoCategoryLocked(item)"
+                                      :readonly="feoReadonly || isItemFeoCategoryLocked(item) || isWishItemCategoryLockedByPlan(item, !!isWishStage)"
                                       :error="isFeoMissing(item)"
                                       horizontal
                                       label="ФЭО позиция"
@@ -422,8 +422,8 @@
                                   </div>
                                 </template>
                               </v-tooltip>
-                              <v-chip v-if="feoLockChipLabel(item)" size="x-small" variant="tonal" color="grey" class="mt-1" prepend-icon="mdi-lock-outline">
-                                {{ feoLockChipLabel(item) }}
+                              <v-chip v-if="feoLockChipLabel(item, !!isWishStage)" size="x-small" variant="tonal" color="grey" class="mt-1" prepend-icon="mdi-lock-outline">
+                                {{ feoLockChipLabel(item, !!isWishStage) }}
                               </v-chip>
                             </div>
                             <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
@@ -768,7 +768,7 @@ import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlan
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { formatPlanResidual, formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur, parseNumber as parseNumberUtil } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT, PLAN_PRICE_LOCKED_HINT } from '@/constants/planPriceLabels'
-import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
+import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT, isWishItemCategoryLockedByPlan } from '@/utils/feoItemLock'
 // item-forms-accommodation-transport.md: спец-форма позиции — ItemRowFormSwitch.vue
 // (переключатель формы строки + ItemFormFields внутри) заменяет колонки Кол-во/
 // Ед./Цена в развёрнутой ТЗ-подстроке (Правило №5/№6, единый рендерер,
@@ -810,6 +810,9 @@ const props = defineProps<{
   // категория/плановая позиция ФЭО остаётся редактируемой. См. PurchaseItemsEditor.vue
   // и feoReadonly ниже.
   feoAttrsEditable?: boolean
+  // Владелец (пакет 2, 22.10.2026, заявка №209) — см. одноимённый проп в
+  // ItemsTableFlat.vue/PurchaseItemsEditor.vue.
+  isWishStage?: boolean
   // Шаг 2 «план ≠ факт» (сессия 2026-08-06): закупка объявлена (статус «Ведётся
   // работа» и далее) — кол-во/цена ТЗ заморожены, редактируется только «Договор».
   // Считается в родителе (PurchaseItemsEditor.vue::tzFrozen) по purchaseStatus.
@@ -999,7 +1002,10 @@ const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
 // Замок категории (владелец, 2026-09-20) — см. докстринг в ItemsTableFlat.vue,
 // тот же предикат/текст (utils/feoItemLock.ts, ПРАВИЛО №6).
 function itemFeoLockTooltip(item: EditorItem): string | null {
-  return isItemFeoCategoryLocked(item) ? FEO_CATEGORY_LOCKED_HINT : null
+  if (isItemFeoCategoryLocked(item) || isWishItemCategoryLockedByPlan(item, !!props.isWishStage)) {
+    return FEO_CATEGORY_LOCKED_HINT
+  }
+  return null
 }
 
 // Дефект «РЕЕ-2026-00904» (владелец, 2026-09-02): протухший собственный feo_node_id

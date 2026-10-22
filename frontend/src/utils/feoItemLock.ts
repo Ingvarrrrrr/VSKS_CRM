@@ -36,10 +36,30 @@ export function isItemFeoCategoryLocked(item: FeoLockableItem | null | undefined
 }
 
 // Короткая подпись для чипа у заблокированного пикера — показывается только
-// у позиций, реально загруженных из плана (см. isItemFeoCategoryLocked выше).
-export function feoLockChipLabel(item: FeoLockableItem | null | undefined): string | null {
-  if (!item || !item.from_plan) return null
-  return item.wish_item_id != null ? 'из заявки' : 'из плана'
+// у позиций, реально загруженных из плана (см. isItemFeoCategoryLocked выше),
+// либо (isWishStage=true) у ЛЮБОЙ позиции заявки с feo_planned_item_id — см.
+// isWishItemCategoryLockedByPlan ниже.
+export function feoLockChipLabel(item: FeoLockableItem | null | undefined, isWishStage = false): string | null {
+  if (!item) return null
+  if (item.from_plan) return item.wish_item_id != null ? 'из заявки' : 'из плана'
+  if (isWishStage && item.feo_planned_item_id != null) return 'из плана'
+  return null
+}
+
+// Владелец (пакет 2, 22.10.2026, заявка №209): «категория позиции по плану не
+// меняется» — ШИРЕ, чем isItemFeoCategoryLocked (from_plan) выше: В ЗАЯВКЕ
+// (isWishStage=true) ЛЮБАЯ позиция с feo_planned_item_id блокирует выбор
+// категории построчно, не только from_plan-позиции из «Закупка по плану».
+// Сервер держит это же правило безусловно для WishItem (ПРАВИЛО №6, см.
+// app/services/wish_item_category_guard.py) — этот предикат только UI-замок ДО
+// отправки запроса. isWishStage=false (закупка, по умолчанию) — поведение НЕ
+// меняется, функция всегда false (редактор общий с закупкой, см. докстринг
+// isItemFeoCategoryLocked выше).
+export function isWishItemCategoryLockedByPlan(
+  item: FeoLockableItem | null | undefined, isWishStage: boolean,
+): boolean {
+  if (!isWishStage || !item) return false
+  return item.feo_planned_item_id != null
 }
 
 // Шапочный замок категории ФЭО закупки (CreateOrderView.vue::FeoTreeSelect).

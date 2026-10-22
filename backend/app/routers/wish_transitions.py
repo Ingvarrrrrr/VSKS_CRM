@@ -28,10 +28,7 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.models.chat_message import ChatMessage
 from app.routers.purchase_members import _create_assignment_chat_room
 from app.schemas.wishes import WishOut, WishReject, WishExecutionPatch, WishStatusForce, WishStop
-from app.services.plan_autoassign import (
-    move_or_detach_planned_item as _move_or_detach_planned_item,
-    deactivate_if_orphaned as _deactivate_if_orphaned,
-)
+from app.services.plan_autoassign import deactivate_if_orphaned as _deactivate_if_orphaned
 from app.routers import wishes as wishes_core
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
@@ -449,6 +446,18 @@ async def patch_wish_execution(
     # повторной отправки того же значения. Общая функция (Правило №6) —
     # app/routers/wishes.py::update_wish использует ТУ ЖЕ, не копию.
     _old_header_cat_id = wish.feo_category_id
+    if body.feo_category_id is not None and body.feo_category_id != _old_header_cat_id:
+        # Владелец (22.10.2026, заявка №209): если у заявки ВСЕ позиции — по
+        # плану (feo_planned_item_id задан у каждой), категорию шапки менять
+        # нельзя вовсе (их категория всегда категория плана, менять шапку
+        # было бы бессмысленно — позиции за ней не последуют, см.
+        # sync_items_to_header_category). Смешанные заявки — шапку менять
+        # можно, позиции по плану просто останутся в своей категории. Тот же
+        # единственный гейт (ПРАВИЛО №6), код ответа как у остального гейта —
+        # app/services/wish_item_category_guard.py.
+        from app.services.wish_item_category_guard import MSG_HEADER_LOCKED, wish_items_all_plan_linked
+        if wish_items_all_plan_linked(wish.items or []):
+            raise HTTPException(status_code=422, detail=MSG_HEADER_LOCKED)
     if body.feo_category_id is not None:
         wish.feo_category_id = body.feo_category_id
     if body.feo_category_id is not None and _old_header_cat_id != body.feo_category_id:
@@ -477,7 +486,34 @@ async def patch_wish_execution(
     # (null) отличалось от «поле не прислали» (как у остальных полей этого
     # патча выше).
     if 'contract_id' in body.model_fields_set:
+        if body.contract_id != wish.contract_id:
+            # Владелец (22.10.2026, заявка №209): только рамочный договор
+            # субсидии заявки/другой субсидии ТОЙ ЖЕ организации (ПРАВИЛО №6,
+            # единственная проверка —
+            # app/services/contract_subsidy_scope.py::ensure_wish_contract_allowed).
+            # wish.subsidy_id здесь уже ИТОГОВОЕ (присвоено выше, если
+            # субсидия менялась в этом же запросе).
+            from app.services.contract_subsidy_scope import ensure_wish_contract_allowed
+            await ensure_wish_contract_allowed(db, body.contract_id, wish.subsidy_id)
         wish.contract_id = body.contract_id
+
+    # Форма договора (владелец, пакет 2, 22.10.2026): согласующий может
+    # сменить «Форму договора» тем же каналом, что и contract_id выше.
+    # Допустимые значения — ЕДИНЫЙ справочник (ПРАВИЛО №6), читаемый бэкендом
+    # (app/services/dictionaries.py::CONTRACT_FORM_LABELS, тот же источник,
+    # что отдаёт GET /api/dictionaries/item-forms → frontend/src/data/
+    # item_forms.json::contract_forms, экспортируемый export_dictionaries.py) —
+    # create_wish/update_wish такую проверку не делали вовсе, второй список не
+    # заводим, только добавляем проверку сюда.
+    if 'contract_form' in body.model_fields_set:
+        if body.contract_form is not None:
+            from app.services.dictionaries import CONTRACT_FORM_LABELS
+            if body.contract_form not in CONTRACT_FORM_LABELS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Недопустимая форма договора: «{body.contract_form}»",
+                )
+        wish.contract_form = body.contract_form
 
     # W2 (2026-09-30): шапка (subsidy_id/feo_category_id/event_id), которую
     # согласующий только что поправил выше, — для компаньона авансового
@@ -573,19 +609,17 @@ async def patch_wish_execution(
                     _old_fpi = await db.get(FeoPlannedItem, _old_fpi_id)
                     await _deactivate_if_orphaned(db, _old_fpi)
             elif _cat_changing and wi.feo_planned_item_id is not None:
-                # Категория сменилась, а плановую позицию явно не переприслали —
-                # та же логика «плановые позиции следуют за сменой категории»,
-                # что и в update_wish (см. комментарий там, владелец 2026-08-17).
-                if wi.feo_category_id is not None:
-                    _w = await _move_or_detach_planned_item(db, wi, wi.feo_category_id)
-                    if _w:
-                        _plan_transfer_warnings.append(_w)
-                else:
-                    _old_fpi_id2 = wi.feo_planned_item_id
-                    _old_fpi2 = await db.get(FeoPlannedItem, _old_fpi_id2)
-                    wi.feo_planned_item_id = None
-                    wi.over_plan = False
-                    await _deactivate_if_orphaned(db, _old_fpi2)
+                # Владелец (22.10.2026, заявка №209): смена категории позиции
+                # по плану без переприсылки feo_planned_item_id — раньше здесь
+                # тихо переезжала/отвязывалась плановая позиция
+                # (move_or_detach_planned_item). Владелец это отменил:
+                # «категория позиции по плану не меняется» действует и для
+                # согласующего — тот же единственный гейт (422), что у
+                # wish_items.py::patch_wish_item/wishes.py::update_wish
+                # (черновик), не вторая копия правила. wi.feo_category_id уже
+                # присвоен новым значением выше — передаём его явно.
+                from app.services.wish_item_category_guard import assert_wish_item_category_from_plan
+                await assert_wish_item_category_from_plan(db, wi, wi.feo_category_id)
 
     # W1: зеркалим привязку к ФЭО из затронутых позиций заявки в связанные
     # строки закупки (см. комментарий у _touched_wish_item_ids выше) — сейчас

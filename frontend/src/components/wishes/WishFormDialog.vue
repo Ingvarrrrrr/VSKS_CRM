@@ -323,10 +323,11 @@
                     variant="outlined"
                     density="compact"
                     clearable
-                    :readonly="!isWishEditable"
-                    hint="Договора на перевозку/проживание/питание могут быть рамочные или разовые — форма включает соответствующие спец-поля позиций ниже"
+                    :readonly="!isWishEditable && !canDecideWish"
+                    :hint="!isWishEditable && canDecideWish ? 'Вы согласующий — можете изменить форму договора' : 'Договора на перевозку/проживание/питание могут быть рамочные или разовые — форма включает соответствующие спец-поля позиций ниже'"
                     persistent-hint
                     data-field="contract_form"
+                    @update:model-value="(val: string | null) => { if (!isWishEditable && canDecideWish) saveContractForm(val) }"
                   />
                 </v-col>
                 <!-- Договор (владелец, 12.10.2026, план lazy-swimming-hollerith.md, п.2):
@@ -337,7 +338,7 @@
                   <v-autocomplete
                     v-model="wishForm.contract_id"
                     :items="wishContractDisplayOptions"
-                    :item-title="(c: any) => `${c.number}${c.contractor_name ? ' · ' + c.contractor_name : ''}`"
+                    :item-title="wishContractItemTitle"
                     item-value="id"
                     label="Договор (рамочный)"
                     variant="outlined"
@@ -345,9 +346,9 @@
                     clearable
                     :loading="wishContractLoading"
                     :readonly="!isWishEditable && !canDecideWish"
-                    :hint="!isWishEditable && canDecideWish ? 'Вы согласующий — можете изменить договор, если не согласны с выбором автора' : 'Необязательно. Только рамочные договоры — сначала этой субсидии и контрагента заявки'"
+                    :hint="wishContractHint"
                     :persistent-hint="!isWishEditable && canDecideWish"
-                    no-data-text="Рамочных договоров не найдено"
+                    :no-data-text="wishContractNoDataText"
                     @update:model-value="(val: number | null) => { if (!isWishEditable && canDecideWish) saveContractId(val) }"
                   />
                 </v-col>
@@ -486,6 +487,10 @@
                     </div>
                   </v-alert>
                   <template v-if="wishForm.subsidy_id && !(canEditWishFeo && !isWishEditable)">
+                    <v-alert v-if="hasPlanLinkedItems" type="info" density="compact" variant="tonal" class="mb-2">
+                      Категория задана планом закупок: у позиций по плану она не меняется. Категорию
+                      дополнительной позиции выбирают в её строке.
+                    </v-alert>
                     <FeoTreeSelect
                       v-model="wishFeoSelected"
                       :nodes="wishFeoTreeNodes"
@@ -493,8 +498,8 @@
                       :plan-positions="wishPlannedResiduals"
                       :node-amounts="wishNodeAmounts"
                       horizontal
-                      :readonly="!isWishEditable && !canEditWishFeo"
-                      :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo))"
+                      :readonly="!isWishEditable && !canEditWishFeo || hasPlanLinkedItems"
+                      :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo) && !hasPlanLinkedItems)"
                       :root-label="selectedSubsidyName"
                       @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                     />
@@ -558,7 +563,7 @@
                   :supports-photo-upload="true"
                   :readonly="!isWishEditable"
                   :feo-attrs-editable="!isWishEditable && canEditWishFeo"
-                  :feo-per-item="wishForm.feo_per_item"
+                  :feo-per-item="wishForm.feo_per_item || hasPlanLinkedItems"
                   :subsidy-id="wishForm.subsidy_id"
                   :subsidy-name="selectedSubsidyName"
                   :org-id="selectedSubsidyOrgId"
@@ -639,6 +644,10 @@
               <v-icon v-if="mobileCollapseActive">{{ isMobileSectionOpen('feo-approver') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
             <v-card-text v-show="isMobileSectionOpen('feo-approver')" class="pa-4 pt-2">
+              <v-alert v-if="hasPlanLinkedItems" type="info" density="compact" variant="tonal" class="mb-2">
+                Категория задана планом закупок: у позиций по плану она не меняется. Категорию
+                дополнительной позиции выбирают в её строке.
+              </v-alert>
               <template v-if="!wishForm.feo_per_item">
                 <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
                   Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
@@ -652,8 +661,8 @@
                   :plan-positions="wishPlannedResiduals"
                   :node-amounts="wishNodeAmounts"
                   horizontal
-                  :readonly="!isWishEditable && !canEditWishFeo"
-                  :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo))"
+                  :readonly="!isWishEditable && !canEditWishFeo || hasPlanLinkedItems"
+                  :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo) && !hasPlanLinkedItems)"
                   :root-label="selectedSubsidyName"
                   @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                 />
@@ -662,7 +671,7 @@
                 Включён режим «Разные категории ФЭО для каждого товара» — категория выбирается по каждой
                 позиции в таблице «Позиции» выше.
               </div>
-              <div v-if="!canAssigneeAct || wishItemsFeoDirty" class="mt-2">
+              <div v-if="!hasPlanLinkedItems && (!canAssigneeAct || wishItemsFeoDirty)" class="mt-2">
                 <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-content-save"
                        :loading="savingExecution" @click="saveExecution">
                   Сохранить ФЭО
@@ -1858,7 +1867,7 @@ const topApproverCandidatesNoDataText = computed(() => {
   return 'Нет сотрудников'
 })
 
-const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId, saveContractId } = autosave
+const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId, saveContractId, saveContractForm } = autosave
 
 // Владелец (2026-09-30): заголовок диалога — суффикс по статусу заявки, а не
 // всегда «редактирование» (диалог открывался тем же заголовком и для
@@ -1932,6 +1941,38 @@ const wishContractDisplayOptions = computed(() => {
   if (sel && !base.some((c: any) => c.id === sel.id)) return [sel, ...base]
   return base
 })
+
+// Владелец (22.10.2026, заявка №209): группа 2 (другая субсидия ТОЙ ЖЕ
+// организации) дописывает имя субсидии договора — иначе в списке не видно,
+// что показан договор не своей субсидии (contract_group приходит с бэка,
+// см. app/services/contract_subsidy_scope.py).
+function wishContractItemTitle(c: any): string {
+  const base = `${c.number}${c.contractor_name ? ' · ' + c.contractor_name : ''}`
+  if (c.contract_group === 2 && c.subsidy_name) return `${base} · ${c.subsidy_name}`
+  return base
+}
+
+const wishContractHint = computed(() => {
+  if (!isWishEditable.value && canDecideWish.value) {
+    return 'Вы согласующий — можете изменить договор, если не согласны с выбором автора'
+  }
+  return 'Необязательно. Только рамочные договоры организации субсидии заявки'
+})
+
+const wishContractNoDataText = computed(() => {
+  if (!wishForm.value.subsidy_id) return 'Сначала выберите субсидию'
+  return 'У организации субсидии нет рамочных договоров'
+})
+
+// Владелец (пакет 2, 22.10.2026, заявка №209): «если всё создано из плана —
+// категория не меняется». Любая позиция заявки с feo_planned_item_id (загружена
+// из Плана закупок через «Закупка по плану» или привязана построчно) блокирует
+// категорию ШАПКИ целиком — её категория всегда категория плановой позиции
+// (сервер держит это тем же правилом, см. app/services/wish_item_category_guard.py,
+// этот computed — только UI-подсказка/замок ДО отправки запроса).
+const hasPlanLinkedItems = computed(() =>
+  (wishForm.value.items as any[]).some(i => i.feo_planned_item_id != null)
+)
 
 // Нижняя закреплённая панель телефона (режим согласующего) — «Одобрить…»
 // открывает WishApproveSheet; сам шит только эмитит, вызовы actions.* здесь.

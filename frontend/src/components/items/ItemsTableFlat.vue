@@ -102,7 +102,7 @@
               v-if="item.feo_category_id != null"
               :category-id="item.feo_category_id"
               :nodes="feoNodes || []"
-              :locked="isItemFeoCategoryLocked(item)"
+              :locked="isItemFeoCategoryLocked(item) || isWishItemCategoryLockedByPlan(item, !!isWishStage)"
               class="mt-1"
             />
             <!-- Phase 27.1.2: inline contractor убран для не-advance из flat layout. Per-item contractor только в advance_report mode (колонка showContractorColumn справа). -->
@@ -302,7 +302,7 @@
                 <template #activator="{ props: tip }">
                   <v-btn v-bind="tip" icon="mdi-call-split" variant="text" size="small" color="primary"
                     data-testid="split-item-btn"
-                    :disabled="isItemFeoCategoryLocked(item)"
+                    :disabled="isItemFeoCategoryLocked(item) || isWishItemCategoryLockedByPlan(item, !!isWishStage)"
                     @click="emit('split-item', idx)" />
                 </template>
               </v-tooltip>
@@ -379,7 +379,7 @@
                           :leaves="feoLeaves"
                           :plan-positions="plannedItems || []"
                           :node-amounts="nodeAmounts"
-                          :readonly="feoReadonly || isItemFeoCategoryLocked(item)"
+                          :readonly="feoReadonly || isItemFeoCategoryLocked(item) || isWishItemCategoryLockedByPlan(item, !!isWishStage)"
                           :error="isFeoMissing(item)"
                           label="Категория ФЭО"
                           required
@@ -391,8 +391,8 @@
                       </div>
                     </template>
                   </v-tooltip>
-                  <v-chip v-if="feoLockChipLabel(item)" size="x-small" variant="tonal" color="grey" class="mt-1" prepend-icon="mdi-lock-outline">
-                    {{ feoLockChipLabel(item) }}
+                  <v-chip v-if="feoLockChipLabel(item, !!isWishStage)" size="x-small" variant="tonal" color="grey" class="mt-1" prepend-icon="mdi-lock-outline">
+                    {{ feoLockChipLabel(item, !!isWishStage) }}
                   </v-chip>
                 </div>
                 <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
@@ -462,7 +462,7 @@ import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/item
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import { formatPlanResidual, formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT, PLAN_PRICE_LOCKED_HINT } from '@/constants/planPriceLabels'
-import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
+import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT, isWishItemCategoryLockedByPlan } from '@/utils/feoItemLock'
 // item-forms-accommodation-transport.md: при спец-форме позиции («Проживание»/
 // «Перевозки автобусом») колонки Кол-во/Ед./Цена заменяются полями формы —
 // ItemRowFormSwitch.vue (переключатель формы строки + ItemFormFields внутри),
@@ -499,6 +499,13 @@ const props = defineProps<{
   // Действует ТОЛЬКО на FeoTreeSelect/FeoPlannedItemsSelect ниже (см. feoReadonly),
   // остальные поля строки остаются readonly как есть.
   feoAttrsEditable?: boolean
+  // Владелец (пакет 2, 22.10.2026, заявка №209): редактор общий с закупкой —
+  // isWishStage=true (прокинуто из PurchaseItemsEditor.vue::isWishStage) включает
+  // ДОПОЛНИТЕЛЬНЫЙ замок построчной категории ФЭО у ЛЮБОЙ позиции заявки с
+  // feo_planned_item_id (см. utils/feoItemLock.ts::isWishItemCategoryLockedByPlan),
+  // не только from_plan — для закупки (isWishStage не передан/false) поведение
+  // не меняется.
+  isWishStage?: boolean
   // Шаг 2 «план ≠ факт» (сессия 2026-08-06): закупка объявлена (статус «Ведётся
   // работа» и далее) — кол-во/цена ТЗ заморожены. Считается в родителе
   // (PurchaseItemsEditor.vue::tzFrozen) по purchaseStatus.
@@ -631,7 +638,10 @@ const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
 // что и в шапке закупки CreateOrderView.vue). Бэкенд отклоняет попытку 422
 // ITEM_FEO_CATEGORY_LOCKED_FROM_PLAN — это лишь UX-подсказка ДО отправки.
 function itemFeoLockTooltip(item: EditorItem): string | null {
-  return isItemFeoCategoryLocked(item) ? FEO_CATEGORY_LOCKED_HINT : null
+  if (isItemFeoCategoryLocked(item) || isWishItemCategoryLockedByPlan(item, !!props.isWishStage)) {
+    return FEO_CATEGORY_LOCKED_HINT
+  }
+  return null
 }
 
 // Дефект «РЕЕ-2026-00904» (владелец, 2026-09-02): протухший собственный feo_node_id

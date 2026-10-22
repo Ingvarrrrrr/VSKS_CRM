@@ -14,6 +14,12 @@ export interface ToastOptions {
   duration?: number
   actionText?: string
   onAction?: () => void
+  // Владелец (пакет 2, 22.10.2026): ссылки под текстом тоста (например, на
+  // карточки закупок из предупреждения о дубле, см. WishFormDialog.vue/
+  // useWishesContext.ts::showExcessWarnings) — рендерятся ToastContainer.vue
+  // как кнопки-ссылки (router.push(to) при клике), единственное место
+  // добавления ссылок в тост (ПРАВИЛО №6, не второй механизм).
+  links?: { label: string; to: string }[]
 }
 
 export interface Toast {
@@ -23,6 +29,7 @@ export interface Toast {
   duration: number
   actionText?: string
   onAction?: () => void
+  links?: { label: string; to: string }[]
 }
 
 // Module-level state → one shared stack for the whole app (mounted once via
@@ -42,6 +49,7 @@ export function useToast() {
       duration,
       actionText: opts.actionText,
       onAction: opts.onAction,
+      links: opts.links,
     })
     if (duration > 0) {
       setTimeout(() => removeToast(id), duration)

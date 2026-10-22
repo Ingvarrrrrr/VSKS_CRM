@@ -240,6 +240,11 @@ export interface ExcessWarning {
   plan_after?: number
   excess_amount?: number
   items?: ExcessWarningItem[]
+  // Владелец (пакет 2, 22.10.2026): структурированный список закупок дубля —
+  // те же закупки, что уже упомянуты текстом в `message`, но машиночитаемо,
+  // чтобы фронт мог построить ссылку на карточку, а не парсить текст (см.
+  // backend app.services.plan_duplicate_warning.collect_plan_duplicate_warnings).
+  purchases?: { id: number; registry_number: string | null; status_label: string | null; wish_id: number | null }[]
 }
 
 export interface PurchaseSyncItem { name: string; quantity?: number | null; amount?: number | null }

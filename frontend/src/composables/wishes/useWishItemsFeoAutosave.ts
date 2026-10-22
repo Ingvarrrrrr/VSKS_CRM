@@ -282,11 +282,30 @@ export function useWishItemsFeoAutosave(deps: {
     }
   }
 
+  // Форма договора (владелец, пакет 2, 22.10.2026): согласующий меняет
+  // «Форма договора» тем же точечным PATCH /execution, что и contract_id/
+  // event_id/subsidy_id выше — второй механизм не заводим.
+  async function saveContractForm(val: string | null) {
+    if (!editingWishId.value) return
+    try {
+      await apiFetch(`/wishes/${editingWishId.value}/execution`, {
+        method: 'PATCH',
+        body: JSON.stringify({ contract_form: val }),
+      })
+      if (editingWish.value) (editingWish.value as any).contract_form = val
+      wishForm.value.contract_form = val
+      showSnack('Форма договора обновлена')
+      await reloadActiveTab()
+    } catch (e: any) {
+      showSnack(`Ошибка: ${e?.payload?.message || e?.message || 'не удалось сохранить'}`, 'error')
+    }
+  }
+
   return {
     wishItemsFeoSnapshot, snapshotWishItemsFeo, wishItemsFeoDirtyList, wishItemsFeoDirty,
     feoAutosavePending, feoAutosaveSaving, feoAutosaveApplicable, wishFeoHeaderDirty,
     scheduleFeoAutosave, runFeoAutosave, flushFeoAutosave,
-    savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId, saveContractId,
+    savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId, saveContractId, saveContractForm,
   }
 }
 

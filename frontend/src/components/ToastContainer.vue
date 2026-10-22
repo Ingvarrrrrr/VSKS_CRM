@@ -9,7 +9,21 @@
           :class="'toast-' + toast.type"
         >
           <v-icon :icon="iconMap[toast.type]" size="20" class="toast-icon" />
-          <span class="toast-text">{{ toast.text }}</span>
+          <div class="toast-text">
+            <div>{{ toast.text }}</div>
+            <!-- Владелец (пакет 2, 22.10.2026): ссылки под текстом (например,
+                 номера закупок в предупреждении о дубле) — единственное место
+                 рендера toast.links (см. useToast.ts). -->
+            <div v-if="toast.links && toast.links.length" class="toast-links">
+              <button
+                v-for="(l, li) in toast.links"
+                :key="li"
+                type="button"
+                class="toast-btn toast-link"
+                @click="goToLink(l.to)"
+              >{{ l.label }}</button>
+            </div>
+          </div>
           <div class="toast-actions">
             <button
               v-if="toast.actionText"
@@ -30,9 +44,11 @@
 </template>
 
 <script setup lang="ts">
+import { useRouter } from 'vue-router'
 import { useToast, type Toast } from '../composables/useToast'
 
 const { toasts, removeToast } = useToast()
+const router = useRouter()
 
 const iconMap: Record<string, string> = {
   success: 'mdi-check-circle',
@@ -41,9 +57,13 @@ const iconMap: Record<string, string> = {
   warning: 'mdi-alert',
 }
 
-function handleAction(toast: Toast) {
+function handleAction(toast: Toast | Record<string, any>) {
   toast.onAction?.()
   removeToast(toast.id)
+}
+
+function goToLink(to: string) {
+  router.push(to)
 }
 </script>
 
@@ -94,6 +114,9 @@ function handleAction(toast: Toast) {
 
 .toast-icon { flex-shrink: 0; margin-top: 1px; }
 .toast-text { flex: 1; white-space: pre-line; word-break: break-word; padding-top: 1px; }
+.toast-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.toast-link { background: rgba(255,255,255,0.22); text-decoration: underline; }
+.toast-link:hover { background: rgba(255,255,255,0.36); }
 
 .toast-actions {
   flex-shrink: 0;

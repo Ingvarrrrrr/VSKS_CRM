@@ -131,6 +131,14 @@ async def list_contracts(
     # релевантные договоры первыми. Если передан subsidy_id — он игнорируется
     # (не сужает выборку), сам subsidy_id остаётся для старых вызовов реестра.
     prefer_subsidy_id: Optional[int] = Query(None),
+    # Владелец (22.10.2026, заявка №209): форма заявки — в отличие от окна
+    # выбора договора в закупке — обязана СУЖАТЬ выдачу до группы 1/2 (своя
+    # организация субсидии), не только ранжировать. only_subsidy_org=true при
+    # заданном prefer_subsidy_id убирает из ответа группу 3 (другая
+    # организация). Без этого параметра поведение prefer_subsidy_id не
+    # меняется (закупка продолжает видеть все 3 группы — ПРАВИЛО №6, один
+    # механизм ранжирования, второй параметр только фильтрует его результат).
+    only_subsidy_org: bool = Query(False),
     contract_type: Optional[str] = Query(None),
     purchase_method: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
@@ -290,13 +298,17 @@ async def list_contracts(
                 select(_Org.id, _Org.name).where(_Org.id.in_(org_ids_needed))
             )).all())
 
+        from app.services.contract_subsidy_scope import contract_group as _contract_group
+
         for c, d in zip(contracts, out):
-            if c.subsidy_id == prefer_subsidy_id or c.id in extra_linked_contract_ids:
-                d.contract_group = 1
-            elif prefer_org_id is not None and c.subsidy and c.subsidy.org_id == prefer_org_id:
-                d.contract_group = 2
-            else:
-                d.contract_group = 3
+            d.contract_group = _contract_group(
+                contract_id=c.id,
+                contract_subsidy_id=c.subsidy_id,
+                contract_subsidy_org_id=c.subsidy.org_id if c.subsidy else None,
+                prefer_subsidy_id=prefer_subsidy_id,
+                prefer_org_id=prefer_org_id,
+                extra_linked_contract_ids=extra_linked_contract_ids,
+            )
             if c.subsidy and c.subsidy.org_id:
                 d.org_name = org_names.get(c.subsidy.org_id)
 
@@ -305,6 +317,9 @@ async def list_contracts(
             0 if d.date else 1,
             -(d.date.toordinal() if d.date else 0),
         ))
+
+        if only_subsidy_org:
+            out = [d for d in out if d.contract_group != 3]
 
     return out
 

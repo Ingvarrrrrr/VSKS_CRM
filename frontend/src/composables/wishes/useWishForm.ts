@@ -201,11 +201,22 @@ export function useWishForm(deps: {
     const title = num ? `${num}${ctr ? ' · ' + ctr : ''}` : `Договор #${id}`
     return { id, number: num || title, contractor_name: ctr || '' }
   })
+  // Владелец (22.10.2026, заявка №209): список сужен до рамочных договоров
+  // организации субсидии ЗАЯВКИ — only_subsidy_org=true убирает группу 3
+  // (другая организация) на бэкенде (ПРАВИЛО №6, единственная формула —
+  // app/services/contract_subsidy_scope.py). Без субсидии запрос вообще не
+  // делаем — список пуст (бэкенд всё равно отклонил бы contract_id без
+  // субсидии, см. ensure_wish_contract_allowed).
   async function loadWishFrameworkContracts() {
+    if (!wishForm.value.subsidy_id) {
+      wishContractOptions.value = []
+      return
+    }
     wishContractLoading.value = true
     try {
       const params = new URLSearchParams()
-      if (wishForm.value.subsidy_id) params.set('prefer_subsidy_id', String(wishForm.value.subsidy_id))
+      params.set('prefer_subsidy_id', String(wishForm.value.subsidy_id))
+      params.set('only_subsidy_org', 'true')
       if (wishForm.value.contractor_id) params.set('contractor_id', String(wishForm.value.contractor_id))
       const all = await apiFetch<any[]>(`/contracts/?${params}`)
       wishContractOptions.value = (all || []).filter(c => FRAMEWORK_CONTRACT_TYPES.includes(c.contract_type))

@@ -341,6 +341,11 @@ class WishExecutionPatch(BaseModel):
     # принцип точечной очистки через model_fields_set, что и у остальных
     # полей этого патча (см. patch_wish_execution).
     contract_id: Optional[int] = None
+    # Форма договора (владелец, пакет 2, 22.10.2026): согласующий может
+    # сменить «Форму договора» тем же каналом, что и contract_id выше —
+    # валидация значения против CONTRACT_FORM_LABELS в patch_wish_execution
+    # (app/services/dictionaries.py, ПРАВИЛО №6, единственный справочник).
+    contract_form: Optional[str] = None
     # Построчные ФЭО-правки согласующего (см. WishItemFeoPatch) — отдельно от
     # WishUpdate.items (тот меняет состав, доступен только автору/участнику).
     items: Optional[List[WishItemFeoPatch]] = None

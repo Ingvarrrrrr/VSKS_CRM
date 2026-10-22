@@ -9,7 +9,7 @@
 уже используется для должностей); _to_gen_fio_initials — тонкая обёртка над
 обобщённым _to_case_fio_initials (раньше была только дательная версия)."""
 from app.services.documents.formatting import _extract_city_from_address
-from app.services.documents.contexts_org_people import _to_gen_org_name, _to_dat_org_name
+from app.services.documents.contexts_org_people import _to_gen_org_name, _to_dat_org_name, _to_ablt_org_name
 from app.services.documents.morphology import _to_gen_fio_initials, _to_dat_fio_initials
 
 
@@ -78,6 +78,25 @@ def test_org_name_starting_with_quote_unchanged():
 def test_org_name_empty():
     assert _to_gen_org_name("") == ""
     assert _to_dat_org_name(None) == ""
+
+
+# ── subsidy_grantor_name_instrumental (владелец, 22.10.2026) ────────────
+
+def test_org_name_instrumental_grantor_agency():
+    assert _to_ablt_org_name(
+        "Федеральное агентство по делам молодёжи"
+    ) == "Федеральным агентством по делам молодёжи"
+
+
+def test_org_name_instrumental_ministry():
+    assert _to_ablt_org_name(
+        "Министерство труда и социальной защиты РФ"
+    ) == "Министерством труда и социальной защиты РФ"
+
+
+def test_org_name_instrumental_empty():
+    assert _to_ablt_org_name("") == ""
+    assert _to_ablt_org_name(None) == ""
 
 
 # ── responsible_initials_gen / chief_accountant_initials_genitive ───────

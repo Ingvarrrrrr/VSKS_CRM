@@ -28,7 +28,7 @@ from app.services.documents.contexts import _signatory_split
 from app.services.documents.contract_terms import warranty_period_text
 from app.services.contractor_pii import contractor_pii_doc_fields
 from app.services.documents.contexts_org_people import (
-    responsible_case_context, _to_gen_org_name, _to_dat_org_name,
+    responsible_case_context, _to_gen_org_name, _to_dat_org_name, _to_ablt_org_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,13 @@ def add_phase28_context(context: dict, subsidy, c, p: Purchase, can_view_pii: bo
         # Реквизиты субсидии-грантодателя (для рамочных и региональных договоров)
         # Phase 28: grantor_name / ministry_name берём из новых полей модели Subsidy
         context["subsidy_grantor_name"] = (subsidy.grantor_name or "").strip() if subsidy else ""
+        # Творительный падеж грантодателя (владелец, 22.10.2026):
+        # {{subsidy_grantor_name_instrumental}} — через единственный разбор
+        # головной группы _to_case_position (ПРАВИЛО №6).
+        context["subsidy_grantor_name_instrumental"] = (
+            _to_ablt_org_name(context["subsidy_grantor_name"])
+            if context["subsidy_grantor_name"] else ""
+        )
         context["subsidy_ministry_name"] = (subsidy.ministry_name or "").strip() if subsidy else ""
         # subsidy_agreement_number/date — см. add_subsidy_agreement_context
         # (ПРАВИЛО №6, вызывается из add_misc_purchase_context ниже по generate.py).
@@ -264,6 +271,10 @@ def add_subsidy_agreement_context(context: dict, subsidy) -> None:
     context["procurement_regulation_date"] = (
         _fmt_date(subsidy.procurement_regulation_date)
         if (subsidy and getattr(subsidy, 'procurement_regulation_date', None)) else ""
+    )
+    context["procurement_regulation_order_number"] = (
+        (subsidy.procurement_regulation_order_number or "").strip()
+        if (subsidy and getattr(subsidy, 'procurement_regulation_order_number', None)) else ""
     )
 
 

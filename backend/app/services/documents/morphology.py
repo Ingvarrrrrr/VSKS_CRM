@@ -151,9 +151,31 @@ def _to_dat_word(word: str) -> str:
     return _to_dat_word_heuristic(word)
 
 
+def _to_ablt_word(word: str) -> str:
+    """Склонить одно слово в творительный падеж: pymorphy3 → слово без
+    изменений (без pymorphy3 эвристики для творительного не заводим — см.
+    _to_gen_word/_to_dat_word, тот же паттерн, просто без heuristic-fallback)."""
+    if not word:
+        return word
+    morph = _get_morph()
+    if morph:
+        try:
+            parsed = morph.parse(word)[0]
+            inflected = parsed.inflect({'ablt'})
+            if inflected:
+                out = inflected.word
+                if word[0].isupper():
+                    out = out[0].upper() + out[1:]
+                return out
+        except Exception:
+            pass
+    return word
+
+
 def _to_case_position(phrase: str, case: str) -> str:
     """Склонить ДОЛЖНОСТЬ в падеж *case* ('gent' родительный / 'datv'
-    дательный) — только управляющую головную группу, НЕ пословно.
+    дательный / 'ablt' творительный) — только управляющую головную группу,
+    НЕ пословно.
 
     ПРАВИЛО №6: единственный алгоритм разбора головной группы должности —
     используется и для родительного (_to_gen_phrase), и для дательного
@@ -201,7 +223,7 @@ def _to_case_position(phrase: str, case: str) -> str:
     # Переиспользуем уже готовые пословные склонятели (pymorphy3 + эвристика
     # как fallback) — не второй расчёт падежного окончания, только второй
     # разбор ГОЛОВНОЙ ГРУППЫ сверху.
-    decline_word = _to_gen_word if case == 'gent' else _to_dat_word
+    decline_word = {'gent': _to_gen_word, 'datv': _to_dat_word, 'ablt': _to_ablt_word}.get(case, _to_dat_word)
 
     morph = _get_morph()
     out = list(tokens)
@@ -271,6 +293,12 @@ def _to_dat_position(phrase: str) -> str:
     """Склонить ДОЛЖНОСТЬ в дательный падеж — тонкая обёртка над
     `_to_case_position` (см. её докстринг)."""
     return _to_case_position(phrase, 'datv')
+
+
+def _to_ablt_position(phrase: str) -> str:
+    """Склонить ДОЛЖНОСТЬ/название в творительный падеж — тонкая обёртка над
+    `_to_case_position` (см. её докстринг)."""
+    return _to_case_position(phrase, 'ablt')
 
 
 def _inflect_phrase_genitive(phrase: str) -> str:

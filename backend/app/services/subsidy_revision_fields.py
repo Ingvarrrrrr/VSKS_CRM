@@ -25,7 +25,7 @@ ENTITIES = (ENTITY_SUBSIDY, ENTITY_CATEGORY, ENTITY_ITEM)
 FIELD_GROUPS: dict[str, dict[str, tuple]] = {
     ENTITY_SUBSIDY: {
         "budget": ("budget",),
-        "meta": ("name", "description", "basis_doc_number", "basis_doc_date", "procurement_regulation_date", "grantor_name"),
+        "meta": ("name", "description", "basis_doc_number", "basis_doc_date", "procurement_regulation_date", "procurement_regulation_order_number", "grantor_name"),
     },
     ENTITY_CATEGORY: {
         "funding": ("budget", "feo_quantity", "feo_unit", "feo_amount"),

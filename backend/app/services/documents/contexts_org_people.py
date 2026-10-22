@@ -64,6 +64,12 @@ def _to_dat_org_name(name: str) -> str:
     return _to_case_org_name(name, 'datv')
 
 
+def _to_ablt_org_name(name: str) -> str:
+    """Название организации в творительном падеже — см. `_to_case_org_name`
+    (владелец, 22.10.2026: {{subsidy_grantor_name_instrumental}})."""
+    return _to_case_org_name(name, 'ablt')
+
+
 def responsible_case_context(resolved_responsible: str) -> dict:
     """Падежи/сокращения ФИО «Ответственного исполнителя» — единственный
     расчёт (ПРАВИЛО №6). До этой функции `responsible_name_gen` считался

@@ -60,11 +60,11 @@ async def create_sandbox_copy(db: AsyncSession, source: Subsidy) -> Subsidy:
         is_sandbox=True,
         copied_from_id=source.id,
         # basis_doc_number/basis_doc_date/agreement_number/
-        # procurement_regulation_date сознательно НЕ копируются — это
-        # реквизиты РЕАЛЬНОГО документа-основания/соглашения/положения о
-        # закупках, у копии-песочницы его нет (иначе банковский матчинг и
-        # ensure_contract_linked рисковали бы спутать копию с оригиналом,
-        # см. payment_matcher.py).
+        # procurement_regulation_date/procurement_regulation_order_number
+        # сознательно НЕ копируются — это реквизиты РЕАЛЬНОГО
+        # документа-основания/соглашения/положения о закупках, у копии-песочницы
+        # его нет (иначе банковский матчинг и ensure_contract_linked рисковали бы
+        # спутать копию с оригиналом, см. payment_matcher.py).
     )
     db.add(new_subsidy)
     await db.flush()

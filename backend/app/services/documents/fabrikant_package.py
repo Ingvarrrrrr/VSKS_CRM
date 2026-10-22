@@ -56,7 +56,7 @@ from .contexts_extra import (
     add_contractor_signatory_context,
     add_customer_context,
 )
-from .contexts_org_people import responsible_case_context, add_chief_accountant_context
+from .contexts_org_people import responsible_case_context, add_chief_accountant_context, _to_ablt_org_name
 from app.services.contractor_pii import contractor_pii_doc_fields, user_can_view_contractor_pii
 
 import logging
@@ -467,6 +467,11 @@ async def render_fabrikant_package_files(
         "applications_review_date": _app_review_date,
         # Phase 28 keys (best-effort)
         "subsidy_grantor_name": (subsidy.grantor_name or "").strip() if subsidy else "",
+        # Творительный падеж — через тот же разбор, что и contexts_extra.py
+        # add_phase28_context (ПРАВИЛО №6, единственный расчёт).
+        "subsidy_grantor_name_instrumental": (
+            _to_ablt_org_name((subsidy.grantor_name or "").strip()) if (subsidy and subsidy.grantor_name) else ""
+        ),
         "subsidy_ministry_name": (subsidy.ministry_name or "").strip() if subsidy else "",
         "advance_amount": _fmt_money(p.advance_amount) if p.advance_amount else "",
         "acceptance_term_days": p.acceptance_term_days if p.acceptance_term_days is not None else 5,

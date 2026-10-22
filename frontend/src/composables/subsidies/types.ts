@@ -39,6 +39,7 @@ export interface SubsidyRow {
   basis_doc_number?: string
   basis_doc_date?: string
   procurement_regulation_date?: string
+  procurement_regulation_order_number?: string
   // Phase 31-05: canonical budget fields
   remaining?: number | null
   planned_amount?: number | null

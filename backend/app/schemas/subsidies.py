@@ -28,6 +28,8 @@ class SubsidyCreate(BaseModel):
     basis_doc_date: Optional[_Date] = None
     # Дата утверждения Положения о закупках (20.10.2026): {{procurement_regulation_date}}
     procurement_regulation_date: Optional[_Date] = None
+    # Номер приказа об утверждении Положения о закупках (22.10.2026): {{procurement_regulation_order_number}}
+    procurement_regulation_order_number: Optional[str] = None
     # Phase 28: реквизиты грантодателя для шаблонов договоров
     grantor_name: Optional[str] = None
     ministry_name: Optional[str] = None
@@ -48,7 +50,7 @@ class SubsidyCreate(BaseModel):
             return None
         return v
 
-    @field_validator('basis_doc_number', mode='before')
+    @field_validator('basis_doc_number', 'procurement_regulation_order_number', mode='before')
     @classmethod
     def empty_str_to_none_number(cls, v):
         if v == '' or v is None:
@@ -79,6 +81,8 @@ class SubsidyUpdate(BaseModel):
     basis_doc_date: Optional[_Date] = None
     # Дата утверждения Положения о закупках (20.10.2026): {{procurement_regulation_date}}
     procurement_regulation_date: Optional[_Date] = None
+    # Номер приказа об утверждении Положения о закупках (22.10.2026): {{procurement_regulation_order_number}}
+    procurement_regulation_order_number: Optional[str] = None
     # Phase 28: реквизиты грантодателя для шаблонов договоров
     grantor_name: Optional[str] = None
     ministry_name: Optional[str] = None
@@ -98,7 +102,7 @@ class SubsidyUpdate(BaseModel):
             return None
         return v
 
-    @field_validator('basis_doc_number', mode='before')
+    @field_validator('basis_doc_number', 'procurement_regulation_order_number', mode='before')
     @classmethod
     def empty_str_to_none_number(cls, v):
         if v == '' or v is None:
@@ -131,6 +135,8 @@ class SubsidyOut(BaseModel):
     basis_doc_date: Optional[_Date] = None
     # Дата утверждения Положения о закупках (20.10.2026): {{procurement_regulation_date}}
     procurement_regulation_date: Optional[_Date] = None
+    # Номер приказа об утверждении Положения о закупках (22.10.2026): {{procurement_regulation_order_number}}
+    procurement_regulation_order_number: Optional[str] = None
     # Phase 28: реквизиты грантодателя для шаблонов договоров
     grantor_name: Optional[str] = None
     ministry_name: Optional[str] = None

@@ -1149,6 +1149,20 @@ async def update_purchase(
     elif data.assigned_user_id == 0:
         raise HTTPException(422, "Укажите ответственного исполнителя")
 
+    # Правило владельца (22.10.2026): инициатор и адресат служебной записки —
+    # только штат организации субсидии (PUT использует PurchaseCreate — оба
+    # поля в схеме, оба попадают в generic setattr ниже). Проверяем, только
+    # если значение реально меняется (см. docstring
+    # assert_service_note_people_in_staff).
+    _sn_changes_put = {}
+    if data.service_note_by is not None and data.service_note_by != p.service_note_by:
+        _sn_changes_put["service_note_by"] = data.service_note_by
+    if data.service_note_to_user_id is not None and data.service_note_to_user_id != p.service_note_to_user_id:
+        _sn_changes_put["service_note_to_user_id"] = data.service_note_to_user_id
+    if _sn_changes_put:
+        from app.services.service_note_people import assert_service_note_people_in_staff
+        await assert_service_note_people_in_staff(db, p, _sn_changes_put)
+
     # Opportunistic backfill: legacy purchases с assigned_user_id=NULL
     # становятся видимыми создателю через первое же сохранение.
     if p.assigned_user_id is None and not getattr(data, "assigned_user_id", None):
@@ -2111,6 +2125,15 @@ async def patch_purchase(
         target = await db.get(User, val)
         if target is None:
             raise HTTPException(422, f"Пользователь {val} не найден")
+
+    # Правило владельца (22.10.2026): адресат служебной записки — только
+    # штат организации субсидии. Проверяем, только если значение реально
+    # меняется (см. docstring assert_service_note_people_in_staff).
+    if "service_note_to_user_id" in (body or {}) and body["service_note_to_user_id"] != p.service_note_to_user_id:
+        from app.services.service_note_people import assert_service_note_people_in_staff
+        await assert_service_note_people_in_staff(
+            db, p, {"service_note_to_user_id": body["service_note_to_user_id"]}
+        )
 
     # Opportunistic backfill: первый PATCH (autosave) от user'а закрепляет
     # за ним legacy-закупку без assigned_user_id — иначе после save она опять

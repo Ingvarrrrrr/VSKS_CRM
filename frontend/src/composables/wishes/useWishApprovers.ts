@@ -3,7 +3,7 @@
 // Дословный перенос из WishesView.vue при разбиении файла на компоненты/композаблы.
 import { computed, ref } from 'vue'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
-import { callApproverCascade, ensureApproversBeforeSubmit, moveApprover as moveApproverShared } from './useApproverCascade'
+import { callApproverCascade, callApproverChain, ensureApproversBeforeSubmit, moveApprover as moveApproverShared } from './useApproverCascade'
 import type { WishesContext } from './useWishesContext'
 import type { Wish, WishApprover, WishMember } from './wishTypes'
 import type { UseWishFormReturn } from './useWishForm'
@@ -87,10 +87,12 @@ export function useWishApprovers(deps: {
   // тот же приём, что decideComment выше.
   const tzNotRequiredChecked = ref<Record<number, boolean>>({})
 
-  // Владелец: верхним согласующим можно ставить только сотрудника с правом
-  // корректировать субсидию заявки — список кандидатов приходит с бэка
-  // (GET /wishes/{id}/approvers/candidates), не весь orgUsers (иначе каждый
-  // сам себя ставил бы согласующим).
+  // Владелец (22.10.2026): согласующим (верхним и любым добавленным вручную)
+  // может стать ЛЮБОЙ пользователь аккаунта — список кандидатов (весь пул,
+  // без проверки прав) приходит с бэка (GET /wishes/{id}/approvers/candidates),
+  // не весь orgUsers — пул учитывает контур аккаунта (несколько организаций),
+  // а не только текущую. Используется и для «Верхнего согласующего», и для
+  // ручного добавления (ПРАВИЛО №6 — один источник списка).
   const topApproverCandidates = ref<{ id: number; full_name: string | null; role: string }[]>([])
   const topApproverCandidatesLoading = ref(false)
   // Баг (прод, заявка №96): catch {} глотал ошибку загрузки — пустой список
@@ -166,6 +168,28 @@ export function useWishApprovers(deps: {
       cascadeLoading.value = false
     }
   }
+  // Владелец (22.10.2026): «У КАЖДОГО добавленного согласующего, а не
+  // только у верхнего, есть кнопка «Цепочка из подчинённых»» — строит
+  // цепочку от автора до ЭТОГО согласующего (POST .../approvers/{id}/chain).
+  // Если автор ему не подчинён — сервер вернёт warning без промежуточных
+  // звеньев (см. backend build_ascending_chain, only_subordinates_of_top).
+  const chainLoading = ref<number | null>(null)
+  async function chainToApprover(approvalId: number) {
+    if (!editingWishId.value) return
+    chainLoading.value = approvalId
+    try {
+      const res = await callApproverChain<WishApprover>(apiFetch, editingWishId.value, approvalId)
+      wishApprovers.value = res.approvers
+      syncIsChainApprover()
+      if (res.warning) showSnack(res.warning, 'warning')
+      else showSnack('Цепочка подчинённых построена')
+    } catch (e: any) {
+      showSnack(e?.payload?.message || e?.message || 'Не удалось построить цепочку', 'error')
+    } finally {
+      chainLoading.value = null
+    }
+  }
+
   // Владелец (прод, заявка №85, 2026-09-29, окончательно): цепочка строится
   // ТОЛЬКО по кнопке «Построить цепочку». Если кнопку не нажали, а верхнего
   // согласующего выбрали — «Отправить» добавляет ЕГО ОДНОГО единственным
@@ -336,6 +360,7 @@ export function useWishApprovers(deps: {
     topApproverCandidates, loadTopApproverCandidates, topApproverCandidatesLoading, topApproverCandidatesError,
     isChainApprover, loadWishApprovers, callCascadeApi, runCascade, ensureApprovers,
     addApprover, reorderLoading, moveApprover, removeApprover, decideApprover, loadWishOnce,
+    chainLoading, chainToApprover,
     canDecideApprover, isDecidingOnBehalf, approverDecisionLine, requiresConsent,
   }
 }

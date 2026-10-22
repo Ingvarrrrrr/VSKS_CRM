@@ -849,7 +849,9 @@
               <!-- Построение цепочки (только для черновика/отклонённой) -->
               <template v-if="isWishEditable && editingWishId">
                 <div class="text-caption text-medium-emphasis mb-2">
-                  Выберите верхнего согласующего — система автоматически подтянет всю восходящую цепочку начальников снизу вверх.
+                  Согласующим можно выбрать любого сотрудника — права для этого не нужны. Цепочку из его подчинённых
+                  (между автором и ним) можно добавить кнопкой «Построить цепочку» для верхнего или значком у строки
+                  для любого согласующего — а можно и не добавлять.
                   Построение цепочки НЕ отправляет заявку: цепочку можно менять и дополнять людьми вручную,
                   а на согласование заявка уйдёт только по кнопке «Отправить на согласование».
                 </div>
@@ -950,6 +952,15 @@
                       />
                     </template>
                     <v-btn
+                      v-if="isWishEditable"
+                      icon="mdi-sitemap"
+                      size="x-small"
+                      variant="text"
+                      :loading="chainLoading === a.id"
+                      title="Цепочка из подчинённых — добавить промежуточных согласующих между автором и этим человеком"
+                      @click="chainToApprover(a.id)"
+                    />
+                    <v-btn
                       v-if="a.status === 'pending' && isWishEditable"
                       icon="mdi-close"
                       size="x-small"
@@ -1043,7 +1054,7 @@
                 <v-divider class="my-3" />
                 <v-autocomplete
                   v-model="approverToAdd"
-                  :items="orgUsers"
+                  :items="topApproverCandidates"
                   item-title="full_name"
                   item-value="id"
                   label="Добавить согласующего"
@@ -1051,6 +1062,7 @@
                   density="compact"
                   clearable
                   hide-details
+                  no-data-text="Нет сотрудников"
                   @update:model-value="(val: number | null) => { if (val) addApprover(val) }"
                 >
                   <template #item="{ item, props: itemProps }">
@@ -1808,6 +1820,7 @@ const {
   topApproverCandidates, topApproverCandidatesLoading, topApproverCandidatesError,
   runCascade, addApprover, reorderLoading, moveApprover, removeApprover, decideApprover,
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
+  chainLoading, chainToApprover,
 } = approvers
 
 // Предпросмотр жёсткого потолка ФЭО ДО нажатия «Согласовать» (владелец,
@@ -1842,7 +1855,7 @@ watch(
 // как «нет прав»). Сама загрузка — :loading у v-autocomplete ниже.
 const topApproverCandidatesNoDataText = computed(() => {
   if (topApproverCandidatesError.value) return `Ошибка загрузки списка: ${topApproverCandidatesError.value}`
-  return 'Нет сотрудников с правом корректировать субсидию — обратитесь к администратору'
+  return 'Нет сотрудников'
 })
 
 const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId, saveContractId } = autosave

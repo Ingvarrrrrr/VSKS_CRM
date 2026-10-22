@@ -60,10 +60,25 @@ async def _walk_superiors(db: AsyncSession, start_id: int) -> list[tuple[int, st
 
 
 async def build_ascending_chain(
-    db: AsyncSession, author_id: int, top_user_id: int, org_id: int
+    db: AsyncSession, author_id: int, top_user_id: int, org_id: int,
+    only_subordinates_of_top: bool = False,
 ) -> tuple[list[dict], str | None]:
     """Вернуть (chain, warning) — список [{user_id, role_name, full_name, order_num}] снизу вверх до top_user_id
     и опциональное предупреждение если цепочка состоит только из top_user_id (нет промежуточных звеньев).
+
+    only_subordinates_of_top — владелец (22.10.2026, заявки): цепочка к
+    произвольному согласующему (не только верхнему, см. app/routers/
+    wish_approvals.py::chain_to_wish_approver) обязана содержать ТОЛЬКО
+    людей, которые реально стоят между автором и top_user_id в его
+    собственной восходящей цепочке. Если top_user_id в этой цепочке не
+    найден (автор ему не подчинён ни по отделу, ни по руководству
+    организации, ни по явному superior_user_id) — промежуточных согласующих
+    нет и подставлять их молча нельзя: цепочка = [top_user_id] с явным
+    предупреждением. Старое поведение по умолчанию
+    (only_subordinates_of_top=False — «не нашли top_user_id в цепочке,
+    дописать его в конец») остаётся прежним для остальных вызывающих
+    (app/routers/purchase_ops.py::_build_framework_chain_approvals, рамочная
+    голова договора) — им эта параметр не передаётся.
     """
     ordered: list[tuple[int, str]] = []
     seen: set[int] = {author_id}
@@ -133,7 +148,11 @@ async def build_ascending_chain(
         sup_ids = {u for u, _ in sup_chain}
         ordered = sup_chain + [(u, r) for (u, r) in ordered if u not in sup_ids]
 
-    # 4. Обрезать на top_user_id (включительно). Если его нет в цепочке — добавить в конец.
+    # 4. Обрезать на top_user_id (включительно). Если его нет в цепочке:
+    #    - по умолчанию — добавить его в конец (старое поведение, нужно
+    #      рамочной голове договора);
+    #    - only_subordinates_of_top=True — цепочка = [top_user_id] без
+    #      промежуточных звеньев (владелец 22.10.2026, см. докстринг выше).
     result_ids: list[tuple[int, str]] = []
     found = False
     for uid, role in ordered:
@@ -141,8 +160,18 @@ async def build_ascending_chain(
         if uid == top_user_id:
             found = True
             break
+    not_subordinate_warning: str | None = None
     if not found:
-        result_ids.append((top_user_id, "Согласующий"))
+        if only_subordinates_of_top:
+            result_ids = [(top_user_id, "Согласующий")]
+            top_user_obj = await db.get(User, top_user_id)
+            top_name = (top_user_obj.full_name or top_user_obj.username) if top_user_obj else f"пользователя #{top_user_id}"
+            author_name = (author_user.full_name or author_user.username) if author_user else f"Пользователь #{author_id}"
+            not_subordinate_warning = (
+                f"{author_name} не в подчинении у {top_name} — промежуточных согласующих нет."
+            )
+        else:
+            result_ids.append((top_user_id, "Согласующий"))
 
     # 5. Обогатить именами + order_num
     uids = [u for u, _ in result_ids]
@@ -161,8 +190,8 @@ async def build_ascending_chain(
         })
 
     # 6. W4: предупреждение, если цепочка получилась из одного звена (только top_user_id)
-    warning: str | None = None
-    if len(chain) == 1:
+    warning: str | None = not_subordinate_warning
+    if warning is None and len(chain) == 1:
         if dept_gave_no_links:
             names_str = ", ".join(f'"{n}"' for n in dept_warning_names)
             warning = (

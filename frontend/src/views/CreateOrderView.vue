@@ -364,7 +364,7 @@
             <v-col v-if="formMode === 'service_note_delivery'" cols="12" md="4">
               <v-autocomplete
                 v-model="form.service_note_to_user_id"
-                :items="orgUsersList"
+                :items="staffUsersList"
                 item-title="full_name"
                 item-value="id"
                 label="Кому служебная записка"
@@ -3071,7 +3071,7 @@ watch(() => form.subsidy_id, async (sid) => {
 // loadActAsUsers(subsidy_id) — тот же пул кандидатов на инициатора служебки,
 // что и в DocPickerDialogs (правило владельца, 14.10.2026): поле «От кого»
 // ниже (form.service_note_by) использует именно его, а не orgUsersList.
-watch(() => form.subsidy_id, () => { loadOrgUsers(); loadActAsUsers(form.subsidy_id) })
+watch(() => form.subsidy_id, () => { loadOrgUsers(); loadStaffUsers(); loadActAsUsers(form.subsidy_id) })
 
 // Phase 23: диалог «Доступные переменные»
 const showPlaceholdersDialog = ref(false)
@@ -3145,6 +3145,31 @@ async function loadOrgUsers() {
 
 // Кому возмещать — список сотрудников из orgUsersList
 const reimbursementUserOptions = computed(() => orgUsersList.value)
+
+// Правило владельца (22.10.2026): «Кому служебная записка» (адресат) —
+// только ШТАТ организации субсидии, УЖЕ (в отличие от orgUsersList выше)
+// без персонального доступа (user_org_access/user_subsidy_access). Отдельный
+// список — orgUsersList используется другими полями формы (возмещение,
+// ответственный исполнитель), их не сужаем (Правило владельца не просил —
+// Purchase.assigned_user_id не попадает ни в один шаблон служебки/приказа,
+// см. backend/app/services/service_note_people.py).
+const staffUsersList = ref<OrgUser[]>([])
+async function loadStaffUsers() {
+  if (!form.subsidy_id) { staffUsersList.value = []; return }
+  try {
+    const users = await apiFetch<any[]>(`/users/?subsidy_id=${form.subsidy_id}&staff_only=1`)
+    staffUsersList.value = users
+      .filter(u => u.full_name)
+      .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
+    // Старое значение адресата может не входить в штат (данные до правила) —
+    // не выбрасываем его из формы, просто добавляем видимым пунктом списка.
+    const current = form.service_note_to_user_id
+    if (current && !staffUsersList.value.some(u => u.id === current)) {
+      const fallback = orgUsersList.value.find(u => u.id === current)
+      if (fallback) staffUsersList.value.push(fallback)
+    }
+  } catch { staffUsersList.value = [] }
+}
 
 // ── Delivery address autocomplete — вынесено в composables/purchase/useDeliveryAddress.ts ──
 const {
@@ -4221,6 +4246,7 @@ const loadRefs = async () => {
   allFeoCategories.value = feos
   allEvents.value = evts
   loadOrgUsers()
+  loadStaffUsers()
   loadActAsUsers(form.subsidy_id)
   loadInitialContractors()
 }

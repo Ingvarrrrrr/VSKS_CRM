@@ -29,7 +29,7 @@ import { ref, computed, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { ToastType } from '@/composables/useToast'
 import type { Receipt, ReceiptFile } from '@/composables/purchase/usePurchaseReceipts'
-import { callApproverCascade, ensureApproversBeforeSubmit, moveApprover as moveApproverShared } from '@/composables/wishes/useApproverCascade'
+import { callApproverCascade, callApproverChain, ensureApproversBeforeSubmit, moveApprover as moveApproverShared } from '@/composables/wishes/useApproverCascade'
 
 export interface AdvanceWishDetail {
   id: number
@@ -166,9 +166,8 @@ export function useAdvanceReimbursement(
           showSnack('Выберите верхнего согласующего', 'error')
           highlightMissingTopApprover()
         } else {
-          // Ошибка добавления согласующего (например «верхним может быть только
-          // сотрудник с правом корректировать субсидию») — показываем как есть,
-          // на согласование НЕ отправляем.
+          // Ошибка добавления согласующего (например «согласующий не из вашего
+          // аккаунта») — показываем как есть, на согласование НЕ отправляем.
           showSnack(ensured.message, 'error')
         }
         return
@@ -215,10 +214,26 @@ export function useAdvanceReimbursement(
     wish.value?.status === 'draft' || wish.value?.status === 'rejected',
   )
 
-  // Владелец: верхним согласующим можно ставить только сотрудника с правом
-  // корректировать субсидию заявки — кандидаты приходят с бэка (тот же
-  // эндпоинт, что и у обычной заявки — ПРАВИЛО №6, второй расчёт не заводим).
+  // Владелец (22.10.2026): согласующим может стать ЛЮБОЙ пользователь
+  // аккаунта — кандидаты (весь пул) приходят с бэка (тот же эндпоинт, что и
+  // у обычной заявки — ПРАВИЛО №6, второй расчёт не заводим). Используется и
+  // для «Верхнего согласующего», и для ручного добавления.
   const topApproverCandidates = ref<{ id: number; full_name: string | null; role: string }[]>([])
+  const chainLoading = ref<number | null>(null)
+  async function chainToApprover(approvalId: number) {
+    if (!wishId.value) return
+    chainLoading.value = approvalId
+    try {
+      const res = await callApproverChain<AdvanceApprover>(apiFetch, wishId.value, approvalId)
+      approvers.value = res.approvers
+      if (res.warning) showSnack(res.warning, 'warning')
+      else showSnack('Цепочка подчинённых построена')
+    } catch (e: any) {
+      showSnack(e?.payload?.message || e?.message || 'Не удалось построить цепочку', 'error')
+    } finally {
+      chainLoading.value = null
+    }
+  }
   async function loadTopApproverCandidates() {
     if (!wishId.value) { topApproverCandidates.value = []; return }
     try {
@@ -367,7 +382,7 @@ export function useAdvanceReimbursement(
     wish, loading, submitting, statusLabel, statusColor, hasReceipts, canSubmit, submit, loadWish,
     approvers, approverTopUser, approvalMode, cascadeLoading, approverToAdd,
     decideComment, decideLoading, reorderLoading, approvalStatusColor, approvalStatusLabel,
-    topApproverCandidates, loadTopApproverCandidates,
+    topApproverCandidates, loadTopApproverCandidates, chainLoading, chainToApprover,
     isEditable, loadApprovers, runCascade, registerTopApproverEl, addApprover, removeApprover, moveApprover, decideApprover,
     canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
   }

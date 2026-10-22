@@ -51,7 +51,7 @@
               density="compact"
               clearable
               hide-details
-              no-data-text="Нет сотрудников с правом корректировать субсидию — обратитесь к администратору"
+              no-data-text="Нет сотрудников"
             />
           </v-col>
           <v-col cols="12" md="3">
@@ -114,6 +114,15 @@
                 @click="moveApprover(ai, 1)"
               />
             </template>
+            <v-btn
+              v-if="isEditable"
+              icon="mdi-sitemap"
+              size="x-small"
+              variant="text"
+              :loading="chainLoading === a.id"
+              title="Цепочка из подчинённых — добавить промежуточных согласующих между автором и этим человеком"
+              @click="chainToApprover(a.id)"
+            />
             <v-btn v-if="a.status === 'pending' && isEditable" icon="mdi-close" size="x-small" variant="text"
               @click="removeApprover(a.id)" />
           </div>
@@ -160,7 +169,7 @@
         <v-divider class="my-3" />
         <v-autocomplete
           v-model="approverToAdd"
-          :items="orgUsers"
+          :items="topApproverCandidates"
           item-title="full_name"
           item-value="id"
           label="Добавить согласующего"
@@ -168,6 +177,7 @@
           density="compact"
           clearable
           hide-details
+          no-data-text="Нет сотрудников"
           @update:model-value="(val: number | null) => { if (val) addApprover(val) }"
         />
       </template>
@@ -205,7 +215,7 @@ const {
   wish, submitting, statusLabel, statusColor, hasReceipts, canSubmit, submit,
   approvers, approverTopUser, approvalMode, cascadeLoading, approverToAdd,
   decideComment, decideLoading, reorderLoading, approvalStatusColor, approvalStatusLabel,
-  topApproverCandidates,
+  topApproverCandidates, chainLoading, chainToApprover,
   isEditable, runCascade, registerTopApproverEl, addApprover, removeApprover, moveApprover, decideApprover,
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
 } = useAdvanceReimbursement(

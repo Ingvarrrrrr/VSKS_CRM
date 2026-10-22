@@ -54,6 +54,23 @@ export async function callApproverCascade<A extends CascadeApprover = CascadeApp
   )
 }
 
+// Владелец (22.10.2026): у КАЖДОГО согласующего в списке (не только верхнего)
+// есть кнопка «Цепочка из подчинённых» — строит цепочку от автора до ЭТОГО
+// согласующего (POST /wishes/{id}/approvers/{approval_id}/chain, backend
+// app/routers/wish_approvals.py::chain_to_wish_approver). Общая функция для
+// обычной заявки (useWishApprovers.ts) и карточки-компаньона авансового
+// отчёта (useAdvanceReimbursement.ts) — ПРАВИЛО №6, второй механизм не заводим.
+export async function callApproverChain<A extends CascadeApprover = CascadeApprover>(
+  apiFetch: typeof import('@/api').apiFetch,
+  wishId: number,
+  approvalId: number,
+): Promise<{ approvers: A[]; warning?: string | null }> {
+  return apiFetch<{ approvers: A[]; warning?: string | null }>(
+    `/wishes/${wishId}/approvers/${approvalId}/chain`,
+    { method: 'POST' },
+  )
+}
+
 // Перестановка согласующих местами (стрелки вверх/вниз) — владелец: «Согласующих
 // можно менять местами только при последовательном согласовании» (parallel — все
 // решают одновременно, порядок не имеет смысла). Общая логика для обычной заявки

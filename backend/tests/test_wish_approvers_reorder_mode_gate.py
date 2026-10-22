@@ -33,7 +33,8 @@ async def _mk_wish_with_two_approvers(db_session, test_org, make_user, client, s
     await db_session.commit()
     await db_session.refresh(w)
 
-    # Первый согласующий проходит проверку subsidy.edit (max_order is None).
+    # Согласующим может быть любой сотрудник своего аккаунта (владелец,
+    # 22.10.2026) — оба прохода через assert_approver_in_pool (wish_approver_pool.py).
     resp = await client.post(
         f"/api/wishes/{w.id}/approvers",
         headers=superadmin_headers,

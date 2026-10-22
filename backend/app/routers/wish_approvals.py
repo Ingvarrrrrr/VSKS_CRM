@@ -2,10 +2,18 @@
 
 Endpoints:
   GET    /api/wishes/{wid}/approvers                        — список согласующих
-  POST   /api/wishes/{wid}/approvers/cascade                — построить восходящую цепочку
+  GET    /api/wishes/{wid}/approvers/candidates              — пул кандидатов (весь аккаунт)
+  POST   /api/wishes/{wid}/approvers/cascade                — построить восходящую цепочку к top_user_id
   POST   /api/wishes/{wid}/approvers                        — добавить согласующего вручную
+  POST   /api/wishes/{wid}/approvers/{approval_id}/chain     — цепочка подчинённых к ЭТОМУ согласующему
   DELETE /api/wishes/{wid}/approvers/{approval_id}          — удалить согласующего (pending)
   POST   /api/wishes/{wid}/approvers/{approval_id}/decide   — согласовать/отклонить
+
+Владелец (22.10.2026): согласующим заявки — любым, не только верхним — может
+стать ЛЮБОЙ пользователь аккаунта; права на деньги (subsidy.edit/wish.edit_feo/
+plan_excess.decide) к согласованию необходимости закупки не относятся и здесь
+НЕ проверяются. Единственная серверная проверка — принадлежность контуру
+аккаунта организации заявки (app.services.wish_approver_pool).
 """
 import logging
 from datetime import datetime, timezone
@@ -20,10 +28,8 @@ from app.auth.permissions import has_org_key
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_approval import WishApproval
-from app.models.purchase import Purchase
-from app.models.subsidy import Subsidy
 from app.services.approval_chain import build_ascending_chain
-from app.services.authorized_approvers import list_users_with_org_key
+from app.services.wish_approver_pool import approver_pool_user_ids, assert_approver_in_pool
 
 logger = logging.getLogger(__name__)
 
@@ -92,54 +98,6 @@ async def _load_approvals(wid: int, db: AsyncSession) -> list[WishApproval]:
     )).scalars().all()
 
 
-# ── Верхний согласующий обязан иметь право корректировать субсидию ─────────────
-# Владелец: «Верхним согласующим необходимости закупки можно ставить только
-# того, кто имеет право корректировать субсидию. Иначе каждый сотрудник будет
-# сам себя ставить и сам себе согласовывать». Право «корректировать субсидию» —
-# ТА ЖЕ проверка, что у PUT/DELETE субсидии (has_org_key(..., 'subsidy.edit',
-# subsidy_id=...), см. subsidies.py) — второй расчёт прав не заводим (ПРАВИЛО №6).
-
-async def _effective_subsidy_id_for_wish(wish: Wish, db: AsyncSession) -> int | None:
-    """Субсидия, по которой проверяется право 'subsidy.edit' для верхнего
-    согласующего этой заявки: своя subsidy_id, иначе — субсидия закупки-
-    компаньона (авансовый отчёт, Purchase.wish_id == wish.id), иначе None
-    (в этом случае проверяем право просто по организации)."""
-    if wish.subsidy_id:
-        return wish.subsidy_id
-    purchase_subsidy_id = (await db.execute(
-        select(Purchase.subsidy_id)
-        .where(Purchase.wish_id == wish.id, Purchase.subsidy_id.isnot(None))
-        .limit(1)
-    )).scalar_one_or_none()
-    return purchase_subsidy_id
-
-
-async def _validate_top_approver(
-    wish: Wish, top_user_id: int, db: AsyncSession,
-) -> None:
-    """400, если top_user_id не может быть верхним согласующим этой заявки —
-    у него нет права 'subsidy.edit' по субсидии заявки/закупки-компаньона (по
-    организации, если субсидии нет). Владелец (2026-09-29, уточнение): если
-    сам автор заявки имеет это право — он МОЖЕТ быть верхним согласующим и
-    провести всю заявку в одиночку; отдельного запрета «автор == согласующий»
-    НЕТ — единственный критерий это subsidy.edit."""
-    subsidy_id = await _effective_subsidy_id_for_wish(wish, db)
-    top_user = await db.get(User, top_user_id)
-    if top_user is None:
-        raise HTTPException(404, "Пользователь не найден")
-    if not await has_org_key(top_user, db, wish.org_id, "subsidy.edit", subsidy_id=subsidy_id):
-        subsidy_name = None
-        if subsidy_id:
-            subsidy_name = (await db.execute(
-                select(Subsidy.name).where(Subsidy.id == subsidy_id)
-            )).scalar_one_or_none()
-        raise HTTPException(
-            400,
-            "Верхним согласующим может быть только сотрудник с правом корректировать "
-            f"субсидию {subsidy_name or 'этой организации'}",
-        )
-
-
 # ── GET list ──────────────────────────────────────────────────────────────────
 
 @router.get("/{wid}/approvers")
@@ -172,26 +130,28 @@ async def wish_approval_ceiling_preview(
     return await preview_wish_approval_ceiling(db, wish, current_user)
 
 
-# ── GET candidates для «Верхний согласующий» ───────────────────────────────────
+# ── GET candidates для согласующих (верхний + ручное добавление) ───────────────
 
 @router.get("/{wid}/approvers/candidates")
-async def list_top_approver_candidates(
+async def list_approver_candidates(
     wid: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Кандидаты в «верхний согласующий» — пользователи, у которых есть право
-    'subsidy.edit' по субсидии заявки/закупки-компаньона (или по организации,
-    если субсидии нет). Тот же расчёт кандидатов, что и у согласующих
-    превышения ФЭО (app.services.authorized_approvers.list_users_with_org_key,
-    ПРАВИЛО №6 — второй расчёт не заводим). Автор заявки НЕ исключается —
-    владелец (2026-09-29): если у автора есть subsidy.edit, он вправе сам
-    быть верхним согласующим собственной заявки."""
+    """Кандидаты в согласующие заявки — ВЕСЬ пул аккаунта (app.services.
+    wish_approver_pool.approver_pool_user_ids), без проверки конкретных прав.
+    Владелец (22.10.2026): «В согласование необходимости закупки можно вообще
+    кого угодно включить» — права типа wish.approve/subsidy.edit относятся к
+    деньгам, не к согласованию необходимости закупки. Один и тот же список
+    используется и для «Верхнего согласующего», и для ручного добавления
+    любого другого согласующего (ПРАВИЛО №6 — второй расчёт не заводим).
+    Сортировка — по ФИО."""
     wish = await _get_wish_or_403(wid, current_user, db)
-    subsidy_id = await _effective_subsidy_id_for_wish(wish, db)
-    users = await list_users_with_org_key(
-        db, wish.org_id, "subsidy.edit", subsidy_id=subsidy_id,
-    )
+    pool_ids = await approver_pool_user_ids(db, wish.org_id)
+    if not pool_ids:
+        return []
+    users = (await db.execute(select(User).where(User.id.in_(pool_ids)))).scalars().all()
+    users.sort(key=lambda u: (u.full_name or u.username or "").lower())
     return [
         {"id": u.id, "full_name": u.full_name or u.username, "role": u.role}
         for u in users
@@ -207,7 +167,11 @@ async def cascade_wish_approvers(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Построить восходящую цепочку согласующих от отдела автора до top_user_id."""
+    """Построить восходящую цепочку согласующих от отдела автора до top_user_id.
+
+    Владелец (22.10.2026): верхним согласующим может быть ЛЮБОЙ пользователь
+    аккаунта — единственная проверка (assert_approver_in_pool) — что он из
+    контура организации заявки, не право на деньги."""
     wish = await _get_wish_or_403(wid, current_user, db)
     top_user_id = int(body.get("top_user_id", 0))
     mode = body.get("mode", "sequential")
@@ -219,7 +183,7 @@ async def cascade_wish_approvers(
     if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
         raise HTTPException(400, "Цепочку можно менять только у черновика или отклонённой заявки")
 
-    await _validate_top_approver(wish, top_user_id, db)
+    await assert_approver_in_pool(db, wish.org_id, top_user_id)
 
     author_id = wish.created_by or current_user.id
     chain, chain_warning = await build_ascending_chain(db, author_id, top_user_id, wish.org_id)
@@ -308,19 +272,16 @@ async def add_wish_approver(
     if existing:
         return (await _approval_dicts([existing], db))[0]
 
+    # Владелец (22.10.2026): согласующим заявки — ЛЮБЫМ, не только первым/
+    # верхним — можно поставить любого пользователя аккаунта; единственная
+    # серверная проверка — что он из контура организации заявки (дыра:
+    # раньше user_id вообще не проверялся, см. app.services.wish_approver_pool).
+    await assert_approver_in_pool(db, wish.org_id, user_id)
+
     max_order = (await db.execute(
         select(func.max(WishApproval.order_num)).where(WishApproval.wish_id == wid)
     )).scalar()
     next_order = (max_order + 1) if max_order is not None else 0
-
-    # Ручное назначение ЕДИНСТВЕННОГО (= одновременно верхнего) согласующего —
-    # без цепочки это прямой аналог top_user_id в cascade (см. UI:
-    # useWishApprovers.ensureApprovers — «не нажал кнопку, согласующим
-    # становится ровно тот, кто выбран»). Та же проверка, что и в cascade:
-    # 400, если у него нет права 'subsidy.edit' по субсидии заявки (автор
-    # заявки с этим правом — легитимный кандидат, см. _validate_top_approver).
-    if max_order is None:
-        await _validate_top_approver(wish, user_id, db)
 
     a = WishApproval(
         wish_id=wid,
@@ -335,6 +296,79 @@ async def add_wish_approver(
     await db.commit()
     await db.refresh(a)
     return (await _approval_dicts([a], db))[0]
+
+
+# ── POST chain to a given approver (не только верхнему) ────────────────────────
+
+@router.post("/{wid}/approvers/{approval_id}/chain")
+async def chain_to_wish_approver(
+    wid: int,
+    approval_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Владелец (22.10.2026): «Если ты включил какого-то человека, то до него
+    должна быть возможность построить цепочку из его подчинённых» — у КАЖДОГО
+    согласующего в списке (не только верхнего) есть кнопка «Цепочка из
+    подчинённых». Строит восходящую цепочку автора до approval.user_id (та же
+    функция, что у верхнего — app.services.approval_chain.build_ascending_chain,
+    только only_subordinates_of_top=True: только реальные подчинённые между
+    автором и этим согласующим, никогда не дописываем его в конец молча) и
+    вставляет недостающие звенья ПЕРЕД этой строкой по order_num, с
+    перенумерацией. Людей, уже стоящих в списке (включая самого автора),
+    пропускает. Вставленные строки — is_auto=False, чтобы пересборка верхней
+    цепочки (cascade) их не стёрла (см. cascade_wish_approvers — она чистит
+    только is_auto=True вне своей новой цепочки)."""
+    wish = await _get_wish_or_403(wid, current_user, db)
+    target = await db.get(WishApproval, approval_id)
+    if target is None or target.wish_id != wid:
+        raise HTTPException(404, "Согласующий не найден")
+    if not target.user_id:
+        raise HTTPException(400, "У этой строки не задан пользователь")
+
+    if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
+        raise HTTPException(400, "Цепочку можно менять только у черновика или отклонённой заявки")
+
+    author_id = wish.created_by or current_user.id
+    chain, warning = await build_ascending_chain(
+        db, author_id, target.user_id, wish.org_id, only_subordinates_of_top=True,
+    )
+
+    rows = await _load_approvals(wid, db)
+    existing_user_ids = {a.user_id for a in rows if a.user_id}
+    # Последнее звено цепочки — сам target.user_id, уже есть в списке (это и
+    # есть та строка, к которой строим цепочку) — не дублируем её.
+    to_insert = [
+        step for step in chain
+        if step["user_id"] != author_id
+        and step["user_id"] != target.user_id
+        and step["user_id"] not in existing_user_ids
+    ]
+
+    if to_insert:
+        # Раздвигаем order_num всех строк с order_num >= target.order_num
+        # (включая саму target), вставляем новые звенья на освободившееся место.
+        # orig_order — ДО сдвига (сам target тоже подпадает под сдвиг ниже).
+        orig_order = target.order_num
+        shift = len(to_insert)
+        for a in rows:
+            if a.order_num >= orig_order:
+                a.order_num += shift
+        await db.flush()
+        for i, step in enumerate(to_insert):
+            db.add(WishApproval(
+                wish_id=wid,
+                user_id=step["user_id"],
+                order_num=orig_order + i,
+                role_name=step["role_name"],
+                approver_full_name=step["full_name"],
+                is_auto=False,
+                status="pending",
+            ))
+        await db.commit()
+
+    rows = await _load_approvals(wid, db)
+    return {"approvers": await _approval_dicts(rows, db), "warning": warning}
 
 
 # ── POST reorder ──────────────────────────────────────────────────────────────
@@ -415,11 +449,11 @@ async def decide_wish_approval(
     if not _is_saas(current_user) and wish.status != "submitted":
         raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть 'submitted')")
 
-    # Владелец (2026-09-29, уточнение): отдельного запрета «автор заявки не
-    # согласовывает свою же заявку» НЕТ — единственный критерий для верхнего
-    # согласующего это subsidy.edit (см. _validate_top_approver). Если автор
-    # сам обладает этим правом, он законно оказывается в цепочке (top_user_id
-    # == created_by пройдёт cascade) и вправе решить свой же шаг.
+    # Владелец (2026-09-29, уточнение; актуально и после 22.10.2026): отдельного
+    # запрета «автор заявки не согласовывает свою же заявку» НЕТ — согласующим
+    # (в том числе верхним) можно поставить любого пользователя аккаунта, в том
+    # числе автора (top_user_id == created_by пройдёт cascade/assert_approver_in_pool),
+    # и он вправе решить свой же шаг.
 
     # Права: решать может сам назначенный согласующий или менеджер+/SaaS
     if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and a.user_id != current_user.id:

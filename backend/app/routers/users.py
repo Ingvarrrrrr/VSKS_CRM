@@ -63,6 +63,16 @@ async def list_users(
     limit: int = Query(500, ge=1, le=1000),
     org_id: Optional[int] = Query(None, description="Вернуть всех членов этой орг: primary User.org_id ИЛИ членство в user_organizations ИЛИ user_org_access"),
     subsidy_id: Optional[int] = Query(None, description="Вернуть всех сотрудников орг(а), связанных с субсидией: subsidy.org_id + орг по contractor_id + орг с тем же ИНН (учёт дублей орг)"),
+    staff_only: bool = Query(
+        False,
+        description=(
+            "Правило владельца 22.10.2026 (служебки/приказы): только ШТАТ орг(а) "
+            "субсидии — primary org_id ИЛИ членство user_organizations. Персональный "
+            "доступ (user_org_access/user_subsidy_access) и union по assignable "
+            "НЕ подмешиваются — та же формула, что app.services.service_note_initiators."
+            "org_staff_user_ids. Применимо только вместе с subsidy_id."
+        ),
+    ),
 ):
     q = select(User).order_by(User.full_name)
     # D-09: hide superadmin from non-superadmin callers
@@ -131,7 +141,16 @@ async def list_users(
                 return []
             return _staff_conditions(ids) + _org_access_conditions(ids)
 
-        if subsidy_id is not None:
+        if subsidy_id is not None and staff_only:
+            # Правило владельца 22.10.2026: пикеры инициатора/адресата/исполнителя
+            # служебки/приказа — ТОЛЬКО штат (без user_org_access/
+            # user_subsidy_access/assignable-union выше). Та же формула штата, что
+            # у инициатора (service_note_initiators._staff_conditions) — не вторая
+            # копия (Правило №6).
+            from app.services.service_note_initiators import _staff_conditions
+            conds = _staff_conditions(list(target_org_ids)) if target_org_ids else []
+            q = q.where(or_(*conds)) if conds else q.where(User.id == -1)
+        elif subsidy_id is not None:
             # СТРОГО по субсидии (для всех ролей, включая super): исполнителями и
             # согласующими могут быть только сотрудники орг(а) субсидии или люди
             # с персональным доступом к ней — иначе не закрыться по документам.

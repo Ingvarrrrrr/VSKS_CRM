@@ -142,8 +142,10 @@
                 'feo-tree-row--selected': !item.pseudo && !item.root && item.node!.id === modelValue,
                 'feo-tree-row--pseudo': item.pseudo,
                 'feo-tree-row--root': item.root,
+                'feo-tree-row--blocked': !item.pseudo && !item.root && isNodeBlocked(item.node!),
               }"
               :data-node-id="!item.pseudo && !item.root ? item.node!.id : undefined"
+              :title="!item.pseudo && !item.root && isNodeBlocked(item.node!) ? 'ФОТ — товары и услуги сюда нельзя' : undefined"
               @click="item.root ? toggleRootExpand() : (item.pseudo ? onPickUnallocated(item.parentId ?? null) : onNodeClick(item.node!))"
             >
               <!-- Направляющие линии предков (пустые/вертикальные ячейки по глубине) -->
@@ -308,6 +310,15 @@ const props = defineProps<{
    *  вторым запросом к серверу. null/undefined — второй остаток «с этой
    *  закупкой» не показывается (прежнее поведение, обратная совместимость). */
   currentPurchaseAmount?: number | null
+  /** Правило владельца (22.10.2026, заявка №209): товары/услуги/работы
+   *  нельзя ставить в статью ФОТ — при true узлы-статьи ФОТ (is_payroll
+   *  своё ИЛИ у предка, см. FeoNode.is_payroll) рисуются серыми и не
+   *  кликаются (клик по ним игнорируется), с подсказкой в title. По
+   *  умолчанию false — поведение существующих вызовов не меняется.
+   *  Подключён только в форме закупки (CreateOrderView.vue) — второй
+   *  независимый источник блокировки здесь не нужен: подтверждение самого
+   *  выбора всё равно проверяется на сервере (payroll_category_guard). */
+  blockPayroll?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -709,7 +720,16 @@ function collapseAllNodes() {
   rootExpanded.value = false
 }
 
+/** Узел-статья ФОТ (себя или предок — is_payroll с бэка уже эффективный),
+ *  недоступная для выбора, когда blockPayroll включён (правило владельца
+ *  22.10.2026, заявка №209, ПРАВИЛО №6 — фактическая блокировка на сервере,
+ *  это только UI-подсказка). */
+function isNodeBlocked(node: FeoNode): boolean {
+  return !!props.blockPayroll && !!node.is_payroll
+}
+
 function onNodeClick(node: FeoNode) {
+  if (isNodeBlocked(node)) return
   // Эмитим id ЛЮБОГО кликнутого узла (лист или папка) — от этого зависит
   // массовая пропагация уровня в PurchaseItemsEditor.onItemFeoChange.
   emit('update:modelValue', node.id)
@@ -907,6 +927,17 @@ watch(menuOpen, (open) => {
 }
 .feo-tree-row--root {
   font-weight: 700;
+}
+/* Правило владельца (22.10.2026, заявка №209): статья ФОТ недоступна для
+   выбора товаров/услуг, когда родитель включил blockPayroll — серый цвет,
+   запрещающий курсор, без hover-подсветки (чтобы не выглядело кликабельной). */
+.feo-tree-row--blocked {
+  color: var(--crm-text-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.feo-tree-row--blocked:hover {
+  background: transparent;
 }
 
 /* ── Направляющие линии «настоящего дерева» ──

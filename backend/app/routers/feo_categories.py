@@ -357,6 +357,15 @@ async def get_feo_flat(
         )).scalars().all()
         cats_with_plan_items = set(plan_rows)
 
+    # Эффективный признак ФОТ (себя или предок) — ЕДИНСТВЕННЫЙ резолвер
+    # app.services.feo_payroll.payroll_category_ids (ПРАВИЛО №6), не второй
+    # обход дерева здесь. Нужен фронту (FeoTreeSelect `blockPayroll`,
+    # правило владельца 22.10.2026, заявка №209) — серые узлы-статьи ФОТ при
+    # выборе статьи закупки/заявки, не гейтится правом (структурный признак,
+    # как has_budget/has_plan выше).
+    from app.services.feo_payroll import payroll_category_ids as _payroll_category_ids
+    _payroll_ids = await _payroll_category_ids(db, [subsidy_id])
+
     return [
         {
             "id": c.id,
@@ -371,6 +380,7 @@ async def get_feo_flat(
             # Структурные признаки — НЕ гейтятся правом, см. docstring выше.
             "has_budget": bool(c.budget is not None and float(c.budget) > 0),
             "has_plan": _category_has_plan(c, cats_with_plan_items),
+            "is_payroll": c.id in _payroll_ids,
         }
         for c in all_cats
     ]
@@ -564,6 +574,12 @@ async def update_category(
     await _require_feo_category_write(current_user, db, cat.subsidy_id)
     from app.services.subsidy_revision_guard import assert_direct_edit
     await assert_direct_edit(db, current_user, cat.subsidy_id)
+    # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — включать
+    # is_payroll на статье, где уже лежат товары/услуги/работы, нельзя.
+    # Снятие признака не проверяем — снятие ФОТ с товарами никому не вредит.
+    if category_data.is_payroll and not cat.is_payroll:
+        from app.services.payroll_category_guard import assert_category_can_become_payroll
+        await assert_category_can_become_payroll(db, cat_id)
 
     result = await feo_category_write.update_category(db, current_user, cat, category_data)
     warning = result["warning"]

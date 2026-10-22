@@ -39,6 +39,12 @@ export interface FeoNode {
    *  гейтится правом. Используй его, а не planned_quantity/planned_amount, для решений
    *  «показать/скрыть узел». */
   has_plan?: boolean
+  /** Эффективный признак ФОТ (себя или предок) — ЕДИНСТВЕННЫЙ источник
+   *  backend/app/services/feo_payroll.py::payroll_category_ids, отдаётся
+   *  GET /feo-categories/flat (ПРАВИЛО №6). Правило владельца 22.10.2026
+   *  (заявка №209): товары/услуги/работы в статью ФОТ ставить нельзя —
+   *  используется FeoTreeSelect `blockPayroll` для серых недоступных узлов. */
+  is_payroll?: boolean
 }
 
 /**

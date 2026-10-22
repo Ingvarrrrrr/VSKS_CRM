@@ -453,6 +453,16 @@ async def build_items_from_plan(
     )
     category_links = await category_plan_links(db, list(all_category_ids))
 
+    # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — дефолт
+    # item_type='товар' ниже (когда у плановой позиции/товара каталога тип не
+    # задан) сломал бы законную заявку по плановой позиции БЕЗ типа в статье
+    # ФОТ (например, «ЗП» — зарплатные выплаты из импорта факта, item_type
+    # NULL): позиция получала бы 'товар' и упиралась в payroll_category_guard.
+    # Единственный резолвер «категория эффективно ФОТ» — payroll_category_ids
+    # (app/services/feo_payroll.py), второй обход дерева здесь не пишем.
+    from app.services.feo_payroll import payroll_category_ids as _payroll_category_ids
+    _payroll_cat_ids = await _payroll_category_ids(db, [subsidy_id])
+
     product_ids = [it.product_id for it in items if it.product_id is not None]
     products_by_id: dict[int, Product] = {}
     if product_ids:
@@ -511,7 +521,14 @@ async def build_items_from_plan(
         # item_type: собственный тип плановой позиции, иначе item_kind выбранного
         # товара каталога, иначе дефолт 'товар' (create_wish/WishItem дефолт тоже
         # 'товар' — здесь просто не оставляем поле пустым раньше времени).
-        item_type = planned.item_type or (product.item_kind if product else None) or "товар"
+        # ИСКЛЮЧЕНИЕ (22.10.2026, заявка №209): в статье ФОТ (себя или предок)
+        # дефолт НЕ применяется — тип остаётся как есть (обычно None, как у
+        # «ЗП» из импорта факта), иначе payroll_category_guard отклонил бы
+        # законную заявку по плановой позиции без типа.
+        if cat.id in _payroll_cat_ids:
+            item_type = planned.item_type or (product.item_kind if product else None)
+        else:
+            item_type = planned.item_type or (product.item_kind if product else None) or "товар"
 
         item_dicts.append({
             "product_id": it.product_id,

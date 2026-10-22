@@ -22,6 +22,7 @@ from app.models.user import User
 from app.schemas.wishes import WishItemPatch
 from app.routers import wishes as wishes_core
 from app.services.wish_item_category_guard import assert_wish_item_category_from_plan
+from app.services.payroll_category_guard import assert_no_goods_in_payroll
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
 
@@ -63,6 +64,13 @@ async def patch_wish_item(
     # трогает уже сохранённую категорию позиции.
     if "feo_category_id" in body.model_fields_set:
         await assert_wish_item_category_from_plan(db, item, body.feo_category_id)
+        # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — товар/
+        # услугу/работу нельзя переносить в статью ФОТ (см.
+        # app.services.payroll_category_guard). После гейта «категория из
+        # плана» (выше) — он успевает отказать раньше при конфликте с планом.
+        await assert_no_goods_in_payroll(
+            db, body.feo_category_id, [{"item_name": item.item_name, "item_type": item.item_type}],
+        )
         item.feo_category_id = body.feo_category_id
     await db.commit()
     await db.refresh(item)

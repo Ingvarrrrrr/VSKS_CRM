@@ -458,6 +458,13 @@ async def patch_wish_execution(
         from app.services.wish_item_category_guard import MSG_HEADER_LOCKED, wish_items_all_plan_linked
         if wish_items_all_plan_linked(wish.items or []):
             raise HTTPException(status_code=422, detail=MSG_HEADER_LOCKED)
+        # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — новая
+        # статья шапки против ВСЕХ позиций заявки (при feo_per_item=False
+        # позиции следуют за шапкой, см. sync_items_to_header_category ниже) —
+        # до любой мутации, отказ не меняет ничего.
+        if not bool(getattr(wish, "feo_per_item", False)):
+            from app.services.payroll_category_guard import assert_no_goods_in_payroll
+            await assert_no_goods_in_payroll(db, body.feo_category_id, wish.items or [])
     if body.feo_category_id is not None:
         wish.feo_category_id = body.feo_category_id
     if body.feo_category_id is not None and _old_header_cat_id != body.feo_category_id:
@@ -620,6 +627,16 @@ async def patch_wish_execution(
                 # присвоен новым значением выше — передаём его явно.
                 from app.services.wish_item_category_guard import assert_wish_item_category_from_plan
                 await assert_wish_item_category_from_plan(db, wi, wi.feo_category_id)
+            if _cat_changing:
+                # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 —
+                # построчная смена категории согласующим. ПОСЛЕ гейтов
+                # «категория из плана» выше (MSG_HEADER_LOCKED в начале
+                # функции, assert_wish_item_category_from_plan сразу над
+                # этой строкой) — по требованию координатора. wi.feo_category_id
+                # уже присвоен новым значением (см. 'feo_category_id' in
+                # _fields_set выше).
+                from app.services.payroll_category_guard import assert_no_goods_in_payroll
+                await assert_no_goods_in_payroll(db, wi.feo_category_id, [wi])
 
     # W1: зеркалим привязку к ФЭО из затронутых позиций заявки в связанные
     # строки закупки (см. комментарий у _touched_wish_item_ids выше) — сейчас

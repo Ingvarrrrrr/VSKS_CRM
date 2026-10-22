@@ -375,11 +375,26 @@ async def create_wish(
         for item_data in body.items:
             if not _is_meaningful_item(item_data):
                 continue  # пустая строка-заготовка — в БД не пишем
+            # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 —
+            # эффективная категория позиции (per_item/шапка, тот же
+            # резолвер, что и у остальных проверок — app/services/
+            # feo_effective_category.py) не может быть ФОТ для товара/
+            # услуги/работы. До записи позиции.
+            from app.services.feo_effective_category import effective_item_feo_category_id
+            from app.services.payroll_category_guard import assert_no_goods_in_payroll, default_wish_item_type
+            _eff_cat_id = effective_item_feo_category_id(
+                bool(body.feo_per_item), body.feo_category_id, item_data.get('feo_category_id'),
+            )
+            _item_type_for_create = default_wish_item_type(item_data)
+            await assert_no_goods_in_payroll(db, _eff_cat_id, [{
+                "item_name": item_data.get('item_name', ''),
+                "item_type": _item_type_for_create,
+            }])
             wi = WishItem(
                 wish_id=wish.id,
                 product_id=item_data.get('product_id'),
                 item_name=item_data.get('item_name', ''),
-                item_type=item_data.get('item_type', 'товар'),
+                item_type=_item_type_for_create,
                 quantity=item_data.get('quantity', 1),
                 unit=item_data.get('unit', 'шт'),
                 unit_price=item_data.get('unit_price', 0),
@@ -715,6 +730,12 @@ async def update_wish(
     # исчезнут, а move_or_detach_planned_item внутри зря бы отвязывал план от
     # строк, которых через секунду не будет.
     if old_status != "draft" and wish.feo_category_id != _old_header_cat_id_for_sync:
+        # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — новая
+        # статья шапки против ВСЕХ позиций заявки, ДО sync_items_to_header_category
+        # (которая переносит их туда безусловно при feo_per_item=False).
+        if not bool(getattr(wish, "feo_per_item", False)):
+            from app.services.payroll_category_guard import assert_no_goods_in_payroll
+            await assert_no_goods_in_payroll(db, wish.feo_category_id, wish.items or [])
         from app.services.feo_effective_category import sync_items_to_header_category
         _plan_transfer_warnings.extend(await sync_items_to_header_category(
             wish.items or [], _old_header_cat_id_for_sync, wish.feo_category_id,
@@ -731,11 +752,12 @@ async def update_wish(
             for item_data in body.items:
                 if not _is_meaningful_item(item_data):
                     continue  # пустая строка-заготовка — в БД не пишем
+                from app.services.payroll_category_guard import default_wish_item_type
                 wi = WishItem(
                     wish_id=wish.id,
                     product_id=item_data.get('product_id'),
                     item_name=item_data.get('item_name', ''),
-                    item_type=item_data.get('item_type', 'товар'),
+                    item_type=default_wish_item_type(item_data),
                     quantity=item_data.get('quantity', 1),
                     unit=item_data.get('unit', 'шт'),
                     unit_price=item_data.get('unit_price', 0),
@@ -764,6 +786,10 @@ async def update_wish(
                 # wi.feo_planned_item_id уже выставлен конструктором выше, проверяем
                 # ДО db.add(wi), чтобы вся операция не сохранила ничего частично.
                 await assert_wish_item_category_from_plan(db, wi, item_data.get('feo_category_id'))
+                # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 —
+                # после гейта «категория из плана» выше, до db.add(wi).
+                from app.services.payroll_category_guard import assert_no_goods_in_payroll
+                await assert_no_goods_in_payroll(db, wi.feo_category_id, [wi])
                 _row_item_form_wish_put_draft = item_form_for_wish_item(wish, wi)
                 if _row_item_form_wish_put_draft:
                     apply_item_amounts(wi, _row_item_form_wish_put_draft)
@@ -852,6 +878,13 @@ async def update_wish(
                 # (_move_or_detach_planned_item) — владелец это отменил.
                 if _wi_cat_changing and wi.feo_planned_item_id is not None:
                     await assert_wish_item_category_from_plan(db, wi, wi.feo_category_id)
+                if _wi_cat_changing:
+                    # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 —
+                    # построчная смена категории позиции (non-draft PUT) —
+                    # ПОСЛЕ гейтов переноса плановой позиции выше, wi.feo_category_id
+                    # уже присвоен итоговым значением.
+                    from app.services.payroll_category_guard import assert_no_goods_in_payroll
+                    await assert_no_goods_in_payroll(db, wi.feo_category_id, [wi])
                 if 'over_plan' in item_data:
                     wi.over_plan = item_data['over_plan']
                 if 'needed_date' in item_data:

@@ -356,6 +356,15 @@ async def apply_rows(state) -> None:
     }
     await preload_catalog_products(state, _candidate_item_names)
 
+    # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — товар/услуга/
+    # работа в статье ФОТ — ошибка СТРОКИ (ниже, у leaf-категории строки), не
+    # падение всего импорта. Кеш «категории ФОТ по субсидии», по одному
+    # запросу на субсидию (см. app.services.feo_payroll.payroll_category_ids —
+    # единственный резолвер, второй обход дерева здесь не пишем).
+    from app.services.payroll_category_guard import build_payroll_violation_message, is_goods_or_services
+    from app.services.feo_payroll import payroll_category_ids as _payroll_category_ids
+    _payroll_ids_by_subsidy: dict[int, set] = {}
+
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)
 
@@ -1452,6 +1461,23 @@ async def apply_rows(state) -> None:
             _prev_cats_in_row = cats_in_row
             _row_root_cats.append((row_num, cats_in_row[0]))
             _row_leaf_by_num[row_num] = leaf
+
+            # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 —
+            # строка с item_type товар/услуга/работа в статье ФОТ (себя или
+            # предок, leaf — самая глубокая категория строки) — ошибка
+            # СТРОКИ, остальной импорт продолжается.
+            if is_goods_or_services(item_type) and leaf.id is not None and subsidy_id is not None:
+                if subsidy_id not in _payroll_ids_by_subsidy:
+                    _payroll_ids_by_subsidy[subsidy_id] = await _payroll_category_ids(db, [subsidy_id])
+                if leaf.id in _payroll_ids_by_subsidy[subsidy_id]:
+                    errors.append({
+                        "row": row_num,
+                        "name": lvl5_name or lvl4_name or lvl3_name or lvl2_name,
+                        "message": build_payroll_violation_message(
+                            leaf.name, [lvl5_name or lvl4_name or lvl3_name or lvl2_name or "позиция"],
+                        ),
+                    })
+                    continue
 
             # --- Учёт для отчёта "несопоставленные узлы" (только анализ) ---
             root_c = cats_in_row[0]

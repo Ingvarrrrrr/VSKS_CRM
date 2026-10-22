@@ -11,7 +11,15 @@ class WishItem(Base):
     wish_id = Column(Integer, ForeignKey("wishes.id", ondelete="CASCADE"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     item_name = Column(Text, nullable=False)
-    item_type = Column(String(200), default="товар")  # товар / услуга / работа (фронт может слать описательный тип)
+    # товар / услуга / работа (фронт может слать описательный тип). БЕЗ
+    # default="товар" на колонке (убрано 22.10.2026, ПРАВИЛО №6, QA S5) —
+    # Python-default срабатывал и на ЯВНЫЙ None (plan_to_wish отдаёт None
+    # для позиций без типа в статье ФОТ, а WishItem(item_type=None) всё
+    # равно писал 'товар'). Дефолт «нет ключа → товар» теперь ТОЛЬКО в
+    # app.services.payroll_category_guard.default_wish_item_type — единственное
+    # место, вызывается в каждой точке создания WishItem. Нет server_default
+    # в БД (проверено по миграциям) — NULL пишется как NULL.
+    item_type = Column(String(200))
     quantity = Column(Numeric(15, 4), default=1)
     unit = Column(String(50), default="шт")
     unit_price = Column(Numeric(15, 2), default=0)

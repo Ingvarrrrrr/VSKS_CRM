@@ -899,6 +899,25 @@ async def create_purchase(
 
     items_data = data.items or []
 
+    # Правило владельца (22.10.2026, заявка №209): товары/услуги/работы
+    # нельзя ставить в статью ФОТ — ЕДИНСТВЕННАЯ проверка (ПРАВИЛО №6), см.
+    # app.services.payroll_category_guard. Эффективная категория позиции —
+    # ТОТ ЖЕ резолвер, что и у заявок (effective_item_feo_category_id,
+    # app.services.feo_effective_category) — при feo_per_item=False («одна
+    # категория на всю закупку») собственная feo_category_id позиции
+    # (протухший остаток) не учитывается, всегда категория шапки.
+    from app.services.feo_effective_category import effective_item_feo_category_id
+    from app.services.payroll_category_guard import assert_no_goods_in_payroll
+    _payroll_items_by_cat: dict[int, list] = {}
+    for _pi in items_data:
+        _pcid = effective_item_feo_category_id(
+            bool(data.feo_per_item), data.feo_category_id, _pi.feo_category_id,
+        )
+        if _pcid:
+            _payroll_items_by_cat.setdefault(_pcid, []).append(_pi)
+    for _pcid, _pitems in _payroll_items_by_cat.items():
+        await assert_no_goods_in_payroll(db, _pcid, _pitems)
+
     # Авансовый (владелец, 30.09.2026, решение повторное и жёсткое): каждая
     # позиция без явной привязки к плану получает СОБСТВЕННУЮ auto-plan
     # позицию, БЕЗ матчинга по имени (см. app/services/advance_auto_plan.py —
@@ -1291,6 +1310,24 @@ async def update_purchase(
         setattr(p, k, v)
     if "acceptance_docs" in payload_dict:
         _acc_docs.replace_docs(p, payload_dict["acceptance_docs"])
+
+    # Правило владельца (22.10.2026, заявка №209): товары/услуги/работы
+    # нельзя ставить в статью ФОТ (ПРАВИЛО №6, одна проверка — см.
+    # app.services.payroll_category_guard) — p.feo_category_id/feo_per_item
+    # уже финальные (setattr выше применил payload), items_data — новый
+    # состав позиций PUT. Эффективная категория — тот же резолвер, что и в
+    # create_purchase (effective_item_feo_category_id), не второй способ.
+    from app.services.feo_effective_category import effective_item_feo_category_id
+    from app.services.payroll_category_guard import assert_no_goods_in_payroll
+    _payroll_items_by_cat_put: dict[int, list] = {}
+    for _pi in items_data:
+        _pcid = effective_item_feo_category_id(
+            bool(p.feo_per_item), p.feo_category_id, _pi.feo_category_id,
+        )
+        if _pcid:
+            _payroll_items_by_cat_put.setdefault(_pcid, []).append(_pi)
+    for _pcid, _pitems in _payroll_items_by_cat_put.items():
+        await assert_no_goods_in_payroll(db, _pcid, _pitems)
 
     # Владелец (2026-08-12, «закупка сама становится планом»): PUT — единственный
     # путь добавить/поменять позицию в УЖЕ СУЩЕСТВУЮЩЕЙ закупке напрямую (в обход

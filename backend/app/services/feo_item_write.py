@@ -138,6 +138,14 @@ async def create_planned_item(
         # existing_item is not None здесь означает allow_duplicate_name=True —
         # дедуп осознанно пропущен, ниже создаётся вторая позиция с тем же именем.
 
+    # Правило владельца (22.10.2026, заявка №209): товар/услугу/работу нельзя
+    # ставить в статью ФОТ — ЕДИНСТВЕННАЯ проверка (ПРАВИЛО №6), см.
+    # app.services.payroll_category_guard. ДО создания записи.
+    from app.services.payroll_category_guard import assert_no_goods_in_payroll
+    await assert_no_goods_in_payroll(
+        db, data.feo_category_id, [{"item_name": data.name, "item_type": data.item_type}],
+    )
+
     _origin_kwargs = {}
     if await _can_edit_feo_origin(user, db):
         _origin_kwargs = {
@@ -229,6 +237,17 @@ async def create_planned_items_bulk(
     missing = cat_ids - set(cat_by_id)
     if missing:
         raise HTTPException(404, f"Категория ФЭО не найдена: {', '.join(str(m) for m in sorted(missing))}")
+
+    # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — одна проверка
+    # на весь пакет, по категориям.
+    from app.services.payroll_category_guard import assert_no_goods_in_payroll
+    _bulk_items_by_cat: dict[int, list] = {}
+    for _d in body.items:
+        _bulk_items_by_cat.setdefault(_d.feo_category_id, []).append(
+            {"item_name": _d.name, "item_type": _d.item_type}
+        )
+    for _cid, _its in _bulk_items_by_cat.items():
+        await assert_no_goods_in_payroll(db, _cid, _its)
 
     existing_by_cat: dict[int, list[FeoPlannedItem]] = {}
     if cat_ids:
@@ -387,6 +406,24 @@ async def update_planned_item(
         )
         item.unit_price = data.unit_price
     _apply_payment_fields(item, data)
+
+    # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — одна
+    # проверка (app.services.payroll_category_guard), и при смене типа
+    # позиции в УЖЕ существующей категории ФОТ, и при переносе позиции
+    # товар/услуга/работа В категорию ФОТ (итоговая категория —
+    # data.feo_category_id (поле обязательное, всегда финальное значение),
+    # итоговый тип — уже финализированный item.item_type). Только когда
+    # РЕАЛЬНО меняется категория ИЛИ тип — иначе PUT, не трогающий ни то ни
+    # другое, спотыкался бы на уже существующих (до этого правила) данных
+    # (тот же принцип, что у _category_changing в purchase_items_edit.py).
+    _type_changed_for_payroll = (
+        "item_type" in data.model_fields_set and item.item_type != _old_values.get("item_type")
+    )
+    if data.feo_category_id != _feo_cat_id or _type_changed_for_payroll:
+        from app.services.payroll_category_guard import assert_no_goods_in_payroll
+        await assert_no_goods_in_payroll(
+            db, data.feo_category_id, [{"item_name": item.name, "item_type": item.item_type}],
+        )
 
     if data.feo_category_id != _feo_cat_id:
         old_cat = (

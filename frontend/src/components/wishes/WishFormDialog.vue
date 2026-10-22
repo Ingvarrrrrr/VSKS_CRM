@@ -501,6 +501,7 @@
                       :readonly="!isWishEditable && !canEditWishFeo || hasPlanLinkedItems"
                       :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo) && !hasPlanLinkedItems)"
                       :root-label="selectedSubsidyName"
+                      block-payroll
                       @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                     />
                   </template>
@@ -664,6 +665,7 @@
                   :readonly="!isWishEditable && !canEditWishFeo || hasPlanLinkedItems"
                   :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo) && !hasPlanLinkedItems)"
                   :root-label="selectedSubsidyName"
+                  block-payroll
                   @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                 />
               </template>

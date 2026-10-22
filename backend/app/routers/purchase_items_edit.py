@@ -291,6 +291,14 @@ async def patch_purchase_item(
         if body.feo_category_id != it.feo_category_id:
             _category_changing = True
         it.feo_category_id = body.feo_category_id
+    # Правило владельца (22.10.2026, заявка №209): товар/услугу/работу нельзя
+    # перенести в статью ФОТ — ЕДИНСТВЕННАЯ проверка (ПРАВИЛО №6), см.
+    # app.services.payroll_category_guard. Только когда категория РЕАЛЬНО
+    # меняется — иначе патч, не трогающий категорию, не спотыкается на уже
+    # существующих (до этого правила) данных.
+    if _category_changing:
+        from app.services.payroll_category_guard import assert_no_goods_in_payroll
+        await assert_no_goods_in_payroll(db, it.feo_category_id, [it])
     # Синхронизировать feo_category_id с WishItem при category-only правке wish-позиции
     if it.wish_item_id is not None and (body.clear_feo_category or body.feo_category_id is not None):
         from app.models.wish_item import WishItem as _WishItem
@@ -912,6 +920,7 @@ async def split_purchase_item(
     # Категории/плановые позиции частей — те же проверки и формулировки ошибок,
     # что и в patch_purchase_item (см. ветки feo_category_id / _explicit_planned_item_chosen).
     from app.models.feo_planned_item import FeoPlannedItem as _FPI
+    from app.services.payroll_category_guard import assert_no_goods_in_payroll
     for idx, part in enumerate(parts, start=1):
         if part.feo_category_id is not None:
             cat = await db.get(FeoCategory, part.feo_category_id)
@@ -919,6 +928,12 @@ async def split_purchase_item(
                 raise HTTPException(404, f"Категория ФЭО части {idx} не найдена")
             if p.subsidy_id and cat.subsidy_id != p.subsidy_id:
                 raise HTTPException(422, f"Категория ФЭО части {idx} относится к другой субсидии")
+            # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — часть
+            # разбивки наследует item_type исходной позиции (создаваемые
+            # плановые позиции выше тоже берут it.item_type).
+            await assert_no_goods_in_payroll(
+                db, part.feo_category_id, [{"item_name": it.item_name, "item_type": it.item_type}],
+            )
         if part.feo_planned_item_id is not None:
             fpi = await db.get(_FPI, part.feo_planned_item_id)
             if not fpi:

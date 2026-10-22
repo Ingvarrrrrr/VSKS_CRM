@@ -487,6 +487,7 @@
                 :readonly="isFeoHeaderLocked"
                 :current-purchase-amount="feoCurrentCategoryOwnAmount"
                 :node-amounts="feoHeaderNodeAmounts"
+                block-payroll
                 @pick-unallocated="onFeoPickUnallocated"
               />
               <!-- Замок категории (владелец, 2026-09-20): «категория закупки из

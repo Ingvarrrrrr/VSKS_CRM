@@ -242,7 +242,13 @@ export interface SubsidyDetailContext {
   excessFor: (node: FeoNode) => { amount: number; pending: boolean; approved: boolean } | null
   excessCulpritFor: (node: FeoNode) => ExcessCulprit | null
   excessCulpritText: (node: FeoNode) => string
-  isExcessCulpritActual: (node: FeoNode, actual: { purchase_id: number; item_name: string }) => boolean
+  isExcessCulpritActual: (node: FeoNode, actual: { purchase_id: number; item_name: string; purchase_item_id?: number | null }) => boolean
+  // Задача владельца 22.10.2026 — подсветка ВСЕЙ цепочки позиций-виновников
+  // (не только первой пересекшей ФЭО), независимо от того, на каком узле
+  // предка «висит» само превышение (см. докстринги в useFeoTreeExcess.ts).
+  plannedItemExcessHit: (plannedItemId: number) => { nodeId: number; totalExcess: number; budget: number | null } | null
+  isExcessCulpritPlannedItem: (plannedItemId: number) => boolean
+  purchaseItemExcessHit: (actual: { purchase_id: number; item_name: string; purchase_item_id?: number | null }) => { nodeId: number; totalExcess: number; budget: number | null } | null
   excessCulpritChipTooltip: (node: FeoNode) => string
   excessFactFor: (node: FeoNode) => { amount: number; pending: boolean; approved: boolean } | null
   excessPlanFor: (node: FeoNode) => { amount: number; pending: boolean; approved: boolean; manualEntered: number; items: ExcessPlanItem[] } | null

@@ -189,9 +189,31 @@ async def _payroll_balance_amounts(db: AsyncSession, invisible_ids: list) -> dic
     return out
 
 
+async def any_payroll_visible(user: User, db: AsyncSession, subsidy_ids: Iterable[int]) -> bool:
+    """True, если среди subsidy_ids есть хотя бы одна субсидия, где у user
+    РЕАЛЬНО (независимо от переключателя payroll_view=all|exclude|only —
+    то ОТДЕЛЬНЫЙ, временный выбор вида на экране, не право) есть ФОТ-статьи
+    И право subsidy.view_payroll их видеть. Используется ТОЛЬКО для ответа
+    payload["payroll_visible"] (GET /dashboard/charts) — показывать
+    переключатель «Всё/Только закупки/Только ФОТ» вообще нет смысла, если
+    у пользователя нигде нет доступа к ФОТ (ПРАВИЛО №6 — переиспользует те
+    же два существующих источника, subsidy_ids_with_payroll и
+    payroll_visible_subsidy_ids, вторая формула не вводится)."""
+    ids = [sid for sid in dict.fromkeys(subsidy_ids) if sid is not None]
+    if not ids:
+        return False
+    from app.services.feo_payroll import subsidy_ids_with_payroll
+    with_payroll = await subsidy_ids_with_payroll(db, ids)
+    if not with_payroll:
+        return False
+    visible = await payroll_visible_subsidy_ids(user, db, ids)
+    return bool(with_payroll & visible)
+
+
 async def scrub_payroll_from_dashboard_charts(
     user: User, db: AsyncSession, subsidy_stats: list, widgets: dict,
     dashboard_type_totals: Optional[dict] = None,
+    *, force_hide_all: bool = False,
 ) -> None:
     """Пост-обработка ответа GET /api/dashboard/charts (мутирует переданные
     subsidy_stats/widgets/dashboard_type_totals IN PLACE, вызывается ПОСЛЕ
@@ -239,7 +261,17 @@ async def scrub_payroll_from_dashboard_charts(
     from app.services.item_type_split import KIND_PAYROLL
 
     ids = [row.get("id") for row in subsidy_stats if row.get("id") is not None]
-    visible = await payroll_visible_subsidy_ids(user, db, ids)
+    if force_hide_all:
+        # payroll_view=exclude (план «Всё/Только закупки/Только ФОТ»,
+        # 23.10.2026) — «Только закупки» обязан отдавать ТЕ ЖЕ числа, что уже
+        # видит пользователь БЕЗ права subsidy.view_payroll, даже тому, у кого
+        # право есть: та же функция, та же ветка кода, просто subsidy_ids_with_
+        # payroll (а не has_org_key) решает, что скрывать — НЕ вторая формула.
+        from app.services.feo_payroll import subsidy_ids_with_payroll
+        with_payroll = await subsidy_ids_with_payroll(db, ids)
+        visible = set(ids) - with_payroll
+    else:
+        visible = await payroll_visible_subsidy_ids(user, db, ids)
     invisible_rows = [row for row in subsidy_stats if row.get("id") not in visible]
     if not invisible_rows:
         return

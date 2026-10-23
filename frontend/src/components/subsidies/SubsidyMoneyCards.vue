@@ -34,7 +34,7 @@
                  см. backend/app/services/subsidy_money_summary.py) — решение
                  владельца 07.10.2026, план .planning/quick/2026-10-07-dnr-feo-
                  cards/PLAN.md шаг 1: «ФЭО не введено», не обезличенное «—». -->
-            <div class="kpi-value" :class="{ 'text-medium-emphasis': redistributable == null }">{{ redistributable != null ? formatCurrency(redistributable) : 'ФЭО не введено' }}</div>
+            <div class="kpi-value" :class="{ 'text-medium-emphasis': redistributable == null }">{{ isPayrollOnly ? formatCurrency(redistributablePayrollOnly ?? 0) : (redistributable != null ? formatCurrency(redistributable) : 'ФЭО не введено') }}</div>
             <div class="kpi-label">Можно перераспределить</div>
             <!-- Задача 1 (владелец, 04.10.2026 → доп. 06.10.2026, исправлено
                  координатором → 15.10.2026 план abstract-noodling-pelican.md):
@@ -46,8 +46,10 @@
                  месяцы)» (contracted_not_ordered) в «ещё уйдёт помесячно до
                  конца года» (monthly_future_not_started) — раскрытое дерево
                  договор → месяцы, MonthlyFutureTreeDialog. «хотелось бы»
-                 показываем даже при 0 ₽, чтобы категория была видна. -->
-            <div v-if="redistributable != null" class="kpi-sub-note kpi-redistributable-notes text-caption text-medium-emphasis">
+                 показываем даже при 0 ₽, чтобы категория была видна.
+                 Скрыты в «Только ФОТ» (владелец, 23.10.2026) — ни одна из
+                 четырёх строк не несёт payroll-долю отдельно. -->
+            <div v-if="!isPayrollOnly && redistributable != null" class="kpi-sub-note kpi-redistributable-notes text-caption text-medium-emphasis">
               <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openFree()">не запланировано: {{ formatCurrency(redistributableUnplanned) }}</div>
               <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openMetric('not_committed_nice')">хотелось бы, можно отказаться: {{ formatCurrency(notCommittedNice) }}</div>
               <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openMetric('not_committed_likely')">скорее всего понадобится: {{ formatCurrency(notCommittedLikely) }}</div>
@@ -67,7 +69,7 @@
                  (доп. задача 06.10.2026) — тот же приём, что type-drill строк
                  в SubsidyKpiCards.vue (kpi-split-row-clickable, см. CSS ниже —
                  scoped-стили родителя сюда не доходят, дублируем класс). -->
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+            <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop>
               <template v-if="splitRows.length">
                 <div v-for="row in splitRows" :key="row.kind" class="kpi-split-row"
                   :class="{ 'kpi-split-row-neg': row.amount < -0.5, 'kpi-split-row-clickable': row.kind === 'goods' || row.kind === 'services' }"
@@ -125,14 +127,17 @@
         <div class="kpi-icon-box"><v-icon icon="mdi-bank-outline" size="26" /></div>
         <div class="kpi-body">
           <div class="kpi-value" :class="balanceByMarks != null && balanceByMarks < 0 ? 'text-error' : ''">
-            {{ balanceByMarks != null ? formatCurrency(balanceByMarks) : 'бюджет не введён' }}
+            <!-- «Только ФОТ» (владелец, 23.10.2026) — у «Остатка субсидии»
+                 нет payroll-доли отдельным полем (payroll_visibility.py
+                 docstring «НЕ скрабится») — честно «нет данных». -->
+            {{ isPayrollOnly ? '—' : (balanceByMarks != null ? formatCurrency(balanceByMarks) : 'бюджет не введён') }}
           </div>
           <div class="kpi-label">Остаток субсидии</div>
           <!-- Решение владельца 06.10.2026 (budget_from_plan, см. докстринг
                backend subsidy_money_summary.py): бюджета по ФЭО/вручную нет —
                остаток временно считается от плана. -->
-          <div v-if="props.subsidy?.budget_from_plan" class="text-caption text-medium-emphasis">по плану — суммы ФЭО не введены</div>
-          <div v-if="balanceByMarks != null" class="kpi-sub-note kpi-balance-notes text-caption text-medium-emphasis">
+          <div v-if="!isPayrollOnly && props.subsidy?.budget_from_plan" class="text-caption text-medium-emphasis">по плану — суммы ФЭО не введены</div>
+          <div v-if="!isPayrollOnly && balanceByMarks != null" class="kpi-sub-note kpi-balance-notes text-caption text-medium-emphasis">
             <!-- Задача владельца 15.10.2026 (план abstract-noodling-pelican.md):
                  обе строки кликабельны — MetricDrillDialog balance_marked/
                  balance_confirmed («Бюджет ФЭО X − оплачено Y = остаток»,
@@ -156,20 +161,23 @@
       >
         <div class="kpi-icon-box"><v-icon :icon="(economyTotal ?? 0) < 0 ? 'mdi-cash-minus' : 'mdi-cash-plus'" size="26" /></div>
         <div class="kpi-body">
-          <div class="kpi-value" :class="economyTotal == null ? '' : (economyTotal < 0 ? 'text-error' : 'text-success')">{{ economyTotal != null ? formatCurrency(Math.abs(economyTotal)) : '—' }}</div>
+          <!-- «Только ФОТ» (владелец, 23.10.2026) — нет payroll-доли экономии
+               отдельным полем (она отфильтрована из экономии ВООБЩЕ,
+               purchase_economy.py) — честно «нет данных». -->
+          <div class="kpi-value" :class="economyTotal == null ? '' : (economyTotal < 0 ? 'text-error' : 'text-success')">{{ isPayrollOnly ? '—' : (economyTotal != null ? formatCurrency(Math.abs(economyTotal)) : '—') }}</div>
           <div class="kpi-label">{{ (economyTotal ?? 0) < 0 ? 'Переплата по закупкам' : 'Экономия по закупкам' }}</div>
           <!-- Шаг 4 (план humble-stirring-emerson.md, 23.10.2026) — строки
                «товары / услуги» под карточкой (ФОТ сюда не попадает никогда —
                отфильтрована на бэкенде, purchase_economy.py). Клик не ставим
                (владелец просил только показать разбивку, без drill) — @click.stop,
                чтобы строка не открывала MetricDrillDialog родительской карточки. -->
-          <div v-if="economyByKindRows.length" class="kpi-split-rows" @click.stop>
+          <div v-if="!isPayrollOnly && economyByKindRows.length" class="kpi-split-rows" @click.stop>
             <div v-for="row in economyByKindRows" :key="row.kind" class="kpi-split-row" :class="{ 'kpi-split-row-neg': row.amount < -0.5 }">
               <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
               <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
             </div>
           </div>
-          <div v-if="economyUnmeasuredText" class="kpi-sub-note text-caption" style="color:#B45309">
+          <div v-if="!isPayrollOnly && economyUnmeasuredText" class="kpi-sub-note text-caption" style="color:#B45309">
             {{ economyUnmeasuredText }}
           </div>
         </div>
@@ -191,6 +199,8 @@ import RedistributableDrillDialog from '@/components/subsidies/RedistributableDr
 // докстринг) — тот же приём, что useFeoTreeExcess()/useExcessDrilldown() там
 // же (Правило №6, одно состояние «что открыто» на оба компонента).
 import { useCardDrills } from '@/composables/subsidies/useCardDrills'
+import { useKpiPrefs } from '@/composables/useKpiPrefs'
+import { payrollOnlyFromByKind } from '@/utils/kpiPayrollOnly'
 
 const props = defineProps<{
   subsidy: SubsidyRow | null
@@ -199,6 +209,14 @@ const props = defineProps<{
 
 const funding = useFundingSources()
 const cardDrills = useCardDrills()
+const kpiPrefs = useKpiPrefs()
+// «Только ФОТ» (владелец, план payroll_view, 23.10.2026) — «Можно
+// перераспределить» имеет payroll-долю готовым полем (redistributable_by_kind,
+// ВСЕГДА присутствует, см. payroll_visibility.py), «Экономия»/«Остаток
+// субсидии» — НЕТ (payroll_visibility.py docstring «НЕ скрабится»), честно
+// «нет данных» вместо придуманного числа.
+const isPayrollOnly = computed(() => kpiPrefs.payrollView.value === 'only')
+const redistributablePayrollOnly = computed(() => payrollOnlyFromByKind(props.subsidy?.redistributable_by_kind))
 
 // Расшифровка «Товары»/«Услуги» по клику (доп. задача 06.10.2026) —
 // RedistributableDrillDialog сам зовёт GET /dashboard/redistributable-drill

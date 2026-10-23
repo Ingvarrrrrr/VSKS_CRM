@@ -6,6 +6,7 @@ import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { pct, truncate, formatCurrency } from './dashboardFormat'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import { formatEconomyUnmeasuredText, type EconomyUnmeasuredByReason } from '@/utils/economyUnmeasured'
+import { payrollOnlyFromByKind, payrollOnlyFromStageBucket } from '@/utils/kpiPayrollOnly'
 
 export interface TypeSplitAmounts { goods: number; services: number; unspecified: number }
 
@@ -33,7 +34,7 @@ export interface WidgetsData {
   paid_over_delivered?: { amount: number; prepayment_amount: number; count: number }
 }
 
-export interface TypeSplitByKind { goods: number; services: number; unspecified: number }
+export interface TypeSplitByKind { goods: number; services: number; unspecified: number; payroll?: number }
 
 export interface SubsidyRow {
   id: number; name: string; shortName: string; description: string; year: number
@@ -44,6 +45,13 @@ export interface SubsidyRow {
   remaining?: number | null
   planned_amount?: number | null
   budget_discrepancy?: number | null
+  // «Только ФОТ» (владелец, план payroll_view, 23.10.2026) — те же поля, что
+  // уже читает SubsidyKpiCards.vue::rawSplitFor('budget'/'plan_schedule') на
+  // вкладке «Субсидии» (Правило №6, не вторая копия) — появляются, только
+  // когда бэкенд считал разбивку по видам (?type_split=true либо
+  // ?payroll_view=only, который форсирует её же).
+  budget_payroll?: number | null
+  planned_payroll?: number | null
   widget?: WidgetsData | null
   // Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.4/5) — то же, что и
   // SubsidyRow в composables/subsidies/types.ts (другой модуль, тот же смысл
@@ -218,6 +226,25 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
 
   watch(kpiPrefs.kpiTypeSplit, (v) => { if (v === 'split') ensureTypeSplitLoaded() }, { immediate: true })
 
+  // «Только ФОТ» для карточек-этапов (Ведётся работа/Заказано/Договоры/
+  // Поставлено[, не оплачено]/Оплачено) — читает widget[stage][`${stage}_payroll`]
+  // из ТОГО ЖЕ /dashboard/charts ответа, что уже грузит effectiveWidgets (не
+  // отдельный запрос): появляется, когда payroll_view=only форсирует разбивку
+  // по видам на бэке (см. dashboard_charts.py), поровну с без фильтра/с фильтром
+  // субсидий — та же схема, что stageTypeSplit выше.
+  function stagePayrollOnly(stage: keyof WidgetsData): number | null {
+    if (selectedSubsidyIds.value.length === 0) {
+      return payrollOnlyFromStageBucket(widgetsData.value?.[stage] as any, stage)
+    }
+    let sum = 0, found = false
+    for (const row of filteredSubsidies.value) {
+      const v = payrollOnlyFromStageBucket((row.widget?.[stage] as any), stage)
+      if (v == null) continue
+      found = true; sum += v
+    }
+    return found ? sum : null
+  }
+
   // Recent purchases filtered to selected subsidies
   const recentPurchases = computed(() => {
     const subsidyIds = filteredSubsidies.value.map(s => s.id)
@@ -318,13 +345,36 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
     filteredSubsidies.value.some(x => x.balance_by_marks != null)
   )
   const totalRedistributableByKind = computed<TypeSplitByKind>(() => {
-    const acc: TypeSplitByKind = { goods: 0, services: 0, unspecified: 0 }
+    const acc: TypeSplitByKind = { goods: 0, services: 0, unspecified: 0, payroll: 0 }
     for (const x of filteredSubsidies.value) {
       const k = x.redistributable_by_kind
       if (!k) continue
       acc.goods += k.goods || 0; acc.services += k.services || 0; acc.unspecified += k.unspecified || 0
+      acc.payroll = (acc.payroll || 0) + ((k as any).payroll || 0)
     }
     return acc
+  })
+
+  // ── «Только ФОТ» (владелец, план payroll_view, 23.10.2026) — читает уже
+  // готовые поля (ПРАВИЛО №6, kpiPayrollOnly.ts — единственная функция
+  // выбора), не пересчитывает. budgetPayrollOnly/plannedPayrollOnly —
+  // Σ budget_payroll/planned_payroll по filteredSubsidies (та же схема
+  // суммирования, что у totalBudget/totalFeoPlanned выше), появляются только
+  // когда бэкенд уже прислал разбивку (?payroll_view=only форсирует её, см.
+  // dashboard_charts.py::effective_type_split).
+  const totalBudgetPayroll = computed<number | null>(() => {
+    const list = filteredSubsidies.value
+    if (!list.some(x => x.budget_payroll != null)) return null
+    return list.reduce((s, x) => s + (x.budget_payroll || 0), 0)
+  })
+  const totalPlannedPayroll = computed<number | null>(() => {
+    const list = filteredSubsidies.value
+    if (!list.some(x => x.planned_payroll != null)) return null
+    return list.reduce((s, x) => s + (x.planned_payroll || 0), 0)
+  })
+  const totalFreePayroll = computed<number | null>(() => {
+    if (totalBudgetPayroll.value == null || totalPlannedPayroll.value == null) return null
+    return totalBudgetPayroll.value - totalPlannedPayroll.value
   })
 
   const overrunSubsidies = computed(() =>
@@ -400,52 +450,62 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const kpiAnim_economy          = useAnimatedNumber(kpiTarget_economy,          800)
   const kpiAnim_balance          = useAnimatedNumber(kpiTarget_balance,          800)
 
+  // ── «Только ФОТ»/«Только закупки» (владелец, план payroll_view,
+  // 23.10.2026) — "exclude" ничего не трогает здесь: бэкенд уже прислал числа
+  // без ФОТ (payroll_view=exclude добавлен в query loadAll() ниже, тот же
+  // scrub_payroll_from_dashboard_charts, что скрывает ФОТ от пользователя без
+  // права). "only" подменяет amount каждой карточки её payroll-долей (null —
+  // «нет данных», карточка показывает «—», см. KpiCardsWidget.vue) и гасит
+  // split-строки (товары/услуги не нужны, когда показан только ФОТ).
+  const isPayrollOnly = computed(() => kpiPrefs.payrollView.value === 'only')
+
   // ── KPI Cards (widgets — накопительная логика) ────
   const kpiCards = computed(() => {
     const w = effectiveWidgets.value
     const freeRaw = totalBudget.value - totalPlanSchedule.value
+    const only = isPayrollOnly.value
     return [
       {
         key: 'budget',
         label: 'Бюджет',
         icon: 'mdi-wallet',
-        amount: kpiAnim_budget.value,
+        amount: only ? totalBudgetPayroll.value : kpiAnim_budget.value,
         count: 0,
         countLabel: '',
         tooltip: 'суммарный бюджет по дереву ФЭО выбранных субсидий',
         monthly: null,
         over: undefined as boolean | undefined,
-        split: budgetTypeSplit.value,
+        split: only ? undefined : budgetTypeSplit.value,
       },
       {
         key: 'plan_schedule',
         label: 'План-График',
         icon: 'mdi-calendar-clock',
-        amount: kpiAnim_plan_schedule.value,
+        amount: only ? totalPlannedPayroll.value : kpiAnim_plan_schedule.value,
         count: w?.plan_schedule.count ?? 0,
         countLabel: 'закупок',
         tooltip: 'включает все последующие этапы',
         monthly: null,
         over: undefined as boolean | undefined,
-        split: stageTypeSplit('plan_schedule'),
+        split: only ? undefined : stageTypeSplit('plan_schedule'),
       },
       {
         key: 'work',
         label: 'Ведётся работа',
         icon: 'mdi-progress-wrench',
-        amount: kpiAnim_work.value,
+        amount: only ? stagePayrollOnly('work') : kpiAnim_work.value,
         count: w?.work.count ?? 0,
         countLabel: 'закупок',
         tooltip: 'включает заказанные, поставленные и оплаченные',
         monthly: null,
         over: undefined as boolean | undefined,
-        split: stageTypeSplit('work'),
+        split: only ? undefined : stageTypeSplit('work'),
       },
       {
         key: 'ordered',
         label: 'Заказано',
         icon: 'mdi-cart-check',
-        amount: kpiAnim_ordered.value,
+        amount: only ? stagePayrollOnly('ordered') : kpiAnim_ordered.value,
         count: w?.ordered.count ?? 0,
         countLabel: 'закупок',
         tooltip: 'включает поставленные и оплаченные',
@@ -453,13 +513,13 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
           ? w!.ordered.monthly_payments_total!
           : null,
         over: undefined as boolean | undefined,
-        split: stageTypeSplit('ordered'),
+        split: only ? undefined : stageTypeSplit('ordered'),
       },
       {
         key: 'contracts',
         label: 'Заключено договоров',
         icon: 'mdi-file-sign',
-        amount: kpiAnim_contracts.value,
+        amount: only ? stagePayrollOnly('contracts') : kpiAnim_contracts.value,
         count: w?.contracts.count ?? 0,
         countLabel: 'договоров',
         tooltip: 'суммарная стоимость заключённых договоров',
@@ -471,28 +531,28 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
           ? `из них ещё уйдёт помесячно до конца года: ${formatCurrency(totalMonthlyFutureToYearEnd.value)}`
           : null,
         over: undefined as boolean | undefined,
-        split: stageTypeSplit('contracts'),
+        split: only ? undefined : stageTypeSplit('contracts'),
       },
       {
         key: 'delivered',
         label: 'Поставлено',
         icon: 'mdi-truck-check',
-        amount: kpiAnim_delivered.value,
+        amount: only ? stagePayrollOnly('delivered') : kpiAnim_delivered.value,
         count: w?.delivered.count ?? 0,
         countLabel: 'закупок',
         tooltip: 'включает оплаченные',
         monthly: null,
         over: undefined as boolean | undefined,
-        split: stageTypeSplit('delivered'),
+        split: only ? undefined : stageTypeSplit('delivered'),
       },
       {
         key: 'delivered_unpaid',
         label: 'Поставлено, не оплачено',
         icon: 'mdi-truck-alert',
-        amount: kpiAnim_delivered_unpaid.value,
+        amount: only ? stagePayrollOnly('delivered_unpaid') : kpiAnim_delivered_unpaid.value,
         count: w?.delivered_unpaid.count ?? 0,
         countLabel: 'закупок',
-        split: stageTypeSplit('delivered_unpaid'),
+        split: only ? undefined : stageTypeSplit('delivered_unpaid'),
         tooltip: 'поставлено, но оплата ещё не прошла',
         monthly: null,
         over: undefined as boolean | undefined,
@@ -501,25 +561,25 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         key: 'paid',
         label: 'Оплачено',
         icon: 'mdi-cash-check',
-        amount: kpiAnim_paid.value,
+        amount: only ? stagePayrollOnly('paid') : kpiAnim_paid.value,
         count: w?.paid.count ?? 0,
         countLabel: 'закупок',
         tooltip: null,
         monthly: null,
         over: undefined as boolean | undefined,
-        split: stageTypeSplit('paid'),
+        split: only ? undefined : stageTypeSplit('paid'),
       },
       {
         key: 'free',
         label: freeRaw < 0 ? 'Превышение' : 'Свободно',
         icon: 'mdi-cash-lock-open',
-        amount: Math.abs(kpiAnim_free.value),
+        amount: only ? (totalFreePayroll.value == null ? null : Math.abs(totalFreePayroll.value)) : Math.abs(kpiAnim_free.value),
         count: 0,
         countLabel: '',
         tooltip: 'бюджет минус запланировано',
         monthly: null,
-        over: freeRaw < 0,
-        split: freeTypeSplit.value,
+        over: only ? (totalFreePayroll.value != null && totalFreePayroll.value < 0) : freeRaw < 0,
+        split: only ? undefined : freeTypeSplit.value,
       },
       // Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.5): «Можно
       // перераспределить» = Бюджет − Законтрактовано = Свободно + В плане без
@@ -529,24 +589,26 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         key: 'redistributable',
         label: 'Можно перераспределить',
         icon: 'mdi-swap-horizontal',
-        amount: kpiAnim_redistributable.value,
+        amount: only ? payrollOnlyFromByKind(totalRedistributableByKind.value) : kpiAnim_redistributable.value,
         count: 0,
         countLabel: '',
         tooltip: 'бюджет минус законтрактовано: деньги, ещё не связанные договором. Разовый договор занимает деньги с момента заключения, рамочный — только суммой заказов',
         monthly: null,
         over: undefined as boolean | undefined,
-        split: totalRedistributableByKind.value,
+        split: only ? undefined : totalRedistributableByKind.value,
         // Задачи 1-2 (владелец, 04.10.2026): раньше одна строка «не
         // запланировано X (Свободно) + в плане без договоров Y» — теперь три
         // строки с разбивкой по статусу плановой позиции (та же разбивка,
         // что и SubsidyMoneyCards.vue на вкладке «Субсидии», Σ готовых полей
-        // по видимым субсидиям, не новая формула — Правило №6).
-        notes: [
+        // по видимым субсидиям, не новая формула — Правило №6). В «Только ФОТ»
+        // (23.10.2026) — ни одна из трёх строк не несёт payroll-разбивки
+        // отдельно, скрываем, чтобы не смешивать с товарами/услугами.
+        notes: only ? undefined : [
           `не запланировано: ${formatCurrency(totalRedistributableUnplanned.value)}`,
           `хотелось бы, можно отказаться: ${formatCurrency(totalNotCommittedNice.value)}`,
           `скорее всего понадобится, без договоров: ${formatCurrency(totalNotCommittedLikely.value)}`,
         ],
-        note: totalCommittedMissingFactItems.value > 0
+        note: (!only && totalCommittedMissingFactItems.value > 0)
           ? `${totalCommittedMissingFactItems.value} позиций в договоре без суммы договора — учтены по плановой цене`
           : null,
       },
@@ -556,7 +618,10 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         icon: (totalEconomy.value ?? 0) < 0 ? 'mdi-cash-minus' : 'mdi-cash-plus',
         // null (ни у одной субсидии нет данных) — карточка показывает «—»
         // (см. KpiCardsWidget.vue: card.amount == null -> '—'), не 0 ₽.
-        amount: totalEconomy.value == null ? null : Math.abs(kpiAnim_economy.value),
+        // «Только ФОТ» (23.10.2026) — у бэкенда НЕТ payroll-доли экономии
+        // отдельным полем (см. payroll_visibility.py docstring «НЕ
+        // скрабится») — честно «нет данных», не считаем здесь заново.
+        amount: only ? null : (totalEconomy.value == null ? null : Math.abs(kpiAnim_economy.value)),
         count: 0,
         countLabel: '',
         tooltip: 'план позиций минус договор по законтрактованным закупкам; переплата — согласованное превышение',
@@ -566,9 +631,9 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         // ничего не измерено): нейтральный цвет вместо «экономия» (зелёный)
         // или «переплата» (красный), см. KpiCardsWidget.vue/DashboardView.vue
         // .kpi-unmeasured.
-        unmeasured: totalEconomy.value == null,
+        unmeasured: only ? true : totalEconomy.value == null,
         split: undefined,
-        note: formatEconomyUnmeasuredText(totalEconomyNoPlannedPriceItems.value, totalEconomyUnmeasuredByReason.value) || null,
+        note: only ? null : (formatEconomyUnmeasuredText(totalEconomyNoPlannedPriceItems.value, totalEconomyUnmeasuredByReason.value) || null),
       },
       // «Остаток субсидии» (владелец, 06.10.2026) = бюджет ФЭО − оплачено, Σ
       // готовых полей по видимым субсидиям (ПРАВИЛО №6, та же схема, что и
@@ -578,20 +643,22 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         key: 'balance',
         label: 'Остаток субсидии',
         icon: 'mdi-bank-outline',
-        amount: totalBalanceHasAny.value ? Math.abs(kpiAnim_balance.value) : null,
+        // «Только ФОТ» — нет payroll-доли «Остатка» отдельным полем (та же
+        // причина, что у «Экономии» выше) — «нет данных», не считаем заново.
+        amount: only ? null : (totalBalanceHasAny.value ? Math.abs(kpiAnim_balance.value) : null),
         count: 0,
         countLabel: '',
         tooltip: 'бюджет ФЭО минус оплаченное. Пока поступление на счёт = бюджету ФЭО (ввод поступлений появится позже)',
         monthly: null,
         over: totalBalanceHasAny.value && totalBalanceByMarks.value < 0,
         split: undefined,
-        notes: totalBalanceHasAny.value ? [
+        notes: (!only && totalBalanceHasAny.value) ? [
           `по отметке: ${formatCurrency(totalBalanceByMarks.value)}`,
           `подтверждено выпиской: ${formatCurrency(totalBalanceByStatement.value)}`,
         ] : undefined,
-        note: totalBalanceNoBudgetCount.value > 0
+        note: only ? null : (totalBalanceNoBudgetCount.value > 0
           ? `без бюджета: ${totalBalanceNoBudgetCount.value} субсид${totalBalanceNoBudgetCount.value === 1 ? 'ии' : 'ий'}`
-          : null,
+          : null),
       },
     ]
   })
@@ -601,10 +668,21 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
     loading.value = true
     loadingPurchases.value = true
     try {
+      // payroll_view (владелец, план 23.10.2026) — передаётся так же, как
+      // ?type_split=true передаётся в отдельный ensureTypeSplitLoaded() (та
+      // же singleton-настройка useKpiPrefs.ts): 'exclude' просит бэкенд уже
+      // вычистить ФОТ (scrub_payroll_from_dashboard_charts force_hide_all,
+      // ПРАВИЛО №6, без копии формулы), 'only' форсирует разбивку по видам,
+      // которую stagePayrollOnly()/totalBudgetPayroll выше читают.
+      const payrollQs = kpiPrefs.payrollView.value !== 'all' ? `&payroll_view=${kpiPrefs.payrollView.value}` : ''
       const [chartsData, purchasesData] = await Promise.all([
-        apiFetch<any>('/dashboard/charts?scope=dashboard'),
+        apiFetch<any>(`/dashboard/charts?scope=dashboard${payrollQs}`),
         apiFetch<any[]>('/purchases/')
       ])
+      // Переключатель «Всё/Только закупки/Только ФОТ» виден только тем, у
+      // кого payroll_visible=true в ЭТОМ ответе (право «Видеть ФОТ» хоть на
+      // одной субсидии видимого scope) — см. docstring any_payroll_visible.
+      kpiPrefs.payrollVisible.value = chartsData.payroll_visible ?? false
 
       // Build subsidy rows from charts endpoint
       allSubsidies.value = chartsData.subsidy_stats.map((s: any) => ({
@@ -635,6 +713,11 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         remaining: s.remaining ?? null,
         planned_amount: s.planned_amount ?? null,
         budget_discrepancy: s.budget_discrepancy ?? null,
+        // «Только ФОТ» (владелец, 23.10.2026) — см. docstring у поля в
+        // interface SubsidyRow выше; undefined, если бэкенд не считал
+        // разбивку (payroll_view !== 'only' и type_split !== true).
+        budget_payroll: s.budget_payroll ?? null,
+        planned_payroll: s.planned_payroll ?? null,
         widget: s.widget ?? null,
         committed: s.committed ?? null,
         planned_not_committed: s.planned_not_committed ?? null,
@@ -696,6 +779,13 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
       loadingPurchases.value = false
     }
   }
+
+  // Смена payroll_view (владелец, 23.10.2026) — полный перезапрос /dashboard/
+  // charts (как и при смене kpiTypeSplit выше, но тут нужен НОВЫЙ запрос
+  // основного эндпоинта, не ленивая догрузка: backend решает по-другому,
+  // какие числа отдавать, см. dashboard_charts.py::payroll_view). Не
+  // immediate — первая загрузка уже вызывается отдельно (App/DashboardView).
+  watch(kpiPrefs.payrollView, () => { loadAll() })
 
   return {
     loading, loadingPurchases,

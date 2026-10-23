@@ -522,7 +522,14 @@ async function loadAll() {
     // уже стоит на «Товары и услуги» (persisted localStorage) — обычная загрузка
     // не утяжеляется (Правило №6, тот же флаг, что и useDashboardData.ts).
     const typeSplitQs = kpiPrefs.kpiTypeSplit.value === 'split' ? '&type_split=true' : ''
-    const charts = await apiFetch<any>(`/dashboard/charts?scope=managed${typeSplitQs}`)
+    // payroll_view (владелец, план payroll_view, 23.10.2026) — 'exclude'
+    // просит бэкенд уже вычистить ФОТ (тот же scrub_payroll_from_dashboard_
+    // charts, что и для пользователя без права, ПРАВИЛО №6), 'only' форсирует
+    // разбивку по видам (budget_payroll/planned_payroll/widget[stage][`_payroll`]),
+    // которую SubsidyKpiCards.vue::rawSplitFor уже умеет читать.
+    const payrollQs = kpiPrefs.payrollView.value !== 'all' ? `&payroll_view=${kpiPrefs.payrollView.value}` : ''
+    const charts = await apiFetch<any>(`/dashboard/charts?scope=managed${typeSplitQs}${payrollQs}`)
+    kpiPrefs.payrollVisible.value = charts.payroll_visible ?? false
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
       id: s.id, name: s.name, year: s.year, budget: s.budget,
       // «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md,
@@ -638,7 +645,9 @@ const recentlyDeletedIds = new Set<number>()
 async function silentRefreshSubsidies() {
   try {
     const typeSplitQs = kpiPrefs.kpiTypeSplit.value === 'split' ? '&type_split=true' : ''
-    const charts = await apiFetch<any>(`/dashboard/charts?scope=managed${typeSplitQs}`)
+    const payrollQs = kpiPrefs.payrollView.value !== 'all' ? `&payroll_view=${kpiPrefs.payrollView.value}` : ''
+    const charts = await apiFetch<any>(`/dashboard/charts?scope=managed${typeSplitQs}${payrollQs}`)
+    kpiPrefs.payrollVisible.value = charts.payroll_visible ?? false
     const rows: any[] = charts.subsidy_stats || []
     let statusRows: Array<{ id: number; status?: string; created_by?: number | null; approved_by?: number | null; approved_at?: string | null }> = []
     try {
@@ -726,6 +735,14 @@ watch(() => kpiPrefs.kpiTypeSplit.value, (v) => {
   const hasSplit = s?.widget && Object.values(s.widget).some(w => Object.keys(w).some(k => k.endsWith('_goods')))
   if (!hasSplit) silentRefreshSubsidies()
 })
+
+// payroll_view (владелец, план payroll_view, 23.10.2026) — КАЖДАЯ смена
+// обязана перезапросить /dashboard/charts (не ленивая догрузка, как
+// kpiTypeSplit выше): бэкенд считает ПО-РАЗНОМУ, что отдавать, для каждого
+// из трёх режимов (exclude вычищает числа, only форсирует разбивку по видам,
+// см. dashboard_charts.py::effective_type_split) — старые данные одного
+// режима не годятся для другого.
+watch(() => kpiPrefs.payrollView.value, () => { silentRefreshSubsidies() })
 
 async function downloadFeoTemplate(subsidyId?: number, subsidyName?: string) {
   const token = localStorage.getItem('auth_token')

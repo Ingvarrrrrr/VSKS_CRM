@@ -50,6 +50,10 @@
         <v-btn size="x-small" value="split">Товары и услуги</v-btn>
       </v-btn-toggle>
     </div>
+    <!-- Переключатель «Всё / Только закупки / Только ФОТ» (владелец, план
+         payroll_view, 23.10.2026) — отдельный файл (Правило №5), видим только
+         тем, у кого payrollVisible=true. -->
+    <KpiPayrollViewToggle />
     <!-- Поиск по субсидии в дереве ФЭО (владелец, 2026-09-15): «ОУ-2 огнетушитель не
          помню где находится... задолбался искать» — общий поиск по БД не привязан к
          текущей субсидии и не показывает путь. Ищет по названиям направлений/
@@ -402,6 +406,7 @@ import FeoCollapseCandidatesDialog from '@/components/subsidies/FeoCollapseCandi
 import FeoCollapseConfirmDialog from '@/components/subsidies/FeoCollapseConfirmDialog.vue'
 // Раздел C — см. докстринг у переключателя «Суммы» в шаблоне выше.
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+import KpiPayrollViewToggle from '@/components/subsidies/KpiPayrollViewToggle.vue'
 // «Закуплено полностью» (владелец, 30.09.2026) — см. докстринг у легенды/
 // переключателя в шаблоне выше.
 import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'

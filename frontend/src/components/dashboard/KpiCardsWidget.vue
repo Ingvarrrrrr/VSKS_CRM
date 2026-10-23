@@ -4,6 +4,9 @@
       <v-btn value="total" size="small">Целиком</v-btn>
       <v-btn value="split" size="small">Товары и услуги</v-btn>
     </v-btn-toggle>
+    <!-- Переключатель «Всё / Только закупки / Только ФОТ» (владелец, план
+         payroll_view, 23.10.2026) — отдельный файл (Правило №5). -->
+    <KpiPayrollViewToggle />
   </div>
   <v-row v-if="loading" class="kpi-row" style="margin:0">
     <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="n in 9" :key="'skel-'+n">
@@ -70,6 +73,7 @@
 import { computed } from 'vue'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import { KIND_LABELS, hasStageDrill, type ItemTypeKind } from '@/utils/itemTypeKind'
+import KpiPayrollViewToggle from '@/components/subsidies/KpiPayrollViewToggle.vue'
 
 const props = defineProps<{
   loading: boolean
@@ -118,7 +122,9 @@ function fmtSplit(v: number): string {
 <style scoped>
 .kpi-toggle-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 8px;
   margin-bottom: 8px;
 }
 .kpi-split-rows {

@@ -52,9 +52,9 @@
                  введено», БЕЗ суммы и БЕЗ разбивки по товарам/услугам (старая
                  подмена «бюджет = план», budget_from_plan, отменена). -->
             <template v-if="feoEntered">
-              <div class="kpi-value">{{ formatCurrency(kpiSubAnim_budget) }}</div>
+              <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('budget') ?? 0) : kpiSubAnim_budget) }}</div>
               <div class="kpi-label">Бюджет (ФЭО)</div>
-              <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+              <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop>
                 <template v-if="splitRowsFor('budget')">
                   <div v-for="row in splitRowsFor('budget')" :key="row.kind" class="kpi-split-row kpi-split-row-clickable"
                     @click="openCardDrill('budget', row.kind)">
@@ -79,15 +79,18 @@
         <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="kpi.kpiCardClass('plan_schedule')" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в плане закупок" @click="openCardDrill('plan_schedule', 'all')">
           <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_plan_schedule) }}</div>
+            <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('plan_schedule') ?? 0) : kpiSubAnim_plan_schedule) }}</div>
             <div class="kpi-label" title="Утверждённый план. Ожидающее согласования не входит">Запланировано</div>
             <!-- Шаг 6 (план humble-stirring-emerson.md, 23.10.2026) — ссылка
                  «на согласовании +N», сценарий владельца 100 → +2,1 на
                  согласовании → 102,1. Вся логика/разметка в отдельном файле
                  (Правило №5, PendingExcessNote.vue) — здесь только вызов, не
                  конфликтует с раскладкой «по позициям/экономия/превышение»
-                 ниже (другой исполнитель, тот же блок карточки). -->
-            <PendingExcessNote />
+                 ниже (другой исполнитель, тот же блок карточки).
+                 Скрыта в exclude/only (владелец, план payroll_view,
+                 23.10.2026) — ссылка несёт сумму ПО ВСЕЙ субсидии, смешивать
+                 с «только закупки»/«только ФОТ» нельзя, см. задание. -->
+            <PendingExcessNote v-if="!hidePendingAndCeilingNotes" />
             <!-- Шаг 1 плана humble-stirring-emerson.md (23.10.2026, владелец)
                  — заменяет прежнюю подпись «в т.ч. перерасход+экономия»
                  (13.10.2026, была ОДНОЙ строкой) — ТРИ строки: «по плановым
@@ -106,7 +109,7 @@
                  экономии/превышения) — новое окно не заводим. Ссылка «на
                  согласовании +N» (PendingExcessNote.vue) выше — ОТДЕЛЬНАЯ
                  строка другого исполнителя, не трогаем. -->
-            <div class="kpi-plan-breakdown text-caption text-medium-emphasis">
+            <div v-if="!hidePendingAndCeilingNotes" class="kpi-plan-breakdown text-caption text-medium-emphasis">
               <div class="kpi-plan-breakdown-row kpi-plan-breakdown-row-clickable"
                 @click.stop="openCardDrill('plan_schedule', 'all')"
                 title="Сумма плановых позиций и заданных на категорию сумм">
@@ -131,7 +134,7 @@
                  согласования. «Где взять деньги» на уровне субсидии целиком
                  (без categoryId — тот же приём, что и у «Можно
                  перераспределить» в SubsidyMoneyCards.vue, см. её шаблон). -->
-            <div v-if="planOverCeilingAmount > 0.005" class="kpi-sub-note kpi-ceiling-over text-caption"
+            <div v-if="!hidePendingAndCeilingNotes && planOverCeilingAmount > 0.005" class="kpi-sub-note kpi-ceiling-over text-caption"
               :title="ceilingOverMatchesCards ? '' : 'статьи, где ФЭО не введено, в сравнение не входят'" @click.stop
             >
               {{ planCeilingNoteText }}
@@ -147,10 +150,10 @@
                  несогласованное превышение, см. usePendingExcessTotal.ts) —
                  вместо правки суммы просто подписываем это словами владельца,
                  когда pending > 0, title объясняет разницу с числом карточки. -->
-            <div v-if="isSplit && planScheduleSplitPendingTotal > 0.005" class="kpi-sub-note text-caption text-medium-emphasis" @click.stop>
+            <div v-if="isSplit && !isPayrollOnly && planScheduleSplitPendingTotal > 0.005" class="kpi-sub-note text-caption text-medium-emphasis" @click.stop>
               вместе с тем, что на согласовании:
             </div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop
+            <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop
               :title="planScheduleSplitPendingTotal > 0.005
                 ? `Разбивка по типам включает превышения, которые ждут согласования, поэтому сумма больше числа карточки на ${formatCurrency(planScheduleSplitPendingTotal)}`
                 : ''"
@@ -179,9 +182,9 @@
         <div v-bind="tip" class="kpi-card kpi-work" :class="kpi.kpiCardClass('work')" @click="openStageAll('work')">
           <div class="kpi-icon-box"><v-icon icon="mdi-progress-wrench" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_work) }}</div>
+            <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('work') ?? 0) : kpiSubAnim_work) }}</div>
             <div class="kpi-label">Ведётся работа</div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+            <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('work')">
                 <div v-for="row in splitRowsFor('work')" :key="row.kind" class="kpi-split-row"
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('work'), 'kpi-split-row-active': hasStageDrill('work') && isActiveTypeRow('work', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
@@ -202,9 +205,9 @@
         <div v-bind="tip" class="kpi-card kpi-ordered" :class="kpi.kpiCardClass('ordered')" @click="openStageAll('ordered')">
           <div class="kpi-icon-box"><v-icon icon="mdi-cart-check" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_ordered) }}</div>
+            <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('ordered') ?? 0) : kpiSubAnim_ordered) }}</div>
             <div class="kpi-label">Заказано</div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+            <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('ordered')">
                 <div v-for="row in splitRowsFor('ordered')" :key="row.kind" class="kpi-split-row"
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('ordered'), 'kpi-split-row-active': hasStageDrill('ordered') && isActiveTypeRow('ordered', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
@@ -227,7 +230,7 @@
         <div v-bind="tip" class="kpi-card kpi-contracts" @click="openContractsDrill">
           <div class="kpi-icon-box"><v-icon icon="mdi-file-sign" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_contracts) }}</div>
+            <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('contracts') ?? 0) : kpiSubAnim_contracts) }}</div>
             <div class="kpi-label">Заключено договоров</div>
             <!-- Задача 3 (владелец, 04.10.2026): остаток помесячных платежей
                  по уже заключённым помесячным договорам до конца года —
@@ -236,11 +239,11 @@
                  (владелец, 15.10.2026, план abstract-noodling-pelican.md) —
                  раскрытое дерево договор → помесячные платежи, MonthlyFutureTreeDialog,
                  metric=monthly_future (backend/app/services/monthly_future_payments.py). -->
-            <div v-if="monthlyFutureToYearEnd > 0" class="kpi-sub-note kpi-sub-note-clickable text-caption text-medium-emphasis"
+            <div v-if="!hidePendingAndCeilingNotes && monthlyFutureToYearEnd > 0" class="kpi-sub-note kpi-sub-note-clickable text-caption text-medium-emphasis"
               @click.stop="cardDrills.openMonthlyTree('monthly_future')">
               из них ещё уйдёт помесячно до конца года: {{ formatCurrency(monthlyFutureToYearEnd) }}
             </div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+            <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('contracts')">
                 <div v-for="row in splitRowsFor('contracts')" :key="row.kind" class="kpi-split-row"
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('contracts'), 'kpi-split-row-active': hasStageDrill('contracts') && isActiveTypeRow('contracts', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
@@ -261,9 +264,9 @@
         <div v-bind="tip" class="kpi-card kpi-delivered" :class="kpi.kpiCardClass('delivered')" @click="openStageAll('delivered')">
           <div class="kpi-icon-box"><v-icon icon="mdi-truck-check" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_delivered) }}</div>
+            <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('delivered') ?? 0) : kpiSubAnim_delivered) }}</div>
             <div class="kpi-label">Поставлено</div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+            <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('delivered')">
                 <div v-for="row in splitRowsFor('delivered')" :key="row.kind" class="kpi-split-row"
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('delivered'), 'kpi-split-row-active': hasStageDrill('delivered') && isActiveTypeRow('delivered', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
@@ -284,9 +287,9 @@
         <div v-bind="tip" class="kpi-card kpi-delivered_unpaid" :class="kpi.kpiCardClass('delivered_unpaid')" @click="openStageAll('delivered_unpaid')">
           <div class="kpi-icon-box"><v-icon icon="mdi-truck-alert" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_delivered_unpaid) }}</div>
+            <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('delivered_unpaid') ?? 0) : kpiSubAnim_delivered_unpaid) }}</div>
             <div class="kpi-label">Поставлено, не оплачено</div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+            <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('delivered_unpaid')">
                 <div v-for="row in splitRowsFor('delivered_unpaid')" :key="row.kind" class="kpi-split-row"
                   :class="{ 'kpi-split-row-clickable': hasStageDrill('delivered_unpaid'), 'kpi-split-row-active': hasStageDrill('delivered_unpaid') && isActiveTypeRow('delivered_unpaid', row.kind), 'kpi-split-row-neg': row.amount < -0.5 }"
@@ -320,12 +323,14 @@
                  крупное число/чипы → MetricDrillDialog paid_declared[/kind],
                  «подтверждено выпиской» → paid_confirmed (своя точка входа,
                  @click.stop — не триггерит клик карточки). -->
-            <div class="kpi-value">{{ formatCurrency(kpiSubAnim_paid) }}</div>
+            <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (paidDeclaredByKind.payroll || 0) : kpiSubAnim_paid) }}</div>
             <div class="kpi-label">Оплачено</div>
             <div class="kpi-paid-dual">
               <!-- Задача 3 (владелец, 06.10.2026): кружки-маркеры товары/услуги —
-                   тот же приём, что у остальных карточек (kpi-split-dot-*). -->
-              <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
+                   тот же приём, что у остальных карточек (kpi-split-dot-*).
+                   Скрыты в «Только ФОТ» (владелец, 23.10.2026) — главное число
+                   карточки уже = ФОТ, смешивать с товарами/услугами не нужно. -->
+              <div v-if="!isPayrollOnly" class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
                 <span class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_declared', 'goods')"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidDeclaredByKind.goods) }}</span>
                 <span class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_declared', 'services')"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidDeclaredByKind.services) }}</span>
                 <!-- ФОТ (задача владельца 21.10.2026, ХРО_2026) — третий чип,
@@ -338,15 +343,15 @@
               </div>
               <div class="kpi-paid-dual-row kpi-paid-dual-row-clickable" @click.stop="cardDrills.openMetric('paid_confirmed')">
                 <span class="kpi-paid-dual-label">подтверждено выпиской:</span>
-                <span class="kpi-paid-dual-amount">{{ formatCurrency(paidConfirmedTotal) }}</span>
+                <span class="kpi-paid-dual-amount">{{ formatCurrency(isPayrollOnly ? (paidConfirmedByKind.payroll || 0) : paidConfirmedTotal) }}</span>
               </div>
-              <div class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
+              <div v-if="!isPayrollOnly" class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
                 <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidConfirmedByKind.goods) }}</span>
                 <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidConfirmedByKind.services) }}</span>
                 <span v-if="Math.abs(paidConfirmedByKind.payroll || 0) > 0.5" class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-payroll" />ФОТ {{ formatCurrency(paidConfirmedByKind.payroll || 0) }}</span>
                 <span v-if="Math.abs(paidConfirmedByKind.unspecified || 0) > 0.5" class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-unspecified" />без типа {{ formatCurrency(paidConfirmedByKind.unspecified || 0) }}</span>
               </div>
-              <div v-if="paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
+              <div v-if="!isPayrollOnly && paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
                 <span class="kpi-paid-dual-label">расхождение:</span>
                 <span class="kpi-paid-dual-amount">{{ paidDiff >= 0 ? '+' : '−' }}{{ formatCurrency(Math.abs(paidDiff)) }}</span>
               </div>
@@ -382,9 +387,9 @@
                  (ФЭО)» выше: без введённого ФЭО «Свободно»/«Превышение» не
                  посчитать (budget − planned с budget=0 — ложное превышение). -->
             <template v-if="feoEntered">
-              <div class="kpi-value">{{ formatCurrency(Math.abs(kpiSubAnim_free)) }}</div>
-              <div class="kpi-label">{{ freeDiffRounded < 0 ? 'Превышение' : 'Свободно' }}</div>
-              <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+              <div class="kpi-value">{{ formatCurrency(Math.abs(isPayrollOnly ? (payrollOnlyValue('free') ?? 0) : kpiSubAnim_free)) }}</div>
+              <div class="kpi-label">{{ (isPayrollOnly ? (payrollOnlyValue('free') ?? 0) : freeDiffRounded) < 0 ? 'Превышение' : 'Свободно' }}</div>
+              <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop>
                 <template v-if="splitRowsFor('free')">
                   <div v-for="row in splitRowsFor('free')" :key="row.kind" class="kpi-split-row kpi-split-row-clickable"
                     :class="{ 'kpi-split-row-neg': row.amount !== null && row.amount < 0 }"
@@ -420,7 +425,7 @@
        компании (тот же источник и та же логика, что и FeoTreeRow.vue на
        уровне категории — node=null здесь означает уровень субсидии, см. её
        докстринг). Правило №6 — не дублировать GET/POST/decide/карту согласований. -->
-  <div v-if="isSplit" class="kpi-type-excess-block">
+  <div v-if="isSplit && !isPayrollOnly" class="kpi-type-excess-block">
     <template v-for="tk in feoTreeExcess.typeExcessKindDefs" :key="tk.kind">
       <div v-if="feoTreeExcess.typeExcessFor(null, tk.kind)" class="kpi-type-excess-row">
         <template v-if="feoTreeExcess.typeExcessFor(null, tk.kind)!.approval?.status === 'pending'">
@@ -651,6 +656,7 @@ import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
 import { usePendingExcessTotal } from '@/composables/subsidies/usePendingExcessTotal'
 import { planCeilingNote } from '@/utils/planCeilingNote'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+import { payrollOnlyFromByKind, payrollOnlyFree } from '@/utils/kpiPayrollOnly'
 import {
   KIND_LABELS, KIND_SHORT_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill,
   type ItemTypeKind,
@@ -679,6 +685,26 @@ const feoTreeExcess = useFeoTreeExcess()
 const excessDrilldown = useExcessDrilldown()
 const kpiPrefs = useKpiPrefs()
 const isSplit = computed(() => kpiPrefs.kpiTypeSplit.value === 'split')
+// «Всё / Только закупки / Только ФОТ» (владелец, план payroll_view,
+// 23.10.2026). "exclude" ничего не трогает здесь — бэкенд уже прислал числа
+// без ФОТ (SubsidiesView.vue добавляет ?payroll_view=exclude в запрос,
+// ПРАВИЛО №6, тот же scrub, что и для пользователя без права «Видеть ФОТ»).
+// "only" — главное число каждой карточки подменяется её payroll-строкой из
+// УЖЕ готовой разбивки (rawSplitFor/*_by_kind) функцией из отдельного файла
+// (kpiPayrollOnly.ts, Правило №6 — не считаем здесь заново).
+const isPayrollOnly = computed(() => kpiPrefs.payrollView.value === 'only')
+const hidePendingAndCeilingNotes = computed(() => kpiPrefs.payrollView.value !== 'all')
+/** Главное число карточки-этапа (budget/plan_schedule/work/ordered/contracts/
+ * delivered/delivered_unpaid/paid) в режиме «Только ФОТ» — читает ТОТ ЖЕ
+ * rawSplitFor(stage), что уже строит строки «товары/услуги/без типа» (не
+ * вторая функция сбора данных, см. docstring у rawSplitFor выше), payroll
+ * выбирает kpiPayrollOnly.ts. */
+function payrollOnlyValue(stage: SplitStageKey): number | null {
+  if (stage === 'free') {
+    return payrollOnlyFree(ctx.selectedSubsidy.value as any)
+  }
+  return payrollOnlyFromByKind(rawSplitFor(stage))
+}
 // «ФЭО не введено» (владелец 07.10.2026, план .planning/quick/2026-10-07-dnr-
 // feo-cards/PLAN.md шаг 1, решение №3 — budget_from_plan отменено) — единственный
 // флаг, на который теперь опираются карточки «Бюджет (ФЭО)»/«Свободно»

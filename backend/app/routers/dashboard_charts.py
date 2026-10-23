@@ -93,7 +93,17 @@ async def dashboard_charts(
     # по типу). Ленивая догрузка — без флага ответ БАЙТ-В-БАЙТ прежний (доп.
     # вычисления просто не выполняются, ни одно существующее поле не трогается).
     type_split: bool = Query(False),
+    # Переключатель «Всё/Только закупки/Только ФОТ» (владелец, план
+    # payroll_view, 23.10.2026) — ТОЛЬКО для тех, кто видит ФОТ
+    # (subsidy.view_payroll). "exclude" переиспользует scrub_payroll_from_
+    # dashboard_charts с force_hide_all=True — ТА ЖЕ функция, что прячет ФОТ
+    # от пользователя без права, просто принудительно для ВСЕХ (ПРАВИЛО №6,
+    # не вторая формула). "only" ничего не вычитает — лишь форсирует ту же
+    # разбивку по видам, что и ?type_split=true (фронт сам берёт строку
+    # payroll из уже готовых *_by_kind/budget_payroll/planned_payroll).
+    payroll_view: str = Query("all", regex="^(all|exclude|only)$"),
 ):
+    effective_type_split = type_split or payroll_view == "only"
     org_ids = get_org_filter(current_user)
     # «Субсидии»: орг-админ-роль + гранты. «Дашборд»: двухуровневая видимость по вкладке dashboard.
     managed = scope == "managed"
@@ -265,7 +275,7 @@ async def dashboard_charts(
     # _calculate_feo_planned_tree_bulk (см. её докстринг и docstring
     # feo_plan_subsidy_totals/subsidy_type_totals — опциональный `tree`).
     _shared_feo_tree = None
-    if type_split and sid_list:
+    if effective_type_split and sid_list:
         from app.services.feo_plan_tree import compute_feo_plan_tree as _compute_feo_plan_tree
         _shared_feo_tree = await _compute_feo_plan_tree(db, sid_list)
     planned_tree_map = await _calculate_feo_planned_tree_bulk(db, sid_list, tree=_shared_feo_tree)
@@ -852,7 +862,7 @@ async def dashboard_charts(
     # догрузка: без флага этот блок не выполняется вовсе, существующие ключи
     # widgets/subsidy_stats выше уже полностью посчитаны и не трогаются здесь. ──
     dashboard_type_totals: Optional[dict] = None
-    if type_split:
+    if effective_type_split:
         def _purchase_filter(q):
             if use_sids:
                 return _apply_purchase_org_filter(q, current_user, subsidy_ids=visible_subsidy_ids)
@@ -1006,11 +1016,21 @@ async def dashboard_charts(
         "widgets": widgets,
         "subsidies_near_ceiling": subsidies_near_ceiling,
     }
+    # payroll_view=all|exclude|only (владелец, 23.10.2026) — payroll_visible в
+    # ответе должен отражать РЕАЛЬНОЕ право (subsidy.view_payroll), а не
+    # выбранный на экране режим — иначе переключатель исчез бы у самого
+    # пользователя, который его выбрал. Считается ДО scrub (на тех же sid_list,
+    # до любого force_hide_all).
+    from app.services.payroll_visibility import any_payroll_visible
+    payload["payroll_visible"] = await any_payroll_visible(current_user, db, sid_list)
     # Гигиена (находка координатора 21.10.2026): payload.update(dashboard_type_totals)
     # вызывался ДВА раза — до scrub (бессмысленно, тут же перезатирался) и после
     # (нужное). Оставлен ОДИН раз, после scrub — budget_payroll/planned_payroll
     # в payload обязаны быть уже вычищенными суммами.
-    await scrub_payroll_from_dashboard_charts(current_user, db, subsidy_stats, widgets, dashboard_type_totals)
+    await scrub_payroll_from_dashboard_charts(
+        current_user, db, subsidy_stats, widgets, dashboard_type_totals,
+        force_hide_all=(payroll_view == "exclude"),
+    )
     if dashboard_type_totals is not None:
         payload.update(dashboard_type_totals)
     return payload

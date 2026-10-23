@@ -5,6 +5,11 @@ import { apiFetch } from '@/api'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { pct, truncate, formatCurrency } from './dashboardFormat'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+// Индикатор «карточки пересчитываются» (владелец, 23.10.2026, доп. задача к
+// payroll_view) — общий singleton с KpiCardsWidget.vue/KpiPayrollViewToggle.vue
+// (Правило №6), здесь используется для токена против устаревшего ответа и
+// для включения/выключения самого флага вокруг «тихих» перезагрузок ниже.
+import { useKpiRecalc } from '@/composables/useKpiRecalc'
 import { formatEconomyUnmeasuredText, type EconomyUnmeasuredByReason } from '@/utils/economyUnmeasured'
 import { payrollOnlyFromByKind, payrollOnlyFromStageBucket } from '@/utils/kpiPayrollOnly'
 
@@ -127,6 +132,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   // что totalBudget/totalPlanSchedule ниже: filteredSubsidies по году +
   // выбранным id, независимо от того, пуст ли selectedSubsidyIds).
   const kpiPrefs = useKpiPrefs()
+  const kpiRecalc = useKpiRecalc()
   const typeSplitLoaded = ref(false)
   const typeSplitLoading = ref(false)
   const typeSplitSubsidyStats = ref<Record<number, any>>({})
@@ -210,8 +216,15 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   async function ensureTypeSplitLoaded() {
     if (typeSplitLoaded.value || typeSplitLoading.value) return
     typeSplitLoading.value = true
+    // Токен useKpiRecalc.ts (владелец, 23.10.2026, доп.) — при быстром
+    // переключении «Целиком» → «Товары и услуги» → «Целиком» → «Товары и
+    // услуги» несколько раз подряд этот запрос мог бы прилететь ПОСЛЕ более
+    // свежего (payroll_view сменился и т.п.) и перезаписать карточки его
+    // устаревшими данными; guard ниже отбрасывает такой ответ молча.
+    const myToken = kpiRecalc.startRecalc()
     try {
       const chartsData = await apiFetch<any>('/dashboard/charts?scope=dashboard&type_split=true')
+      if (!kpiRecalc.isCurrent(myToken)) return
       const map: Record<number, any> = {}
       for (const s of chartsData.subsidy_stats || []) map[s.id] = s
       typeSplitSubsidyStats.value = map
@@ -221,6 +234,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
       console.error('Dashboard type-split load error:', e)
     } finally {
       typeSplitLoading.value = false
+      kpiRecalc.finishRecalc(myToken)
     }
   }
 
@@ -664,9 +678,22 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   })
 
   // ── Load data ─────────────────────────────────────
-  async function loadAll() {
-    loading.value = true
-    loadingPurchases.value = true
+  // silent (владелец, 23.10.2026, доп. задача) — вызов из watch(payrollView)
+  // ниже: полная замена v-skeleton-loader блока (loading=true) стирала бы
+  // уже показанные карточки на миг переключения, вместо «старые числа
+  // приглушены, идёт пересчёт» — тот же приём, что silentRefreshSubsidies()
+  // в SubsidiesView.vue (не трогает loading), но здесь ЕСТЬ отдельный флаг
+  // индикатора (useKpiRecalc.ts, Правило №6 — общий с KpiCardsWidget.vue/
+  // KpiPayrollViewToggle.vue), который KpiRecalcOverlay.vue/KpiRecalcBadge.vue
+  // показывают поверх уже отрисованных карточек.
+  async function loadAll(opts: { silent?: boolean } = {}) {
+    const silent = !!opts.silent
+    if (!silent) { loading.value = true; loadingPurchases.value = true }
+    // Токен — защита от устаревшего ответа при быстрых повторных кликах по
+    // переключателю (useKpiRecalc.ts docstring): новее запрос стартовал —
+    // этот обязан молча отбросить свои данные, не перезаписать актуальный
+    // режим его устаревшими числами.
+    const myToken = silent ? kpiRecalc.startRecalc() : null
     try {
       // payroll_view (владелец, план 23.10.2026) — передаётся так же, как
       // ?type_split=true передаётся в отдельный ensureTypeSplitLoaded() (та
@@ -679,6 +706,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         apiFetch<any>(`/dashboard/charts?scope=dashboard${payrollQs}`),
         apiFetch<any[]>('/purchases/')
       ])
+      if (myToken !== null && !kpiRecalc.isCurrent(myToken)) return
       // Переключатель «Всё/Только закупки/Только ФОТ» виден только тем, у
       // кого payroll_visible=true в ЭТОМ ответе (право «Видеть ФОТ» хоть на
       // одной субсидии видимого scope) — см. docstring any_payroll_visible.
@@ -775,8 +803,8 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
     } catch (e) {
       console.error('Dashboard load error:', e)
     } finally {
-      loading.value = false
-      loadingPurchases.value = false
+      if (!silent) { loading.value = false; loadingPurchases.value = false }
+      if (myToken !== null) kpiRecalc.finishRecalc(myToken)
     }
   }
 
@@ -785,7 +813,8 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   // основного эндпоинта, не ленивая догрузка: backend решает по-другому,
   // какие числа отдавать, см. dashboard_charts.py::payroll_view). Не
   // immediate — первая загрузка уже вызывается отдельно (App/DashboardView).
-  watch(kpiPrefs.payrollView, () => { loadAll() })
+  // silent:true (доп. задача 23.10.2026) — см. docstring loadAll() выше.
+  watch(kpiPrefs.payrollView, () => { loadAll({ silent: true }) })
 
   return {
     loading, loadingPurchases,

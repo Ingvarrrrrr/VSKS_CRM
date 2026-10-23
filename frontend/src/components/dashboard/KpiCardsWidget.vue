@@ -7,13 +7,24 @@
     <!-- Переключатель «Всё / Только закупки / Только ФОТ» (владелец, план
          payroll_view, 23.10.2026) — отдельный файл (Правило №5). -->
     <KpiPayrollViewToggle />
+    <!-- Индикатор «пересчитываю…» для «Целиком/Товары и услуги» (владелец,
+         23.10.2026, доп.) — тот же общий флаг/компонент, что у ФОТ-переключателя
+         выше (Правило №6, useKpiRecalc.ts): первое включение «Товары и услуги»
+         тоже догружает данные (ensureTypeSplitLoaded в useDashboardData.ts). -->
+    <KpiRecalcBadge />
   </div>
+  <!-- Пересчёт после смены ФОТ/типа-разбивки (владелец, 23.10.2026, доп.) —
+       НЕ полный skeleton-блок ниже (тот только для первой загрузки страницы),
+       а полупрозрачный слой над уже показанными карточками + полоска сверху,
+       числа остаются на месте, просто приглушены (KpiRecalcOverlay.vue,
+       Правило №6 — общий с SubsidyKpiCards.vue компонент). -->
   <v-row v-if="loading" class="kpi-row" style="margin:0">
     <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="n in 9" :key="'skel-'+n">
       <v-skeleton-loader type="card" height="100" class="rounded-lg" />
     </v-col>
   </v-row>
-  <v-row v-else class="kpi-row" style="margin:0">
+  <KpiRecalcOverlay v-else :active="kpiRecalc.recalculating.value">
+  <v-row class="kpi-row" style="margin:0">
     <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="card in kpiCards" :key="card.key">
       <v-tooltip :text="card.tooltip ?? undefined" location="bottom" :disabled="!card.tooltip">
         <template #activator="{ props: tip }">
@@ -67,13 +78,17 @@
       </v-tooltip>
     </v-col>
   </v-row>
+  </KpiRecalcOverlay>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+import { useKpiRecalc } from '@/composables/useKpiRecalc'
 import { KIND_LABELS, hasStageDrill, type ItemTypeKind } from '@/utils/itemTypeKind'
 import KpiPayrollViewToggle from '@/components/subsidies/KpiPayrollViewToggle.vue'
+import KpiRecalcBadge from '@/components/KpiRecalcBadge.vue'
+import KpiRecalcOverlay from '@/components/KpiRecalcOverlay.vue'
 
 const props = defineProps<{
   loading: boolean
@@ -89,6 +104,7 @@ const emit = defineEmits<{
 }>()
 
 const kpiPrefs = useKpiPrefs()
+const kpiRecalc = useKpiRecalc()
 const isSplit = computed(() => kpiPrefs.kpiTypeSplit.value === 'split')
 
 interface SplitRow { kind: ItemTypeKind; label: string; amount: number }

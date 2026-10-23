@@ -18,11 +18,17 @@
       <v-btn size="x-small" value="exclude">Только закупки</v-btn>
       <v-btn size="x-small" value="only">Только ФОТ</v-btn>
     </v-btn-toggle>
+    <!-- Задача владельца (23.10.2026, доп.): индикатор «карточки
+         пересчитываются», пока не пришёл новый ответ /dashboard/charts —
+         общий компонент/флаг (Правило №6, useKpiRecalc.ts), переключатель
+         не блокируется. -->
+    <KpiRecalcBadge />
   </div>
 </template>
 
 <script setup lang="ts">
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+import KpiRecalcBadge from '@/components/KpiRecalcBadge.vue'
 
 const kpiPrefs = useKpiPrefs()
 </script>

@@ -6,6 +6,11 @@
       <v-btn value="total" size="small">Целиком</v-btn>
       <v-btn value="split" size="small">Товары и услуги</v-btn>
     </v-btn-toggle>
+    <!-- Индикатор «пересчитываю…» (владелец, 23.10.2026, доп.) — общий
+         компонент/флаг с KpiPayrollViewToggle.vue (Правило №6,
+         useKpiRecalc.ts): первое включение «Товары и услуги» тоже уходит в
+         silentRefreshSubsidies() (см. watch(kpiTypeSplit) в SubsidiesView.vue). -->
+    <KpiRecalcBadge />
   </div>
 
   <!-- Задача (владелец, 07.10.2026, прод id=74 «ЛНР», второй заход — скриншот
@@ -38,7 +43,13 @@
     </span>
   </v-alert>
 
-  <!-- KPI mini-cards for selected subsidy -->
+  <!-- KPI mini-cards for selected subsidy. Оборачиваем в KpiRecalcOverlay
+       (владелец, 23.10.2026, доп.) — во время смены ФОТ/типа-разбивки
+       (silentRefreshSubsidies в SubsidiesView.vue не трогает loading, чтобы
+       не моргать сеткой на удалении/добавлении субсидии) числа оставались
+       без признака пересчёта; теперь слой+полоска сверху, Правило №6 — тот
+       же компонент, что у KpiCardsWidget.vue на дашборде. -->
+  <KpiRecalcOverlay :active="kpiRecalc.recalculating.value">
   <div class="detail-kpis">
     <!-- 1. Бюджет (ФЭО) -->
     <v-tooltip location="bottom" :disabled="true">
@@ -417,6 +428,7 @@
          > 500 строк). -->
     <SubsidyMoneyCards :subsidy="ctx.selectedSubsidy.value" :is-split="isSplit" />
   </div>
+  </KpiRecalcOverlay>
 
   <!-- Раздел E1 (план ancient-prancing-music.md, 21.09): два новых контроля
        превышения ПО ТИПУ на уровне субсидии целиком (независимые от «план над
@@ -656,6 +668,11 @@ import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
 import { usePendingExcessTotal } from '@/composables/subsidies/usePendingExcessTotal'
 import { planCeilingNote } from '@/utils/planCeilingNote'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+// Индикатор «карточки пересчитываются» (владелец, 23.10.2026, доп.) — общий
+// singleton с дашбордом/переключателями (Правило №6, useKpiRecalc.ts).
+import { useKpiRecalc } from '@/composables/useKpiRecalc'
+import KpiRecalcOverlay from '@/components/KpiRecalcOverlay.vue'
+import KpiRecalcBadge from '@/components/KpiRecalcBadge.vue'
 import { payrollOnlyFromByKind, payrollOnlyFree } from '@/utils/kpiPayrollOnly'
 import {
   KIND_LABELS, KIND_SHORT_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill,
@@ -684,6 +701,7 @@ const kpi = useKpiDrilldown(ctx)
 const feoTreeExcess = useFeoTreeExcess()
 const excessDrilldown = useExcessDrilldown()
 const kpiPrefs = useKpiPrefs()
+const kpiRecalc = useKpiRecalc()
 const isSplit = computed(() => kpiPrefs.kpiTypeSplit.value === 'split')
 // «Всё / Только закупки / Только ФОТ» (владелец, план payroll_view,
 // 23.10.2026). "exclude" ничего не трогает здесь — бэкенд уже прислал числа

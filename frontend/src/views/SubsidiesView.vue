@@ -227,6 +227,7 @@ import { captureScroll } from '@/composables/subsidies/usePreserveScroll'
 // здесь только чтобы решить, догружать ли ?type_split=true к /dashboard/charts
 // (Правило №6 — второго переключателя не заводим).
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+import { useKpiRecalc } from '@/composables/useKpiRecalc'
 // Относительный путь (не '@/...'), т.к. tsconfig.app.json не содержит paths-маппинга
 // для алиаса '@' (Vite резолвит его сам через vite.config.ts, но чистый tsc/vue-tsc —
 // нет) — см. комментарий у остальных импортов типов в этом файле (не менялся волной 5c).
@@ -338,6 +339,14 @@ function showSnack(
 }
 
 const kpiPrefs = useKpiPrefs()
+// Индикатор «карточки пересчитываются» (владелец, 23.10.2026, доп. задача
+// к payroll_view) — общий singleton с SubsidyKpiCards.vue/KpiPayrollViewToggle.vue
+// (Правило №6, useKpiRecalc.ts). silentRefreshSubsidies() сама по себе
+// вызывается и из других мест (удаление/создание субсидии) — там флаг НЕ
+// включается (владелец просил индикатор именно на смену ФОТ/типа-разбивки,
+// не на обычное фоновое обновление списка), поэтому recalc стартуется в
+// самих watch() ниже, а не внутри функции.
+const kpiRecalc = useKpiRecalc()
 
 // ── Дерево ФЭО: composables (волна 5c) ─────────────────────────────────────
 // Порядок вызовов важен только для того, что нужно СРАЗУ (refs/computed) —
@@ -642,11 +651,19 @@ const recentlyDeletedIds = new Set<number>()
 // из SubsidyDeleteDialog.vue (через onSubsidyDeleted) и SubsidyEditDialog.vue
 // (updateSubsidy) — оба места раньше звали await ctx.loadAll(), что on каждую
 // мелкую правку включало `loading=true` и на миг размонтировало всю сетку.
-async function silentRefreshSubsidies() {
+// guardToken (владелец, 23.10.2026, доп.) — передают ТОЛЬКО вызовы из
+// watch(kpiTypeSplit)/watch(payrollView) ниже (useKpiRecalc.ts, Правило №6):
+// при быстром повторном переключении режима несколько таких вызовов могут
+// лететь одновременно, и более медленный должен молча отбросить свой ответ,
+// а не затереть карточки числами уже не актуального режима. Остальные
+// вызыватели (удаление/создание субсидии) не передают токен — для них это
+// обычное фоновое обновление без проверки устаревания, как и раньше.
+async function silentRefreshSubsidies(guardToken?: number) {
   try {
     const typeSplitQs = kpiPrefs.kpiTypeSplit.value === 'split' ? '&type_split=true' : ''
     const payrollQs = kpiPrefs.payrollView.value !== 'all' ? `&payroll_view=${kpiPrefs.payrollView.value}` : ''
     const charts = await apiFetch<any>(`/dashboard/charts?scope=managed${typeSplitQs}${payrollQs}`)
+    if (guardToken !== undefined && !kpiRecalc.isCurrent(guardToken)) return
     kpiPrefs.payrollVisible.value = charts.payroll_visible ?? false
     const rows: any[] = charts.subsidy_stats || []
     let statusRows: Array<{ id: number; status?: string; created_by?: number | null; approved_by?: number | null; approved_at?: string | null }> = []
@@ -733,7 +750,13 @@ watch(() => kpiPrefs.kpiTypeSplit.value, (v) => {
   if (v !== 'split') return
   const s = selectedSubsidy.value ?? allSubsidies.value[0]
   const hasSplit = s?.widget && Object.values(s.widget).some(w => Object.keys(w).some(k => k.endsWith('_goods')))
-  if (!hasSplit) silentRefreshSubsidies()
+  if (!hasSplit) {
+    // Индикатор «пересчитываю…» (владелец, 23.10.2026, доп.) — токен
+    // из useKpiRecalc.ts гасится после ответа (или отбрасывается, если за
+    // это время стартовал более новый вызов), см. её docstring.
+    const guardToken = kpiRecalc.startRecalc()
+    silentRefreshSubsidies(guardToken).finally(() => kpiRecalc.finishRecalc(guardToken))
+  }
 })
 
 // payroll_view (владелец, план payroll_view, 23.10.2026) — КАЖДАЯ смена
@@ -742,7 +765,11 @@ watch(() => kpiPrefs.kpiTypeSplit.value, (v) => {
 // из трёх режимов (exclude вычищает числа, only форсирует разбивку по видам,
 // см. dashboard_charts.py::effective_type_split) — старые данные одного
 // режима не годятся для другого.
-watch(() => kpiPrefs.payrollView.value, () => { silentRefreshSubsidies() })
+watch(() => kpiPrefs.payrollView.value, () => {
+  // Та же защита от устаревшего ответа, что и у kpiTypeSplit выше.
+  const guardToken = kpiRecalc.startRecalc()
+  silentRefreshSubsidies(guardToken).finally(() => kpiRecalc.finishRecalc(guardToken))
+})
 
 async function downloadFeoTemplate(subsidyId?: number, subsidyName?: string) {
   const token = localStorage.getItem('auth_token')

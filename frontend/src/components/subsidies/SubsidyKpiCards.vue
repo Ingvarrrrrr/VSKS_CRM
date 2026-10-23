@@ -2,6 +2,13 @@
   <!-- Раздел C (план ancient-prancing-music.md, 21.09): общий с дашбордом
        переключатель «целиком / товары-услуги» — тот же useKpiPrefs.ts. -->
   <div class="kpi-toggle-row">
+    <!-- Переключатель «Всё / Только закупки / Только ФОТ» (владелец, план
+         payroll_view, 23.10.2026) — отдельный файл (Правило №5), слева от
+         «Целиком», та же строка; перенесён сюда из FeoTreeToolbar.vue, чтобы
+         не было двух мест с одним переключателем. Свой KpiRecalcBadge внутри
+         него умышленно убран (см. докстринг там) — здесь он был бы вторым
+         подряд. -->
+    <KpiPayrollViewToggle />
     <v-btn-toggle v-model="kpiPrefs.kpiTypeSplit.value" mandatory density="compact" color="primary">
       <v-btn value="total" size="small">Целиком</v-btn>
       <v-btn value="split" size="small">Товары и услуги</v-btn>
@@ -9,7 +16,8 @@
     <!-- Индикатор «пересчитываю…» (владелец, 23.10.2026, доп.) — общий
          компонент/флаг с KpiPayrollViewToggle.vue (Правило №6,
          useKpiRecalc.ts): первое включение «Товары и услуги» тоже уходит в
-         silentRefreshSubsidies() (см. watch(kpiTypeSplit) в SubsidiesView.vue). -->
+         silentRefreshSubsidies() (см. watch(kpiTypeSplit) в SubsidiesView.vue).
+         Один на оба переключателя этой строки, второй не заводим. -->
     <KpiRecalcBadge />
   </div>
 
@@ -673,6 +681,7 @@ import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import { useKpiRecalc } from '@/composables/useKpiRecalc'
 import KpiRecalcOverlay from '@/components/KpiRecalcOverlay.vue'
 import KpiRecalcBadge from '@/components/KpiRecalcBadge.vue'
+import KpiPayrollViewToggle from '@/components/subsidies/KpiPayrollViewToggle.vue'
 import { payrollOnlyFromByKind, payrollOnlyFree } from '@/utils/kpiPayrollOnly'
 import {
   KIND_LABELS, KIND_SHORT_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill,

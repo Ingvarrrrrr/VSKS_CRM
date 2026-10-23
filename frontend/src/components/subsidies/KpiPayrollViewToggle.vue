@@ -18,17 +18,19 @@
       <v-btn size="x-small" value="exclude">Только закупки</v-btn>
       <v-btn size="x-small" value="only">Только ФОТ</v-btn>
     </v-btn-toggle>
-    <!-- Задача владельца (23.10.2026, доп.): индикатор «карточки
-         пересчитываются», пока не пришёл новый ответ /dashboard/charts —
-         общий компонент/флаг (Правило №6, useKpiRecalc.ts), переключатель
-         не блокируется. -->
-    <KpiRecalcBadge />
+    <!-- Индикатор «пересчитываю…» (Правило №6, useKpiRecalc.ts) умышленно НЕ
+         рисуется здесь: везде, где стоит этот переключатель (KpiCardsWidget.vue,
+         SubsidyKpiCards.vue), рядом уже есть KpiRecalcBadge у соседнего
+         переключателя «Целиком / Товары и услуги» — тот же общий
+         singleton-флаг, второй экземпляр подряд дублировал надпись
+         «пересчитываю…» (правка 23.10.2026, 2-й заход). Свой badge здесь
+         к тому же гасило бы payrollVisible — индикатор мигал бы только у
+         части пользователей. -->
   </div>
 </template>
 
 <script setup lang="ts">
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
-import KpiRecalcBadge from '@/components/KpiRecalcBadge.vue'
 
 const kpiPrefs = useKpiPrefs()
 </script>

@@ -63,7 +63,7 @@
       <v-col cols="5" class="px-2">
         <v-card class="pa-3 mb-2">
           <strong>Строки</strong>
-          <div v-if="!pivot.state.rows.length" class="text-grey text-caption">Перетащите измерения слева</div>
+          <div v-if="!pivot.state.rows.length" class="text-grey text-caption">Нажмите ↑ у поля слева</div>
           <v-chip
             v-for="(r, idx) in pivot.state.rows"
             :key="r.key"
@@ -85,7 +85,7 @@
         </v-card>
         <v-card class="pa-3 mb-2">
           <strong>Значения (меры)</strong>
-          <div v-if="!pivot.state.measures.length" class="text-grey text-caption">Перетащите меру слева</div>
+          <div v-if="!pivot.state.measures.length" class="text-grey text-caption">Выберите меру на вкладке «Меры»</div>
           <v-list density="compact">
             <v-list-item v-for="(m, idx) in pivot.state.measures" :key="m.key">
               <v-list-item-title>{{ m.label }}</v-list-item-title>
@@ -207,7 +207,7 @@
             </tbody>
           </v-table>
           <div v-else class="text-center text-grey pa-4">
-            Добавьте строки, меры и фильтры
+            {{ previewEmptyHint }}
           </div>
         </v-card>
       </v-col>
@@ -313,6 +313,22 @@ const subsidies = ref<any[]>([])
 
 const result = ref<any>({ rows: [], totals: {}, rows_count: 0 })
 const loading = ref(false)
+// true после того как запрос реально ушёл на сервер и ответ получен —
+// отличает «не хватает поля в конфиге» от «запрос выполнен, строк нет»
+const queried = ref(false)
+
+const previewEmptyHint = computed(() => {
+  if (!pivot.state.rows.length && !pivot.state.cols.length) {
+    return 'Добавьте хотя бы одно поле в Строки или Колонки'
+  }
+  if (!pivot.state.measures.length) {
+    return 'Добавьте меру'
+  }
+  if (queried.value) {
+    return 'Нет данных под эти фильтры'
+  }
+  return 'Добавьте строки, меры и фильтры'
+})
 
 const configId = ref<number | null>(null)
 const configName = ref('')
@@ -404,8 +420,13 @@ function saveCalcColumn() {
   reload()
 }
 async function reload() {
-  if (!pivot.state.rows.length || !pivot.state.measures.length) {
+  // Баг-фикс 23.10.2026: раньше требовалось непустое rows — запрос с полями
+  // только в cols (например cols=[subsidy_id, contract_item_name], rows=[])
+  // никогда не отправлялся. Достаточно хотя бы одного измерения в rows ИЛИ
+  // cols, плюс хотя бы одна мера.
+  if ((!pivot.state.rows.length && !pivot.state.cols.length) || !pivot.state.measures.length) {
     result.value = { rows: [], totals: {}, rows_count: 0 }
+    queried.value = false
     return
   }
   loading.value = true
@@ -414,8 +435,10 @@ async function reload() {
       method: 'POST',
       body: JSON.stringify(pivot.buildQuery()),
     })
+    queried.value = true
   } catch (e: any) {
     toast.error('Ошибка: ' + (e?.message || e))
+    queried.value = false
   } finally {
     loading.value = false
   }

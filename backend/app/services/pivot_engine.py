@@ -43,8 +43,17 @@ _TABLE_PREFIX_MAP: Dict[str, Any] = {
 
 # === Базовые JOINs ===
 
-def _base_query():
-    """Базовый select из purchases + LEFT JOIN всех связанных таблиц."""
+def _base_query(include_contract_items: bool = True):
+    """Базовый select из purchases + LEFT JOIN всех связанных таблиц.
+
+    include_contract_items (баг-фикс 23.10.2026, REQUEST_TIMEOUT в конструкторе
+    сводных): JOIN contract_items размножает строки — одна закупка → N позиций
+    договора, и SUM(purchases.planned_quantity) по GROUP BY, не включающему
+    contract_items.*, умножается на число позиций. JOIN нужен ТОЛЬКО когда
+    конфиг реально ссылается на поле из contract_items — вызывающая сторона
+    решает это через `_config_needs_contract_items()` (единственное место,
+    где это определяется — см. ниже), не здесь.
+    """
     from sqlalchemy.orm import aliased
     feo_l1 = aliased(FeoCategory, name='feo_l1')
     feo_l2 = aliased(FeoCategory, name='feo_l2')
@@ -59,13 +68,34 @@ def _base_query():
         .outerjoin(feo_l3, and_(FeoCategory.level == 3, feo_l3.id == FeoCategory.id))
         .outerjoin(feo_l2, and_(feo_l3.parent_id == feo_l2.id, feo_l2.level == 2))
         .outerjoin(feo_l1, and_(feo_l2.parent_id == feo_l1.id, feo_l1.level == 1))
-        # Phase 27.1: LEFT JOIN contract_items для полей contracted_qty / contracted_total / etc.
-        # Cardinality: одна закупка → N contract_items → row-multiplication для list-queries.
-        # Для pivot (aggregation с GROUP BY) JOIN корректен: SUM группируется по purchase_id.
-        # Для list-режима — потенциальное дублирование строк; решение: добавить .distinct() если нужно.
-        .outerjoin(ContractItem, Purchase.id == ContractItem.purchase_id)
     )
+    if include_contract_items:
+        # Phase 27.1: LEFT JOIN contract_items для полей contracted_qty / contracted_total / etc.
+        # Cardinality: одна закупка → N contract_items → row-multiplication.
+        # Подключается только когда конфиг реально использует поле из contract_items
+        # (см. _config_needs_contract_items) — иначе SUM по полям закупки задваивается/
+        # утраивается без видимой причины.
+        q = q.outerjoin(ContractItem, Purchase.id == ContractItem.purchase_id)
     return q, feo_l1, feo_l2, feo_l3
+
+
+def _config_needs_contract_items(*field_key_lists: List[str]) -> bool:
+    """Единственное место, решающее нужен ли JOIN contract_items.
+
+    Смотрит в field_registry.FieldDef.source — не хардкодит список ключей,
+    чтобы при добавлении нового поля с source='contract_item' решение
+    подхватилось автоматически (ПРАВИЛО №6 — один источник истины).
+    """
+    for keys in field_key_lists:
+        for key in keys:
+            f = get_field(key)
+            if f is not None and f.source == 'contract_item':
+                return True
+    return False
+
+
+def _filter_keys_needing_contract_items(filters: Dict[str, Any]) -> List[str]:
+    return list(filters.keys())
 
 
 # === Field accessor ===
@@ -192,9 +222,20 @@ async def execute_query(
     """
     kind = config.get('kind', 'list')
 
-    base, feo_l1, feo_l2, feo_l3 = _base_query()
+    filters_cfg = config.get('filters', {})
+    measure_fields = [m.get('field') for m in config.get('measures', []) if m.get('field')]
+    needs_contract_items = _config_needs_contract_items(
+        config.get('rows', []),
+        config.get('cols', []),
+        config.get('columns', []),
+        config.get('order_by_fields', []) or [ob.get('field') for ob in config.get('order_by', []) if ob.get('field')],
+        measure_fields,
+        _filter_keys_needing_contract_items(filters_cfg),
+    )
+
+    base, feo_l1, feo_l2, feo_l3 = _base_query(include_contract_items=needs_contract_items)
     base = _apply_org_filter(base, user)
-    where = _build_filters(config.get('filters', {}), feo_l1, feo_l2, feo_l3)
+    where = _build_filters(filters_cfg, feo_l1, feo_l2, feo_l3)
     if where:
         base = base.where(and_(*where))
 
@@ -382,7 +423,15 @@ async def _execute_pivot(base, config, feo_l1, feo_l2, feo_l3, db) -> Dict:
     if not select_cols:
         return {'kind': 'pivot', 'rows': [], 'totals': {}, 'rows_count': 0}
 
-    pivot_q = select(*select_cols).select_from(base.subquery())
+    # Баг-фикс 23.10.2026 (REQUEST_TIMEOUT): было select(*select_cols).select_from(base.subquery())
+    # — select_cols ссылаются на колонки ИСХОДНЫХ таблиц (Purchase.x, Subsidy.id, text() на
+    # "purchases."/"feo_l1." и т.п.), а не на колонки подзапроса base.subquery(). Postgres не может
+    # связать их с подзапросом и добавляет purchases/subsidies/contract_items/... В FROM ЧЕРЕЗ ЗАПЯТУЮ
+    # рядом с (subquery) — декартово произведение без фильтров (WHERE/org-фильтр остались внутри
+    # подзапроса), отсюда таймаут и неверные суммы. with_only_columns на САМОМ base сохраняет его
+    # select_from()/outerjoin()-цепочку (purchases LEFT OUTER JOIN ... LEFT OUTER JOIN ...) и
+    # переносит WHERE/org-фильтр в тот же запрос — агрегат считается по одной связной выборке.
+    pivot_q = base.with_only_columns(*select_cols)
 
     if all_dims:
         group_exprs = []

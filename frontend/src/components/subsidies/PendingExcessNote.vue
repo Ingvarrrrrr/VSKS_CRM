@@ -13,7 +13,8 @@
      узлы просто отсутствуют в planTreeByCat (см. usePendingExcessTotal.ts),
      никакой второй проверки прав здесь не нужно. -->
 <template>
-  <div v-if="total > 0.005" class="kpi-sub-note kpi-pending-excess-note text-caption" @click.stop="dialogVisible = true">
+  <div v-if="total > 0.005" class="kpi-sub-note kpi-pending-excess-note text-caption" @click.stop="dialogVisible = true"
+    title="Превышения плана, которые ждут решения согласующего; в «Запланировано» пока не входят">
     на согласовании +{{ formatCurrency(total) }}
   </div>
 

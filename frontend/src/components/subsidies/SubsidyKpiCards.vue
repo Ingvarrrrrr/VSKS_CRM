@@ -80,7 +80,7 @@
           <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_plan_schedule) }}</div>
-            <div class="kpi-label">Запланировано</div>
+            <div class="kpi-label" title="Утверждённый план. Ожидающее согласования не входит">Запланировано</div>
             <!-- Шаг 6 (план humble-stirring-emerson.md, 23.10.2026) — ссылка
                  «на согласовании +N», сценарий владельца 100 → +2,1 на
                  согласовании → 102,1. Вся логика/разметка в отдельном файле
@@ -109,7 +109,7 @@
             <div class="kpi-plan-breakdown text-caption text-medium-emphasis">
               <div class="kpi-plan-breakdown-row kpi-plan-breakdown-row-clickable"
                 @click.stop="openCardDrill('plan_schedule', 'all')"
-                title="Список плановых позиций и заданных на категорию сумм">
+                title="Сумма плановых позиций и заданных на категорию сумм">
                 по плановым позициям {{ formatCurrency(subsidyPlanPositionsTotal) }}
               </div>
               <div v-if="subsidyOrderEconomyItemsTotal > 0.005"
@@ -121,7 +121,7 @@
               <div v-if="subsidyOrderOverspendItemsTotal > 0.005"
                 class="kpi-plan-breakdown-row kpi-plan-breakdown-row-clickable"
                 @click.stop="orderSubstitutionDialogVisible = true"
-                title="Позиции, закупленные целиком дороже плана, после согласования">
+                title="Позиции, купленные дороже плана; превышение согласовано">
                 превышение (согласовано) +{{ formatCurrency(subsidyOrderOverspendItemsTotal) }}
               </div>
             </div>
@@ -134,13 +134,27 @@
             <div v-if="planOverCeilingAmount > 0.005" class="kpi-sub-note kpi-ceiling-over text-caption"
               :title="ceilingOverMatchesCards ? '' : 'статьи, где ФЭО не введено, в сравнение не входят'" @click.stop
             >
-              {{ ceilingOverMatchesCards ? 'выше ФЭО на' : 'в статьях с ФЭО план выше на' }} {{ formatCurrency(planOverCeilingAmount) }} — уменьшите план
+              {{ planCeilingNoteText }}
               <v-btn v-if="ctx.selectedSubsidy.value?.id" size="x-small" variant="text" color="error"
                 prepend-icon="mdi-cash-sync" class="mt-1 d-block"
                 @click.stop="funding.openFundingSources({ subsidyId: ctx.selectedSubsidy.value!.id, amount: planOverCeilingAmount })"
               >Где взять деньги</v-btn>
             </div>
-            <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+            <!-- Правка координатора (найдено ревью tests/test_type_excess_own_sum_feo.py
+                 — backend-формулу plan_<kind> не трогаем, она нужна контролю
+                 «план по типу над ФЭО по типу», см. feo_type_excess_basis.py):
+                 разбивка товары/услуги СОХРАНЯЕТ старое число (несёт
+                 несогласованное превышение, см. usePendingExcessTotal.ts) —
+                 вместо правки суммы просто подписываем это словами владельца,
+                 когда pending > 0, title объясняет разницу с числом карточки. -->
+            <div v-if="isSplit && planScheduleSplitPendingTotal > 0.005" class="kpi-sub-note text-caption text-medium-emphasis" @click.stop>
+              вместе с тем, что на согласовании:
+            </div>
+            <div v-if="isSplit" class="kpi-split-rows" @click.stop
+              :title="planScheduleSplitPendingTotal > 0.005
+                ? `Разбивка по типам включает превышения, которые ждут согласования, поэтому сумма больше числа карточки на ${formatCurrency(planScheduleSplitPendingTotal)}`
+                : ''"
+            >
               <template v-if="splitRowsFor('plan_schedule')">
                 <div v-for="row in splitRowsFor('plan_schedule')" :key="row.kind" class="kpi-split-row kpi-split-row-clickable"
                   @click="openCardDrill('plan_schedule', row.kind)">
@@ -631,6 +645,11 @@ import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
 // переиспользуется без аргумента (тот же приём, что у useFeoTreeExcess()
 // выше).
 import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
+// Шаг доработки (владелец, 23.10.2026) — тот же источник «на согласовании»,
+// что у PendingExcessNote.vue (ПРАВИЛО №6, не вторая формула), нужен здесь
+// для текста красной строки «план выше ФЭО» (planCeilingNoteText ниже).
+import { usePendingExcessTotal } from '@/composables/subsidies/usePendingExcessTotal'
+import { planCeilingNote } from '@/utils/planCeilingNote'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import {
   KIND_LABELS, KIND_SHORT_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill,
@@ -696,6 +715,26 @@ const planOverCeilingAmount = computed(() => ctx.selectedSubsidy.value?.plan_ove
 const ceilingOverMatchesCards = computed(() =>
   Math.abs(planOverCeilingAmount.value - (kpiSubTarget_plan_schedule.value - kpiSubTarget_budget.value)) <= 0.01
 )
+// Шаг доработки (владелец, 23.10.2026) — три случая текста красной строки
+// (см. docstring frontend/src/utils/planCeilingNote.ts): план карточки уже
+// выше бюджета / план+«на согласовании» вместе превысят бюджет / статьи без
+// ФЭО не входят в сравнение. pendingTotal — ТОТ ЖЕ composable, что и
+// PendingExcessNote.vue (ПРАВИЛО №6).
+const pendingExcessForCeilingNote = usePendingExcessTotal(ctx)
+// Правка координатора (ревью tests/test_type_excess_own_sum_feo.py — backend
+// plan_<kind> не трогаем): разбивка товары/услуги под «Запланировано»
+// (splitRowsFor('plan_schedule')) суммируется в число БОЛЬШЕ карточки ровно
+// на эту величину — тот же composable, что у PendingExcessNote.vue/
+// planCeilingNoteText выше, Правило №6, второй раз не считаем.
+const planScheduleSplitPendingTotal = computed(() => pendingExcessForCeilingNote.total.value)
+const planCeilingNoteText = computed(() => planCeilingNote({
+  planOverCeilingAmount: planOverCeilingAmount.value,
+  planCardValue: kpiSubTarget_plan_schedule.value,
+  budgetCardValue: kpiSubTarget_budget.value,
+  pendingTotal: pendingExcessForCeilingNote.total.value,
+  ceilingOverMatchesCards: ceilingOverMatchesCards.value,
+  formatCurrency,
+}).text)
 const kpiSubTarget_work              = computed(() => ctx.selectedSubsidy.value?.work              ?? 0)
 const kpiSubTarget_ordered           = computed(() => ctx.selectedSubsidy.value?.ordered           ?? 0)
 const kpiSubTarget_contracts         = computed(() => ctx.selectedSubsidy.value?.contracts         ?? 0)

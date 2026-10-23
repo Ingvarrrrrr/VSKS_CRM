@@ -305,11 +305,12 @@
           >
             <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />{{ feoExcessChip(item).text }}
           </v-chip>
-          <!-- Значок жёсткого потолка субсидии (владелец, 19.10.2026) — см. ceilingBlockedChip. -->
-          <v-chip v-if="item.ceiling_blocked" size="x-small" :color="ceilingBlockedChip(item).color" variant="flat"
-            :title="ceilingBlockedChip(item).title" @click.stop="openCeilingFunding(item)"
+          <!-- Значок жёсткого потолка субсидии (владелец, 19.10.2026) — см. ceilingBlockedChip.
+               Сумма приходит ИЗ ceilingBadges (ceiling-badges, не поля item). -->
+          <v-chip v-if="ceilingBadges.has(item.id)" size="x-small" :color="ceilingBlockedChip(ceilingBadges.get(item.id)).color" variant="flat"
+            :title="ceilingBlockedChip(ceilingBadges.get(item.id)).title" @click.stop="openCeilingFunding(item)"
           >
-            <v-icon icon="mdi-alert-octagon" size="12" class="mr-1" />{{ ceilingBlockedChip(item).text }}
+            <v-icon icon="mdi-alert-octagon" size="12" class="mr-1" />{{ ceilingBlockedChip(ceilingBadges.get(item.id)).text }}
           </v-chip>
           <!-- Расхождение категории ФЭО шапки/товара/плановой позиции. -->
           <v-tooltip v-if="item.feo_mismatch" location="top" max-width="380">
@@ -533,13 +534,17 @@ import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 const funding = useFundingSources()
 function openCeilingFunding(item: Purchase) {
   if (!item.subsidy_id) return
-  funding.openFundingSources({ subsidyId: item.subsidy_id, amount: item.ceiling_over_amount ?? null })
+  funding.openFundingSources({ subsidyId: item.subsidy_id, amount: props.ceilingBadges.get(item.id) ?? null })
 }
 
 const props = defineProps<{
   headers: any[]
   items: any[]
   filteredOrders: Purchase[]
+  // Значок потолка (владелец, 21.10.2026) — карта purchase_id -> over_amount
+  // из GET /api/purchases/ceiling-badges (useOrdersData.ts::ceilingBadges),
+  // список закупок эту сумму больше не содержит полем.
+  ceilingBadges: Map<number, number>
   loading: boolean
   selectedOrders: Purchase[]
   expanded: string[]

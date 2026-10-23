@@ -75,9 +75,15 @@ export function feoExcessChip(item: Purchase): { color: string; text: string; ti
 // дальше «Плана закупок», пока план субсидии не уменьшат или не найдут
 // деньги (app.services.subsidy_ceiling.assert_subsidy_ceiling). Сумма —
 // ceiling_over_amount, ТА ЖЕ, что у плитки «Запланировано» (ПРАВИЛО №6).
-export function ceilingBlockedChip(item: Purchase): { color: string; text: string; title: string } {
-  const amount = item.ceiling_over_amount != null
-    ? item.ceiling_over_amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+//
+// Перф (владелец, 21.10.2026): значок больше не приходит ПОЛЕМ закупки
+// (item.ceiling_blocked/ceiling_over_amount — GET /api/purchases/ их больше
+// не считает, см. backend/app/routers/purchases.py::list_purchases) — сумма
+// передаётся отдельно, из карты GET /api/purchases/ceiling-badges
+// (useOrdersData.ts::ceilingBadges), которую реестр догружает асинхронно.
+export function ceilingBlockedChip(overAmount: number | null | undefined): { color: string; text: string; title: string } {
+  const amount = overAmount != null
+    ? overAmount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : null
   return {
     color: 'red-darken-3',

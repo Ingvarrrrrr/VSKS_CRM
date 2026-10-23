@@ -20,6 +20,23 @@ export function useOrdersData(options: {
   const { filters, matchesColumnFilters, localSort, getRowField, showSnack } = options
 
   const orders = ref<Purchase[]>([])
+  // Значок «Стоит: план субсидии выше ФЭО» (владелец, 21.10.2026, перф):
+  // GET /api/purchases/ больше не отдаёт ceiling_blocked/ceiling_over_amount
+  // полями закупки (список стал ~3,5с → ~1,9с, дерево ФЭО под значок стоило
+  // ~1,6с) — сумма догружается отдельным батч-запросом GET
+  // /api/purchases/ceiling-badges ПОСЛЕ основного списка и живёт здесь, одной
+  // картой (purchase_id -> over_amount), а не мутацией строк orders.value
+  // (см. ceilingBlockedChip в ordersLabels.ts — принимает сумму, не item).
+  const ceilingBadges = ref<Map<number, number>>(new Map())
+  const loadCeilingBadges = async () => {
+    try {
+      const data = await apiFetch<Record<string, number>>('/purchases/ceiling-badges')
+      ceilingBadges.value = new Map(Object.entries(data).map(([pid, amount]) => [Number(pid), amount]))
+    } catch (e) {
+      // Не блокируем реестр — строки уже отрисованы без значка.
+      console.warn('ceiling-badges load failed', e)
+    }
+  }
   // Возможные дубликаты в реестре: purchase_id -> группа {contractor_name, amount, items: [...]}.
   // Заполняется batch-эндпоинтом GET /purchases/duplicate-groups, без N+1 запросов по строкам.
   const duplicateGroupsMap = ref<Map<number, any>>(new Map())
@@ -216,6 +233,11 @@ export function useOrdersData(options: {
       const params = new URLSearchParams({ scope: 'purchases', with_feo_excess: 'true' })
       if (filters.status) params.set('status', filters.status)
       orders.value = await apiFetch<Purchase[]>(`/purchases/?${params.toString()}`)
+      // Значки потолка — отдельным запросом, НЕ await: список уже отрисован,
+      // строки получат значок через 1-2 с, когда карта обновится (реактивно).
+      // Повторная loadOrders() (смена фильтра/статуса, транзишены) тоже
+      // перезапрашивает значки — набор закупок на странице мог измениться.
+      loadCeilingBadges()
     } catch {
       showSnack('Ошибка загрузки закупок', 'error')
     } finally {
@@ -391,7 +413,7 @@ export function useOrdersData(options: {
   }
 
   return {
-    orders, duplicateGroupsMap, dupGroupFor, subsidies, contractors, loading, transitioning,
+    orders, ceilingBadges, duplicateGroupsMap, dupGroupFor, subsidies, contractors, loading, transitioning,
     contractorsForFilter, expanded, selectedOrders, guardDialog, deleteDialog,
     filteredOrders, filteredOrdersWithRowNum,
     cardsPage, cardsPageSize, cardsSource, cardsTotalPages, pagedCards,

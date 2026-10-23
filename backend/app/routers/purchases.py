@@ -1,7 +1,7 @@
 import difflib
 from types import SimpleNamespace
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from sqlalchemy import select, func, delete, or_
+from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -14,8 +14,11 @@ from app.models.product import Product
 from app.models.feo_category import FeoCategory
 from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
-from app.auth.jwt import get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, OWNER_ROLES
-from app.auth.visibility import build_visibility_clause, get_visible_user_ids, get_visible_subsidy_ids
+from app.auth.jwt import get_current_user, get_single_org_id, ADMIN_ROLES, OWNER_ROLES
+# build_visibility_clause/get_visible_user_ids/get_visible_subsidy_ids/get_org_filter —
+# видимость списка закупок вынесена в app.services.purchase_list_visibility
+# (ПРАВИЛО №6, перф-задача 21.10.2026); этот модуль зовёт их локально там, где
+# нужно (см. update_purchase ниже — свой re-import get_visible_subsidy_ids).
 from app.utils.coerce import coerce_patch_value
 from app.models.user import User
 from app.routers.contracts import ensure_contract_linked
@@ -259,54 +262,15 @@ async def list_purchases(
         # запрос на всю страницу, не N+1.
         selectinload(Purchase.contract),
     )
-    org_ids = get_org_filter(current_user)
-    # #8: явный grant субсидии (user_subsidy_access) расширяет org-фильтр —
-    # пользователь видит закупки субсидии вне своего контура.
-    from app.models.user_subsidy_access import UserSubsidyAccess
-    granted_ids = set((await db.execute(
-        select(UserSubsidyAccess.subsidy_id).where(UserSubsidyAccess.user_id == current_user.id)
-    )).scalars().all())
-    _SCOPED_TABS = {"purchases", "advance_reports", "service_notes"}
-    needs_subsidy_join = org_ids is not None or org_id is not None
-    if scope is not None and scope in _SCOPED_TABS and org_id is None:
-        # Двухуровневая видимость по конкретной вкладке (purchases / advance_reports / service_notes).
-        vis = await get_visible_subsidy_ids(current_user, db, scope)
-        if vis is not None:
-            q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id)
-            q = q.where(Subsidy.id.in_(vis))
-    else:
-        if needs_subsidy_join:
-            q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id)
-            if org_id is not None:
-                # Explicit org filter takes precedence; still validate user has access to this org
-                if org_ids is not None and org_id not in org_ids:
-                    return []
-                q = q.where(Subsidy.org_id == org_id)
-            elif org_ids is not None:
-                q = q.where(or_(Subsidy.org_id.in_(org_ids), Subsidy.id.in_(granted_ids)))
-    # Phase 28: unified visibility helper.
-    # — build_visibility_clause возвращает None для SaaS-ролей (фильтр не нужен),
-    #   иначе or_() с правилами 1-5 (иерархия + участие).
-    clause = await build_visibility_clause(current_user, db, 'purchase')
-    if clause is not None:
-        # Safety-net: для org-lead'ов всё ещё пропускаем закупки с
-        # assigned_user_id IS NULL — на проде осталась 1 legacy-закупка
-        # (id 779 без subsidy_id), будет удалена после ручного triage.
-        # Org-lead = admin/account_owner ИЛИ есть head/managed dept/org/UOA.
-        # Используем visible_user_ids: если size > 1 → user управляет ≥1 чел.
-        vuids = await get_visible_user_ids(current_user, db)
-        is_org_lead = (
-            current_user.role in ADMIN_ROLES
-            or (vuids is not None and len(vuids) > 1)
-        )
-        if is_org_lead:
-            clause = or_(clause, Purchase.assigned_user_id.is_(None))
-        q = q.where(clause)
-    # Право «Видеть ФОТ» (владелец, 21.10.2026): закупки ФОТ субсидий без
-    # subsidy.view_payroll не попадают в реестр вообще — фильтр в SQL до LIMIT
-    # (одно место: app.services.payroll_visibility.exclude_hidden_payroll_purchases).
-    from app.services.payroll_visibility import exclude_hidden_payroll_purchases as _exclude_hidden_payroll
-    q = await _exclude_hidden_payroll(q, current_user, db)
+    # ПРАВИЛО №6 (перф-задача 21.10.2026): видимость/scope/org — единая
+    # функция app.services.purchase_list_visibility.apply_purchase_visibility,
+    # которой также пользуется GET /api/purchases/ceiling-badges ниже (та же
+    # формула, не вторая копия). None → org_id вне доступа пользователя,
+    # как и раньше — пустой список.
+    from app.services.purchase_list_visibility import apply_purchase_visibility
+    q = await apply_purchase_visibility(q, current_user, db, scope=scope, org_id=org_id)
+    if q is None:
+        return []
     if contract_id:
         q = q.where(Purchase.contract_id == contract_id)
     if feo_category_id:
@@ -340,8 +304,9 @@ async def list_purchases(
     # взаимно исключают друг друга — результат пуст, а не список родителей.
     # Единственное место, определяющее видимость Purchase.status='split'
     # (Правило №6) — subsidy_delete_impact.py считает эти закупки отдельно,
-    # но в реестр их не возвращает.
-    q = q.where(Purchase.status != "split")
+    # но в реестр их не возвращает. Этот фильтр и право «Видеть ФОТ»
+    # (exclude_hidden_payroll_purchases) теперь внутри apply_purchase_visibility
+    # выше — второй раз их здесь не применяем (ПРАВИЛО №6).
     # Владелец (2026-08-21, дефект «отцеплённая закупка»): скрытые закупки
     # (status='wishes' — ещё не прошли гейт одобрения заявки ИЛИ принудительно
     # возвращены обратно через force_wish_status/_withdraw_wish_from_plan) не
@@ -487,39 +452,21 @@ async def list_purchases(
         for p in purchases if p.contract_id and p.contract is not None
     }
 
-    # Перф (20.10.2026, жалоба «GET /api/purchases стал 13-16 с»):
-    # compute_purchase_ceiling_block раньше считала compute_feo_plan_tree ОТДЕЛЬНО
-    # на КАЖДУЮ субсидию страницы (19-27 субсидий × ~0,3 с = 5-6 с) —
-    # subsidy_ceiling_state без переданного tree строит его сама. Дерево строим
-    # ОДИН раз здесь и отдаём его обоим потребителям (ПРАВИЛО №6).
-    #
-    # Два масштаба дерева по стоимости РАЗНЫЕ: _compute_purchase_feo_excess
-    # (?with_feo_excess=true) обязана смотреть на категорию ЛЮБОЙ закупки —
-    # нужно дерево по ВСЕМ субсидиям страницы. А значок потолка (считается
-    # ВСЕГДА, без флага) касается только закупок в статусах ДО «Заключён
-    # договор» (см. compute_purchase_ceiling_block._PRE_CONTRACT_STATUSES) —
-    # обычно это подмножество субсидий страницы (замер 20.10.2026: 18 из 27),
-    # поэтому для него строим дерево ТОЛЬКО по этому подмножеству, а не по
-    # всем субсидиям — иначе каждый обычный GET /purchases (без
-    # with_feo_excess) платил бы те же ~2 с, которые раньше были ценой ТОЛЬКО
-    # опционального флага.
+    # Перф (владелец, 21.10.2026, «список грузится ~3,5 с, 1,6 с — только ради
+    # значка потолка»): compute_purchase_ceiling_block (и дерево ФЭО под него)
+    # здесь БОЛЬШЕ НЕ СЧИТАЕТСЯ — ни безусловно (как было с 20.10), ни под
+    # with_feo_excess. Список отдаёт ceiling_blocked/ceiling_over_amount как
+    # None/False (дефолт _purchase_to_full без ceiling_map) — значок догружает
+    # фронт отдельным батч-запросом GET /api/purchases/ceiling-badges (ниже в
+    # этом файле), который зовёт ТУ ЖЕ compute_purchase_ceiling_block
+    # (ПРАВИЛО №6, второй формулы нет). Карточка (get_purchase) считает значок
+    # как и раньше — не трогаем.
     _subsidy_ids_on_page = list({p.subsidy_id for p in purchases if p.subsidy_id})
-    _ceiling_subsidy_ids = list({
-        p.subsidy_id for p in purchases
-        if p.subsidy_id and p.status in _CEILING_PRE_CONTRACT_STATUSES
-    })
 
     _feo_excess_map: dict = {}
-    _ceiling_map: dict = {}
     if with_feo_excess and purchases:
-        # Один проход по ВСЕМ субсидиям страницы покрывает оба потребителя —
-        # второй (узкий) tree не нужен, передаём этот же.
         _shared_tree = await compute_feo_plan_tree(db, _subsidy_ids_on_page) if _subsidy_ids_on_page else {}
         _feo_excess_map = await _compute_purchase_feo_excess(db, purchases, tree=_shared_tree)
-        _ceiling_map = await compute_purchase_ceiling_block(db, purchases, tree=_shared_tree)
-    elif purchases:
-        _ceiling_tree = await compute_feo_plan_tree(db, _ceiling_subsidy_ids) if _ceiling_subsidy_ids else {}
-        _ceiling_map = await compute_purchase_ceiling_block(db, purchases, tree=_ceiling_tree)
 
     # Владелец (2026-09-02): «уведомление глобально, если позиция категории ФЭО
     # вверху и в каждом товаре не соответствует друг другу — об этом должен быть
@@ -548,7 +495,12 @@ async def list_purchases(
             feo_mismatch_map=_feo_mismatch_map, amounts_map=_amounts_map, contract=p.contract,
             tz_waived_by_map=tz_waived_by_map, sn_map=sn_map,
             economy_map=_economy_map_list, subsidy_sandbox_map=subsidy_sandbox_map,
-            ceiling_map=_ceiling_map,
+            # Перф (21.10.2026, п.3): реестр не показывает описание позиции —
+            # не сериализуем тяжёлые текстовые поля (product_description/
+            # product_description_44fz/effective_tz_description). Карточка
+            # (get_purchase ниже) передаёт light_items=False (дефолт) — там
+            # эти поля нужны (PurchaseHeader.vue/TzRowsSection.vue и т.д.).
+            light_items=True,
         )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
@@ -598,6 +550,53 @@ async def load_purchase_for_out(db: AsyncSession, pid: int) -> Purchase | None:
         .where(Purchase.id == pid)
     )
     return result.scalar_one_or_none()
+
+
+@router.get("/ceiling-badges")
+async def purchase_ceiling_badges(
+    scope: Optional[str] = Query("purchases"),
+    org_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """GET /api/purchases/ceiling-badges — лёгкая ручка значка «Стоит: план
+    субсидии выше ФЭО» (владелец, 21.10.2026, перф-решение: GET /api/purchases/
+    больше не считает этот значок сама, см. докстринг в list_purchases выше).
+    Возвращает {"<purchase_id>": over_amount, ...} ТОЛЬКО для закупок со
+    значком — реестр (OrdersView.vue/useOrdersData.ts) догружает её отдельно
+    ПОСЛЕ основного списка и сам проставляет чип в строках.
+
+    ПРАВИЛО №6: видимость — та же формула, что у списка
+    (app.services.purchase_list_visibility.apply_purchase_visibility), сам
+    значок — та же функция, что и у карточки (compute_purchase_ceiling_block,
+    app/services/purchase_ceiling_block.py), второй расчёт не заводим.
+    Колонки — только id/subsidy_id/status (без selectinload: функции они не
+    нужны), дерево ФЭО строится один раз по субсидиям закупок в
+    PRE_CONTRACT_STATUSES (обычно подмножество субсидий страницы), не по всем
+    субсидиям сразу — поэтому дешевле полного списка.
+
+    Регистрация ДО /{pid} ниже — иначе "ceiling-badges" перехватился бы как
+    pid.
+    """
+    from app.services.purchase_list_visibility import apply_purchase_visibility
+
+    q = select(Purchase.id, Purchase.subsidy_id, Purchase.status).where(
+        Purchase.status.in_(_CEILING_PRE_CONTRACT_STATUSES)
+    )
+    q = await apply_purchase_visibility(q, current_user, db, scope=scope, org_id=org_id)
+    if q is None:
+        return {}
+    rows = (await db.execute(q)).all()
+    if not rows:
+        return {}
+    subsidy_ids = list({r.subsidy_id for r in rows if r.subsidy_id})
+    tree = await compute_feo_plan_tree(db, subsidy_ids) if subsidy_ids else {}
+    ceiling_map = await compute_purchase_ceiling_block(db, rows, tree=tree)
+    return {
+        str(pid): data["ceiling_over_amount"]
+        for pid, data in ceiling_map.items()
+        if data.get("ceiling_blocked")
+    }
 
 
 @router.get("/{pid}", response_model=PurchaseOutFull)

@@ -30,10 +30,10 @@
               >
                 <v-icon icon="mdi-alert" size="12" class="mr-1" />Расхождение ФЭО
               </v-chip>
-              <v-chip v-if="item.ceiling_blocked" size="x-small" :color="ceilingBlockedChip(item).color" variant="flat"
-                :title="ceilingBlockedChip(item).title" @click.stop="openCeilingFunding(item)"
+              <v-chip v-if="ceilingBadges.has(item.id)" size="x-small" :color="ceilingBlockedChip(ceilingBadges.get(item.id)).color" variant="flat"
+                :title="ceilingBlockedChip(ceilingBadges.get(item.id)).title" @click.stop="openCeilingFunding(item)"
               >
-                <v-icon icon="mdi-alert-octagon" size="12" class="mr-1" />{{ ceilingBlockedChip(item).text }}
+                <v-icon icon="mdi-alert-octagon" size="12" class="mr-1" />{{ ceilingBlockedChip(ceilingBadges.get(item.id)).text }}
               </v-chip>
             </div>
             <div class="text-caption text-medium-emphasis">Контрагент</div>
@@ -112,13 +112,16 @@ import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 const funding = useFundingSources()
 function openCeilingFunding(item: Purchase) {
   if (!item.subsidy_id) return
-  funding.openFundingSources({ subsidyId: item.subsidy_id, amount: item.ceiling_over_amount ?? null })
+  funding.openFundingSources({ subsidyId: item.subsidy_id, amount: props.ceilingBadges.get(item.id) ?? null })
 }
 
-defineProps<{
+const props = defineProps<{
   pagedCards: any[]
   cardsPage: number
   cardsTotalPages: number
+  // Значок потолка (владелец, 21.10.2026) — карта purchase_id -> over_amount
+  // из GET /api/purchases/ceiling-badges, список закупок поле не содержит.
+  ceilingBadges: Map<number, number>
   isOrderSelected: (item: any) => boolean
   toggleOrderSelected: (item: any) => void
   isAdmin: boolean

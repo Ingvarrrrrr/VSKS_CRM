@@ -43,7 +43,14 @@ async def items_out_with_contractor_map(db, items) -> list:
 def _item_to_out(
     item: PurchaseItem, plan_residual=None, plan_planned_amount=None,
     contractor_names: dict | None = None, contractor_inns: dict | None = None,
+    light: bool = False,
 ) -> PurchaseItemOut:
+    """`light=True` — реестр (GET /api/purchases/) не показывает описание
+    позиции (владелец, 21.10.2026, перф «список грузится долго» часть 3):
+    product_description/product_description_44fz/effective_tz_description —
+    тексты каталога/ТЗ, нужные только карточке закупки (GET /api/purchases/{id},
+    _purchase_to_full там зовётся с light=False) и редактору позиций — не
+    реестру. Поле остаётся в схеме (Optional), просто не заполняется."""
     product_name = None
     product_photo_url = None
     product_description = None
@@ -51,8 +58,9 @@ def _item_to_out(
     if item.product:
         product_name = item.product.name
         product_photo_url = item.product.photo_url
-        product_description = item.product.description
-        product_description_44fz = item.product.description_44fz
+        if not light:
+            product_description = item.product.description
+            product_description_44fz = item.product.description_44fz
     # ПРАВИЛО №6 (группа D5): единственный читатель — item_contractor.item_contractor.
     # FK (contractor_id) — источник истины, когда задан; contractor_names/contractor_inns —
     # bulk-карты (тот же приём, что и для шапки закупки), без N+1 на страницу.
@@ -103,7 +111,9 @@ def _item_to_out(
         product_description=product_description,
         product_description_44fz=product_description_44fz,
         tz_description=getattr(item, 'tz_description', None),
-        effective_tz_description=_effective_item_tz(item, item.product if item.product else None),
+        effective_tz_description=(
+            None if light else _effective_item_tz(item, item.product if item.product else None)
+        ),
         plan_residual=plan_residual,
         plan_planned_amount=plan_planned_amount,
         extra_attrs=getattr(item, 'extra_attrs', None) or {},
@@ -124,7 +134,7 @@ def _purchase_to_full(
     feo_mismatch_map: dict | None = None, amounts_map: dict | None = None,
     contract=None, tz_waived_by_map: dict | None = None, sn_map: dict | None = None,
     economy_map: dict | None = None, subsidy_sandbox_map: dict | None = None,
-    ceiling_map: dict | None = None,
+    ceiling_map: dict | None = None, light_items: bool = False,
 ) -> PurchaseOutFull:
     # Ленивый импорт — избежать цикла на уровне модуля: purchases.py (ядро)
     # импортирует _purchase_to_full ОТСЮДА, поэтому этот модуль не может
@@ -162,7 +172,10 @@ def _purchase_to_full(
     # что уже собраны вызывающим для шапки закупки (один SELECT на страницу) —
     # переиспользуем их и для контрагента ПОЗИЦИИ, второй карты не заводим.
     items = [
-        _item_to_out(i, *(_ipm.get(i.id) or (None, None)), contractor_names=contractors, contractor_inns=contractor_inns)
+        _item_to_out(
+            i, *(_ipm.get(i.id) or (None, None)), contractor_names=contractors, contractor_inns=contractor_inns,
+            light=light_items,
+        )
         for i in (p.items or [])
     ]
     files = [

@@ -281,6 +281,13 @@ async def scrub_payroll_from_dashboard_charts(
             ("not_committed_likely", "not_committed_likely_payroll"),
             ("monthly_future_not_started", "monthly_future_not_started_payroll"),
             ("redistributable_unplanned", "redistributable_unplanned_payroll"),
+            # Правка 23.10.2026 (владелец) — manual_plan_gap («задано на
+            # категорию, но не расписано позициями») обязана вычищаться той
+            # же payroll-долей, что уже вычтена из redistributable_by_kind
+            # ['payroll'] выше (см. subsidy_money_summary.manual_plan_gap_payroll),
+            # иначе Σ подстрок карточки у пользователя без «Видеть ФОТ»
+            # перестаёт сходиться с уже вычищенным итогом ровно на эту долю.
+            ("manual_plan_gap", "manual_plan_gap_payroll"),
         ):
             amt = _psum.get(payroll_field, 0.0) or 0.0
             if not amt or row.get(field) is None:
@@ -517,6 +524,16 @@ _ADDITIVE_TREE_FIELDS = (
     "plan_unspecified", "feo_goods", "feo_services", "feo_unspecified",
     "fact_goods", "fact_services", "fact_unspecified", "paid_marked",
     "paid_confirmed", "plan_floor_added",
+    # ПРАВИЛО №6 (23.10.2026, шаг 2 плана humble-stirring-emerson.md) —
+    # manual_plan_gap («задано на категорию, но не расписано позициями»,
+    # строка карточки «Можно перераспределить») — та же Σ по поддереву, что
+    # остальные аддитивные поля; вычитается из предков закрытой ФОТ-ветки
+    # тем же механизмом ниже.
+    "manual_plan_gap",
+    # Правка 23.10.2026 (владелец) — та же Σ, разложенная по виду (см.
+    # feo_plan_tree.py node, feo_plan_common.manual_plan_gap_by_kind).
+    "manual_plan_gap_goods", "manual_plan_gap_services",
+    "manual_plan_gap_payroll", "manual_plan_gap_unspecified",
     # ПРАВИЛО №6 (22.10.2026) — plan_typed_goods/services (typed-базис
     # excess_plan_over_feo_*, app.services.feo_type_excess_basis) аддитивны
     # по тому же построению, что и plan_goods/plan_services (разница —

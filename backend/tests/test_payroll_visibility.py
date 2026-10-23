@@ -415,7 +415,72 @@ class TestPayrollVisibility:
         # бюджет мы проверяем, а то, что 90000 ФОТ его туда не утащили).
         assert by_kind["payroll"] == pytest.approx(90000.0, abs=0.01)
         assert by_kind["unspecified"] == pytest.approx(40000.0, abs=0.01)
-        assert by_kind["payroll"] + by_kind["unspecified"] == pytest.approx(row["redistributable_unplanned"], abs=0.01)
+
+    async def test_manual_plan_gap_by_kind_payroll_and_scrub_without_right(
+        self, db_session, test_org, make_user,
+    ):
+        """Правка 23.10.2026 (владелец, после живой проверки) — статья ФОТ
+        «Задано на категорию» (manual_sum) с позициями МЕНЬШЕ заданной суммы:
+        budget=ФЭО=90000, задано 90000, позиции 60000 (1 шт, monthly — не
+        участвует в замещении), законтрактовано 0 → gap=30000 обязан попасть
+        в redistributable_by_kind['payroll'], НЕ unspecified (тот же приём,
+        что и у _feo_by_kind — payroll-категория целиком payroll, независимо
+        от того, что сама gap-сумма не расписана позициями). Инвариант
+        «Σ по видам == итогу» держится И у superadmin, И у пользователя БЕЗ
+        права «Видеть ФОТ» (строка «manual_plan_gap» тоже вычищается)."""
+        from app.models.feo_planned_item import FeoPlannedItem
+        from app.services.subsidy_money_summary import subsidy_money_summary
+
+        subsidy = await _make_subsidy(db_session, test_org.id)
+        payroll_cat = await _make_category(
+            db_session, subsidy.id, is_payroll=True, budget=Decimal("90000"),
+        )
+        from app.models.feo_category import FeoCategory as _FC
+        await db_session.execute(
+            _FC.__table__.update().where(_FC.id == payroll_cat.id).values(
+                plan_source="manual_sum", manual_plan_amount=Decimal("90000"),
+            )
+        )
+        db_session.add(FeoPlannedItem(
+            feo_category_id=payroll_cat.id, name="ЗП позиция", quantity=Decimal("1"),
+            amount=Decimal("60000"), payment_mode="monthly", is_active=True,
+        ))
+        await db_session.commit()
+
+        result = await subsidy_money_summary(db_session, [subsidy.id])
+        row = result[subsidy.id]
+        assert row["manual_plan_gap"] == pytest.approx(30000.0, abs=0.01)
+        assert row["redistributable"] == pytest.approx(90000.0, abs=0.01)  # budget − committed(0)
+        by_kind = row["redistributable_by_kind"]
+        assert by_kind["payroll"] == pytest.approx(90000.0, abs=0.01), (
+            "ФОТ-категория: и «не запланировано», и gap, и «по позициям не "
+            "законтрактовано» (все три составляющие) обязаны остаться под payroll"
+        )
+        assert by_kind["unspecified"] == pytest.approx(0.0, abs=0.01)
+        assert sum(by_kind.values()) == pytest.approx(row["redistributable"])
+
+        # Без права «Видеть ФОТ» — строка manual_plan_gap тоже вычищена.
+        from app.services.payroll_visibility import scrub_payroll_from_dashboard_charts
+
+        manager, _uoa = await _manager_with_access(db_session, test_org, make_user, can_view_payroll=False)
+        fake_row = {
+            "id": subsidy.id, "redistributable": row["redistributable"],
+            "redistributable_by_kind": dict(by_kind),
+            "manual_plan_gap": row["manual_plan_gap"],
+            "not_committed_nice": row["not_committed_nice"],
+            "not_committed_likely": row["not_committed_likely"],
+            "monthly_future_not_started": row["monthly_future_not_started"],
+            "redistributable_unplanned": row["redistributable_unplanned"],
+            "committed_by_kind": row["committed_by_kind"], "planned_not_committed_by_kind": row["planned_not_committed_by_kind"],
+            "widget": {}, "feo_budget_total": row["budget"], "total_feo_planned": row["planned"],
+            "calculated_budget": row["budget"], "planned_tree": row["planned"],
+            "balance_paid_marked": 0.0, "balance_paid_confirmed": 0.0,
+            "balance_by_marks": None, "balance_by_statement": None,
+        }
+        await scrub_payroll_from_dashboard_charts(manager, db_session, [fake_row], {})
+        assert fake_row["manual_plan_gap"] == pytest.approx(0.0, abs=0.01)
+        assert fake_row["redistributable_by_kind"]["payroll"] == pytest.approx(0.0, abs=0.01)
+        assert fake_row["redistributable"] == pytest.approx(0.0, abs=0.01)
 
     async def test_plan_tree_without_right_subtracts_payroll_from_ancestors(
         self, client, db_session, test_org, make_user, superadmin_headers,
@@ -567,3 +632,79 @@ class TestPayrollVisibility:
                     if isinstance(cell, str) and "Зарплата" in cell:
                         found_super = True
         assert found_super, "superadmin обязан видеть ФОТ в выгрузке"
+
+    async def test_payroll_protected_plan_hidden_without_right_visible_with_it(
+        self, client, db_session, test_org, make_user, superadmin_headers,
+    ):
+        """Синтетический сценарий «всё в одном» (владелец, шаг 1 плана
+        humble-stirring-emerson.md, 23.10.2026) — ХРО_2026-подобная статья ФОТ
+        (план «1 шт на год» 1 000 000, законтрактовано/выплачено 600 000,
+        защита от замещения «заказ вместо плана» активна) под пользователем
+        БЕЗ права «Видеть ФОТ»: статья не видна вовсе в дереве, итог
+        дашборда уменьшен ровно на её вклад; под superadmin — видна целиком,
+        план НЕ подменён суммой выплаты."""
+        from app.models.feo_planned_item import FeoPlannedItem
+        from app.models.purchase import Purchase
+        from app.models.purchase_item import PurchaseItem
+
+        subsidy = await _make_subsidy(db_session, test_org.id)
+        payroll_cat = await _make_category(
+            db_session, subsidy.id, is_payroll=True, name="ЗП", budget=Decimal("1000000"),
+        )
+        fpi = FeoPlannedItem(
+            feo_category_id=payroll_cat.id, name="ЗП — план на год",
+            quantity=Decimal("1"), unit="шт", amount=Decimal("1000000"), is_active=True,
+        )
+        db_session.add(fpi)
+        await db_session.flush()
+        purchase = Purchase(
+            subsidy_id=subsidy.id, feo_category_id=payroll_cat.id, item_name="Выплата ЗП",
+            status="contracted", contract_price=Decimal("600000"),
+            total_nmck=Decimal("600000"), nmck=Decimal("600000"),
+        )
+        db_session.add(purchase)
+        await db_session.flush()
+        db_session.add(PurchaseItem(
+            purchase_id=purchase.id, item_name="Выплата ЗП", quantity=Decimal("1"), unit="шт",
+            unit_price=Decimal("600000"), total_price=Decimal("600000"),
+            feo_category_id=payroll_cat.id, feo_planned_item_id=fpi.id, over_plan=False,
+        ))
+        await db_session.commit()
+
+        manager, _uoa = await _manager_with_access(db_session, test_org, make_user, can_view_payroll=False)
+
+        resp_tree_m = await client.get(
+            "/api/feo-categories/plan-tree", params={"subsidy_id": subsidy.id}, headers=_headers(manager),
+        )
+        resp_tree_s = await client.get(
+            "/api/feo-categories/plan-tree", params={"subsidy_id": subsidy.id}, headers=superadmin_headers,
+        )
+        assert resp_tree_m.status_code == 200 and resp_tree_s.status_code == 200
+        data_m, data_s = resp_tree_m.json(), resp_tree_s.json()
+        assert str(payroll_cat.id) not in data_m, "статья ФОТ обязана быть скрыта целиком без права"
+        payroll_node_s = data_s[str(payroll_cat.id)]
+        assert payroll_node_s["plan"] == pytest.approx(1_000_000.0), (
+            "ФОТ: план НЕ подменяется суммой выплаты даже при видимости у superadmin"
+        )
+        assert payroll_node_s["is_payroll"] is True
+        assert payroll_node_s["payroll_closed"] is False
+
+        resp_charts_m = await client.get(
+            "/api/dashboard/charts", params={"scope": "dashboard"}, headers=_headers(manager),
+        )
+        resp_charts_s = await client.get(
+            "/api/dashboard/charts", params={"scope": "dashboard"}, headers=superadmin_headers,
+        )
+        row_m = _find_subsidy_row(resp_charts_m.json(), subsidy.id)
+        row_s = _find_subsidy_row(resp_charts_s.json(), subsidy.id)
+        # «Запланировано» у superadmin — полный защищённый план (1 000 000);
+        # у manager без права — статья ФОТ вычтена целиком из «Запланировано».
+        assert row_s["planned_tree"] == pytest.approx(1_000_000.0)
+        assert row_m["planned_tree"] == pytest.approx(0.0)
+        # Единый источник «ФЭО план» дашборда (шаг 2 плана) == «Запланировано».
+        assert row_s["total_feo_planned"] == pytest.approx(row_s["planned_tree"])
+        assert row_m["total_feo_planned"] == pytest.approx(row_m["planned_tree"])
+        # «Можно перераспределить» строкой «ФОТ» (redistributable_by_kind.payroll)
+        # — невыплаченный остаток (400 000) виден только с правом.
+        assert row_s["redistributable_by_kind"]["payroll"] == pytest.approx(400_000.0, abs=0.01)
+        assert row_m["redistributable_by_kind"]["payroll"] == pytest.approx(0.0, abs=0.01)

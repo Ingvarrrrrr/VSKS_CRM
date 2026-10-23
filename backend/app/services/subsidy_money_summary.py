@@ -76,12 +76,16 @@ redistributable_unplanned           = free, когда задан бюджет (
 
 Инвариант (проверен test_subsidy_money_summary.py и совпадением с subsidy_stats
 /api/dashboard/charts): redistributable_unplanned + not_committed_nice +
-not_committed_likely == redistributable — ДЛЯ ЛЮБОЙ субсидии, с бюджетом и без,
-с точностью до копейки. При заданном бюджете free + planned_not_committed ==
-redistributable == budget − committed. Без бюджета (budget <= 0) инвариант
-иной: redistributable == planned_not_committed (budget в формулу не входит,
-free всё равно считается как budget − planned, т.е. может быть
-отрицательным/нулевым — это отдельное поле, не трогается;
+not_committed_likely + monthly_future_not_started + manual_plan_gap ==
+redistributable — ДЛЯ ЛЮБОЙ субсидии, с бюджетом и без, с точностью до копейки
+(manual_plan_gap — шаг 2 плана humble-stirring-emerson.md, 23.10.2026,
+«задано на категорию, но не расписано позициями» — ДО этой правки инвариант
+не держался на статьях plan_source='manual_sum' без (или с неполными)
+плановыми позициями, см. feo_plan_common.manual_plan_gap). При заданном
+бюджете free + planned_not_committed == redistributable == budget − committed.
+Без бюджета (budget <= 0) инвариант иной: redistributable == planned_not_committed
+(budget в формулу не входит, free всё равно считается как budget − planned,
+т.е. может быть отрицательным/нулевым — это отдельное поле, не трогается;
 redistributable_unplanned в этой ветке — 0.0, не free).
 
 РЕШЕНИЕ ВЛАДЕЛЬЦА (06.10.2026, «бюджет = план, когда ФЭО не введён»): у
@@ -217,7 +221,11 @@ async def _plan_floor_added_by_subsidy(
     result: dict[int, dict] = {
         sid: {
             "plan_floor_added": 0.0, "not_committed_likely": 0.0, "not_committed_nice": 0.0,
-            "paid_marked": 0.0, "paid_confirmed": 0.0,
+            "paid_marked": 0.0, "paid_confirmed": 0.0, "manual_plan_gap": 0.0,
+            # Правка 23.10.2026 (владелец) — manual_plan_gap по виду, см.
+            # комментарий у суммирования ниже.
+            "manual_plan_gap_goods": 0.0, "manual_plan_gap_services": 0.0,
+            "manual_plan_gap_payroll": 0.0, "manual_plan_gap_unspecified": 0.0,
         }
         for sid in subsidy_ids
     }
@@ -236,6 +244,18 @@ async def _plan_floor_added_by_subsidy(
             result[sid]["not_committed_nice"] += float(node.get("not_committed_nice", 0.0) or 0.0)
             result[sid]["paid_marked"] += float(node.get("paid_marked", 0.0) or 0.0)
             result[sid]["paid_confirmed"] += float(node.get("paid_confirmed", 0.0) or 0.0)
+            # Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — Σ по
+            # корням, та же техника, что и у остальных аддитивных полей этой
+            # функции (node['manual_plan_gap'] уже рекурсивно считает
+            # поддерево, см. compute_feo_plan_tree).
+            result[sid]["manual_plan_gap"] += float(node.get("manual_plan_gap", 0.0) or 0.0)
+            # Правка 23.10.2026 (владелец, после живой проверки) — та же Σ,
+            # разложенная по виду (ПРАВИЛО №6 — читаем уже готовые поля узла,
+            # не вторая формула, см. feo_plan_common.manual_plan_gap_by_kind).
+            result[sid]["manual_plan_gap_goods"] += float(node.get("manual_plan_gap_goods", 0.0) or 0.0)
+            result[sid]["manual_plan_gap_services"] += float(node.get("manual_plan_gap_services", 0.0) or 0.0)
+            result[sid]["manual_plan_gap_payroll"] += float(node.get("manual_plan_gap_payroll", 0.0) or 0.0)
+            result[sid]["manual_plan_gap_unspecified"] += float(node.get("manual_plan_gap_unspecified", 0.0) or 0.0)
     return result
 
 
@@ -356,16 +376,6 @@ async def subsidy_money_summary(
             "payroll": _committed.get("plan_payroll", 0.0) - committed_by_kind["payroll"],
             "unspecified": _committed.get("plan_unspecified", 0.0) - committed_by_kind["unspecified"],
         }
-        redistributable_by_kind: Optional[dict] = None
-        if sid in type_totals_map:
-            tt = type_totals_map[sid]
-            redistributable_by_kind = {
-                "goods": tt.get("feo_goods", 0.0) - committed_by_kind["goods"],
-                "services": tt.get("feo_services", 0.0) - committed_by_kind["services"],
-                "payroll": tt.get("feo_payroll", 0.0) - committed_by_kind["payroll"],
-                "unspecified": tt.get("feo_unspecified", 0.0) - committed_by_kind["unspecified"],
-            }
-
         # ОТМЕНЕНО (владелец, 07.10.2026, план .planning/quick/2026-10-07-dnr-
         # feo-cards/PLAN.md шаг 1, решение №3): раньше при budget<=0 (ни
         # официального бюджета, ни суммы ФЭО) budget_basis подставлял planned
@@ -386,103 +396,127 @@ async def subsidy_money_summary(
         # subsidy_revision_floor.py байт-в-байт как раньше.
         feo_entered = budget > 0
         budget_from_plan = False
+
+        # Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — формула
+        # владельца: Можно перераспределить = ФЭО − законтрактовано =
+        # (ФЭО − Запланировано) + (Запланировано − законтрактовано). ОБЕ
+        # половины читают ТЕ ЖЕ числа, что уже показывают карточки
+        # «Свободно»/«Запланировано»/«Законтрактовано» — ни одного нового
+        # расчёта плана.
+        #   not_planned (redistributable_unplanned) = free_basis = budget_basis
+        #     − planned — ТО ЖЕ число, что карточка «Свободно». ИСПРАВЛЕНО
+        #     (находка владельца 23.10.2026): раньше отсюда вычитался
+        #     pending_excess («несогласованная прибавка»), из-за чего «не
+        #     запланировано» расходилось со «Свободно» — на синтетической
+        #     30871: 9 997,90 ≠ 19 997,90; на копии прода ФАДМ 2026_3 id 100:
+        #     −326 492,00 ≠ 0,00. «Одно число — один источник» (ПРАВИЛО №6):
+        #     теперь буквально то же free_basis, без поправок.
+        #   R = planned − committed («Запланировано минус законтрактовано»)
+        #     раскладывается на «хотелось бы» (nice, позиции need_level=
+        #     nice_to_have, клэмп в [0, R]), «ещё уйдёт помесячно» (monthly —
+        #     как раньше, monthly_future_not_started_raw), «задано на
+        #     категорию, но не расписано позициями» (manual_plan_gap — как
+        #     раньше, node['manual_plan_gap']), а «скорее всего понадобится»
+        #     (likely) — ОСТАТОК R минус три предыдущие строки (владелец,
+        #     пример 100/80/70/54: likely = 70 − 54 = 16). Отрицательный
+        #     остаток — не прячем, показываем как есть (бывает на floor-
+        #     артефактах/несогласованном превышении, см. отчёт).
+        # Σ(not_planned+nice+likely+monthly+manual_gap) == free_basis + R ==
+        # (budget_basis−planned) + (planned−committed) == budget_basis−committed
+        # == redistributable ВСЕГДА, чисто алгебраически — больше не зависит
+        # от floor-артефактов позиционных сумм (pending_excess-поправка не
+        # нужна, удалена вместе с _plan_floor_added_by_subsidy.pending_excess).
         if feo_entered:
             budget_basis = budget
             free_basis = budget_basis - planned
             redistributable = budget_basis - committed
             redistributable_unplanned = free_basis
-            if redistributable_by_kind is None:
-                redistributable_by_kind = dict(planned_not_committed_by_kind)
         else:
             budget_basis = None
             free_basis = None
             redistributable = None
             redistributable_unplanned = None
-            redistributable_by_kind = None
 
-        # Карточка «Можно перераспределить» (план abstract-noodling-pelican.md,
-        # 15.10.2026, п.C) — подстроки и разбивка по типу БЕЗ клэмпа дерева по
-        # направлениям, см. докстринг app.services.redistributable_raw.
-        #
-        # ИЗМЕНЕНО (15.10.2026): «ещё уйдёт помесячно, не начато» (было
-        # «договоры без заказа», contracted_not_ordered) теперь monthly_future_
-        # not_started_raw ИЗ not_committed_raw_by_subsidy САМОЙ (она уже
-        # исключила эти строки из nice_raw/likely_raw/by_kind — см. её
-        # докстринг) — ОДНА точка расчёта, здесь только читаем готовую сумму,
-        # не вычитаем второй раз. redistributable = not_planned + nice_raw +
-        # likely_raw + monthly_future_not_started_raw — держится
-        # АЛГЕБРАИЧЕСКИ (Σ raw не меняется, просто одни строки переставлены в
-        # отдельную сумму вместо nice/likely — см. test_monthly_future_payments.py).
         _raw = raw_not_committed_map.get(sid) or {
             "nice_raw": 0.0, "likely_raw": 0.0, "by_kind": {}, "monthly_future_not_started_raw": 0.0,
             "nice_payroll_raw": 0.0, "likely_payroll_raw": 0.0, "monthly_future_not_started_payroll_raw": 0.0,
         }
-        monthly_future_not_started = _raw.get("monthly_future_not_started_raw", 0.0)
-        not_committed_nice_raw = _raw["nice_raw"]
-        not_committed_likely_raw = _raw["likely_raw"]
-        _raw_by_kind = dict(_raw.get("by_kind") or {})
-        # D7 (живая приёмка 21.10.2026, ДНР id 61) — payroll-доля трёх подстрок
-        # карточки, см. docstring not_committed_raw_by_subsidy; payroll-доля
-        # «не запланировано» (_free_payroll) — ниже, в той же ветке, что считает
-        # остальные _free_k (не вторая формула). Нужны payroll_visibility.
-        # scrub_payroll_from_dashboard_charts, чтобы вычесть ТОЧНО ту же сумму,
-        # на которую redistributable_by_kind['payroll'] уже гасится в карточке
-        # «Можно перераспределить» (D2-фикс выше), из её подстрок.
+        _gap_map = plan_floor_map.get(sid) or {}
+        monthly_future_not_started = _raw.get("monthly_future_not_started_raw", 0.0) or 0.0
+        manual_plan_gap = _gap_map.get("manual_plan_gap", 0.0) or 0.0
+        R = planned - committed
+        not_committed_nice_raw = max(0.0, min(_raw.get("nice_raw", 0.0) or 0.0, R))
+        not_committed_likely_raw = R - not_committed_nice_raw - monthly_future_not_started - manual_plan_gap
+
+        # payroll-доля той же remainder-конструкции (D7, живая приёмка
+        # 21.10.2026, ДНР id 61) — ТОЛЬКО для payroll_visibility.
+        # scrub_payroll_from_dashboard_charts (ПРАВИЛО №6 — тот же приём,
+        # что и у R/nice/likely выше, restricted к kind=='payroll').
+        R_payroll = (_committed.get("plan_payroll", 0.0) or 0.0) - committed_by_kind["payroll"]
+        _nice_payroll = max(0.0, min(_raw.get("nice_payroll_raw", 0.0) or 0.0, R_payroll))
+        _monthly_payroll = _raw.get("monthly_future_not_started_payroll_raw", 0.0) or 0.0
+        _manual_gap_payroll = _gap_map.get("manual_plan_gap_payroll", 0.0) or 0.0
+        _likely_payroll = R_payroll - _nice_payroll - _monthly_payroll - _manual_gap_payroll
         _free_payroll = 0.0
-        # «Не запланировано» (redistributable_unplanned = free_basis = бюджет −
-        # план, ИТОГО по субсидии) раскладывается по виду ТЕМ ЖЕ способом, что
-        # planned_not_committed_by_kind выше (бюджет_по_виду − план_по_виду), а
-        # не целиком в «без типа» — ИСПРАВЛЕНО (находка владельца 21.10.2026,
-        # ХРО_2026: карточка «Можно перераспределить» показывала «без типа
-        # 5 338 478,35», хотя «Свободно» подписывает ТУ ЖЕ сумму «ФОТ:
-        # свободно» — это непланированный остаток бюджета именно статьи ФОТ,
-        # а не «неизвестного» вида). Используем tt (feo_<kind> — бюджет по виду
-        # из того же дерева, что redistributable_by_kind выше, ПРАВИЛО №6 — не
-        # вторая формула) минус _committed.plan_<kind> (тот же план по виду,
-        # что уже участвует в planned_not_committed_by_kind). Σ по виду всё
-        # равно равна redistributable_unplanned (Σtt.feo_* == budget_basis,
-        # Σ plan_* == planned, когда есть разбивка бюджета по типу) — алгебра,
-        # не новый источник чисел. Без разбивки бюджета по типу (sid не в
-        # type_totals_map) — старое поведение (целиком в «без типа», честно:
-        # per-kind бюджета не введено, делить нечем).
-        if redistributable_unplanned is not None and abs(redistributable_unplanned) > 0.005:
-            if sid in type_totals_map:
-                _tt = type_totals_map[sid]
-                for _k in ("goods", "services", "payroll", "unspecified"):
-                    _free_k = _tt.get(f"feo_{_k}", 0.0) - _committed.get(f"plan_{_k}", 0.0)
-                    if abs(_free_k) > 0.005:
-                        _raw_by_kind[_k] = _raw_by_kind.get(_k, 0.0) + _free_k
-                        if _k == "payroll":
-                            _free_payroll = _free_k
-            else:
-                _raw_by_kind["unspecified"] = _raw_by_kind.get("unspecified", 0.0) + redistributable_unplanned
-        # Карточка «Можно перераспределить» целиком пуста без feo_entered (см.
-        # редистрибутируемую гейт-ветку выше, решение владельца №3) — raw
-        # построение Σ по позициям выше не знает о budget_basis вообще, поэтому
-        # гасим ЗДЕСЬ, единственной точке сборки этого поля (ПРАВИЛО №6).
+        if sid in type_totals_map:
+            _free_payroll = type_totals_map[sid].get("feo_payroll", 0.0) - (_committed.get("plan_payroll", 0.0) or 0.0)
+
+        # Строки по видам (п.4 Шаг 2 плана) = feo_<вид> − committed_<вид> —
+        # бюджет вида минус законтрактовано вида, из уже существующих
+        # type_totals/committed_amounts (ПРАВИЛО №6 — ни одна сумма здесь не
+        # считается заново, raw-строки позиций для этого больше не нужны).
+        # Σ видов == budget_basis − committed == redistributable ПО
+        # ПОСТРОЕНИЮ (Σ feo_<вид> по корням дерева == budget_basis, Σ
+        # committed_<вид> == committed, обе Σ уже проверены test_type_totals.py/
+        # test_money_committed.py) — не зависит от floor/pending_excess-
+        # артефактов, которые ломали старую raw+поправки формулу на ХРО_2026
+        # (id 55 на стенде: Σ by_kind переоценивала ФОТ на ~11 млн).
         #
-        # ИСПРАВЛЕНО (D2, живая приёмка 21.10.2026, ХРО_2026): настоящая причина
-        # несовпадения Σ rows ≠ card_total на ХРО_2026 (id 55) — 3 закупки ФОТ
-        # НЕ привязаны к плановой позиции (committed_by_planned_item их не
-        # видит на уровне позиции, хотя committed_amounts.subsidy_committed_totals
-        # уже учла их на уровне дерева категорий). Раньше пытались принудительно
-        # пересчитать redistributable_by_kind рескейлом (split_amount_by_kind_pool,
-        # техника reconcile_split у widgets) — но test_redistributable_drill.py::
-        # test_redistributable_drill_rows_match_card_by_kind требует байт-в-байт
-        # равенства redistributable_by_kind[kind] и Σ строк окна-расшифровки
-        # («строка клика = число карточки», владелец 06.10.2026) — рескейл здесь
-        # его ломает. Исправлено в САМОМ источнике raw (ПРАВИЛО №6, не вторая
-        # формула здесь): app.services.redistributable_raw.not_committed_raw_rows
-        # теперь сама добавляет отрицательную строку на категорию+вид для таких
-        # закупок (committed_consumption_by_category(exclude_planned_item_linked=
-        # True)) — redistributable_by_kind_raw ниже и расшифровка видят её
-        # одинаково, Σ снова совпадает с redistributable без рескейла.
-        redistributable_by_kind_raw = {
-            "goods": _raw_by_kind.get("goods", 0.0),
-            "services": _raw_by_kind.get("services", 0.0),
-            "payroll": _raw_by_kind.get("payroll", 0.0),
-            "unspecified": _raw_by_kind.get("unspecified", 0.0),
-        } if feo_entered else None
+        # Товары/услуги НЕ показываются отрицательными (находка на копии
+        # прода ФАДМ 2026_3 id 100: «товары −1 276 407,01 / услуги
+        # −6 696 081,73 / без типа +11 087 752,04» — минус здесь означает не
+        # «превышение по товару», а что реально законтрактованные товары/
+        # услуги лежат в категориях, чей бюджет ФЭО никогда не был размечен
+        # по виду (вся его сумма — в «без типа»); долг переносится в «без
+        # типа» — ту же Σ видов это не меняет, убирает только обманчивый
+        # минус из строки, которую владелец читает как конкретный план по
+        # товару/услуге).
+        if sid in type_totals_map:
+            tt = type_totals_map[sid]
+            _by_kind = {
+                "goods": tt.get("feo_goods", 0.0) - committed_by_kind["goods"],
+                "services": tt.get("feo_services", 0.0) - committed_by_kind["services"],
+                "payroll": tt.get("feo_payroll", 0.0) - committed_by_kind["payroll"],
+                "unspecified": tt.get("feo_unspecified", 0.0) - committed_by_kind["unspecified"],
+            }
+            for _k in ("goods", "services"):
+                if _by_kind[_k] < 0:
+                    _by_kind["unspecified"] += _by_kind[_k]
+                    _by_kind[_k] = 0.0
+            redistributable_by_kind_raw = _by_kind if feo_entered else None
+        elif feo_entered:
+            # Нет разбивки бюджета ФЭО по видам (sid не в type_totals_map) —
+            # ПОВЕДЕНИЕ НЕ МЕНЯЕТСЯ (байт-в-байт, как раньше): товары/услуги
+            # читаются построчно из redistributable_raw.py (нечем читать
+            # feo_<вид>, делить нечего), «не запланировано»/manual_gap
+            # целиком уходят в «без типа» — ЭТУ ветку проверяют
+            # test_redistributable_drill.py и test_monthly_future_payments.py
+            # построчной сверкой, не ослаблять.
+            _raw_by_kind = dict(_raw.get("by_kind") or {})
+            if abs(redistributable_unplanned or 0.0) > 0.005:
+                _raw_by_kind["unspecified"] = _raw_by_kind.get("unspecified", 0.0) + redistributable_unplanned
+            for _k in ("goods", "services", "payroll", "unspecified"):
+                _gap_k = _gap_map.get(f"manual_plan_gap_{_k}", 0.0) or 0.0
+                if abs(_gap_k) > 0.005:
+                    _raw_by_kind[_k] = _raw_by_kind.get(_k, 0.0) + _gap_k
+            redistributable_by_kind_raw = {
+                "goods": _raw_by_kind.get("goods", 0.0),
+                "services": _raw_by_kind.get("services", 0.0),
+                "payroll": _raw_by_kind.get("payroll", 0.0),
+                "unspecified": _raw_by_kind.get("unspecified", 0.0),
+            }
+        else:
+            redistributable_by_kind_raw = None
 
         result[sid] = {
             "budget": budget,
@@ -493,13 +527,11 @@ async def subsidy_money_summary(
             "planned_not_committed": planned - committed,
             "planned_not_committed_by_kind": planned_not_committed_by_kind,
             "redistributable": redistributable,
-            # ИЗМЕНЕНО (06.10.2026, план sleepy-fluttering-walrus.md п.1):
-            # redistributable_by_kind теперь = raw Σ по позициям (товар/услуга),
-            # НЕ бюджет-минус-законтрактовано-по-типу — см. докстринг
-            # app.services.redistributable_raw. redistributable_by_kind_old
-            # (прежняя формула) никому отдельно не нужен — Правило №6, не
-            # оставляем второе поле ради обратной совместимости, фронт читает
-            # ОДНО имя redistributable_by_kind.
+            # ИЗМЕНЕНО (23.10.2026, Шаг 2 плана humble-stirring-emerson.md):
+            # redistributable_by_kind = feo_<вид> − committed_<вид>, когда у
+            # субсидии есть разбивка бюджета ФЭО по видам (sid в
+            # type_totals_map); иначе — старое raw-построение по позициям
+            # (см. ветку выше). Фронт читает ОДНО имя redistributable_by_kind.
             "redistributable_by_kind": redistributable_by_kind_raw,
             "redistributable_unplanned": redistributable_unplanned,
             "committed_missing_fact_items": _committed.get("committed_missing_fact_items", 0),
@@ -533,10 +565,30 @@ async def subsidy_money_summary(
             # ТОЛЬКО payroll_visibility.scrub_payroll_from_dashboard_charts —
             # dashboard_charts.py эти 4 ключа в subsidy_stats НЕ отдаёт
             # (не нужны пользователю с правом, он их не видит).
-            "not_committed_likely_payroll": _raw.get("likely_payroll_raw", 0.0),
-            "not_committed_nice_payroll": _raw.get("nice_payroll_raw", 0.0),
-            "monthly_future_not_started_payroll": _raw.get("monthly_future_not_started_payroll_raw", 0.0),
+            "not_committed_likely_payroll": _likely_payroll,
+            "not_committed_nice_payroll": _nice_payroll,
+            "monthly_future_not_started_payroll": _monthly_payroll,
             "redistributable_unplanned_payroll": _free_payroll,
+            # Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — «задано на
+            # категорию, но не расписано позициями», строка карточки «Можно
+            # перераспределить» (пример владельца ФЭО 100/задано 80/позиции 70/
+            # законтрактовано 54 → эта строка = 80−70 = 10). Источник — ОДНА
+            # точка feo_plan_common.manual_plan_gap через node['manual_plan_gap']
+            # (compute_feo_plan_tree), Σ по корням уже готова в plan_floor_map
+            # (см. _plan_floor_added_by_subsidy выше, ПРАВИЛО №6 — не вторая
+            # формула). Делает ТОЧНЫМ инвариант (см. докстринг модуля):
+            # redistributable == redistributable_unplanned + not_committed_nice
+            # + not_committed_likely + monthly_future_not_started + manual_plan_gap.
+            "manual_plan_gap": manual_plan_gap,
+            # Правка 23.10.2026 (владелец) — payroll-доля manual_plan_gap, ТА
+            # ЖЕ Σ, что уже вошла в redistributable_by_kind['payroll'] выше
+            # (не вторая формула) — нужна ТОЛЬКО payroll_visibility.
+            # scrub_payroll_from_dashboard_charts, чтобы «manual_plan_gap»
+            # (скаляр строки карточки) тоже уменьшался у пользователя без
+            # права «Видеть ФОТ» — иначе Σ(подстрок) ≠ redistributable
+            # (уже вычищенный) ровно на эту долю. dashboard_charts.py этот
+            # ключ в subsidy_stats НЕ отдаёт (не нужен пользователю с правом).
+            "manual_plan_gap_payroll": plan_floor_map.get(sid, {}).get("manual_plan_gap_payroll", 0.0),
             "budget_basis": budget_basis,
             "budget_from_plan": budget_from_plan,
             "free_basis": free_basis,

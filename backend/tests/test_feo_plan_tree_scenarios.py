@@ -205,13 +205,17 @@ async def test_k1_sum_stored_in_per_unit_price_field(db_session, test_org):
     раздулся мимо бюджета») выражен ЧЕРЕЗ ДЕЙСТВУЮЩИЙ переключатель —
     plan_source='manual_sum' с manual_plan_amount, В КОТОРОЕ по ошибке внесли
     итоговую сумму 16 760 000 (а не то меньшее число, которое соответствовало
-    бы плану 2×4 000 000). Числа боевого скриншота владельца (display
-    16 760 000, excess_amount 8 760 000 при budget 8 000 000) сохранены как
+    бы плану 2×4 000 000). plan_manual/excess_amount/budget из боевого
+    скриншота владельца (16 760 000 / 8 760 000 / 8 000 000) сохранены как
     контрольные — 'manual_sum' без активных FeoPlannedItem не участвует в
     отдельном механизме excess_plan_over_manual (тот сравнивает Σ позиций с
     manual_plan_amount, тут позиций нет вовсе), поэтому раздувание плана
     проверяется тем же способом, что и раньше — excess_amount (план > budget
-    узла)."""
+    узла). display ИЗМЕНЁН (владелец, шаг 6 плана humble-stirring-emerson.md,
+    23.10.2026): ДО согласования excess_amount display не может быть выше
+    budget — раньше откатывался к plan_manual (=16 760 000, весь неодобренный
+    раздув), теперь к budget (8 000 000), см. docstring у этой ветки в
+    feo_plan_tree.py."""
     subsidy = await _make_subsidy(db_session, test_org.id)
     group = await _make_category(db_session, subsidy.id, name="Внедорожник повышенной проходимости")
     leaf = await _make_category(
@@ -228,7 +232,7 @@ async def test_k1_sum_stored_in_per_unit_price_field(db_session, test_org):
     tree = await compute_feo_plan_tree(db_session, [subsidy.id])
     node = tree[leaf.id]
     assert node["plan_manual"] == 16_760_000.0
-    assert node["display"] == 16_760_000.0
+    assert node["display"] == 8_000_000.0, "до согласования display не выше budget"
     assert node["budget"] == 8_000_000.0
     assert node["excess_amount"] == 8_760_000.0
 
@@ -257,7 +261,10 @@ async def test_k2_duplicate_planned_items(db_session, test_org):
     tree = await compute_feo_plan_tree(db_session, [subsidy.id])
     node = tree[leaf.id]
     assert node["plan_manual"] == 16_760_000.0
-    assert node["display"] == 16_760_000.0
+    # ИЗМЕНЕНО (владелец, шаг 6 плана humble-stirring-emerson.md, 23.10.2026):
+    # ДО согласования display не выше budget (8 000 000) — см. K1 выше за
+    # полным объяснением, тот же фикс.
+    assert node["display"] == 8_000_000.0
     assert node["budget"] == 8_000_000.0
     assert node["excess_amount"] == 8_760_000.0
 
@@ -341,3 +348,162 @@ async def test_find_excess_culprit_matches_compute_feo_plan_tree_manual_sum(db_s
         "что compute_feo_plan_tree.plan_manual — иначе виновник называет "
         "число, не совпадающее с тем, из-за которого реально сработала блокировка"
     )
+
+
+@pytest.mark.asyncio
+async def test_payroll_plan_not_substituted_by_partial_payment(db_session, test_org):
+    """Шаг 1 плана humble-stirring-emerson.md (22.10.2026, владелец) —
+    воспроизводит прод ХРО_2026: статья ФОТ, план «1 шт на год» = 1 000 000,
+    выплачено (законтрактовано) 600 000 — КОЛИЧЕСТВО набралось целиком (1 шт
+    заказана), но ДЕНЬГИ не выплачены полностью. ДО этой правки
+    _order_substituted_plan подменял план суммой заказа (экономия
+    400 000 "высвобождалась" в «Свободно», хотя зарплата не выплачена) — тест
+    фиксирует, что для is_payroll узла это НЕ происходит: node['plan'] и
+    node['plan_manual'] остаются 1 000 000 целиком, невыплаченный остаток
+    (400 000) виден в committed/not_committed (карточка «Можно
+    перераспределить» строка «ФОТ», redistributable_by_kind['payroll'])."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    payroll_leaf = await _make_category(
+        db_session, subsidy.id, name="ЗП", budget=Decimal("1000000"), is_payroll=True,
+    )
+    fpi = await _make_planned_item(db_session, payroll_leaf.id, "ЗП — план на год", 1, 1_000_000)
+
+    purchase = Purchase(
+        subsidy_id=subsidy.id, feo_category_id=payroll_leaf.id, item_name="Выплата ЗП",
+        status="contracted", contract_price=Decimal("600000"),
+        total_nmck=Decimal("600000"), nmck=Decimal("600000"),
+    )
+    db_session.add(purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(
+        purchase_id=purchase.id, item_name="Выплата ЗП", quantity=Decimal("1"), unit="шт",
+        unit_price=Decimal("600000"), total_price=Decimal("600000"),
+        feo_category_id=payroll_leaf.id, feo_planned_item_id=fpi.id, over_plan=False,
+    ))
+    await db_session.commit()
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[payroll_leaf.id]
+    assert node["plan_manual"] == pytest.approx(1_000_000.0), (
+        "ФОТ: план НЕ должен подмениться суммой выплаты, даже если "
+        "количество (1 шт) заказано целиком"
+    )
+    assert node["plan"] == pytest.approx(1_000_000.0)
+    assert node["is_payroll"] is True
+    assert node["payroll_closed"] is False
+
+    # «Закрыть ФОТ по статье» (вариант в) — снимает защиту ТОЛЬКО для этой
+    # статьи: план снова = фактически законтрактовано (600 000), 400 000
+    # уходит в «Свободно» (владелец решил, что по этой статье больше ничего
+    # не будет). Тест трогает колонку напрямую — сам сервис/роут проверяется
+    # отдельно в test_feo_payroll_close.py.
+    from app.models.feo_category import FeoCategory
+    await db_session.execute(
+        FeoCategory.__table__.update().where(FeoCategory.id == payroll_leaf.id).values(payroll_closed=True)
+    )
+    await db_session.commit()
+
+    tree_closed = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node_closed = tree_closed[payroll_leaf.id]
+    assert node_closed["plan"] == pytest.approx(600_000.0), (
+        "после «Закрыть ФОТ по статье» план статьи обязан вернуться к "
+        "обычному поведению замещения (= фактически законтрактовано)"
+    )
+    assert node_closed["payroll_closed"] is True
+
+
+@pytest.mark.asyncio
+async def test_manual_plan_gap_owner_example_100_80_70_54(db_session, test_org):
+    """🔵 Пример владельца (план humble-stirring-emerson.md, шаг 2, 23.10.2026):
+    ФЭО 100; «Задано на категорию» 80; плановые позиции 70 (payment_mode=
+    'monthly' — не участвует в per-item замещении «заказ вместо плана»,
+    избегаем попутного шума в этом тесте, см. committed_amounts.
+    planned_item_contributions); законтрактовано по позициям 54.
+
+    Ожидание:
+      plan_manual (= "задано на категорию")      == 80
+      plan_items_raw (= "расчёт на основе позиций") == 70
+      manual_plan_gap ("задано, не расписано")    == 10
+      plan (= «Запланировано» статьи, без детей)  == 80 (нет замещения —
+        committed=0 на самом узле; законтрактовано относится к ПОЗИЦИИ,
+        не к узлу, см. docstring _own_plan_and_forecast/_order_substituted_plan)
+    """
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=100)
+    leaf = await _make_category(
+        db_session, subsidy.id, name="Задано на категорию",
+        budget=Decimal("100"), plan_source="manual_sum", manual_plan_amount=Decimal("80"),
+    )
+    from app.models.feo_planned_item import FeoPlannedItem
+    fpi = FeoPlannedItem(
+        feo_category_id=leaf.id, name="Позиция", quantity=Decimal("1"), unit="шт",
+        amount=Decimal("70"), payment_mode="monthly", is_active=True,
+    )
+    db_session.add(fpi)
+    await db_session.commit()
+    await db_session.refresh(fpi)
+
+    purchase = Purchase(
+        subsidy_id=subsidy.id, feo_category_id=leaf.id, item_name="Частичный расход",
+        status="contracted", contract_price=Decimal("54"), total_nmck=Decimal("54"), nmck=Decimal("54"),
+    )
+    db_session.add(purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(
+        purchase_id=purchase.id, item_name="Частичный расход", quantity=Decimal("1"), unit="шт",
+        unit_price=Decimal("54"), total_price=Decimal("54"),
+        feo_category_id=leaf.id, feo_planned_item_id=fpi.id, over_plan=False,
+    ))
+    await db_session.commit()
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[leaf.id]
+    assert node["plan_manual"] == pytest.approx(80.0)
+    assert node["plan_items_raw"] == pytest.approx(70.0)
+    assert node["manual_plan_gap"] == pytest.approx(10.0)
+    assert node["plan"] == pytest.approx(80.0)
+
+    # «Свободно» по позициям (переключатель «Показать разницу», 🔵) — budget
+    # минус расчёт на основе позиций, ровно подпись владельца «по позициям 30».
+    assert float(node["budget"]) - node["plan_items_raw"] == pytest.approx(30.0)
+
+    from app.services.subsidy_money_summary import subsidy_money_summary
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+    assert row["planned"] == pytest.approx(80.0)
+    assert row["free"] == pytest.approx(20.0)  # «не запланировано»: 100 − 80
+    assert row["committed"] == pytest.approx(54.0)
+    assert row["redistributable"] == pytest.approx(46.0)  # 100 − 54
+    assert row["manual_plan_gap"] == pytest.approx(10.0)
+    # «по позициям не законтрактовано» — need_level по умолчанию 'likely'
+    # (FeoPlannedItem.need_level server_default) → not_committed_likely.
+    assert row["not_committed_likely"] == pytest.approx(16.0)  # 70 − 54
+    assert row["not_committed_nice"] == pytest.approx(0.0)
+    # Инвариант карточки «Можно перераспределить» (ПРАВИЛО №6, см. docstring
+    # subsidy_money_summary.py): Σ строк == итогу, включая новую строку gap.
+    assert (
+        row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"]
+        + row["monthly_future_not_started"] + row["manual_plan_gap"]
+    ) == pytest.approx(row["redistributable"])
+
+    # Правка 23.10.2026 (владелец, после живой проверки) — строки «Можно
+    # перераспределить» ПО ВИДАМ тоже обязаны давать итог до копейки: статья
+    # не ФОТ → весь gap (10) идёт в unspecified (см.
+    # feo_plan_common.manual_plan_gap_by_kind), вместе с «не запланировано»
+    # (20, unspecified — без typed-разбивки ФЭО) и «по позициям» (16,
+    # unspecified — позиция без item_type) даёт ровно 46.
+    by_kind = row["redistributable_by_kind"]
+    assert by_kind["unspecified"] == pytest.approx(46.0)
+    assert by_kind["goods"] + by_kind["services"] + by_kind["payroll"] == pytest.approx(0.0)
+    assert sum(by_kind.values()) == pytest.approx(row["redistributable"])
+
+    tree_node = tree[leaf.id]
+    assert tree_node["manual_plan_gap_unspecified"] == pytest.approx(10.0)
+    assert tree_node["manual_plan_gap_payroll"] == pytest.approx(0.0)
+    assert tree_node["manual_plan_gap_goods"] == pytest.approx(0.0)
+    assert tree_node["manual_plan_gap_services"] == pytest.approx(0.0)

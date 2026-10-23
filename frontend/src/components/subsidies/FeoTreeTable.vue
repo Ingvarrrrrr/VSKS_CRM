@@ -16,6 +16,19 @@
     </template>
   </div>
 
+  <!-- 🔵 Переключатель «Показать разницу» (владелец, 23.10.2026, план
+       humble-stirring-emerson.md) — у статей «Задано на категорию»
+       показывает рядом со строкой второе число «Расчёт на основе позиций»
+       и разницу между ними (см. useFeoTreeAmounts.feoManualPlanDiffFor). -->
+  <div class="rev-filter-bar">
+    <v-switch
+      v-model="ctx.showManualPlanDiff.value"
+      density="compact" hide-details color="deep-purple"
+      label="Показать разницу"
+      title="У статей «Задано на категорию» — показать рядом «Расчёт на основе позиций» и разницу между ними"
+    />
+  </div>
+
   <div v-if="ctx.feoCategories.value.length === 0" class="feo-empty">
     <v-icon icon="mdi-folder-off" size="40" color="grey-lighten-2" />
     <div class="text-caption text-medium-emphasis mt-2">Нет категорий ФЭО</div>

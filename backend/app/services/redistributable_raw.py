@@ -122,7 +122,10 @@ async def not_committed_raw_rows(
         return result
 
     cat_rows = (await db.execute(
-        select(FeoCategory.id, FeoCategory.subsidy_id, FeoCategory.parent_id, FeoCategory.name)
+        select(
+            FeoCategory.id, FeoCategory.subsidy_id, FeoCategory.parent_id, FeoCategory.name,
+            FeoCategory.payroll_closed,
+        )
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
     )).all()
     if not cat_rows:
@@ -130,6 +133,7 @@ async def not_committed_raw_rows(
     sid_by_cat = {r.id: r.subsidy_id for r in cat_rows}
     cats = {r.id: {"parent_id": r.parent_id, "name": r.name} for r in cat_rows}
     cat_ids = list(sid_by_cat.keys())
+    _payroll_closed_ids = {r.id for r in cat_rows if r.payroll_closed}
 
     items_q = (
         select(
@@ -144,14 +148,21 @@ async def not_committed_raw_rows(
         return result
 
     item_ids = [r.id for r in rows]
-    contrib = await planned_item_contributions(db, cat_ids)
+    # payroll-категории (своя или по предку, план .planning/quick/2026-10-07-
+    # dnr-feo-cards/PLAN.md шаг 2) — ОДИН резолвер, ПРАВИЛО №6. Считаем ДО
+    # planned_item_contributions ниже (шаг 1 плана humble-stirring-emerson.md,
+    # 22.10.2026) — ей нужен _payroll_block_ids (без закрытых кнопкой статей),
+    # чтобы «raw» строки ФОТ не рассчитывались по уже подменённому (замещённым
+    # заказом) plan_manual, иначе строка «ФОТ» карточки «Можно
+    # перераспределить» теряла бы невыплаченный остаток (см. докстринг
+    # feo_plan_common._order_substituted_plan).
+    from app.services.feo_payroll import payroll_category_ids
+    _payroll_ids = await payroll_category_ids(db, subsidy_ids)
+    _payroll_block_ids = _payroll_ids - _payroll_closed_ids
+    contrib = await planned_item_contributions(db, cat_ids, _payroll_block_ids)
     # month_aware=True (🟢/🔵 правки, п.B/C) — заказ рамочного договора, чей
     # месяц уже начался, тоже committed — см. докстринг committed_by_planned_item.
     committed_map = await committed_by_planned_item(db, item_ids, month_aware=True)
-    # payroll-категории (своя или по предку, план .planning/quick/2026-10-07-
-    # dnr-feo-cards/PLAN.md шаг 2) — ОДИН резолвер, ПРАВИЛО №6.
-    from app.services.feo_payroll import payroll_category_ids
-    _payroll_ids = await payroll_category_ids(db, subsidy_ids)
 
     # «Ещё уйдёт помесячно, не начато» — ОДИН источник правила, см. докстринг
     # модуля: app.services.monthly_future_payments.framework_order_month_rows,

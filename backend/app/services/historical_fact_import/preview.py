@@ -685,6 +685,7 @@ async def build_preview(
                     row_qty=_row_qty,
                     row_amount=contract_amount_for_row,
                     planned_item_name=_econ_entry.get("name") or row["name"],
+                    is_payroll=is_payroll,
                 )
                 if economy_info:
                     warnings.append(economy_info["message"])
@@ -706,6 +707,7 @@ async def build_preview(
                     row_qty=_row_qty,
                     row_amount=contract_amount_for_row,
                     planned_item_name=_econ_entry.get("name") or row["name"],
+                    is_payroll=is_payroll,
                 )
                 if overspend_info:
                     warnings.append(overspend_info["message"])

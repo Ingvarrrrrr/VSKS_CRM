@@ -279,3 +279,218 @@ async def test_subsidy_money_summary_no_budget_redistributable_is_none(
     assert row2["redistributable_by_kind"] is None
     assert row2["redistributable_unplanned"] is None
     assert row2["planned_not_committed"] == pytest.approx(row2["planned"] - row2["committed"])
+
+
+@pytest.mark.asyncio
+async def test_pending_excess_keeps_redistributable_rows_summing_to_total(
+    db_session, test_org,
+):
+    """ИЗМЕНЕНО (Шаг 2 плана humble-stirring-emerson.md, 23.10.2026) —
+    владелец: «не запланировано» ОБЯЗАНО быть тем же числом, что карточка
+    «Свободно» (находка на синтетической 30871: 9 997,90 ≠ 19 997,90; на
+    копии прода ФАДМ 2026_3 id 100: −326 492,00 ≠ 0,00). Старая
+    pending_excess-поправка (вычитание несогласованной прибавки из
+    «не запланировано», см. git-историю) ровно это и нарушала — тест ниже
+    раньше ЗАКРЕПЛЯЛ её как верную (redistributable_unplanned=-20, ≠ free=0);
+    теперь закрепляет НОВУЮ формулу: redistributable_unplanned ВСЕГДА ==
+    free_basis, а несогласованная прибавка (full_display − display) просто
+    остаётся внутри R = planned − committed и выходит в «скорее всего
+    понадобится» (likely = R − nice − monthly − manual_gap, остаток).
+
+    Фикстура: budget=100, ОДНА плановая позиция 120 (без согласования,
+    excess_amount=20), committed=0 → planned(display)=100 (капнуто), free=0,
+    redistributable=budget−committed=100, R=planned(100)−committed(0)=100,
+    likely=R−0−0−0=100, redistributable_unplanned=free_basis=0,
+    Σ строк = 0+0+100+0+0 = 100 = redistributable."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=100)
+    leaf = await _make_category(db_session, subsidy.id, name="Над бюджетом, не согласовано", budget=Decimal("100"))
+    await _make_planned_item(db_session, leaf.id, "Позиция сверх бюджета", 1, 120)
+
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+
+    assert row["planned"] == pytest.approx(100.0), "Запланировано капнуто budget до согласования"
+    assert row["free"] == pytest.approx(0.0), "Свободно честно 0, не отрицательное"
+    assert row["committed"] == pytest.approx(0.0)
+    assert row["redistributable"] == pytest.approx(100.0)
+    assert row["redistributable_unplanned"] == pytest.approx(row["free"]), (
+        "«не запланировано» ОБЯЗАНО быть тем же числом, что «Свободно» — "
+        "несогласованная прибавка больше не вычитается отдельно"
+    )
+    assert row["redistributable_unplanned"] == pytest.approx(0.0)
+    assert row["not_committed_nice"] == pytest.approx(0.0)
+    assert row["not_committed_likely"] == pytest.approx(100.0), (
+        "несогласованная прибавка (20) остаётся внутри R=planned−committed "
+        "и выходит в «скорее всего понадобится» (остаток)"
+    )
+    assert (
+        row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"]
+        + row["monthly_future_not_started"] + row["manual_plan_gap"]
+    ) == pytest.approx(row["redistributable"])
+
+
+@pytest.mark.asyncio
+async def test_redistributable_card_builds_up_on_realistic_mixed_data(
+    db_session, test_org, make_user,
+):
+    """Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — «собрать карточку
+    «Можно перераспределить» так, чтобы сходилось ПО ПОСТРОЕНИЮ», проверено
+    на ОДНОЙ субсидии, где сразу перемешаны все ингредиенты примера 30871:
+
+      - «Товары» (budget=200000, разбит по типу): позиция, закупленная ЦЕЛИКОМ
+        по количеству дешевле плана (экономия 30000, уходит в «Свободно»
+        автоматически — order-substitution), и позиция, закупленная ЧАСТИЧНО
+        (1 из 2 шт) дороже цены за единицу (перерасход по заказу, количество
+        не закрыто — contribution остаётся планом, raw отрицательный);
+      - «Без плановой позиции» (budget=30000, категория без единой плановой
+        позиции, закупка целиком на статью) — «пол»: plan_floor_added=30000;
+      - «Услуги» (budget=100000): одна плановая позиция 120000 — НЕСОГЛАСОВАННОЕ
+        превышение (план статьи капается budget'ом до согласования);
+      - «ФОТ» (budget=90000, is_payroll=True, «задано на категорию»=90000,
+        одна позиция 60000 → manual_plan_gap=30000), частично законтрактована
+        (40000 из 60000) — ФОТ не даёт «экономии» даже закрытым количеством.
+
+    Инварианты владельца (не хардкодим ни одного промежуточного числа —
+    только алгебраические соотношения, которые должны держаться НА ЛЮБЫХ
+    данных, по построению):
+      1) Σ подстрок карточки == её итогу;
+      2) «не запланировано» == «Свободно» (budget_basis − planned) — байт-в-
+         байт, никакой отдельной «несогласованной» поправки;
+      3) Σ строк по видам == итогу, и «товары»/«услуги» НЕ отрицательны.
+    """
+    from app.models.feo_category import FeoCategory as _FC
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
+
+    cat_goods = await _make_category(db_session, subsidy.id, name="Товары", budget=Decimal("200000"))
+    item_economy = await _make_planned_item(db_session, cat_goods.id, "Станок (закуплен целиком дешевле)", 1, 100_000)
+    item_economy.item_type = "товар"
+    item_overspend = await _make_planned_item(db_session, cat_goods.id, "Партия (1 из 2, дороже цены/ед.)", 2, 100_000)
+    item_overspend.item_type = "товар"
+    db_session.add_all([item_economy, item_overspend])
+    await db_session.commit()
+    # Экономия: 1 шт из 1 — количество ЗАКРЫТО целиком, цена дешевле плана.
+    await _make_linked_purchase(db_session, subsidy.id, cat_goods.id, item_economy.id, 1, 70_000)
+    # Перерасход по заказу: 1 шт из 2 — количество НЕ закрыто, но цена за
+    # единицу (70000/шт) дороже плановой (50000/шт) — raw = 100000−70000 = 30000
+    # (контрибуция остаётся планом целиком, не замещается).
+    await _make_linked_purchase(db_session, subsidy.id, cat_goods.id, item_overspend.id, 1, 70_000)
+
+    # «Пол»: категория БЕЗ единой плановой позиции, закупка целиком на статью
+    # (feo_planned_item_id=None) — plan_floor_addition поднимает её «план»
+    # до committed, чтобы категория не выглядела «законтрактовано сверх плана».
+    cat_floor = await _make_category(db_session, subsidy.id, name="Без плановой позиции", budget=Decimal("30000"))
+    await _make_linked_purchase(db_session, subsidy.id, cat_floor.id, None, 1, 30_000)
+
+    # Несогласованное превышение: план позиции (120000) больше budget статьи
+    # (100000) — «Запланировано» капается budget'ом до согласования.
+    cat_services = await _make_category(db_session, subsidy.id, name="Услуги", budget=Decimal("100000"))
+    item_excess = await _make_planned_item(db_session, cat_services.id, "Услуга сверх бюджета статьи", 1, 120_000)
+    item_excess.item_type = "услуга"
+    db_session.add(item_excess)
+    await db_session.commit()
+
+    # ФОТ: «задано на категорию» (manual_sum) 90000, позиции на 60000
+    # (gap=30000), частично законтрактовано (40000 из 60000) — ФОТ НЕ даёт
+    # «экономии» даже при закрытом количестве (шаг 1 плана, 22.10.2026).
+    cat_payroll = await _make_category(db_session, subsidy.id, name="ФОТ", is_payroll=True, budget=Decimal("90000"))
+    await db_session.execute(
+        _FC.__table__.update().where(_FC.id == cat_payroll.id).values(
+            plan_source="manual_sum", manual_plan_amount=Decimal("90000"),
+        )
+    )
+    item_payroll = await _make_planned_item(db_session, cat_payroll.id, "ЗП — план на год", 1, 60_000)
+    await db_session.commit()
+    await _make_linked_purchase(db_session, subsidy.id, cat_payroll.id, item_payroll.id, 1, 40_000)
+
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+
+    assert row["feo_entered"] is True
+    assert row["redistributable"] is not None
+
+    # 1) Σ подстрок карточки == её итогу (до копейки, алгебраически).
+    subrows_sum = (
+        row["redistributable_unplanned"] + row["not_committed_nice"] + row["not_committed_likely"]
+        + row["monthly_future_not_started"] + row["manual_plan_gap"]
+    )
+    assert subrows_sum == pytest.approx(row["redistributable"], abs=0.01)
+
+    # 2) «Не запланировано» == «Свободно» — ОДНО число, не вычитаем отдельно
+    #    несогласованную прибавку (пример услуги сверх бюджета статьи выше).
+    assert row["redistributable_unplanned"] == pytest.approx(row["free_basis"], abs=0.01)
+    assert row["free_basis"] == pytest.approx(row["budget_basis"] - row["planned"], abs=0.01)
+
+    # 3) Σ строк по видам == итогу, товары/услуги не отрицательны (ФОТ-долг
+    #    может уйти в «без типа», но не в «товары»/«услуги» — владелец,
+    #    копия прода ФАДМ 2026_3 id 100).
+    by_kind = row["redistributable_by_kind"]
+    assert by_kind is not None
+    assert sum(by_kind.values()) == pytest.approx(row["redistributable"], abs=0.01)
+    assert by_kind["goods"] >= -0.01
+    assert by_kind["services"] >= -0.01
+
+    # «Пол» и manual_plan_gap видны в своих полях (не потеряны, не задвоены).
+    assert row["plan_floor_added"] == pytest.approx(30_000.0, abs=0.01)
+    assert row["manual_plan_gap"] == pytest.approx(30_000.0, abs=0.01)
+
+    # Без права «Видеть ФОТ» — та же пара инвариантов держится на вычищенных
+    # числах (владелец, D7 21.10.2026 — находка «подстроки не совпадали со
+    # «Свободно»/«Запланировано» без ФОТ»).
+    from app.services.payroll_visibility import scrub_payroll_from_dashboard_charts
+    from tests.test_payroll_visibility import _manager_with_access
+
+    manager, _uoa = await _manager_with_access(db_session, test_org, make_user, can_view_payroll=False)
+    fake_row = {
+        "id": subsidy.id, "redistributable": row["redistributable"],
+        "redistributable_by_kind": dict(by_kind),
+        "manual_plan_gap": row["manual_plan_gap"],
+        "not_committed_nice": row["not_committed_nice"],
+        "not_committed_likely": row["not_committed_likely"],
+        "monthly_future_not_started": row["monthly_future_not_started"],
+        "redistributable_unplanned": row["redistributable_unplanned"],
+        "committed_by_kind": row["committed_by_kind"], "planned_not_committed_by_kind": row["planned_not_committed_by_kind"],
+        "widget": {}, "feo_budget_total": row["budget"], "total_feo_planned": row["planned"],
+        "calculated_budget": row["budget"], "planned_tree": row["planned"],
+        "balance_paid_marked": None, "balance_paid_confirmed": None,
+        "balance_by_marks": None, "balance_by_statement": None,
+    }
+    await scrub_payroll_from_dashboard_charts(manager, db_session, [fake_row], {})
+    scrubbed_subrows_sum = (
+        fake_row["redistributable_unplanned"] + fake_row["not_committed_nice"] + fake_row["not_committed_likely"]
+        + fake_row["monthly_future_not_started"] + fake_row["manual_plan_gap"]
+    )
+    assert scrubbed_subrows_sum == pytest.approx(fake_row["redistributable"], abs=0.01)
+    assert fake_row["redistributable_by_kind"]["goods"] >= -0.01
+    assert fake_row["redistributable_by_kind"]["services"] >= -0.01
+    assert sum(fake_row["redistributable_by_kind"].values()) == pytest.approx(fake_row["redistributable"], abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_redistributable_by_kind_sums_to_total_without_type_split(
+    db_session, test_org,
+):
+    """Та же проверка (Σ видов == итогу), когда у субсидии НЕТ разбивки
+    бюджета ФЭО по видам вообще (ни одной категории с budget/feo_amount) —
+    падает в старую (не тронутую этой правкой) построчную ветку
+    redistributable_raw.py, которую проверяют test_redistributable_drill.py/
+    test_monthly_future_payments.py; здесь — та же Σ-проверка, что и выше,
+    на другом коде."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=500_000)
+    cat = await _make_category(db_session, subsidy.id, name="Без разбивки по видам")
+    item_a = await _make_planned_item(db_session, cat.id, "Товар без ФЭО-разбивки", 1, 150_000)
+    item_a.item_type = "товар"
+    item_b = await _make_planned_item(db_session, cat.id, "Услуга без ФЭО-разбивки", 1, 100_000)
+    item_b.item_type = "услуга"
+    db_session.add_all([item_a, item_b])
+    await db_session.commit()
+    await _make_linked_purchase(db_session, subsidy.id, cat.id, item_a.id, 1, 90_000)
+
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+
+    assert row["redistributable"] is not None
+    by_kind = row["redistributable_by_kind"]
+    assert by_kind is not None
+    assert sum(by_kind.values()) == pytest.approx(row["redistributable"], abs=0.01)
+    assert row["redistributable_unplanned"] == pytest.approx(row["free_basis"], abs=0.01)

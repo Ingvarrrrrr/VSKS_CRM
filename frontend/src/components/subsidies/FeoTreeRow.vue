@@ -412,6 +412,19 @@
         · перераспределить {{ formatCurrency(ctx.feoResidualNoteFor(node)!.redistributable) }}<span v-if="ctx.feoResidualNoteFor(node)!.redistributableFallback"> (из плана без договоров)</span>
         <!-- Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — см. FeoCategoryEconomyNote.vue. -->
         <FeoCategoryEconomyNote :node="node" />
+        <!-- 🔵 Переключатель «Показать разницу» (владелец, 23.10.2026, план
+             humble-stirring-emerson.md) — ТОЛЬКО для статей «Задано на
+             категорию» (plan_source='manual_sum', см. feoManualPlanDiffFor). -->
+        <div v-if="ctx.showManualPlanDiff.value && ctx.feoManualPlanDiffFor(node)"
+          class="feo-plan-note text-medium-emphasis"
+          title="«Задано на категорию» — введённая сумма. «Расчёт на основе позиций» — Σ активных плановых позиций категории"
+        >
+          задано на категорию {{ formatCurrency(ctx.feoManualPlanDiffFor(node)!.declared) }} ·
+          расчёт на основе позиций {{ formatCurrency(ctx.feoManualPlanDiffFor(node)!.items) }} ·
+          <span v-if="ctx.feoManualPlanDiffFor(node)!.diff > 0.005">разница {{ formatCurrency(ctx.feoManualPlanDiffFor(node)!.diff) }}</span>
+          <span v-else-if="ctx.feoManualPlanDiffFor(node)!.diff < -0.005" style="color:#EF4444;font-weight:700">позиции больше на {{ formatCurrency(-ctx.feoManualPlanDiffFor(node)!.diff) }}</span>
+          <span v-else>совпадает</span>
+        </div>
         <div v-if="ctx.feoResidualNoteFor(node)!.residual < -0.005" style="font-size:11px;white-space:normal;margin-top:2px">
           <v-btn v-if="!ctx.comparisonData.value[node.id]"
             size="x-small" variant="text" color="orange-darken-3"
@@ -459,6 +472,19 @@
         <span v-else>свободно {{ formatCurrency(ctx.feoPlanConsumedNoteFor(node)!.residual) }}</span>
         · перераспределить {{ formatCurrency(ctx.feoPlanConsumedNoteFor(node)!.redistributable) }}<span v-if="ctx.feoPlanConsumedNoteFor(node)!.redistributableFallback"> (из плана без договоров)</span>
         <FeoCategoryEconomyNote :node="node" />
+        <!-- 🔵 Переключатель «Показать разницу» (владелец, 23.10.2026, план
+             humble-stirring-emerson.md) — ТОЛЬКО для статей «Задано на
+             категорию» (plan_source='manual_sum', см. feoManualPlanDiffFor). -->
+        <div v-if="ctx.showManualPlanDiff.value && ctx.feoManualPlanDiffFor(node)"
+          class="feo-plan-note text-medium-emphasis"
+          title="«Задано на категорию» — введённая сумма. «Расчёт на основе позиций» — Σ активных плановых позиций категории"
+        >
+          задано на категорию {{ formatCurrency(ctx.feoManualPlanDiffFor(node)!.declared) }} ·
+          расчёт на основе позиций {{ formatCurrency(ctx.feoManualPlanDiffFor(node)!.items) }} ·
+          <span v-if="ctx.feoManualPlanDiffFor(node)!.diff > 0.005">разница {{ formatCurrency(ctx.feoManualPlanDiffFor(node)!.diff) }}</span>
+          <span v-else-if="ctx.feoManualPlanDiffFor(node)!.diff < -0.005" style="color:#EF4444;font-weight:700">позиции больше на {{ formatCurrency(-ctx.feoManualPlanDiffFor(node)!.diff) }}</span>
+          <span v-else>совпадает</span>
+        </div>
       </div>
       <!-- Прогноз «цена выше плановой» — ТОЛЬКО у конечной категории. -->
       <div v-if="!node.hasChildren && ctx.feoForecastWarningFor(node)"
@@ -871,6 +897,21 @@
           />
           <v-btn v-if="ctx.canEditFeo.value" icon="mdi-delete-outline" variant="text" size="x-small" color="error"
             title="Удалить" @click="ctx.confirmFeoDelete(node)" />
+          <!-- «Закрыть ФОТ по статье» / «Отменить закрытие» (владелец,
+               22.10.2026, план humble-stirring-emerson.md, шаг 1, вариант
+               (в)) — только на статьях ФОТ, только с правом редактировать
+               ФЭО И «Видеть ФОТ». payroll_closed=false (защищена) → значок
+               замка (защита от «экономии»); true (закрыта) → открытый замок
+               с предупреждающим цветом (защита снята, план = факт). -->
+          <v-btn v-if="ctx.canEditFeo.value && canViewPayroll && node.is_payroll"
+            :icon="node.payroll_closed ? 'mdi-lock-open-variant-outline' : 'mdi-lock-outline'"
+            variant="text" size="x-small" :color="node.payroll_closed ? 'orange-darken-2' : 'blue-grey-darken-1'"
+            :loading="payrollCloseLoading"
+            :title="node.payroll_closed
+              ? 'ФОТ закрыт — невыплаченный остаток в «Свободно». Нажмите, чтобы отменить закрытие (защита вернётся)'
+              : 'Закрыть ФОТ по статье — план станет = фактически выплачено/законтрактовано, невыплаченный остаток уйдёт в «Свободно»'"
+            @click.stop="onTogglePayrollClose"
+          />
           <!-- Комментарии к категории (владелец, Волна 4, п.16) — раскрывает
                ветку комментариев в отдельной строке ниже (см. FeoCommentThread.vue
                ниже). Правка 2026-09-14: иконка видна ВСЕГДА (общий переключатель
@@ -945,6 +986,10 @@
 // превышения плана) — вынесена из SubsidiesView.vue (волна 5c). Level 5 панель
 // (плановые vs фактические) — соседний <tr>, см. FeoLevel5Panel.vue.
 import { computed, ref, onMounted, toRef, watch } from 'vue'
+import { apiFetch } from '@/api'
+import { useToast } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 import { formatCurrency } from '@/composables/subsidies/format'
@@ -1130,6 +1175,38 @@ function onCollapseToItem() {
   // Подтверждение — v-dialog (FeoCollapseConfirmDialog.vue, рендерится один раз
   // в FeoTreeToolbar.vue), не window.confirm() (координатор, приёмка в браузере).
   feoCollapse.openSingleCollapseDialog(node.value.id, node.value.name, cand.planned_item_name)
+}
+
+// «Закрыть ФОТ по статье» / «Отменить закрытие» (владелец, 22.10.2026, план
+// humble-stirring-emerson.md, шаг 1, вариант (в)) — та же проверка права
+// «Видеть ФОТ», что у галочки «ФОТ и выплаты персоналу» в FeoCategoryDialog.vue
+// (ПРАВИЛО №6, authStore.hasAction — org-дефолт; точный персональный/
+// субсидийный оверрайд проверяет бэкенд (POST .../payroll-close|payroll-reopen),
+// кнопка здесь — только видимость, не источник права).
+const authStore = useAuthStore()
+const canViewPayroll = computed(() => authStore.hasAction(ACTIONS.SUBSIDY_VIEW_PAYROLL))
+const payrollCloseToast = useToast()
+const payrollCloseLoading = ref(false)
+async function onTogglePayrollClose() {
+  if (payrollCloseLoading.value) return
+  const closing = !node.value.payroll_closed
+  payrollCloseLoading.value = true
+  try {
+    const path = closing ? 'payroll-close' : 'payroll-reopen'
+    const result = await apiFetch<{ released_amount: number }>(`/feo-categories/${node.value.id}/${path}`, { method: 'POST' })
+    const amount = formatCurrency(Math.abs(result.released_amount))
+    payrollCloseToast.addToast(
+      closing
+        ? `ФОТ по статье «${node.value.name}» закрыт — ${amount} ушло в «Свободно»`
+        : `Закрытие отменено — ${amount} вернулось в «Запланировано»`,
+      'success',
+    )
+    await ctx.silentRefreshSubsidies()
+  } catch (e: any) {
+    payrollCloseToast.addToast(e?.payload?.message || e?.detail || e?.message || 'Не удалось изменить статус ФОТ', 'error')
+  } finally {
+    payrollCloseLoading.value = false
+  }
 }
 
 // Тот же гейт, что и в SubsidyEditDialog.vue/FeoTreeToolbar.vue (canSaveVersion) —

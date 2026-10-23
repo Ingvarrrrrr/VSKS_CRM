@@ -186,7 +186,14 @@ async def align_budget_to_plan(
         over_root_lines = []
         for rid in root_ids:
             rn = tree_after[rid]
-            disp_d = Decimal(str(rn["display"]))
+            # ИЗМЕНЕНО 23.10.2026 (шаг 6 плана humble-stirring-emerson.md) —
+            # plan+over (ПОЛНЫЙ план корня), не "display": feo_entered_
+            # ceiling_and_plan (вызванный чуть выше за total_plan_after)
+            # теперь тоже читает plan+over, а не капнутый до budget display —
+            # пояснение по каждому корню обязано называть ТУ ЖЕ сумму, что
+            # уже вошла в total_plan_after, иначе текст ошибки разойдётся с
+            # цифрой «суммарный план составит X ₽» в сообщении ниже.
+            disp_d = Decimal(str(rn["plan"] + rn["over"]))
             rb = rn["budget"]
             rname = name_by_id.get(rid, str(rid))
             if rb is None:

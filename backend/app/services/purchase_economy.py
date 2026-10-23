@@ -105,11 +105,25 @@ feo_plan_fact — не дублируется):
     схемы/фронта), economy_unmeasured_by_reason (НОВОЕ) — счётчики
     {unlinked, no_plan_price, monthly, no_fact}.
   субсидия (/api/dashboard/charts subsidy_stats): economy_total,
-    economy_no_planned_price_items, economy_unmeasured_by_reason.
+    economy_no_planned_price_items, economy_unmeasured_by_reason,
+    economy_by_kind (НОВОЕ, шаг 4 плана humble-stirring-emerson.md —
+    {goods, services, unspecified}, None пока economy_total is None;
+    карточка «Экономия по закупкам» показывает «товары N / услуги N»).
   GET /api/dashboard/economy-by-method: plan (Σ баз измеренных), fact (Σ
     фактов измеренных), economy, economy_pct = economy/plan,
     no_planned_price_items (неизмеренные, любая причина),
     unmeasured_by_reason.
+
+ШАГ 4 (план humble-stirring-emerson.md, 23.10.2026) — ФОТ не даёт
+«экономии/переплаты» НИКОГДА: закупки, эффективная статья которых ФОТ
+(app.services.feo_payroll.purchase_payroll_map — ЕДИНСТВЕННАЯ проверка,
+ПРАВИЛО №6), отфильтрованы из committed_rows В НАЧАЛЕ purchase_economy_bulk,
+ДО любой классификации — их bucket остаётся пустым (economy=None), как у
+незаконтрактованной закупки, без отдельной причины 'payroll' (решение —
+«не входят», не «неизмеримы»). Разбивка economy_by_kind — тот же item_type
+(FeoPlannedItem.item_type приоритетнее PurchaseItem.item_type, kind_of,
+работы = услуги), что и везде в проекте (dashboard_type_split.py), вторая
+классификация не вводится.
 
 ИСПРАВЛЕНО 02.10.2026 (приёмка по скриншотам ФАДМ_2026 — 39/39 законтрактованных
 позиций без привязки к плановой, ни одна не измерена, карточки/таблица
@@ -138,9 +152,30 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.committed_amounts import committed_by_planned_item, is_purchase_committed
 from app.services.feo_plan_fact import fact_amounts_for_rows
+from app.services.feo_payroll import purchase_payroll_map
+from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, kind_of
 
 _CENTS = Decimal("0.01")
 _UNMEASURED_REASONS = ("unlinked", "no_plan_price", "monthly", "no_fact")
+# Шаг 4 (план humble-stirring-emerson.md) — «товары/услуги» экономии закупки:
+# работы считаются услугами, та же свёртка, что и везде (item_type_split.kind_of,
+# ПРАВИЛО №6 — вторая классификация типа не заводится). «Без типа» тоже копится
+# (инвариант Σ by_kind == economy), но отдельной строкой карточки не выводится
+# (решение владельца — только «товары N / услуги N»).
+_ECONOMY_KINDS = (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+
+
+def _empty_economy_by_kind() -> dict:
+    return {k: Decimal("0") for k in _ECONOMY_KINDS}
+
+
+def _kind_for_row(pi: "PurchaseItem", fpi: Optional["FeoPlannedItem"] = None) -> str:
+    """Вид позиции для разбивки экономии по товарам/услугам (шаг 4) — тип
+    ПЛАНОВОЙ позиции (fpi.item_type), если он задан, иначе тип строки закупки
+    (pi.item_type); работы = услуги (kind_of, та же функция, что и везде —
+    dashboard_type_split.py, item_type_split.purchase_type_shares)."""
+    raw = (fpi.item_type if fpi is not None and fpi.item_type else None) or pi.item_type
+    return kind_of(raw)
 
 
 def _empty_bucket() -> dict:
@@ -151,6 +186,11 @@ def _empty_bucket() -> dict:
         "items_considered": 0,         # измеренных строк (составная группа считается как кол-во её строк)
         "unmeasured_total": 0,         # Σ unmeasured_by_reason.values() — удобства ради
         "unmeasured_by_reason": {r: 0 for r in _UNMEASURED_REASONS},
+        # Шаг 4 — разбивка economy по виду позиции (товары/услуги/без типа),
+        # Decimal, НЕ None — ФОТ-закупки сюда не попадают вовсе (отфильтрованы
+        # до начала расчёта, см. purchase_economy_bulk), поэтому нулевой словарь
+        # для них — корректное «нечего раскладывать», как и economy=None.
+        "economy_by_kind": _empty_economy_by_kind(),
     }
 
 
@@ -159,15 +199,19 @@ def _mark_unmeasured(bucket: dict, reason: str, count: int = 1) -> None:
     bucket["unmeasured_total"] += count
 
 
-def _apply_measured(bucket: dict, base: Decimal, fact: Decimal, rows_count: int) -> None:
+def _apply_measured(bucket: dict, base: Decimal, fact: Decimal, rows_count: int, kind: str = KIND_UNSPECIFIED) -> None:
     base_q = base.quantize(_CENTS)
     fact_q = fact.quantize(_CENTS)
+    delta = base_q - fact_q
     if bucket["economy"] is None:
         bucket["economy"] = Decimal("0")
-    bucket["economy"] += (base_q - fact_q)
+    bucket["economy"] += delta
     bucket["planned_sum"] += base_q
     bucket["fact_sum"] += fact_q
     bucket["items_considered"] += rows_count
+    # Шаг 4 — тот же delta, разложенный по виду позиции (товары/услуги/без
+    # типа), Σ economy_by_kind.values() == bucket["economy"] (инвариант).
+    bucket["economy_by_kind"][kind if kind in bucket["economy_by_kind"] else KIND_UNSPECIFIED] += delta
 
 
 async def purchase_economy_bulk(db: AsyncSession, purchase_ids) -> dict[int, dict]:
@@ -189,7 +233,18 @@ async def purchase_economy_bulk(db: AsyncSession, purchase_ids) -> dict[int, dic
     if not rows:
         return result
 
-    committed_rows = [r for r in rows if is_purchase_committed(r.Purchase)]
+    # Шаг 4 (план humble-stirring-emerson.md) — закупки ФОТ не входят в
+    # экономию НИКОГДА (владелец: зарплата/отчисления не могут быть
+    # «экономией по закупкам»), ни измеренными, ни unmeasured — полностью
+    # отфильтрованы ДО начала расчёта (их bucket остаётся пустым, "—" на
+    # экране, как у незаконтрактованной закупки). ЕДИНСТВЕННАЯ проверка
+    # «закупка — ФОТ» (ПРАВИЛО №6) — app.services.feo_payroll.purchase_payroll_map,
+    # вторая формула здесь не заводится.
+    payroll_map = await purchase_payroll_map(db, purchase_ids)
+    committed_rows = [
+        r for r in rows
+        if is_purchase_committed(r.Purchase) and not payroll_map.get(r.Purchase.id, False)
+    ]
     if not committed_rows:
         return result
 
@@ -262,7 +317,7 @@ async def purchase_economy_bulk(db: AsyncSession, purchase_ids) -> dict[int, dic
         else:
             _mark_unmeasured(bucket, "no_plan_price")
             continue
-        _apply_measured(bucket, base, fact, rows_count=1)
+        _apply_measured(bucket, base, fact, rows_count=1, kind=_kind_for_row(pi, fpi))
 
     # Шаг 1б: составные группы — MAX(quantity) строк группы, Σ фактов группы.
     for (pid, _fpid), g in composite_groups.items():
@@ -275,7 +330,7 @@ async def purchase_economy_bulk(db: AsyncSession, purchase_ids) -> dict[int, dic
         max_qty = max(Decimal(str(pi.quantity or 0)) for pi, _f in rows_)
         fact_sum = sum((f for _pi, f in rows_), Decimal("0"))
         base = Decimal(str(fpi.amount)) * max_qty / Decimal(str(fpi.quantity))
-        _apply_measured(bucket, base, fact_sum, rows_count=len(rows_))
+        _apply_measured(bucket, base, fact_sum, rows_count=len(rows_), kind=_kind_for_row(rows_[0][0], fpi))
 
     # Шаг 1а.1 (см. докстринг модуля, ИСПРАВЛЕНО 15.10.2026) — позиции без
     # quantity и без unit_price: committed_by_planned_item — ЕДИНАЯ точка
@@ -290,6 +345,11 @@ async def purchase_economy_bulk(db: AsyncSession, purchase_ids) -> dict[int, dic
         for fpi_id, g in qty_less_groups.items():
             fpi: FeoPlannedItem = g["fpi"]
             rows_ = g["rows"]  # [(purchase_id, fact), ...]
+            # Строки этой группы не хранят PurchaseItem (только purchase_id +
+            # fact) — вид берём с плановой позиции (fpi.item_type), см.
+            # _kind_for_row (та же функция, строку закупки здесь не достать
+            # без лишнего запроса, а план целиком описывает один вид).
+            kind = kind_of(fpi.item_type)
             base_total = Decimal(str(fpi.amount))
             committed_info = committed_map.get(fpi_id) or {"amount": 0.0}
             committed_amt = Decimal(str(committed_info["amount"])).quantize(_CENTS)
@@ -305,7 +365,7 @@ async def purchase_economy_bulk(db: AsyncSession, purchase_ids) -> dict[int, dic
                     # нечем, экономия/перерасход делится РАВНОМЕРНО.
                     row_economy = (total_economy / n).quantize(_CENTS)
                 base_row = fact + row_economy
-                _apply_measured(bucket, base_row, fact, rows_count=1)
+                _apply_measured(bucket, base_row, fact, rows_count=1, kind=kind)
 
     return result
 
@@ -339,12 +399,20 @@ def _sum_unmeasured(buckets) -> dict:
 
 async def purchase_economy_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
     """{subsidy_id: {"economy_total": Decimal, "economy_no_planned_price_items": int,
-    "economy_unmeasured_by_reason": {...}}} — контракт API (PLAN.md шаг 1-2,
-    п. A — GET /api/dashboard/charts subsidy_stats и KPI вкладки «Субсидии»):
+    "economy_unmeasured_by_reason": {...}, "economy_by_kind": {goods, services,
+    unspecified}|None}} — контракт API (PLAN.md шаг 1-2, п. A — GET
+    /api/dashboard/charts subsidy_stats и KPI вкладки «Субсидии»):
     Σ economy (purchase_economy_bulk, ЕДИНАЯ точка выше в этом модуле) по
     ВСЕМ закупкам субсидии, не только законтрактованным — purchase_economy_bulk
     сама отфильтрует незаконтрактованные (economy=None для них, в сумму не
-    входят)."""
+    входят) И закупки ФОТ (шаг 4 плана humble-stirring-emerson.md — не входят
+    никогда, см. докстринг purchase_economy_bulk).
+
+    economy_by_kind (шаг 4, карточка «Экономия по закупкам» — строки
+    «товары N / услуги N») — та же Σ bucket["economy_by_kind"] по закупкам
+    субсидии, параллельно economy_total: None, пока economy_total is None
+    (нечего раскладывать), иначе словарь Decimal, 0 по умолчанию (работы =
+    услуги, kind_of — единственная классификация, ПРАВИЛО №6)."""
     # ИСПРАВЛЕНО 02.10.2026 (приёмка по скриншотам ФАДМ_2026 — 0 ₽ читался как
     # «экономии нет», хотя НИ ОДНА позиция не измерена): economy_total=None,
     # пока у субсидии нет НИ ОДНОЙ измеренной закупки — Decimal("0") заводится
@@ -354,6 +422,7 @@ async def purchase_economy_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) 
             "economy_total": None,
             "economy_no_planned_price_items": 0,
             "economy_unmeasured_by_reason": {r: 0 for r in _UNMEASURED_REASONS},
+            "economy_by_kind": None,
         }
         for sid in subsidy_ids
     }
@@ -368,6 +437,7 @@ async def purchase_economy_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) 
 
     sid_by_purchase = {r.id: r.subsidy_id for r in p_rows}
     econ = await purchase_economy_bulk(db, list(sid_by_purchase.keys()))
+    by_kind_acc: dict[int, dict] = {sid: _empty_economy_by_kind() for sid in subsidy_ids}
     for pid, sid in sid_by_purchase.items():
         bucket = econ.get(pid) or _empty_bucket()
         if sid not in result:
@@ -376,9 +446,14 @@ async def purchase_economy_by_subsidy(db: AsyncSession, subsidy_ids: list[int]) 
             if result[sid]["economy_total"] is None:
                 result[sid]["economy_total"] = Decimal("0")
             result[sid]["economy_total"] += bucket["economy"]
+            for k in _ECONOMY_KINDS:
+                by_kind_acc[sid][k] += bucket["economy_by_kind"][k]
         result[sid]["economy_no_planned_price_items"] += bucket["unmeasured_total"]
         for r in _UNMEASURED_REASONS:
             result[sid]["economy_unmeasured_by_reason"][r] += bucket["unmeasured_by_reason"][r]
+    for sid in subsidy_ids:
+        if result[sid]["economy_total"] is not None:
+            result[sid]["economy_by_kind"] = by_kind_acc[sid]
     return result
 
 

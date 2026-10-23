@@ -123,6 +123,11 @@ export interface SubsidyRow {
     monthly: number
     no_fact: number
   } | null
+  // Шаг 4 (план humble-stirring-emerson.md, 23.10.2026) — разбивка «Экономии
+  // по закупкам» на товары/услуги (работы = услуги, ФОТ сюда не попадает
+  // никогда — purchase_economy.py отфильтровал её раньше). null, пока
+  // economy_total == null (нечего раскладывать). См. SubsidyMoneyCards.vue.
+  economy_by_kind?: { goods: number; services: number; unspecified: number } | null
   // Число позиций закупок, у которых есть договор, но сумма договора не
   // заполнена — такие позиции учтены в committed по плановой цене (см.
   // подсказку карточки «Можно перераспределить»).
@@ -172,6 +177,14 @@ export interface SubsidyRow {
   // законтрактованные сверх плана, с готовой суммой превышения — источник
   // backend/app/services/subsidy_money_summary.py, не трогается.
   monthly_future_not_started?: number | null
+  // Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — 5-я строка карточки
+  // «Можно перераспределить»: «задано на категорию, но не расписано
+  // позициями» (статья со своей заданной суммой больше Σ её плановых
+  // позиций). Готовое поле backend/app/services/subsidy_money_summary.py
+  // (node['manual_plan_gap'], ПРАВИЛО №6) — без него Σ строк карточки
+  // расходилась с её итогом ровно на эту сумму (находка владельца на
+  // ХРО_2026/30871).
+  manual_plan_gap?: number | null
   over_plan_categories?: { category_id: number; name: string | null; excess_amount: number }[]
   // Жёсткий потолок субсидии (задача владельца 15.10.2026, карточка
   // «Запланировано» должна кричать, если план выше ФЭО) — готовые поля
@@ -179,6 +192,26 @@ export interface SubsidyRow {
   // (ПРАВИЛО №6, фронт не считает). 0 — план в пределах/ФЭО нигде не введено.
   plan_over_ceiling_amount?: number | null
   feo_ceiling?: number | null
+  // «Бюджет (ФЭО)»/«Запланировано» по видам (товары/услуги/ФОТ/без типа) —
+  // ПРАВИЛО №6, находка приёмки 23.10.2026: раньше карточки SubsidyKpiCards.vue
+  // читали их из subsidy_type_totals ДЕРЕВА (GET /feo-categories/plan-tree),
+  // который гейтит ВСЕ денежные поля узла отдельным правом
+  // feo_budget.view_tree_amounts — у пользователя без него (независимо от
+  // «Видеть ФОТ») строки товары/услуги навечно висели «загрузка по типам…».
+  // Эти поля — ТА ЖЕ сумма (app.services.type_totals.subsidy_type_totals),
+  // но на строке /dashboard/charts (?type_split=true, dashboard_charts.py),
+  // без того отдельного гейта, вычищены по ФОТ синхронно с budget/planned
+  // выше (payroll_visibility.scrub_payroll_from_dashboard_charts). Приходят
+  // ТОЛЬКО когда запрос сделан с ?type_split=true (как и widget[stage]*_goods
+  // выше) — undefined, если ещё не догружено.
+  budget_goods?: number
+  budget_services?: number
+  budget_payroll?: number
+  budget_unspecified?: number
+  planned_goods?: number
+  planned_services?: number
+  planned_payroll?: number
+  planned_unspecified?: number
 }
 
 // C4: участник (соредактор) черновой субсидии — калька wish_member без
@@ -209,6 +242,10 @@ export interface FeoCategory {
   // app.services.feo_payroll.payroll_category_ids), сама колонка хранит
   // только собственное значение этой статьи.
   is_payroll?: boolean
+  // «Закрыть ФОТ по статье» (владелец, 22.10.2026, план humble-stirring-
+  // emerson.md, шаг 1) — см. backend app/models/feo_category.py. Меняется
+  // ТОЛЬКО через POST .../payroll-close|payroll-reopen.
+  payroll_closed?: boolean
 }
 
 export interface FeoNode extends FeoCategory {

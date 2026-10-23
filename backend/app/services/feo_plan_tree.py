@@ -20,6 +20,8 @@ from app.services.committed_amounts import (
     leaf_items_committed_contribution,
 )
 from app.services.feo_plan_common import _order_substituted_plan, plan_floor_addition
+from app.services.feo_plan_common import manual_plan_gap as _manual_plan_gap_fn
+from app.services.feo_plan_common import manual_plan_gap_by_kind as _manual_plan_gap_by_kind_fn
 from app.services.plan_need_level import NEED_LEVEL_NICE_TO_HAVE
 from app.services.feo_plan_fact import (
     fact_consumption_by_category,
@@ -426,11 +428,24 @@ async def compute_feo_plan_tree(
     cat_q = select(
         FeoCategory.id, FeoCategory.subsidy_id, FeoCategory.parent_id,
         FeoCategory.planned_quantity, FeoCategory.planned_amount, FeoCategory.budget,
-        FeoCategory.plan_source, FeoCategory.manual_plan_amount,
+        FeoCategory.plan_source, FeoCategory.manual_plan_amount, FeoCategory.payroll_closed,
     ).where(FeoCategory.subsidy_id.in_(subsidy_ids))
     cat_rows = (await db.execute(cat_q)).all()
     if not cat_rows:
         return result
+
+    # «Закрыть ФОТ по статье» (владелец, 22.10.2026, план humble-stirring-
+    # emerson.md, шаг 1, вариант (в)) — _payroll_block_ids — payroll-категории
+    # БЕЗ закрытых (payroll_closed=False): ТОЛЬКО они защищены от замещения
+    # «заказ вместо плана» (_order_substituted_plan(is_payroll=True) ниже,
+    # planned_item_contributions через leaf_items_committed_contribution/
+    # planned_item_order_diffs) — закрытая статья возвращается к обычному
+    # поведению (план = фактически законтрактовано/выплачено, невыплаченный
+    # остаток уходит в «Свободно»). _payroll_ids (полный набор, ВКЛЮЧАЯ
+    # закрытые) остаётся «это вид payroll» для классификации/видимости —
+    # кнопка НЕ меняет тип категории, только снимает защиту плана.
+    _payroll_closed_ids = {r.id for r in cat_rows if r.payroll_closed}
+    _payroll_block_ids = _payroll_ids - _payroll_closed_ids
 
     by_id = {r.id: r for r in cat_rows}
     children_map: dict[int, list[int]] = {}
@@ -599,7 +614,8 @@ async def compute_feo_plan_tree(
     # 'manual_sum' продолжает читать СЫРУЮ Σ amount (leaf_item_amt), владелец
     # явно просил его не трогать.
     leaf_item_committed_amt, committed_plan_by_kind = await leaf_items_committed_contribution(
-        db, list(by_id.keys()), payroll_category_ids=_payroll_ids
+        db, list(by_id.keys()), payroll_category_ids=_payroll_ids,
+        payroll_block_category_ids=_payroll_block_ids,
     )
     # Задача владельца (13.10.2026, правка после замечания координатора) —
     # «перерасход/экономия по заказам ПО ПОЗИЦИИ, не по сумме категории»:
@@ -616,7 +632,7 @@ async def compute_feo_plan_tree(
     # own_plan_manual_for_calc/own_items_raw (там own-план НЕ читает
     # per-item contribution вообще, см. _manual_plan_for).
     from app.services.committed_amounts import planned_item_order_diffs
-    _item_order_diffs = await planned_item_order_diffs(db, list(by_id.keys()))
+    _item_order_diffs = await planned_item_order_diffs(db, list(by_id.keys()), _payroll_block_ids)
     own_order_overspend_by_cat: dict[int, float] = {}
     own_order_economy_by_cat: dict[int, float] = {}
     for _diff_info in _item_order_diffs.values():
@@ -821,7 +837,7 @@ async def compute_feo_plan_tree(
 
     def _own_plan_and_forecast(
         qty: float, amt: float, plan_manual: float, ordered: float, ordered_qty: float,
-        committed: float = 0.0, committed_qty: float = 0.0,
+        committed: float = 0.0, committed_qty: float = 0.0, is_payroll: bool = False,
     ):
         """Формула замещения плана заказом для ОДНОГО узла (без учёта детей) —
         общая для листа и «собственной» части группы. qty/amt — planned_quantity/
@@ -834,8 +850,15 @@ async def compute_feo_plan_tree(
         — предикат «законтрактовано», сработавший уже на «Договор» для разовых
         закупок, не дожидаясь «Заказано»), а НЕ по ordered/ordered_qty — те
         остаются ТОЛЬКО для прогноза (forecast/forecast_over ниже, отдельная,
-        не затронутая этой задачей метрика «средняя цена уже заказанного»)."""
-        plan = _order_substituted_plan(qty, committed, committed_qty, plan_manual)
+        не затронутая этой задачей метрика «средняя цена уже заказанного»).
+
+        `is_payroll` (план humble-stirring-emerson.md, 22.10.2026, шаг 1) —
+        узел — payroll-категория БЕЗ закрытия (cat_id in _payroll_block_ids,
+        см. вызывающий код) — замещение `plan` отключается целиком (ФОТ не
+        даёт «экономии» ни по количеству FeoCategory.planned_quantity, ни по
+        committed узла). forecast/forecast_over НЕ меняются — это прогнозная
+        метрика «средняя цена уже заказанного», её эта защита не касается."""
+        plan = _order_substituted_plan(qty, committed, committed_qty, plan_manual, is_payroll=is_payroll)
         if ordered_qty > 0:
             avg_price = ordered / ordered_qty
             remaining_qty = max(0.0, qty - ordered_qty) if qty > 0 else 0.0
@@ -893,7 +916,20 @@ async def compute_feo_plan_tree(
         excess = own_manual_excess.get(cid, 0.0)
         items = own_excess_items.get(cid, [])
         plan_manual = manual_amt
-        plan_manual_by_kind = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_PAYROLL: 0.0, KIND_UNSPECIFIED: manual_amt}
+        # ИСПРАВЛЕНО (23.10.2026, владелец, «разложить по видам до копейки») —
+        # payroll-категория (своя или по предку, _payroll_ids) с ещё не
+        # согласованным manual_sum: раньше ВСЕГДА шло в unspecified, даже на
+        # статье ФОТ, — ФОТ-деньги «терялись» из payroll-корзины ПО ТИПУ (не
+        # путать с их видимостью — это отдельный, уже верный, гейт). Тот же
+        # приём, что и в _feo_by_kind (budget payroll-категории целиком в
+        # payroll, ПРАВИЛО №6 — там же объяснение, почему тип позиции тут не
+        # участвует вовсе).
+        _is_payroll_node = cid in _payroll_ids
+        plan_manual_by_kind = {
+            KIND_GOODS: 0.0, KIND_SERVICES: 0.0,
+            KIND_PAYROLL: manual_amt if _is_payroll_node else 0.0,
+            KIND_UNSPECIFIED: 0.0 if _is_payroll_node else manual_amt,
+        }
         appr = _latest_approval(cid, _pek.PLAN_OVER_MANUAL)
         if excess > 0.005 and appr is not None and appr.status == "approved":
             plan_manual = items_total
@@ -1461,6 +1497,18 @@ async def compute_feo_plan_tree(
             # plan_items_raw − plan_manual = «экономия по заказам» узла, видна
             # в FeoCategoryEconomyNote.vue (useFeoTreeAmounts.feoOrderEconomyNoteFor).
             plan_items_raw = leaf_item_amt.get(cat_id, 0.0)
+            # Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — «задано на
+            # категорию, но не расписано позициями» (карточка «Можно
+            # перераспределить», строка 2 примера владельца 100/80/70/54) —
+            # ЕДИНАЯ точка feo_plan_common.manual_plan_gap (ПРАВИЛО №6): лист
+            # без детей — own же значение и есть значение узла, рекурсии нет.
+            manual_plan_gap = _manual_plan_gap_fn(manual_plan_entered, plan_items_raw)
+            # Правка 23.10.2026 (владелец, после живой проверки) — разбивка
+            # gap по виду: payroll-категория (своя или по предку) целиком в
+            # payroll, иначе целиком в unspecified (см. docstring функции,
+            # ПРАВИЛО №6 — та же трактовка нетипизированной суммы, что и
+            # остальное дерево). Лист без детей — own-значение и есть значение узла.
+            manual_plan_gap_kind = _manual_plan_gap_by_kind_fn(manual_plan_gap, cat_id in _payroll_ids)
             # Задача владельца (13.10.2026, «перерасход по заказам» — зеркало
             # «экономии по заказам» выше, ПРАВИЛО №6: НЕ вторая формула
             # замещения, просто разложение diff'ов позиций на две
@@ -1482,6 +1530,20 @@ async def compute_feo_plan_tree(
             else:
                 order_overspend = max(0.0, plan_manual - plan_items_raw)
                 order_economy = max(0.0, plan_items_raw - plan_manual)
+            # Шаг 1 плана humble-stirring-emerson.md (23.10.2026) — «по
+            # плановым позициям / экономия / превышение (согласовано)» под
+            # карточкой «Запланировано» (SubsidyKpiCards.vue): ТОЛЬКО
+            # настоящий перерасход/экономия ПОЗИЦИИ (закупка дороже/дешевле
+            # плана), БЕЗ net-подмены manual_sum (та считает совсем другое —
+            # «задано не расписано позициями», уже отдельная строка
+            # manual_plan_gap, см. её докстринг) — иначе строка «превышение»
+            # дублировала бы gap ещё раз (двойной счёт при X−Y+Z). Те же
+            # own_order_overspend_by_cat/own_order_economy_by_cat, но БЕЗ
+            # ветки по plan_source — они и так 0, если ни одна позиция узла
+            # не была замещена (planned_item_order_diffs — payroll-защищённые
+            # позиции тоже дают здесь 0, см. её докстринг).
+            order_overspend_items = own_order_overspend_by_cat.get(cat_id, 0.0)
+            order_economy_items = own_order_economy_by_cat.get(cat_id, 0.0)
             if qty == 0.0:
                 # planned_quantity категории не задано (план введён позициями,
                 # не полями листа) — без этого fallback'а qty_plan/display_quantity
@@ -1503,7 +1565,8 @@ async def compute_feo_plan_tree(
             paid_marked = own_paid_marked
             paid_confirmed = own_paid_confirmed
             plan, forecast, forecast_over = _own_plan_and_forecast(
-                qty, amt, plan_manual, ordered, ordered_qty, own_committed, own_committed_qty
+                qty, amt, plan_manual, ordered, ordered_qty, own_committed, own_committed_qty,
+                is_payroll=cat_id in _payroll_block_ids,
             )
             # Шаг 3 плана «Деньги субсидии» (02.10.2026, «договор входит в
             # план») — пол на собственной части листа: committed (ВСЕ позиции
@@ -1573,7 +1636,7 @@ async def compute_feo_plan_tree(
             own_manual_entered, own_plan_manual_for_calc, own_excess, own_excess_items_, _ = _manual_plan_for(cat_id, r)
             own_plan, _own_forecast, _own_forecast_over = _own_plan_and_forecast(
                 own_qty, own_amt, own_plan_manual_for_calc, own_ordered, own_ordered_qty,
-                own_committed, own_committed_qty,
+                own_committed, own_committed_qty, is_payroll=cat_id in _payroll_block_ids,
             )
             # Шаг 2 плана (02.10.2026) — порог committed, не ordered (см. ветку листа выше).
             own_qty_plan = own_committed_qty if (own_qty > 0 and own_committed_qty >= own_qty) else own_qty
@@ -1591,6 +1654,27 @@ async def compute_feo_plan_tree(
             # активных FeoPlannedItem УЗЛА (без замещения), что и у листа.
             own_items_raw = leaf_item_amt.get(cat_id, 0.0)
             plan_items_raw = children_plan_items_raw + own_items_raw
+            # Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — rollup
+            # «задано на категорию, но не расписано позициями» (см. комментарий
+            # у листа выше, ТА ЖЕ единая точка feo_plan_common.manual_plan_gap,
+            # ПРАВИЛО №6): own-часть узла + Σ готовых значений детей.
+            own_manual_gap = _manual_plan_gap_fn(own_manual_entered, own_items_raw)
+            children_manual_plan_gap = sum(c["manual_plan_gap"] for c in child_nodes)
+            manual_plan_gap = children_manual_plan_gap + own_manual_gap
+            # Правка 23.10.2026 — rollup разбивки по виду (см. комментарий у
+            # листа выше, ПРАВИЛО №6 — та же единая точка). Узел хранит 4
+            # ОТДЕЛЬНЫХ скаляра (manual_plan_gap_goods/services/payroll/
+            # unspecified, не вложенный dict — см. их публикацию ниже), читаем
+            # детей той же россыпью полей.
+            own_manual_gap_kind = _manual_plan_gap_by_kind_fn(own_manual_gap, cat_id in _payroll_ids)
+            _gap_field_by_kind = {
+                KIND_GOODS: "manual_plan_gap_goods", KIND_SERVICES: "manual_plan_gap_services",
+                KIND_PAYROLL: "manual_plan_gap_payroll", KIND_UNSPECIFIED: "manual_plan_gap_unspecified",
+            }
+            manual_plan_gap_kind = {
+                k: sum(c[_gap_field_by_kind[k]] for c in child_nodes) + own_manual_gap_kind[k]
+                for k in ALL_KINDS
+            }
             # Задача владельца (13.10.2026) — «перерасход по заказам», rollup
             # зеркалит plan_items_raw/plan_manual выше (ПРАВИЛО №6, см.
             # комментарий у листа). Правка после замечания координатора — ПО
@@ -1609,6 +1693,14 @@ async def compute_feo_plan_tree(
             children_order_economy = sum(c["order_economy"] for c in child_nodes)
             order_overspend = own_order_overspend + children_order_overspend
             order_economy = own_order_economy + children_order_economy
+            # Шаг 1 плана humble-stirring-emerson.md (23.10.2026) — версия БЕЗ
+            # manual_sum net-подмены, см. комментарий у листа выше.
+            own_order_overspend_items = own_order_overspend_by_cat.get(cat_id, 0.0)
+            own_order_economy_items = own_order_economy_by_cat.get(cat_id, 0.0)
+            children_order_overspend_items = sum(c["order_overspend_items"] for c in child_nodes)
+            children_order_economy_items = sum(c["order_economy_items"] for c in child_nodes)
+            order_overspend_items = own_order_overspend_items + children_order_overspend_items
+            order_economy_items = own_order_economy_items + children_order_economy_items
             ordered = own_ordered + children_ordered
             ordered_qty = own_ordered_qty + children_ordered_qty
             over = own_over + children_over
@@ -1676,7 +1768,28 @@ async def compute_feo_plan_tree(
                 excess_approved = True
                 display = full_display
             else:
-                display = plan_manual
+                # ИСПРАВЛЕНО (владелец, шаг 6 плана humble-stirring-emerson.md,
+                # 23.10.2026, сценарий «план 100, хотят +2,1»): ДО этой правки
+                # display откатывался к plan_manual — для plan_source=
+                # 'planned_items' (умолчание) plan_manual УЖЕ включает ЛЮБУЮ
+                # новую плановую позицию без какого-либо согласования (режим
+                # 'planned_items' не имеет approval-гейта на уровне
+                # plan_manual вообще, см. _manual_plan_for — approval там
+                # относится ТОЛЬКО к 'manual_sum'), поэтому «Запланировано»
+                # подскакивало СРАЗУ, как только появлялась вторая плановая
+                # позиция, независимо от согласования (владелец: «план 100,
+                # хотят +2,1 → до согласования Запланировано должно остаться
+                # 100»). Правильная «безопасная» верхняя граница ДО
+                # согласования excess_amount (over_feo) — budget (= min(
+                # full_display, budget) — budget < full_display гарантирован
+                # условием ветки выше): то, что реально profinancировано по
+                # ФЭО, остаётся «Запланировано», несогласованная разница
+                # видна отдельно (excess_amount/excess_pending — плашка «на
+                # согласовании +N», см. frontend PendingExcessNote.vue/
+                # usePendingExcessTotal.ts, читают ИМЕННО эти поля, не display
+                # — эта правка их не касается). После согласования —
+                # display = full_display (ветка выше), как и было.
+                display = budget
                 excess_pending = bool(appr_over_feo is not None and appr_over_feo.status == "pending")
 
         # Задача владельца «план ≠ факт» (шаг C, сессия 2026-08-06): ВТОРОЕ,
@@ -1898,12 +2011,37 @@ async def compute_feo_plan_tree(
             # Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — см.
             # комментарий у leaf/group-веток выше.
             "plan_items_raw": plan_items_raw,
+            # Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — «задано на
+            # категорию, но не расписано позициями», строка 2 карточки «Можно
+            # перераспределить» (см. комментарий у leaf/group-веток выше,
+            # feo_plan_common.manual_plan_gap).
+            "manual_plan_gap": manual_plan_gap,
+            # Правка 23.10.2026 (владелец) — та же сумма, разложенная по виду
+            # (payroll-категория целиком в payroll, иначе целиком в
+            # unspecified — см. feo_plan_common.manual_plan_gap_by_kind).
+            # ОТДЕЛЬНЫЕ скаляры, не вложенный dict — тот же приём, что и у
+            # committed_goods/committed_services/committed_payroll/
+            # committed_unspecified чуть ниже (ПРАВИЛО №6, единый стиль).
+            "manual_plan_gap_goods": manual_plan_gap_kind[KIND_GOODS],
+            "manual_plan_gap_services": manual_plan_gap_kind[KIND_SERVICES],
+            "manual_plan_gap_payroll": manual_plan_gap_kind[KIND_PAYROLL],
+            "manual_plan_gap_unspecified": manual_plan_gap_kind[KIND_UNSPECIFIED],
             # Задача владельца (13.10.2026) — «перерасход по заказам» рядом с
             # «экономией по заказам»: plan_items_raw + order_overspend −
             # order_economy == plan_manual на КАЖДОМ узле (см. комментарий у
             # leaf/group-веток выше). Не меняет plan/plan_manual/display/excess_*.
             "order_overspend": order_overspend,
             "order_economy": order_economy,
+            # Шаг 1 плана humble-stirring-emerson.md (23.10.2026) — версии
+            # БЕЗ manual_sum net-подмены, см. комментарий у leaf/group-веток
+            # выше. Карточка «Запланировано» (SubsidyKpiCards.vue, раскладка
+            # «по плановым позициям/экономия/превышение») обязана читать
+            # ИМЕННО эти два поля для Y/Z, не order_overspend/order_economy
+            # выше (те для manual_sum уже содержат gap — читать их ЗДЕСЬ
+            # означало бы задвоить gap, который уже отдельной строкой
+            # manual_plan_gap).
+            "order_overspend_items": order_overspend_items,
+            "order_economy_items": order_economy_items,
             "ordered": ordered,
             "ordered_quantity": ordered_qty,
             "ordered_qty": ordered_qty,
@@ -2019,6 +2157,12 @@ async def compute_feo_plan_tree(
             # в форме категории (см. app.routers.feo_categories POST/PUT).
             "plan_source": r.plan_source or "planned_items",
             "manual_plan_amount": float(r.manual_plan_amount) if r.manual_plan_amount is not None else None,
+            # Шаг 1 плана humble-stirring-emerson.md (22.10.2026) — кнопка
+            # «Закрыть ФОТ по статье»: is_payroll — ЭФФЕКТИВНО payroll (себя
+            # ИЛИ предок, _payroll_ids), payroll_closed — собственный флаг
+            # узла (защита снята ИМЕННО для него, см. FeoCategory.payroll_closed).
+            "is_payroll": cat_id in _payroll_ids,
+            "payroll_closed": cat_id in _payroll_closed_ids,
             # Задача владельца п.4 (2026-08-12): данные последнего approved-согласования
             # по категории (для предупреждения «превышение согласовано»), см. комментарий выше.
             "excess_approval_amount": excess_approval_amount,

@@ -166,10 +166,19 @@ async def find_excess_culprit(
     all_cats = (await db.execute(
         select(
             FeoCategory.id, FeoCategory.parent_id, FeoCategory.planned_quantity,
-            FeoCategory.plan_source, FeoCategory.manual_plan_amount,
+            FeoCategory.plan_source, FeoCategory.manual_plan_amount, FeoCategory.payroll_closed,
         ).where(FeoCategory.subsidy_id == cat.subsidy_id)
     )).all()
     by_id = {r.id: r for r in all_cats}
+    # Шаг 1 плана humble-stirring-emerson.md (22.10.2026) — ТА ЖЕ пара
+    # множеств, что compute_feo_plan_tree считает для всей субсидии
+    # (_payroll_ids/_payroll_block_ids, ПРАВИЛО №6): виновник превышения
+    # обязан применять ТУ ЖЕ защиту «ФОТ не даёт экономии», иначе Σ
+    # контрибьюторов разойдётся с node['full_display'] дерева на статьях ФОТ.
+    from app.services.feo_payroll import payroll_category_ids as _resolve_payroll_ids
+    _payroll_ids = await _resolve_payroll_ids(db, [cat.subsidy_id])
+    _payroll_closed_ids = {r.id for r in all_cats if r.payroll_closed}
+    _payroll_block_ids = _payroll_ids - _payroll_closed_ids
     children_map: dict[int, list[int]] = {}
     for r in all_cats:
         if r.parent_id is not None:
@@ -276,7 +285,7 @@ async def find_excess_culprit(
     # для items_total (агрегат ниже), и построчно для контрибьюторов-позиций
     # (Источник №1, см. ниже — amt берётся из этого словаря, не из голого
     # FeoPlannedItem.amount).
-    per_item_contribution = await planned_item_contributions(db, node_ids)
+    per_item_contribution = await planned_item_contributions(db, node_ids, _payroll_block_ids)
     committed_items_total: dict[int, float] = {}
     for _info in per_item_contribution.values():
         committed_items_total[_info["feo_category_id"]] = (
@@ -334,8 +343,16 @@ async def find_excess_culprit(
         # способом раскладывать вклад узла на контрибьюторов — построчно по
         # FeoPlannedItem (Источник №1) или построчно по реальным закупленным
         # позициям (Источник №1а).
-        contribution = _order_substituted_plan(qty, committed, committed_qty, plan_manual)
-        substituted = qty > 0 and committed_qty >= qty
+        _node_is_payroll = nid in _payroll_block_ids
+        contribution = _order_substituted_plan(
+            qty, committed, committed_qty, plan_manual, is_payroll=_node_is_payroll,
+        )
+        # Шаг 1 плана humble-stirring-emerson.md (22.10.2026) — узел ФОТ
+        # (защищённый, не закрытый кнопкой) НИКОГДА не считается «законтрактован
+        # целиком» для ЭТОЙ раскладки (contribution выше уже не замещена) — иначе
+        # вклад узла раскладывался бы на реальные закупленные позиции (Источник
+        # №1а), хотя сам contribution остался равен plan_manual, а не committed.
+        substituted = (qty > 0 and committed_qty >= qty) and not _node_is_payroll
 
         # Шаг 3 плана «Деньги субсидии» (02.10.2026, решение владельца «договор
         # входит в план») — ЕДИНАЯ точка с compute_feo_plan_tree._own_plan_floor

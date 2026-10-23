@@ -19,16 +19,39 @@ compute_feo_plan_tree.plan (и, соответственно, с display/excess_
 from typing import Optional
 
 
-def _order_substituted_plan(qty: float, ordered: float, ordered_qty: float, plan_manual: float) -> float:
+def _order_substituted_plan(
+    qty: float, ordered: float, ordered_qty: float, plan_manual: float, is_payroll: bool = False,
+) -> float:
     """Общая точка формулы «заказ замещает план, когда количество набрано
     целиком» (compute_feo_plan_tree._own_plan_and_forecast, задача владельца
     2026-08-05, ФОРМУЛА v2 — см. подробный docstring compute_feo_plan_tree) —
     используется И деревом (для листа и «собственной» части группы), И
-    find_excess_culprit (feo_plan_excess.py, ПРАВИЛО №6): узел заказан
-    ПОЛНОСТЬЮ (qty > 0 and ordered_qty >= qty) → его вклад в план становится
-    фактической суммой заказа (`ordered`) — экономия/переплата высвобождается;
-    иначе (заказано частично или количество не задано) — план резервируется
-    целиком (`plan_manual`), даже если что-то уже заказано дешевле/дороже."""
+    find_excess_culprit (feo_plan_excess.py), И committed_amounts.
+    planned_item_contributions (построчно, по одной плановой позиции), И
+    historical_fact_import/economy_preview.py — ПРАВИЛО №6: узел/позиция
+    заказан(а) ПОЛНОСТЬЮ (qty > 0 and ordered_qty >= qty) → её вклад в план
+    становится фактической суммой заказа (`ordered`) — экономия/переплата
+    высвобождается; иначе (заказано частично или количество не задано) — план
+    резервируется целиком (`plan_manual`), даже если что-то уже заказано
+    дешевле/дороже.
+
+    `is_payroll` (владелец, 22.10.2026, план humble-stirring-emerson.md, шаг
+    1, «ФОТ не даёт экономии») — ОТКЛЮЧАЕТ замещение целиком: по статьям ФОТ
+    (app.services.feo_payroll.payroll_category_ids, с наследованием) план
+    НИКОГДА не заменяется суммой выплаты/заказа, даже если количество/сумма
+    совпали — иначе невыплаченная часть зарплаты молча становится «экономией»
+    и утекает в «Свободно» (прод, ХРО_2026: 1 шт плана × 13 277 966,84,
+    выплачено 1 шт × 8 235 337,78 — количество «набралось» целиком, хотя
+    деньги не выплачены). Невыплаченный остаток продолжает входить в
+    «Запланировано» и показывается строкой «ФОТ» карточки «Можно
+    перераспределить» (см. app.services.redistributable_raw — kind=='payroll'
+    уже существующей разбивки, та же точка, ПРАВИЛО №6: вторая формула для
+    ФОТ не вводится, просто эта замена отключается). Снять защиту на ОДНОЙ
+    статье можно только явной кнопкой «Закрыть ФОТ по статье»
+    (app.routers.feo_payroll_close — создаёт запись FeoCategory.payroll_closed,
+    читаемую вызывающим кодом ДО передачи is_payroll сюда)."""
+    if is_payroll:
+        return plan_manual
     return ordered if (qty > 0 and ordered_qty >= qty) else plan_manual
 
 
@@ -125,6 +148,66 @@ def plan_floor_addition(own_plan_before_floor: float, own_over: float, own_commi
     own-плановой сумме и публикует отдельно (node['plan_floor_added']) для
     объяснения на экране «включено N ₽ договоров без плановой позиции»."""
     return max(0.0, own_committed_all - (own_plan_before_floor + own_over))
+
+
+def manual_plan_gap(manual_plan_entered: float, items_total_raw: float) -> float:
+    """Четвёртая единая точка (владелец, 23.10.2026, план humble-stirring-
+    emerson.md, 🔵 «ваш пример по строкам» — карточка «Можно перераспределить»,
+    строка «задано на категорию, но не расписано позициями»).
+
+    Повод: статья «Задано на категорию» (plan_source='manual_sum', см.
+    FeoCategory.plan_source) без плановых позиций ВООБЩЕ (ЦентрПоиск_2026:
+    «Аренда автотранспортных средств…» план 372 000, позиций 0) или с суммой
+    позиций МЕНЬШЕ заданной — не теряет свою долю ФЭО из «Можно
+    перераспределить»: node['plan_manual'] УЖЕ считает эту статью полностью
+    запланированной (manual_plan_entered, пока превышение не согласовано —
+    см. _leaf_plan_manual выше), но app.services.redistributable_raw.
+    not_committed_raw_rows видит ТОЛЬКО реальные FeoPlannedItem и для такой
+    статьи возвращает 0 строк — разница (сама заданная сумма) «терялась»
+    из подстрок карточки, хотя в её ИТОГЕ (budget_basis − committed) эти
+    деньги уже сидели (находка владельца — ЦентрПоиск_2026 подстроки меньше
+    итога на 6 703 025,12, ЦП_2026_2 — на 10 650 000,00).
+
+    gap = max(0, заданная сумма узла СВОЯ (БЕЗ рекурсии по детям) − Σ
+    активных FeoPlannedItem СВОИХ (БЕЗ рекурсии), ТА ЖЕ пара, что
+    compute_feo_plan_tree передаёт в _manual_plan_for/own_items_raw) — когда
+    позиций больше, чем заданная сумма (превышение, другая ветка, см.
+    excess_plan_over_manual) gap=0 (max зажимает отрицательное), когда режим
+    узла 'planned_items' (manual_plan_entered всегда 0 по построению
+    _manual_plan_for) gap тривиально 0 — формула не требует отдельной
+    проверки режима. Вызывающий код (compute_feo_plan_tree, node
+    ['manual_plan_gap']) суммирует gap рекурсивно по поддереву, как и прочие
+    аддитивные поля узла (ПРАВИЛО №6 — одна формула, не per-режимный if в
+    каждом месте, где нужна эта строка карточки)."""
+    return max(0.0, float(manual_plan_entered) - float(items_total_raw))
+
+
+def manual_plan_gap_by_kind(gap: float, is_payroll: bool) -> dict:
+    """Разбивка manual_plan_gap (см. функцию выше) по виду — владелец,
+    23.10.2026 (правка после живой проверки): «строки «Можно
+    перераспределить» по видам обязаны давать итог до копейки» — без этой
+    разбивки Σ redistributable_by_kind была короче итога карточки ровно на
+    manual_plan_gap (находка на синтетической субсидии 100/80/70/54: «юнит»
+    46 = 20+16+10, но redistributable_by_kind.unspecified показывал только 36).
+
+    Сама сумма — НЕ РАСПИСАНА позициями по определению (это и есть повод
+    строки «задано на категорию, но не расписано позициями»), поэтому типа
+    «товар»/«услуга» у неё взять неоткуда — ТА ЖЕ трактовка, что уже
+    применяется ко ВСЕЙ declared-сумме узла, пока превышение над ней не
+    согласовано (_manual_plan_for.plan_manual_by_kind, feo_plan_tree.py:
+    «одно число manual_plan_amount, БЕЗ разбивки по позициям... целиком в
+    KIND_UNSPECIFIED» — ПРАВИЛО №6, та же договорённость, не новая):
+    payroll-категория (своя или по предку, feo_payroll.payroll_category_ids)
+    — вся сумма идёт в payroll (как и бюджет/факт такой категории, см.
+    _feo_by_kind/kind_of_by_category_id); иначе — целиком в unspecified."""
+    from app.services.item_type_split import KIND_GOODS, KIND_PAYROLL, KIND_SERVICES, KIND_UNSPECIFIED
+    g = float(gap)
+    return {
+        KIND_GOODS: 0.0,
+        KIND_SERVICES: 0.0,
+        KIND_PAYROLL: g if is_payroll else 0.0,
+        KIND_UNSPECIFIED: 0.0 if is_payroll else g,
+    }
 
 
 def composite_group_metrics(quantities: list, unit_prices: list) -> tuple:

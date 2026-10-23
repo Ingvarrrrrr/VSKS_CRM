@@ -232,10 +232,28 @@ async def feo_entered_ceiling_and_plan(
     собственная сумма ПЛЮС, если явного budget нет, — сумма детей,
     рекурсивно, та же формула, что и у calculate_budget_from_categories/
     subsidy_budget_from_categories, Правило №6, вторая формула бюджета не
-    заводится). total_plan = Σ tree[node]["display"] (вся плановая сумма
-    ПОДДЕРЕВА этого узла) по тем же верхним введённым узлам. `tree` — уже
-    построенный compute_feo_plan_tree(db, [subsidy_id]) этого же вызова
+    заводится). total_plan = Σ (tree[node]["plan"] + tree[node]["over"])
+    (ПОЛНАЯ плановая сумма ПОДДЕРЕВА этого узла, БЕЗ отката к budget при
+    несогласованном превышении) по тем же верхним введённым узлам. `tree` —
+    уже построенный compute_feo_plan_tree(db, [subsidy_id]) этого же вызова
     (план .planning/quick/2026-10-07-dnr-feo-cards/PLAN.md шаг 3).
+
+    ИЗМЕНЕНО (владелец, шаг 6 плана humble-stirring-emerson.md, 23.10.2026):
+    было — tree[node]["display"]. После правки «display не выше budget до
+    согласования over_feo-превышения» (feo_plan_tree.py, тот же узел МОЖЕТ
+    нести СВОЁ несогласованное превышение) display узла откатывается к
+    budget узла, пока ИМЕННО ЭТО превышение не согласовано — "Запланировано"
+    на карточке больше не завышает ожидания раньше времени. Но ЖЁСТКИЙ
+    потолок субсидии («ни при каких обстоятельствах», см. докстринг этого
+    модуля и assert_subsidy_ceiling) — ОТДЕЛЬНЫЙ, более строгий контроль: он
+    обязан видеть ПОЛНЫЙ план (plan+over, ту же формулу, что full_display в
+    _visit), а не капнутый display, иначе план, реально уже превышающий
+    потолок, становится для потолка невидимым ровно тогда, когда у узла ещё
+    не согласовано его СОБСТВЕННОЕ превышение над СВОИМ budget — то есть в
+    точности в сценарии, для которого потолок и существует (test regression
+    test_align_budget_to_plan_ceiling_error.py/test_excess_total_not_per_
+    branch.py/test_plan_excess_ceiling_gate.py, найдено полным прогоном
+    pytest 23.10.2026).
 
     ПОВОД (07.10.2026, живой пример — субсидия «ДНР», категория 18090 «День
     спасателя», глубокий лист внутри корня «Прочие расходы»): при
@@ -293,7 +311,10 @@ async def feo_entered_ceiling_and_plan(
             ceiling += b
             node = tree.get(cid)
             if node is not None:
-                total_plan += float(node.get("display", 0.0) or 0.0)
+                # ИЗМЕНЕНО 23.10.2026 — см. докстринг выше: plan+over (полный
+                # план, НЕ капнутый до budget при несогласованном превышении
+                # над ЭТИМ же узлом), а не "display".
+                total_plan += float(node.get("plan", 0.0) or 0.0) + float(node.get("over", 0.0) or 0.0)
     return ceiling, total_plan, top_entered_ids
 
 

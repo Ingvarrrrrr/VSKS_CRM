@@ -309,6 +309,13 @@ class FeoCategoryOut(BaseModel):
     manual_plan_amount: Optional[float] = None
     # ФОТ и иные выплаты персоналу — см. FeoCategoryCreate.is_payroll выше.
     is_payroll: bool = False
+    # «Закрыть ФОТ по статье» (владелец, 22.10.2026, план humble-stirring-
+    # emerson.md, шаг 1) — см. app/models/feo_category.py. Меняется ТОЛЬКО
+    # через POST /{cat_id}/payroll-close|payroll-reopen (app.routers.
+    # feo_payroll_close), не через этот PUT/create.
+    payroll_closed: bool = False
+    payroll_closed_by_user_id: Optional[int] = None
+    payroll_closed_at: Optional[datetime] = None
     # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): непустое — только
     # когда PUT /feo-categories/{id} заподозрил, что в planned_amount (цена ЗА
     # ЕДИНИЦУ) записана СУММА (защита от повторения К1, см. update_category).

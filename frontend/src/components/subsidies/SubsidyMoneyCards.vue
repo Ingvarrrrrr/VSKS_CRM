@@ -52,6 +52,14 @@
               <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openMetric('not_committed_nice')">хотелось бы, можно отказаться: {{ formatCurrency(notCommittedNice) }}</div>
               <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openMetric('not_committed_likely')">скорее всего понадобится: {{ formatCurrency(notCommittedLikely) }}</div>
               <div class="kpi-redistributable-note-row kpi-redistributable-note-row-clickable" @click.stop="cardDrills.openMonthlyTree('monthly_future_not_started')">ещё уйдёт помесячно до конца года: {{ formatCurrency(monthlyFutureNotStarted) }}</div>
+              <!-- Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — 5-я
+                   строка: «задано на категорию, но не расписано позициями»
+                   (готовое поле бэкенда manual_plan_gap, ПРАВИЛО №6). Без
+                   drill-окна (клика нет) — у этой суммы нет построчного
+                   источника (она разница «задано» минус Σ позиций статьи,
+                   не список позиций/закупок); показываем только когда
+                   заметна (>0.5 ₽), как и необязательные строки «без типа». -->
+              <div v-if="Math.abs(manualPlanGap) > 0.5" class="kpi-redistributable-note-row">задано на категорию, не расписано позициями: {{ formatCurrency(manualPlanGap) }}</div>
             </div>
           </div>
           <div class="kpi-redistributable-col-side">
@@ -150,6 +158,17 @@
         <div class="kpi-body">
           <div class="kpi-value" :class="economyTotal == null ? '' : (economyTotal < 0 ? 'text-error' : 'text-success')">{{ economyTotal != null ? formatCurrency(Math.abs(economyTotal)) : '—' }}</div>
           <div class="kpi-label">{{ (economyTotal ?? 0) < 0 ? 'Переплата по закупкам' : 'Экономия по закупкам' }}</div>
+          <!-- Шаг 4 (план humble-stirring-emerson.md, 23.10.2026) — строки
+               «товары / услуги» под карточкой (ФОТ сюда не попадает никогда —
+               отфильтрована на бэкенде, purchase_economy.py). Клик не ставим
+               (владелец просил только показать разбивку, без drill) — @click.stop,
+               чтобы строка не открывала MetricDrillDialog родительской карточки. -->
+          <div v-if="economyByKindRows.length" class="kpi-split-rows" @click.stop>
+            <div v-for="row in economyByKindRows" :key="row.kind" class="kpi-split-row" :class="{ 'kpi-split-row-neg': row.amount < -0.5 }">
+              <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
+              <span class="kpi-split-text">{{ row.label }} {{ formatCurrency(Math.abs(row.amount)) }}</span>
+            </div>
+          </div>
           <div v-if="economyUnmeasuredText" class="kpi-sub-note text-caption" style="color:#B45309">
             {{ economyUnmeasuredText }}
           </div>
@@ -208,6 +227,9 @@ const committedMissingFactItems = computed(() => props.subsidy?.committed_missin
 // Переименовано 15.10.2026 (план abstract-noodling-pelican.md) — готовое поле
 // бэкенда, фронт не считает (Правило №6).
 const monthlyFutureNotStarted = computed(() => props.subsidy?.monthly_future_not_started ?? 0)
+// Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — готовое поле бэкенда,
+// фронт не считает (ПРАВИЛО №6, см. комментарий у строки в template выше).
+const manualPlanGap = computed(() => props.subsidy?.manual_plan_gap ?? 0)
 const overPlanCategories = computed(() => props.subsidy?.over_plan_categories ?? [])
 // null-безопасно (02.10.2026, приёмка): нет данных (поле не пришло или
 // бэкенд явно вернул null) — показываем «—», а не 0 ₽ (0 — это РЕАЛЬНОЕ
@@ -221,6 +243,22 @@ const economyNoPlannedPriceItems = computed(() => props.subsidy?.economy_no_plan
 const economyUnmeasuredText = computed(() =>
   formatEconomyUnmeasuredText(economyNoPlannedPriceItems.value, props.subsidy?.economy_unmeasured_by_reason)
 )
+// Шаг 4 (план humble-stirring-emerson.md, 23.10.2026) — строки «товары N /
+// услуги N» под карточкой «Экономия по закупкам» (готовое поле бэкенда
+// economy_by_kind, ПРАВИЛО №6 — фронт не считает). ФОТ сюда не попадает
+// никогда (отфильтрована в purchase_economy.py) — без ФОТ-строки, в отличие
+// от splitRows «Можно перераспределить» ниже. «Без типа» показываем только
+// если заметна (>0.5 ₽), как и остальные «необязательные» корзины в проекте.
+const economyByKindRows = computed<SplitRow[]>(() => {
+  const k = props.subsidy?.economy_by_kind
+  if (!k) return []
+  const rows: SplitRow[] = [
+    { kind: 'goods', label: KIND_LABELS.goods, amount: k.goods },
+    { kind: 'services', label: KIND_LABELS.services, amount: k.services },
+  ]
+  if (Math.abs(k.unspecified || 0) > 0.5) rows.push({ kind: 'unspecified', label: KIND_LABELS.unspecified, amount: k.unspecified })
+  return rows
+})
 
 const splitRows = computed<SplitRow[]>(() => {
   const k = props.subsidy?.redistributable_by_kind

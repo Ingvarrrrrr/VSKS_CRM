@@ -169,3 +169,45 @@ async def test_5_contract_over_budget_still_triggers_excess_control(db_session, 
         "включая добавку пола, а не только Σ плановых позиций"
     )
     assert culprit["total_plan_amount"] == pytest.approx(node["plan"] + node["over"])
+
+
+@pytest.mark.asyncio
+async def test_floor_excess_display_clamped_to_budget_before_approval(db_session, test_org):
+    """Шаг 6 плана humble-stirring-emerson.md (23.10.2026, находка второго
+    исполнителя на стенде, субсидия id 30871): узел БЕЗ собственных плановых
+    позиций, весь план через «пол» (plan_floor_added — договор без плановой
+    позиции): budget 20 000, договор (НЕ привязан) 30 000 → excess_amount
+    10 000, не согласовано. ДО правки display падал до 0 (откатывался к
+    plan_manual, который здесь 0 — позиций нет вовсе). Теперь display = budget
+    (20 000) — «Запланировано» не теряет честно профинансированную сумму,
+    несогласованная разница (10 000) видна через excess_amount/excess_pending
+    (плашка «на согласовании +10 000», PendingExcessNote.vue/
+    usePendingExcessTotal.ts, НЕ трогается этой правкой)."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=20_000)
+    leaf = await _make_category(db_session, subsidy.id, name="Пол без позиций", budget=Decimal("20000"))
+
+    await _make_unlinked_purchase(db_session, subsidy.id, leaf.id, quantity=1, contract_price=30_000)
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[leaf.id]
+    assert node["plan_manual"] == pytest.approx(0.0), "позиций нет вовсе — plan_manual пуст"
+    assert node["plan_floor_added"] == pytest.approx(30_000.0)
+    assert node["excess_amount"] == pytest.approx(10_000.0)
+    assert node["display"] == pytest.approx(20_000.0), (
+        "до согласования display не должен падать ниже budget, даже когда "
+        "plan_manual пуст (весь план держится полом, а не позициями)"
+    )
+
+    # После согласования — display = полный план (budget + over), как и раньше.
+    from app.models.plan_excess_approval import PlanExcessApproval
+    from app.services import plan_excess_kinds as _pek
+    db_session.add(PlanExcessApproval(
+        feo_category_id=leaf.id, subsidy_id=subsidy.id, kind=_pek.OVER_FEO,
+        excess_amount=Decimal("10000"), status="approved", mode="sequential",
+    ))
+    await db_session.commit()
+
+    tree2 = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node2 = tree2[leaf.id]
+    assert node2["excess_approved"] is True
+    assert node2["display"] == pytest.approx(30_000.0)

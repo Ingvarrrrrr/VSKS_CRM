@@ -46,6 +46,12 @@ async def test_owner_suit_example_overspend_230900(db_session, test_org):
     assert node["order_overspend"] == pytest.approx(230_900.0, abs=0.01)
     assert node["order_economy"] == 0.0
     _assert_identity(node)
+    # Шаг 1 плана humble-stirring-emerson.md (23.10.2026) — версии БЕЗ
+    # manual_sum net-подмены: для 'planned_items' (умолчание, этот тест)
+    # совпадают с order_overspend/order_economy БАЙТ-В-БАЙТ (нет manual_sum
+    # узлов в этом дереве — нечего исключать).
+    assert node["order_overspend_items"] == pytest.approx(node["order_overspend"], abs=0.01)
+    assert node["order_economy_items"] == pytest.approx(node["order_economy"], abs=0.01)
 
 
 @pytest.mark.asyncio
@@ -68,6 +74,8 @@ async def test_owner_example_economy_still_zero_overspend(db_session, test_org):
     assert node["order_overspend"] == 0.0
     assert node["order_economy"] == pytest.approx(16_173.77, abs=0.01)
     _assert_identity(node)
+    assert node["order_overspend_items"] == pytest.approx(node["order_overspend"], abs=0.01)
+    assert node["order_economy_items"] == pytest.approx(node["order_economy"], abs=0.01)
 
 
 @pytest.mark.asyncio
@@ -123,3 +131,47 @@ async def test_rollup_to_group_node(db_session, test_org):
     _assert_identity(group_node)
     _assert_identity(tree[leaf_over.id])
     _assert_identity(tree[leaf_econ.id])
+
+
+@pytest.mark.asyncio
+async def test_order_overspend_items_excludes_manual_sum_gap(db_session, test_org):
+    """Шаг 1 плана humble-stirring-emerson.md (23.10.2026) — карточка
+    «Запланировано» (SubsidyKpiCards.vue, раскладка «по плановым позициям/
+    экономия/превышение») обязана читать order_overspend_items/
+    order_economy_items, НЕ order_overspend/order_economy: для статьи
+    «Задано на категорию» (plan_source='manual_sum') БЕЗ закупок (как
+    ЦентрПоиск_2026/пример владельца 100/80/70/54) node['order_overspend']
+    УЖЕ несёт manual_plan_gap под видом «перерасхода» (10 = 80−70, net-
+    формула, см. _visit) — показывать его ЕЩЁ РАЗ в раскладке «Запланировано»
+    удвоило бы gap (он уже своя строка карточки «Можно перераспределить»).
+    order_overspend_items/order_economy_items обязаны остаться 0 — НИ один
+    FeoPlannedItem не был фактически куплен/законтрактован дороже/дешевле
+    своего плана (в этом сценарии закупок нет вовсе)."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=100)
+    leaf = await _make_category(
+        db_session, subsidy.id, name="Задано на категорию (пример владельца)",
+        budget=100, plan_source="manual_sum", manual_plan_amount=80,
+    )
+    await _make_planned_item(db_session, leaf.id, "Позиция", 1, 70)
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[leaf.id]
+
+    assert node["manual_plan_gap"] == pytest.approx(10.0, abs=0.01)
+    # Старые (mode-зависимые) поля — net-формула манит gap перерасходом.
+    assert node["order_overspend"] == pytest.approx(10.0, abs=0.01)
+    assert node["order_economy"] == pytest.approx(0.0, abs=0.01)
+    # Новые (mode-независимые, ТОЛЬКО настоящая покупка) — обязаны быть пусты.
+    assert node["order_overspend_items"] == pytest.approx(0.0, abs=0.01), (
+        "order_overspend_items не должен задваивать manual_plan_gap — "
+        "ни одна позиция фактически не куплена дороже своего плана"
+    )
+    assert node["order_economy_items"] == pytest.approx(0.0, abs=0.01)
+
+    # Тождество карточки «Запланировано»: X(по позициям) − Y(экономия) +
+    # Z(превышение) == plan_manual, при X = plan_items_raw + manual_plan_gap,
+    # Y/Z = *_items (НЕ node['order_economy']/['order_overspend']).
+    declared = node["plan_items_raw"] + node["manual_plan_gap"]
+    assert (
+        declared - node["order_economy_items"] + node["order_overspend_items"]
+    ) == pytest.approx(node["plan_manual"], abs=0.01)

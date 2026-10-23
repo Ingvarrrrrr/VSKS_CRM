@@ -13,8 +13,6 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-from app.models.feo_category import FeoCategory
-from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.subsidy import Subsidy
 from app.models.contractor import Contractor
@@ -240,31 +238,14 @@ async def dashboard_charts(
         subsidy_q = subsidy_q.where(Subsidy.id.in_(_not_sandbox_ids))
     subsidy_result = await db.execute(subsidy_q)
 
-    # FEO planned sum per subsidy
-    feo_planned_q = (
-        select(
-            FeoCategory.subsidy_id,
-            func.coalesce(func.sum(FeoPlannedItem.amount), 0).label("feo_planned_sum"),
-        )
-        .join(FeoPlannedItem, FeoPlannedItem.feo_category_id == FeoCategory.id)
-        .where(FeoPlannedItem.is_active == True)
-        .group_by(FeoCategory.subsidy_id)
-    )
-    if use_sids:
-        if visible_subsidy_ids is not None:
-            feo_planned_q = feo_planned_q.where(FeoCategory.subsidy_id.in_(visible_subsidy_ids))
-    elif org_ids is not None:
-        feo_planned_q = feo_planned_q.where(FeoCategory.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-        ))
-    if dashboard:
-        feo_planned_q = feo_planned_q.where(FeoCategory.subsidy_id.in_(_not_sandbox_ids))
-    feo_planned_result = await db.execute(feo_planned_q)
-    feo_planned_map: dict[int, float] = {
-        row.subsidy_id: float(row.feo_planned_sum)
-        for row in feo_planned_result
-    }
-
+    # ОТМЕНЕНО (владелец, 23.10.2026, план humble-stirring-emerson.md, шаг 2,
+    # «один источник Запланировано, нарушение ПРАВИЛА №6» — было: простая Σ
+    # FeoPlannedItem.amount, ВТОРОЙ независимый расчёт «Запланировано» рядом с
+    # планом дерева ФЭО (planned_tree, см. ниже) — на статьях с замещением
+    # «заказ вместо плана»/ручными суммами/превышениями эти два числа
+    # расходились, колонка «ФЭО план» дашборда показывала не то же число, что
+    # карточка «Запланировано». Колонка теперь читает planned_tree (тот же
+    # единственный источник, что и везде) — см. "total_feo_planned" ниже.
     subsidy_rows = subsidy_result.all()
     sid_list = [row.id for row in subsidy_rows]
     # Batch вместо N+1: бюджеты, субсидии и контрагенты одним IN-запросом каждый
@@ -545,7 +526,13 @@ async def dashboard_charts(
             # compute_monthly_future_map, ПРАВИЛО №6 — тот же разбор графика,
             # что и monthly_ordered_accrued, не вторая формула).
             "monthly_future_to_year_end": monthly_future_map.get(row.id, 0.0),
-            "total_feo_planned": feo_planned_map.get(row.id, 0.0),  # NEW 12-01: SUM FeoPlannedItem.amount
+            # ИЗМЕНЕНО (23.10.2026, шаг 2 плана humble-stirring-emerson.md,
+            # ПРАВИЛО №6): было — отдельная Σ FeoPlannedItem.amount (второй
+            # расчёт «Запланировано», расходился с planned_tree на статьях с
+            # замещением/ручными суммами/превышениями). Теперь — ТО ЖЕ
+            # planned_tree, что и строка ниже: «ФЭО план» дашборда ==
+            # «Запланировано» карточки БАЙТ-В-БАЙТ, одна точка расчёта.
+            "total_feo_planned": planned_tree,
             "planned_tree": planned_tree,  # единый источник: план дерева ФЭО (ручные + заявки)
             "feo_budget_total": budget_basis,
             "feo_filled": calc > 0,
@@ -604,6 +591,11 @@ async def dashboard_charts(
             # — источник теперь app.services.monthly_future_payments (ТОЛЬКО
             # заказы рамочных договоров, ещё не начавшие свой месяц).
             "monthly_future_not_started": _money.get("monthly_future_not_started", 0.0),
+            # Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — «задано на
+            # категорию, но не расписано позициями», четвёртая строка карточки
+            # «Можно перераспределить» (см. докстринг subsidy_money_summary.py
+            # за формулой и примером владельца 100/80/70/54 → эта строка = 10).
+            "manual_plan_gap": _money.get("manual_plan_gap", 0.0),
             "over_plan_categories": _money.get("over_plan_categories", []),
             # Жёсткий потолок субсидии (задача владельца 15.10.2026, карточка
             # «Запланировано» должна кричать, если план выше ФЭО) — ОДНА точка
@@ -621,6 +613,16 @@ async def dashboard_charts(
             ),
             "economy_no_planned_price_items": _economy.get("economy_no_planned_price_items", 0),
             "economy_unmeasured_by_reason": _economy.get("economy_unmeasured_by_reason"),
+            # Шаг 4 (план humble-stirring-emerson.md, 23.10.2026) — разбивка
+            # «Экономии по закупкам» на товары/услуги (работы = услуги), ФОТ
+            # сюда никогда не попадает (purchase_economy_bulk отфильтровал её
+            # раньше, см. докстринг purchase_economy.py) — {goods, services,
+            # unspecified}|None (None, пока economy_total is None).
+            "economy_by_kind": (
+                {k: float(v) for k, v in _economy["economy_by_kind"].items()}
+                if _economy.get("economy_by_kind") is not None
+                else None
+            ),
             "committed_missing_fact_items": _money.get("committed_missing_fact_items", 0),
             # Per-subsidy work/delivery baskets (зеркала глобальных widgets)
             "total_work": float(row.total_plan_schedule) + float(row.w_ordered) + float(row.w_delivered) + float(row.w_paid),

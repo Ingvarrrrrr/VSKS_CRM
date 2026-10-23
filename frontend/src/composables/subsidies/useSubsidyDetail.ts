@@ -132,6 +132,10 @@ export interface SubsidyDetailContext {
   // волны) — здесь только ссылки на те же реактивные значения (Правило №6).
   selectedBudget: ComputedRef<number>
   selectedPlannedTotal: ComputedRef<number>
+  // «Свободно»/«Превышение» карточки (ПРАВИЛО №6, 23.10.2026) — ОДНА точка,
+  // см. useFeoTreeAmounts.ts::selectedFree за формулой (remaining/free_basis
+  // строки субсидии /dashboard/charts, та же сводка, что budget/planned выше).
+  selectedFree: ComputedRef<number>
   // Решение владельца (02.10.2026) — ИТОГО дерева: «Оплачено (по отметке)»/
   // «Подтверждено выпиской», см. useFeoTreeAmounts.ts.
   selectedPaidMarkedTotal: ComputedRef<number>
@@ -214,6 +218,10 @@ export interface SubsidyDetailContext {
   // Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — см. docstring
   // в useFeoTreeAmounts.ts.
   feoOrderEconomyNoteFor: (node: FeoNode) => { planFromFile: number; economy: number } | null
+  // 🔵 Переключатель «Показать разницу» (план humble-stirring-emerson.md,
+  // 23.10.2026) — см. docstring в useFeoTreeAmounts.ts.
+  showManualPlanDiff: Ref<boolean>
+  feoManualPlanDiffFor: (node: FeoNode) => { declared: number; items: number; diff: number } | null
   feoForecastWarningFor: (node: FeoNode) => { forecast: number; forecastOver: number; planManual: number } | null
   isAutoAmtNode: (node: FeoNode) => boolean
   isManualPosLeaf: (node: FeoNode) => boolean

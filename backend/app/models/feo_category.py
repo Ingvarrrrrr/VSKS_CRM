@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Numeric, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Numeric, Text, DateTime
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -43,5 +43,17 @@ class FeoCategory(Base):
     # e3f5g7h9i1j3. Наследуется подкатегориями (у себя или у любого предка) —
     # см. app.services.item_type_split.KIND_PAYROLL.
     is_payroll = Column(Boolean, nullable=False, server_default="false")
+    # «Закрыть ФОТ по статье» (владелец, 22.10.2026, план humble-stirring-
+    # emerson.md, шаг 1, вариант (в)) — ТОЛЬКО на статьях ФОТ (is_payroll
+    # эффективно True): пока False, план статьи ЗАЩИЩЁН от замещения «заказ
+    # вместо плана» (невыплаченный остаток НЕ становится «экономией», см.
+    # feo_plan_common._order_substituted_plan(is_payroll=True)); True — защита
+    # снята для ЭТОЙ статьи (не поддерева — кнопка точечная), план = фактически
+    # выплачено/законтрактовано, невыплаченный остаток уходит в «Свободно», как
+    # до правки. «Отменить закрытие» возвращает False. См. app.routers.
+    # feo_payroll_close — запись истории (feo_history.ENTITY_FEO_CATEGORY) там же.
+    payroll_closed = Column(Boolean, nullable=False, server_default="false")
+    payroll_closed_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    payroll_closed_at = Column(DateTime(timezone=True), nullable=True)
     parent = relationship("FeoCategory", remote_side=[id], backref="children")
     subsidy = relationship("Subsidy", back_populates="feo_categories")

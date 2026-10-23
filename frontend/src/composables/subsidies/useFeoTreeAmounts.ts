@@ -7,7 +7,7 @@
 // Module-level singleton (как useKpiDrilldown.ts).
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { FeoNode, FeoReqItem, PlanTreeEntry, SubsidyRow } from './types'
-import { formatCurrency as fmtLocal } from './format'
+import { formatCurrency as fmtLocal, roundMoney } from './format'
 import { makeCtxSingleton } from './ctxSingleton'
 import { computeFeoEffective, feoBudgetIsSet as feoBudgetIsSetValue, isEstimatedNode } from './feoEffectiveFormula'
 
@@ -528,6 +528,27 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return { planFromFile, economy, overspend }
   }
 
+  // 🔵 Переключатель «Показать разницу» (владелец, 23.10.2026, план
+  // humble-stirring-emerson.md, п. «Переименование и переключатель») — ТОЛЬКО
+  // для статей plan_source='manual_sum' («Задано на категорию»): показывает
+  // рядом оба числа — «задано на категорию» (manual_plan_entered, введённая
+  // сумма, НЕ меняется согласованием — в отличие от plan_manual) и «расчёт
+  // на основе позиций» (plan_items_raw, Σ активных плановых позиций) — и их
+  // разницу. Выключен по умолчанию (defaultOn=false), чтобы не захламлять
+  // дерево у статей, где обе суммы совпадают или различие уже видно через
+  // feoOrderEconomyNoteFor выше (planned_items-режим — читает ЕГО, не этот).
+  // ПРАВИЛО №6 — ничего не считает заново: оба числа уже в planTreeByCat
+  // (GET /feo-categories/plan-tree, compute_feo_plan_tree).
+  const showManualPlanDiff = ref(false)
+
+  function feoManualPlanDiffFor(node: FeoNode): { declared: number; items: number; diff: number } | null {
+    const t = planTreeByCat.value[node.id]
+    if (!t || (t.plan_source || 'planned_items') !== 'manual_sum') return null
+    const declared = Number(t.manual_plan_entered ?? 0)
+    const items = Number(t.plan_items_raw ?? 0)
+    return { declared, items, diff: declared - items }
+  }
+
   function feoForecastWarningFor(node: FeoNode): { forecast: number; forecastOver: number; planManual: number } | null {
     const v = plannedPurchaseForecast.value[node.id]
     if (!v || !(v.forecast_over > 0)) return null
@@ -654,11 +675,45 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   // 'all'» — то есть feoPlannedDisplayFor(root) уже ЯВЛЯЕТСЯ контрактом с дашбордом,
   // его и переиспользуем здесь вместо повторной сборки той же суммы другим способом.
   // Теперь карточка, ИТОГО дерева и дашборд читают ровно одну формулу.
-  const selectedPlannedTotal = computed(() => {
-    if (feoTree.value.length) {
-      return feoTree.value.reduce((acc, r) => acc + feoPlannedDisplayFor(r), 0)
-    }
-    return selectedSubsidy.value?.planned || 0
+  //
+  // ИСПРАВЛЕНИЕ (ПРАВИЛО №6, находка владельца 23.10.2026 — стенд, субсидия
+  // 31799/org 29, сотрудник без права «Видеть ФОТ»): раньше здесь, когда
+  // дерево уже загружено (почти всегда), СУММИРОВАЛСЯ ОТДЕЛЬНЫЙ путь —
+  // feoTree (GET /feo-categories/plan-tree, свой скраб ФОТ, см.
+  // app.services.payroll_visibility.strip_hidden_payroll_from_tree_result) —
+  // ВМЕСТО готового planned_tree/total_feo_planned строки субсидии
+  // /dashboard/charts (subsidy_money_summary.py), который payroll_visibility.
+  // scrub_payroll_from_dashboard_charts вычищает ОДНИМ проходом ВМЕСТЕ с
+  // calculated_budget/feo_budget_total и remaining (см. её докстринг —
+  // «b_amt»/«p_amt» одной транзакции). Два ОТДЕЛЬНЫХ скраба одного и того же
+  // «Запланировано» у сотрудника без права расходились (хоть каждый сам по
+  // себе и честный) — карточка «Свободно» (budget−planned ИЗ ДЕРЕВА) не
+  // совпадала с «не запланировано» карточки «Можно перераспределить»
+  // (redistributable_unplanned = free_basis ИЗ /dashboard/charts). Теперь
+  // карточка читает ТУ ЖЕ сводку, что и «Можно перераспределить» — Правило
+  // №6, одна точка. allSubsidies.map(...) уже кладёт planned_tree под именем
+  // selectedSubsidy.planned (SubsidiesView.vue loadAll/silentRefreshSubsidies:
+  // `planned: s.planned_tree ?? s.total_planned`) — второе поле не нужно.
+  //
+  // ИТОГО дерева (FeoTreeTable.vue, Σ feoPlannedDisplayFor(root)) НЕ
+  // трогается — это другая, своя проекция для строк дерева (см. задание),
+  // просто больше не питает эту карточку.
+  const selectedPlannedTotal = computed(() => Number(selectedSubsidy.value?.planned || 0))
+
+  // «Свободно»/«Превышение» (та же находка 23.10.2026, см. комментарий у
+  // selectedPlannedTotal выше) — ОДНА точка: remaining (= free_basis) готов
+  // на ТОЙ ЖЕ строке субсидии /dashboard/charts, вычищен СИНХРОННО с
+  // budget/planned. Раньше карточка «Свободно» считала ВТОРОЙ формулой прямо
+  // здесь (selectedBudget − selectedPlannedTotal, где planned брался из
+  // отдельного дерева) — теперь просто читает готовое число (roundMoney — та
+  // же защита от шума плавающей точки, что и раньше, см. её применение в
+  // SubsidyKpiCards.vue). Фолбэк на локальный расчёт — только если строка
+  // субсидии совсем не несёт remaining (очень старый кэш/ответ без этого
+  // поля) — то же выражение, что было единственной формулой раньше.
+  const selectedFree = computed(() => {
+    if (!selectedSubsidy.value || selectedSubsidy.value.feo_entered === false) return 0
+    const r = selectedSubsidy.value.remaining
+    return roundMoney(r != null ? Number(r) : (selectedBudget.value - selectedPlannedTotal.value))
   })
 
   // Решение владельца (02.10.2026): «Оплачено (по отметке)»/«Подтверждено
@@ -760,11 +815,12 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     feoAmtFor, feoPlannedTotalFor, feoPlannedRequestsFor, feoPlannedConsumedFor, feoInPlanScheduleFor,
     feoPlannedOverFor, feoPlannedDisplayRaw, feoPlannedDisplayFor,
     feoResidualNoteFor, feoPlanConsumedNoteFor, feoOrderEconomyNoteFor, feoForecastWarningFor, isAutoAmtNode,
+    showManualPlanDiff, feoManualPlanDiffFor,
     isManualPosLeaf, hasOwnPlannedAmountFor, feoOwnDirectionPlanFor,
     feoChildrenPlanManualFor, feoChildrenWithPlanCountFor, mergedManualPriority,
     setMatchedReqFns,
     totalFeoBudget, totalFeoEffective, totalFeoDiff, totalFeoPurchased, totalFeoInPlanSchedule,
-    selectedBudget, selectedPlannedTotal, syncFeoFilled, getFeoPlanManual,
+    selectedBudget, selectedPlannedTotal, selectedFree, syncFeoFilled, getFeoPlanManual,
     paidMarkedFor, paidConfirmedFor, selectedPaidMarkedTotal, selectedPaidConfirmedTotal,
     // Раздел C0 — «товары/услуги» по узлу (см. докстринги функций выше).
     planTypeSplitFor, feoTypeSplitFor, remainingTypeSplitFor,

@@ -123,6 +123,11 @@ async def get_feo_plan_tree(
             # plan/display/excess_*.
             "order_overspend": node["order_overspend"],
             "order_economy": node["order_economy"],
+            # Шаг 1 плана humble-stirring-emerson.md (23.10.2026) — версии
+            # БЕЗ manual_sum net-подмены, читает раскладка «Запланировано»
+            # (SubsidyKpiCards.vue), см. compute_feo_plan_tree за докстрингом.
+            "order_overspend_items": node["order_overspend_items"],
+            "order_economy_items": node["order_economy_items"],
             "ordered_qty": node["ordered_qty"],
             "ordered_sum": node["ordered_sum"],
             "over": node["over"],
@@ -221,6 +226,17 @@ async def get_feo_plan_tree(
             # чтобы объяснить пользователю, почему «Запланировано» больше суммы его
             # плановых позиций («Свободно» не завышено умышленно).
             "plan_floor_added": node["plan_floor_added"],
+            # Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — переключатель
+            # «Показать разницу»: «задано на категорию» (plan_manual, уже выше)
+            # vs «расчёт на основе позиций» (plan_items_raw, уже выше) и их
+            # разница — manual_plan_gap (Σ по поддереву, см. compute_feo_plan_tree).
+            "manual_plan_gap": node["manual_plan_gap"],
+            # Шаг 1 плана humble-stirring-emerson.md (22.10.2026) — кнопка
+            # «Закрыть ФОТ по статье»/«Отменить закрытие» (app.routers.
+            # feo_payroll_close): фронт включает кнопку по is_payroll=true,
+            # меняет подпись по payroll_closed.
+            "is_payroll": node["is_payroll"],
+            "payroll_closed": node["payroll_closed"],
         }
         for cat_id, node in tree.items()
     }
@@ -294,6 +310,9 @@ async def get_feo_plan_tree(
             "excess_fact_over_plan_goods", "excess_fact_over_plan_services",
             # Решение владельца (02.10.2026) — деньги, та же гейтовка.
             "paid_marked", "paid_confirmed", "plan_floor_added",
+            # Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — та же
+            # гейтовка money-полей, что и у остальных денежных значений узла.
+            "manual_plan_gap",
         )
         for cat_id, node in result.items():
             if cat_id in ("unassigned", "subsidy_type_totals", "subsidy_type_excess"):

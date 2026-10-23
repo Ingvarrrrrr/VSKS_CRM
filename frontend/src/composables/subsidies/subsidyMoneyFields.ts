@@ -40,6 +40,14 @@ export function pickSubsidyMoneyFields(s: any) {
     // contracted_not_ordered → monthly_future_not_started («ещё уйдёт
     // помесячно до конца года»). Перерасход по категориям — не трогается.
     monthly_future_not_started: s.monthly_future_not_started ?? null,
+    // Шаг 2 плана humble-stirring-emerson.md (23.10.2026) — 5-я строка
+    // карточки «Можно перераспределить»: «задано на категорию, но не
+    // расписано позициями» (готовое поле /dashboard/charts, ничего не
+    // считаем). Без этой записи поле терялось бы точно так же, как
+    // committed/balance_by_marks до него (см. докстринг модуля выше) —
+    // найдено живой приёмкой: карточка на экране показывала Σ четырёх
+    // строк МЕНЬШЕ итога ровно на эту сумму.
+    manual_plan_gap: s.manual_plan_gap ?? null,
     over_plan_categories: s.over_plan_categories ?? [],
     // feo_entered (владелец 07.10.2026, план .planning/quick/2026-10-07-dnr-
     // feo-cards/PLAN.md шаг 1) — см. docstring у поля в composables/subsidies/
@@ -61,5 +69,23 @@ export function pickSubsidyMoneyFields(s: any) {
     paid_over_delivered: s.paid_over_delivered ?? 0,
     paid_over_delivered_prepayment: s.paid_over_delivered_prepayment ?? 0,
     paid_over_delivered_by_kind: s.paid_over_delivered_by_kind ?? null,
+    // «Бюджет (ФЭО)»/«Запланировано» по видам (ПРАВИЛО №6, находка приёмки
+    // 23.10.2026, SubsidyKpiCards.vue::rawSplitFor/splitRowsFor('free')) —
+    // готовые поля /dashboard/charts (?type_split=true), ничего не считаем.
+    // undefined (не ?? 0) — КОГДА НЕ ЗАПРОШЕНЫ (?type_split не включён) —
+    // rawSplitFor проверяет именно `=== undefined`, чтобы отличить «не
+    // загружено» от «загружено и равно нулю»; без этой записи поля терялись
+    // бы точно так же, как committed/balance_by_marks до них (см. докстринг
+    // модуля выше) — ровно это и произошло при первой попытке переноса
+    // карточек на /dashboard/charts (загрузка по типам висела вечно и у
+    // admin, т.к. поля уходили в s напрямую, а не в локальную строку).
+    budget_goods: s.budget_goods,
+    budget_services: s.budget_services,
+    budget_payroll: s.budget_payroll,
+    budget_unspecified: s.budget_unspecified,
+    planned_goods: s.planned_goods,
+    planned_services: s.planned_services,
+    planned_payroll: s.planned_payroll,
+    planned_unspecified: s.planned_unspecified,
   }
 }

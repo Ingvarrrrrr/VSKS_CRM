@@ -513,3 +513,105 @@ async def test_11_committed_by_planned_item_month_aware_survives_null_purchase_s
         "(INNER JOIN на Subsidy раньше выбрасывал её целиком)"
     )
     assert by_item_new[fpi.id]["amount"] == by_item_old[fpi.id]["amount"]
+
+
+@pytest.mark.asyncio
+async def test_12_payroll_purchase_excluded_from_economy_entirely(db_session, test_org):
+    """Шаг 4 (план humble-stirring-emerson.md, 23.10.2026, прод ХРО_2026) —
+    закупка ФОТ (её статья FeoCategory.is_payroll=True) НЕ даёт «экономии»,
+    даже когда количество набрано целиком и формально база > факта (как
+    невыплаченная зарплата на проде): bucket остаётся ПУСТЫМ (economy=None),
+    как у незаконтрактованной закупки — не «измерена с экономией» и не
+    «unmeasured» (owner: «не входят никогда», не «неизмеримы»)."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    leaf = await _make_category(db_session, subsidy.id, name="ФОТ ДНР", is_payroll=True, budget=Decimal("1000000"))
+    fpi = await _make_planned_item(db_session, leaf.id, "ЗП", 1, 13_277_966.84)
+
+    purchase, _item = await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, 1, 8_235_337.78)
+
+    bucket = (await purchase_economy_bulk(db_session, [purchase.id]))[purchase.id]
+    assert bucket["economy"] is None, "ФОТ-закупка отфильтрована целиком — нечего сравнивать, не 5 042 629,06"
+    assert bucket["unmeasured_total"] == 0, "не 'unmeasured' — она вообще не входит в расчёт"
+    assert bucket["economy_by_kind"] == {"goods": Decimal("0"), "services": Decimal("0"), "unspecified": Decimal("0")}
+
+    res = await purchase_economy_by_subsidy(db_session, [subsidy.id])
+    row = res[subsidy.id]
+    assert row["economy_total"] is None, "единственная закупка субсидии — ФОТ, нечего раскладывать"
+    assert row["economy_by_kind"] is None
+    assert row["economy_no_planned_price_items"] == 0
+
+
+@pytest.mark.asyncio
+async def test_13_economy_split_by_kind_goods_services_work_is_service(db_session, test_org):
+    """Шаг 4 — разбивка economy по виду позиции: «товар» → goods, «услуга»/
+    «работа» → services (работы считаются услугами, item_type_split.kind_of,
+    та же классификация, что и везде в проекте). Три закупки одной субсидии,
+    НИ ОДНА не ФОТ — Σ economy_by_kind == economy_total (инвариант)."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    leaf = await _make_category(db_session, subsidy.id, name="Разное", budget=Decimal("1000000"))
+
+    fpi_goods = await _make_planned_item(db_session, leaf.id, "Бумага", 1, 100_000)
+    fpi_goods.unit_price = Decimal("100000")
+    fpi_services = await _make_planned_item(db_session, leaf.id, "Обучение", 1, 50_000)
+    fpi_services.unit_price = Decimal("50000")
+    fpi_work = await _make_planned_item(db_session, leaf.id, "Ремонт", 1, 30_000)
+    fpi_work.unit_price = Decimal("30000")
+    db_session.add_all([fpi_goods, fpi_services, fpi_work])
+    await db_session.commit()
+
+    p_goods, i_goods = await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi_goods.id, 1, 90_000)
+    i_goods.item_type = "товар"
+    p_services, i_services = await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi_services.id, 1, 40_000)
+    i_services.item_type = "услуга"
+    p_work, i_work = await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi_work.id, 1, 25_000)
+    i_work.item_type = "работа"
+    db_session.add_all([i_goods, i_services, i_work])
+    await db_session.commit()
+
+    econ = await purchase_economy_bulk(db_session, [p_goods.id, p_services.id, p_work.id])
+    assert econ[p_goods.id]["economy"] == Decimal("10000.00")
+    assert econ[p_goods.id]["economy_by_kind"]["goods"] == Decimal("10000.00")
+    assert econ[p_services.id]["economy"] == Decimal("10000.00")
+    assert econ[p_services.id]["economy_by_kind"]["services"] == Decimal("10000.00")
+    assert econ[p_work.id]["economy"] == Decimal("5000.00")
+    assert econ[p_work.id]["economy_by_kind"]["services"] == Decimal("5000.00"), "работа = услуга, НЕ отдельная корзина"
+
+    res = await purchase_economy_by_subsidy(db_session, [subsidy.id])
+    row = res[subsidy.id]
+    assert row["economy_total"] == Decimal("25000.00")
+    assert row["economy_by_kind"]["goods"] == Decimal("10000.00")
+    assert row["economy_by_kind"]["services"] == Decimal("15000.00"), "услуга 10 000 + работа 5 000"
+    assert row["economy_by_kind"]["unspecified"] == Decimal("0")
+    assert (
+        row["economy_by_kind"]["goods"] + row["economy_by_kind"]["services"] + row["economy_by_kind"]["unspecified"]
+        == row["economy_total"]
+    ), "инвариант: Σ economy_by_kind == economy_total"
+
+
+@pytest.mark.asyncio
+async def test_14_payroll_purchase_does_not_pollute_kind_split_of_other_purchases(db_session, test_org):
+    """Субсидия с ОДНОЙ обычной (товар) и ОДНОЙ ФОТ закупкой — ФОТ не только
+    не входит в economy_total, но и не протекает в economy_by_kind (нет
+    пятой строки/утечки в 'unspecified')."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=1_000_000)
+    goods_leaf = await _make_category(db_session, subsidy.id, name="Товары", budget=Decimal("500000"))
+    payroll_leaf = await _make_category(db_session, subsidy.id, name="ФОТ", is_payroll=True, budget=Decimal("500000"))
+
+    fpi_goods = await _make_planned_item(db_session, goods_leaf.id, "Бумага", 1, 100_000)
+    fpi_goods.unit_price = Decimal("100000")
+    db_session.add(fpi_goods)
+    await db_session.commit()
+    p_goods, i_goods = await _make_linked_purchase(db_session, subsidy.id, goods_leaf.id, fpi_goods.id, 1, 90_000)
+    i_goods.item_type = "товар"
+    db_session.add(i_goods)
+    await db_session.commit()
+
+    fpi_payroll = await _make_planned_item(db_session, payroll_leaf.id, "ЗП", 1, 200_000)
+    await _make_linked_purchase(db_session, subsidy.id, payroll_leaf.id, fpi_payroll.id, 1, 150_000)
+
+    res = await purchase_economy_by_subsidy(db_session, [subsidy.id])
+    row = res[subsidy.id]
+    assert row["economy_total"] == Decimal("10000.00"), "только товарная закупка — ФОТ не входит"
+    assert row["economy_by_kind"]["goods"] == Decimal("10000.00")
+    assert row["economy_by_kind"]["services"] == Decimal("0")
+    assert row["economy_by_kind"]["unspecified"] == Decimal("0")

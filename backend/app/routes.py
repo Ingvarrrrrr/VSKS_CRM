@@ -125,6 +125,11 @@ from app.routers import feo_import_export
 # catch-all feo_categories.router).
 from app.routers import feo_roundtrip_import
 from app.routers import feo_tree_ops
+# «Закрыть ФОТ по статье» / «Отменить закрытие» (владелец, 22.10.2026, план
+# humble-stirring-emerson.md, шаг 1) — POST "/{cat_id}/payroll-close"/
+# "/payroll-reopen", на сегмент длиннее catch-all ядра, тот же принцип
+# порядка регистрации, что и feo_tree_ops выше.
+from app.routers import feo_payroll_close
 # Разрезание purchases.py (Правило №5, сессия 2026-09-06): purchase_duplicates,
 # purchase_lists, purchase_payment_matching, purchase_ops содержат статические
 # литеральные пути ("/duplicate-check", "/my-tasks", "/payment-groups",
@@ -401,6 +406,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(feo_roundtrip_import.router)
     app.include_router(feo_tree_ops.router)
     app.include_router(feo_tree_ops.router_subsidy_feo)
+    app.include_router(feo_payroll_close.router)
     app.include_router(feo_categories.router)
     app.include_router(feo_planned_items_matching.router)
     app.include_router(feo_planned_items_reports.router)

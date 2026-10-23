@@ -81,16 +81,49 @@
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(kpiSubAnim_plan_schedule) }}</div>
             <div class="kpi-label">Запланировано</div>
-            <!-- Задача владельца (13.10.2026, дополнено по замечанию координатора) —
-                 «в т.ч. перерасход по заказам +X · экономия −Y», кликабельная —
-                 клик открывает OrderSubstitutionDialog (см. subsidyOrderOverspendTotal/
-                 subsidyOrderEconomyTotal, Правило №6, готовые поля дерева). -->
-            <div v-if="subsidyOrderOverspendTotal > 0.005 || subsidyOrderEconomyTotal > 0.005"
-              class="kpi-sub-note kpi-sub-note-clickable text-caption text-medium-emphasis"
-              @click.stop="orderSubstitutionDialogVisible = true">
-              <template v-if="subsidyOrderOverspendTotal > 0.005">в т.ч. перерасход по заказам +{{ formatCurrency(subsidyOrderOverspendTotal) }}</template>
-              <template v-if="subsidyOrderOverspendTotal > 0.005 && subsidyOrderEconomyTotal > 0.005"> · </template>
-              <template v-if="subsidyOrderEconomyTotal > 0.005">экономия −{{ formatCurrency(subsidyOrderEconomyTotal) }}</template>
+            <!-- Шаг 6 (план humble-stirring-emerson.md, 23.10.2026) — ссылка
+                 «на согласовании +N», сценарий владельца 100 → +2,1 на
+                 согласовании → 102,1. Вся логика/разметка в отдельном файле
+                 (Правило №5, PendingExcessNote.vue) — здесь только вызов, не
+                 конфликтует с раскладкой «по позициям/экономия/превышение»
+                 ниже (другой исполнитель, тот же блок карточки). -->
+            <PendingExcessNote />
+            <!-- Шаг 1 плана humble-stirring-emerson.md (23.10.2026, владелец)
+                 — заменяет прежнюю подпись «в т.ч. перерасход+экономия»
+                 (13.10.2026, была ОДНОЙ строкой) — ТРИ строки: «по плановым
+                 позициям X» (Σ позиций и заданных на категорию сумм, как
+                 завели) · «экономия −Y» (закупленные целиком дешевле плана)
+                 · «превышение (согласовано) +Z» (закупленные дороже плана).
+                 X − Y + Z = kpiSubAnim_plan_schedule (число карточки) ДО
+                 КОПЕЙКИ — X получен ИЗ уже показанного числа карточки и
+                 готовых per-item order_economy_items/order_overspend_items
+                 узлов дерева (см. subsidyPlanPositionsTotal ниже, ПРАВИЛО
+                 №6 — не независимый расчёт «в лоб», который разошёлся бы на
+                 статьях с «полом»/над-планом/несогласованным превышением).
+                 Клик по КАЖДОЙ строке — ТЕ ЖЕ диалоги, что уже существуют
+                 (FeoCardDrillDialog через openCardDrill — тот же, что при
+                 клике по самой карточке; OrderSubstitutionDialog для
+                 экономии/превышения) — новое окно не заводим. Ссылка «на
+                 согласовании +N» (PendingExcessNote.vue) выше — ОТДЕЛЬНАЯ
+                 строка другого исполнителя, не трогаем. -->
+            <div class="kpi-plan-breakdown text-caption text-medium-emphasis">
+              <div class="kpi-plan-breakdown-row kpi-plan-breakdown-row-clickable"
+                @click.stop="openCardDrill('plan_schedule', 'all')"
+                title="Список плановых позиций и заданных на категорию сумм">
+                по плановым позициям {{ formatCurrency(subsidyPlanPositionsTotal) }}
+              </div>
+              <div v-if="subsidyOrderEconomyItemsTotal > 0.005"
+                class="kpi-plan-breakdown-row kpi-plan-breakdown-row-clickable"
+                @click.stop="orderSubstitutionDialogVisible = true"
+                title="Позиции, закупленные целиком дешевле плана">
+                экономия −{{ formatCurrency(subsidyOrderEconomyItemsTotal) }}
+              </div>
+              <div v-if="subsidyOrderOverspendItemsTotal > 0.005"
+                class="kpi-plan-breakdown-row kpi-plan-breakdown-row-clickable"
+                @click.stop="orderSubstitutionDialogVisible = true"
+                title="Позиции, закупленные целиком дороже плана, после согласования">
+                превышение (согласовано) +{{ formatCurrency(subsidyOrderOverspendItemsTotal) }}
+              </div>
             </div>
             <!-- Задача владельца 15.10.2026: план субсидии выше жёсткого
                  потолка ФЭО (PLAN_OVER_SUBSIDY_CEILING) — плашка должна
@@ -564,9 +597,12 @@
     @row-click="(id) => { paidOverDeliveredDrillVisible = false; ctx.router.push(`/orders/${id}/edit`) }"
   />
 
-  <!-- Задача владельца (13.10.2026) — окно «Перерасход/экономия по заказам»
-       по клику на подпись карточки «Запланировано» (см. subsidyOrderOverspendTotal/
-       subsidyOrderEconomyTotal выше), без category-фильтра — вся субсидия. -->
+  <!-- Задача владельца (13.10.2026, строки «экономия»/«превышение (согласовано)»
+       раскладки карточки «Запланировано» — шаг 1 плана humble-stirring-
+       emerson.md, 23.10.2026) — окно «Перерасход/экономия по заказам» по
+       клику на любую из этих двух строк (см. subsidyOrderEconomyItemsTotal/
+       subsidyOrderOverspendItemsTotal выше), без category-фильтра — вся
+       субсидия. -->
   <OrderSubstitutionDialog
     :visible="orderSubstitutionDialogVisible"
     :subsidy-id="ctx.selectedId.value"
@@ -598,7 +634,7 @@ import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import {
   KIND_LABELS, KIND_SHORT_LABELS, KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, hasStageDrill,
-  freeByKindFromTypeTotals, type ItemTypeKind,
+  type ItemTypeKind,
 } from '@/utils/itemTypeKind'
 import { STATUS_LABELS, STATUS_COLORS } from '@/composables/dashboard/dashboardStatusMaps'
 import { purchaseEffectivePrice } from '@/composables/dashboard/dashboardFormat'
@@ -610,10 +646,10 @@ import PaidOverDeliveredDrillDialog from '@/components/subsidies/PaidOverDeliver
 import OrderSubstitutionDialog from '@/components/subsidies/OrderSubstitutionDialog.vue'
 import MetricDrillDialog from '@/components/subsidies/MetricDrillDialog.vue'
 import MonthlyFutureTreeDialog from '@/components/subsidies/MonthlyFutureTreeDialog.vue'
+import PendingExcessNote from '@/components/subsidies/PendingExcessNote.vue'
 import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
 import ExcessDrilldownBar from '@/components/subsidies/ExcessDrilldownBar.vue'
 import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
-import type { SubsidyTypeTotals } from '@/composables/subsidies/types'
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
 import { useCardDrills } from '@/composables/subsidies/useCardDrills'
 
@@ -716,36 +752,56 @@ watch([() => ctx.selectedId.value, paidOverDeliveredTotal], async ([sid, total])
     paidOverDeliveredCount.value = 0
   }
 }, { immediate: true })
-// roundMoney — защита от шума плавающей точки: бюджет ФЭО и план суммируются
-// из десятков строк, «равно нулю» на деле выходит 0.000000002 ₽, что
-// переворачивало подпись карточки на «Превышение 0 ₽» (владелец, 2026-10-06,
-// ФАДМ 2026_2). freeDiffRounded — НЕ анимированная версия, используется для
-// знака/подписи/класса (анимация kpiSubAnim_free меняла бы подпись раньше
-// времени посреди анимации числа).
-const freeDiffRounded = computed(() => roundMoney(ctx.selectedBudget.value - ctx.selectedPlannedTotal.value))
+// ИСПРАВЛЕНИЕ (ПРАВИЛО №6, находка владельца 23.10.2026 — стенд, субсидия
+// 31799/org 29, сотрудник без права «Видеть ФОТ»: карточка «Свободно»
+// показывала 100, а «не запланировано» карточки «Можно перераспределить» —
+// 20, та же величина двумя формулами): «Свободно» больше НЕ считается здесь
+// локально (selectedBudget − selectedPlannedTotal, где planned раньше брался
+// из отдельного дерева ФЭО со своим скрабом ФОТ) — читает ГОТОВОЕ
+// useFeoTreeAmounts.ts::selectedFree (remaining/free_basis строки субсидии
+// /dashboard/charts, та же сводка, что и «Можно перераспределить»). roundMoney
+// применён уже внутри selectedFree (защита от шума плавающей точки — бюджет
+// ФЭО и план суммируются из десятков строк, «равно нулю» на деле выходит
+// 0.000000002 ₽, что переворачивало подпись карточки на «Превышение 0 ₽»,
+// владелец, 2026-10-06, ФАДМ 2026_2). freeDiffRounded — НЕ анимированная
+// версия, используется для знака/подписи/класса (анимация kpiSubAnim_free
+// меняла бы подпись раньше времени посреди анимации числа).
+const freeDiffRounded = computed(() => ctx.selectedFree.value)
 const kpiSubTarget_free              = computed(() => freeDiffRounded.value)
 // Задача 3 (владелец, 04.10.2026) — готовое поле бэкенда, не считаем здесь (Правило №6).
 const monthlyFutureToYearEnd = computed(() => ctx.selectedSubsidy.value?.monthly_future_to_year_end ?? 0)
 
-// Задача владельца (13.10.2026) — «в т.ч. перерасход по заказам +X» у карточки
-// «Запланировано»: X = Σ ГОТОВОГО order_overspend корневых узлов дерева ФЭО
-// (compute_feo_plan_tree, ПРАВИЛО №6 — order_overspend уже rollup по
-// узлу+поддереву, вторая формула здесь не считается). Число «Запланировано»
-// (kpiSubTarget_plan_schedule/ctx.selectedPlannedTotal) НЕ меняется — подпись
-// только объясняет, какая часть уже показанной суммы — не из планового файла,
-// а подставлена из заказа/договора дороже плана (зеркало feoOrderEconomyNoteFor
-// на уровне узла дерева, см. useFeoTreeAmounts.ts).
-const subsidyOrderOverspendTotal = computed(() => {
+// Шаг 1 плана humble-stirring-emerson.md (23.10.2026, владелец) — раскладка
+// карточки «Запланировано» на три строки «по плановым позициям X · экономия
+// −Y · превышение (согласовано) +Z». ЗАМЕНЯЕТ прежнюю подпись «в т.ч.
+// перерасход+экономия» (13.10.2026) — та читала node['order_overspend']/
+// node['order_economy'] НАПРЯМУЮ, а эти поля для статей «Задано на
+// категорию» (plan_source='manual_sum') без (или с неполными) позициями
+// УЖЕ несут manual_plan_gap под видом «перерасхода» (см. docstring
+// compute_feo_plan_tree._visit у order_overspend_items/order_economy_items,
+// 23.10.2026) — показывать их здесь ЕЩЁ РАЗ удвоило бы gap (он уже отдельная
+// строка карточки «Можно перераспределить», «задано на категорию, но не
+// расписано позициями»). Y/Z ниже читают НОВУЮ пару полей дерева
+// (order_economy_items/order_overspend_items — ТОЛЬКО настоящий перерасход/
+// экономия ПОЗИЦИИ, см. их докстринг), та же схема Σ корней, что и раньше.
+const subsidyOrderOverspendItemsTotal = computed(() => {
   const byCat = ctx.planTreeByCat.value as Record<number, any>
-  return ctx.feoTree.value.reduce((sum, root) => sum + Number(byCat[root.id]?.order_overspend || 0), 0)
+  return ctx.feoTree.value.reduce((sum, root) => sum + Number(byCat[root.id]?.order_overspend_items || 0), 0)
 })
-// Правка 13.10.2026 (замечание координатора) — рядом с перерасходом теперь
-// видна и экономия в той же подписи («+X · экономия −Y»), та же схема rollup
-// корней (order_economy — готовое поле дерева, ПРАВИЛО №6).
-const subsidyOrderEconomyTotal = computed(() => {
+const subsidyOrderEconomyItemsTotal = computed(() => {
   const byCat = ctx.planTreeByCat.value as Record<number, any>
-  return ctx.feoTree.value.reduce((sum, root) => sum + Number(byCat[root.id]?.order_economy || 0), 0)
+  return ctx.feoTree.value.reduce((sum, root) => sum + Number(byCat[root.id]?.order_economy_items || 0), 0)
 })
+// «По плановым позициям» (X) — НЕ отдельная Σ (та разошлась бы с картой на
+// статьях с «полом»/над-планом/несогласованным превышением, см. докстринг в
+// шаблоне выше) — ВЫВЕДЕНА из уже показанного числа карточки
+// (kpiSubTarget_plan_schedule, НЕ анимированная версия — иначе строка
+// «прыгала» бы посреди анимации числа) и Y/Z: X = card − Z + Y, тогда
+// X − Y + Z == card ТОЖДЕСТВЕННО, при любых значениях (ПРАВИЛО №6 — card
+// уже единственный источник «Запланировано», вторая формула не вводится).
+const subsidyPlanPositionsTotal = computed(() => (
+  kpiSubTarget_plan_schedule.value - subsidyOrderOverspendItemsTotal.value + subsidyOrderEconomyItemsTotal.value
+))
 const orderSubstitutionDialogVisible = ref(false)
 
 const kpiSubAnim_budget            = useAnimatedNumber(kpiSubTarget_budget,           800)
@@ -759,35 +815,40 @@ const kpiSubAnim_paid              = useAnimatedNumber(kpiSubTarget_paid,       
 const kpiSubAnim_free              = useAnimatedNumber(kpiSubTarget_free,             800)
 
 // ── Раздел C/E1: товары/услуги по карточкам ──────────────────────────────────
-// «Бюджет (ФЭО)»/«Запланировано»/«Свободно» — из subsidy_type_totals, который
-// GET /feo-categories/plan-tree (compute_subsidy_type_summary) отдаёт ВСЕГДА
-// (без флага) вместе с обычным деревом — ctx.planTreeByCat уже содержит его
-// под строковым ключом 'subsidy_type_totals' (useFeoTreeState.splitPlanTree
-// вычленяет только 'unassigned', остальные ключи проходят как есть; тип
-// PlanTreeEntry не объявляет этот строковый ключ, тот же каст использует
-// useFeoTreeExcess.ts для subsidy_type_excess — см. её докстринг). Остальные
-// 6 карточек (work/ordered/contracts/delivered/delivered_unpaid/paid) — из
+// «Бюджет (ФЭО)»/«Запланировано»/«Свободно» — ИСПРАВЛЕНИЕ (ПРАВИЛО №6,
+// находка приёмки 23.10.2026, та же сессия, что и selectedFree в
+// useFeoTreeAmounts.ts): раньше читались из subsidy_type_totals ДЕРЕВА
+// (GET /feo-categories/plan-tree, compute_subsidy_type_summary) — та ветка
+// гейтит ВСЕ денежные поля узла отдельным правом feo_budget.view_tree_amounts
+// (см. её докстринг), и у пользователя без этого права (независимо от
+// «Видеть ФОТ») строки товары/услуги/ФОТ навечно висели «загрузка по
+// типам…» (баг найден приёмкой на qa_revision_executor). Теперь — готовые
+// budget_goods/budget_services/budget_payroll/budget_unspecified и
+// planned_goods/planned_services/planned_payroll/planned_unspecified той же
+// строки субсидии /dashboard/charts (SubsidyRow, см. её докстринг в
+// composables/subsidies/types.ts) — БЕЗ этого отдельного гейта, вычищены по
+// ФОТ синхронно с budget/planned карточек выше. Остальные 6 карточек
+// (work/ordered/contracts/delivered/delivered_unpaid/paid) — из
 // ctx.selectedSubsidy.value.widget[stage] (SubsidiesView.vue догружает
 // ?type_split=true в /dashboard/charts?scope=managed при включении
-// переключателя — второй запрос здесь не заводится, Правило №6).
+// переключателя — второй запрос здесь не заводится, Правило №6); оба набора
+// полей приходят ОДНИМ тем же запросом.
 type SplitStageKey = 'budget' | 'plan_schedule' | 'work' | 'ordered' | 'contracts' | 'delivered' | 'delivered_unpaid' | 'paid' | 'free'
-
-function subsidyTypeTotals(): SubsidyTypeTotals | null {
-  return (ctx.planTreeByCat.value as any)?.subsidy_type_totals ?? null
-}
 
 function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; payroll?: number; unspecified: number } | null {
   // 'free' обрабатывается отдельно в splitRowsFor() ниже (решение владельца
   // 06.10.2026: без разбивки бюджета ФЭО по типу превышение по типу — ложная
   // тревога, см. её докстринг) — здесь больше НЕ обрабатывается.
   if (stage === 'budget' || stage === 'plan_schedule') {
-    const totals = subsidyTypeTotals()
-    if (!totals) return null
+    const s = ctx.selectedSubsidy.value
+    if (!s) return null
     if (stage === 'budget') {
-      return { goods: totals.feo_goods || 0, services: totals.feo_services || 0, payroll: totals.feo_payroll || 0, unspecified: totals.feo_unspecified || 0 }
+      if (s.budget_goods === undefined) return null
+      return { goods: s.budget_goods || 0, services: s.budget_services || 0, payroll: s.budget_payroll || 0, unspecified: s.budget_unspecified || 0 }
     }
     // plan_schedule
-    return { goods: totals.plan_goods || 0, services: totals.plan_services || 0, payroll: totals.plan_payroll || 0, unspecified: totals.plan_unspecified || 0 }
+    if (s.planned_goods === undefined) return null
+    return { goods: s.planned_goods || 0, services: s.planned_services || 0, payroll: s.planned_payroll || 0, unspecified: s.planned_unspecified || 0 }
   }
   // «Поставлено, не оплачено» (владелец, 05.10.2026) — по типам источник НЕ
   // widget.delivered_unpaid (тот означает status='delivered' без paid, его же
@@ -817,29 +878,41 @@ function splitRowsFor(stage: SplitStageKey): SplitRow[] | null {
     // Решение владельца (06.10.2026, жалоба «превышение без типа 20 093 275,58
     // ложная тревога»): «Свободно» по типу = «Бюджет (ФЭО) по типу» − «Запланировано
     // по типу». Бюджет по типу нередко НЕ разбит (суммы ФЭО заданы на статьях
-    // целиком, без распределения на товары/услуги) — тогда feo_goods/feo_services
+    // целиком, без распределения на товары/услуги) — тогда budget_goods/budget_services
     // стоят 0, а «план по типу» (из плановых позиций, у которых тип ЕСТЬ) —
-    // не 0, и вычитание давало огромное ложное «превышение». Теперь — row.amount
-    // = null («нет данных»), когда у ЭТОЙ конкретной корзины (товары/услуги)
-    // бюджет по типу не введён (feo_<kind> <= 0); посчитанное число — только
-    // когда бюджет по типу у этой корзины реально есть (частичная разбивка —
-    // считаем превышение только для разбитой части, см. задание владельца).
-    // «без типа» НИКОГДА не помечается превышением — у «без типа» нет
-    // самостоятельного бюджета-по-типу, который можно было бы сравнить с
-    // планом (см. docstring type_totals.py: feo_unspecified — остаток, не
-    // отдельно заданная величина), поэтому строка для unspecified не строится.
-    const totals = subsidyTypeTotals()
-    if (!totals) return null
-    const free = freeByKindFromTypeTotals(totals, roundMoney)
+    // не 0, и вычитание давало огромное ложное «превышение». row.amount = null
+    // («нет данных»), когда у ЭТОЙ конкретной корзины (товары/услуги) бюджет
+    // по типу не введён (budget_<kind> <= 0); посчитанное число — только когда
+    // бюджет по типу у этой корзины реально есть (частичная разбивка — считаем
+    // превышение только для разбитой части, см. задание владельца). «без
+    // типа» НИКОГДА не помечается превышением (budget_unspecified — остаток,
+    // не отдельно заданная величина), поэтому строка для unspecified не строится.
+    //
+    // ИСПРАВЛЕНИЕ (ПРАВИЛО №6, та же находка 23.10.2026, см. docstring у
+    // rawSplitFor выше) — budget_goods/services/payroll и planned_goods/
+    // services/payroll читаются из строки субсидии /dashboard/charts, НЕ из
+    // subsidy_type_totals дерева (тот гейтится отдельным правом
+    // feo_budget.view_tree_amounts и вечно null у части пользователей).
+    // Для товаров/услуг это plain plan_goods/plan_services (а не typed-базис
+    // plan_typed_goods/services, который только дерево считает, владелец
+    // 14.10.2026, см. itemTypeKind.ts::freeByKindFromTypeTotals) — на статьях
+    // «своей суммой» (budget не приравнен к плану) строка может отличаться от
+    // старой typed-версии на их разницу; ФОТ — ТА ЖЕ пара полей (budget_payroll/
+    // planned_payroll ≡ feo_payroll/plan_payroll), формула не меняется.
+    const s = ctx.selectedSubsidy.value
+    if (!s || s.budget_goods === undefined) return null
+    const bg = s.budget_goods || 0, bs = s.budget_services || 0, bp = s.budget_payroll || 0
+    const pg = s.planned_goods || 0, ps = s.planned_services || 0, pp = s.planned_payroll || 0
     const freeRows: SplitRow[] = [
-      { kind: 'goods', label: KIND_LABELS.goods, amount: free.goods },
-      { kind: 'services', label: KIND_LABELS.services, amount: free.services },
+      { kind: 'goods', label: KIND_LABELS.goods, amount: bg > 0 ? roundMoney(bg - pg) : null },
+      { kind: 'services', label: KIND_LABELS.services, amount: bs > 0 ? roundMoney(bs - ps) : null },
     ]
     // ФОТ (задача 1, 07.10.2026) — показываем строку, только если сумма
     // payroll ≠ 0 (то же правило, что у «без типа» ниже), null — «нет данных
-    // по типу» (см. docstring freeByKindFromTypeTotals выше).
-    if (free.payroll !== null && Math.abs(free.payroll) > 0.5) {
-      freeRows.push({ kind: 'payroll', label: KIND_SHORT_LABELS.payroll ?? KIND_LABELS.payroll, amount: free.payroll })
+    // по типу».
+    const payrollFree = bp > 0 ? roundMoney(bp - pp) : null
+    if (payrollFree !== null && Math.abs(payrollFree) > 0.5) {
+      freeRows.push({ kind: 'payroll', label: KIND_SHORT_LABELS.payroll ?? KIND_LABELS.payroll, amount: payrollFree })
     }
     return freeRows
   }
@@ -973,6 +1046,25 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
   text-decoration: underline dotted;
 }
 .kpi-sub-note-clickable:hover {
+  color: inherit;
+  opacity: 0.8;
+}
+/* Шаг 1 плана humble-stirring-emerson.md (23.10.2026) — раскладка карточки
+   «Запланировано» на 3 строки (та же вёрстка, что .kpi-sub-note выше, просто
+   каждая строка — отдельный блок, не одна строка с «·»). */
+.kpi-plan-breakdown {
+  margin-top: 4px;
+  line-height: 1.3;
+}
+.kpi-plan-breakdown-row {
+  white-space: normal;
+  word-break: break-word;
+}
+.kpi-plan-breakdown-row-clickable {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.kpi-plan-breakdown-row-clickable:hover {
   color: inherit;
   opacity: 0.8;
 }

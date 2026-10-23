@@ -148,7 +148,12 @@ async def test_c_nonzero_budget_still_flags_excess(db_session, test_org):
     node_a = tree[cat_a.id]
     assert node_a["budget"] == 100_000.0
     assert node_a["excess_amount"] == pytest.approx(50_000.0)
-    assert node_a["display"] == pytest.approx(150_000.0), "без согласования план не входит в display"
+    # ИЗМЕНЕНО (владелец, шаг 6 плана humble-stirring-emerson.md, 23.10.2026):
+    # ДО согласования display НЕ показывает несогласованную прибавку —
+    # откатывается к budget (100 000), не к полному plan_manual (150 000),
+    # см. feo_plan_tree.py docstring у этой ветки. Несогласованная разница
+    # (50 000) видна отдельно через excess_amount/excess_pending.
+    assert node_a["display"] == pytest.approx(100_000.0), "без согласования display не выше budget"
 
     warnings = await assert_no_unapproved_excess(db_session, cat_a.id)
     assert warnings, "ненулевой budget с превышением обязан вернуть предупреждение — фикс не должен был это сломать"

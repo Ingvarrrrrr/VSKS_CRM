@@ -52,6 +52,7 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
+from app.services.feo_plan_common import _order_substituted_plan
 from app.services.feo_plan_fact import fact_amounts_for_rows
 from app.services.plan_need_level import (
     NEED_LEVEL_LIKELY, NEED_LEVEL_NICE_TO_HAVE, is_reserve_need_level, normalize_need_level,
@@ -457,7 +458,9 @@ async def committed_by_purchase(db: AsyncSession, purchase_ids, include_over_pla
     return result
 
 
-async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) -> dict[int, dict]:
+async def planned_item_contributions(
+    db: AsyncSession, category_ids: list[int], payroll_category_ids: Optional[set] = None,
+) -> dict[int, dict]:
     """{feo_planned_item_id: {"amount": contribution, "feo_category_id", "item_type_effective"}}
     — ЕДИНАЯ (ПРАВИЛО №6), ПОСТРОЧНАЯ точка правила шага 2 плана «Деньги
     субсидии» (владелец, 02.10.2026, «экономия закрытой позиции возвращается в
@@ -491,12 +494,28 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
     (feo_plan_excess.py, ПОСТРОЧНО — виновнику нужна сумма КОНКРЕТНОЙ позиции,
     не агрегат) — оба обязаны читать ОДНО и то же число на одну и ту же
     позицию, иначе Σ контрибьюторов разойдётся с планом дерева (см.
-    test_find_excess_culprit_uses_same_plan_source_formula)."""
+    test_find_excess_culprit_uses_same_plan_source_formula).
+
+    `payroll_category_ids` (владелец, 22.10.2026, план humble-stirring-
+    emerson.md, шаг 1) — set id категорий ФОТ (себя+предка, app.services.
+    feo_payroll.payroll_category_ids), по статьям ФОТ замещение «заказ вместо
+    плана» ОТКЛЮЧАЕТСЯ (feo_plan_common._order_substituted_plan(is_payroll=
+    True) — ЕДИНАЯ точка, ПРАВИЛО №6). None (не передан явно) — резолвится
+    здесь САМА по subsidy_id категорий (один легкий запрос) — безопасный
+    дефолт для вызывающих мест, которые об этом правиле не знают, НЕ
+    отдельная формула «это ФОТ»."""
     from app.services.feo_plan_tree import resolve_effective_item_types  # local: avoid import cycle
 
     result: dict[int, dict] = {}
     if not category_ids:
         return result
+
+    if payroll_category_ids is None:
+        from app.services.feo_payroll import payroll_category_ids as _resolve_payroll_ids
+        _subsidy_rows = (await db.execute(
+            select(FeoCategory.subsidy_id).where(FeoCategory.id.in_(category_ids)).distinct()
+        )).scalars().all()
+        payroll_category_ids = await _resolve_payroll_ids(db, _subsidy_rows)
 
     items_q = (
         select(
@@ -523,14 +542,20 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
     for r in rows:
         raw_amount = float(r.amount or 0)
         contribution = raw_amount
-        if (r.payment_mode or "one_time") == "one_time":
+        _is_payroll = r.feo_category_id in payroll_category_ids
+        if (r.payment_mode or "one_time") == "one_time" and not _is_payroll:
             own_qty = float(r.quantity or 0)
             _committed = committed_map.get(r.id) or {
                 "amount": 0.0, "quantity": 0.0, "has_rows": False,
             }
             if own_qty > 0:
-                if _committed["quantity"] >= own_qty:
-                    contribution = _committed["amount"]
+                # ЕДИНАЯ точка (feo_plan_common._order_substituted_plan,
+                # ПРАВИЛО №6) — та же формула, что и дерево/find_excess_culprit;
+                # is_payroll уже отфильтрован веткой `and not _is_payroll` выше,
+                # передавать её сюда вторично не нужно (оставлено False).
+                contribution = _order_substituted_plan(
+                    own_qty, _committed["amount"], _committed["quantity"], raw_amount,
+                )
             elif _committed.get("has_rows"):
                 # план 0/без quantity — нечем мерить «частично»: любая
                 # привязанная committed-закупка целиком замещает contribution
@@ -550,7 +575,9 @@ async def planned_item_contributions(db: AsyncSession, category_ids: list[int]) 
     return result
 
 
-async def planned_item_order_diffs(db: AsyncSession, category_ids: list[int]) -> dict[int, dict]:
+async def planned_item_order_diffs(
+    db: AsyncSession, category_ids: list[int], payroll_category_ids: Optional[set] = None,
+) -> dict[int, dict]:
     """{feo_planned_item_id: {feo_category_id, name, amount (план из файла —
     r.amount), contribution (план после замены «заказ/договор вместо плана»),
     diff (contribution − amount)}} — задача владельца (13.10.2026): «перерасход/
@@ -571,8 +598,14 @@ async def planned_item_order_diffs(db: AsyncSession, category_ids: list[int]) ->
     plan_manual держится потому, что для режима plan_source='planned_items'
     узла Σ contribution его собственных позиций ЕСТЬ его plan_manual (см.
     leaf_items_committed_contribution/_manual_plan_for в feo_plan_tree.py) —
-    Σ(raw+diff) = raw_total + Σdiff = items_total + overspend − economy."""
-    contributions = await planned_item_contributions(db, category_ids)
+    Σ(raw+diff) = raw_total + Σdiff = items_total + overspend − economy.
+
+    `payroll_category_ids` — передаётся дальше в planned_item_contributions
+    (ПРАВИЛО №6, шаг 1 плана humble-stirring-emerson.md): по статьям ФОТ
+    contribution==amount всегда (замещение отключено), поэтому diff==0 —
+    «перерасход/экономия по заказам» для ФОТ не формируется, что и нужно
+    (ФОТ не даёт экономии ни по узлу, ни по позиции)."""
+    contributions = await planned_item_contributions(db, category_ids, payroll_category_ids)
     return {
         item_id: {
             "feo_category_id": info["feo_category_id"],
@@ -586,7 +619,8 @@ async def planned_item_order_diffs(db: AsyncSession, category_ids: list[int]) ->
 
 
 async def leaf_items_committed_contribution(
-    db: AsyncSession, category_ids: list[int], payroll_category_ids: set | None = None
+    db: AsyncSession, category_ids: list[int], payroll_category_ids: set | None = None,
+    payroll_block_category_ids: set | None = None,
 ) -> tuple[dict[int, float], dict[int, dict]]:
     """Агрегат по категории поверх planned_item_contributions (см. её докстринг
     — ОДНА точка правила, эта функция только суммирует) — используется
@@ -600,13 +634,27 @@ async def leaf_items_committed_contribution(
     (своя или по предку, план .planning/quick/2026-10-07-dnr-feo-cards/
     PLAN.md шаг 2) перебивает item_type — нужна, чтобы инвариант «plan_goods+
     services+payroll+unspecified == display узла» (test_feo_plan_tree_type_split.py)
-    остался в силе и после замещения savings по типу."""
+    остался в силе и после замещения savings по типу.
+
+    `payroll_category_ids` — ВСЕ payroll-категории (себя+предок), на показ/
+    классификацию "это вид payroll" влияет ВСЕГДА, независимо от кнопки
+    «Закрыть ФОТ по статье». `payroll_block_category_ids` (план humble-
+    stirring-emerson.md, 22.10.2026, шаг 1) — ПОДМНОЖЕСТВО без закрытых
+    статей (FeoCategory.payroll_closed=False) — ИМЕННО оно отключает
+    замещение «заказ вместо плана» в planned_item_contributions; по
+    умолчанию (не передан) = payroll_category_ids целиком (обратная
+    совместимость для вызовов, не знающих о кнопке)."""
     from app.services.item_type_split import empty_kind_dict, kind_of_by_category_id
     _payroll_ids = payroll_category_ids or set()
+    _payroll_block_ids = payroll_block_category_ids if payroll_block_category_ids is not None else _payroll_ids
 
     contribution_by_category: dict[int, float] = {}
     contribution_by_kind: dict[int, dict] = {}
-    per_item = await planned_item_contributions(db, category_ids)
+    # planned_item_contributions получает ТОЛЬКО _payroll_block_ids (ПРАВИЛО
+    # №6) — закрытая статья ФОТ (payroll_closed=True) остаётся payroll-видом
+    # ниже (kind_of_by_category_id читает полный _payroll_ids), но замещение
+    # для неё снова разрешено (владелец нажал «Закрыть ФОТ по статье»).
+    per_item = await planned_item_contributions(db, category_ids, _payroll_block_ids)
     for _item_id, info in per_item.items():
         cat_id = info["feo_category_id"]
         contribution_by_category[cat_id] = contribution_by_category.get(cat_id, 0.0) + info["amount"]

@@ -44,9 +44,19 @@ def build_order_substitution_economy(
     row_qty: Optional[float],
     row_amount: Optional[float],
     planned_item_name: str,
+    is_payroll: bool = False,
 ) -> Optional[dict]:
     """None — нет новой экономии от ЭТОЙ строки. Иначе {message, amount,
-    new_plan} — amount/new_plan это Decimal, округлённые до копеек."""
+    new_plan} — amount/new_plan это Decimal, округлённые до копеек.
+
+    `is_payroll` (владелец, 22.10.2026, план humble-stirring-emerson.md, шаг
+    1) — позиция статьи ФОТ (preview.py уже знает это для строки, см.
+    `is_payroll` там же, «Включить ФОТ») — ФОТ НИКОГДА не даёт «экономии»,
+    даже при включённом «Включить ФОТ» (та же ЕДИНАЯ точка
+    _order_substituted_plan, ПРАВИЛО №6): возвращаем None сразу, не доходя до
+    замещения."""
+    if is_payroll:
+        return None
     if not planned_qty or planned_qty <= 0:
         return None
     if already_ordered_qty >= planned_qty:
@@ -84,6 +94,7 @@ def build_order_substitution_overspend(
     row_qty: Optional[float],
     row_amount: Optional[float],
     planned_item_name: str,
+    is_payroll: bool = False,
 ) -> Optional[dict]:
     """Зеркало build_order_substitution_economy (владелец, задача 13.10.2026,
     «перерасход показывать так же, как экономию») — ОДНА И ТА ЖЕ точка
@@ -93,8 +104,13 @@ def build_order_substitution_overspend(
     вырастет (заменится суммой заказа) — здесь это становится явным
     предупреждением «Перерасход …», а не тихим ростом «Запланировано».
 
+    `is_payroll` — см. build_order_substitution_economy: ФОТ не замещается
+    вовсе, значит и «перерасход по заказам» для неё не формируется.
+
     None — нет нового перерасхода от ЭТОЙ строки. Иначе {message, amount,
     new_plan} — amount/new_plan это Decimal, округлённые до копеек."""
+    if is_payroll:
+        return None
     if not planned_qty or planned_qty <= 0:
         return None
     if already_ordered_qty >= planned_qty:

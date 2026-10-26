@@ -729,3 +729,86 @@ def test_store_nomenclature_comma_unit_split():
     by_name = {c["name"]: c for c in item["characteristics"]}
     assert by_name["Защищаемая площадь (до)"]["unit"] == "м²"
     assert by_name["Защищаемая площадь (до)"]["value"] == "150"
+
+
+# --- from_store_nomenclature: Сима-ленд (brand/article верхнего уровня, 26.10) -
+
+def test_store_nomenclature_sima_land_fragment():
+    """Фрагмент реального sima_land_catalog_all.json (26.10): верхнеуровневые
+    brand/article приоритетнее характеристик, "Артикул Сима-ленд"/"Торговая
+    марка" с тем же значением — не дублируются, "Страна-производитель" идёт
+    и в country_origin, и в characteristics, "Вес брутто"/"Габариты (ДхШхВ)"
+    — упаковка (in_description=False)."""
+    raw = [{
+        "name": "Челюсть «Вампир», зелёная", "category": "Приколы", "brand": "Сима-ленд",
+        "article": "4878510", "unit": "шт", "price_rub": 3.58,
+        "source_store": "Сима-ленд (sima-land.ru)",
+        "link_1": "https://www.sima-land.ru/4878510/",
+        "photo_url": "https://goods-photos.static1-sima-land.com/items/4234704/0/700.jpg",
+        "description": "Челюсть «Вампир», зелёная. Сертифицированная продукция.",
+        "specifications": {
+            "Артикул Сима-ленд": "4878510",
+            "Страна-производитель": "Китай",
+            "Вес брутто": "2 г",
+            "Габариты (ДхШхВ)": "5.5 x 4 x 2 см",
+        },
+    }]
+    result = from_store_nomenclature.convert(raw, "sima_land_catalog_all.json")
+    item = result["items"][0]
+    assert item["manufacturer"] == "Сима-ленд"
+    assert item["article"] == "4878510"
+    assert item["country_origin"] == "Китай"
+    assert item["description"] is None
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert "Артикул Сима-ленд" not in by_name, "дубль article — не пишем"
+    assert by_name["Страна-производитель"]["value"] == "Китай"
+    assert by_name["Вес брутто"] == {"name": "Вес брутто", "value": "2 г", "unit": None, "in_description": False}
+    assert by_name["Габариты (ДхШхВ)"] == {
+        "name": "Габариты (ДхШхВ)", "value": "5.5 x 4 x 2 см", "unit": None, "in_description": False,
+    }
+    assert validate_gala_catalog(_envelope("store_nomenclature", result["items"])) == []
+
+
+def test_store_nomenclature_sima_land_torgovaya_marka_dedup_and_kept():
+    raw = [{
+        "name": "A", "category": "C", "brand": "БрендА", "article": "1", "unit": "шт", "price_rub": 10,
+        "source_store": "Сима-ленд (sima-land.ru)", "link_1": "", "photo_url": None,
+        "specifications": {"Торговая марка": "БрендА"},
+    }]
+    item = from_store_nomenclature.convert(raw, "sima_land_catalog_all.json")["items"][0]
+    names = {c["name"] for c in item["characteristics"]}
+    assert "Торговая марка" not in names, "совпадает с brand — не дублируем"
+
+    raw2 = [{
+        "name": "B", "category": "C", "brand": "БрендА", "article": "2", "unit": "шт", "price_rub": 10,
+        "source_store": "Сима-ленд (sima-land.ru)", "link_1": "", "photo_url": None,
+        "specifications": {"Торговая марка": "ДругойБренд"},
+    }]
+    item2 = from_store_nomenclature.convert(raw2, "sima_land_catalog_all.json")["items"][0]
+    by_name2 = {c["name"]: c for c in item2["characteristics"]}
+    assert by_name2["Торговая марка"]["value"] == "ДругойБренд"
+
+
+def test_store_nomenclature_sima_land_article_differs_kept_as_characteristic():
+    raw = [{
+        "name": "A", "category": "C", "brand": "", "article": "100", "unit": "шт", "price_rub": 10,
+        "source_store": "Сима-ленд (sima-land.ru)", "link_1": "", "photo_url": None,
+        "specifications": {"Артикул поставщика": "200"},
+    }]
+    item = from_store_nomenclature.convert(raw, "sima_land_catalog_all.json")["items"][0]
+    assert item["article"] == "100"
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert by_name["Артикул поставщика"]["value"] == "200"
+
+
+def test_store_nomenclature_top_level_brand_article_no_specs():
+    """Без specifications — просто brand/article верхнего уровня, без
+    зависимости от старого ключа "Артикул"/"Производитель" в specifications."""
+    raw = [{
+        "name": "A", "category": "C", "brand": "Сима-ленд", "article": "999", "unit": "шт",
+        "price_rub": 10, "source_store": "Сима-ленд (sima-land.ru)", "link_1": "", "photo_url": None,
+        "specifications": {},
+    }]
+    item = from_store_nomenclature.convert(raw, "sima_land_catalog_all.json")["items"][0]
+    assert item["manufacturer"] == "Сима-ленд"
+    assert item["article"] == "999"

@@ -1,11 +1,14 @@
-"""Конвертер общего формата выгрузок трёх магазинов (promalp_height_safety_
+"""Конвертер общего формата выгрузок магазинов (promalp_height_safety_
 nomenclature.json, rescue_medical_nomenclature.json, fire_equipment_
-nomenclature.json) → формат GALA (см. format.py). Владелец, 2026-10-26,
-Задача 1.
+nomenclature.json, sima_land_catalog_all.json) → формат GALA (см. format.py).
+Владелец, 2026-10-26, Задача 1; Сима-ленд (152 652 позиции) добавлена тем же
+днём — тот же конвертер, формат совпадает, плюс верхнеуровневые brand/article.
 
 Вход (raw) — список объектов вида:
   {name, category, unit, price_rub, source_store, link_1, photo_url,
-   description, specifications: {"<ключ>": "<значение>", ...}}
+   description, brand, article, specifications: {"<ключ>": "<значение>", ...}}
+  brand/article — опциональные верхнеуровневые поля (есть у Сима-ленда, нет у
+  трёх старых выгрузок).
 
 Правила отображения полей:
   - name чистится через catalog_gala.clean.clean_text.
@@ -14,6 +17,26 @@ nomenclature.json) → формат GALA (см. format.py). Владелец, 20
     уровень не нужен); category_path=[category], если category есть.
   - unit → unit как есть.
   - price_rub: null/0 → None (как у остальных конвертеров).
+  - brand (верхнеуровневое, Сима-ленд) → manufacturer, приоритет над
+    характеристиками specifications ("Производитель"/"Бренд"/"Торговая
+    марка"): если они заданы и равны brand — в characteristics не
+    дублируются; если отличаются — остаются обычной характеристикой (как и
+    раньше у "Бренд" при несовпадении с "Производитель").
+  - article (верхнеуровневое, Сима-ленд) → article, приоритет над
+    характеристикой "Артикул"/"Артикул <магазин>" из specifications: ключ,
+    начинающийся с "артикул" (без учёта регистра), со значением, равным
+    итоговому article — не пишется в characteristics (дубль, не вторая
+    характеристика); отличается по значению — остаётся обычной
+    характеристикой.
+  - "Страна-производитель"/"Страна производства" (дефис или пробел —
+    нормализуются перед сравнением) → ТАКЖЕ item["country_origin"] (как у
+    baucenter, format.py); характеристика из characteristics НЕ убирается —
+    видна в карточке тоже (то же решение владельца, что у baucenter).
+  - "Торговая марка" — если значение совпадает с итоговым manufacturer (без
+    учёта регистра/пробелов), в characteristics НЕ дублируется; отличается
+    или manufacturer не задан — остаётся обычной характеристикой.
+  - "Габариты (ДхШхВ)" и "Вес брутто" — характеристики упаковки товара (не
+    самого товара), in_description=False; значение в карточке остаётся.
   - source_store → characteristic "Магазин-источник" (in_description=False —
     это данные о логистике, не о товаре), НЕ в manufacturer (это не
     производитель, а магазин, у которого выгрузка).
@@ -116,24 +139,42 @@ def _is_junk_key(key: str) -> bool:
 # вес упаковки магазина, не самого товара (см. докстринг модуля).
 _PACKAGE_DIM_NAMES = {"длина", "ширина", "высота", "вес"}
 
+# Сима-ленд (26.10): габариты/вес упаковки товара — всегда, независимо от
+# source_file (в отличие от _PACKAGE_DIM_NAMES выше, которые только у
+# rescue_medical и без уточнения в ключе).
+_SIMA_PACKAGE_KEY_NAMES = {"вес брутто", "габариты (дхшхв)"}
+
 
 def _is_rescue_medical(source_file: str) -> bool:
     return "rescue_medical" in (source_file or "").lower()
 
 
-def _clean_characteristics(specs: dict, is_rescue_medical: bool) -> tuple:
-    """Возвращает (characteristics, manufacturer, article)."""
+def _norm_country_key(key_lower: str) -> str:
+    return key_lower.replace("-", " ").strip()
+
+
+_COUNTRY_KEY_NAMES = {"страна производитель", "страна производства"}
+
+
+def _clean_characteristics(specs: dict, is_rescue_medical: bool, top_manufacturer, top_article) -> tuple:
+    """Возвращает (characteristics, manufacturer, article, country_origin).
+    top_manufacturer/top_article — верхнеуровневые brand/article (Сима-ленд),
+    имеют приоритет над характеристиками из specifications."""
     characteristics = []
-    article = None
+    article = top_article
+    country_origin = None
 
     # Предварительный проход — найти manufacturer-кандидата из "Производитель"
     # (он главнее "Бренда" независимо от порядка ключей в исходнике).
-    manufacturer = None
-    for raw_key, raw_value in (specs or {}).items():
-        key = clean_text(raw_key)
-        if key and key.rstrip(":").strip().lower() == "производитель":
-            manufacturer = clean_text(raw_value)
-            break
+    # Верхнеуровневый brand (Сима-ленд) приоритетнее — если задан, спецификации
+    # его не переопределяют.
+    manufacturer = top_manufacturer or None
+    if manufacturer is None:
+        for raw_key, raw_value in (specs or {}).items():
+            key = clean_text(raw_key)
+            if key and key.rstrip(":").strip().lower() == "производитель":
+                manufacturer = clean_text(raw_value)
+                break
 
     for raw_key, raw_value in (specs or {}).items():
         key = clean_text(raw_key)
@@ -156,8 +197,17 @@ def _clean_characteristics(specs: dict, is_rescue_medical: bool) -> tuple:
         key_lower = key.lower()
 
         if key_lower == "артикул":
-            article = value
+            if article is None:  # верхнеуровневый article (Сима-ленд) приоритетнее
+                article = value
             continue
+
+        if key_lower.startswith("артикул"):
+            # "Артикул Сима-ленд" и т.п. — дубль итогового article (верхний
+            # уровень или "Артикул" выше) той же выгрузки: не пишем вторую
+            # характеристику с тем же значением. Отличается — остаётся
+            # обычной характеристикой (падает в общий разбор ниже).
+            if article and value.strip().lower() == article.strip().lower():
+                continue
 
         if key_lower == "производитель":
             continue  # уже взят в предварительном проходе
@@ -172,6 +222,20 @@ def _clean_characteristics(specs: dict, is_rescue_medical: bool) -> tuple:
             characteristics.append({"name": key, "value": value, "unit": None})
             continue
 
+        if key_lower == "торговая марка":
+            # Сима-ленд: аналог "Бренда", но без фолбэка "взять как
+            # manufacturer, если он не задан" — так решил владелец только для
+            # "Бренд"/"Производитель" у трёх старых выгрузок.
+            if manufacturer and manufacturer.strip().lower() == value.strip().lower():
+                continue
+            characteristics.append({"name": key, "value": value, "unit": None})
+            continue
+
+        if _norm_country_key(key_lower) in _COUNTRY_KEY_NAMES:
+            country_origin = value
+            characteristics.append({"name": key, "value": value, "unit": None})
+            continue
+
         name, unit = split_key_unit(key)
         # Фильтр мусора (владелец, 26.10) — проверяем ИМЯ после отделения
         # единицы, не ключ целиком: единица в хвосте ключа ("..., лет")
@@ -182,9 +246,11 @@ def _clean_characteristics(specs: dict, is_rescue_medical: bool) -> tuple:
         c = {"name": name, "value": value, "unit": unit}
         if is_rescue_medical and name.lower() in _PACKAGE_DIM_NAMES:
             c["in_description"] = False
+        elif name.lower() in _SIMA_PACKAGE_KEY_NAMES:
+            c["in_description"] = False
         characteristics.append(c)
 
-    return characteristics, manufacturer, article
+    return characteristics, manufacturer, article, country_origin
 
 
 def convert(raw: list, source_file: str) -> dict:
@@ -197,8 +263,11 @@ def convert(raw: list, source_file: str) -> dict:
 
         category = row.get("category") or None
 
-        characteristics, manufacturer, article = _clean_characteristics(
-            row.get("specifications") or {}, is_rescue_medical
+        top_manufacturer = clean_text(row.get("brand")) or None
+        top_article = clean_text(row.get("article")) or None
+
+        characteristics, manufacturer, article, country_origin = _clean_characteristics(
+            row.get("specifications") or {}, is_rescue_medical, top_manufacturer, top_article
         )
 
         store = clean_text(row.get("source_store"))
@@ -229,6 +298,7 @@ def convert(raw: list, source_file: str) -> dict:
             "article": article,
             "description": None,  # реклама магазина — не переносим (владелец, 26.10)
             "characteristics": characteristics,
+            "country_origin": country_origin,
             "photos": photos,
             "links": links,
             "source_url": url,

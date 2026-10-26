@@ -162,6 +162,26 @@ class ProductOut(ProductCreate):
             pass
         return data
 
+# Серверный поиск/пагинация каталога (владелец, 26.10.2026) — GET
+# /api/products/page, см. app/services/product_search.py. Контракт НОВЫЙ,
+# не путать с ProductOut-массивом старого GET /api/products/.
+class ProductSearchPageOut(BaseModel):
+    items: List[ProductOut]
+    total: int
+    # total_capped — total достиг потолка точного count() (ПРАВИЛО №6,
+    # product_search.py::TOTAL_COUNT_CAP — единственное место, где считается
+    # сам потолок) и является ОЦЕНКОЙ «минимум total», не точным числом.
+    total_capped: bool = False
+
+
+# GET /api/products/stale-count — счётчик для бейджа «требует актуализации»,
+# ОТДЕЛЬНО от /page (владелец, 26.10.2026, см. docstring
+# app/services/product_stale_count_cache.py — раньше считался безусловно на
+# каждый /page, это самостоятельный full-scan).
+class ProductStaleCountOut(BaseModel):
+    stale_total: int
+
+
 class PriceActualizationIn(BaseModel):
     """Тело POST /api/products/{id}/price-actualization — ручная актуализация цены."""
     price: Decimal

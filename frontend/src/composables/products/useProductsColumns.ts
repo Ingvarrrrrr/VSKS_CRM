@@ -15,17 +15,21 @@ export const ALL_COLUMNS = [
   { title: 'Тип',       key: 'product_type',       width: 140 },
   { title: 'Категория', key: 'category',           width: 140, minWidth: 140 },
   // Ед. изм. (владелец, 14.10) — formatUnitWithPack показывает упаковку:
-  // «упак. (10 шт.)» (см. ProductsTable.vue, utils/units.ts).
-  { title: 'Ед. изм.',  key: 'unit',               width: 130 },
+  // «упак. (10 шт.)» (см. ProductsTable.vue, utils/units.ts). Сортировка на
+  // сервере по этой колонке не предусмотрена (не входит в SORTABLE_COLUMNS
+  // app/services/product_search.py) — sortable:false, как и у остальных
+  // колонок ниже без прямого соответствия серверному полю сортировки.
+  { title: 'Ед. изм.',  key: 'unit',               width: 130, sortable: false },
   { title: 'Цена',      key: 'price',              width: 130, align: 'end' as const },
   // Средняя цена за 60 дней (решение владельца 2026-09-16, п.3) — avg_price/
   // avg_price_basis/avg_price_stale уже приходят в ProductOut, второго запроса
-  // на строку не делаем (Правило №6).
-  { title: 'Средняя',   key: 'avg_price',          width: 150, align: 'end' as const },
-  { title: 'Цена по договору', key: 'contract_price', width: 180, align: 'end' as const },
-  { title: 'Актуальность цены', key: 'price_freshness', width: 200 },
-  { title: 'Страна',    key: 'country_origin',     width: 120 },
-  { title: 'Статус',    key: 'is_active',          width: 110 },
+  // на строку не делаем (Правило №6). Считается не колонкой БД — сортировать
+  // на сервере нечем, sortable:false (владелец, 26.10 — серверная пагинация).
+  { title: 'Средняя',   key: 'avg_price',          width: 150, align: 'end' as const, sortable: false },
+  { title: 'Цена по договору', key: 'contract_price', width: 180, align: 'end' as const, sortable: false },
+  { title: 'Актуальность цены', key: 'price_freshness', width: 200, sortable: false },
+  { title: 'Страна',    key: 'country_origin',     width: 120, sortable: false },
+  { title: 'Статус',    key: 'is_active',          width: 110, sortable: false },
   { title: 'Действия',  key: 'actions',            width: 100, sortable: false },
   { title: 'ТЗ проверено',     key: 'tz_verified_at',      width: 160, sortable: false },
   { title: 'ТЗ 44-ФЗ',        key: 'tz_44fz_verified_at', width: 150, sortable: false },

@@ -30,7 +30,11 @@ router = APIRouter(prefix="/plan-to-wish", tags=["feo_planned_items"])
 
 
 class _CandidatesRequest(BaseModel):
-    planned_item_ids: List[int]
+    # Потолок (владелец, 2026-10-26, задача сужения каталога): каждый id —
+    # один батч-вызов products_match._score_product_candidates (SQL-кандидаты
+    # по trigram/ILIKE, см. app/services/product_match_candidates.py) — 422
+    # вместо зависания/таймаута на нереалистично большом списке.
+    planned_item_ids: List[int] = Field(..., max_length=500)
     limit: int = 6
 
 

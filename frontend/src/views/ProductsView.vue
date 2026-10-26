@@ -1,7 +1,8 @@
 <template>
   <v-container fluid class="pa-6">
     <ProductsToolbar
-      :products-count="products.length"
+      :products-count="total"
+      :products-count-capped="totalCapped"
       :deduplicating="deduplicating"
       :mobile="mobile"
       :view-mode="viewMode"
@@ -46,18 +47,22 @@
       @reset="resetFilters"
     />
 
-    <!-- Table -->
+    <!-- Table — серверная пагинация/сортировка (владелец, 26.10.2026), items —
+         уже страница результатов, не весь каталог (см. useProductsData.ts). -->
     <ProductsTable
       v-if="effectiveView === 'table'"
       :headers="headers"
-      :items="filteredProducts"
+      :items="products"
+      :total-count="total"
       :loading="loading"
-      :search="search"
+      :page="tablePage"
+      :items-per-page="tableItemsPerPage"
       :selected-ids="selectedIds"
       :is-superadmin="isSuperadmin"
       :is-admin="isAdmin"
       :tz-verifying="tzVerifying"
       @update:selected-ids="selectedIds = $event"
+      @table-options="onTableOptions"
       @row-click="openEdit"
       @toggle-sharing="toggleSharing"
       @verify-tz="verifyTz"
@@ -70,19 +75,19 @@
       @delete-all="deleteAllDialog = true"
     />
 
-    <!-- Cards view -->
+    <!-- Cards view — пагинация по 24 тем же серверным запросом -->
     <ProductsCards
       v-else
-      :items="pagedProducts"
-      :total-count="filteredProducts.length"
+      :items="products"
+      :total-count="total"
       :page="cardsPage"
       :total-pages="cardsTotalPages"
       :selected-ids="selectedIds"
       :is-superadmin="isSuperadmin"
       :card-photo-src="cardPhotoSrc"
       @update:selected-ids="selectedIds = $event"
-      @update:page="cardsPage = $event"
-      @select-all="selectedIds = filteredProducts.map(p => p.id)"
+      @update:page="onCardsPage"
+      @select-all="selectedIds = products.map(p => p.id)"
       @edit="openEdit"
       @delete="confirmDelete"
       @bulk-edit="openBulkEdit"
@@ -160,7 +165,7 @@
     <ProductsDeleteAllDialog
       v-model="deleteAllDialog"
       v-model:confirm-text="deleteAllConfirm"
-      :total-count="products.length"
+      :total-count="total"
       :deleting="deletingAll"
       @confirm="doDeleteAll"
     />
@@ -272,11 +277,14 @@ const toast = useToast()
 const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 const {
-  products, loading,
+  products, loading, total, totalCapped,
   search, filterType, filterCategory, filterActive, filterPriceMin, filterPriceMax, filterStaleOnly,
   resetFilters, load,
-  typeOptions, categoryOptions, staleProductsCount, filteredProducts,
-  mobile, viewMode, effectiveView, cardsPage, cardsTotalPages, pagedProducts,
+  typeOptions, categoryOptions, staleProductsCount, loadStaleCount,
+  loadProductOptions,
+  mobile, viewMode, effectiveView,
+  tablePage, tableItemsPerPage, onTableOptions,
+  cardsPage, cardsTotalPages, onCardsPage,
   cardPhotoSrc,
 } = useProductsData(showSnack)
 
@@ -324,7 +332,7 @@ const { tzVerifying, verifyTz, unverifyTz } = useProductsTz({ products, showSnac
 
 const {
   priceSourceOptions, actualizeDialog, actualizeForm, openActualizeDialog, saveActualization,
-} = useProductsActualize({ products, showSnack })
+} = useProductsActualize({ products, showSnack, onActualized: loadStaleCount })
 
-onMounted(() => { load(); loadPendingProposalsCount() })
+onMounted(() => { load(); loadProductOptions(); loadPendingProposalsCount(); loadStaleCount() })
 </script>

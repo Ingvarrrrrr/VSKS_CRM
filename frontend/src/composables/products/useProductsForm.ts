@@ -10,6 +10,7 @@ import { isPackUnit } from '@/utils/units'
 import { postPriceHistoryEntry } from './useProductPriceHistory'
 import type { DraftPriceEntry } from './useProductPriceHistory'
 import type { Product, PriceLink } from './productsTypes'
+import { useProductSearch, isSearchTooShort } from './useProductSearch'
 
 export function useProductsForm(options: {
   products: { value: Product[] }
@@ -107,13 +108,23 @@ export function useProductsForm(options: {
   const photoCacheBuster = ref(0)
   const editMeta = reactive({ updated_at: null as string | null, updated_by: null as string | null, import_note: null as string | null })
 
-  // Name autocomplete + duplicate detection
+  // Name autocomplete + duplicate detection — серверный поиск по ИМЕНИ
+  // (ПРАВИЛО №6, тот же механизм useProductSearch.ts, что у страницы «Товары»/
+  // пикера товара), не products.value: каталог 54 тыс. строк, вырастет до
+  // 250+ тыс. — products.value теперь ТЕКУЩАЯ СТРАНИЦА списка (≤200 строк),
+  // искать по ней подстроку означало бы почти всегда «ничего не найдено»
+  // (владелец, 26.10.2026). Финальная защита от дублей всё равно на backend
+  // (409 duplicate_product при save(), см. ниже) — это только живая подсказка.
   const nameSearch = ref('')
+  const nameSearchApi = useProductSearch({ debounceMs: 250 })
+  watch(nameSearch, (q) => {
+    if (isSearchTooShort(q)) { nameSearchApi.items.value = []; return }
+    nameSearchApi.loadDebounced({ search: (q || '').trim(), limit: 15 })
+  })
   const nameSuggestions = computed(() => {
-    const q = (nameSearch.value || '').toLowerCase().trim()
-    if (q.length < 2) return []
-    return products.value
-      .filter(p => p.name.toLowerCase().includes(q) && p.id !== editingId.value)
+    if (isSearchTooShort(nameSearch.value)) return []
+    return nameSearchApi.items.value
+      .filter(p => p.id !== editingId.value)
       .map(p => p.name)
       .slice(0, 15)
   })
@@ -121,7 +132,7 @@ export function useProductsForm(options: {
     if (!form.name) return false
     const q = (typeof form.name === 'string' ? form.name : '').toLowerCase().trim()
     if (!q) return false
-    return products.value.some(p => p.name.toLowerCase().trim() === q && p.id !== editingId.value)
+    return nameSearchApi.items.value.some(p => p.name.toLowerCase().trim() === q && p.id !== editingId.value)
   })
 
   // Auto-calculate average price from links

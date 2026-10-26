@@ -40,7 +40,9 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.product import DEFAULT_PRODUCT_CATEGORY, Product
 from app.services.price_actualization import actualize_product_price
 from app.services.product_unit import backfill_product_unit
-from app.services.products_import_match import ProductMatchIndex, norm_key as _norm_key_for_match
+from app.services.products_import_match import (
+    ProductMatchIndex, load_candidate_products, norm_key as _norm_key_for_match,
+)
 from app.services.text_case import capitalize_first
 from app.services.units import is_pack_unit
 from app.services.product_description_history import set_product_description
@@ -211,13 +213,20 @@ async def apply_products_import(
     feo_rows = (await db.execute(select(FeoCategory))).scalars().all()
     feo_by_name = {f.name.lower().strip(): f.id for f in feo_rows}
 
-    existing_result = await db.execute(select(Product))
+    # Сужение SQL (владелец, 2026-10-26): раньше здесь был select ВСЕГО
+    # каталога без лимита — теперь только товары, чьё normalize-имя
+    # встречается среди имён строк ЭТОГО ЖЕ файла (load_candidate_products,
+    # services/products_import_match.py) — остальной каталог не может
+    # совпасть ни с одной строкой импорта (см. её докстринг).
+    file_names = {_cell(row, col_idx, "name") for row in data_rows}
+    file_names.discard(None)
+    candidate_products = await load_candidate_products(db, file_names)
     # Единственный индекс сопоставления строки импорта с товаром каталога
     # (ПРАВИЛО №6, services/products_import_match.py) — пополняется новыми
     # товарами СРАЗУ после создания (см. match_index.add(p) ниже), поэтому
     # повтор позиции внутри одного файла находит уже созданный товар, а не
     # плодит второй created (Задача 2).
-    match_index = ProductMatchIndex(existing_result.scalars().all())
+    match_index = ProductMatchIndex(candidate_products)
 
     created = 0
     updated = 0

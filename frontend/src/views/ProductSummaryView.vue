@@ -5,8 +5,8 @@
       <div>
         <h1 class="page-title text-h5 font-weight-bold">Сводная по продукции</h1>
         <span class="page-subtitle text-body-2">
-          {{ filteredGroups.length }} продуктов, {{ totalPurchases }} закупок
-          &nbsp;·&nbsp; Итого: {{ formatQty(totalQuantity) }} шт, {{ formatCurrency(totalAmount) }}
+          {{ total }} продуктов (показано {{ filteredGroups.length }}), {{ totalPurchases }} закупок на странице
+          &nbsp;·&nbsp; На странице: {{ formatQty(totalQuantity) }} шт, {{ formatCurrency(totalAmount) }}
         </span>
       </div>
       <v-btn variant="outlined" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="loadData">
@@ -177,6 +177,18 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Серверная пагинация (владелец, 2026-10-26, рост каталога к 250+ тыс.) -->
+    <div v-if="!loading && groups.length > 0" class="d-flex align-center justify-space-between mt-4 flex-wrap gap-2">
+      <v-select
+        v-model="pageSize" :items="[50, 100, 200, 500]" label="На странице"
+        variant="outlined" density="compact" hide-details style="max-width: 140px"
+      />
+      <v-pagination
+        v-model="page" :length="totalPages" :total-visible="7"
+        density="compact"
+      />
+    </div>
   </v-container>
 </template>
 
@@ -230,6 +242,14 @@ const groups = ref<SummaryGroup[]>([])
 const subsidies = ref<SubsidyOption[]>([])
 const expandedGroups = ref(new Set<number>())
 
+// Серверная пагинация (владелец, 2026-10-26): backend GET /api/products/summary
+// теперь отдаёт {items, total} с limit/offset ПО ЧИСЛУ ТОВАРОВ (групп), не
+// строк внутри группы (см. docstring backend/app/routers/products_summary.py).
+const page = ref(1)
+const pageSize = ref(100)
+const total = ref(0)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+
 const filterCategory = ref<string | null>(null)
 const filterSubsidy = ref<number | null>(null)
 const searchText = ref('')
@@ -251,6 +271,11 @@ const totalAmount = computed(() =>
   filteredGroups.value.reduce((sum, g) => sum + (g.total_amount || 0), 0)
 )
 
+// Список категорий — из ТЕКУЩЕЙ страницы (сервер отдаёт только limit
+// товаров за раз, владелец, 2026-10-26). Это сужает список вариантов при
+// активном фильтре/поиске, но не ломает фильтрацию — выбор категории,
+// которой нет на текущей странице, просто уйдёт на сервер тем же query-
+// параметром, страница перегрузится под него.
 const categoryOptions = computed(() => {
   const cats = new Set<string>()
   groups.value.forEach(g => { if (g.category) cats.add(g.category) })
@@ -273,37 +298,14 @@ const orgOptions = computed(() => {
   return Array.from(seen.entries()).map(([id, name]) => ({ id, name }))
 })
 
-const filteredGroups = computed(() => {
-  let result = groups.value
-
-  if (filterCategory.value)
-    result = result.filter(g => g.category === filterCategory.value)
-
-  if (filterSubsidy.value) {
-    result = result
-      .map(g => ({
-        ...g,
-        items: g.items.filter(i => {
-          const sub = subsidies.value.find(s => s.id === filterSubsidy.value)
-          return sub ? i.subsidy_name === sub.name : true
-        }),
-      }))
-      .filter(g => g.items.length > 0)
-      .map(g => ({
-        ...g,
-        purchase_count: g.items.length,
-        total_quantity: g.items.reduce((s, i) => s + (i.quantity || 0), 0),
-        total_amount: g.items.reduce((s, i) => s + (i.total_price || 0), 0),
-      }))
-  }
-
-  if (searchText.value) {
-    const q = searchText.value.toLowerCase()
-    result = result.filter(g => g.product_name.toLowerCase().includes(q))
-  }
-
-  return result
-})
+// Все фильтры (категория/субсидия/поиск/оргция/регион/даты/квартал) теперь
+// уходят на сервер параметрами запроса (см. loadData) — backend одним и тем
+// же _apply_common_filters применяет их и к выборке id товаров, и к полной
+// агрегации (ПРАВИЛО №6, один источник фильтрации). groups.value — уже
+// отфильтрованная сервером страница, второй раз фильтровать на клиенте
+// не нужно (и неверно — после сервеной пагинации клиентский повторный
+// фильтр мог бы показывать меньше total на странице, чем сервер насчитал).
+const filteredGroups = computed(() => groups.value)
 
 const toggleGroup = (id: number) => {
   if (expandedGroups.value.has(id)) expandedGroups.value.delete(id)
@@ -347,6 +349,11 @@ const methodLabel = (m: string | null) => {
   return ({ single: 'Единственный', competitive: 'Конкурентная' } as Record<string, string>)[m] || m
 }
 
+interface SummaryPageOut {
+  items: SummaryGroup[]
+  total: number
+}
+
 const loadData = async () => {
   loading.value = true
   try {
@@ -358,8 +365,13 @@ const loadData = async () => {
     if (filterDateFrom.value) params.set('date_from', filterDateFrom.value)
     if (filterDateTo.value) params.set('date_to', filterDateTo.value)
     if (filterQuarter.value) params.set('quarter', String(filterQuarter.value))
+    if (searchText.value.trim()) params.set('search', searchText.value.trim())
+    params.set('limit', String(pageSize.value))
+    params.set('offset', String((page.value - 1) * pageSize.value))
     const qs = params.toString()
-    groups.value = await apiFetch<SummaryGroup[]>(`/products/summary${qs ? '?' + qs : ''}`)
+    const resp = await apiFetch<SummaryPageOut>(`/products/summary${qs ? '?' + qs : ''}`)
+    groups.value = resp.items
+    total.value = resp.total
   } catch (e) {
     console.error('Failed to load product summary:', e)
   } finally {
@@ -367,10 +379,22 @@ const loadData = async () => {
   }
 }
 
+// Фильтры (кроме поиска) и размер страницы — сбрасывают на первую страницу
+// и грузят сразу.
 watch(
-  [filterSubsidy, filterCategory, filterOrgId, filterRegion, filterDateFrom, filterDateTo, filterQuarter],
-  () => { loadData() },
+  [filterSubsidy, filterCategory, filterOrgId, filterRegion, filterDateFrom, filterDateTo, filterQuarter, pageSize],
+  () => { page.value = 1; loadData() },
 )
+
+// Поиск — с задержкой (не долбить сервер на каждое нажатие клавиши).
+let searchDebounce: ReturnType<typeof setTimeout> | null = null
+watch(searchText, () => {
+  if (searchDebounce) clearTimeout(searchDebounce)
+  searchDebounce = setTimeout(() => { page.value = 1; loadData() }, 350)
+})
+
+// Переключение страницы пагинации — без сброса на 1.
+watch(page, () => { loadData() })
 
 const loadSubsidies = async () => {
   try { subsidies.value = await apiFetch<SubsidyOption[]>('/subsidies/') } catch { /* ok */ }

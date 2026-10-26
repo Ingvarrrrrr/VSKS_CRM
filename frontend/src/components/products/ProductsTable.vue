@@ -20,23 +20,34 @@
         @delete-all="$emit('delete-all')"
       />
 
-      <v-data-table
+      <!-- Серверная пагинация/сортировка (владелец, 26.10.2026 — каталог 54
+           тыс. строк, вырастет до 250+ тыс., v-data-table больше не грузит
+           список целиком). items — уже СТРАНИЦА результатов, items-length —
+           total по текущим фильтрам (не items.length), @update:options —
+           единственный источник page/itemsPerPage/sortBy (см.
+           useProductsData.ts::onTableOptions, тот же паттерн, что
+           useVehicleListData.ts). :search больше не передаём — поиск
+           серверный, клиентского повторного фильтра по этому же тексту не
+           делаем (Правило №6 — один механизм поиска). -->
+      <v-data-table-server
         v-resizable-columns="'products'"
         :model-value="selectedIds"
         show-select
         item-value="id"
         :headers="headers"
         :items="items"
+        :items-length="totalCount"
         :loading="loading"
-        :search="search"
         density="compact"
         fixed-header
         hover
-        items-per-page="25"
+        :page="page"
+        :items-per-page="itemsPerPage"
         class="products-clickable products-table"
         @update:model-value="$emit('update:selectedIds', $event)"
         @click:row="(_: any, row: { item: Product }) => $emit('row-click', row.item)"
         :items-per-page-options="[25, 50, 100, -1]"
+        @update:options="$emit('table-options', $event)"
       >
         <!-- Photo — единый источник utils/productPhoto.ts (ПРАВИЛО №6):
              отсекает мусорные photo_link вроде «НЕ смог найти» (импорт
@@ -251,7 +262,7 @@
             <div class="text-medium-emphasis">Товары не найдены</div>
           </div>
         </template>
-      </v-data-table>
+      </v-data-table-server>
     </v-card>
   </div>
 </template>
@@ -290,8 +301,10 @@ function avgPriceTooltipText(item: Product): string {
 defineProps<{
   headers: any[]
   items: Product[]
+  totalCount: number
   loading: boolean
-  search: string
+  page: number
+  itemsPerPage: number
   selectedIds: number[]
   isSuperadmin: boolean
   isAdmin: boolean
@@ -307,6 +320,7 @@ onMounted(async () => {
 
 defineEmits<{
   (e: 'update:selectedIds', ids: number[]): void
+  (e: 'table-options', opts: { page: number; itemsPerPage: number; sortBy: { key: string; order: string }[] }): void
   (e: 'row-click', item: Product): void
   (e: 'toggle-sharing', item: Product): void
   (e: 'verify-tz', item: Product, tzType: 'standard' | '44fz'): void

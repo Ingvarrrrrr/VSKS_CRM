@@ -23,7 +23,7 @@ matched.price".
 from datetime import datetime
 from decimal import Decimal
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -33,7 +33,7 @@ from app.services.item_amounts import line_total
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.product_unit import backfill_product_unit
 from app.services.product_catalog_match import (
-    find_exact_product, index_products_by_name,
+    find_exact_product, find_products_by_normalized_names, normalize_product_name,
 )
 from app.services.qty_price_check import resolve_qty_price_choice
 from app.services.items_import_tz_choice import match_catalog_product, resolve_tz_description
@@ -177,11 +177,35 @@ async def _save_smart_preview_to_purchase(
     row_data['vat_rate'] на каждую созданную позицию — единственное место
     применения результата УПД-детекции к сохранённым данным."""
     org_id = get_single_org_id(current_user)
-    prod_q = select(Product)
-    if org_id:
-        prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
-    products = (await db.execute(prod_q)).scalars().all()
-    product_by_name = index_products_by_name(products)
+    # Сужение SQL (владелец, 2026-10-26): раньше здесь был select ВСЕГО
+    # каталога организации без лимита — теперь только товары, чьё
+    # нормализованное имя встречается СРЕДИ ИМЁН СТРОК preview (единая точка
+    # нормализации/группировки — product_catalog_match.find_products_by_
+    # normalized_names, ПРАВИЛО №6, та же функция, что и у find_exact_product
+    # чуть ниже по файлу — не вторая реализация поиска).
+    preview_names = [row_data.get("item_name") for row_data in preview]
+    product_by_name = await find_products_by_normalized_names(
+        db, preview_names, org_id=org_id, include_org_null=True,
+    )
+    # match_catalog_product (items_import_tz_choice.py) — не только точный
+    # матч: при промахе он ищет fuzzy-кандидата (score>=SCORE_AUTO=0.95) СРЕДИ
+    # ВСЕХ значений product_by_name — раньше это был весь каталог орг.
+    # (select(Product) без лимита). Порог 0.95 на практике достижим только у
+    # почти идентичных названий — trigram-похожесть (оператор `%`, GIN-индекс
+    # миграции r5s7u9w1y3a5) их не теряет, поэтому для имён БЕЗ точного
+    # совпадения дополняем словарь trigram-кандидатами вместо всего каталога
+    # (сужение, не вторая реализация поиска — тот же оператор, что у
+    # app/services/product_match_candidates.py).
+    unmatched_names = {
+        n.strip() for n in preview_names
+        if n and n.strip() and not product_by_name.get(normalize_product_name(n))
+    }
+    if unmatched_names:
+        trgm_q = select(Product).where(or_(*(Product.name.op('%')(n) for n in unmatched_names)))
+        if org_id:
+            trgm_q = trgm_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
+        for p in (await db.execute(trgm_q)).scalars().all():
+            product_by_name.setdefault(normalize_product_name(p.name), p)
 
     added = matched_catalog = new_in_catalog = 0
     errors_list: list[str] = []

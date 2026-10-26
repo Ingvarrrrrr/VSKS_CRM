@@ -6,7 +6,10 @@
           v-model="search"
           prepend-inner-icon="mdi-magnify"
           label="Поиск по наименованию / описанию"
-          variant="outlined" density="compact" clearable hide-details
+          :placeholder="SEARCH_PLACEHOLDER"
+          :hint="remainingHint"
+          :persistent-hint="!!remainingHint"
+          variant="outlined" density="compact" clearable
           style="min-width:240px"
         />
         <v-autocomplete
@@ -60,6 +63,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+// Подсказка минимума символов — ЕДИНЫЙ источник (ПРАВИЛО №6), см. docstring
+// useProductSearch.ts.
+import { SEARCH_PLACEHOLDER, searchRemainingHint } from '@/composables/products/useProductSearch'
+
 defineProps<{
   typeOptions: string[]
   categoryOptions: string[]
@@ -68,6 +76,7 @@ defineProps<{
 defineEmits<{ (e: 'reset'): void }>()
 
 const search = defineModel<string>('search', { required: true })
+const remainingHint = computed(() => searchRemainingHint(search.value))
 const filterType = defineModel<string[]>('filterType', { required: true })
 const filterCategory = defineModel<string[]>('filterCategory', { required: true })
 const filterActive = defineModel<boolean | null>('filterActive', { required: true })

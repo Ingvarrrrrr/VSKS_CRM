@@ -11,8 +11,15 @@ import type { Product, PriceHistoryEntry } from './productsTypes'
 export function useProductsActualize(options: {
   products: { value: Product[] }
   showSnack: (text: string, color?: ToastType) => void
+  // Счётчик «требует актуализации» на странице «Товары» теперь отдельный
+  // запрос (useProductsData.ts::loadStaleCount, владелец 26.10.2026) —
+  // актуализация цены ОДНОГО товара меняет его на весь каталог, поэтому
+  // после успешного сохранения просим вызывающую сторону перечитать бейдж
+  // (TTL-кэш на бэкенде может на ≤60с отдать старое значение — см.
+  // product_stale_count_cache.py).
+  onActualized?: () => void
 }) {
-  const { products, showSnack } = options
+  const { products, showSnack, onActualized } = options
 
   const priceSourceOptions = Object.entries(PRICE_SOURCE_LABELS).map(([value, title]) => ({ value, title }))
 
@@ -73,6 +80,7 @@ export function useProductsActualize(options: {
       if (idx !== -1) products.value[idx] = { ...products.value[idx], ...updated }
       showSnack('Цена актуализирована')
       actualizeDialog.show = false
+      onActualized?.()
     } catch (e: any) {
       showSnack(e?.payload?.message || e?.detail || `Ошибка актуализации цены (HTTP ${e?.status ?? '?'})`, 'error')
     } finally {

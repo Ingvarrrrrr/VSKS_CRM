@@ -24,7 +24,10 @@ async def test_list_products_hides_characteristics_but_does_not_wipe_db(
     await db_session.commit()
     product_id = product.id
 
-    resp = await client.get("/api/products/", headers=auth_headers)
+    # Каталог вырос (26.10.2026) — GET /api/products/ без ids больше не отдаёт
+    # ВЕСЬ каталог (см. app/services/product_search.py), поэтому сузим поиск
+    # именем, иначе товар может не попасть в первую страницу дефолтного limit.
+    resp = await client.get("/api/products/", params={"search": "Товар с характеристиками"}, headers=auth_headers)
     assert resp.status_code == 200, resp.text
     data = resp.json()
 

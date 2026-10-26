@@ -10,6 +10,8 @@
                            POST /bulk-from-purchase-items
   - products_price.py   — share-price, price-actualization, price-history,
                            verify-tz/unverify-tz
+  - products_page.py    — GET /page (серверный поиск/фильтры/пагинация,
+                           26.10.2026, app/services/product_search.py)
 
 Каталог товаров общий (org_id IS NULL допустим) — без per-org разбивки
 (Правило №6, память проекта). GET /{product_id} и PUT/PATCH/DELETE
@@ -31,12 +33,12 @@ from app.auth.jwt import get_current_user, get_single_org_id, OWNER_ROLES
 from app.database import get_db
 from app.models.product import Product, DEFAULT_PRODUCT_CATEGORY
 from app.models.purchase_category import PurchaseCategory
-from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.schemas import ProductCreate, ProductOut
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.price_actualization import actualize_product_price
-from app.services.product_price_stats import compute_price_stats_bulk
+from app.services.product_list_postprocess import attach_price_stats as _attach_price_stats, postprocess_catalog_list
+from app.services.product_search import ProductSearchFilters, search_products, MAX_LIMIT, DEFAULT_LIMIT, MAX_IDS
 from app.services.product_delete_impact import (
     get_product_delete_impact,
     has_blocking_dependents,
@@ -72,54 +74,37 @@ async def _set_purchase_categories(db: AsyncSession, product: Product, category_
     product.purchase_categories = list(rows)
 
 
-async def _attach_price_stats(
-    db: AsyncSession, products: list,
-    *, target_region: Optional[str] = None, quantity=None,
-) -> None:
-    """Проставляет avg_price/avg_price_basis/avg_price_stale (+avg_price_level/
-    avg_price_region/avg_price_batch) ОДНИМ запросом на весь список
-    (app.services.product_price_stats.compute_price_stats_bulk) — не N+1.
-    Используется и списком (с target_region/quantity — средняя по региону
-    и партии 1–9 текущей организации), и карточкой товара (список из одного,
-    без фильтра — старое поведение, план clever-bouncing-lantern.md касается
-    только списка «Товары»)."""
-    ids = [p.id for p in products]
-    stats_by_id = await compute_price_stats_bulk(
-        db, ids, target_region=target_region, quantity=quantity,
-    )
-    for p in products:
-        stats = stats_by_id.get(p.id)
-        if stats is not None:
-            p.avg_price = stats.avg_price
-            p.avg_price_basis = stats.basis_count
-            p.avg_price_stale = stats.stale
-            p.avg_price_level = stats.level
-            p.avg_price_region = stats.region_used
-            p.avg_price_batch = stats.batch
-
-
 @router.get("/", response_model=List[ProductOut])
 async def list_products(
     feo_category_id: Optional[int] = Query(None),
     category: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
-    search: Optional[str] = Query(None, description="Полнотекстовый поиск по имени/описанию/типу"),
+    search: Optional[str] = Query(None, description="Поиск по имени/артикулу/производителю (многословный, AND)"),
     ids: Optional[str] = Query(None, description="CSV id товаров (\"1,2,3\") — точечная догрузка карточек без полного каталога"),
-    limit: Optional[int] = Query(None, ge=1, le=10000, description="Ограничить кол-во результатов (фронт грузит весь каталог в пикер)"),
+    limit: Optional[int] = Query(None, ge=1, description="Кол-во результатов без ids (по умолчанию и максимум — см. ниже)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Phase 17.1-08 / 26.10.2026: bytea фото живёт в отдельной таблице
-    # product_photos (не на Product) — defer() здесь больше не нужен, список
-    # остаётся лёгким сам по себе. Клиенты получают байты через
-    # GET /{product_id}/photo, когда has_photo=True (products.photo_size).
-    # Владелец, 26.10.2026: список не отдаёт characteristics (JSONB,
-    # может быть тяжёлым — на каталоге 53 797 товаров раздувает ответ и
-    # трафик без пользы: список их не показывает, карточка товара
-    # (GET /{product_id}) догружает их отдельным запросом — см. ниже
-    # p.characteristics = None и фронт ProductFormDialog.vue/useProductsForm.ts).
-    q = select(Product).options(defer(Product.characteristics))
-    # Products are global — no org_id filter
+    """Владелец, 26.10.2026: каталог вырос до 53 797+ товаров (растёт к
+    250 тыс.) — ЭТОТ путь больше НЕ отдаёт полный каталог без ids. Формат
+    ответа (массив, не {items,total}) сохранён — его зовут
+    ProductMatchReviewDialog.vue/ProductEditorDialog.vue/PlanToRequestDialog.vue/
+    ProductDescriptionProposals.vue/useItemsCatalog.ts/usePurchaseSplit.ts/
+    useWishActions.ts/CreateOrderView.vue (все — через ids= или limit<=20,
+    см. grep во фронте перед правкой этого роутера). Серверный поиск с
+    пагинацией {items,total,total_capped} — GET /api/products/page
+    (app/routers/products_page.py; счётчик stale_total — отдельным
+    GET /api/products/stale-count, см. его докстринг), новые места каталога
+    должны звать его.
+
+    ids — не более product_search.MAX_IDS штук, иначе 422 (точечная
+    догрузка не предназначена на сотни id одновременно). limit без ids —
+    по умолчанию product_search.DEFAULT_LIMIT, большее значение ОБРЕЗАЕТСЯ
+    до product_search.MAX_LIMIT (не 422) — иначе ломает старых вызывающих,
+    которые раньше слали большой limit ради всего каталога (useItemsCatalog.ts
+    ensureFullCatalog(), useProductsData.ts::load() — зовут '/products/' без
+    параметров вовсе; им предстоит перейти на /page отдельной задачей,
+    до этого они будут получать только первые DEFAULT_LIMIT товаров)."""
     if ids is not None:
         try:
             ids_list = [int(part.strip()) for part in ids.split(",") if part.strip()]
@@ -127,79 +112,30 @@ async def list_products(
             raise HTTPException(422, "Параметр ids: ожидается список чисел через запятую")
         if not ids_list:
             raise HTTPException(422, "Параметр ids: пустой список")
-        q = q.where(Product.id.in_(ids_list))
-    if feo_category_id is not None:
-        q = q.where(Product.feo_category_id == feo_category_id)
-    if category is not None:
-        q = q.where(Product.category == category)
-    if is_active is not None:
-        q = q.where(Product.is_active == is_active)
-    if search:
-        from sqlalchemy import or_
-        pattern = f"%{search}%"
-        q = q.where(or_(
-            Product.name.ilike(pattern),
-            Product.description.ilike(pattern),
-            Product.product_type.ilike(pattern),
-            Product.category.ilike(pattern),
-        ))
-    q = q.order_by(Product.name)
-    if limit is not None:
-        q = q.limit(limit)
-    result = await db.execute(q)
-    products = result.scalars().all()
+        if len(ids_list) > MAX_IDS:
+            raise HTTPException(422, f"Параметр ids: не более {MAX_IDS} id за один запрос")
+        # Phase 17.1-08 / 26.10.2026: bytea фото живёт в отдельной таблице
+        # product_photos (не на Product) — defer() здесь больше не нужен.
+        # characteristics (JSONB) список не показывает — обнуляется ниже в
+        # postprocess_catalog_list, как и раньше.
+        q = (
+            select(Product)
+            .options(defer(Product.characteristics))
+            .where(Product.id.in_(ids_list))
+            .order_by(Product.name)
+        )
+        products = (await db.execute(q)).scalars().all()
+    else:
+        effective_limit = DEFAULT_LIMIT if limit is None else min(limit, MAX_LIMIT)
+        filters = ProductSearchFilters(
+            search=search,
+            feo_category_id=feo_category_id,
+            category=[category] if category else None,
+            is_active=is_active,
+        )
+        products, _total, _capped = await search_products(db, filters, limit=effective_limit, offset=0)
 
-    # Скрыть контрактные цены для чужих организаций (если не shared).
-    # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026) —
-    # контрактная цена своей же орги для него не «чужая». ИСПРАВЛЕНИЕ К1
-    # (QA-итерация 2, 19.10.2026): account_owner раньше обходил скрытие
-    # БЕЗУСЛОВНО (видел контрактные цены любой организации любого аккаунта,
-    # т.к. каталог товаров общий — project_products_catalog_shared) — теперь
-    # только для орг своего аккаунта (та же проверка, что у app.routers.
-    # external_drivers.py::_check_visibility — is_org_in_owner_account).
-    if current_user.role != "superadmin":
-        contour_org_ids = None
-        if current_user.role == "account_owner":
-            from app.auth.visibility import get_account_contour_org_ids
-            contour_org_ids = await get_account_contour_org_ids(current_user, db)
-        user_org_id = current_user.org_id
-        for p in products:
-            if not p.contract_org_id or p.price_shared:
-                continue
-            if p.contract_org_id == user_org_id:
-                continue
-            if contour_org_ids is not None and p.contract_org_id in contour_org_ids:
-                continue
-            p.contract_price = None
-            p.contract_number = None
-            p.contract_date = None
-            p.contract_org_id = None
-
-    # Актуализация цены (владелец, 2026-08-29): контекст правил + курс USD
-    # грузится ОДИН раз на весь список, не в цикле по товарам.
-    org_id = get_single_org_id(current_user)
-    freshness_ctx = await load_freshness_context(db, org_id)
-    for p in products:
-        p.price_freshness = evaluate_freshness(p, freshness_ctx)
-        # characteristics не загружено (defer выше) — явно выставляем None,
-        # а не читаем атрибут: чтение недогруженной deferred-колонки внутри
-        # async ORM без await лезет за ней в БД и роняет сериализацию.
-        # set_committed_value (не обычное присваивание!) — иначе объект
-        # помечается dirty и autoflush перед следующим запросом (напр.
-        # _attach_price_stats) шлёт UPDATE products SET characteristics=NULL
-        # на каждый товар из списка (53 тыс. на проде).
-        set_committed_value(p, "characteristics", None)
-    # Список «Товары»: средняя для партии 1–9 по региону ТЕКУЩЕЙ организации
-    # пользователя (план clever-bouncing-lantern.md п.7) — тот же порядок
-    # поиска уровней, что и везде (compute_price_stats), нет данных по
-    # региону → функция сама откатится на более общий уровень/"all".
-    org_region = None
-    if org_id is not None:
-        org_region = (await db.execute(
-            select(Organization.region).where(Organization.id == org_id)
-        )).scalar_one_or_none()
-    await _attach_price_stats(db, products, target_region=org_region, quantity=1)
-
+    await postprocess_catalog_list(db, products, current_user)
     return products
 
 

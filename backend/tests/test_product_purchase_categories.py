@@ -36,7 +36,9 @@ async def test_product_create_with_two_purchase_categories(client, superadmin_he
     r_get = await client.get(f"/api/products/{body['id']}", headers=superadmin_headers)
     assert sorted(c["name"] for c in r_get.json()["purchase_categories"]) == sorted(got_names)
 
-    r_list = await client.get("/api/products/", headers=superadmin_headers)
+    # Каталог вырос (26.10.2026) — GET /api/products/ без ids больше не отдаёт
+    # ВЕСЬ каталог (см. app/services/product_search.py), сужаем поиск именем.
+    r_list = await client.get("/api/products/", params={"search": "Краги пожарного (тест)"}, headers=superadmin_headers)
     listed = next(p for p in r_list.json() if p["id"] == body["id"])
     assert sorted(c["name"] for c in listed["purchase_categories"]) == sorted(got_names)
 

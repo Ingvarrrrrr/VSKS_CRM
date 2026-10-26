@@ -69,6 +69,10 @@ from app.routers import products_match
 from app.routers import products_photos
 from app.routers import products_import
 from app.routers import products_price
+# Серверный поиск/пагинация каталога (владелец, 26.10.2026) — GET "/page",
+# один литеральный сегмент, тот же принцип регистрации ДО products.router,
+# что и products_summary выше.
+from app.routers import products_page
 # Подсказки категории/типа товара по всему каталогу (владелец, 22.10.2026) —
 # GET "/options", один литеральный сегмент, тот же порядок регистрации, что
 # у products_summary (ДО products.router) и остальных products_*-соседей.
@@ -445,6 +449,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(products_photos.router)
     app.include_router(products_import.router)
     app.include_router(products_price.router)
+    app.include_router(products_page.router)
     app.include_router(products_options.router)
     app.include_router(products_avg_price.router)
     app.include_router(product_description.router)

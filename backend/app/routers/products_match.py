@@ -16,7 +16,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,10 +27,16 @@ from app.models.product import Product
 from app.models.user import User
 from app.schemas.schemas import PriceFreshnessOut
 from app.services.product_matcher import bulk_match
+from app.services.product_match_candidates import fetch_match_candidates
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.product_snapshot import resolve_photo_url
 from app.services.item_types import normalize_item_type
 from app.services.product_catalog_guard import assert_can_edit_catalog
+
+# Потолок числа queries в одном батче /match (владелец, 2026-10-26, задача
+# сужения кандидатов — N round-trip'ов SQL-предвыборки на queries, см.
+# app/services/product_match_candidates.py): выше — 422, не 500/таймаут.
+MAX_MATCH_QUERIES = 500
 
 _log = logging.getLogger(__name__)
 
@@ -75,7 +81,7 @@ class _MatchResultItem(BaseModel):
 
 
 class _MatchRequest(BaseModel):
-    queries: List[str]
+    queries: List[str] = Field(..., max_length=MAX_MATCH_QUERIES)
     limit: int = 3
     # Интерактивный набор в строке позиции: включает префиксное сопоставление
     # стемов (см. text_match._stem_hits), чтобы подсказки появлялись раньше
@@ -113,21 +119,13 @@ async def _score_product_candidates(
     product_type/unit.
     """
     # 27.4-29: photo_url из БД ИЛИ /api/products/{id}/photo если фото в bytea (photo_data)
-    q = select(
-        Product.id,
-        Product.name,
-        Product.price,
-        Product.description,
-        Product.photo_url,
-        (Product.photo_size.isnot(None)).label('has_bytea_photo'),
-        Product.item_kind,
-        Product.category,
-    )
-    if org_id:
-        q = q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
-    if active_only:
-        q = q.where(Product.is_active.is_(True))
-    rows = (await db.execute(q)).all()
+    # Сужение SQL (владелец, 2026-10-26): раньше здесь был select ВСЕГО каталога
+    # (54 тыс.+ строк на каждый вызов) — теперь только trigram/ILIKE-кандидаты
+    # ПО ЭТИМ ЖЕ queries (app/services/product_match_candidates.py, ПРАВИЛО №6 —
+    # один механизм SQL-предвыборки для /match и, через эту же функцию,
+    # plan-to-wish/candidates). bulk_match (прогрессивное сужение по стемам)
+    # ниже не меняется — ему подаётся суженный, а не весь каталог.
+    rows = await fetch_match_candidates(db, queries, org_id=org_id, active_only=active_only)
     catalog = [
         (
             r.id,
@@ -247,8 +245,9 @@ async def deduplicate_products(
     await assert_can_edit_catalog(current_user, db)
     from app.product_matcher import name_similarity, _normalize
     from collections import defaultdict
-    from sqlalchemy import update as sa_update
+    from sqlalchemy import func, update as sa_update
     from app.models.purchase_item import PurchaseItem
+    from app.services.product_dedup_sql import sql_dedup_normalized_name_expr
 
     skipped_ids = set()
     if skip_ids:
@@ -257,12 +256,37 @@ async def deduplicate_products(
         except ValueError:
             pass
 
-    result = await db.execute(
-        select(Product, Product.photo_size.isnot(None))
-    )
-    _rows = result.all()
-    all_products: list[Product] = [r[0] for r in _rows]
-    has_photo_blob: dict[int, bool] = {r[0].id: bool(r[1]) for r in _rows}
+    # Сужение SQL (владелец, 2026-10-26): раньше здесь был select ВСЕГО
+    # каталога (54 тыс.+ строк) в Python ради union-find по точному имени.
+    # Дубликат = ТОЛЬКО точное совпадение имени после нормализации (см.
+    # app.product_matcher._normalize и его докстринг выше в этом роутере —
+    # похожие названия с РАЗНЫМИ характеристиками — разные товары, никакого
+    # fuzzy). Группировка по точному ключу — не транзитивная похожесть,
+    # поэтому union-find был избыточен и для него: GROUP BY в БД находит те
+    # же группы (ключ — SQL-эквивалент _normalize, app/services/
+    # product_dedup_sql.py), в приложение попадают ТОЛЬКО товары из групп с
+    # count>1, не весь каталог.
+    norm_expr = sql_dedup_normalized_name_expr()
+    total_products = (await db.execute(select(func.count(Product.id)))).scalar_one()
+
+    dup_key_rows = (await db.execute(
+        select(norm_expr)
+        .where(func.length(norm_expr) > 0)
+        .group_by(norm_expr)
+        .having(func.count() > 1)
+    )).all()
+    dup_keys = [r[0] for r in dup_key_rows]
+
+    all_products: list[Product] = []
+    has_photo_blob: dict[int, bool] = {}
+    if dup_keys:
+        result = await db.execute(
+            select(Product, Product.photo_size.isnot(None))
+            .where(norm_expr.in_(dup_keys))
+        )
+        _rows = result.all()
+        all_products = [r[0] for r in _rows]
+        has_photo_blob = {r[0].id: bool(r[1]) for r in _rows}
 
     def priority_score(p: Product) -> tuple:
         has_price_links = bool(p.price_links)
@@ -273,42 +297,17 @@ async def deduplicate_products(
 
     duplicate_groups: list[dict] = []
 
-    # Единый общий каталог — дедупликация по всей базе без деления по org_id
-    org_products = all_products
-    n = len(org_products)
-    if n >= 2:
-        # Union-find для транзитивного объединения
-        parent = list(range(n))
-
-        def find(x: int) -> int:
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
-        def union(a: int, b: int) -> None:
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[ra] = rb
-
-        # Дубликат = ТОЛЬКО точное совпадение имени (после нормализации регистра/
-        # пробелов/ё). Похожие названия с РАЗНЫМИ характеристиками — это разные
-        # товары (Гофрокороб д600/Т24 ≠ д500/Т22; ZenBook 14 i7 ≠ ZenBook 13 i5).
-        # Никакого fuzzy (token-set / char-ratio): он ложно сливал разные SKU.
-        norms = [_normalize(p.name or '') for p in org_products]
-        by_norm: dict[str, int] = {}
-        for i, key in enumerate(norms):
-            if not key:
-                continue
-            prev = by_norm.get(key)
-            if prev is not None:
-                union(i, prev)
-            else:
-                by_norm[key] = i
-
-        groups_map: dict[int, list[Product]] = defaultdict(list)
-        for i, p in enumerate(org_products):
-            groups_map[find(i)].append(p)
+    if all_products:
+        # Перегруппировка в Python той же формулой _normalize (единый ключ,
+        # см. докстринг product_dedup_sql.py — SQL-формула построена как её
+        # зеркало) — товары уже сужены до групп с count>1, здесь только
+        # раскладка по ключу, без union-find (равенство ключа не нуждается в
+        # транзитивном связывании).
+        groups_map: dict[str, list[Product]] = defaultdict(list)
+        for p in all_products:
+            key = _normalize(p.name or '')
+            if key:
+                groups_map[key].append(p)
 
         for ps in groups_map.values():
             if len(ps) < 2:
@@ -349,7 +348,10 @@ async def deduplicate_products(
             "groups": duplicate_groups,
             "total_groups": len(duplicate_groups),
             "total_to_delete": sum(len(g["duplicates"]) for g in duplicate_groups),
-            "kept": len(all_products),
+            # "kept" — размер ВСЕГО каталога (как и раньше, когда all_products
+            # был полным select) — total_products считается отдельным
+            # count(*), не len() по суженной выборке дублей.
+            "kept": total_products,
         }
 
     deleted = 0
@@ -372,6 +374,6 @@ async def deduplicate_products(
     return {
         "dry_run": False,
         "deleted": deleted,
-        "kept": len(all_products) - deleted,
+        "kept": total_products - deleted,
         "groups": duplicate_groups,
     }

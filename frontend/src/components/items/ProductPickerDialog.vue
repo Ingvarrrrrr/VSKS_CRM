@@ -14,8 +14,10 @@
           :model-value="search"
           prepend-inner-icon="mdi-magnify"
           label="Поиск"
-          placeholder="Наименование, описание или тип"
-          variant="outlined" density="compact" clearable hide-details autofocus
+          :placeholder="SEARCH_PLACEHOLDER"
+          :hint="remainingHint"
+          :persistent-hint="!!remainingHint"
+          variant="outlined" density="compact" clearable autofocus
           class="mb-3"
           @update:model-value="(v: string) => emit('update:search', v ?? '')"
         />
@@ -88,13 +90,17 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ProductLike } from '@/components/items/types'
 import { useDisplay } from 'vuetify'
 import { formatUnitWithPack } from '@/utils/units'
+// Подсказка минимума символов — ЕДИНЫЙ источник (ПРАВИЛО №6), см. docstring
+// useProductSearch.ts/useItemsCatalog.ts::runPickerSearch.
+import { SEARCH_PLACEHOLDER, searchRemainingHint } from '@/composables/products/useProductSearch'
 
 const { mobile } = useDisplay()
 
-defineProps<{
+const props = defineProps<{
   modelValue: boolean
   search: string
   results: ProductLike[]
@@ -105,6 +111,8 @@ defineProps<{
   /** Resolves the row photo src (parent's productPhotoSrc helper). */
   photoSrc: (p: ProductLike | null | undefined) => string | undefined
 }>()
+
+const remainingHint = computed(() => searchRemainingHint(props.search))
 
 const emit = defineEmits<{
   'update:modelValue': [v: boolean]

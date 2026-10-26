@@ -23,9 +23,13 @@ Fuzzy/похожие названия НЕ сопоставляются — то
   id. Такая многозначность возвращается вызывающему через `reason`, чтобы
   попасть в построчный отчёт импорта.
 """
-from typing import Optional
+from typing import Iterable, Optional
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
+from app.utils.chunking import chunked
 
 
 def norm_key(s) -> str:
@@ -38,6 +42,43 @@ def norm_key(s) -> str:
     s = s.replace("ё", "е")
     s = " ".join(s.split())
     return s
+
+
+def _sql_norm_key_expr():
+    """SQL-эквивалент norm_key() выше — но, в отличие от неё, работает
+    только на Product.name (однострочное поле: \\r/\\n в товарных названиях
+    практически не встречаются, а regexp '\\s+' ниже и так схлопывает ЛЮБОЙ
+    whitespace, включая переводы строк, так что ограничение не меняет
+    результат на реальных данных). Используется ТОЛЬКО для сужения
+    кандидатов в `load_candidate_products` — финальное точное сравнение
+    name+description остаётся в Python (ProductMatchIndex.find), это SQL —
+    предвыборка, а не замена сравнения."""
+    collapsed = func.regexp_replace(func.trim(Product.name), r"\s+", " ", "g")
+    return func.replace(func.lower(collapsed), "ё", "е")
+
+
+async def load_candidate_products(db: AsyncSession, file_names: Iterable[str]) -> list[Product]:
+    """Сужение кандидатов ProductMatchIndex (владелец, 2026-10-26): раньше
+    apply_products_import грузил select(Product) БЕЗ ЛИМИТА — весь каталог
+    (в проде 53 797+ строк, растёт к 250+ тыс.) в память на один импорт.
+    Совпасть с товаром из `file_names` (правила (а)/(б)/(в) модуля) может
+    ТОЛЬКО товар, чьё norm_key(name) равно norm_key одного из имён САМОГО
+    ФАЙЛА — остальной каталог заведомо не участвует в сопоставлении, сужение
+    безопасно (не меняет найденные пары, только убирает то, что гарантированно
+    не совпадёт). `chunked` (app/utils/chunking.py, Правило №6) бьёт список
+    ключей на порции ≤5000 — тот же лимит asyncpg на параметры запроса."""
+    keys = {norm_key(n) for n in file_names}
+    keys.discard("")
+    if not keys:
+        return []
+    norm_expr = _sql_norm_key_expr()
+    out: list[Product] = []
+    for chunk in chunked(list(keys)):
+        rows = (await db.execute(
+            select(Product).where(norm_expr.in_(chunk))
+        )).scalars().all()
+        out.extend(rows)
+    return out
 
 
 def _sort_key(p: Product):

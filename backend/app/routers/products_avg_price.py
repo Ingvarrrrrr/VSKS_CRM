@@ -27,6 +27,11 @@ from app.services.product_price_stats import compute_price_stats_bulk
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
+# Потолок product_ids в одном батче (владелец, 2026-10-26, ПРАВИЛО №8 п.6 —
+# лимит тела запроса проверяется ДО обращения к БД, 422, а не 500/зависание
+# на огромном списке id при росте каталога к 250+ тыс.).
+MAX_AVG_PRICE_PRODUCT_IDS = 500
+
 
 async def _resolve_org_region(db: AsyncSession, org_id: Optional[int]) -> Optional[str]:
     if org_id is None:
@@ -71,6 +76,12 @@ async def get_products_avg_price_bulk(
     product_ids = [int(pid) for pid in (body.get("product_ids") or [])]
     if not product_ids:
         return {}
+    if len(product_ids) > MAX_AVG_PRICE_PRODUCT_IDS:
+        raise HTTPException(
+            422,
+            f"product_ids: не более {MAX_AVG_PRICE_PRODUCT_IDS} за один запрос "
+            f"(передано {len(product_ids)})",
+        )
     region = await _resolve_org_region(db, body.get("org_id"))
     stats_by_id = await compute_price_stats_bulk(
         db, product_ids, target_region=region, quantity=body.get("quantity"),

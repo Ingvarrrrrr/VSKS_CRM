@@ -8,13 +8,13 @@
 // урезанная копия (fullProductForm/openFullProduct/saveFullProduct) — убрана,
 // открытие окна теперь у владельца ref'а (PurchaseItemsEditor.vue) через
 // deps.openProductEditor.
-import { ref, computed, type Ref } from 'vue'
+import { ref, computed, watch, nextTick, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { ItemsDisplayRow } from '@/components/items/types'
 import type { ToastType } from '@/composables/useToast'
 import { productPhotoSrc } from '@/utils/productPhoto'
-import { matchesAllWords, normalizeSearchText, searchWords } from '@/utils/textSearch'
+import { useProductSearch, isSearchTooShort } from '@/composables/products/useProductSearch'
 
 // EditorItem/Product are structurally identical to the parent's; kept loose
 // here (same convention as ItemsTableFlat.vue) since the parent owns the real
@@ -57,14 +57,6 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   const { props, localItems, selectedItemIdxs, emitUpdate, emit, showSnack, applyMatchCandidate, clearMatchBinding, clearItem, openProductEditor } = deps
 
   const products = ref<Product[]>([])
-  // Перф (владелец, 27.09.2026, «закупка грузится 10 сек»): GET /api/products/
-  // без ids отдаёт ВЕСЬ каталог (≈4,4 МБ JSON, ~800 КБ gzip) — на карточке
-  // закупки открытие грузило его дважды (см. лог nginx). fullCatalogLoaded
-  // гейтит ленивую ОДНОКРАТНУю догрузку полного каталога (ensureFullCatalog)
-  // — только когда реально нужен (пикер товара / диалог «новый товар из
-  // каталога»), не на каждое открытие карточки.
-  const fullCatalogLoaded = ref(false)
-  let _fullCatalogPromise: Promise<void> | null = null
 
   async function loadProducts() {
     try {
@@ -78,11 +70,10 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
       // product_id. Грузим только уже привязанные товары — по id, тем же
       // контрактом (`/products/?ids=`), что и useWishActions.ts/
       // usePurchaseSplit.ts. Вторичные фичи каталога (группировка по
-      // категории/типу для ещё НЕ привязанных строк, подсказки в диалоге
-      // «Новый товар из каталога», productPickerDialog fallback-список) при
-      // этом видят суженный products ДО первого обращения — см.
-      // ensureFullCatalog(), которую они дозывают сами (openProductPicker/
-      // openFullProduct) при реальной необходимости.
+      // категории/типу для ещё НЕ привязанных строк) при этом видят суженный
+      // products — пикер товара (productPickerDialog) больше его не читает,
+      // ищет на сервере (см. runPickerSearch/useProductSearch.ts ниже,
+      // владелец 26.10.2026: каталог вырастет до 250+ тыс. строк).
       const ids = [...new Set(
         (localItems.value as any[])
           .map((it) => it?.product_id)
@@ -92,27 +83,6 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     } catch (e) {
       console.warn('[PurchaseItemsEditor] Could not load products:', e)
     }
-  }
-
-  // Догружает ПОЛНЫЙ каталог ОДИН раз за время жизни компонента (не на каждый
-  // вызов пикера/диалога) — общий промис не даёт двум одновременным вызовам
-  // (например, клик по строке во время ещё не отрисованного диалога) уйти в
-  // две параллельные загрузки одного и того же (тот же паттерн дедупа, что и
-  // в api.ts для инфлайт-запросов, но здесь нужен персистентный флаг, а не
-  // разовый).
-  function ensureFullCatalog(): Promise<void> {
-    if (fullCatalogLoaded.value) return Promise.resolve()
-    if (_fullCatalogPromise) return _fullCatalogPromise
-    _fullCatalogPromise = apiFetch<Product[]>('/products/')
-      .then(list => {
-        products.value = list
-        fullCatalogLoaded.value = true
-      })
-      .catch(e => {
-        console.warn('[PurchaseItemsEditor] Could not load full catalog:', e)
-      })
-      .finally(() => { _fullCatalogPromise = null })
-    return _fullCatalogPromise
   }
 
   // ── Группировка/фильтр позиций по категории и виду товара из каталога ────────
@@ -225,30 +195,6 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   // Keep productFilter available but it's not used directly in this component's template
   void productFilter
 
-  // Слова в любом порядке (utils/textSearch.ts — один алгоритм на проект).
-  // Владелец 16.10.2026: окно привязки открывается с полным названием позиции
-  // («Бинт марлевый стерильный 7 м х 14 см.») и показывало «Ничего не найдено»,
-  // пока не сотрёшь лишнее. Если все слова разом не нашлись — показываем
-  // товары, где совпало больше всего значимых слов (от 3 букв), лучшие сверху.
-  function productItemsFor(search?: string): Product[] {
-    const words = searchWords(search)
-    if (!words.length) return products.value
-    const text = (p: Product) => `${p.name || ''} ${p.description || ''} ${p.product_type || ''}`
-    const exact = products.value.filter(p => matchesAllWords(text(p), words))
-    if (exact.length) return exact
-    const significant = words.filter(w => w.length >= 3)
-    if (significant.length < 2) return exact
-    return products.value
-      .map(p => {
-        const t = normalizeSearchText(text(p))
-        return { p, hits: significant.filter(w => t.includes(w)).length }
-      })
-      .filter(r => r.hits > 0)
-      .sort((a, b) => b.hits - a.hits)
-      .slice(0, 60)
-      .map(r => r.p)
-  }
-
   const hasProducts = computed(() => products.value.length > 0)
   void hasProducts
 
@@ -333,16 +279,52 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     pickerMode.value === 'repick' ? 'Изменить привязку к каталогу' : 'Выбрать товар из каталога'
   )
 
-  const productPickerResults = computed(() => productItemsFor(productPickerSearch.value))
+  // Серверный поиск (ПРАВИЛО №6, тот же механизм useProductSearch.ts, что у
+  // страницы «Товары»/подсказок в форме товара) — каталог 54 тыс. строк,
+  // вырастет до 250+ тыс., пикер больше не грузит его целиком (владелец,
+  // 26.10.2026). top-60 — тот же лимит, что был у старого клиентского
+  // ранжирования (productItemsFor), теперь считает backend (search_products).
+  const PICKER_LIMIT = 60
+  const pickerSearchApi = useProductSearch({ debounceMs: 300 })
+  const productPickerResults = computed(() => pickerSearchApi.items.value)
+
+  // Короче MIN_SEARCH_CHARS (useProductSearch.ts, решение владельца
+  // 26.10.2026) — запрос на сервер не уходит вовсе, результаты пустые
+  // (пикер больше не показывает «браузинг» каталога без поиска — каталог
+  // 54 тыс.+ строк). Подсказку «Ещё N символ(а)» рисует ProductPickerDialog.vue
+  // тем же searchRemainingHint.
+  function runPickerSearch(q: string, opts: { immediate?: boolean } = {}) {
+    if (isSearchTooShort(q)) { pickerSearchApi.items.value = []; return }
+    const params = { search: q.trim(), limit: PICKER_LIMIT, offset: 0 }
+    if (opts.immediate) void pickerSearchApi.load(params)
+    else pickerSearchApi.loadDebounced(params)
+  }
+
+  // Поле поиска в диалоге (ProductPickerDialog.vue) меняет productPickerSearch
+  // напрямую (@update:search="(v) => productPickerSearch = v") — следим здесь.
+  // suppressNextSearchWatch гасит ОДНО срабатывание, вызванное самим
+  // openProductPicker() ниже (который уже сделал свой немедленный запрос) —
+  // иначе первое открытие пикера слало бы тот же запрос дважды (сразу и
+  // через 300мс debounce).
+  let suppressNextSearchWatch = false
+  watch(productPickerSearch, (q) => {
+    if (suppressNextSearchWatch) { suppressNextSearchWatch = false; return }
+    if (productPickerDialog.value) runPickerSearch(q)
+  })
 
   function openProductPicker(idx: number, mode: 'normal' | 'repick' = 'normal') {
     pickerMode.value = mode
     productPickerIdx.value = idx
-    productPickerSearch.value = localItems.value[idx]?.item_name || ''
+    const initialQuery = localItems.value[idx]?.item_name || ''
+    suppressNextSearchWatch = true
+    productPickerSearch.value = initialQuery
     productPickerDialog.value = true
-    // Пикер ищет по ВСЕМУ каталогу (productItemsFor фильтрует products.value
-    // целиком) — догружаем его тут, не на mount карточки.
-    void ensureFullCatalog()
+    runPickerSearch(initialQuery, { immediate: true })
+    // Присвоение выше МОГЛО не изменить значение (тот же текст, что и в
+    // прошлый раз) — тогда watch не срабатывает вовсе, и флаг остался бы
+    // висеть до следующего реального ввода. Снимаем его в конце тика на
+    // случай если watch не сработал.
+    void nextTick(() => { suppressNextSearchWatch = false })
   }
 
   // Кнопка-скрепка «Изменить привязку к каталогу» у позиции — тот же пикер,
@@ -394,11 +376,11 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   }
 
   return {
-    products, loadProducts, ensureFullCatalog, fullCatalogLoaded,
+    products, loadProducts,
     itemsGroupBy, itemsFilterCats, itemsFilterTypes, productById, itemCategoryOf, itemTypeOf,
     itemCategoryOptions, itemTypeOptions, itemsFilterActive, itemsDisplayRows, visibleItemsCount,
     hasUncatalogedSelected, uncatalogedSelectedCount,
-    productFilter, productItemsFor, hasProducts, onItemProductSelect,
+    productFilter, hasProducts, onItemProductSelect,
     onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
     productPickerDialog, productPickerSearch, productPickerIdx, productPickerResults,
     pickerMode, pickerTitle, bindProductToItem,

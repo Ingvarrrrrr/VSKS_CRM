@@ -1,15 +1,52 @@
-// useProductsData.ts — список товаров, загрузка, фильтры, вид карточек/таблицы.
-// Дословный перенос из ProductsView.vue.
-import { ref, computed } from 'vue'
+// useProductsData.ts — список товаров страницы «Товары»: серверный поиск/
+// фильтры/пагинация/сортировка через GET /api/products/page (владелец,
+// 26.10.2026 — каталог 54 тыс. строк, вырастет до 250+ тыс., полный список
+// грузить нельзя). Серверный механизм — ОДИН на проект (ПРАВИЛО №6), см.
+// useProductSearch.ts; useProductsForm.ts (подсказки по имени) и
+// useItemsCatalog.ts (пикер товара в закупке) заводят свой экземпляр того же
+// композабла, не второй механизм.
+import { ref, computed, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
-import { useCardView } from '@/composables/useCardView'
 import type { ToastType } from '@/composables/useToast'
-import type { Product } from './productsTypes'
 import { productPhotoSrc } from '@/utils/productPhoto'
+import { useProductSearch, isSearchTooShort } from './useProductSearch'
+import { useProductOptions } from './useProductOptions'
+
+// Белый список сортируемых колонок — зеркало SORTABLE_COLUMNS backend'а
+// (app/services/product_search.py). Сортировка вне списка тут не нужна,
+// т.к. все ключи ставит сама ProductsTable.vue по headers.key, но держим
+// явную защиту, если @update:options придёт с незнакомым key.
+const SORTABLE_KEYS = new Set(['name', 'category', 'product_type', 'price', 'price_updated_at', 'updated_at', 'id'])
+const CARDS_PAGE_SIZE = 24
 
 export function useProductsData(showSnack: (text: string, color?: ToastType) => void) {
-  const products = ref<Product[]>([])
-  const loading  = ref(false)
+  const { mobile } = useDisplay()
+
+  const viewMode = ref<'table' | 'cards'>(
+    (localStorage.getItem('products_view_mode') as 'table' | 'cards') || 'table',
+  )
+  watch(viewMode, v => localStorage.setItem('products_view_mode', v))
+  const effectiveView = computed<'table' | 'cards'>(() => mobile.value ? 'cards' : viewMode.value)
+
+  const searchApi = useProductSearch()
+  const { items: products, total, totalCapped, loading } = searchApi
+
+  // Счётчик «требует актуализации» — ОТДЕЛЬНЫЙ запрос GET
+  // /api/products/stale-count (владелец, 26.10.2026, см. docstring
+  // backend/app/services/product_stale_count_cache.py): раньше ехал внутри
+  // КАЖДОГО /page и считался на каждое нажатие клавиши при поиске; теперь
+  // грузится на открытии страницы и после актуализации цены (loadStaleCount()
+  // ниже), не на каждый load().
+  const staleTotal = ref(0)
+  async function loadStaleCount() {
+    try {
+      const data = await apiFetch<{ stale_total: number }>('/products/stale-count')
+      staleTotal.value = data.stale_total
+    } catch {
+      // Бейдж необязателен для работы страницы — молча оставляем прежнее значение.
+    }
+  }
 
   const search         = ref('')
   const filterType     = ref<string[]>([])
@@ -30,62 +67,128 @@ export function useProductsData(showSnack: (text: string, color?: ToastType) => 
     filterStaleOnly.value = false
   }
 
-  async function load() {
-    loading.value = true
-    try { products.value = await apiFetch<Product[]>('/products/') }
-    catch { showSnack('Ошибка загрузки', 'error') }
-    finally { loading.value = false }
+  // Опции фильтров «Категория»/«Тип» — по ВСЕМУ каталогу (GET /products/options),
+  // НЕ из текущей страницы результатов (страница — выборка ≤200 строк, не
+  // источник списка значений).
+  const productOptions = useProductOptions()
+  const typeOptions = computed(() => productOptions.types.value)
+  const categoryOptions = computed(() => productOptions.categories.value)
+
+  // ── Таблица: серверная пагинация/сортировка (v-data-table-server) ──────────
+  const tablePage = ref(1)
+  const tableItemsPerPage = ref(100)
+  const tableSortBy = ref<{ key: string; order: 'asc' | 'desc' }[]>([])
+
+  // ── Карточки: пагинация по 24 тем же запросом ───────────────────────────────
+  const cardsPage = ref(1)
+  const cardsTotalPages = computed(() => Math.max(1, Math.ceil(total.value / CARDS_PAGE_SIZE)))
+
+  // Эффективный поиск — короче MIN_SEARCH_CHARS (useProductSearch.ts, решение
+  // владельца 26.10.2026) считается отсутствующим: список как при пустом поле
+  // поиска, с фильтрами. Именно от ЭТОГО значения (не от search.value
+  // напрямую) зависит перезагрузка списка ниже — иначе каждый символ в
+  // диапазоне 1-2 (эффективно всё ещё «пусто») дёргал бы повторный запрос.
+  const effectiveSearch = computed(() => isSearchTooShort(search.value) ? '' : search.value.trim())
+
+  function filterParams() {
+    return {
+      search: effectiveSearch.value,
+      category: filterCategory.value,
+      productType: filterType.value,
+      isActive: filterActive.value,
+      priceMin: filterPriceMin.value,
+      priceMax: filterPriceMax.value,
+      staleOnly: filterStaleOnly.value,
+    }
   }
 
-  // Computed options from existing data
-  const typeOptions = computed(() => {
-    const types = products.value.map(p => p.product_type).filter(Boolean) as string[]
-    return [...new Set(types)].sort()
-  })
+  function activeSort(): { sort: string; order: 'asc' | 'desc' } {
+    const s = tableSortBy.value[0]
+    if (s && SORTABLE_KEYS.has(s.key)) return { sort: s.key, order: s.order }
+    return { sort: 'name', order: 'asc' }
+  }
 
-  const categoryOptions = computed(() => {
-    const cats = products.value.map(p => p.category).filter(Boolean) as string[]
-    return [...new Set(cats)].sort()
-  })
+  async function loadTable() {
+    const { sort, order } = activeSort()
+    const limit = tableItemsPerPage.value === -1 ? 200 : tableItemsPerPage.value
+    const offset = tableItemsPerPage.value === -1 ? 0 : (tablePage.value - 1) * tableItemsPerPage.value
+    const res = await searchApi.load({ ...filterParams(), sort, order, limit, offset })
+    if (res === null) return // отменён более новым запросом — не показываем ошибку
+  }
 
-  const staleProductsCount = computed(() => products.value.filter(p => p.price_freshness?.is_stale).length)
+  async function loadCards() {
+    await searchApi.load({
+      ...filterParams(),
+      sort: 'name', order: 'asc',
+      limit: CARDS_PAGE_SIZE,
+      offset: (cardsPage.value - 1) * CARDS_PAGE_SIZE,
+    })
+  }
 
-  const filteredProducts = computed(() => {
-    let r = products.value
-    if (filterType.value.length)     r = r.filter(p => filterType.value.includes(p.product_type || ''))
-    if (filterCategory.value.length) r = r.filter(p => filterCategory.value.includes(p.category || ''))
-    if (filterActive.value !== null) r = r.filter(p => p.is_active === filterActive.value)
-    if (filterPriceMin.value !== null) r = r.filter(p => p.price != null && Number(p.price) >= filterPriceMin.value!)
-    if (filterPriceMax.value !== null) r = r.filter(p => p.price != null && Number(p.price) <= filterPriceMax.value!)
-    if (filterStaleOnly.value) r = r.filter(p => p.price_freshness?.is_stale)
-    return r
-  })
+  async function load() {
+    try {
+      if (effectiveView.value === 'table') await loadTable()
+      else await loadCards()
+    } catch {
+      showSnack('Ошибка загрузки', 'error')
+    }
+  }
 
-  const {
-    mobile,
-    viewMode,
-    effectiveView,
-    page: cardsPage,
-    totalPages: cardsTotalPages,
-    paged: pagedProducts,
-  } = useCardView({
-    storageKey: 'products_view_mode',
-    source: () => filteredProducts.value,
-    search: () => search.value,
-    searchFields: (p: Product) => [p.name, p.description, p.product_type, p.category],
-    pageSize: 24,
+  // Текстовый поиск — debounce 300 мс (внутри useProductSearch.loadDebounced).
+  // Остальные фильтры/сортировка/страница — сразу: владелец ждёт отклика на
+  // клик по чекбоксу/селекту, не только на ввод в текстовое поле.
+  function loadSearchDebounced() {
+    const { sort, order } = activeSort()
+    if (effectiveView.value === 'table') {
+      const limit = tableItemsPerPage.value === -1 ? 200 : tableItemsPerPage.value
+      searchApi.loadDebounced({ ...filterParams(), sort, order, limit, offset: 0 })
+    } else {
+      searchApi.loadDebounced({ ...filterParams(), sort: 'name', order: 'asc', limit: CARDS_PAGE_SIZE, offset: 0 })
+    }
+  }
+
+  watch(effectiveSearch, () => {
+    tablePage.value = 1
+    cardsPage.value = 1
+    loadSearchDebounced()
   })
+  watch([filterType, filterCategory, filterActive, filterPriceMin, filterPriceMax, filterStaleOnly], () => {
+    tablePage.value = 1
+    cardsPage.value = 1
+    void load()
+  })
+  watch(effectiveView, () => { void load() })
+
+  // v-data-table-server::update:options — один объединённый обработчик
+  // страницы/размера страницы/сортировки (стандартный паттерн проекта, см.
+  // useVehicleListData.ts::onTableOptions).
+  function onTableOptions(opts: { page: number; itemsPerPage: number; sortBy: { key: string; order: string }[] }) {
+    tablePage.value = opts.page
+    tableItemsPerPage.value = opts.itemsPerPage
+    tableSortBy.value = (opts.sortBy || []).map(s => ({ key: s.key, order: s.order === 'desc' ? 'desc' : 'asc' }))
+    void loadTable().catch(() => showSnack('Ошибка загрузки', 'error'))
+  }
+
+  function onCardsPage(p: number) {
+    cardsPage.value = p
+    void loadCards().catch(() => showSnack('Ошибка загрузки', 'error'))
+  }
+
+  const staleProductsCount = computed(() => staleTotal.value)
 
   // Единый источник — utils/productPhoto.ts (ПРАВИЛО №6): отсекает мусорные
   // значения photo_link вроде «НЕ смог найти», оставшиеся от Excel-импорта.
   const cardPhotoSrc = productPhotoSrc
 
   return {
-    products, loading,
+    products, loading, total, totalCapped,
     search, filterType, filterCategory, filterActive, filterPriceMin, filterPriceMax, filterStaleOnly,
     resetFilters, load,
-    typeOptions, categoryOptions, staleProductsCount, filteredProducts,
-    mobile, viewMode, effectiveView, cardsPage, cardsTotalPages, pagedProducts,
+    typeOptions, categoryOptions, staleProductsCount, loadStaleCount,
+    loadProductOptions: productOptions.load,
+    mobile, viewMode, effectiveView,
+    tablePage, tableItemsPerPage, tableSortBy, onTableOptions,
+    cardsPage, cardsTotalPages, onCardsPage,
     cardPhotoSrc,
   }
 }

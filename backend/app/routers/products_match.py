@@ -18,7 +18,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, get_single_org_id
@@ -120,7 +119,7 @@ async def _score_product_candidates(
         Product.price,
         Product.description,
         Product.photo_url,
-        (Product.photo_data.isnot(None)).label('has_bytea_photo'),
+        (Product.photo_size.isnot(None)).label('has_bytea_photo'),
         Product.item_kind,
         Product.category,
     )
@@ -156,7 +155,7 @@ async def _score_product_candidates(
     meta_by_id: dict[int, Product] = {}
     if candidate_ids:
         meta_rows = (await db.execute(
-            select(Product).options(defer(Product.photo_data)).where(Product.id.in_(candidate_ids))
+            select(Product).where(Product.id.in_(candidate_ids))
         )).scalars().all()
         freshness_ctx = await load_freshness_context(db, org_id)
         for prod in meta_rows:
@@ -259,7 +258,7 @@ async def deduplicate_products(
             pass
 
     result = await db.execute(
-        select(Product, Product.photo_data.isnot(None)).options(defer(Product.photo_data))
+        select(Product, Product.photo_size.isnot(None))
     )
     _rows = result.all()
     all_products: list[Product] = [r[0] for r in _rows]

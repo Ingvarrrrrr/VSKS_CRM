@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text, Numeric, Date, DateTime, LargeBinary
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text, Numeric, Date, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -43,8 +43,11 @@ class Product(Base):
     photo_url = Column(String(1000), nullable=True)  # Внешняя ссылка (маркетплейс) — источник правды для повторного скачивания
     photo_link = Column(String(1000), nullable=True)  # Альтернативная ссылка на фото
     clarification_link = Column(String(1000), nullable=True)  # Уточнющая ссылка
-    # Бинарное хранение фото в БД (Phase 17.1-08). Один бэкап БД = все фото в сохранности.
-    photo_data = Column(LargeBinary, nullable=True)
+    # Бинарное хранение фото (Phase 17.1-08) вынесено в отдельную таблицу
+    # product_photos (владелец, 26.10.2026 — не раздувать ежедневный бэкап БД
+    # фотографиями; см. app/models/product_photo.py). Здесь остаётся только
+    # дёшевый кэш метаданных — читать/писать ТОЛЬКО через
+    # app/services/product_photo_store.py (ПРАВИЛО №6).
     photo_mime = Column(String(50), nullable=True)
     photo_size = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True)

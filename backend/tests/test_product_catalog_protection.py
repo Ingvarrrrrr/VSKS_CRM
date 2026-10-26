@@ -2,6 +2,8 @@
 владелец 14.10.2026): правка описания СУЩЕСТВУЮЩЕГО товара — только с
 правом products.edit_catalog; без права — предложение (pending), принятое
 применяется и пишет историю; создание НОВОГО товара не блокируется."""
+import io
+
 import pytest
 from sqlalchemy import select
 
@@ -9,6 +11,18 @@ from app.models.permission import RolePermission
 from app.models.product import Product
 from app.models.product_description_history import ProductDescriptionHistory
 from app.models.product_description_proposal import ProductDescriptionProposal
+
+
+def _tiny_png(color=(10, 20, 30)) -> bytes:
+    """Настоящий декодируемый PNG 2x2 — владелец 26.10.2026: фото каталога
+    ВСЕГДА сжимаются через PIL (app/services/product_photo_compress.py), так
+    что «магические байты + мусор» (старые фейковые тесты) больше не
+    принимаются как валидное фото — нужен реально декодируемый файл."""
+    from PIL import Image
+    img = Image.new("RGB", (2, 2), color)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 async def _set_role_permission(db_session, role: str, key: str, granted: bool) -> None:
@@ -369,7 +383,7 @@ async def test_employee_without_permission_uploads_photo_when_none(client, auth_
     product = await _create_empty_product(client, auth_headers)
     r = await client.post(
         f"/api/products/{product['id']}/photo", headers=auth_headers,
-        files={"file": ("photo.png", b"\x89PNG\r\n\x1a\n" + b"0" * 32, "image/png")},
+        files={"file": ("photo.png", _tiny_png(), "image/png")},
     )
     assert r.status_code == 200, r.text
     assert r.json()["has_photo"] is True
@@ -380,13 +394,13 @@ async def test_employee_without_permission_cannot_replace_existing_photo(client,
     product = await _create_empty_product(client, auth_headers)
     r1 = await client.post(
         f"/api/products/{product['id']}/photo", headers=auth_headers,
-        files={"file": ("photo.png", b"\x89PNG\r\n\x1a\n" + b"0" * 32, "image/png")},
+        files={"file": ("photo.png", _tiny_png(), "image/png")},
     )
     assert r1.status_code == 200, r1.text
 
     r2 = await client.post(
         f"/api/products/{product['id']}/photo", headers=auth_headers,
-        files={"file": ("photo2.png", b"\x89PNG\r\n\x1a\n" + b"1" * 32, "image/png")},
+        files={"file": ("photo2.png", _tiny_png(color=(200, 150, 100)), "image/png")},
     )
     assert r2.status_code == 403, r2.text
 
@@ -396,7 +410,7 @@ async def test_employee_without_permission_cannot_delete_photo(client, auth_head
     product = await _create_empty_product(client, auth_headers)
     r1 = await client.post(
         f"/api/products/{product['id']}/photo", headers=auth_headers,
-        files={"file": ("photo.png", b"\x89PNG\r\n\x1a\n" + b"0" * 32, "image/png")},
+        files={"file": ("photo.png", _tiny_png(), "image/png")},
     )
     assert r1.status_code == 200, r1.text
 

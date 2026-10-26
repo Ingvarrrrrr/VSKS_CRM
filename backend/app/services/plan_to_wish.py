@@ -239,7 +239,7 @@ async def build_plan_to_wish_candidates(
         select(
             Product.id, Product.name, Product.price, Product.description,
             Product.photo_url,
-            (Product.photo_data.isnot(None)).label('has_bytea_photo'),
+            (Product.photo_size.isnot(None)).label('has_bytea_photo'),
             Product.product_type, Product.category, Product.unit,
             Product.price_updated_at, Product.price_source, Product.price_source_ref,
             Product.price_ttl_days, Product.item_kind,

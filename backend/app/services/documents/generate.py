@@ -118,7 +118,12 @@ async def generate_document_bytes(
 
     # docxtpl template object + InlineImage-producing helpers.
     tpl = build_docx_template(template_path, pid, doc_type)
-    resolve_photo = make_photo_resolver(tpl)
+    # Фото товаров — один запрос в product_photos на все позиции закупки,
+    # а не N синхронных попыток читать bytea с уже удалённой колонки
+    # products.photo_data (владелец, 26.10.2026 — фото в отдельной таблице).
+    from app.services.product_photo_store import load_photos_bulk
+    _photo_map = await load_photos_bulk(db, [it.product_id for it in (p.items or [])])
+    resolve_photo = make_photo_resolver(tpl, photo_map=_photo_map)
 
     # Items / subject_kind.
     items_list, subject_kind = build_items_and_subject_kind(p, doc_type, tz_override_mode, resolve_photo)
@@ -196,7 +201,7 @@ async def generate_document_bytes(
     # более лёгкий список, не формальное приложение ТЗ. Единый источник —
     # app.services.tz_items.tz_required (ПРАВИЛО №6).
     if tz_required(p):
-        buf = append_tz_table_for_contract(buf, doc_type, items_list, p)
+        buf = append_tz_table_for_contract(buf, doc_type, items_list, p, photo_map=_photo_map)
     buf = attach_methodology(buf, doc_type, p, pid)
     buf, filename_base = merge_secondary_doc(buf, merge, doc_type, context, p, filename_base)
 

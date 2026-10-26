@@ -13,7 +13,6 @@ app/routers/wish_transitions.py зовут их через `wishes_core._enrich`
 см. докстринг wish_transitions.py про monkeypatch).
 """
 from sqlalchemy import select
-from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.wish import Wish
@@ -254,7 +253,7 @@ async def _attach_item_product_snapshot(wish: Wish, enriched: WishOut, db: Async
         return
 
     products_rows = (await db.execute(
-        select(Product).options(defer(Product.photo_data)).where(Product.id.in_(all_product_ids))
+        select(Product).where(Product.id.in_(all_product_ids))
     )).scalars().all()
     products_by_id = {p.id: p for p in products_rows}
 

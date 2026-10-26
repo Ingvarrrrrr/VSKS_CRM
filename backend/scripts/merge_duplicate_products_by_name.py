@@ -85,7 +85,13 @@ from sqlalchemy import text  # noqa: E402
 SIMPLE_BACKFILL_FIELDS = ["description", "description_44fz", "category", "unit", "photo_url", "photo_link"]
 PRICE_FIELDS = ["price", "price_source", "price_source_ref", "price_source_contractor_id",
                 "price_updated_at", "price_ttl_days"]
-PHOTO_DATA_FIELDS = ["photo_data", "photo_mime", "photo_size"]
+# Байты фото теперь в отдельной таблице product_photos, keyed by product_id
+# (владелец, 26.10.2026) — простой UPDATE products SET photo_data=... больше
+# не годится. plan_backfill() вместо значений колонок кладёт "_photo_source_id"
+# (id донора, чью строку product_photos нужно перевесить на keep_id), apply_merge
+# переносит её отдельным UPDATE product_photos ДО удаления донора (иначе
+# ON DELETE CASCADE снесёт строку вместе с удаляемым товаром), затем копирует
+# photo_mime/photo_size на products (дёшевый кэш, см. product_photo_store.py).
 
 # Поля, которые учитываются при выборе "у кого больше заполнено" среди
 # кандидатов с непустым description. Фото считается одним булевым признаком
@@ -108,7 +114,7 @@ def is_empty(value) -> bool:
 
 
 def has_photo(row: dict) -> bool:
-    return not is_empty(row.get("photo_url")) or row.get("photo_data") is not None
+    return not is_empty(row.get("photo_url")) or row.get("photo_size") is not None
 
 
 def completeness_score(row: dict) -> int:
@@ -190,7 +196,7 @@ async def find_duplicate_groups(db, name_substr: str | None) -> list[dict]:
 async def load_products(db, ids: list[int]) -> dict[int, dict]:
     result = await db.execute(text("""
         SELECT id, name, description, description_44fz, category, unit,
-               photo_url, photo_link, photo_data, photo_mime, photo_size,
+               photo_url, photo_link, photo_mime, photo_size,
                price, price_source, price_source_ref, price_source_contractor_id,
                price_updated_at, price_ttl_days
         FROM products WHERE id = ANY(:ids)
@@ -226,11 +232,12 @@ def plan_backfill(keep_row: dict, remove_rows: list[dict]) -> dict:
             if not is_empty(rrow.get(field)):
                 plan[field] = rrow[field]
                 break
-    if keep_row.get("photo_data") is None:
+    if keep_row.get("photo_size") is None:
         for rrow in remove_rows:
-            if rrow.get("photo_data") is not None:
-                for f in PHOTO_DATA_FIELDS:
-                    plan[f] = rrow[f]
+            if rrow.get("photo_size") is not None:
+                plan["photo_mime"] = rrow["photo_mime"]
+                plan["photo_size"] = rrow["photo_size"]
+                plan["_photo_source_id"] = rrow["id"]
                 break
     if keep_row.get("price") is None:
         for rrow in remove_rows:
@@ -269,14 +276,27 @@ async def apply_merge(
     перемещённые ссылки (после разрешения конфликтов уникальности)."""
     moved: dict[str, int] = {}
 
+    photo_source_id = backfill.pop("_photo_source_id", None) if backfill else None
+
     if backfill:
         set_clause = ", ".join(f"{f} = :{f}" for f in backfill)
         params = dict(backfill)
         params["keep_id"] = keep_id
         await db.execute(text(f"UPDATE products SET {set_clause} WHERE id = :keep_id"), params)
 
+    if photo_source_id is not None:
+        # Переносим строку product_photos ДО общего FK-цикла/удаления доноров
+        # ниже — иначе ON DELETE CASCADE снёс бы её вместе с удаляемым товаром
+        # (владелец, 26.10.2026: фото теперь отдельная таблица, keyed by
+        # product_id, которого у keep_id пока нет).
+        await db.execute(
+            text("UPDATE product_photos SET product_id = :keep_id WHERE product_id = :donor_id"),
+            {"keep_id": keep_id, "donor_id": photo_source_id},
+        )
+        moved["product_photos.product_id"] = 1
+
     for table, column in fk_tables:
-        if table == "products":
+        if table == "products" or table == "product_photos":
             continue
         siblings = await find_unique_sibling_columns(db, table, column)
         if siblings:

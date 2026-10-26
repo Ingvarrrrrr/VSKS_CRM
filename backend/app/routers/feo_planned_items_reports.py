@@ -202,7 +202,7 @@ async def get_comparison(
             Purchase,
             ContractItem,
             PurchaseItem.product_id.label("_product_id"),
-            Product.photo_data.isnot(None).label("_product_has_photo"),
+            Product.photo_size.isnot(None).label("_product_has_photo"),
             Product.photo_url.label("_photo_url"),
             Product.photo_link.label("_photo_link"),
         )

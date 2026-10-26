@@ -58,9 +58,14 @@ async def export_wish_xlsx(
     )
     items = res.scalars().all()
 
+    from app.services.product_photo_store import load_photos_bulk, has_photo as _has_photo
+    _photo_map = await load_photos_bulk(db, [it.product_id for it in items])
+
     async def _image_bytes(p):
-        if p is not None and getattr(p, "photo_data", None):
-            return bytes(p.photo_data)
+        if p is not None and _has_photo(p):
+            cached = _photo_map.get(p.id)
+            if cached:
+                return cached[0]
         url = (p.photo_url or p.photo_link) if p is not None else None
         if url and str(url).startswith("http"):
             # SSRF-гейт (аудит безопасности 2026-10-20, Правило №6 — тот же
@@ -157,7 +162,7 @@ async def export_wish_xlsx(
     def _photo_url(p):
         if not p:
             return ""
-        return p.photo_url or p.photo_link or (f"/api/products/{p.id}/photo" if p.photo_data else "")
+        return p.photo_url or p.photo_link or (f"/api/products/{p.id}/photo" if _has_photo(p) else "")
 
     def _example_url(p):
         if not p:

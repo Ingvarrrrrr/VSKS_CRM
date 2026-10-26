@@ -83,10 +83,11 @@ def get_product_photo_path(
     product,
     uploads_dir: str = UPLOADS_DIR,
     cache: Optional[dict] = None,
+    photo_map: Optional[dict] = None,
 ) -> Optional[str]:
     """Резолвит объект Product в путь к локальному (временному) файлу фото.
 
-    Единственная точка чтения photo_data/photo_url для документов —
+    Единственная точка чтения фото/photo_url для документов —
     make_photo_resolver() ниже и стадия ручной сборки таблицы ТЗ
     (stages_contract_tz.py) оба вызывают эту функцию, чтобы не плодить
     вторую копию порядка источников (Правило №6).
@@ -95,6 +96,11 @@ def get_product_photo_path(
     тот же товар не перекодировался повторно в пределах одной генерации
     документа (у закупки #858 одна фотография может повторяться в
     десятках позиций).
+
+    `photo_map` — байты фото, предзагруженные ОДНИМ асинхронным запросом из
+    product_photos (эта функция сама синхронная и БД не читает — см.
+    app.services.product_photo_store.load_photos_bulk, вызывающие генераторы
+    документов прогревают map перед рендером). {product_id: (bytes, mime)}.
     """
     if product is None:
         return None
@@ -104,11 +110,12 @@ def get_product_photo_path(
 
     local_path: Optional[str] = None
 
-    # 1) Канонический источник — bytea в БД.
-    photo_data = getattr(product, "photo_data", None)
-    if photo_data:
+    # 1) Канонический источник — bytea из product_photos (предзагружен в photo_map).
+    photo_entry = photo_map.get(product_id) if photo_map and product_id is not None else None
+    if photo_entry:
+        photo_data, photo_mime = photo_entry
         try:
-            raw, suffix = _resize_image_bytes(photo_data, getattr(product, "photo_mime", None))
+            raw, suffix = _resize_image_bytes(photo_data, photo_mime)
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
             tmp.write(raw)
             tmp.close()
@@ -162,13 +169,17 @@ def _resolve_from_photo_url(url: str, uploads_dir: str) -> Optional[str]:
     return None
 
 
-def make_photo_resolver(tpl: DocxTemplate, uploads_dir: str = UPLOADS_DIR):
+def make_photo_resolver(tpl: DocxTemplate, uploads_dir: str = UPLOADS_DIR, photo_map: Optional[dict] = None):
     """Factory: returns resolve_photo(product) -> InlineImage|"" bound to `tpl`.
 
     Принимает объект Product (не url — см. модуль-докстринг про порядок
     источников). Для обратной совместимости также принимает голую строку
     (тогда работает только запасная ветка photo_url/http/local-file, без
-    доступа к photo_data, т.к. строка не несёт bytea).
+    доступа к bytea из product_photos, т.к. строка не несёт продукт).
+
+    `photo_map` — см. get_product_photo_path(): предзагруженные байты
+    {product_id: (bytes, mime)}, готовит вызывающий код ОДНИМ запросом перед
+    рендером документа (эта фабрика и сама вызываемая функция — синхронные).
     """
     cache: dict = {}
 
@@ -178,7 +189,7 @@ def make_photo_resolver(tpl: DocxTemplate, uploads_dir: str = UPLOADS_DIR):
         if isinstance(product_or_url, str):
             local_path = _resolve_from_photo_url(product_or_url.strip(), uploads_dir)
         else:
-            local_path = get_product_photo_path(product_or_url, uploads_dir, cache)
+            local_path = get_product_photo_path(product_or_url, uploads_dir, cache, photo_map)
 
         if not local_path or not os.path.exists(local_path):
             return ""

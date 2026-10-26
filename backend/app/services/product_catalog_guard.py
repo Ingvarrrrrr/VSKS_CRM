@@ -86,7 +86,8 @@ def is_fill_empty_change(product: "Product", field: str) -> bool:
     if field == "price":
         return product.price is None
     if field == "photo":
-        return not product.photo_data
+        from app.services.product_photo_store import has_photo
+        return not has_photo(product)
     return False
 
 

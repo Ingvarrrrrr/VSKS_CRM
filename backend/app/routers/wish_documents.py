@@ -137,7 +137,9 @@ async def generate_wish_service_note(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки шаблона: {e}")
 
-    resolve_photo = make_photo_resolver(tpl)
+    from app.services.product_photo_store import load_photos_bulk
+    _photo_map = await load_photos_bulk(db, [it.product_id for it in (w.items or [])])
+    resolve_photo = make_photo_resolver(tpl, photo_map=_photo_map)
 
     # ── Build items list (same shape as documents.py items_list) ────────────
     items_list = []
@@ -410,7 +412,9 @@ async def generate_wish_tech_spec(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки шаблона: {e}")
 
-    resolve_photo = make_photo_resolver(tpl)
+    from app.services.product_photo_store import load_photos_bulk
+    _photo_map = await load_photos_bulk(db, [it.product_id for it in (w.items or [])])
+    resolve_photo = make_photo_resolver(tpl, photo_map=_photo_map)
 
     items_list = _build_items_list_from_purchase_items(
         w, tz_override_mode=tz_override_mode, resolve_photo=resolve_photo,

@@ -228,6 +228,12 @@ async def render_fabrikant_package_files(
         })
         items_products.append(item.product)
 
+    # Фото — один запрос в product_photos на все позиции закупки (26.10.2026,
+    # фото вынесены из products.photo_data в отдельную таблицу); используется
+    # ниже в make_photo_resolver для tech_spec_request.
+    from app.services.product_photo_store import load_photos_bulk as _load_photos_bulk_z
+    _photo_map_z = await _load_photos_bulk_z(db, [getattr(pr, "id", None) for pr in items_products])
+
     # Ставка НДС — только из введённого пользователем, без придуманного
     # значения по умолчанию (см. подробный комментарий у generate_document /
     # _require_vat_rate_for_doc). None = не указана, 0 = валидная ставка 0%.
@@ -625,7 +631,7 @@ async def render_fabrikant_package_files(
                 # InlineImage под ЭТОТ конкретный _tpl (см. комментарий у
                 # items_products выше), общим резолвером make_photo_resolver.
                 from app.services.documents.product_photos import make_photo_resolver as _mk_photo_resolver
-                _resolve_photo_z = _mk_photo_resolver(_tpl)
+                _resolve_photo_z = _mk_photo_resolver(_tpl, photo_map=_photo_map_z)
                 _items_with_photo = [
                     {**_it, "photo": _resolve_photo_z(_prod)}
                     for _it, _prod in zip(items_list, items_products)

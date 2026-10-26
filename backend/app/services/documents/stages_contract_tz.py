@@ -20,7 +20,7 @@ from app.services.documents.product_photos import get_product_photo_path
 logger = logging.getLogger(__name__)
 
 
-def append_tz_table_for_contract(buf: BytesIO, doc_type: str, items_list: list, p) -> BytesIO:
+def append_tz_table_for_contract(buf: BytesIO, doc_type: str, items_list: list, p, photo_map: dict = None) -> BytesIO:
     # For contract docs: append ТЗ table with items
     if doc_type == "contract" and items_list:
         try:
@@ -92,7 +92,7 @@ def append_tz_table_for_contract(buf: BytesIO, doc_type: str, items_list: list, 
                 _product = item_data.get("_product")
                 if _product is not None:
                     try:
-                        _photo_path = get_product_photo_path(_product, cache=_photo_cache)
+                        _photo_path = get_product_photo_path(_product, cache=_photo_cache, photo_map=photo_map)
                         if _photo_path:
                             _run = row_cells[1].paragraphs[0].add_run()
                             _run.add_picture(_photo_path, width=Cm(2.5))

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
 from app.services.product_photo_fetch import PhotoFetchError, fetch_photo_bytes, normalize_url
+from app.services.product_photo_store import save_product_photo
 
 
 def pick_external_url(p: Product) -> Optional[str]:
@@ -58,9 +59,7 @@ async def download_and_save_photo(
     product = await db.get(Product, product_id)
     if not product:
         return False, "network_error", "Товар не найден"
-    product.photo_data = raw
-    product.photo_mime = mime
-    product.photo_size = len(raw)
+    await save_product_photo(db, product, raw)
     # Do NOT clear photo_url — external URL stays as source of truth.
     await db.commit()
     return True, None, None

@@ -30,6 +30,12 @@ from app.services.product_photo_download import (
     download_and_save_photo as _download_and_save_photo,
     pick_external_url as _pick_external_url,
 )
+from app.services.product_photo_store import (
+    has_photo as _has_photo,
+    load_product_photo as _load_product_photo,
+    save_product_photo as _save_product_photo,
+    delete_product_photo as _delete_product_photo,
+)
 
 PRODUCT_UPLOAD_DIR = "/app/uploads/products"
 ALLOWED_IMAGE_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
@@ -66,11 +72,15 @@ async def serve_product_photo_bytea(
     Photo bytes are not sensitive — the product list itself requires auth.
     """
     product = await db.get(Product, product_id)
-    if not product or not product.photo_data:
+    if not product or not _has_photo(product):
         raise HTTPException(404, "Фото не найдено")
+    loaded = await _load_product_photo(db, product_id)
+    if loaded is None:
+        raise HTTPException(404, "Фото не найдено")
+    data, mime = loaded
     return Response(
-        content=product.photo_data,
-        media_type=product.photo_mime or "image/jpeg",
+        content=data,
+        media_type=mime or "image/jpeg",
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
@@ -93,9 +103,7 @@ async def delete_product_photo(
     # удалить уже загруженное фото — только с products.edit_catalog (ПРАВИЛО
     # №6, та же единая проверка, что и у PUT/PATCH/DELETE товара).
     await assert_can_edit_catalog(current_user, db)
-    product.photo_data = None
-    product.photo_mime = None
-    product.photo_size = None
+    await _delete_product_photo(db, product)
     if product.photo_url and product.photo_url.startswith('/api/products/photos/'):
         product.photo_url = None
     await db.commit()
@@ -122,7 +130,7 @@ async def download_all_photos(
     by_reason: dict[str, int] = {}
     for p in all_products:
         # Already cached in DB → skip (idempotent re-runs are cheap).
-        if p.photo_data is not None:
+        if _has_photo(p):
             skipped += 1
             continue
         # Find source URL: prefer photo_url (external), fallback to photo_link.
@@ -172,7 +180,7 @@ async def download_single_photo(
     # Защита каталога (план clever-bouncing-lantern.md, Часть 1, 14.10.2026):
     # заменить УЖЕ ЗАГРУЖЕННОЕ фото скачиванием — только с галочкой; если
     # фото ещё нет — заполнение пустого, доступно всем (ПРАВИЛО №6).
-    if product.photo_data is not None and not await can_edit_catalog(current_user, db):
+    if _has_photo(product) and not await can_edit_catalog(current_user, db):
         raise HTTPException(403, CATALOG_EDIT_DENIED_MESSAGE)
     src = _pick_external_url(product)
     if not src:
@@ -202,16 +210,20 @@ async def upload_product_photo(
     # Защита каталога (план clever-bouncing-lantern.md, Часть 1, 14.10.2026):
     # заменить УЖЕ ЗАГРУЖЕННОЕ фото — только с галочкой; загрузить фото
     # впервые (пусто) — заполнение пустого, доступно всем (ПРАВИЛО №6).
-    if product.photo_data is not None and not await can_edit_catalog(current_user, db):
+    if _has_photo(product) and not await can_edit_catalog(current_user, db):
         raise HTTPException(403, CATALOG_EDIT_DENIED_MESSAGE)
     if file.content_type not in ALLOWED_IMAGE_MIME:
         raise HTTPException(400, f"Недопустимый тип файла: {file.content_type}")
     raw = await file.read()
     if len(raw) > 10 * 1024 * 1024:
         raise HTTPException(400, "Файл > 10MB")
-    product.photo_data = raw
-    product.photo_mime = file.content_type or "image/jpeg"
-    product.photo_size = len(raw)
+    try:
+        await _save_product_photo(db, product, raw)
+    except Exception:
+        # compress_product_photo декодирует файл через PIL (владелец,
+        # 26.10.2026 — фото ВСЕГДА хранится сжатым WebP) — битый/нечитаемый
+        # файл не должен ронять запрос 500-кой, это ошибка входных данных.
+        raise HTTPException(400, "Файл повреждён или не является изображением")
     # photo_url is left untouched — user-uploaded photo doesn't need an
     # external source URL, but any pre-existing one stays as-is.
     await db.commit()

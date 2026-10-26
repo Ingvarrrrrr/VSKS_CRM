@@ -23,7 +23,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, Body
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, get_single_org_id, OWNER_ROLES
@@ -108,10 +107,11 @@ async def list_products(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Phase 17.1-08 perf: defer photo_data (bytea, up to 10MB per row).
-    # The list endpoint must stay small (~1-2MB); clients fetch bytes via
-    # GET /{product_id}/photo when has_photo=True.
-    q = select(Product).options(defer(Product.photo_data))
+    # Phase 17.1-08 / 26.10.2026: bytea фото живёт в отдельной таблице
+    # product_photos (не на Product) — defer() здесь больше не нужен, список
+    # остаётся лёгким сам по себе. Клиенты получают байты через
+    # GET /{product_id}/photo, когда has_photo=True (products.photo_size).
+    q = select(Product)
     # Products are global — no org_id filter
     if ids is not None:
         try:
@@ -194,11 +194,11 @@ async def get_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Phase 17.1-08 perf: defer photo_data — detail endpoint doesn't return
-    # bytes; frontend uses GET /{product_id}/photo for raw image.
+    # Phase 17.1-08 / 26.10.2026: bytea фото в отдельной таблице
+    # product_photos — detail endpoint не выбирает её вовсе; frontend uses
+    # GET /{product_id}/photo for raw image.
     result = await db.execute(
         select(Product)
-        .options(defer(Product.photo_data))
         .where(Product.id == product_id)
     )
     product = result.scalar_one_or_none()

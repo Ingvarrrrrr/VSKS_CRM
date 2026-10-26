@@ -244,7 +244,7 @@ async def get_planned_purchase_items(
             Contract.number.label("contract_number"),
             Product.category.label("product_category"),
             Product.product_type.label("product_type"),
-            Product.photo_data.isnot(None).label("product_has_photo"),
+            Product.photo_size.isnot(None).label("product_has_photo"),
             Product.photo_url,
             Product.photo_link,
         )

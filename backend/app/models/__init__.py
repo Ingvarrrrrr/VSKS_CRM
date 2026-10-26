@@ -9,6 +9,7 @@ from app.models.payment import Payment
 from app.models.feo_category import FeoCategory
 from app.models.subsidy import Subsidy
 from app.models.product import Product
+from app.models.product_photo import ProductPhoto  # noqa: F401 — фото товара, отдельная таблица (26.10.2026)
 from app.models.platform_publication import PlatformPublication
 from app.models.subsidy_approver import SubsidyApprover
 from app.models.responsible_person import ResponsiblePerson

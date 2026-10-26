@@ -177,9 +177,10 @@ async def _download_photos(limit) -> dict:
     async with async_session() as db:
         rows = (await db.execute(select(Product).where(Product.is_active == True))).scalars().all()
 
+    from app.services.product_photo_store import has_photo as _has_photo
     targets = []
     for p in rows:
-        if p.photo_data is not None:
+        if _has_photo(p):
             continue
         src = pick_external_url(p)
         if not src:

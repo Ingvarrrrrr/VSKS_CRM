@@ -355,6 +355,6 @@ def effective_photo_url(product: Product) -> Optional[str]:
     url = getattr(product, "photo_url", None)
     if url:
         return url
-    if getattr(product, "photo_data", None) is not None and getattr(product, "id", None) is not None:
+    if getattr(product, "photo_size", None) is not None and getattr(product, "id", None) is not None:
         return f"/api/products/{product.id}/photo"
     return None

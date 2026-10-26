@@ -131,3 +131,167 @@ def test_pps_a_full_description_actual_result_after_prefix_and_ad_filter():
 
     result = strip_ad_sentences(prefixed)
     assert result is None
+
+
+# --- Задача 3 (владелец, 2026-10-26, расширение _AD_MARKERS — найдена
+# непойманная реклама "Широкий выбор..." у 403 товаров Магазин 01 /
+# К-Спасатель; проверка на всём prod-каталоге, см. ad_filter_review.md)
+# -----------------------------------------------------------------------
+
+# РЕАЛЬНЫЙ description товара (Магазин 01, fire_equipment_nomenclature.json,
+# id 59186/91073/91094 и др.) — пример владельца.
+_VALVE_WIDE_CHOICE_RAW = (
+    "Широкий выбор запорно-регулирующей арматуры для систем водяного и "
+    "пенного пожаротушения: противопожарные клапаны, задвижки, вентили, "
+    "затворы.\n\nДиаметр: 300 мм"
+)
+
+
+def test_owner_example_wide_choice_valve_removed():
+    """Пример владельца: предложение-реклама удаляется, техническая
+    характеристика (второй абзац) не затрагивается этой функцией (она
+    работает только с description, абзац характеристик — отдельное
+    поле)."""
+    sentence = (
+        "Широкий выбор запорно-регулирующей арматуры для систем водяного "
+        "и пенного пожаротушения: противопожарные клапаны, задвижки, "
+        "вентили, затворы."
+    )
+    assert strip_ad_sentences(sentence) is None
+
+
+# --- Защита от ложных срабатываний на технический текст -----------------
+
+def test_fp_delivery_of_cargo_not_removed():
+    """«Авиадесантируемый кейс ... для доставки грузов ...» — доставка
+    ГРУЗОВ (технический термин), не доставка покупателю — не трогаем."""
+    text = "Авиадесантируемый кейс предназначен для доставки грузов и оборудования к месту применения."
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_insulation_material_quality_not_removed():
+    text = "В качестве утеплителя используется гусиный пух высокого качества."
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_fraction_not_removed_by_discount_marker():
+    """"скидк" — корень "скидка", не должен ловить "фракция"."""
+    text = "Масса 10 кг, фракция 7-15 см."
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_brooch_bouquet_not_removed():
+    text = "Брошь «Букет цветов в корзине»."
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_wide_choice_of_diameters_not_removed():
+    """«Большой выбор диаметров и размеров» — про сам товар (разные
+    диаметры одной позиции), не "широкий выбор" магазина — маркер
+    анкорен к началу предложения и не ловит "больш..." вообще."""
+    text = "Большой выбор диаметров и размеров, позволяющий подобрать необходимые кранцы на судно любого размера."
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_wide_assortment_of_compatible_gear_not_removed():
+    """«...широкого ассортимента применяемого на высоте оборудования» —
+    про совместимость снаряжения, "широкий ассортимент" не в начале
+    предложения — не трогаем."""
+    text = "Универсальный комплект для защиты от падения широкого ассортимента применяемого на высоте оборудования."
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_wide_choice_of_buoyancy_not_removed():
+    """«Широкий выбор по плавучести»/«по форме и плавающей способности» —
+    реальный технический текст о поплавках (не реклама магазина),
+    исключено явным отрицательным просмотром вперёд."""
+    assert strip_ad_sentences("Широкий выбор по плавучести.") == "Широкий выбор по плавучести."
+    assert strip_ad_sentences(
+        "Широкий выбор по форме и плавающей способности."
+    ) == "Широкий выбор по форме и плавающей способности."
+
+
+def test_fp_courier_delivery_restriction_not_removed():
+    """«...курьерская доставка по Москве. Не отправляем транспортными
+    компаниями... из-за ограничений на перевозку опасных грузов» — важное
+    техническое ограничение по опасному грузу, не реклама; "доставка по"
+    сама по себе маркером не является (слишком широко)."""
+    text = "Важно: только самовывоз или курьерская доставка по Москве."
+    assert strip_ad_sentences(text) == text
+
+
+# --- Новые маркеры (Задача 3) — по одному реальному примеру из prod ------
+
+def test_marker_u_nas_bolshoy_vybor():
+    text = "У нас большой выбор противопожарных средств и оборудования."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_my_predlagaem_shirokiy_assortiment():
+    text = "Мы предлагаем широкий ассортимент средств пожаротушения и пожарной безопасности."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_v_nashem_kataloge():
+    text = "В нашем каталоге представлены только сертифицированное пожарное оборудование и средства тушения пожаров."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_vy_mozhete_priobresti():
+    text = "Здесь вы можете приобрести строп для применения в страховочных системах."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_po_dostupnoy_cene():
+    text = "Здесь вы сможете приобрести одинарный строп ленточный по доступной цене."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_po_dostupnym_cenam():
+    text = "Профессиональная справочная литература по доступным ценам."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_melkim_optom():
+    text = "Если вам нужна мелким оптом аптечка настенная металлическая - обратитесь к менеджерам."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_skidka():
+    text = "Всем клиентам мы предоставляем индивидуальные условия и специальные скидки в зависимости от объема заказа."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_garantiruem():
+    text = "Мы гарантируем надежность и качество поставленного товара."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_garantiya_kachestva():
+    text = "Гарантия качества, доставка по РФ."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_onlayn_zakaz():
+    text = "Онлайн заказ с доставкой."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_dostavka_po_rf():
+    text = "Доставка по РФ."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_dostavka_vo_vse_regiony():
+    text = "Мы предлагаем короба и кабельные каналы с доставкой во все регионы России."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_shirokiy_vybor_pattern():
+    text = "Широкий выбор пожарных извещателей: дымовые, тепловые, ручные и комбинированные модели."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_shirokiy_assortiment_pattern():
+    text = "Широкий ассортимент аварийного и пожарного оборудования."
+    assert strip_ad_sentences(text) is None

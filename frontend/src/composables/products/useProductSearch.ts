@@ -14,9 +14,14 @@
 // счётчик seq отбрасывает ответ, даже если он успел прилететь до того, как
 // abort долетел до браузера (гонка), — так же, как и зачем это сделано в
 // api.ts для инфлайт-дедупа, но здесь нужна отмена, а не дедуп одного и того
-// же запроса.
+// же запроса. Реализация обоих механизмов — в latestRequest.ts
+// (createLatestRequestGuard, ПРАВИЛО №6): это же единое место используют
+// InlineProductMatch.vue и ProductMatchReviewDialog.vue для той же задачи на
+// других ручках (инлайн-подбор позиции заявки, ручной поиск при импорте) —
+// второй раз эту логику не пишем.
 import { ref } from 'vue'
 import { apiFetch } from '@/api'
+import { createLatestRequestGuard } from './latestRequest'
 import type { Product } from './productsTypes'
 
 // Минимум символов для запуска поиска товара — ЕДИНОЕ место (ПРАВИЛО №6),
@@ -99,24 +104,21 @@ export function useProductSearch(opts: { debounceMs?: number } = {}) {
   const totalCapped = ref(false)
   const loading = ref(false)
 
-  let seq = 0
-  let controller: AbortController | null = null
+  const guard = createLatestRequestGuard()
   let timer: ReturnType<typeof setTimeout> | null = null
 
   async function run(params: ProductSearchParams): Promise<ProductSearchResult | null> {
     if (timer) { clearTimeout(timer); timer = null }
-    if (controller) controller.abort()
-    controller = new AbortController()
-    const mySeq = ++seq
+    const { signal, isStale } = guard.begin()
     loading.value = true
     try {
       const data = await apiFetch<ProductSearchPageOut>(
         `/products/page?${buildQuery(params)}`,
-        { signal: controller.signal },
+        { signal },
       )
       // Ответ мог прилететь ПОСЛЕ более нового запроса (гонка, abort ещё не
       // долетел) — отбрасываем его счётчиком, а не только AbortController'ом.
-      if (mySeq !== seq) return null
+      if (isStale()) return null
       items.value = data.items
       total.value = data.total
       totalCapped.value = data.total_capped
@@ -125,7 +127,7 @@ export function useProductSearch(opts: { debounceMs?: number } = {}) {
       if (e?.name === 'AbortError') return null
       throw e
     } finally {
-      if (mySeq === seq) loading.value = false
+      if (!isStale()) loading.value = false
     }
   }
 

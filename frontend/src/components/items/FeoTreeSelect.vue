@@ -33,7 +33,14 @@
         content-class="feo-tree-menu-content"
       >
         <template #activator="{ props: activatorProps }">
-          <div ref="fieldWrapEl">
+          <!-- data-field="feo_category_select" — узкая цель (ровно поле, не вся
+               рамка-обёртка выше) для highlightMissingFeoCategory (useWishForm.ts,
+               wishFeoMissingTarget.ts kind='category'): координатор 2026-10-26
+               нашёл, что стрелка целилась в ПОЛНУЮ высоту внешней рамки
+               data-field="feo_category" (подпись+алерт+поле), из-за чего конечная
+               точка (вертикальный центр ВСЕЙ рамки) попадала не в само поле, а в
+               пустую зону у кнопки «Импорт из файла» строкой ниже. -->
+          <div ref="fieldWrapEl" data-field="feo_category_select">
             <!-- v-textarea вместо v-text-field: путь переносится и виден целиком,
                  а не обрезается многоточием в одну строку. Label встроен в поле
                  (как у соседних полей формы), поэтому отдельная подпись сверху
@@ -827,6 +834,11 @@ watch(menuOpen, (open) => {
     scrollToSelected()
   })
 })
+
+// Программное открытие меню — нужно useWishForm.ts::highlightMissingFeoCategory
+// (подсветка стрелкой «Категория ФЭО не выбрана»): владелец должен не просто
+// увидеть поле, а сразу получить раскрытое дерево под ним, не кликая сам.
+defineExpose({ openMenu: () => { if (!props.readonly) menuOpen.value = true } })
 </script>
 
 <style scoped>

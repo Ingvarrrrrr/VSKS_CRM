@@ -448,7 +448,11 @@
                 :disabled="!isWishEditable"
                 @update:model-value="onWishFeoPerItemChange"
               />
-              <!-- data-field="feo_category" — цель для highlightMissingFeoCategory.
+              <!-- data-field="feo_category" — одна из ТРЁХ целей highlightMissingFeoCategory
+                   (см. wishFeoMissingTarget.ts) — на неё указывает стрелка/подсветка
+                   ТОЛЬКО когда субсидия уже выбрана (иначе цель — data-field="subsidy_id",
+                   жалоба владельца 2026-10-26: пустая рамка без дерева, стрелка визуально
+                   утыкалась в таблицу позиций под ней).
                    Владелец (2026-09-17): «подсвети поле "Категория ФЭО", я его найти
                    не могу, даже зная что он должен быть» — рамка + подпись сверху,
                    тот же приём, что contract-terms-box в PurchaseContractParamsSection.vue.
@@ -456,7 +460,10 @@
                    прежняя подпись (text-caption, обычный вес) не цепляла взгляд. Подпись
                    увеличена (text-subtitle-2, акцентный цвет), добавлена подсказка
                    «необязательно — уточнит согласующий» — полем остаётся необязательным,
-                   required НЕ выставляется ни в форме, ни на бэке. -->
+                   required НЕ выставляется ни в форме, ни на бэке. Текст алерта
+                   («Субсидия не выбрана» / «Конечная категория ФЭО не выбрана», title/detail)
+                   и текст подсказки кнопок (tooltip) — ВСЕ из wishFeoMissingTarget
+                   (wishFeoMissingTarget.ts), второй копии текста в файле нет (ПРАВИЛО №6). -->
               <div data-field="feo_category" class="feo-category-highlight pa-3 mb-3">
                 <div class="text-subtitle-2 font-weight-bold mb-1" style="color: #6366f1;">
                   <v-icon size="18" color="#6366f1" class="mr-1">mdi-sitemap</v-icon>Категория ФЭО
@@ -479,12 +486,8 @@
                     class="mb-2"
                     icon="mdi-alert-octagon-outline"
                   >
-                    <div class="font-weight-medium">Конечная категория ФЭО не выбрана — отправить заявку на согласование нельзя</div>
-                    <div class="mt-1">
-                      Без конечной категории закупка не попадёт ни в один план ФЭО и её сумма потеряется.
-                      Выберите категорию ниже, углубившись до самого конечного уровня дерева, а если
-                      категория неизвестна — нажмите «Не определена».
-                    </div>
+                    <div class="font-weight-medium">{{ wishFeoMissingTarget.title }}</div>
+                    <div class="mt-1">{{ wishFeoMissingTarget.detail }}</div>
                   </v-alert>
                   <template v-if="wishForm.subsidy_id && !(canEditWishFeo && !isWishEditable)">
                     <v-alert v-if="hasPlanLinkedItems" type="info" density="compact" variant="tonal" class="mb-2">
@@ -492,6 +495,7 @@
                       дополнительной позиции выбирают в её строке.
                     </v-alert>
                     <FeoTreeSelect
+                      ref="wishFeoTreeSelectRef"
                       v-model="wishFeoSelected"
                       :nodes="wishFeoTreeNodes"
                       :leaves="wishFeoLeaves"
@@ -523,13 +527,9 @@
                     class="mb-2"
                     icon="mdi-alert-octagon-outline"
                   >
-                    <div class="font-weight-medium">Конечная категория ФЭО не выбрана — отправить заявку на согласование нельзя</div>
-                    <div class="mt-1">
-                      Без конечной категории закупка не попадёт ни в один план ФЭО и её сумма потеряется.
-                      Выберите категорию у каждой позиции в таблице ниже, углубившись до самого конечного
-                      уровня дерева, а если категория неизвестна — нажмите «Не определена» у нужной строки.
-                    </div>
-                    <div v-if="wishItemsMissingFeoCategory.length" class="mt-2">
+                    <div class="font-weight-medium">{{ wishFeoMissingTarget.title }}</div>
+                    <div class="mt-1">{{ wishFeoMissingTarget.detail }}</div>
+                    <div v-if="wishFeoMissingTarget.kind !== 'subsidy' && wishItemsMissingFeoCategory.length" class="mt-2">
                       <span class="font-weight-medium">Позиции без конечной категории:</span>
                       <ul class="ml-4 mt-1">
                         <li v-for="(it, idx) in wishItemsMissingFeoCategory" :key="idx">{{ it.item_name || 'без названия' }}</li>
@@ -1353,7 +1353,7 @@
               <span v-bind="tipProps">
                 <v-btn ref="wishSubmitBtnRef" color="primary" variant="flat" :loading="saving"
                        :class="{ 'wish-btn-blocked': wishFeoCategoryMissing }"
-                       @click="wishFeoCategoryMissing ? highlightMissingFeoCategory() : saveWish(true)">
+                       @click="wishFeoCategoryMissing ? onHighlightMissingFeoCategory() : saveWish(true)">
                   Отправить на согласование
                 </v-btn>
               </span>
@@ -1419,7 +1419,7 @@
               <span v-bind="tipProps">
                 <v-btn color="success" variant="tonal" prepend-icon="mdi-check" :loading="actions.approvingId.value === editingWish.id"
                        :class="{ 'wish-btn-blocked': wishFeoCategoryMissing }"
-                       @click="wishFeoCategoryMissing ? highlightMissingFeoCategory() : actions.approveWish(editingWish, actions.quickApproveTzNotRequired.value).then(() => wishDialog = false)">
+                       @click="wishFeoCategoryMissing ? onHighlightMissingFeoCategory() : actions.approveWish(editingWish, actions.quickApproveTzNotRequired.value).then(() => wishDialog = false)">
                   Одобрить без согласования остальных
                 </v-btn>
               </span>
@@ -1812,6 +1812,7 @@ const {
   wishFeoLeaves, wishFeoTreeNodes, wishNodeAmounts, pickWishUnallocated,
   wishPlannedResiduals, onWishPlannedItemCreated,
   wishFeoStale, wishItemsMissingFeoCategory, wishFeoCategoryMissing, wishFeoCategoryMissingTooltip,
+  wishFeoMissingTarget,
   wishItemsWithStaleFeoCategory, itemDiscrepancy, wishItemStatus,
   onAddApproversClick, totalNmck, onSubsidyChange,
   isWishEditable, isDialogCreator, canAssigneeAct, canEditWishFeo, canEditAssignee, canDecideWish,
@@ -1920,17 +1921,30 @@ function isMobileSectionOpen(key: string): boolean {
   return !mobileCollapseActive.value || !!openMobileSections[key]
 }
 
-// highlightMissingFeoCategory() (useWishForm.ts) ищет [data-field="feo_category"]
-// внутри wishFormRef.value.$el — на телефоне в свёрнутом режиме этот узел лежит
-// в разделе «Позиции» (v-show, не v-if — элемент в DOM есть и свёрнутым, но
-// скрыт display:none, scrollIntoView по нему бессмыслен). Раскрываем раздел
-// ПЕРЕД вызовом оригинальной функции, как и требует задание.
+// highlightMissingFeoCategory() (useWishForm.ts) целится в одно из трёх полей
+// (см. wishFeoMissingTarget.ts: subsidy_id / feo_category / item-row-<uid>) —
+// на телефоне в свёрнутом режиме нужный узел лежит в СВЁРНУТОМ разделе
+// (v-show, не v-if — элемент в DOM есть, но display:none, scrollIntoView по
+// нему бессмыслен). Раскрываем правильный раздел ПЕРЕД вызовом оригинальной
+// функции — «Основная информация» для subsidy_id, «Позиции» для категории/строки.
+// Ref на FeoTreeSelect в шапке («Категория ФЭО», см. data-field="feo_category_select"
+// внутри самого компонента) — нужен, чтобы программно раскрыть дерево после
+// подсветки (openMenu(), см. defineExpose в FeoTreeSelect.vue). Задача
+// координатора (2026-10-26, п.2): «после скролла к полю категории — открыть
+// выпадающий список».
+const wishFeoTreeSelectRef = ref<{ openMenu?: () => void } | null>(null)
+
 async function onHighlightMissingFeoCategory() {
   if (mobileCollapseActive.value) {
-    openMobileSections.items = true
+    openMobileSections[wishFeoMissingTarget.value.kind === 'subsidy' ? 'basic' : 'items'] = true
     await nextTick()
   }
   highlightMissingFeoCategory()
+  if (wishFeoMissingTarget.value.kind === 'category') {
+    // Ждём, пока доедет smooth-scroll (см. scrollIntoView в highlightMissingFeoCategory),
+    // иначе v-menu в FeoTreeSelect спозиционируется по ещё не финальным координатам поля.
+    window.setTimeout(() => wishFeoTreeSelectRef.value?.openMenu?.(), 450)
+  }
 }
 
 // Форма договора — то же самое значение/справочник, что выбирается в разделе

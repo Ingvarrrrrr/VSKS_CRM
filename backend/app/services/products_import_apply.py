@@ -40,6 +40,9 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.product import DEFAULT_PRODUCT_CATEGORY, Product
 from app.services.price_actualization import actualize_product_price
 from app.services.product_unit import backfill_product_unit
+from app.services.product_description_merge import (
+    is_new_description_shorter, merge_missing_lines,
+)
 from app.services.products_import_match import (
     ProductMatchIndex, load_candidate_products, norm_key as _norm_key_for_match,
 )
@@ -175,6 +178,20 @@ async def apply_products_import(
     скрипта загрузки каталога, scripts/load_gala_catalog.py) — описание
     ЗАМЕНЯЕТСЯ файловым через тот же set_product_description (история
     описаний не теряется — там же пишется старое значение).
+
+    ФИНАЛЬНОЕ РЕШЕНИЕ ВЛАДЕЛЬЦА (26.10.2026, повторное уточнение в тот же
+    день) — отменяет предыдущую версию этого докстринга про «правило
+    не-затирания»: данные из файла поставщика должны быть ЛУЧШЕ того, что
+    было вписано раньше. Если supplier_description=True и в файле для
+    товара есть хоть что-то (build_tech_description вернул непустой текст),
+    описание ЗАМЕНЯЕТСЯ файловым безусловно — даже если новый текст короче
+    старого. Старое значение не теряется: set_product_description сама
+    пишет его в product_description_history как предыдущую версию — это не
+    отдельная защита, так эта функция уже работает. ЕДИНСТВЕННАЯ защита —
+    пустой результат build_tech_description (нет ни текста, ни
+    характеристик): такая строка не попадает даже в проверку чуть выше
+    (`new_desc_norm` пуст → ветка `if editor_can_edit_catalog and
+    new_desc_norm:` не выполняется), старое описание остаётся как есть.
 
     supplier_description (владелец, 2026-10-26, загрузчик каталогов
     поставщиков GALA) — col_idx может содержать поля "characteristics"
@@ -414,6 +431,16 @@ async def apply_products_import(
                     # импорт это право есть. Без права строка всё равно
                     # создаётся/обновляется по остальным полям, описание
                     # каталога не трогаем.
+                    #
+                    # Задача 1 (26.10.2026, ПРАВИЛО №6, повод — 41 товар с
+                    # потерей техданных в прошлом dry-run
+                    # rebuild_descriptions_from_sources.py при безусловной
+                    # замене): если файловое описание ЗАМЕТНО КОРОЧЕ старого
+                    # (is_new_description_shorter — тот же критерий, что в
+                    # rebuild-скрипте, 20% по непробельным символам), не
+                    # заменяем целиком, а объединяем через
+                    # merge_missing_lines — старое сохраняется целиком, в
+                    # конец дописываются только недостающие строки файла.
                     desc_reason = None
                     existing_desc = (ep.description or "").strip()
                     new_desc_norm = (desc_val or "").strip()
@@ -441,7 +468,11 @@ async def apply_products_import(
                             changed = True
                         elif _norm_key_for_match(existing_desc) != _norm_key_for_match(new_desc_norm):
                             if effective_replace_descriptions:
-                                await _set_description(desc_val)
+                                if is_new_description_shorter(existing_desc, desc_val):
+                                    final_desc_val = merge_missing_lines(existing_desc, desc_val)
+                                else:
+                                    final_desc_val = desc_val
+                                await _set_description(final_desc_val)
                                 changed = True
                             else:
                                 desc_reason = "описание в БД другое, оставлено"

@@ -58,9 +58,10 @@
              v-field), а поле при этом не расширялось. Однострочное усечение
              многоточием ВНУТРИ поля + title для полного текста по наведению. -->
         <span
-          class="d-block"
+          class="d-block inline-match-selection-text"
           :title="it?.raw?.name ?? itemName"
-          style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;line-height:1.3;font-size:12px"
+          style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;line-height:1.3;font-size:12px;user-select:text;cursor:text"
+          @mousedown.stop
         >{{ it?.raw?.name ?? itemName }}</span>
       </template>
       <template #item="{ item: it, props: ip }">
@@ -92,7 +93,7 @@
       <template #no-data>
         <v-list-item>
           <div class="text-caption text-medium-emphasis py-1">
-            {{ matching ? 'Поиск…' : (searchText && searchText.length >= 2 ? 'Совпадений нет' : 'Введите минимум 2 символа') }}
+            {{ noDataText }}
           </div>
         </v-list-item>
       </template>
@@ -125,6 +126,8 @@
 // useItemMatching.applyCandidate so list state is single-sourced.
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useItemMatching, type MatchCandidate, type MatchStatus } from '@/composables/useItemMatching'
+import { searchRemainingHint, isSearchTooShort } from '@/composables/products/useProductSearch'
+import { createLatestRequestGuard } from '@/composables/products/latestRequest'
 
 const props = withDefaults(defineProps<{
   /** Current row name (used as initial query / display fallback). */
@@ -190,7 +193,7 @@ function activate() {
   if (props.disabled || active.value) return
   active.value = true
   // Seed candidates for an already-named row so the menu is useful immediately.
-  if ((searchText.value || '').trim().length >= 2) {
+  if (!isSearchTooShort(searchText.value)) {
     void runMatch(searchText.value)
   }
   // Focus the real autocomplete once it has mounted.
@@ -251,6 +254,15 @@ function candidateTitle(c: MatchCandidate | null): string {
   return c?.name ?? ''
 }
 
+// Подсказка в выпадающем списке, когда нет данных — порог длины и текст
+// «Ещё N символ(а)» берём из useProductSearch.ts (MIN_SEARCH_CHARS,
+// ПРАВИЛО №6), а не держим свой хардкод «минимум 2 символа».
+const noDataText = computed(() => {
+  if (matching.value) return 'Поиск…'
+  if (!isSearchTooShort(searchText.value)) return 'Совпадений нет'
+  return searchRemainingHint(searchText.value) || 'Начните вводить наименование'
+})
+
 // ── Status badge ──────────────────────────────────────────────────────────────
 const statusColor = computed(() => {
   if (props.productId != null) {
@@ -292,20 +304,36 @@ function scoreColor(score: number | undefined): string {
 // ── Debounced matching ──────────────────────────────────────────────────────
 let timer: ReturnType<typeof setTimeout> | null = null
 
+// Отмена устаревших ответов (ПРАВИЛО №6, latestRequest.ts) — пока
+// пользователь печатает «боевая», ответ на раннее «бо»/«боев» мог прилететь
+// ПОСЛЕ ответа на «боевая» и перетереть уже правильный список (владелец,
+// 26.10.2026, баг «болгарка» вместо «боевая одежда пожарного»). Один guard на
+// весь компонент — создаётся один раз при setup, а не на каждый вызов.
+const searchGuard = createLatestRequestGuard()
+
 async function runMatch(query: string) {
   const q = (query || '').trim()
-  if (q.length < 2) {
+  if (isSearchTooShort(q)) {
     candidates.value = []
     status.value = 'create'
     return
   }
-  const res = await matchOne(q, 100, true)
-  if (res) {
-    candidates.value = res.candidates ?? []
-    status.value = res.status ?? 'create'
-  } else {
-    candidates.value = []
-    status.value = 'create'
+  const { signal, isStale } = searchGuard.begin()
+  try {
+    const res = await matchOne(q, 100, true, signal)
+    // Устаревший ответ (гонка, abort ещё не долетел) ИЛИ сам запрос отменён —
+    // не применяем результат, список уже показывает более новый запрос.
+    if (isStale()) return
+    if (res) {
+      candidates.value = res.candidates ?? []
+      status.value = res.status ?? 'create'
+    } else {
+      candidates.value = []
+      status.value = 'create'
+    }
+  } catch (e: any) {
+    if (e?.name === 'AbortError') return
+    throw e
   }
 }
 
@@ -360,5 +388,26 @@ function emitCreateNew() {
   void nextTick(() => { autocompleteRef.value?.blur?.() })
 }
 
-onBeforeUnmount(() => { if (timer) clearTimeout(timer) })
+onBeforeUnmount(() => {
+  if (timer) clearTimeout(timer)
+  // Абортнуть последний незавершённый запрос подбора, если строка удаляется
+  // из таблицы пока запрос в полёте (не обязательно для корректности —
+  // isStale() и так отбросит результат, — но не тянуть сеть впустую).
+  searchGuard.begin()
+})
 </script>
+
+<style scoped>
+/* Владелец (26.10.2026): нельзя было выделить/скопировать название позиции —
+   Vuetify ставит user-select:none на readonly v-text-field (неактивное
+   «лёгкое» поле, перф-режим выше) и на свой контейнер .v-field, который
+   перехватывает mousedown для открытия списка в активном v-autocomplete.
+   Перебиваем это ТОЛЬКО на тексте названия (не на всём поле), чтобы клик
+   рядом с текстом продолжал открывать/активировать список как раньше. */
+.inline-match-lazy :deep(input) {
+  user-select: text !important;
+}
+.inline-match-selection-text {
+  user-select: text !important;
+}
+</style>

@@ -68,7 +68,7 @@ export function useItemMatching() {
    * character (see backend text_match._stem_hits). Batch/import callers must
    * leave it unset so matching stays strict.
    */
-  async function matchQueries(queries: string[], limit?: number, prefix?: boolean): Promise<MatchResult[]> {
+  async function matchQueries(queries: string[], limit?: number, prefix?: boolean, signal?: AbortSignal): Promise<MatchResult[]> {
     if (!queries.length) return []
     matching.value = true
     try {
@@ -78,6 +78,7 @@ export function useItemMatching() {
       const data = await apiFetch<{ results: MatchResult[] }>('/products/match', {
         method: 'POST',
         body,
+        signal,
       })
       return data?.results ?? []
     } finally {
@@ -85,11 +86,13 @@ export function useItemMatching() {
     }
   }
 
-  /** Convenience: match a single query, return its candidate list (status badge too). */
-  async function matchOne(query: string, limit?: number, prefix?: boolean): Promise<MatchResult | null> {
+  /** Convenience: match a single query, return its candidate list (status badge too).
+      `signal` (опционально) — отмена устаревшего запроса, см. latestRequest.ts
+      (ПРАВИЛО №6); вызывающий, передавший signal, сам ловит AbortError. */
+  async function matchOne(query: string, limit?: number, prefix?: boolean, signal?: AbortSignal): Promise<MatchResult | null> {
     const q = (query || '').trim()
     if (!q) return null
-    const results = await matchQueries([q], limit, prefix)
+    const results = await matchQueries([q], limit, prefix, signal)
     return results[0] ?? null
   }
 
@@ -107,11 +110,25 @@ export function useItemMatching() {
    *    (accommodation/food/transport) still end up 'услуга' regardless, via
    *    the separate applyItemAmounts()/computeItemTotal() recompute keyed on
    *    itemForm (utils/itemAmounts.ts) — not duplicated here (ПРАВИЛО №6).
-   *  - sets unit_price (contract_price ?? price) only if the row has none yet,
-   *    then recomputes total_price = qty × unit_price
+   *  - цена (владелец, 26.10.2026, баг «выбрал бензопилу → выбрал зубную пасту
+   *    → цена осталась от бензопилы»):
+   *      · from_plan → цену НЕ трогаем (план закупок всегда главнее, как раньше);
+   *      · тот же product_id, что уже стоял в строке (повторный выбор того же
+   *        товара) → цену НЕ трогаем, даже если пользователь её поправил руками;
+   *      · раньше в строке не было товара (product_id был null) → старое
+   *        поведение: подставляем цену ТОЛЬКО если row.unit_price ещё пуст (не
+   *        затираем цену, введённую вручную до выбора товара);
+   *      · в строке УЖЕ был другой товар, а теперь выбран новый → цена ВСЕГДА
+   *        берётся от нового товара (contract_price ?? price), включая случай,
+   *        когда у нового товара цены нет вовсе — тогда unit_price становится
+   *        null (а не остаётся ценой старого товара). total_price пересчитывается
+   *        по той же формуле qty × unit_price либо тоже становится null, если
+   *        unit_price null (тот же приём, что useItemsTotals.ts::calcItemTotal /
+   *        PurchaseItemsEditor.vue — Правило №6, вторая конвенция не заводится).
    *  - marks match_confirmed = true
    */
   function applyCandidate(row: MatchableRow, cand: MatchCandidate): void {
+    const prevProductId = row.product_id
     row.product_id = cand.product_id
     row.item_name = cand.name || row.item_name
     row._selectedProduct = cand
@@ -129,12 +146,29 @@ export function useItemMatching() {
     // Владелец (14.10.2026, решение (в)): у позиции из Плана закупок цена
     // ВСЕГДА плановая — выбор товара каталога её не перебивает, даже если
     // плановая цена по какой-то причине пуста (не подставляем цену каталога).
-    if (row.unit_price == null && !(row as any).from_plan) {
-      const best = cand.contract_price ?? cand.price
-      if (best != null) {
-        row.unit_price = Number(best)
-        if (row.quantity != null) {
+    const isSameProduct = prevProductId != null && prevProductId === cand.product_id
+    if (!(row as any).from_plan && !isSameProduct) {
+      if (prevProductId == null) {
+        // Первичный выбор для пустой строки — не затираем цену, введённую
+        // пользователем вручную ДО выбора товара (старое поведение).
+        if (row.unit_price == null) {
+          const best = cand.contract_price ?? cand.price
+          if (best != null) {
+            row.unit_price = Number(best)
+            if (row.quantity != null) {
+              row.total_price = Math.round(Number(row.quantity) * Number(row.unit_price) * 100) / 100
+            }
+          }
+        }
+      } else {
+        // Смена товара на другой — цена строки ВСЕГДА синхронизируется с
+        // новым товаром, включая очистку в null, когда у него нет цены.
+        const best = cand.contract_price ?? cand.price
+        row.unit_price = best != null ? Number(best) : null
+        if (row.unit_price != null && row.quantity != null) {
           row.total_price = Math.round(Number(row.quantity) * Number(row.unit_price) * 100) / 100
+        } else {
+          row.total_price = null
         }
       }
     }

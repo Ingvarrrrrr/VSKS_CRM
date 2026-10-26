@@ -82,6 +82,9 @@ async def test_different_nonempty_description_no_duplicate_default_mode(db_sessi
 async def test_different_nonempty_description_replaced_when_flag_true(db_session, test_user):
     """replace_descriptions=True — описание ЗАМЕНЯЕТСЯ файловым через
     set_product_description (история не теряется)."""
+    # Финальное решение владельца (26.10.2026): replace_descriptions=True
+    # заменяет описание файловым безусловно, даже если новый текст короче
+    # старого — здесь новый текст длиннее, но это не требование.
     name = _uniq_name("ДругоеОписаниеTrue")
     product = Product(name=name, category="Прочее", description="Старое описание2")
     db_session.add(product)
@@ -89,7 +92,7 @@ async def test_different_nonempty_description_replaced_when_flag_true(db_session
     await db_session.refresh(product)
 
     col_idx = {"name": 0, "description": 1}
-    data_rows = [(name, "Новое описание2")]
+    data_rows = [(name, "Старое описание2, дополненное новым текстом")]
     result = await apply_products_import(
         db_session, data_rows, col_idx,
         filename="match3.xlsx", current_user=test_user,
@@ -99,14 +102,14 @@ async def test_different_nonempty_description_replaced_when_flag_true(db_session
     assert await _count_by_name(db_session, name) == 1
 
     await db_session.refresh(product)
-    assert product.description == "Новое описание2"
+    assert product.description == "Старое описание2, дополненное новым текстом"
 
     hist = (await db_session.execute(
         select(ProductDescriptionHistory).where(ProductDescriptionHistory.product_id == product.id)
     )).scalars().all()
     assert len(hist) == 1
     assert hist[0].old_value == "Старое описание2"
-    assert hist[0].new_value == "Новое описание2"
+    assert hist[0].new_value == "Старое описание2, дополненное новым текстом"
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,7 @@ from app.models.user import User
 
 DESCRIPTION_FIELDS = ("description", "description_44fz")
 
-Source = Literal["edit", "proposal", "revert", "fill_empty"]
+Source = Literal["edit", "proposal", "revert", "fill_empty", "import"]
 
 
 async def set_product_description(

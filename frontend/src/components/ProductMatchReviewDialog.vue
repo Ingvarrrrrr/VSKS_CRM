@@ -74,7 +74,7 @@
                   return-object
                   placeholder="Найти в каталоге вручную..."
                   prepend-inner-icon="mdi-magnify"
-                  no-data-text="Начните вводить название (минимум 2 символа)"
+                  :no-data-text="manualSearchHint(r)"
                   @update:search="(q: string) => onManualSearch(r, q)"
                   @update:model-value="(c: Candidate | null) => { if (c) applyManualChoice(r, c) }"
                 />
@@ -113,7 +113,7 @@
                   return-object
                   placeholder="Найти в каталоге (если товар уже есть)..."
                   prepend-inner-icon="mdi-magnify"
-                  no-data-text="Начните вводить название (минимум 2 символа)"
+                  :no-data-text="manualSearchHint(r)"
                   @update:search="(q: string) => onManualSearch(r, q)"
                   @update:model-value="(c: Candidate | null) => { if (c) applyManualChoice(r, c) }"
                 />
@@ -137,6 +137,8 @@
 import { ref, computed, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { isSearchTooShort, searchRemainingHint, SEARCH_PLACEHOLDER } from '@/composables/products/useProductSearch'
+import { createLatestRequestGuard, type LatestRequestGuard } from '@/composables/products/latestRequest'
 
 const { mobile } = useDisplay()
 
@@ -203,17 +205,40 @@ const totalReady = computed(() => autoCount.value + suggestCount.value + createC
 
 // ── Manual catalog search (server-side) ──────────────────────────────────────
 
+// Порог длины и подсказка — ЕДИНОЕ место useProductSearch.ts (ПРАВИЛО №6),
+// не свой хардкод «минимум 2 символа».
+function manualSearchHint(r: MatchRow): string {
+  return searchRemainingHint(r._manualSearchQuery || '') || SEARCH_PLACEHOLDER
+}
+
+// Каждая строка диалога ищет независимо — у каждой своя гонка запросов
+// (ввод в строке A не должен ждать строку B). WeakMap по объекту строки
+// держит отдельный guard (latestRequest.ts, ПРАВИЛО №6) на каждую строку,
+// без дублирования seq/AbortController логики здесь.
+const manualSearchGuards = new WeakMap<MatchRow, LatestRequestGuard>()
+function guardFor(r: MatchRow): LatestRequestGuard {
+  let g = manualSearchGuards.get(r)
+  if (!g) {
+    g = createLatestRequestGuard()
+    manualSearchGuards.set(r, g)
+  }
+  return g
+}
+
 async function onManualSearch(r: MatchRow, query: string) {
   r._manualSearchQuery = query
-  if (!query || query.length < 2) {
+  if (isSearchTooShort(query)) {
     r._manualSearchItems = []
     return
   }
+  const { signal, isStale } = guardFor(r).begin()
   r._manualSearchLoading = true
   try {
     const data = await apiFetch<{ results?: Array<{ id: number; name: string; price: number | null; description?: string; photo_url?: string; product_type?: string; category?: string }> }>(
-      `/products/?search=${encodeURIComponent(query)}&limit=20`
+      `/products/?search=${encodeURIComponent(query)}&limit=20`,
+      { signal },
     )
+    if (isStale()) return
     // GET /api/products/ returns list of ProductOut directly
     const items = Array.isArray(data) ? data as any[] : (data.results ?? [])
     r._manualSearchItems = items.map((p: any) => ({
@@ -226,10 +251,11 @@ async function onManualSearch(r: MatchRow, query: string) {
       item_type: p.product_type ?? null,
       category: p.category ?? null,
     }))
-  } catch {
+  } catch (e: any) {
+    if (e?.name === 'AbortError') return
     r._manualSearchItems = []
   } finally {
-    r._manualSearchLoading = false
+    if (!isStale()) r._manualSearchLoading = false
   }
 }
 

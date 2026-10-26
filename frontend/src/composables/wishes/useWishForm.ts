@@ -17,6 +17,7 @@ import { ACTIONS } from '@/constants/permissionActions'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { numOrNull } from '@/utils/numberFormat'
 import { productPhotoSrc } from '@/utils/productPhoto'
+import { resolveWishFeoMissingTarget } from './wishFeoMissingTarget'
 import type { WishesContext } from './useWishesContext'
 import type { Wish } from './wishTypes'
 import type { EnsureApproversOutcome } from './useWishApprovers'
@@ -504,11 +505,18 @@ export function useWishForm(deps: {
     return items.filter((it) => !itemHasFinalFeoCategory(it, it.feo_category_id ?? wishFeoSelected.value))
   })
   const wishFeoCategoryMissing = computed(() => wishItemsMissingFeoCategory.value.length > 0)
-  const wishFeoCategoryMissingTooltip = computed(() =>
-    wishForm.value.feo_per_item
-      ? 'Не у всех позиций выбрана категория ФЭО — заполните её в таблице позиций выше, иначе заявку нельзя будет согласовать'
-      : 'Категория ФЭО заявки не выбрана (или не до конечного уровня) — заполните её в блоке выше, иначе заявку нельзя будет согласовать'
+  // Единственное место, решающее «какое поле виновато» — см.
+  // wishFeoMissingTarget.ts (ПРАВИЛО №6). Алерт в WishFormDialog.vue, тултип
+  // кнопок (wishFeoCategoryMissingTooltip) и подсветка (highlightMissingFeoCategory)
+  // ВСЕ берут текст/цель отсюда, второй копии логики в проекте нет.
+  const wishFeoMissingTarget = computed(() =>
+    resolveWishFeoMissingTarget({
+      subsidyId: wishForm.value.subsidy_id,
+      feoPerItem: !!wishForm.value.feo_per_item,
+      firstMissingItem: wishItemsMissingFeoCategory.value[0] ?? null,
+    })
   )
+  const wishFeoCategoryMissingTooltip = computed(() => wishFeoMissingTarget.value.tooltip)
   const wishItemsWithStaleFeoCategory = computed(() => {
     if (!wishFeoNodes.value.length) return [] as any[]
     const items = (wishForm.value.items as any[]).filter(
@@ -592,13 +600,53 @@ export function useWishForm(deps: {
     return !!itemDiscrepancy(item)
   }
 
+  // Цель подсветки берётся из wishFeoMissingTarget (resolveWishFeoMissingTarget,
+  // wishFeoMissingTarget.ts) — субсидия / само поле категории в шапке / строка
+  // конкретной позиции, НЕ всегда data-field="feo_category" (см. комментарий
+  // там же про жалобу владельца 2026-10-26: стрелка в пустую рамку указывала
+  // на край таблицы позиций).
+  //
+  // Координатор (2026-10-26, повторная проверка): для kind='category' целью
+  // должно быть САМО поле выбора (data-field="feo_category_select" внутри
+  // FeoTreeSelect.vue), а не вся рамка data-field="feo_category" (подпись +
+  // алерт + поле) — ValidationArrows.vue целится в вертикальный ЦЕНТР цели,
+  // у высокой рамки это пустая зона у кнопки «Импорт из файла» строкой ниже
+  // поля, а не само поле. Внутренний data-field ищем ВНУТРИ внешней рамки —
+  // она всё ещё нужна как fallback, если дерева нет в DOM (например, рамка
+  // сейчас показывает только алерт про устаревшую категорию).
+  //
+  // Координатор (2026-10-26, третья проверка): для kind='item' целью тоже
+  // должно быть САМО поле категории позиции (data-field="item-feo-category-
+  // select-<uid>", ItemsTableFlat.vue — отдельная feo-attrs-row ПОД основной
+  // строкой), а НЕ весь item-row-<uid> — тот id висит на верхней строке
+  // товара с иконкой корзины удаления, стрелка туда опасна (клик удалит
+  // позицию). item-row-<uid> остаётся fallback-целью для scrollIntoView,
+  // если узкое поле ещё не в DOM (строка свёрнута/виртуализирована) —
+  // после скролла к строке повторно ищем узкое поле.
   function highlightMissingFeoCategory() {
     const formEl = wishFormRef.value?.$el as HTMLElement | undefined
-    const target = formEl?.querySelector('[data-field="feo_category"]') as HTMLElement | null
+    if (!formEl) return
+    const t = wishFeoMissingTarget.value
+    let target: HTMLElement | null = null
+    let pulseClass = 'wish-date-missing-pulse'
+    if (t.kind === 'subsidy') {
+      target = formEl.querySelector('[data-field="subsidy_id"]') as HTMLElement | null
+    } else if (t.kind === 'item') {
+      const selectField = document.querySelector(`[data-field="item-feo-category-select-${t.uid}"]`) as HTMLElement | null
+      target = selectField || document.getElementById(`item-row-${t.uid}`)
+      pulseClass = 'plan-bulk-row-pulse'
+    } else {
+      target = (formEl.querySelector('[data-field="feo_category"] [data-field="feo_category_select"]')
+        || formEl.querySelector('[data-field="feo_category"]')) as HTMLElement | null
+    }
     if (!target) return
     target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    target.classList.add('wish-date-missing-pulse')
-    setTimeout(() => target.classList.remove('wish-date-missing-pulse'), 3000)
+    target.classList.add(pulseClass)
+    setTimeout(() => target!.classList.remove(pulseClass), 3000)
+    if (t.kind === 'subsidy') {
+      const input = target.querySelector('input') as HTMLInputElement | null
+      setTimeout(() => input?.focus(), 400)
+    }
     pointArrowsTo([target])
   }
   function highlightMissingApprovers() {
@@ -1298,6 +1346,7 @@ export function useWishForm(deps: {
     collectFeoDescendantIds, wishFeoBranchHasPlannedItems,
     wishPlannedResiduals, wishPlannedByCategory, reloadWishPlanned, onWishPlannedItemCreated,
     wishFeoStale, wishItemsMissingFeoCategory, wishFeoCategoryMissing, wishFeoCategoryMissingTooltip,
+    wishFeoMissingTarget,
     wishItemsWithStaleFeoCategory, pickWishUnallocated, itemDiscrepancy, wishItemStatus,
     highlightMissingFeoCategory, highlightMissingApprovers, focusApproversField, onAddApproversClick,
     undoRedoWish, totalNmck, onSubsidyChange,

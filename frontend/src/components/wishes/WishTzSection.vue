@@ -47,41 +47,13 @@
            отдельного сохранения тут нет. Один хелпер (ПРАВИЛО №6) — см.
            utils/itemTz.ts, тот же, что использует ItemsTableStages.vue. -->
       <div class="px-4 pt-3 pb-1">
-        <div v-for="(item, idx) in visibleItems" :key="item.id ?? item._uid ?? idx" class="mb-3">
-          <div class="text-caption text-medium-emphasis mb-1">{{ item.item_name }}</div>
-          <v-textarea
-            v-model="item.tz_description"
-            density="compact" variant="outlined" hide-details
-            rows="2" max-rows="6" auto-grow
-            label="Характеристики (ТЗ) этой позиции"
-            :placeholder="item._description || 'Характеристики не заданы'"
-          />
-          <div class="d-flex align-center ga-2 mt-1">
-            <span v-if="isTzFromCatalog(item)" class="text-caption text-medium-emphasis">
-              показано из каталога товара
-            </span>
-            <v-btn
-              v-if="(item.tz_description || '').trim() && item._description"
-              size="x-small" variant="text" color="primary" density="compact"
-              prepend-icon="mdi-restore"
-              @click="resetTzToCatalog(item)"
-            >
-              вернуть из каталога
-            </v-btn>
-            <!-- «Предложить в каталог» (план item-tz-description.md, Этап В,
-                 п.4) — только если позиция привязана к товару каталога И своё
-                 ТЗ реально отличается от каталожного (tzTextsDiffer, ПРАВИЛО
-                 №6 — тот же критерий различия, что у окна сравнения импорта). -->
-            <v-btn
-              v-if="item.product_id && item.id && tzTextsDiffer(item.tz_description, item._description)"
-              size="x-small" variant="text" color="teal" density="compact"
-              prepend-icon="mdi-upload-outline"
-              @click="openProposeDialog(item)"
-            >
-              предложить в каталог
-            </v-btn>
-          </div>
-        </div>
+        <WishTzItemRow
+          v-for="(item, idx) in visibleItems"
+          :key="item.id ?? item._uid ?? idx"
+          :item="item"
+          :mode="descriptionMode"
+          @propose="openProposeDialog"
+        />
       </div>
 
       <ProposeToCatalogDialog
@@ -128,8 +100,9 @@
 import { computed, ref, watch } from 'vue'
 import TzRowsSection from '@/components/purchase/TzRowsSection.vue'
 import ProposeToCatalogDialog from '@/components/products/ProposeToCatalogDialog.vue'
+import WishTzItemRow from '@/components/wishes/WishTzItemRow.vue'
 import type { TzRow } from '@/composables/purchase/useTzRows'
-import { isTzFromCatalog, resetTzToCatalog, effectiveTz, tzTextsDiffer } from '@/utils/itemTz'
+import { effectiveTz } from '@/utils/itemTz'
 
 type EditorItem = any
 
@@ -145,10 +118,14 @@ const tzRowsRef = ref<InstanceType<typeof TzRowsSection> | null>(null)
 // (см. шаблон), она читает исключительно сервер.
 const visibleItems = computed(() => (props.items || []).filter((it) => (it.item_name || '').trim()))
 
-const COLLAPSE_KEY = 'wish_tz_collapsed'
+// Ключ сменён (владелец, 26.10.2026, жалоба «не вижу ТЗ») — раньше блок был
+// свёрнут по умолчанию, и старое значение '1' в localStorage у всех
+// пользователей держало бы его свёрнутым даже после смены дефолта. Новый
+// ключ v2 — дефолт «развёрнут», старое сохранённое решение не наследуется.
+const COLLAPSE_KEY = 'wish_tz_collapsed_v2'
 const MODE_KEY = 'wish_tz_description_mode'
 
-const collapsed = ref(localStorage.getItem(COLLAPSE_KEY) !== '0') // свёрнута по умолчанию
+const collapsed = ref(localStorage.getItem(COLLAPSE_KEY) === '1') // развёрнута по умолчанию
 function toggleCollapsed() {
   collapsed.value = !collapsed.value
   try { localStorage.setItem(COLLAPSE_KEY, collapsed.value ? '1' : '0') } catch { /* noop */ }

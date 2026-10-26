@@ -44,10 +44,14 @@ async def test_new_product_gets_characteristics_manufacturer_article_and_built_d
 
 @pytest.mark.asyncio
 async def test_existing_product_characteristics_replaced_manufacturer_article_filled_only_if_empty(db_session, test_user):
+    # Описание старого товара намеренно похоже на новое (не обязательно по
+    # финальному решению владельца 26.10.2026 — supplier_description теперь
+    # заменяет описание файловым безусловно — но так тест нагляднее проверяет
+    # именно характеристики/manufacturer/article, а не замену текста).
     name = _uniq_name("Существующий")
     product = Product(
         name=name, category="Прочее",
-        description="Старое описание",
+        description="Текст поставщика",
         characteristics=[{"name": "Старая", "value": "1", "unit": None}],
         manufacturer="Старый производитель",
         article=None,
@@ -77,7 +81,7 @@ async def test_existing_product_characteristics_replaced_manufacturer_article_fi
         select(ProductDescriptionHistory).where(ProductDescriptionHistory.product_id == product.id)
     )).scalars().all()
     assert len(hist) == 1
-    assert hist[0].old_value == "Старое описание"
+    assert hist[0].old_value == "Текст поставщика"
 
 
 @pytest.mark.asyncio

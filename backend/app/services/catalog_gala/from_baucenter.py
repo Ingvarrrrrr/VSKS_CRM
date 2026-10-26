@@ -37,12 +37,22 @@ spec_parse.py, ПРАВИЛО №6), включая нормализацию с�
     есть); все элементы чистятся через clean_text на случай HTML-мусора в
     ссылках (как и у прочих текстовых полей).
   - specifications → characteristics, по ключу:
-      * "Страна производства" → ТАКЖЕ item["country_origin"] (новое
-        опциональное поле GALA, см. format.py) — апстрим
-        (products_import_apply.py/load_gala_catalog.py) заполняет
-        Product.country_origin, если он пуст или равен дефолту "РФ"; при
-        этом характеристику из characteristics НЕ убираем — владелец прямо
-        попросил оставить её видимой в карточке тоже.
+      * "Страна производства"/"Страна производитель"/"Страна изготовитель"
+        (дефис в ключе нормализуется в пробел перед сравнением — список
+        имён ключа вынесен в app.services.catalog_gala.country_names,
+        ПРАВИЛО №6, тот же модуль использует from_store_nomenclature.py;
+        "страна изготовитель" добавлена 26.10.2026, находка владельца:
+        country_origin='РФ' дефолт у baucenter_electro_lighting/
+        baucenter_tools_hardware — перенос страны из файла появился позже
+        загрузки) → ТАКЖЕ item["country_origin"] (новое опциональное поле
+        GALA, см. format.py) — апстрим (products_import_apply.py/
+        load_gala_catalog.py) заполняет Product.country_origin, если он
+        пуст или равен дефолту "РФ"; при этом характеристику из
+        characteristics НЕ убираем — владелец прямо попросил оставить её
+        видимой в карточке тоже. "Производство"/"Производство изделия" —
+        НЕ страна (в baucenter такие ключи не встречались при проверке
+        26.10.2026 — specifications этой выгрузки используют только три
+        варианта выше), country_names.COUNTRY_KEY_NAMES их не содержит.
       * "Марка" — если значение совпадает с brand (без учёта регистра/
         пробелов), в characteristics НЕ дублируется (manufacturer уже несёт
         этот факт); отличается от brand или brand пуст — остаётся обычной
@@ -54,6 +64,7 @@ spec_parse.py, ПРАВИЛО №6), включая нормализацию с�
   - is_reusable/is_active не определены в исходнике → null.
 """
 from app.services.catalog_gala.clean import clean_text
+from app.services.catalog_gala.country_names import COUNTRY_KEY_NAMES, norm_country_key
 from app.services.catalog_gala.spec_parse import split_key_unit
 
 _CONSTRUCTION_CATEGORY = "Строительные и отделочные материалы"
@@ -72,9 +83,9 @@ def _parse_specifications(specs: dict, brand) -> tuple:
         key_lower = raw_key.strip().lower()
         value = clean_text(raw_value)
 
-        if key_lower == "страна производства":
+        if norm_country_key(key_lower) in COUNTRY_KEY_NAMES:
             country_origin = value
-            characteristics.append({"name": "Страна производства", "value": value, "unit": None})
+            characteristics.append({"name": clean_text(raw_key) or raw_key, "value": value, "unit": None})
             continue
 
         if key_lower == "марка" and _norm_eq(value, brand):

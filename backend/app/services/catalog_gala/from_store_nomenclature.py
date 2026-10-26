@@ -28,21 +28,53 @@ nomenclature.json, sima_land_catalog_all.json) → формат GALA (см. form
     итоговому article — не пишется в characteristics (дубль, не вторая
     характеристика); отличается по значению — остаётся обычной
     характеристикой.
-  - "Страна-производитель"/"Страна производства" (дефис или пробел —
-    нормализуются перед сравнением) → ТАКЖЕ item["country_origin"] (как у
+  - "Страна-производитель"/"Страна производства"/"Страна изготовитель"
+    (дефис или пробел — нормализуются перед сравнением; список имён ключа —
+    app.services.catalog_gala.country_names, ПРАВИЛО №6, тот же модуль
+    использует from_baucenter.py) → ТАКЖЕ item["country_origin"] (как у
     baucenter, format.py); характеристика из characteristics НЕ убирается —
     видна в карточке тоже (то же решение владельца, что у baucenter).
+    ДОПОЛНЕНО 26.10.2026 (находка владельца: country_origin='РФ' дефолт у
+    товаров ряда выгрузок, перенос страны из файла появился позже загрузки):
+    "страна изготовитель" добавлена в общий список (country_names.py);
+    "страна-изготовитель" покрывается тем же вариантом после нормализации
+    дефиса — отдельной записи не требует.
   - "Торговая марка" — если значение совпадает с итоговым manufacturer (без
     учёта регистра/пробелов), в characteristics НЕ дублируется; отличается
     или manufacturer не задан — остаётся обычной характеристикой.
-  - "Габариты (ДхШхВ)" и "Вес брутто" — характеристики упаковки товара (не
-    самого товара), in_description=False; значение в карточке остаётся.
+  - "Габариты (ДхШхВ)" и "Вес брутто" (Сима-ленд) — владелец УТОЧНИЛ
+    26.10.2026 на примере товара id 152085 («Ластик фигурный «Панда»»,
+    sima_land_catalog_all.json): это технические параметры товара, которые
+    ДОЛЖНЫ идти в описание (как и остальные характеристики) — НЕ помечаются
+    in_description=False. Прежнее решение дня (упаковка, не товар) отменено
+    этим же днём.
   - source_store → characteristic "Магазин-источник" (in_description=False —
     это данные о логистике, не о товаре), НЕ в manufacturer (это не
     производитель, а магазин, у которого выгрузка).
   - link_1 → source_url и links=[{"url","price"}], если непусто.
   - photo_url → photos=[photo_url], если непусто.
-  - description НЕ переносится (SEO-реклама магазина, решение владельца).
+  - description ПЕРЕСМОТРЕНО 26.10.2026 (Задача 1, решение владельца): у всех
+    товаров в этих выгрузках в description — технический текст поставщика
+    (описание и состоит из технических параметров), не реклама. Переносится
+    как base_text (item["description"]): чистится через clean_text, затем
+    срезается служебный префикс "Описание <название товара>" или просто
+    "Описание" в начале (см. _strip_description_prefix) — это не часть
+    текста, а заголовок-повтор, который магазин ставит перед описанием.
+    Остальной текст (технические параметры в свободной форме) остаётся как
+    есть. build_tech_description (другой модуль, см. ПРАВИЛО №6 — там
+    единственная сборка текста из base_text+характеристик) дальше склеивает
+    этот base_text с characteristics — здесь, в конвертере, эта склейка НЕ
+    вызывается, только формируется base_text.
+    ДОПОЛНЕНО 26.10.2026 (тем же днём, после среза префикса): у части товаров
+    (fire_equipment: "Гидроэлеватор пожарный Г-600", "Колонка пожарная КПА",
+    "ШКПС (шлем-каска пожарного спасателя) с пелериной (черная)") остаток
+    текста — не технический, а реклама магазина ("... по низким ценам в
+    Москве в компании Magazin01. На нашем сайте большой выбор... купить ...
+    с доставкой по России."). После _strip_description_prefix текст
+    дополнительно прогоняется через strip_ad_sentences (см.
+    app.services.catalog_gala.ad_text_filter, ПРАВИЛО №6 — единственное
+    место такой фильтрации) — рекламные предложения удаляются целиком; если
+    весь текст был рекламой, base_text становится None (как у Г-600/КПА).
   - specifications → characteristics, с чисткой (_clean_characteristics):
       * ключ ПОСЛЕ clean_text, с обрезанным хвостовым ":" (двоеточие в конце
         ключа — артефакт выгрузки, не часть имени).
@@ -94,7 +126,9 @@ nomenclature.json, sima_land_catalog_all.json) → формат GALA (см. form
 """
 import re
 
+from app.services.catalog_gala.ad_text_filter import strip_ad_sentences
 from app.services.catalog_gala.clean import clean_text
+from app.services.catalog_gala.country_names import COUNTRY_KEY_NAMES, norm_country_key
 from app.services.catalog_gala.spec_parse import split_key_unit
 
 _PURE_DIGIT_RE = re.compile(r"^[\d\s№]+$")
@@ -139,21 +173,52 @@ def _is_junk_key(key: str) -> bool:
 # вес упаковки магазина, не самого товара (см. докстринг модуля).
 _PACKAGE_DIM_NAMES = {"длина", "ширина", "высота", "вес"}
 
-# Сима-ленд (26.10): габариты/вес упаковки товара — всегда, независимо от
-# source_file (в отличие от _PACKAGE_DIM_NAMES выше, которые только у
-# rescue_medical и без уточнения в ключе).
-_SIMA_PACKAGE_KEY_NAMES = {"вес брутто", "габариты (дхшхв)"}
+# Сима-ленд (26.10, уточнение владельца тем же днём на примере товара
+# id 152085 «Ластик фигурный «Панда»»): "Вес брутто"/"Габариты (ДхШхВ)" —
+# технические параметры ТОВАРА, не только упаковки — больше НЕ помечаются
+# in_description=False (пустое множество, прежнее решение отменено).
+_SIMA_PACKAGE_KEY_NAMES: set = set()
 
 
 def _is_rescue_medical(source_file: str) -> bool:
     return "rescue_medical" in (source_file or "").lower()
 
 
-def _norm_country_key(key_lower: str) -> str:
-    return key_lower.replace("-", " ").strip()
+# Владелец, 2026-10-26, Задача 1 (пересмотр): выгрузки ставят перед
+# технический текстом поставщика служебный заголовок-повтор "Описание
+# <название товара>" (например "Описание Шлем ШКПС серебряный Соответствует
+# требованиям ГОСТ..." — всё после заголовка это нормальный технический текст
+# поставщика). Срезаем только этот заголовок, регистронезависимо.
+_DESCRIPTION_WORD_RE = re.compile(r"^описание\b", re.IGNORECASE)
 
 
-_COUNTRY_KEY_NAMES = {"страна производитель", "страна производства"}
+def _strip_description_prefix(description, name) -> "str | None":
+    """Срезает служебный префикс "Описание <название>" (или просто
+    "Описание") из начала текста description, если он там есть. Остаток —
+    обычный технический текст поставщика, остаётся как есть. См. докстринг
+    модуля (Задача 1, 26.10.2026)."""
+    if not description:
+        return None
+    text = description.strip()
+    if not text:
+        return None
+
+    clean_name = clean_text(name) or ""
+    if clean_name:
+        prefix_with_name_re = re.compile(
+            r"^описание\s+" + re.escape(clean_name), re.IGNORECASE
+        )
+        match = prefix_with_name_re.match(text)
+        if match:
+            remainder = text[match.end():].strip()
+            return remainder or None
+
+    match = _DESCRIPTION_WORD_RE.match(text)
+    if match:
+        remainder = text[match.end():].lstrip(" :.-").strip()
+        return remainder or None
+
+    return text
 
 
 def _clean_characteristics(specs: dict, is_rescue_medical: bool, top_manufacturer, top_article) -> tuple:
@@ -231,7 +296,7 @@ def _clean_characteristics(specs: dict, is_rescue_medical: bool, top_manufacture
             characteristics.append({"name": key, "value": value, "unit": None})
             continue
 
-        if _norm_country_key(key_lower) in _COUNTRY_KEY_NAMES:
+        if norm_country_key(key_lower) in COUNTRY_KEY_NAMES:
             country_origin = value
             characteristics.append({"name": key, "value": value, "unit": None})
             continue
@@ -282,8 +347,16 @@ def convert(raw: list, source_file: str) -> dict:
         photo = row.get("photo_url") or None
         photos = [photo] if photo else []
 
+        item_name = clean_text(row.get("name"))
+        description = _strip_description_prefix(clean_text(row.get("description")), item_name)
+        # 26.10.2026, Задача 1 (решение владельца тем же днём): после срезки
+        # служебного заголовка вырезаем рекламные предложения магазина — см.
+        # app.services.catalog_gala.ad_text_filter (ЕДИНСТВЕННОЕ место этого
+        # фильтра, ПРАВИЛО №6).
+        description = strip_ad_sentences(description)
+
         items.append({
-            "name": clean_text(row.get("name")),
+            "name": item_name,
             "category": category,
             "category_path": [category] if category else [],
             "product_type": None,
@@ -296,7 +369,7 @@ def convert(raw: list, source_file: str) -> dict:
             "currency": "RUB" if price is not None else None,
             "manufacturer": manufacturer,
             "article": article,
-            "description": None,  # реклама магазина — не переносим (владелец, 26.10)
+            "description": description,  # base_text поставщика, см. докстринг модуля (26.10, Задача 1)
             "characteristics": characteristics,
             "country_origin": country_origin,
             "photos": photos,

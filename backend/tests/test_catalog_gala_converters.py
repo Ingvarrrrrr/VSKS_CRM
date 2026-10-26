@@ -43,10 +43,12 @@ def test_electro_mpo_converter():
     assert item["manufacturer"] == "Legrand"
     assert item["article"] == "078604"
     assert item["product_type"] == "Розетка телефонная"
-    # Задача 2 (26.10): «Высота»/«Объём» — габариты упаковки, не попадают в
-    # техописание (in_description=False), но хранятся в карточке полностью.
+    # Задача 2 (26.10): «Высота» — габарит упаковки, не попадает в
+    # техописание (in_description=False), но хранится в карточке полностью.
     assert {"name": "Высота", "value": "0.015", "unit": "м", "in_description": False} in item["characteristics"]
-    assert {"name": "Объём", "value": "3.0E-5", "unit": "м³", "in_description": False} in item["characteristics"]
+    # Задача 1б (26.10, пересмотр): «Объём» убран из _NOT_IN_DESCRIPTION —
+    # это технический параметр самого товара, а не упаковки, остаётся в описании.
+    assert {"name": "Объём", "value": "3.0E-5", "unit": "м³"} in item["characteristics"]
     assert {"name": "Серия", "value": "Mosaic", "unit": None} in item["characteristics"]
     assert item["source_url"] == "https://example.com/item"
     assert item["links"] == [{"url": "https://example.com/item", "price": 403.82}]
@@ -55,9 +57,11 @@ def test_electro_mpo_converter():
 
 
 def test_electro_mpo_excludes_more_packaging_characteristics_from_description():
-    """Остальные характеристики упаковки из списка Задачи 2: "Номер по
-    прайс-листу", "Торговая единица", "Количество товара в упаковке",
-    "Хрупкость", "Ширина", "Глубина" — тоже не попадают в описание."""
+    """Остальные характеристики упаковки/логистики из списка Задачи 2: "Номер
+    по прайс-листу", "Торговая единица", "Количество товара в упаковке",
+    "Ширина", "Глубина" — не попадают в описание. "Хрупкость" убрана из
+    этого списка 26.10.2026 (Задача 1б, пересмотр) — технический параметр
+    товара, остаётся в описании."""
     raw = [{
         "name": "Товар", "category": "C", "price": 10, "unit": "шт", "url": "", "photo": "",
         "specifications": {
@@ -72,12 +76,13 @@ def test_electro_mpo_excludes_more_packaging_characteristics_from_description():
     }]
     item = from_electro_mpo.convert(raw, "f.json")["items"][0]
     by_name = {c["name"]: c for c in item["characteristics"]}
-    for name in ("Номер по прайс-листу", "Торговая единица", "Количество товара в упаковке", "Хрупкость"):
+    for name in ("Номер по прайс-листу", "Торговая единица", "Количество товара в упаковке"):
         assert by_name[name]["in_description"] is False, name
     assert by_name["Ширина"]["in_description"] is False
     assert by_name["Глубина"]["in_description"] is False
-    # "Вес" НЕ входит в список исключений — остаётся в описании (нет флага).
+    # "Вес" и "Хрупкость" НЕ входят в список исключений — остаются в описании.
     assert "in_description" not in by_name["Вес"]
+    assert "in_description" not in by_name["Хрупкость"]
 
 
 def test_electro_mpo_zero_dimension_value_not_written():
@@ -546,7 +551,7 @@ def test_store_nomenclature_basic_mapping():
         "source_store": "АльпИндустрия / Ледниковый период",
         "link_1": "https://ice-age.ru/product/x",
         "photo_url": "https://cdn.example.com/x.jpeg",
-        "description": "Рекламный текст, который не переносим.",
+        "description": "Описание Детская страховочная система OUISTITI Соответствует ГОСТ.",
         "specifications": {"Артикул": "C068AA00"},
     }]
     result = from_store_nomenclature.convert(raw, "promalp_height_safety_nomenclature.json")
@@ -557,7 +562,9 @@ def test_store_nomenclature_basic_mapping():
     assert item["product_type"] is None
     assert item["price"] == 7490.0
     assert item["article"] == "C068AA00"
-    assert item["description"] is None
+    # Задача 1 (26.10, пересмотр): текст поставщика переносится, служебный
+    # заголовок-повтор "Описание <название>" срезается.
+    assert item["description"] == "Соответствует ГОСТ."
     assert item["photos"] == ["https://cdn.example.com/x.jpeg"]
     assert item["links"] == [{"url": "https://ice-age.ru/product/x", "price": 7490.0}]
     by_name = {c["name"]: c for c in item["characteristics"]}
@@ -738,7 +745,9 @@ def test_store_nomenclature_sima_land_fragment():
     brand/article приоритетнее характеристик, "Артикул Сима-ленд"/"Торговая
     марка" с тем же значением — не дублируются, "Страна-производитель" идёт
     и в country_origin, и в characteristics, "Вес брутто"/"Габариты (ДхШхВ)"
-    — упаковка (in_description=False)."""
+    — технические параметры товара (владелец уточнил тем же днём на примере
+    товара id 152085 «Ластик фигурный «Панда»») — идут в описание, БЕЗ
+    in_description=False."""
     raw = [{
         "name": "Челюсть «Вампир», зелёная", "category": "Приколы", "brand": "Сима-ленд",
         "article": "4878510", "unit": "шт", "price_rub": 3.58,
@@ -758,13 +767,15 @@ def test_store_nomenclature_sima_land_fragment():
     assert item["manufacturer"] == "Сима-ленд"
     assert item["article"] == "4878510"
     assert item["country_origin"] == "Китай"
-    assert item["description"] is None
+    # Задача 1 (26.10, пересмотр): текст без служебного префикса "Описание"
+    # переносится как есть — это нормальный текст поставщика о товаре.
+    assert item["description"] == "Челюсть «Вампир», зелёная. Сертифицированная продукция."
     by_name = {c["name"]: c for c in item["characteristics"]}
     assert "Артикул Сима-ленд" not in by_name, "дубль article — не пишем"
     assert by_name["Страна-производитель"]["value"] == "Китай"
-    assert by_name["Вес брутто"] == {"name": "Вес брутто", "value": "2 г", "unit": None, "in_description": False}
+    assert by_name["Вес брутто"] == {"name": "Вес брутто", "value": "2 г", "unit": None}
     assert by_name["Габариты (ДхШхВ)"] == {
-        "name": "Габариты (ДхШхВ)", "value": "5.5 x 4 x 2 см", "unit": None, "in_description": False,
+        "name": "Габариты (ДхШхВ)", "value": "5.5 x 4 x 2 см", "unit": None,
     }
     assert validate_gala_catalog(_envelope("store_nomenclature", result["items"])) == []
 
@@ -812,3 +823,136 @@ def test_store_nomenclature_top_level_brand_article_no_specs():
     item = from_store_nomenclature.convert(raw, "sima_land_catalog_all.json")["items"][0]
     assert item["manufacturer"] == "Сима-ленд"
     assert item["article"] == "999"
+
+
+# --- _strip_description_prefix (Задача 1, 26.10, пересмотр) -----------------
+
+def test_strip_description_prefix_with_name_repeated():
+    """"Описание <название>" в начале — весь префикс (слово + название)
+    срезается, настоящий технический текст поставщика остаётся."""
+    strip = from_store_nomenclature._strip_description_prefix
+    text = "Описание Шлем ШКПС серебряный Соответствует требованиям ГОСТ Р 53269-2009."
+    assert strip(text, "Шлем ШКПС серебряный") == "Соответствует требованиям ГОСТ Р 53269-2009."
+
+
+def test_strip_description_prefix_with_name_case_insensitive():
+    strip = from_store_nomenclature._strip_description_prefix
+    text = "ОПИСАНИЕ шлем шкпс серебряный Текст про товар."
+    assert strip(text, "Шлем ШКПС серебряный") == "Текст про товар."
+
+
+def test_strip_description_prefix_word_only_name_mismatch():
+    """Название не совпало с началом текста после "Описание" — срезаем
+    только слово "Описание", остальной текст остаётся как есть."""
+    strip = from_store_nomenclature._strip_description_prefix
+    text = "Описание Соответствует требованиям ГОСТ Р 53269-2009."
+    assert strip(text, "Шлем ШКПС серебряный") == "Соответствует требованиям ГОСТ Р 53269-2009."
+
+
+def test_strip_description_prefix_word_only_no_name():
+    strip = from_store_nomenclature._strip_description_prefix
+    assert strip("Описание: технический текст.", "Товар") == "технический текст."
+
+
+def test_strip_description_prefix_no_prefix_kept_as_is():
+    """Текст без служебного заголовка "Описание" — возвращается как есть
+    (это нормальный технический текст поставщика)."""
+    strip = from_store_nomenclature._strip_description_prefix
+    assert strip("Соответствует ГОСТ Р 53269-2009.", "Товар") == "Соответствует ГОСТ Р 53269-2009."
+
+
+def test_strip_description_prefix_word_boundary_not_matched_inside_word():
+    """"Описаниетовара" — не отдельное слово "Описание" (нет границы слова),
+    не срезаем."""
+    strip = from_store_nomenclature._strip_description_prefix
+    assert strip("Описаниетовара техническое", "Товар") == "Описаниетовара техническое"
+
+
+def test_strip_description_prefix_empty_and_none():
+    strip = from_store_nomenclature._strip_description_prefix
+    assert strip(None, "Товар") is None
+    assert strip("", "Товар") is None
+    assert strip("   ", "Товар") is None
+    assert strip("Описание Товар", "Товар") is None  # остаток после префикса пуст
+
+
+# --- strip_ad_sentences подключён в convert() (Задача 1, 26.10, доп.) -------
+# Реальные description из fire_equipment_nomenclature.json (name =
+# "Гидроэлеватор пожарный Г-600" / "Колонка пожарная КПА") — у этих товаров
+# в файле НЕТ служебного "Описание <название>" (в отличие от ШКПС в тестах
+# выше), текст прямо начинается с рекламы магазина Magazin01.
+
+def test_convert_g600_description_becomes_none_after_ad_filter():
+    raw = [{
+        "name": "Гидроэлеватор пожарный Г-600", "category": "Пожарное оборудование",
+        "unit": "шт", "price_rub": 100, "source_store": "Magazin01",
+        "link_1": "", "photo_url": None,
+        "description": (
+            "Гидроэлеватор пожарный Г-600 по низким ценам в Москве в компании "
+            "Magazin01. На нашем сайте большой выбор пожарного оборудования, у "
+            "нас вы можете купить гидроэлеватор Г-600 с доставкой по России."
+        ),
+        "specifications": {},
+    }]
+    item = from_store_nomenclature.convert(raw, "fire_equipment_nomenclature.json")["items"][0]
+    assert item["description"] is None
+
+
+# --- country_names.py: "страна изготовитель" (26.10, находка владельца) -----
+
+def test_store_nomenclature_strana_izgotovitel_sets_country_origin():
+    """"Страна изготовитель" (без дефиса) — вариант, добавленный 26.10.2026 в
+    общий app.services.catalog_gala.country_names (ПРАВИЛО №6) после находки
+    владельца: country_origin='РФ' дефолт у k_spasatel/rescue_medical/
+    fire_equipment и др., перенос страны из файла появился позже загрузки."""
+    raw = [{
+        "name": "Товар", "category": "C", "unit": "шт", "price_rub": 10,
+        "source_store": "S", "link_1": "", "photo_url": None, "description": "",
+        "specifications": {"Страна изготовитель": "Франция"},
+    }]
+    item = from_store_nomenclature.convert(raw, "k_spasatel_rescue_nomenclature.json")["items"][0]
+    assert item["country_origin"] == "Франция"
+
+
+def test_store_nomenclature_strana_izgotovitel_with_hyphen_sets_country_origin():
+    """"Страна-изготовитель" (дефис) — покрывается тем же вариантом после
+    norm_country_key, отдельной записи в COUNTRY_KEY_NAMES не требует."""
+    raw = [{
+        "name": "Товар", "category": "C", "unit": "шт", "price_rub": 10,
+        "source_store": "S", "link_1": "", "photo_url": None, "description": "",
+        "specifications": {"Страна-изготовитель": "Россия"},
+    }]
+    item = from_store_nomenclature.convert(raw, "k_spasatel_rescue_nomenclature.json")["items"][0]
+    assert item["country_origin"] == "Россия"
+
+
+def test_baucenter_strana_izgotovitel_sets_country_origin():
+    """Тот же общий список имён ключа (country_names.py) у from_baucenter.py —
+    "Страна изготовитель" тоже даёт country_origin (ПРАВИЛО №6, один источник
+    истины для обоих конвертеров)."""
+    raw = [{
+        "id": 1, "name": "Товар", "brand": "", "article": "",
+        "category": "Кат", "unit": "шт", "price": 100,
+        "url": "", "photo": "", "all_photos": [],
+        "description": "",
+        "specifications": {"Страна изготовитель": "КНР"},
+    }]
+    item = from_baucenter.convert(raw, "f.json")["items"][0]
+    assert item["country_origin"] == "КНР"
+
+
+def test_convert_kpa_description_becomes_none_after_ad_filter():
+    raw = [{
+        "name": "Колонка пожарная КПА", "category": "Пожарное оборудование",
+        "unit": "шт", "price_rub": 100, "source_store": "Magazin01",
+        "link_1": "", "photo_url": None,
+        "description": (
+            "Колонка пожарная КПА по низким ценам в Москве в компании "
+            "Magazin01. На нашем сайте большой выбор пожарного оборудования, "
+            "у нас вы можете купить пожарную водоразборную колонку КПА с "
+            "доставкой по России."
+        ),
+        "specifications": {},
+    }]
+    item = from_store_nomenclature.convert(raw, "fire_equipment_nomenclature.json")["items"][0]
+    assert item["description"] is None

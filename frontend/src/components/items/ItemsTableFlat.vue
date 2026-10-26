@@ -369,7 +369,13 @@
           <td :colspan="totalColCount - 2">
             <div class="d-flex align-start ga-4 flex-wrap py-1">
               <template v-if="feoPerItem">
-                <div style="flex:2 1 520px;min-width:320px">
+                <!-- data-field="item-feo-category-select-<uid>" — цель useWishForm.ts::
+                     highlightMissingFeoCategory (kind='item'), wishFeoMissingTarget.ts.
+                     Координатор (2026-10-26): id="item-row-<uid>" (строка 49 выше) висит
+                     на ВЕРХНЕЙ строке товара (с корзиной удаления) — целиться туда для
+                     подсветки ПОЛЯ категории опасно, стрелка утыкалась в иконку корзины.
+                     Это поле — в ОТДЕЛЬНОЙ feo-attrs-row строкой ниже, нужен свой узкий id. -->
+                <div :data-field="`item-feo-category-select-${item._uid ?? idx}`" style="flex:2 1 520px;min-width:320px">
                   <v-tooltip :text="itemFeoLockTooltip(item) || ''" :disabled="!itemFeoLockTooltip(item)" location="top">
                     <template #activator="{ props: lockTip }">
                       <div v-bind="lockTip">

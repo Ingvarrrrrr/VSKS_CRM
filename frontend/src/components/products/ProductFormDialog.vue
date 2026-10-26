@@ -172,15 +172,53 @@
             >
               Предложить правку описания для 44-ФЗ
             </v-btn>
+            <!-- Сборка ТЗ 44-ФЗ из характеристик каталога (владелец,
+                 26.10.2026) — только для существующего товара (нужен id для
+                 preview) и только когда поле реально редактируемо; ничего
+                 не сохраняет сама, кладёт текст в form.description_44fz —
+                 реальное сохранение делает общая кнопка «Сохранить» тем же
+                 PUT/PATCH, что и раньше (ПРАВИЛО №6, второй механизм записи
+                 не заводим). -->
+            <v-btn
+              v-if="editingId && !description44Readonly"
+              size="small" variant="tonal" color="secondary" class="mt-1 ml-2"
+              prepend-icon="mdi-file-document-check-outline"
+              :loading="generatingTz44"
+              @click="onGenerateTz44Click"
+            >
+              Сформировать по характеристикам
+            </v-btn>
+            <div v-if="tz44NeedsReview" class="text-caption text-warning mt-1">
+              Проверьте наименование — не удалось однозначно очистить от бренда/модели.
+            </div>
+            <!-- Подтверждение замены непустого поля — внутри диалога, не
+                 confirm() (см. CLAUDE.md: системные confirm-диалоги в этом
+                 проекте не используются). -->
+            <v-alert v-if="tz44Pending" type="warning" variant="tonal" density="comfortable" class="mt-2">
+              Поле «Описание для 44-ФЗ» не пустое. Заменить его сформированным текстом?
+              <div class="d-flex gap-2 mt-2">
+                <v-btn size="small" color="warning" variant="flat" @click="applyGeneratedTz44">Заменить</v-btn>
+                <v-btn size="small" variant="text" @click="tz44Pending = null">Отмена</v-btn>
+              </div>
+            </v-alert>
           </v-col>
 
           <!-- Характеристики каталога (владелец, 26.10) — только показ, без
                полей ввода: заполняет загрузчик из прайсов поставщиков
                (app/services/catalog_gala/), карточка здесь их не редактирует. -->
-          <v-col cols="12" v-if="form.manufacturer || form.article || (form.characteristics && form.characteristics.length)">
+          <v-col cols="12" v-if="form.manufacturer || form.article || productLinkUrl || (form.characteristics && form.characteristics.length)">
             <div class="text-subtitle-2 mb-2">Характеристики каталога</div>
             <div v-if="form.manufacturer">Производитель: {{ form.manufacturer }}</div>
             <div v-if="form.article">Артикул: {{ form.article }}</div>
+            <!-- Владелец: «ссылка на товар при импорте не отображается» — форма её
+                 уже содержит (clarification_link/priceLinks из useProductsForm.ts),
+                 не показывалась только здесь. Фолбэк на первую ссылку из
+                 priceLinks ТОЛЬКО если clarification_link пуст (ПРАВИЛО №6 — тот
+                 же источник данных формы, второй механизм не заводим). -->
+            <div v-if="productLinkUrl">
+              Ссылка на товар:
+              <a :href="productLinkUrl" target="_blank" rel="noopener">{{ productLinkUrl }}</a>
+            </div>
             <v-table v-if="form.characteristics && form.characteristics.length" density="compact" class="mt-2">
               <thead>
                 <tr>
@@ -383,6 +421,16 @@ const emit = defineEmits<{
 const dialog = defineModel<boolean>('modelValue', { required: true })
 const nameSearch = defineModel<string>('nameSearch', { required: true })
 
+// Владелец: «ссылка на товар при импорте не отображается» — clarification_link
+// форма уже содержит (useProductsForm.ts:195), фолбэк на первую ссылку из
+// priceLinks (useProductsForm.ts:198) только если clarification_link пуст.
+const productLinkUrl = computed<string>(() => {
+  const direct = (props.form.clarification_link || '').trim()
+  if (direct) return direct
+  const firstPriceLink = (props.form.priceLinks || []).find((l: { url: string }) => (l.url || '').trim())
+  return firstPriceLink ? firstPriceLink.url.trim() : ''
+})
+
 // Этап В, п.1: правка СУЩЕСТВУЮЩЕГО товара без права — поля, не входящие в
 // "заполнение пустого" (название/категория/единица/тип и т.д.), только
 // чтение. Создание нового (editingId==null) не ограничено (см. докстринг
@@ -438,5 +486,46 @@ async function onHistoryReverted() {
   if (!fresh) return
   props.form.description = fresh.description || ''
   props.form.description_44fz = fresh.description_44fz || ''
+}
+
+// Сборка ТЗ 44-ФЗ из характеристик (владелец, 26.10.2026) — вызывает ТОЛЬКО
+// preview-роутер (app/routers/products_tz44.py), ничего не сохраняет сама.
+// Единственный генератор текста — backend/app/services/product_tz_44fz.py
+// (ПРАВИЛО №6); фронт просто показывает результат и кладёт его в форму.
+const generatingTz44 = ref(false)
+const tz44NeedsReview = ref(false)
+const tz44Pending = ref<string | null>(null)
+
+async function onGenerateTz44Click() {
+  if (!props.editingId) return
+  generatingTz44.value = true
+  tz44NeedsReview.value = false
+  try {
+    const result = await apiFetch<{ text: string | null; needs_review: boolean }>(
+      `/products/${props.editingId}/tz-44fz/preview`,
+      { method: 'POST' },
+    )
+    if (!result.text) {
+      tz44NeedsReview.value = false
+      return
+    }
+    tz44NeedsReview.value = result.needs_review
+    if ((props.form.description_44fz || '').trim()) {
+      // Поле не пустое — подтверждение внутри диалога (см. v-alert ниже),
+      // не браузерный confirm().
+      tz44Pending.value = result.text
+    } else {
+      props.form.description_44fz = result.text
+    }
+  } finally {
+    generatingTz44.value = false
+  }
+}
+
+function applyGeneratedTz44() {
+  if (tz44Pending.value) {
+    props.form.description_44fz = tz44Pending.value
+  }
+  tz44Pending.value = null
 }
 </script>

@@ -87,6 +87,11 @@ from app.routers import products_avg_price
 # (минимум на сегмент длиннее catch-all) и GET/POST "/description-proposals..."
 # (литерал) — тот же порядок регистрации, что у products_* соседей выше.
 from app.routers import product_description
+# Предпросмотр ТЗ 44-ФЗ (владелец, 26.10.2026) — POST "/{product_id}/
+# tz-44fz/preview", на сегмент длиннее catch-all "/{product_id}", ничего не
+# сохраняет (app/services/product_tz_44fz.py). Тот же порядок регистрации,
+# что у products_* соседей выше — ДО products.router.
+from app.routers import products_tz44
 # Разрезание feo_categories.py (Правило №5, сессия 2026-09-07): feo_plan_reads,
 # feo_import, feo_tree_ops содержат ТОЛЬКО статические/литеральные пути на
 # префиксе /api/feo-categories (feo_plan_reads/feo_import — без {cat_id} вовсе;
@@ -453,6 +458,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(products_options.router)
     app.include_router(products_avg_price.router)
     app.include_router(product_description.router)
+    app.include_router(products_tz44.router)
     app.include_router(products.router)
     app.include_router(price_freshness_router.router)
     app.include_router(purchase_files.router)

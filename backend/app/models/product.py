@@ -85,6 +85,14 @@ class Product(Base):
     # Примечание об импорте: кто загрузил данные, каким способом и когда
     import_note = Column(Text, nullable=True)
 
+    # Характеристики каталога (владелец, 26.10): карточка товара пока только
+    # ПОКАЗЫВАЕТ эти поля (см. ProductFormDialog.vue), заполняет их позже
+    # загрузчик из прайсов поставщиков (app/services/catalog_gala/).
+    # Список объектов [{"name","value","unit"}], порядок как у поставщика.
+    characteristics = Column(JSONB, nullable=True)
+    manufacturer = Column(String(300), nullable=True)  # Производитель
+    article = Column(String(200), nullable=True)  # Артикул/номер по каталогу поставщика
+
     feo_category = relationship("FeoCategory", backref="products")
 
     # Категории закупки (владелец, 2026-09-16) — НЕСКОЛЬКО, отдельный

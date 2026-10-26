@@ -25,6 +25,16 @@ class PriceFreshnessOut(BaseModel):
     fx_change_pct: Optional[float] = None
     label: str
 
+class ProductCharacteristic(BaseModel):
+    """Одна характеристика карточки товара — «название: значение ед.» (владелец,
+    26.10). Единственная форма представления характеристик в проекте — та же
+    форма отдают конвертеры app/services/catalog_gala/ и читает
+    app/services/product_tech_description.py::build_tech_description."""
+    name: str
+    value: Optional[str] = None
+    unit: Optional[str] = None
+
+
 class PurchaseCategoryRef(BaseModel):
     """Категория закупки (владелец, 2026-09-16) — отдельный справочник от
     «категории товара» (Product.category, поле ниже). См. app.models.purchase_category."""
@@ -110,6 +120,11 @@ class ProductOut(ProductCreate):
     avg_price_level: Optional[str] = None
     avg_price_region: Optional[str] = None
     avg_price_batch: Optional[str] = None
+    # Характеристики каталога (владелец, 26.10) — только показ, см.
+    # app/models/product.py::Product.characteristics/manufacturer/article.
+    characteristics: Optional[List[ProductCharacteristic]] = None
+    manufacturer: Optional[str] = None
+    article: Optional[str] = None
     model_config = {"from_attributes": True}
 
     @model_validator(mode='after')

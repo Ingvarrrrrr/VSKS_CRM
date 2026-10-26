@@ -51,6 +51,11 @@ export interface Product {
   avg_price_level?: string | null
   avg_price_region?: string | null
   avg_price_batch?: string | null
+  // Характеристики каталога — только показ, задача владельца 26.10,
+  // наполняются загрузчиком позже.
+  characteristics?: { name: string; value?: string | null; unit?: string | null }[] | null
+  manufacturer?: string | null
+  article?: string | null
 }
 
 // Форма 409 при удалении товара (backend/app/services/product_delete_impact.py,

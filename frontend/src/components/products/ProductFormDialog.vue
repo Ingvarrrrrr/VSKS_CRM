@@ -174,6 +174,29 @@
             </v-btn>
           </v-col>
 
+          <!-- Характеристики каталога (владелец, 26.10) — только показ, без
+               полей ввода: заполняет загрузчик из прайсов поставщиков
+               (app/services/catalog_gala/), карточка здесь их не редактирует. -->
+          <v-col cols="12" v-if="form.manufacturer || form.article || (form.characteristics && form.characteristics.length)">
+            <div class="text-subtitle-2 mb-2">Характеристики каталога</div>
+            <div v-if="form.manufacturer">Производитель: {{ form.manufacturer }}</div>
+            <div v-if="form.article">Артикул: {{ form.article }}</div>
+            <v-table v-if="form.characteristics && form.characteristics.length" density="compact" class="mt-2">
+              <thead>
+                <tr>
+                  <th>Характеристика</th>
+                  <th>Значение</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(c, idx) in form.characteristics" :key="idx">
+                  <td>{{ c.name }}</td>
+                  <td>{{ c.value }}{{ c.unit ? ' ' + c.unit : '' }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </v-col>
+
           <!-- Фото -->
           <v-col cols="12">
             <div class="text-subtitle-2 mb-2">Фото товара</div>

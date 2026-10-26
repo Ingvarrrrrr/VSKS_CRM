@@ -33,8 +33,8 @@ docker exec vsks-crm-db-1 pg_dump -U vsks -d vsks_crm -Fc -t product_photos --da
 if [ "$(date +%u)" = "7" ]; then ln "$OUT" /opt/backups/weekly/ 2>/dev/null || cp "$OUT" /opt/backups/weekly/; fi
 
 # --- 4) retention: daily 14, weekly 4, photos 2 ---
-ls -1t /opt/backups/daily/*.dump 2>/dev/null | tail -n +15 | xargs -r rm -f
-ls -1t /opt/backups/weekly/*.dump 2>/dev/null | tail -n +5 | xargs -r rm -f
-ls -1t /opt/backups/photos/*.dump 2>/dev/null | tail -n +3 | xargs -r rm -f
+ls -1t /opt/backups/daily/*.dump 2>/dev/null | tail -n +15 | xargs -r rm -f || true
+ls -1t /opt/backups/weekly/*.dump 2>/dev/null | tail -n +5 | xargs -r rm -f || true
+ls -1t /opt/backups/photos/*.dump 2>/dev/null | tail -n +3 | xargs -r rm -f || true
 
 echo "[$(date "+%F %T")] ok $OUT $(stat -c%s "$OUT") bytes; photos $PHOTOS_OUT $(stat -c%s "$PHOTOS_OUT") bytes" >> /var/log/vsks-backup.log

@@ -46,11 +46,22 @@
     — у автоматов эти поля часто "0", т.е. не измерялись) трактуется как
     «нет значения» — характеристика целиком НЕ попадает в characteristics
     (не "0", не пустая строка — просто отсутствует).
+  - Код поставщика в начале названия ("00113. . Провод...", "04610.
+    Автоматический выключатель...", владелец 2026-10-26, Задача 3) срезается
+    через clean.strip_leading_code — ДО clean_text (код всегда ASCII-цифры,
+    порядок с html-очисткой не важен, но strip_leading_code работает на
+    "сырой" строке до обрезки пробелов, чтобы не плодить вторую функцию
+    очистки). check_cable_consistency получает уже очищенное от кода имя.
+  - Категория "Кабельно-проводниковая продукция" (кабели, владелец 2026-10-26,
+    Задача 4): характеристики "Способ прокладки"/"Назначение" — почти всегда
+    подставлены сборщиком выгрузки по умолчанию, не несут смысла для
+    читателя техописания → in_description=False (как и у упаковочных
+    характеристик Задачи 2), характеристика всё равно хранится в карточке.
 """
 import re
 from typing import Optional
 
-from app.services.catalog_gala.clean import clean_text
+from app.services.catalog_gala.clean import clean_text, strip_leading_code
 from app.services.catalog_gala.electro_consistency import check_cable_consistency
 from app.services.catalog_gala.spec_parse import clean_key as _clean_key, split_key_unit
 
@@ -60,6 +71,11 @@ _NOT_IN_DESCRIPTION = {
     "номер по прайс-листу", "торговая единица", "количество товара в упаковке",
     "хрупкость", "объём", "высота", "ширина", "глубина",
 }
+
+# Задача 4 (26.10) — у кабелей эти характеристики почти всегда дефолтные
+# (подставлены сборщиком выгрузки), не несут смысла для техописания.
+_CABLE_CATEGORY = "Кабельно-проводниковая продукция"
+_CABLE_NOT_IN_DESCRIPTION = {"способ прокладки", "назначение"}
 
 # Размерные характеристики, у которых "0" значит «не измерялось» — владелец,
 # 2026-10-26, electro_mpo_breakers_all.json (автоматы).
@@ -75,9 +91,10 @@ def _is_zero(value) -> bool:
         return False
 
 
-def _char(name: str, value, unit) -> Optional[dict]:
+def _char(name: str, value, unit, is_cable: bool) -> Optional[dict]:
     """Собирает элемент characteristics, добавляя in_description=False для
-    характеристик упаковки поставщика из _NOT_IN_DESCRIPTION (Задача 2).
+    характеристик упаковки поставщика из _NOT_IN_DESCRIPTION (Задача 2) и,
+    у кабелей (is_cable), из _CABLE_NOT_IN_DESCRIPTION (Задача 4).
     Возвращает None (характеристику не писать вовсе), если имя — размерное
     из _ZERO_IS_EMPTY_NAMES и значение — ноль (automaты electro_mpo_breakers_all.json,
     см. докстринг модуля)."""
@@ -85,12 +102,12 @@ def _char(name: str, value, unit) -> Optional[dict]:
     if name_lower in _ZERO_IS_EMPTY_NAMES and _is_zero(value):
         return None
     item = {"name": name, "value": value, "unit": unit}
-    if name_lower in _NOT_IN_DESCRIPTION:
+    if name_lower in _NOT_IN_DESCRIPTION or (is_cable and name_lower in _CABLE_NOT_IN_DESCRIPTION):
         item["in_description"] = False
     return item
 
 
-def _parse_specifications(specs: dict) -> tuple:
+def _parse_specifications(specs: dict, is_cable: bool) -> tuple:
     """Возвращает (characteristics, manufacturer, article, product_type)."""
     characteristics = []
     manufacturer = None
@@ -113,7 +130,7 @@ def _parse_specifications(specs: dict) -> tuple:
             continue
 
         name, unit = split_key_unit(key)
-        c = _char(name, value, unit)
+        c = _char(name, value, unit, is_cable)
         if c is not None:
             characteristics.append(c)
 
@@ -128,11 +145,14 @@ def convert(raw: list, source_file: str) -> dict:
         if price == 0:
             price = None
 
+        category = row.get("category") or None
+        is_cable = (category or "").strip() == _CABLE_CATEGORY
+
         characteristics, manufacturer, article, product_type = _parse_specifications(
-            row.get("specifications") or {}
+            row.get("specifications") or {}, is_cable
         )
 
-        name = clean_text(row.get("name"))
+        name = clean_text(strip_leading_code(row.get("name")))
 
         # Владелец, 2026-10-26: кабели, где «N×S» в названии противоречит
         # «Сечение жилы кабеля»/«Количество жил кабеля» — не загружаем вовсе
@@ -150,8 +170,8 @@ def convert(raw: list, source_file: str) -> dict:
 
         items.append({
             "name": name,
-            "category": row.get("category") or None,
-            "category_path": [row["category"]] if row.get("category") else [],
+            "category": category,
+            "category_path": [category] if category else [],
             "product_type": product_type,
             "item_kind": "товар",
             "unit": row.get("unit") or None,

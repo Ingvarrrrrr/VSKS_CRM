@@ -1,7 +1,10 @@
 """Тесты конвертеров backend/app/services/catalog_gala/ в формат GALA."""
 from app.services.catalog_gala.format import validate_gala_catalog, GALA_FORMAT_NAME, GALA_FORMAT_VERSION
-from app.services.catalog_gala import from_electro_mpo, from_vkusvill, from_gala_sheet, from_baucenter
-from app.services.catalog_gala.clean import clean_text
+from app.services.catalog_gala import (
+    from_electro_mpo, from_vkusvill, from_gala_sheet, from_baucenter, from_store_nomenclature,
+)
+from app.services.catalog_gala.clean import clean_text, strip_leading_code
+from app.services.catalog_gala.spec_parse import split_key_unit
 
 
 def _envelope(source, items):
@@ -388,3 +391,275 @@ def test_baucenter_composite_unit_normalized():
     item = from_baucenter.convert(raw, "f.json")["items"][0]
     by_name = {c["name"]: c for c in item["characteristics"]}
     assert by_name["Расход в один слой до"]["unit"] == "м²/л"
+
+
+# --- spec_parse: формат "<Имя>, <ед>" (Задача 1, 26.10) -----------------------
+
+def test_split_key_unit_comma_format():
+    assert split_key_unit("Диаметр, мм") == ("Диаметр", "мм")
+    assert split_key_unit("Защищаемая площадь (до), м²") == ("Защищаемая площадь (до)", "м²")
+
+
+def test_split_key_unit_comma_format_not_a_unit_untouched():
+    """Хвост после запятой не похож на единицу (не короткий код, нет цифры)
+    — ключ остаётся целым, без разбора."""
+    assert split_key_unit("Рост, женские модели") == ("Рост, женские модели", None)
+
+
+# --- clean.strip_leading_code (Задача 3, 26.10) --------------------------------
+
+def test_strip_leading_code_removes_supplier_code():
+    assert strip_leading_code("00113. . Провод АПВ 16,0 кв.мм") == "Провод АПВ 16,0 кв.мм"
+    assert strip_leading_code("04610. Автоматический выключатель") == "Автоматический выключатель"
+    assert strip_leading_code("13430.  Кабель АВВГ") == "Кабель АВВГ"
+
+
+def test_strip_leading_code_leaves_names_without_code():
+    assert strip_leading_code("Накладка Mosaic 078604") == "Накладка Mosaic 078604"
+    assert strip_leading_code(None) is None
+
+
+# --- from_electro_mpo: код в названии + кабельные характеристики (26.10) ------
+
+def test_electro_mpo_strips_leading_supplier_code():
+    raw = [{
+        "name": "00113. . Провод АПВ 16,0 кв.мм", "category": "C", "price": 10, "unit": "м",
+        "url": "", "photo": "", "specifications": {},
+    }]
+    item = from_electro_mpo.convert(raw, "f.json")["items"][0]
+    assert item["name"] == "Провод АПВ 16,0 кв.мм"
+
+
+def test_electro_mpo_cable_laying_and_purpose_excluded_from_description():
+    """Задача 4: у кабелей (категория "Кабельно-проводниковая продукция")
+    "Способ прокладки"/"Назначение" — in_description=False."""
+    raw = [{
+        "name": "Кабель ВВГ 3х1,5 кв.мм", "category": "Кабельно-проводниковая продукция",
+        "price": 10, "unit": "м", "url": "", "photo": "",
+        "specifications": {
+            "Способ прокладки": "Открыто",
+            "Назначение": "Для электрического освещения",
+            "Сечение жилы кабеля": "1.5",
+            "Количество жил кабеля": "3",
+        },
+    }]
+    item = from_electro_mpo.convert(raw, "f.json")["items"][0]
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert by_name["Способ прокладки"]["in_description"] is False
+    assert by_name["Назначение"]["in_description"] is False
+    assert "in_description" not in by_name["Сечение жилы кабеля"]
+
+
+def test_electro_mpo_laying_and_purpose_kept_in_description_outside_cables():
+    """Та же характеристика у НЕ-кабельной категории — без флага (правило
+    только для "Кабельно-проводниковая продукция")."""
+    raw = [{
+        "name": "X", "category": "Электротехническая продукция", "price": 10, "unit": "шт",
+        "url": "", "photo": "", "specifications": {"Назначение": "Общего применения"},
+    }]
+    item = from_electro_mpo.convert(raw, "f.json")["items"][0]
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert "in_description" not in by_name["Назначение"]
+
+
+# --- from_vkusvill: названия поставщиков в Составе/Пищевой ценности (26.10) ---
+
+def test_vkusvill_single_supplier_prefix_stripped():
+    """Пример владельца 1: один поставщик-префикс в значении "Состава"."""
+    raw = [{
+        "id": 1, "name": "Томаты", "description": None,
+        "price": {"current": 100}, "unit": "шт", "url": "https://x", "images": [],
+        "category": [{"name": "Овощи"}],
+        "properties": [{"name": "Состав", "value": 'ООО "МАНГОФРЕШ":Томаты розовые Краснодар;'}],
+    }]
+    item = from_vkusvill.convert(raw, "f.json")["items"][0]
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert by_name["Состав"]["value"] == "Томаты розовые Краснодар"
+    assert by_name["Поставщики"]["value"] == 'ООО "МАНГОФРЕШ"'
+    assert by_name["Поставщики"]["in_description"] is False
+
+
+def test_vkusvill_postavshiki_marker_list_stripped():
+    """Пример владельца 2: отдельная строка "Поставщики:А;Б;В;Г" в значении."""
+    raw = [{
+        "id": 1, "name": "Томаты Пинк Парадайз", "description": None,
+        "price": {"current": 100}, "unit": "шт", "url": "https://x", "images": [],
+        "category": [{"name": "Овощи"}],
+        "properties": [{
+            "name": "Состав",
+            "value": 'Томаты Пинк Парадайз, 500 г\nПоставщики:ООО "КОЛОС";ООО "ЗАПАДНЫЕ ВОРОТА";'
+                     'ООО ЮЖНЫЙ ВЕТЕР;ООО "АГРО-ЛИДЕР"',
+        }],
+    }]
+    item = from_vkusvill.convert(raw, "f.json")["items"][0]
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert by_name["Состав"]["value"] == "Томаты Пинк Парадайз, 500 г"
+    assert by_name["Поставщики"]["value"] == (
+        'ООО "КОЛОС"; ООО "ЗАПАДНЫЕ ВОРОТА"; ООО ЮЖНЫЙ ВЕТЕР; ООО "АГРО-ЛИДЕР"'
+    )
+
+
+def test_vkusvill_suppliers_merged_across_sostav_and_nutrition_and_deduped():
+    raw = [{
+        "id": 1, "name": "Творог", "description": None,
+        "price": {"current": 100}, "unit": "шт", "url": "https://x", "images": [],
+        "category": [{"name": "Молочное"}],
+        "properties": [
+            {"name": "Состав", "value": 'ООО "НИКОН":молоко цельное.;<br>Гелиос ЗАО:молоко цельное.;'},
+            {
+                "name": "Пищевая и энергетическая ценность в 100 г",
+                "value": 'ООО "НИКОН": белки 12 г; 234 ккал<br>Гелиос ЗАО: белки 14 г; 245 ккал',
+            },
+        ],
+    }]
+    item = from_vkusvill.convert(raw, "f.json")["items"][0]
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    # одинаковый текст состава у обоих поставщиков — один экземпляр
+    assert by_name["Состав"]["value"] == "молоко цельное."
+    # разные варианты пищевой ценности — оба, каждый с новой строки
+    assert by_name["Пищевая и энергетическая ценность в 100 г"]["value"] == (
+        "белки 12 г; 234 ккал\nбелки 14 г; 245 ккал"
+    )
+    # поставщики собраны из обоих полей, без дублей
+    assert by_name["Поставщики"]["value"] == 'ООО "НИКОН"; Гелиос ЗАО'
+
+
+def test_vkusvill_no_suppliers_marker_characteristic_absent():
+    raw = [{
+        "id": 1, "name": "X", "description": None, "price": {"current": 10}, "unit": "шт",
+        "url": "https://x", "images": [], "category": [{"name": "Кат"}],
+        "properties": [{"name": "Состав", "value": "мука, вода, соль"}],
+    }]
+    item = from_vkusvill.convert(raw, "f.json")["items"][0]
+    names = {c["name"] for c in item["characteristics"]}
+    assert "Поставщики" not in names
+    assert next(c for c in item["characteristics"] if c["name"] == "Состав")["value"] == "мука, вода, соль"
+
+
+# --- from_store_nomenclature (Задача 1, 26.10) --------------------------------
+
+def test_store_nomenclature_basic_mapping():
+    raw = [{
+        "name": "Детская страховочная система OUISTITI",
+        "category": "Альпинистское снаряжение и промальп",
+        "unit": "шт", "price_rub": 7490.0,
+        "source_store": "АльпИндустрия / Ледниковый период",
+        "link_1": "https://ice-age.ru/product/x",
+        "photo_url": "https://cdn.example.com/x.jpeg",
+        "description": "Рекламный текст, который не переносим.",
+        "specifications": {"Артикул": "C068AA00"},
+    }]
+    result = from_store_nomenclature.convert(raw, "promalp_height_safety_nomenclature.json")
+    assert result["source"] == "store_nomenclature"
+    item = result["items"][0]
+    assert item["category"] == "Альпинистское снаряжение и промальп"
+    assert item["category_path"] == ["Альпинистское снаряжение и промальп"]
+    assert item["product_type"] is None
+    assert item["price"] == 7490.0
+    assert item["article"] == "C068AA00"
+    assert item["description"] is None
+    assert item["photos"] == ["https://cdn.example.com/x.jpeg"]
+    assert item["links"] == [{"url": "https://ice-age.ru/product/x", "price": 7490.0}]
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert by_name["Магазин-источник"]["value"] == "АльпИндустрия / Ледниковый период"
+    assert by_name["Магазин-источник"]["in_description"] is False
+    assert "Артикул" not in by_name
+    assert validate_gala_catalog(_envelope("store_nomenclature", result["items"])) == []
+
+
+def test_store_nomenclature_zero_and_missing_price_is_null():
+    raw = [{"name": "X", "category": "C", "unit": "шт", "price_rub": 0, "source_store": "S",
+            "link_1": "", "photo_url": None, "specifications": {}}]
+    item = from_store_nomenclature.convert(raw, "f.json")["items"][0]
+    assert item["price"] is None
+    assert item["links"] == []
+    assert item["photos"] == []
+
+
+def test_store_nomenclature_drops_junk_keys_and_stub_values():
+    """Задача 1: пустые/цифровые/заглушечные ключи и значения-заглушки, а
+    также значения длиннее 300 символов — выбрасываются; хвостовое ":" у
+    ключа — срезается, не выбрасывается."""
+    raw = [{
+        "name": "Огнетушитель", "category": "Огнетушители", "unit": "шт", "price_rub": 100,
+        "source_store": "Магазин 01", "link_1": "", "photo_url": None,
+        "specifications": {
+            "#PROP_TITLE#": "#PROP_VALUE#",
+            "123": "мусор",
+            "": "мусор",
+            "Масса, кг": "х" * 301,
+            "Срок службы, лет": "10",
+            "Комплектация:": "На тележке",
+        },
+    }]
+    item = from_store_nomenclature.convert(raw, "fire_equipment_nomenclature.json")["items"][0]
+    names = {c["name"] for c in item["characteristics"]}
+    assert "#PROP_TITLE#" not in names
+    assert "123" not in names
+    assert "Масса" not in names  # значение >300 символов выброшено целиком
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert by_name["Срок службы"]["unit"] == "лет"
+    assert by_name["Срок службы"]["value"] == "10"
+    assert by_name["Комплектация"]["value"] == "На тележке"  # хвостовое ":" у ключа убрано
+
+
+def test_store_nomenclature_article_and_manufacturer_priority():
+    raw = [{
+        "name": "Жгут", "category": "Медицина", "unit": "шт", "price_rub": 100,
+        "source_store": "Медплант", "link_1": "", "photo_url": None,
+        "specifications": {
+            "Артикул": "A1",
+            "Производитель": "ООО Медплант",
+            "Бренд": "ООО Медплант",
+        },
+    }]
+    item = from_store_nomenclature.convert(raw, "f.json")["items"][0]
+    assert item["article"] == "A1"
+    assert item["manufacturer"] == "ООО Медплант"
+    names = {c["name"] for c in item["characteristics"]}
+    assert "Производитель" not in names
+    assert "Бренд" not in names  # совпадает с "Производитель" — не дублируем
+
+
+def test_store_nomenclature_brand_different_from_manufacturer_kept():
+    raw = [{
+        "name": "X", "category": "Кат", "unit": "шт", "price_rub": 100,
+        "source_store": "S", "link_1": "", "photo_url": None,
+        "specifications": {"Производитель": "ПроизводительА", "Бренд": "БрендБ"},
+    }]
+    item = from_store_nomenclature.convert(raw, "f.json")["items"][0]
+    assert item["manufacturer"] == "ПроизводительА"
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert by_name["Бренд"]["value"] == "БрендБ"
+
+
+def test_store_nomenclature_rescue_medical_package_dims_excluded_from_description():
+    """Задача 1: в rescue_medical "Длина"/"Ширина"/"Высота"/"Вес" без
+    уточнения — габариты упаковки магазина, in_description=False; у
+    уточнённых ключей ("Длина ленты") правило не действует; в других файлах
+    (не rescue_medical) правило тоже не действует."""
+    raw = [{
+        "name": "Жгут", "category": "Медицина", "unit": "шт", "price_rub": 100,
+        "source_store": "Медплант", "link_1": "", "photo_url": None,
+        "specifications": {"Длина": "102 см", "Длина ленты": "950 мм"},
+    }]
+    item = from_store_nomenclature.convert(raw, "rescue_medical_nomenclature.json")["items"][0]
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert by_name["Длина"]["in_description"] is False
+    assert "in_description" not in by_name["Длина ленты"]
+
+    item2 = from_store_nomenclature.convert(raw, "fire_equipment_nomenclature.json")["items"][0]
+    by_name2 = {c["name"]: c for c in item2["characteristics"]}
+    assert "in_description" not in by_name2["Длина"]
+
+
+def test_store_nomenclature_comma_unit_split():
+    raw = [{
+        "name": "Огнетушитель", "category": "Огнетушители", "unit": "шт", "price_rub": 100,
+        "source_store": "Магазин 01", "link_1": "", "photo_url": None,
+        "specifications": {"Защищаемая площадь (до), м²": "150"},
+    }]
+    item = from_store_nomenclature.convert(raw, "fire_equipment_nomenclature.json")["items"][0]
+    by_name = {c["name"]: c for c in item["characteristics"]}
+    assert by_name["Защищаемая площадь (до)"]["unit"] == "м²"
+    assert by_name["Защищаемая площадь (до)"]["value"] == "150"

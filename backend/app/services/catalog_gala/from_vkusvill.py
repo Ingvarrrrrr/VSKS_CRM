@@ -45,10 +45,84 @@ description НЕ переносится (владелец, 2026-10-26): текс
 поле — рекламное описание товара, не характеристика; техописание карточки
 собирается только из characteristics (см.
 services/product_tech_description.py::build_tech_description).
+
+Названия поставщиков в "Состав"/"Пищевая и энергетическая ценность в 100 г"
+(владелец, 2026-10-26, Задача 2) — у части товаров значение собрано из
+нескольких поставщиков построчно, у каждой строки свой текст с префиксом/
+суффиксом вида "ООО «ИМЯ»:<текст>;" (организационная форма — ООО/ОАО/АО/
+ЗАО/ПАО/ИП/КФХ/СПК, до или после названия, до первого ":" в строке), плюс
+может быть отдельный хвост "Поставщики:ООО А;ООО Б;..." (в той же строке
+после основного текста ЛИБО отдельной строкой). Обработка (_strip_suppliers,
+на значении, уже прошедшем clean_text — <br> уже заменены на "\n"):
+  1. В каждой строке ищем "Поставщики:<список через ';'>" (в любом месте
+     строки, не только в начале) — список организаций вынимается, остаток
+     строки до найденного текста — содержимое этой строки.
+  2. Если оставшееся содержимое строки начинается с "<организация>:" (вся
+     часть строки до первого ":" содержит слово из списка форм) — название
+     организации вынимается, остаток после ":" — содержимое строки.
+  3. Собранные названия организаций со всех строк — без дублей, по порядку
+     первого упоминания.
+  4. Содержимое строк (после вырезания организаций) — без дублей (если у
+     разных поставщиков текст совпал буквально, оставляем один экземпляр);
+     разные варианты — каждый с новой строки, без имени поставщика.
+Названия организаций со всех характеристик товара (Состав + Пищевая
+ценность) объединяются в ОДНУ характеристику "Поставщики" (через "; ",
+in_description=False — это данные о логистике поставщика, не о товаре).
 """
+import re
+
 from app.services.catalog_gala.clean import clean_text
 
 _GROCERY_CATEGORY = "Продукты питания"
+
+_ORG_FORMS_RE = r"(?:ООО|ОАО|АО|ЗАО|ПАО|ИП|КФХ|СПК)"
+_SUPPLIERS_MARKER_RE = re.compile(r"Поставщики\s*:\s*(.+)$", re.IGNORECASE)
+_ORG_PREFIX_RE = re.compile(r"^([^:]{1,100}):\s*(.*)$")
+_ORG_TOKEN_RE = re.compile(r"\b" + _ORG_FORMS_RE + r"\b")
+
+
+def _strip_suppliers(value):
+    """Возвращает (очищенное_значение, [название_организации, ...]) —
+    см. докстринг модуля. value уже прошло clean_text."""
+    if not value:
+        return value, []
+
+    orgs = []
+    contents = []
+    for line in value.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+
+        m = _SUPPLIERS_MARKER_RE.search(line)
+        if m:
+            orgs.extend(o.strip() for o in m.group(1).split(";") if o.strip())
+            line = line[: m.start()].rstrip(" ;").strip()
+
+        if line:
+            m2 = _ORG_PREFIX_RE.match(line)
+            if m2 and _ORG_TOKEN_RE.search(m2.group(1)):
+                orgs.append(m2.group(1).strip())
+                line = m2.group(2).strip()
+
+        # Разделитель между строками поставщика в исходнике — ";" перед
+        # "<br>" (ставшим "\n" после clean_text) — хвостовой "." у нас не
+        # мусор (конец предложения), а вот одинокая ";" — артефакт формата.
+        line = line.rstrip(";").strip()
+
+        if line and line not in contents:
+            contents.append(line)
+
+    # Дедуп организаций, порядок первого упоминания.
+    seen = set()
+    uniq_orgs = []
+    for o in orgs:
+        if o not in seen:
+            seen.add(o)
+            uniq_orgs.append(o)
+
+    clean_value = "\n".join(contents) if contents else None
+    return clean_value, uniq_orgs
 
 
 def _convert_flat_item(row: dict) -> dict:
@@ -100,13 +174,31 @@ def _convert_structured_item(row: dict) -> dict:
     photos = [img.get("large") for img in images if isinstance(img, dict) and img.get("large")]
 
     characteristics = []
+    supplier_orgs = []
     for prop in (row.get("properties") or []):
         if not isinstance(prop, dict):
             continue
         name = clean_text(prop.get("name"))
         if not name:
             continue
-        characteristics.append({"name": name, "value": clean_text(prop.get("value")), "unit": None})
+        value = clean_text(prop.get("value"))
+
+        name_lower = name.lower()
+        if name_lower == "состав" or name_lower.startswith("пищевая и энергетическая ценность"):
+            value, orgs = _strip_suppliers(value)
+            for o in orgs:
+                if o not in supplier_orgs:
+                    supplier_orgs.append(o)
+
+        characteristics.append({"name": name, "value": value, "unit": None})
+
+    if supplier_orgs:
+        characteristics.append({
+            "name": "Поставщики",
+            "value": "; ".join(supplier_orgs),
+            "unit": None,
+            "in_description": False,
+        })
 
     weight = row.get("weight") or {}
     if isinstance(weight, dict) and weight.get("value") is not None:

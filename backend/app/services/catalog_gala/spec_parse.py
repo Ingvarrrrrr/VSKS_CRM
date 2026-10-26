@@ -6,13 +6,18 @@
 "Диаметр (мм)", "Расход в один слой до (м2/л)") — используется та же
 функция, не вторая копия разбора.
 
-Два распознаваемых формата ключа:
+Три распознаваемых формата ключа:
   - "<Имя> в <ед>" (electro_mpo: "Высота в м", "Объём  в м3" — повторные
     пробелы схлопываются перед разбором).
   - "<Имя> (<ед>)" (electro_mpo кабели, baucenter: "Диаметр (мм)").
+  - "<Имя>, <ед>" (store_nomenclature — promalp/rescue_medical/fire_equipment,
+    владелец 26.10: "Диаметр, мм", "Защищаемая площадь (до), м²" — единица
+    после запятой в конце ключа).
 Единица признаётся единицей, только если похожа на единицу (короткий код
 до 3 символов ИЛИ содержит цифру — _looks_like_unit) — иначе это бытовое
-слово ("в упаковке" и т.п.), ключ остаётся как есть, без разбора.
+слово ("в упаковке" и т.п.) или часть описательного текста ключа ("не
+более", "женские модели" и т.п. — встречаются в store_nomenclature после
+запятой), ключ остаётся как есть, без разбора.
 normalize_unit (units_normalize.py) применяется к найденной единице.
 """
 import re
@@ -23,6 +28,7 @@ _UNIT_SUFFIX_RE = re.compile(r"^(.*?)\s+в\s+(\S+)$", re.IGNORECASE)
 # Короткий код типа "м"/"кг"/"м3" — не бытовое слово (см. docstring).
 _UNIT_TOKEN_RE = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9/]{1,3}$")
 _UNIT_PAREN_RE = re.compile(r"^(.*?)\s*\(([^()]+)\)$")
+_UNIT_COMMA_RE = re.compile(r"^(.+),\s*([^,]+)$")
 
 
 def clean_key(key: str) -> str:
@@ -43,6 +49,10 @@ def split_key_unit(raw_key: str) -> tuple:
         return m.group(1).strip(), normalize_unit(m.group(2).strip())
 
     m = _UNIT_PAREN_RE.match(key)
+    if m and looks_like_unit(m.group(2).strip()):
+        return m.group(1).strip(), normalize_unit(m.group(2).strip())
+
+    m = _UNIT_COMMA_RE.match(key)
     if m and looks_like_unit(m.group(2).strip()):
         return m.group(1).strip(), normalize_unit(m.group(2).strip())
 

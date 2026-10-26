@@ -2,7 +2,7 @@
   <div class="d-flex align-center justify-space-between mb-6">
     <div>
       <h1 class="text-h5 font-weight-bold">Каталог товаров</h1>
-      <span class="text-body-2 text-medium-emphasis">{{ productsCount }}{{ productsCountCapped ? '+' : '' }} позиций</span>
+      <span class="text-body-2 text-medium-emphasis">{{ productsCount }} позиций</span>
     </div>
     <div class="d-flex gap-2">
       <v-btn variant="outlined" prepend-icon="mdi-download-outline" @click="$emit('download-template')">Шаблон</v-btn>
@@ -23,9 +23,10 @@
 <script setup lang="ts">
 defineProps<{
   productsCount: number
-  // total_capped с бэкенда (ПРАВИЛО №6, product_search.py::TOTAL_COUNT_CAP) —
-  // точный count() на частых словах поиска не укладывался в 200мс на
-  // 250+ тыс. товаров, отдаём «10 000+» вместо точного числа.
+  // total_capped с бэкенда (ПРАВИЛО №6, product_search.py::count_products) —
+  // владелец 26.10.2026 решил: счётчик всегда точный, потолок убран, поле
+  // всегда false. Оставлено в пропсах для совместимости с вызывающим кодом,
+  // в шаблоне больше не используется (раньше показывало «10 000+»).
   productsCountCapped?: boolean
   deduplicating: boolean
   mobile: boolean

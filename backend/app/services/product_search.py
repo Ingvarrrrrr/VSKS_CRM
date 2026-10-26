@@ -33,6 +33,11 @@ similarity вообще — см. _fetch_hybrid_page ниже и докстри�
 именно range-условие по lower(name) (не LIKE), почему убран
 max_parallel_workers_per_gather и почему есть HYBRID_OFFSET_LIMIT_CAP.
 
+total/total_capped: total — ТОЧНЫЙ count(*) по тем же условиям, без потолка
+(владелец, 26.10.2026: счётчик всегда точный). total_capped оставлено в
+сигнатуре count_products/search_products и ответе API для совместимости —
+всегда False.
+
 stale_only/stale_total — читают app/services/price_freshness_sql.py
 ::stale_condition (тот же источник правды, что price_freshness.evaluate,
 см. докстринг там).
@@ -52,18 +57,6 @@ from app.services.price_freshness_sql import apply_stale_join
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 MAX_IDS = 500
-
-# Потолок точного count() (владелец, 26.10.2026, замер на 263 тыс. товаров):
-# COUNT по частым словам поиска ("кабель" — 24 тыс. совпадений из 263 тыс.)
-# стоил ~186мс — полный проход по всем найденным строкам, т.к. агрегату
-# нужно досчитать ВСЕ совпадения, а не первые N. Оборачиваем count в
-# `SELECT count(*) FROM (... LIMIT TOTAL_COUNT_CAP) t` — тогда планировщик
-# останавливается, как только нашёл TOTAL_COUNT_CAP строк (для редких слов
-# это не меняет результат вообще, для частых — отдаём total=TOTAL_COUNT_CAP
-# и total_capped=True, фронт показывает «10 000+»). Без этого предела
-# PostgreSQL обязан пройти ВСЕ строки-кандидаты, даже если нашёл их тысячи
-# больше лимита страницы.
-TOTAL_COUNT_CAP = 10_000
 
 # Гибридное ранжирование (владелец, 26.10.2026, доработка): выше этого числа
 # совпадений similarity-ранжирование по ВСЕМ строкам не укладывается в
@@ -278,17 +271,16 @@ async def count_products(
     filters: ProductSearchFilters,
     freshness_ctx: Optional[FreshnessContext] = None,
 ) -> tuple[int, bool]:
-    """Возвращает (total, total_capped). total_capped=True — в каталоге
-    совпадений БОЛЬШЕ, чем TOTAL_COUNT_CAP, total в этом случае == потолку,
-    не точное число (см. докстринг константы — иначе count() частых слов
-    поиска не укладывается в 200мс)."""
+    """Возвращает (total, total_capped). total — ТОЧНЫЙ count(*) по тем же
+    условиям, без потолка (владелец, 26.10.2026: счётчик всегда точный —
+    раньше частые слова поиска отдавали «10 000+» вместо реального числа).
+    total_capped оставлено в сигнатуре для совместимости вызывающих мест
+    (search_products, роуты) и ответа API — всегда False."""
     inner = select(Product.id)
     inner = _apply_filters(inner, filters, freshness_ctx)
-    inner = inner.limit(TOTAL_COUNT_CAP + 1).subquery()
+    inner = inner.subquery()
     q = select(func.count()).select_from(inner)
     total = (await db.execute(q)).scalar_one()
-    if total > TOTAL_COUNT_CAP:
-        return TOTAL_COUNT_CAP, True
     return total, False
 
 
@@ -402,8 +394,8 @@ async def search_products(
     """Возвращает (товары страницы, total по тем же фильтрам, total_capped).
     total — ОТДЕЛЬНЫЙ count-запрос по тем же условиям (не COUNT(*) OVER() —
     страница рассчитана на limit<=200, второй лёгкий запрос дешевле, чем
-    тащить window-функцию по каждой строке первого); count_products() сам
-    ограничивает его TOTAL_COUNT_CAP (см. докстринг там). При search —
+    тащить window-функцию по каждой строке первого); count_products() всегда
+    точный, без потолка (см. докстринг там). При search —
     total считается ПЕРВЫМ и его же значение решает, идти ли гибридным
     путём (total > RANK_FULL_THRESHOLD) — второго count-запроса на принятие
     решения не нужно (Правило №6)."""

@@ -34,6 +34,8 @@ async def find_or_create_contractor(
     inn: Optional[Any],
     org_id: Optional[int] = None,
     match_by_name: bool = True,
+    ogrn: Optional[str] = None,
+    org_type: Optional[str] = None,
 ) -> Optional[int]:
     """Возвращает id существующего контрагента (точный ИНН, иначе точное
     нормализованное имя) или создаёт новый, если оба пусты/не нашли
@@ -48,6 +50,13 @@ async def find_or_create_contractor(
     закупку к существующему контрагенту по имени, только создавать новый.
     По умолчанию `True` — поведение и для ЭТОЙ функции, и для всех остальных
     вызывающих (purchase_from_bank_payment.py, fadm_sheet_load/*) НЕ меняется.
+
+    `ogrn`/`org_type` (владелец, 26.10.2026, загрузка каталогов GALA по
+    известным магазинам из services/catalog_gala/stores.py) — записываются
+    ТОЛЬКО при создании нового контрагента; у найденного существующего (по
+    ИНН или имени) ничего не перезаписывают — карточка контрагента, которую
+    уже мог вручную дополнить владелец, не затирается повторной загрузкой
+    каталога.
     """
     norm_inn = normalize_inn(inn)
     norm_name = normalize_org_name(name)
@@ -70,6 +79,8 @@ async def find_or_create_contractor(
         name=(name or (inn if isinstance(inn, str) else str(inn))),
         inn=(inn if isinstance(inn, str) else (str(inn) if inn is not None else None)),
         org_id=org_id,
+        ogrn=ogrn,
+        org_type=org_type,
     )
     db.add(new_contractor)
     await db.flush()

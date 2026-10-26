@@ -36,6 +36,7 @@ import re
 from datetime import datetime
 
 from app.services.catalog_gala.clean import clean_text
+from app.services.catalog_gala.stores import seller_inn_for_url
 
 _NOT_SPECIFIED_RE = re.compile(r"^\s*не\s+указано\s*$", re.IGNORECASE)
 
@@ -119,6 +120,10 @@ def _convert_row(row: dict) -> dict:
         "source_id": str(row["row"]) if row.get("row") is not None else None,
         "is_reusable": _parse_bool(row.get("is_reusable")),
         "is_active": _parse_bool(row.get("is_active")),
+        # Магазины этой таблицы ГАЛА разные (Яндекс Маркет, DNS и т.п.) —
+        # seller_inn проставляется только если домен ссылки входит в
+        # справочник stores.py, иначе остаётся None (см. докстринг модуля).
+        "seller_inn": seller_inn_for_url(source_url),
     }
 
 

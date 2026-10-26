@@ -18,7 +18,11 @@ class ProductPriceHistory(Base):
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
     price = Column(Numeric(15, 2), nullable=True)
     source = Column(String(20), nullable=True)  # 'contract' | 'kp' | 'manual' | 'import' | 'monitoring'
-    source_ref = Column(String(300), nullable=True)
+    # String(1000) (владелец, 26.10.2026) — раньше 300: ссылки на страницу
+    # товара у части магазинов (vseinstrumenti.ru с utm-параметрами и т.п.)
+    # доходят до 607 символов на реальных файлах каталога GALA — 300
+    # обрезало бы запись (миграция z2a3b4c5d6e7_widen_price_source_ref.py).
+    source_ref = Column(String(1000), nullable=True)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
     collected_at = Column(Date, nullable=True)
     note = Column(Text, nullable=True)

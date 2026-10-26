@@ -55,6 +55,7 @@ FIXED_COLUMNS = [
     "name", "description", "category", "product_type", "price", "price_date",
     "unit", "pack_quantity", "pack_unit", "photo_link", "is_reusable",
     "is_active", "characteristics", "manufacturer", "article", "country_origin",
+    "seller_inn", "source_url",
 ] + [f"link_url_{n}" for n in range(1, _MAX_LINKS + 1)] + [
     f"link_price_{n}" for n in range(1, _MAX_LINKS + 1)
 ]
@@ -93,6 +94,8 @@ def item_to_row(item: dict) -> tuple:
     row[COL_IDX["manufacturer"]] = item.get("manufacturer")
     row[COL_IDX["article"]] = item.get("article")
     row[COL_IDX["country_origin"]] = item.get("country_origin")
+    row[COL_IDX["seller_inn"]] = item.get("seller_inn")
+    row[COL_IDX["source_url"]] = item.get("source_url")
     for i, link in enumerate((item.get("links") or [])[:_MAX_LINKS], start=1):
         row[COL_IDX[f"link_url_{i}"]] = link.get("url")
         row[COL_IDX[f"link_price_{i}"]] = _num_to_cell(link.get("price"))

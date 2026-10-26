@@ -130,6 +130,7 @@ from app.services.catalog_gala.ad_text_filter import strip_ad_sentences
 from app.services.catalog_gala.clean import clean_text
 from app.services.catalog_gala.country_names import COUNTRY_KEY_NAMES, norm_country_key
 from app.services.catalog_gala.spec_parse import split_key_unit
+from app.services.catalog_gala.stores import seller_inn_for_url, seller_inn_for_source_store
 
 _PURE_DIGIT_RE = re.compile(r"^[\d\s№]+$")
 _STUB_RE = re.compile(r"^#.+#$")
@@ -378,6 +379,10 @@ def convert(raw: list, source_file: str) -> dict:
             "source_id": None,
             "is_reusable": None,
             "is_active": None,
+            # Магазин этой строки — сначала по домену товарной ссылки, иначе
+            # по тексту "Магазин-источник" (store, вида «Сима-ленд
+            # (sima-land.ru)») — тот же справочник stores.py (ПРАВИЛО №6).
+            "seller_inn": seller_inn_for_url(url) or seller_inn_for_source_store(store),
         })
 
     return {"source": "store_nomenclature", "items": items}

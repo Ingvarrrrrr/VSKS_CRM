@@ -66,6 +66,7 @@ spec_parse.py, ПРАВИЛО №6), включая нормализацию с�
 from app.services.catalog_gala.clean import clean_text
 from app.services.catalog_gala.country_names import COUNTRY_KEY_NAMES, norm_country_key
 from app.services.catalog_gala.spec_parse import split_key_unit
+from app.services.catalog_gala.stores import seller_inn_for_url
 
 _CONSTRUCTION_CATEGORY = "Строительные и отделочные материалы"
 
@@ -141,6 +142,7 @@ def _convert_row(row: dict) -> dict:
         "source_id": str(product_id) if product_id is not None else None,
         "is_reusable": None,
         "is_active": None,
+        "seller_inn": seller_inn_for_url(url),
     }
 
 

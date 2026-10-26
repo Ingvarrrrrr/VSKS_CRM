@@ -72,6 +72,7 @@ in_description=False — это данные о логистике постав�
 import re
 
 from app.services.catalog_gala.clean import clean_text
+from app.services.catalog_gala.stores import seller_inn_for_url
 
 _GROCERY_CATEGORY = "Продукты питания"
 
@@ -155,6 +156,7 @@ def _convert_flat_item(row: dict) -> dict:
         "source_id": None,
         "is_reusable": None,
         "is_active": None,
+        "seller_inn": seller_inn_for_url(url),
     }
 
 
@@ -233,6 +235,7 @@ def _convert_structured_item(row: dict) -> dict:
         "source_id": str(product_id) if product_id is not None else None,
         "is_reusable": None,
         "is_active": None,
+        "seller_inn": seller_inn_for_url(url),
     }
 
 

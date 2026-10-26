@@ -42,7 +42,7 @@
               <td>{{ r.sourceLabel }}</td>
               <td>{{ r.contractor_name || '—' }}</td>
               <td>
-                <a v-if="r.linkUrl" :href="r.linkUrl" target="_blank" rel="noopener noreferrer">ссылка</a>
+                <a v-if="r.linkUrl" :href="r.linkUrl" :title="r.linkUrl" target="_blank" rel="noopener noreferrer">{{ linkDomain(r.linkUrl) }}</a>
                 <span v-else-if="r.source_ref">{{ r.source_ref }}</span>
                 <span v-else>—</span>
               </td>
@@ -173,6 +173,18 @@ interface DisplayRow {
 
 function isUrl(v: string | null | undefined): boolean {
   return !!v && /^https?:\/\//i.test(v.trim())
+}
+
+// Короткий текст ссылки в таблице «Цены» (владелец, 26.10) — домен страницы
+// товара, полный URL — в title (см. :title в шаблоне). Не распозналось —
+// показываем ссылку как есть (длинную), чтобы не потерять данные.
+function linkDomain(url: string | null): string {
+  if (!url) return 'ссылка'
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') || url
+  } catch {
+    return url
+  }
 }
 
 const rows = computed<DisplayRow[]>(() => {

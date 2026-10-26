@@ -54,6 +54,17 @@ services/catalog_gala/electro_consistency.py). Поле необязательн
                                       #   "Страна производства"; апстрим
                                       #   пишет в Product.country_origin,
                                       #   только если он пуст или = "РФ"
+  "seller_inn": str | None,          # опционально (владелец, 26.10) — ИНН
+                                      #   юрлица/ИП магазина-источника
+                                      #   (ссылка товара → домен →
+                                      #   services/catalog_gala/stores.py,
+                                      #   ЕДИНСТВЕННЫЙ справочник); неизвестный
+                                      #   домен → None. Апстрим
+                                      #   (apply_products_import) находит/
+                                      #   создаёт по нему контрагента строки
+                                      #   цены (ПРАВИЛО №6 — один резолвер,
+                                      #   contractor_resolve.find_or_create_
+                                      #   contractor).
 }
 """
 
@@ -63,7 +74,7 @@ GALA_FORMAT_VERSION = 1
 _KNOWN_STRING_FIELDS = (
     "category", "product_type", "item_kind", "unit", "pack_unit",
     "price_date", "currency", "manufacturer", "article", "description",
-    "source_url", "source_id", "country_origin",
+    "source_url", "source_id", "country_origin", "seller_inn",
 )
 _KNOWN_NUMBER_OR_NULL_FIELDS = ("pack_quantity", "price")
 _KNOWN_BOOL_OR_NULL_FIELDS = ("is_reusable", "is_active")

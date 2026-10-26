@@ -68,6 +68,7 @@ from typing import Optional
 from app.services.catalog_gala.clean import clean_text, strip_leading_code
 from app.services.catalog_gala.electro_consistency import check_cable_consistency
 from app.services.catalog_gala.spec_parse import clean_key as _clean_key, split_key_unit
+from app.services.catalog_gala.stores import seller_inn_for_url
 
 # Задача 2 — характеристики, которые есть в карточке (characteristics
 # хранятся полностью), но НЕ попадают в собранное техописание.
@@ -197,6 +198,7 @@ def convert(raw: list, source_file: str) -> dict:
             "source_id": None,
             "is_reusable": None,
             "is_active": None,
+            "seller_inn": seller_inn_for_url(url),
         })
 
     return {"source": "electro_mpo", "items": items, "excluded": excluded}

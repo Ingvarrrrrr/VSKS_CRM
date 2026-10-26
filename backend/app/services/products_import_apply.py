@@ -38,6 +38,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.product import DEFAULT_PRODUCT_CATEGORY, Product
+from app.services.catalog_gala.stores import store_for_inn
+from app.services.contractor_resolve import find_or_create_contractor
 from app.services.price_actualization import actualize_product_price
 from app.services.product_unit import backfill_product_unit
 from app.services.product_description_merge import (
@@ -230,6 +232,34 @@ async def apply_products_import(
     feo_rows = (await db.execute(select(FeoCategory))).scalars().all()
     feo_by_name = {f.name.lower().strip(): f.id for f in feo_rows}
 
+    # Контрагент строки цены при загрузке каталогов GALA (владелец,
+    # 26.10.2026) — магазин-источник по ИНН (col_idx "seller_inn", см.
+    # services/catalog_gala/stores.py и from_*.py), НЕ сам поставщик файла.
+    # Резолв find_or_create_contractor один раз НА ИНН за весь файл (кэш
+    # ниже) — иначе повтор одного магазина на тысячах строк файла искал бы
+    # контрагента заново на каждой строке (ПРАВИЛО №6 — один резолвер,
+    # contractor_resolve.find_or_create_contractor, никакого второго поиска/
+    # создания контрагента здесь). Обычные вызовы без колонки "seller_inn"
+    # (POST /api/products/import{,-mapped}) эту ветку не задевают вовсе.
+    _contractor_cache: dict = {}
+
+    async def _resolve_seller_contractor(seller_inn: Optional[str]) -> Optional[int]:
+        if not seller_inn:
+            return None
+        if seller_inn in _contractor_cache:
+            return _contractor_cache[seller_inn]
+        info = store_for_inn(seller_inn)
+        cid = await find_or_create_contractor(
+            db,
+            info["name"] if info else seller_inn,
+            seller_inn,
+            match_by_name=False,
+            ogrn=info.get("ogrn") if info else None,
+            org_type=info.get("org_type") if info else None,
+        )
+        _contractor_cache[seller_inn] = cid
+        return cid
+
     # Сужение SQL (владелец, 2026-10-26): раньше здесь был select ВСЕГО
     # каталога без лимита — теперь только товары, чьё normalize-имя
     # встречается среди имён строк ЭТОГО ЖЕ файла (load_candidate_products,
@@ -334,6 +364,20 @@ async def apply_products_import(
 
                 price_date_val = _parse_price_date(_raw_cell(row, col_idx, "price_date")) or _upload_date
 
+                # Ссылка/контрагент строки цены (владелец, 26.10.2026,
+                # загрузка каталогов GALA) — source_ref = ссылка на страницу
+                # товара (link_url_1 строки, иначе source_url, иначе имя
+                # файла, как раньше); contractor_id = магазин по seller_inn
+                # строки (см. _resolve_seller_contractor выше). Обычный
+                # Excel-импорт без этих колонок (col_idx их не содержит) ведёт
+                # себя как раньше: source_ref=filename, contractor_id=None.
+                row_source_ref = (
+                    _cell(row, col_idx, "link_url_1")
+                    or _cell(row, col_idx, "source_url")
+                    or filename
+                )
+                row_contractor_id = await _resolve_seller_contractor(_cell(row, col_idx, "seller_inn"))
+
                 qty_str = _cell(row, col_idx, "quantity")
                 unit_raw = _cell(row, col_idx, "unit")  # без дефолта — для бэкфилла Product.unit
                 unit_str = unit_raw or "шт."
@@ -375,16 +419,20 @@ async def apply_products_import(
 
                     if _price_is_more_actual(price, price_date_val, cur_price, cur_date):
                         if is_new_unflushed:
-                            pending_new_price.append((ep, price, price_date_val))
+                            pending_new_price.append((ep, price, price_date_val, row_source_ref, row_contractor_id))
                             new_product_price_state[id(ep)] = {"price": price, "date": price_date_val}
                         else:
                             # Актуализация цены (владелец, 2026-08-29): цена пришла
                             # из импортируемого файла — source='import'.
                             # collected_at (владелец, 2026-09-16) — «Дата цены» из
-                            # строки, иначе дата загрузки файла.
+                            # строки, иначе дата загрузки файла. source_ref/
+                            # contractor_id (владелец, 26.10.2026) — ссылка на
+                            # страницу товара и контрагент-магазин, см.
+                            # row_source_ref/row_contractor_id выше.
                             await actualize_product_price(
                                 db, ep, price=price, source="import",
-                                source_ref=filename, collected_at=price_date_val,
+                                source_ref=row_source_ref, contractor_id=row_contractor_id,
+                                collected_at=price_date_val,
                                 user=current_user,
                             )
                         changed = True
@@ -554,7 +602,7 @@ async def apply_products_import(
                 all_products.append(p)
                 product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price})
                 if price is not None and price > 0:
-                    pending_new_price.append((p, price, price_date_val))
+                    pending_new_price.append((p, price, price_date_val, row_source_ref, row_contractor_id))
                     new_product_price_state[id(p)] = {"price": price, "date": price_date_val}
                 created += 1
                 report_rows.append({"row": row_num, "action": "created", "name": name, "reason": None})
@@ -569,10 +617,11 @@ async def apply_products_import(
         # теперь у них есть product.id (нужен для ProductPriceHistory.product_id
         # NOT NULL). Одна и та же функция-писатель, что и для существующих
         # (см. actualize_product_price выше) — не вторая формула/копия.
-        for _p, _price, _price_date in pending_new_price:
+        for _p, _price, _price_date, _source_ref, _contractor_id in pending_new_price:
             await actualize_product_price(
                 db, _p, price=_price, source="import",
-                source_ref=filename, collected_at=_price_date,
+                source_ref=_source_ref, contractor_id=_contractor_id,
+                collected_at=_price_date,
                 user=current_user,
             )
 

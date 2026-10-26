@@ -68,7 +68,10 @@ class Product(Base):
     # точка входа для ВСЕХ мест, где меняется product.price.
     price_updated_at = Column(DateTime, nullable=True)
     price_source = Column(String(20), nullable=True)  # 'contract' | 'kp' | 'manual' | 'import' | 'monitoring'
-    price_source_ref = Column(String(300), nullable=True)  # № договора / «Запрос КП №N» / ссылка
+    # String(1000) (владелец, 26.10.2026) — как и ProductPriceHistory.source_ref,
+    # ссылка на страницу товара (а не только № договора/КП) на реальных файлах
+    # каталога GALA доходит до 607 символов.
+    price_source_ref = Column(String(1000), nullable=True)  # № договора / «Запрос КП №N» / ссылка
     price_source_contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
     price_ttl_days = Column(Integer, nullable=True)  # персональный override срока актуальности (дней)
 

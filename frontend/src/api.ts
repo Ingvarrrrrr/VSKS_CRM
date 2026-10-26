@@ -134,9 +134,9 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     : options.body
   _inflight += 1
   emitLoading()
-  // Внешний AbortController поверх пользовательского options.signal (если он
-  // когда-нибудь появится у вызывающих) — на сегодня ни один вызов apiFetch в
-  // проекте signal не передаёт, но на всякий случай не затираем его молча.
+  // Внешний AbortController поверх пользовательского options.signal: signal
+  // передаёт useProductSearch.ts (отмена устаревшего поиска при вводе) — отмена
+  // вызывающего не должна читаться как таймаут (см. catch ниже).
   const timeoutController = new AbortController()
   const timeoutId = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS)
   if (options.signal) {
@@ -163,6 +163,12 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   try {
     res = await doRawFetch()
   } catch (fetchErr: any) {
+    // Отмена вызывающим (options.signal), а не таймаутом — не таймаут-ошибка и
+    // не повтор: бросаем чистый AbortError, вызывающий (useProductSearch.ts и
+    // т.п.) сам ловит e?.name === 'AbortError' и молча выходит.
+    if (options.signal?.aborted) {
+      throw new DOMException('Запрос отменён', 'AbortError')
+    }
     // Сетевая ошибка (не таймаут) на идемпотентном/явно безопасном запросе —
     // один тихий повтор перед тем, как показать человеку что-либо (владелец,
     // 29.09, см. докстринг canRetryNetworkError выше).
@@ -171,6 +177,9 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
       try {
         res = await doRawFetch()
       } catch (retryErr: any) {
+        if (options.signal?.aborted) {
+          throw new DOMException('Запрос отменён', 'AbortError')
+        }
         throw translateFetchThrow(retryErr, options.suppressErrorDialog)
       }
     } else {

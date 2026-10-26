@@ -54,7 +54,37 @@ export interface MatchableRow {
     price_source_ref?: string | null
     price_freshness?: PriceFreshness | null
   } | null
+  // Владелец, 26.10.2026 (баг «цена не меняется при смене товара»): признак
+  // «цена сейчас подставлена из каталога, а не введена руками». ЕДИНЫЙ флаг,
+  // который решает, трогать ли unit_price/total_price при смене/очистке
+  // товара — см. applyCandidate() и resetPriceIfFromCatalog() ниже, это
+  // единственное место, где считается это решение (ПРАВИЛО №6). Служебное
+  // поле строки — вырезается перед сохранением тем же механизмом, что
+  // _description и т.п. (useWishForm.ts/CreateOrderView.vue).
+  price_from_catalog?: boolean
   [k: string]: any
+}
+
+/**
+ * Единственное место, решающее, чистить ли цену строки при снятии привязки
+ * к товару (крестик, очистка, выбор "не из каталога"). Цена чистится ТОЛЬКО
+ * если она была подставлена из каталога (price_from_catalog === true) —
+ * цену, введённую руками, очистка товара не трогает (владелец, 26.10.2026).
+ * Вынесена из useItemMatching() наружу — используется и там (clearBinding),
+ * и в useItemsTable.ts::clearItem, без собственного состояния композабла.
+ */
+export function resetPriceIfFromCatalog(row: MatchableRow): void {
+  // price_from_catalog === false — ЕДИНСТВЕННОЕ явное свидетельство, что цену
+  // в этой строке правили руками (ставится только в numberFormat.ts::
+  // moneyFieldOnInput на ручной ввод поля «Цена ед.»). Любое другое значение
+  // (true — цена только что подставлена из каталога; undefined — строка
+  // пришла с сервера/создана без правок цены в этой сессии, флаг не
+  // персистится) считается «цена не защищена» и чистится вместе с товаром.
+  if (row.price_from_catalog !== false) {
+    row.unit_price = null
+    row.total_price = null
+  }
+  row.price_from_catalog = false
 }
 
 export function useItemMatching() {
@@ -111,20 +141,25 @@ export function useItemMatching() {
    *    the separate applyItemAmounts()/computeItemTotal() recompute keyed on
    *    itemForm (utils/itemAmounts.ts) — not duplicated here (ПРАВИЛО №6).
    *  - цена (владелец, 26.10.2026, баг «выбрал бензопилу → выбрал зубную пасту
-   *    → цена осталась от бензопилы»):
+   *    → цена осталась от бензопилы»). Единое правило через флаг
+   *    `price_from_catalog` (см. тип MatchableRow выше и resetPriceIfFromCatalog
+   *    ниже — та же пара решает во ВСЕХ путях: инлайн-подбор, пикер-диалог,
+   *    очистка):
    *      · from_plan → цену НЕ трогаем (план закупок всегда главнее, как раньше);
    *      · тот же product_id, что уже стоял в строке (повторный выбор того же
    *        товара) → цену НЕ трогаем, даже если пользователь её поправил руками;
-   *      · раньше в строке не было товара (product_id был null) → старое
-   *        поведение: подставляем цену ТОЛЬКО если row.unit_price ещё пуст (не
-   *        затираем цену, введённую вручную до выбора товара);
-   *      · в строке УЖЕ был другой товар, а теперь выбран новый → цена ВСЕГДА
-   *        берётся от нового товара (contract_price ?? price), включая случай,
-   *        когда у нового товара цены нет вовсе — тогда unit_price становится
-   *        null (а не остаётся ценой старого товара). total_price пересчитывается
-   *        по той же формуле qty × unit_price либо тоже становится null, если
-   *        unit_price null (тот же приём, что useItemsTotals.ts::calcItemTotal /
-   *        PurchaseItemsEditor.vue — Правило №6, вторая конвенция не заводится).
+   *      · цена в строке НЕ подставлена из каталога (пуста, либо введена
+   *        руками — price_from_catalog не true) → подставляем цену нового
+   *        товара (contract_price ?? price), включая null, если у товара цены
+   *        нет. Так закрывается и «первичный выбор в пустую строку» (цены не
+   *        было — подставится), и «цену правили руками» (мануальная цена не
+   *        затирается при смене товара) ОДНИМ условием;
+   *      · цена в строке УЖЕ была подставлена из каталога (price_from_catalog
+   *        true, от предыдущего товара) → при смене товара синхронизируется с
+   *        новым (включая очистку в null, если у нового товара цены нет).
+   *    total_price пересчитывается по той же формуле qty × unit_price либо
+   *    тоже становится null (тот же приём, что useItemsTotals.ts::calcItemTotal
+   *    — Правило №6, вторая конвенция не заводится).
    *  - marks match_confirmed = true
    */
   function applyCandidate(row: MatchableRow, cand: MatchCandidate): void {
@@ -147,30 +182,18 @@ export function useItemMatching() {
     // ВСЕГДА плановая — выбор товара каталога её не перебивает, даже если
     // плановая цена по какой-то причине пуста (не подставляем цену каталога).
     const isSameProduct = prevProductId != null && prevProductId === cand.product_id
-    if (!(row as any).from_plan && !isSameProduct) {
-      if (prevProductId == null) {
-        // Первичный выбор для пустой строки — не затираем цену, введённую
-        // пользователем вручную ДО выбора товара (старое поведение).
-        if (row.unit_price == null) {
-          const best = cand.contract_price ?? cand.price
-          if (best != null) {
-            row.unit_price = Number(best)
-            if (row.quantity != null) {
-              row.total_price = Math.round(Number(row.quantity) * Number(row.unit_price) * 100) / 100
-            }
-          }
-        }
+    // Защищена только явно отмеченная ручная правка (price_from_catalog===false
+    // — см. resetPriceIfFromCatalog выше про остальные значения флага).
+    const manualPrice = row.unit_price != null && row.price_from_catalog === false
+    if (!(row as any).from_plan && !isSameProduct && !manualPrice) {
+      const best = cand.contract_price ?? cand.price
+      row.unit_price = best != null ? Number(best) : null
+      if (row.unit_price != null && row.quantity != null) {
+        row.total_price = Math.round(Number(row.quantity) * Number(row.unit_price) * 100) / 100
       } else {
-        // Смена товара на другой — цена строки ВСЕГДА синхронизируется с
-        // новым товаром, включая очистку в null, когда у него нет цены.
-        const best = cand.contract_price ?? cand.price
-        row.unit_price = best != null ? Number(best) : null
-        if (row.unit_price != null && row.quantity != null) {
-          row.total_price = Math.round(Number(row.quantity) * Number(row.unit_price) * 100) / 100
-        } else {
-          row.total_price = null
-        }
+        row.total_price = null
       }
+      row.price_from_catalog = true
     }
     row.match_confirmed = true
   }
@@ -183,7 +206,8 @@ export function useItemMatching() {
     row._photo_url = undefined
     row._description = undefined
     row._price_meta = null
+    resetPriceIfFromCatalog(row)
   }
 
-  return { matching, matchQueries, matchOne, applyCandidate, clearBinding }
+  return { matching, matchQueries, matchOne, applyCandidate, clearBinding, resetPriceIfFromCatalog }
 }

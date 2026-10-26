@@ -11,6 +11,7 @@
 import { ref, computed, watch, nextTick, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { MatchCandidate } from '@/composables/useItemMatching'
+import { resetPriceIfFromCatalog } from '@/composables/useItemMatching'
 import type { ItemsDisplayRow } from '@/components/items/types'
 import type { ToastType } from '@/composables/useToast'
 import { productPhotoSrc } from '@/utils/productPhoto'
@@ -215,6 +216,8 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
       item._description = undefined
       item._description_44fz = undefined
       item._price_meta = null
+      // Цена — единое правило useItemMatching.ts::resetPriceIfFromCatalog.
+      resetPriceIfFromCatalog(item)
       ;(item as any).match_confirmed = true
       emitUpdate()
       return

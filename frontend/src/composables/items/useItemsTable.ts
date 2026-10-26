@@ -4,6 +4,7 @@
 // (add/remove/clear/confirm-match) and row selection. Extracted from
 // PurchaseItemsEditor.vue (monolith refactor, часть 2).
 import { ref, computed, watch, type Ref } from 'vue'
+import { resetPriceIfFromCatalog } from '@/composables/useItemMatching'
 
 // EditorItem is structurally identical to the parent's; kept loose here (same
 // convention as ItemsTableFlat.vue) since the parent owns the real shape and
@@ -122,13 +123,17 @@ export function useItemsTable(deps: UseItemsTableDeps) {
   }
 
   function clearItem(idx: number) {
-    localItems.value[idx].item_name = ''
-    localItems.value[idx].product_id = null
-    localItems.value[idx]._selectedProduct = null
-    localItems.value[idx]._photo_url = undefined
-    localItems.value[idx]._description = undefined
-    localItems.value[idx]._description_44fz = undefined
-    localItems.value[idx]._price_meta = null
+    const row = localItems.value[idx]
+    row.item_name = ''
+    row.product_id = null
+    row._selectedProduct = null
+    row._photo_url = undefined
+    row._description = undefined
+    row._description_44fz = undefined
+    row._price_meta = null
+    // Цена — единое правило useItemMatching.ts::resetPriceIfFromCatalog
+    // (ПРАВИЛО №6): чистится только если была подставлена из каталога.
+    resetPriceIfFromCatalog(row)
     emitUpdate()
   }
 

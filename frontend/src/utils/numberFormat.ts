@@ -64,6 +64,11 @@ export function moneyFieldDisplay(item: any, numberField: string): string {
 export function moneyFieldOnInput(item: any, numberField: string, raw: string): number | null {
   const displayField = `_${numberField}_display`
   item[displayField] = raw
+  // Владелец, 26.10.2026: ручная правка цены позиции — единственное место,
+  // где снимается признак price_from_catalog (useItemMatching.ts) — дальше
+  // applyCandidate/resetPriceIfFromCatalog знают, что цену больше нельзя
+  // затирать автоподстановкой при смене товара (ПРАВИЛО №6, один источник).
+  if (numberField === 'unit_price' && item) item.price_from_catalog = false
   return parseNumber(raw)
 }
 

@@ -1008,7 +1008,7 @@ export function useWishForm(deps: {
       contractor_name: (wishForm.value.contractor_name || '').toString().trim() || null,
       items: wishForm.value.items
         .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
-        .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, ...rest }) => ({
+        .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, price_from_catalog, ...rest }) => ({
           ...rest,
           quantity: numOrNull((rest as any).quantity),
           unit_price: numOrNull((rest as any).unit_price),

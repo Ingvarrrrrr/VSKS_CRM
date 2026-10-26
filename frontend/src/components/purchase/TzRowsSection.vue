@@ -41,7 +41,7 @@
       </v-btn>
     </div>
 
-    <v-table density="comfortable" class="tz-table">
+    <v-table v-if="!bannerOnly" density="comfortable" class="tz-table">
       <thead>
         <tr class="tz-table-header">
           <th style="width:36px;text-align:center">№</th>
@@ -166,6 +166,13 @@ const props = withDefaults(defineProps<{
   footerTotal?: number | null
   resolveLocalItem?: (row: TzRow) => any
   activeDescription?: (item: any) => string | undefined
+  // Владелец, 26.10.2026 (вид ТЗ заявки — единый лист-таблица, не два
+  // параллельных): WishTzSection.vue показывает собственную таблицу строк
+  // (WishTzLocalTable.vue, из локальных позиций формы, всегда) — здесь
+  // остаётся ТОЛЬКО баннер проверки дублей (после сохранения), свою таблицу
+  // данных компонент не рисует, чтобы не дублировать один и тот же список
+  // дважды (Правило №6).
+  bannerOnly?: boolean
   // Совпадает с composables/useToast.ts::ToastType — CreateOrderView передаёт
   // сюда свой showSnack(text, color?: ToastType, opts?), a `color?: string`
   // здесь был бы шире цели (TS2322: contravariance), не принимается.
@@ -178,6 +185,7 @@ const props = withDefaults(defineProps<{
   showPrices: true,
   priceDash: false,
   footerTotal: undefined,
+  bannerOnly: false,
 })
 
 const emit = defineEmits<{

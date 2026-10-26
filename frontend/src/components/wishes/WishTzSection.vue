@@ -40,20 +40,16 @@
       </div>
     </v-card-title>
     <v-card-text v-show="!collapsed" class="pa-0">
-      <!-- Своё ТЗ (характеристики) каждой позиции — план item-tz-description.md,
-           Этап Б (владелец, 14.10.2026). Правка здесь мутирует те же объекты
-           позиций, что держит форма заявки (props.items передаётся по ссылке из
-           wishForm.value.items) — автосейв формы подхватывает значение сам,
-           отдельного сохранения тут нет. Один хелпер (ПРАВИЛО №6) — см.
-           utils/itemTz.ts, тот же, что использует ItemsTableStages.vue. -->
+      <!-- Лист-таблица ТЗ (№, фото+название, описание, кол-во, ед.) — ВСЕГДА
+           по локальным позициям формы (до и после сохранения заявки), как
+           было до коммита b966b1db (владелец, 26.10.2026: «почему
+           переделалось в блоки?»). Правка описания мутирует те же объекты
+           позиций, что держит форма заявки (props.items — ссылка на
+           wishForm.value.items), автосейв формы подхватывает сам. Один
+           рендер строки (WishTzItemRow внутри ячейки) — см.
+           WishTzLocalTable.vue (Правило №5/№6). -->
       <div class="px-4 pt-3 pb-1">
-        <WishTzItemRow
-          v-for="(item, idx) in visibleItems"
-          :key="item.id ?? item._uid ?? idx"
-          :item="item"
-          :mode="descriptionMode"
-          @propose="openProposeDialog"
-        />
+        <WishTzLocalTable :items="visibleItems" :mode="descriptionMode" @propose="openProposeDialog" />
       </div>
 
       <ProposeToCatalogDialog
@@ -65,20 +61,22 @@
         field="description"
         :wish-item-id="proposeTarget.id"
       />
-      <!-- Строки ТЗ — только с сервера (GET /api/wishes/{id}/tz-rows), пока
-           заявка не сохранена (нет wishId) — id ещё нет, показываем подсказку
-           вместо локального пересчёта дублей (Правило №6). -->
+      <!-- Проверка повторяющихся позиций — ТОЛЬКО после сохранения (нет
+           своего локального пересчёта дублей, Правило №6) — у TzRowsSection
+           здесь остаётся только баннер (bannerOnly), таблицу строк рисует
+           WishTzLocalTable выше, дважды список не выводим. -->
       <TzRowsSection
         v-if="wishId"
         ref="tzRowsRef"
         :wish-id="wishId"
         readonly
+        banner-only
         :show-prices="false"
         :resolve-local-item="resolveLocalItem"
         :active-description="activeDescription"
       />
-      <div v-else class="pa-4 text-center text-medium-emphasis text-caption">
-        Сохраните заявку, чтобы увидеть строки ТЗ и проверку повторяющихся позиций.
+      <div v-else class="px-4 pb-3 text-caption text-medium-emphasis">
+        Проверка повторяющихся позиций — после сохранения заявки.
       </div>
     </v-card-text>
   </v-card>
@@ -100,7 +98,7 @@
 import { computed, ref, watch } from 'vue'
 import TzRowsSection from '@/components/purchase/TzRowsSection.vue'
 import ProposeToCatalogDialog from '@/components/products/ProposeToCatalogDialog.vue'
-import WishTzItemRow from '@/components/wishes/WishTzItemRow.vue'
+import WishTzLocalTable from '@/components/wishes/WishTzLocalTable.vue'
 import type { TzRow } from '@/composables/purchase/useTzRows'
 import { effectiveTz } from '@/utils/itemTz'
 
@@ -118,14 +116,13 @@ const tzRowsRef = ref<InstanceType<typeof TzRowsSection> | null>(null)
 // (см. шаблон), она читает исключительно сервер.
 const visibleItems = computed(() => (props.items || []).filter((it) => (it.item_name || '').trim()))
 
-// Ключ сменён (владелец, 26.10.2026, жалоба «не вижу ТЗ») — раньше блок был
-// свёрнут по умолчанию, и старое значение '1' в localStorage у всех
-// пользователей держало бы его свёрнутым даже после смены дефолта. Новый
-// ключ v2 — дефолт «развёрнут», старое сохранённое решение не наследуется.
-const COLLAPSE_KEY = 'wish_tz_collapsed_v2'
+// Ключ 'wish_tz_collapsed', формула дефолта — как было до b966b1db (владелец,
+// 26.10.2026: «раскрытие без клика не нужно») — свёрнут, если в localStorage
+// не лежит явное '0'. Раскрывается только явным кликом по заголовку.
+const COLLAPSE_KEY = 'wish_tz_collapsed'
 const MODE_KEY = 'wish_tz_description_mode'
 
-const collapsed = ref(localStorage.getItem(COLLAPSE_KEY) === '1') // развёрнута по умолчанию
+const collapsed = ref(localStorage.getItem(COLLAPSE_KEY) !== '0') // свёрнута по умолчанию
 function toggleCollapsed() {
   collapsed.value = !collapsed.value
   try { localStorage.setItem(COLLAPSE_KEY, collapsed.value ? '1' : '0') } catch { /* noop */ }

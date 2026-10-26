@@ -282,6 +282,7 @@
                 </v-col>
                 <v-col cols="12">
                   <v-select
+                    ref="wishSubsidySelectRef"
                     v-model="wishForm.subsidy_id"
                     :items="ctx.subsidies.value"
                     item-title="name"
@@ -488,6 +489,12 @@
                   >
                     <div class="font-weight-medium">{{ wishFeoMissingTarget.title }}</div>
                     <div class="mt-1">{{ wishFeoMissingTarget.detail }}</div>
+                    <v-btn
+                      size="small" variant="flat" color="error" class="mt-2"
+                      @click="onHighlightMissingFeoCategory"
+                    >
+                      {{ wishFeoMissingTarget.buttonLabel }}
+                    </v-btn>
                   </v-alert>
                   <template v-if="wishForm.subsidy_id && !(canEditWishFeo && !isWishEditable)">
                     <v-alert v-if="hasPlanLinkedItems" type="info" density="compact" variant="tonal" class="mb-2">
@@ -535,6 +542,12 @@
                         <li v-for="(it, idx) in wishItemsMissingFeoCategory" :key="idx">{{ it.item_name || 'без названия' }}</li>
                       </ul>
                     </div>
+                    <v-btn
+                      size="small" variant="flat" color="error" class="mt-2"
+                      @click="onHighlightMissingFeoCategory"
+                    >
+                      {{ wishFeoMissingTarget.buttonLabel }}
+                    </v-btn>
                   </v-alert>
                 </template>
                 <!-- Дефект 1 (владелец, 2026-08-20): видимый индикатор автосейва построчных
@@ -1345,14 +1358,19 @@
         <v-spacer />
         <!-- draft/rejected или новая заявка: черновик + отправить -->
         <template v-if="isWishEditable && (!editingWishId || ['draft', 'rejected'].includes((wishForm as any).status))">
-          <v-btn color="grey" variant="tonal" :loading="saving" @click="saveWish(false)">
+          <!-- Владелец, 26.10.2026: «кнопки бледные — нажимать не будет». Черновик
+               backend разрешает сохранять без субсидии/категории ФЭО
+               (subsidy_id Optional в WishCreate, assert_subsidy_approved_for_binding
+               пропускает None) — сохранение здесь безусловное, подсветка/гейт не
+               нужны. Выглядеть кнопка должна явно активной — color="primary"
+               variant="outlined" вместо бледно-серого tonal. -->
+          <v-btn color="primary" variant="outlined" :loading="saving" @click="saveWish(false)">
             Сохранить черновик
           </v-btn>
           <v-tooltip :disabled="!wishFeoCategoryMissing" location="top">
             <template #activator="{ props: tipProps }">
               <span v-bind="tipProps">
                 <v-btn ref="wishSubmitBtnRef" color="primary" variant="flat" :loading="saving"
-                       :class="{ 'wish-btn-blocked': wishFeoCategoryMissing }"
                        @click="wishFeoCategoryMissing ? onHighlightMissingFeoCategory() : saveWish(true)">
                   Отправить на согласование
                 </v-btn>
@@ -1418,7 +1436,6 @@
             <template #activator="{ props: tipProps }">
               <span v-bind="tipProps">
                 <v-btn color="success" variant="tonal" prepend-icon="mdi-check" :loading="actions.approvingId.value === editingWish.id"
-                       :class="{ 'wish-btn-blocked': wishFeoCategoryMissing }"
                        @click="wishFeoCategoryMissing ? onHighlightMissingFeoCategory() : actions.approveWish(editingWish, actions.quickApproveTzNotRequired.value).then(() => wishDialog = false)">
                   Одобрить без согласования остальных
                 </v-btn>
@@ -1441,14 +1458,13 @@
         class="px-4 pb-4 d-flex flex-column ga-2 align-stretch"
       >
         <template v-if="isWishEditable && (!editingWishId || ['draft', 'rejected'].includes((wishForm as any).status))">
-          <v-btn color="grey" variant="tonal" block :loading="saving" @click="saveWish(false)">
+          <v-btn color="primary" variant="outlined" block :loading="saving" @click="saveWish(false)">
             Сохранить черновик
           </v-btn>
           <v-tooltip :disabled="!wishFeoCategoryMissing" location="top">
             <template #activator="{ props: tipProps }">
               <span v-bind="tipProps" class="w-100">
                 <v-btn block color="primary" variant="flat" :loading="saving"
-                       :class="{ 'wish-btn-blocked': wishFeoCategoryMissing }"
                        @click="wishFeoCategoryMissing ? onHighlightMissingFeoCategory() : saveWish(true)">
                   Отправить на согласование
                 </v-btn>
@@ -1933,6 +1949,14 @@ function isMobileSectionOpen(key: string): boolean {
 // координатора (2026-10-26, п.2): «после скролла к полю категории — открыть
 // выпадающий список».
 const wishFeoTreeSelectRef = ref<{ openMenu?: () => void } | null>(null)
+// Ref на сам v-select «Субсидия *» (не на компонент-обёртку — тут это обычный
+// Vuetify v-select) — тот же приём «после скролла открыть список сам», что и
+// у FeoTreeSelect выше, только здесь нет своего openMenu(): Vuetify forwardRefs
+// у VSelect пробрасывает внутренний reactive `menu` прямо на публичный
+// instance (проверено: VSelect.js — forwardRefs({isFocused, menu, select}, …)),
+// поэтому programmatic open — тот же `.menu = true`, без второго механизма
+// скролла/подсветки (ПРАВИЛО №6) — используется ОДИН highlightMissingFeoCategory.
+const wishSubsidySelectRef = ref<{ menu?: boolean } | null>(null)
 
 async function onHighlightMissingFeoCategory() {
   if (mobileCollapseActive.value) {
@@ -1944,6 +1968,12 @@ async function onHighlightMissingFeoCategory() {
     // Ждём, пока доедет smooth-scroll (см. scrollIntoView в highlightMissingFeoCategory),
     // иначе v-menu в FeoTreeSelect спозиционируется по ещё не финальным координатам поля.
     window.setTimeout(() => wishFeoTreeSelectRef.value?.openMenu?.(), 450)
+  } else if (wishFeoMissingTarget.value.kind === 'subsidy') {
+    // Та же задержка и тот же повод (дождаться smooth-scroll к полю) — список
+    // субсидий раскрывается после прокрутки, а не вместо неё.
+    window.setTimeout(() => {
+      if (wishSubsidySelectRef.value) wishSubsidySelectRef.value.menu = true
+    }, 450)
   }
 }
 

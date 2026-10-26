@@ -96,4 +96,56 @@ describe('useItemMatching.clearBinding', () => {
     expect((row as any)._description).toBeUndefined()
     expect((row as any)._price_meta).toBeNull()
   })
+
+  // Владелец, 26.10.2026: главный баг — выбрал «Боевая одежда» (12450, из
+  // каталога) → крестик (очистить) → выбрал «Зубная паста» — раньше unit_price
+  // не чистился при очистке, и applyCandidate (видя product_id=null) считал,
+  // что цену ввели руками. Теперь clearBinding/clearItem сами чистят
+  // каталожную цену через price_from_catalog (resetPriceIfFromCatalog).
+  it('цена подставлена из каталога (price_from_catalog=true) — очистка чистит и её', () => {
+    const { clearBinding } = useItemMatching()
+    const row = makeRow({ product_id: 20, unit_price: 12450, total_price: 12450, price_from_catalog: true } as any)
+    clearBinding(row)
+    expect(row.unit_price).toBeNull()
+    expect(row.total_price).toBeNull()
+    expect((row as any).price_from_catalog).toBe(false)
+  })
+
+  it('цена введена руками (price_from_catalog=false) — очистка товара её не трогает', () => {
+    const { clearBinding } = useItemMatching()
+    const row = makeRow({ product_id: 20, unit_price: 500, total_price: 1000, price_from_catalog: false } as any)
+    clearBinding(row)
+    expect(row.unit_price).toBe(500)
+    expect(row.total_price).toBe(1000)
+  })
+})
+
+describe('useItemMatching.applyCandidate — price_from_catalog', () => {
+  it('сценарий (а): выбор → очистка → выбор другого товара — цена нового товара', () => {
+    const { applyCandidate, clearBinding } = useItemMatching()
+    const row = makeRow({ quantity: 1 })
+    applyCandidate(row, makeCandidate({ product_id: 1, name: 'Боевая одежда пожарного черная', price: 12450 }))
+    expect(row.unit_price).toBe(12450)
+    expect((row as any).price_from_catalog).toBe(true)
+    clearBinding(row)
+    expect(row.unit_price).toBeNull()
+    applyCandidate(row, makeCandidate({ product_id: 2, name: 'Зубная паста Dabur Red, 100 г', price: 209 }))
+    expect(row.unit_price).toBe(209)
+  })
+
+  it('сценарий (в): ручная цена 500 переживает смену товара на новый', () => {
+    const { applyCandidate } = useItemMatching()
+    const row = makeRow({ product_id: 1, quantity: 1, unit_price: 500, total_price: 500, price_from_catalog: false } as any)
+    applyCandidate(row, makeCandidate({ product_id: 2, name: 'Другой товар', price: 999 }))
+    expect(row.unit_price).toBe(500)
+    expect(row.total_price).toBe(500)
+  })
+
+  it('сценарий (г): у нового товара нет цены — поле становится пустым, не старой ценой', () => {
+    const { applyCandidate } = useItemMatching()
+    const row = makeRow({ product_id: 1, quantity: 1, unit_price: 12450, total_price: 12450, price_from_catalog: true } as any)
+    applyCandidate(row, makeCandidate({ product_id: 2, name: 'Без цены', price: null, contract_price: null }))
+    expect(row.unit_price).toBeNull()
+    expect(row.total_price).toBeNull()
+  })
 })

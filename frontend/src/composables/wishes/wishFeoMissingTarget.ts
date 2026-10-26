@@ -32,19 +32,26 @@
 // ошибки не формируется (WishFormDialog.vue подставляет title/detail, не
 // дублирует сам текст).
 
+// buttonLabel — владелец, 26.10.2026: плашка «Субсидия не выбрана...» висела
+// текстом без действия. Кнопка в плашке зовёт ТОТ ЖЕ onHighlightMissingFeoCategory
+// (WishFormDialog.vue — скролл/раскрытие раздела/открытие дерева категории),
+// что и подсветка по клику на заблокированную кнопку отправки — второй
+// механизм прокрутки/раскрытия не заводится (ПРАВИЛО №6). Текст кнопки —
+// отсюда же, единственный источник текстов этой ошибки.
 export type WishFeoMissingTarget =
-  | { kind: 'subsidy'; title: string; detail: string; tooltip: string }
-  | { kind: 'category'; title: string; detail: string; tooltip: string }
-  | { kind: 'item'; uid: string | number; title: string; detail: string; tooltip: string }
+  | { kind: 'subsidy'; title: string; detail: string; tooltip: string; buttonLabel: string }
+  | { kind: 'category'; title: string; detail: string; tooltip: string; buttonLabel: string }
+  | { kind: 'item'; uid: string | number; title: string; detail: string; tooltip: string; buttonLabel: string }
 
 function build(
   kind: WishFeoMissingTarget['kind'],
   title: string,
   detail: string,
   tooltip: string,
+  buttonLabel: string,
   extra?: Record<string, unknown>
 ): WishFeoMissingTarget {
-  return { kind, title, detail, tooltip, ...extra } as WishFeoMissingTarget
+  return { kind, title, detail, tooltip, buttonLabel, ...extra } as WishFeoMissingTarget
 }
 
 export function resolveWishFeoMissingTarget(params: {
@@ -57,9 +64,10 @@ export function resolveWishFeoMissingTarget(params: {
   if (!subsidyId) {
     return build(
       'subsidy',
-      'Субсидия не выбрана — отправить заявку на согласование нельзя',
-      'Сначала выберите субсидию — после этого появится выбор категории ФЭО.',
-      'Сначала выберите субсидию.'
+      'Субсидия не выбрана.',
+      'Выберите её в разделе «Основная информация» — после этого появится выбор категории ФЭО.',
+      'Сначала выберите субсидию.',
+      'Выбрать субсидию'
     )
   }
 
@@ -72,6 +80,7 @@ export function resolveWishFeoMissingTarget(params: {
         title,
         'Не у всех позиций выбрана конечная категория ФЭО — заполните её у каждой позиции в таблице (строка подсвечена).',
         'Не у всех позиций выбрана категория ФЭО.',
+        'Выбрать категорию',
         { uid: firstMissingItem._uid }
       )
     }
@@ -79,7 +88,8 @@ export function resolveWishFeoMissingTarget(params: {
       'category',
       title,
       'Не у всех позиций выбрана конечная категория ФЭО — заполните её у каждой позиции в таблице.',
-      'Не у всех позиций выбрана категория ФЭО.'
+      'Не у всех позиций выбрана категория ФЭО.',
+      'Выбрать категорию'
     )
   }
 
@@ -87,6 +97,7 @@ export function resolveWishFeoMissingTarget(params: {
     'category',
     title,
     'Без конечной категории закупка не попадёт ни в один план ФЭО и её сумма потеряется. Выберите категорию в дереве, углубившись до самого конечного уровня, а если категория неизвестна — нажмите «Не определена».',
-    'Выберите категорию ФЭО до конечного уровня.'
+    'Выберите категорию ФЭО до конечного уровня.',
+    'Выбрать категорию'
   )
 }

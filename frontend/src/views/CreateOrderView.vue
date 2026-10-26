@@ -5160,7 +5160,7 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
   try {
     const validItems = items.value
       .filter(i => i.item_name?.trim())
-      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, feo_node_id: _feoNodeId, ...rest }) => ({
+      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, feo_node_id: _feoNodeId, price_from_catalog, ...rest }) => ({
         ...rest,
         // numOrNull (2026-09-04) заменил локальную проверку `!== '' && != null ? v : null`
         // (ПРАВИЛО №6, один источник истины): '' → null, 0 сохраняется как число.

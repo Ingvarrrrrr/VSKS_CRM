@@ -1,6 +1,6 @@
 <template>
-  <div class="mb-3">
-    <div class="text-caption text-medium-emphasis mb-1">{{ item.item_name }}</div>
+  <div :class="hideNameCaption ? '' : 'mb-3'">
+    <div v-if="!hideNameCaption" class="text-caption text-medium-emphasis mb-1">{{ item.item_name }}</div>
 
     <!-- Текст из каталога, своего ТЗ у позиции нет — показываем обычным текстом
          (не placeholder'ом, иначе владелец его не видит, жалоба 26.10.2026),
@@ -72,6 +72,12 @@ type EditorItem = any
 const props = defineProps<{
   item: EditorItem
   mode: 'exact' | '44fz'
+  // Владелец, 26.10.2026 («вид ТЗ» — лист-таблица, не блоки): используется из
+  // WishTzLocalTable.vue, когда компонент — содержимое ячейки описания внутри
+  // строки таблицы, где наименование уже выведено своей колонкой (повторять
+  // его подписью здесь не нужно). Сам компонент (текст/правка ТЗ) один и тот
+  // же — второй параллельный рендер описания не заводится (ПРАВИЛО №6).
+  hideNameCaption?: boolean
 }>()
 
 defineEmits<{ propose: [item: EditorItem] }>()

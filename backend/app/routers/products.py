@@ -22,6 +22,8 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Body
 from sqlalchemy import select
+from sqlalchemy.orm import defer
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,7 +113,12 @@ async def list_products(
     # product_photos (не на Product) — defer() здесь больше не нужен, список
     # остаётся лёгким сам по себе. Клиенты получают байты через
     # GET /{product_id}/photo, когда has_photo=True (products.photo_size).
-    q = select(Product)
+    # Владелец, 26.10.2026: список не отдаёт characteristics (JSONB,
+    # может быть тяжёлым — на каталоге 53 797 товаров раздувает ответ и
+    # трафик без пользы: список их не показывает, карточка товара
+    # (GET /{product_id}) догружает их отдельным запросом — см. ниже
+    # p.characteristics = None и фронт ProductFormDialog.vue/useProductsForm.ts).
+    q = select(Product).options(defer(Product.characteristics))
     # Products are global — no org_id filter
     if ids is not None:
         try:
@@ -174,6 +181,14 @@ async def list_products(
     freshness_ctx = await load_freshness_context(db, org_id)
     for p in products:
         p.price_freshness = evaluate_freshness(p, freshness_ctx)
+        # characteristics не загружено (defer выше) — явно выставляем None,
+        # а не читаем атрибут: чтение недогруженной deferred-колонки внутри
+        # async ORM без await лезет за ней в БД и роняет сериализацию.
+        # set_committed_value (не обычное присваивание!) — иначе объект
+        # помечается dirty и autoflush перед следующим запросом (напр.
+        # _attach_price_stats) шлёт UPDATE products SET characteristics=NULL
+        # на каждый товар из списка (53 тыс. на проде).
+        set_committed_value(p, "characteristics", None)
     # Список «Товары»: средняя для партии 1–9 по региону ТЕКУЩЕЙ организации
     # пользователя (план clever-bouncing-lantern.md п.7) — тот же порядок
     # поиска уровней, что и везде (compute_price_stats), нет данных по

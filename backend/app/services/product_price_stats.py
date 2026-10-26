@@ -255,22 +255,32 @@ async def compute_price_stats_bulk(
         return {}
     from app.models.product import Product
     from app.models.product_price_history import ProductPriceHistory
+    from app.utils.chunking import chunked
 
-    rows = (await db.execute(
-        select(
-            ProductPriceHistory.product_id,
-            ProductPriceHistory.price,
-            ProductPriceHistory.collected_at,
-            ProductPriceHistory.region,
-            ProductPriceHistory.quantity,
-            ProductPriceHistory.unit,
-            ProductPriceHistory.source_ref,
-        ).where(ProductPriceHistory.product_id.in_(product_ids))
-    )).all()
+    # Владелец, 26.10.2026: каталог дорос до 53 797 товаров — один IN на ВСЕ
+    # id разом ловил asyncpg "the number of query arguments cannot exceed
+    # 32767" (GET /api/products/ падал 500). Оба запроса — порциями по
+    # DEFAULT_CHUNK_SIZE id, результат склеивается — число и состав строк
+    # не меняются относительно одного большого IN.
+    rows = []
+    for ids_chunk in chunked(product_ids):
+        rows.extend((await db.execute(
+            select(
+                ProductPriceHistory.product_id,
+                ProductPriceHistory.price,
+                ProductPriceHistory.collected_at,
+                ProductPriceHistory.region,
+                ProductPriceHistory.quantity,
+                ProductPriceHistory.unit,
+                ProductPriceHistory.source_ref,
+            ).where(ProductPriceHistory.product_id.in_(ids_chunk))
+        )).all())
 
-    units = dict((await db.execute(
-        select(Product.id, Product.unit).where(Product.id.in_(product_ids))
-    )).all())
+    units: dict = {}
+    for ids_chunk in chunked(product_ids):
+        units.update(dict((await db.execute(
+            select(Product.id, Product.unit).where(Product.id.in_(ids_chunk))
+        )).all()))
 
     by_product: dict[int, list] = {pid: [] for pid in product_ids}
     for r in rows:

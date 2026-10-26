@@ -95,6 +95,12 @@ export function useProductsForm(options: {
     country_origin: 'РФ' as string,
     has_photo: false as boolean,
     price_ttl_days: null as number | null,
+    // Характеристики каталога (владелец, 26.10) — список GET /products/ их не
+    // отдаёт (тяжёлый JSONB, карточка догружает отдельным запросом, см.
+    // openEdit ниже), поэтому в пустой форме — пустое значение по умолчанию.
+    characteristics: null as Product['characteristics'],
+    manufacturer: '' as string,
+    article: '' as string,
   })
   const form = reactive(emptyForm())
   // Bumped when we re-download / re-upload so the <img> bypasses browser cache.
@@ -187,6 +193,13 @@ export function useProductsForm(options: {
       country_origin: p.country_origin || 'РФ',
       has_photo: !!p.has_photo,
       price_ttl_days: p.price_ttl_days ?? null,
+      // Список товаров (GET /products/) больше не отдаёт characteristics
+      // (владелец, 26.10 — тяжёлый JSONB не нужен в списке), поэтому из p
+      // здесь почти всегда null/undefined — реальные значения подгружает
+      // _loadCharacteristics ниже отдельным запросом GET /products/{id}.
+      characteristics: p.characteristics ?? null,
+      manufacturer: p.manufacturer || '',
+      article: p.article || '',
     })
     photoCacheBuster.value = Date.now()
     resetPhotoState()
@@ -201,6 +214,29 @@ export function useProductsForm(options: {
     editMeta.updated_by = (p as any).updated_by || null
     editMeta.import_note = (p as any).import_note || null
     dialog.value = true
+    void _loadCharacteristics(p.id)
+  }
+
+  // Владелец, 26.10.2026: список товаров больше не отдаёт characteristics/
+  // manufacturer/article (см. backend/app/routers/products.py::list_products —
+  // defer(Product.characteristics), ответ был слишком тяжёлым на каталоге
+  // 53 797 товаров). Карточка товара при открытии существующего товара
+  // догружает их отдельным GET /products/{id}. Остальные поля формы НЕ
+  // трогаем (пользователь мог начать печатать до ответа) — применяем ответ
+  // ТОЛЬКО если editingId не сменился (пользователь быстро открыл другой
+  // товар/создал новый, пока запрос letел).
+  async function _loadCharacteristics(productId: number) {
+    try {
+      const full = await apiFetch<Product>(`/products/${productId}`)
+      if (editingId.value !== productId) return
+      form.characteristics = full.characteristics ?? null
+      form.manufacturer = full.manufacturer || ''
+      form.article = full.article || ''
+    } catch {
+      // Молча — characteristics не критичны для остальной работы формы,
+      // save() их не требует; showSnack здесь только отвлекал бы внимание
+      // от основной задачи редактирования товара.
+    }
   }
 
   // Пункт 2 (владелец, 14.10): после первого сохранения товара отправляет

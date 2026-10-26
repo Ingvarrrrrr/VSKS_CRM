@@ -88,6 +88,7 @@ async def run(dry_run: bool, limit, ids, batch_size: int) -> int:
                     manufacturer=product.manufacturer,
                     article=product.article,
                     brands=brands,
+                    product_type=product.product_type,
                 )
                 if not text:
                     skipped_no_data += 1

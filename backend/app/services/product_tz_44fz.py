@@ -59,6 +59,7 @@ def build_tz_44fz(
     manufacturer: Optional[str] = None,
     article: Optional[str] = None,
     brands: Optional[frozenset] = None,
+    product_type: Optional[str] = None,
 ) -> tuple:
     """Собирает текст ТЗ 44-ФЗ. Возвращает (text, needs_review); text is
     None, если параметров нет вообще (ни характеристик, ни пригодного для
@@ -68,13 +69,33 @@ def build_tz_44fz(
     Product.manufacturer + значения характеристик «Бренд/Производитель/
     Торговая марка» по всему каталогу, длина >= 3), собирает вызывающий
     через collect_catalog_brands() (product_tz_44fz_brands.py), ПРАВИЛО №6 —
-    эта функция остаётся чистой и не трогает БД сама."""
+    эта функция остаётся чистой и не трогает БД сама.
+
+    product_type — Product.product_type («Тип товара»), владелец 26.10.2026:
+    приоритет источника наименования — product_type > характеристика
+    «Наименование» > Product.name (_resolve_name_source). Непустой
+    product_type прогоняется через ТУ ЖЕ чистку брендов/моделей (_clean_name
+    — второго места не заводим, ПРАВИЛО №6); если результат чистки непустой,
+    он и есть наименование, needs_review форсируется False (тип товара —
+    короткая точная строка, ревью не нужно), даже если сама _clean_name
+    решила иначе (осталось < 2 слов). Пустой product_type или пустой
+    результат чистки — откат к прежней логике (характеристика/название)."""
     characteristics = characteristics or []
     source_items = characteristics
     if not source_items and description:
         source_items = _parse_description_fallback(description)
 
-    name_source = _resolve_name_source(name, characteristics)
+    product_type_value = (product_type or "").strip()
+    force_name_no_review = False
+    name_source = ""
+    if product_type_value:
+        name_source = product_type_value
+        force_name_no_review = True
+
+    if not name_source:
+        name_source = _resolve_name_source(name, characteristics)
+        force_name_no_review = False
+
     product_name_lower = name_source.strip().lower() if name_source else ""
     # Бренд-слова собираем из source_items (а не только "сырых"
     # characteristics) — у товаров без JSON-характеристик (characteristics
@@ -89,6 +110,20 @@ def build_tz_44fz(
     clean_name, needs_review, removed_name_tokens = _clean_name(
         name_source, source_items, manufacturer, article, brands,
     )
+
+    if force_name_no_review and not clean_name.strip():
+        # Чистка product_type ушла в пустоту (крайний случай) — откат к
+        # прежнему источнику наименования (характеристика/Product.name).
+        force_name_no_review = False
+        name_source = _resolve_name_source(name, characteristics)
+        product_name_lower = name_source.strip().lower() if name_source else ""
+        clean_name, needs_review, removed_name_tokens = _clean_name(
+            name_source, source_items, manufacturer, article, brands,
+        )
+
+    if force_name_no_review:
+        needs_review = False
+
     value_strip_words = list(local_brand_words) + removed_name_tokens
 
     lines = []

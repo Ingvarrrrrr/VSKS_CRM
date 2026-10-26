@@ -72,7 +72,10 @@ async def assert_can_edit_catalog(user: User, db: AsyncSession) -> None:
 # (routers/products.py, routers/products_photos.py) только сравнивает
 # старое/новое значение и передаёт сюда РЕАЛЬНО изменившиеся поля, вторую
 # такую проверку не писать.
-FILL_EMPTY_FIELDS = ("description", "description_44fz", "price", "photo")
+# characteristics добавлены владельцем в задаче «ручное заполнение
+# характеристик» (26.10.2026) — та же логика "заполнить пустое можно всем,
+# перезаписать непустое — только с правом каталога".
+FILL_EMPTY_FIELDS = ("description", "description_44fz", "price", "photo", "characteristics")
 
 
 def is_fill_empty_change(product: "Product", field: str) -> bool:
@@ -88,6 +91,8 @@ def is_fill_empty_change(product: "Product", field: str) -> bool:
     if field == "photo":
         from app.services.product_photo_store import has_photo
         return not has_photo(product)
+    if field == "characteristics":
+        return not (getattr(product, "characteristics", None) or [])
     return False
 
 

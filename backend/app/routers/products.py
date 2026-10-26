@@ -53,6 +53,7 @@ from app.services.product_catalog_guard import (
     prices_differ,
 )
 from app.services.product_description_history import DESCRIPTION_FIELDS, set_product_description
+from app.services.product_characteristics_validate import normalize_characteristics, characteristics_changed
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -251,6 +252,17 @@ async def create_product(
             )
 
     data = product.model_dump()
+    # characteristics=None (ключ прислан, но пуст) — «не трогать» (QA,
+    # 26.10.2026: раньше normalize_characteristics(None) → [] стирало уже
+    # сохранённые характеристики, если фронт ещё не догрузил их). Явная
+    # очистка — только пустой список [], он проходит нормализацию как обычно.
+    # См. ту же логику в update_product/patch_product (ПРАВИЛО №6, один
+    # принцип «None = не трогать», не три разных).
+    if "characteristics" in data:
+        if data["characteristics"] is None:
+            del data["characteristics"]
+        else:
+            data["characteristics"] = normalize_characteristics(data["characteristics"])
     category_ids = data.pop("purchase_category_ids", None)
     # Категория опциональна на входе (владелец, 2026-09-20: ручное добавление
     # товара без категории падало 422) — пусто/None подменяется дефолтом
@@ -307,6 +319,16 @@ async def update_product(
     # purchase_category_ids=[] стирал категории закупки, country_origin
     # перезаписывался на дефолтное "РФ"). Не присланное поле — не трогаем.
     data = product.model_dump(exclude_unset=True)
+    # characteristics=None — «не трогать» (та же логика, что в create_product
+    # выше, ПРАВИЛО №6): PUT шлёт форму целиком, но пока фронт не догрузил
+    # характеристики отдельным запросом (_loadCharacteristics), поле формы
+    # ещё null — null НЕ должен стирать уже сохранённые характеристики.
+    # Явная очистка — только пустой список [].
+    if "characteristics" in data:
+        if data["characteristics"] is None:
+            del data["characteristics"]
+        else:
+            data["characteristics"] = normalize_characteristics(data["characteristics"])
     # purchase_category_ids трогаем только если ключ прислан явно: отсутствие
     # ключа (exclude_unset) не стирает категории, пустой список [] — очищает
     # (явное действие пользователя).
@@ -343,9 +365,14 @@ async def update_product(
         new_cat_ids = sorted({i for i in category_ids if i is not None})
         if current_cat_ids != new_cat_ids:
             changed_fields["purchase_category_ids"] = category_ids
-    # price/price_links — уже учтены выше отдельно (price_links влияет на
-    # price через _apply_price_links, не гейтится второй раз).
-    _skip_generic = set(DESCRIPTION_FIELDS) | {"price", "price_links"}
+    # characteristics — сравнение по содержанию (name/value/unit), не "в лоб"
+    # (characteristics_changed игнорирует одно лишь появление ключа
+    # in_description у старых записей, см. докстринг функции).
+    if "characteristics" in data and characteristics_changed(db_product.characteristics, data["characteristics"]):
+        changed_fields["characteristics"] = data["characteristics"]
+    # price/price_links/characteristics — уже учтены выше отдельно
+    # (characteristics — особая сверка по содержанию, не гейтится второй раз).
+    _skip_generic = set(DESCRIPTION_FIELDS) | {"price", "price_links", "characteristics"}
     for key, value in data.items():
         if key in _skip_generic:
             continue
@@ -434,6 +461,21 @@ async def patch_product(
     # price_links пересчитывает price автоматически ниже — уже учтено через
     # "price" выше, вторую проверку для него не завязываем (см. комментарий
     # в update_product).
+    # characteristics — PATCH принимает произвольный dict (без ProductCreate),
+    # поэтому нормализация (лимиты длины, отбрасывание пустых строк, 400 на
+    # плохой формат) вызывается здесь явно — тот же единственный нормализатор,
+    # что и в PUT/POST (ПРАВИЛО №6, app/services/product_characteristics_validate.py).
+    # characteristics=None — «не трогать» (та же логика, что в create_product/
+    # update_product выше, ПРАВИЛО №6) — удаляем ключ ДО вычисления
+    # changed_fields и до setattr-ветки ниже (479-480), иначе null стирал бы
+    # уже сохранённые характеристики.
+    if "characteristics" in data:
+        if data["characteristics"] is None:
+            del data["characteristics"]
+        else:
+            data["characteristics"] = normalize_characteristics(data["characteristics"])
+            if characteristics_changed(db_product.characteristics, data["characteristics"]):
+                changed_fields["characteristics"] = data["characteristics"]
     if not has_catalog_perm:
         await assert_can_apply_product_changes(current_user, db, db_product, changed_fields)
 
@@ -458,7 +500,9 @@ async def patch_product(
         db_product.product_type = pt or None
     if "purchase_category_ids" in data:
         await _set_purchase_categories(db, db_product, data["purchase_category_ids"])
-    if "category" in data or "product_type" in data:
+    if "characteristics" in data:
+        db_product.characteristics = data["characteristics"]
+    if "category" in data or "product_type" in data or "characteristics" in data:
         from datetime import datetime
         db_product.updated_at = datetime.utcnow()
         db_product.updated_by = current_user.full_name or current_user.username

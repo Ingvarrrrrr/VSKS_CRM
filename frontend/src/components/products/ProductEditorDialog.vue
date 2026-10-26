@@ -36,6 +36,8 @@
     :duplicate-existing="form.duplicateExisting.value"
     :queue-label="queueLabel"
     :show-skip="showSkip"
+    :characteristics-loaded="form.characteristicsLoaded.value"
+    :characteristics-load-error="form.characteristicsLoadError.value"
     @save="form.save"
     @clear-photo="form.clearUploadedPhoto"
     @download-photo="form.downloadSinglePhoto"
@@ -44,6 +46,7 @@
     @cancel-duplicate="form.cancelDuplicate"
     @photo-file-change="form.onPhotoFileChange"
     @price-synced="form.syncPriceFromHistory($event.price)"
+    @characteristics-dirty="form.markCharacteristicsDirty"
     @skip="$emit('skip')"
   />
 </template>

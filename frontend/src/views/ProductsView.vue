@@ -120,6 +120,8 @@
       :saving="saving"
       :duplicate-dialog="duplicateDialog"
       :duplicate-existing="duplicateExisting"
+      :characteristics-loaded="characteristicsLoaded"
+      :characteristics-load-error="characteristicsLoadError"
       @save="save"
       @clear-photo="clearUploadedPhoto"
       @download-photo="downloadSinglePhoto"
@@ -128,6 +130,7 @@
       @cancel-duplicate="cancelDuplicate"
       @price-synced="syncPriceFromHistory($event.price)"
       @photo-file-change="onPhotoFileChange"
+      @characteristics-dirty="markCharacteristicsDirty"
     />
 
     <!-- Delete confirm -->
@@ -304,6 +307,7 @@ const {
   downloadingPhoto, deletingPhoto, clearUploadedPhoto, downloadSinglePhoto,
   duplicateDialog, duplicateExisting, confirmUseExisting, confirmCreateNew, cancelDuplicate,
   syncPriceFromHistory,
+  characteristicsLoaded, characteristicsLoadError, markCharacteristicsDirty,
 } = useProductsForm({ products, load, showSnack })
 
 const {

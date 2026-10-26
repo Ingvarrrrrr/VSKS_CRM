@@ -69,7 +69,35 @@ export function useProductsForm(options: {
     description_44fz: true,
     price: true,
     photo: true,
+    // characteristics — та же логика «заполнить пустое может любой,
+    // перезаписать уже заполненное — только с правом каталога» (задача
+    // «ручное заполнение характеристик», 26.10.2026, backend::FILL_EMPTY_FIELDS).
+    // characteristics НЕ приходят в p (GET /products/, список) — реальное
+    // значение подтягивает _loadCharacteristics ниже и обновляет этот флаг.
+    characteristics: true,
   })
+
+  // QA (26.10.2026, подтверждённая потеря данных на товаре 50014): форма
+  // открывается с form.characteristics=null (см. emptyForm/openEdit ниже) ДО
+  // ответа _loadCharacteristics; если «Сохранить» нажали в этот момент, save()
+  // раньше шло с characteristics=null в payload, backend стирал уже
+  // сохранённые характеристики (normalize_characteristics(None) → []).
+  // Теперь ключ попадает в payload ТОЛЬКО если характеристики реально
+  // загрузились (characteristicsLoaded) И пользователь их менял
+  // (characteristicsDirty, выставляет markCharacteristicsDirty() из
+  // ProductFormDialog.vue при правке редактора) — иначе ключа в PUT/POST нет
+  // вовсе, backend его тоже не тронет (защита и на бэкенде — см. products.py).
+  const characteristicsLoaded = ref(false)
+  const characteristicsDirty = ref(false)
+  // Ошибка _loadCharacteristics — раньше гасилась молча (catch без showSnack,
+  // «characteristics не критичны»); теперь явно показывается и держит
+  // редактор readonly (ProductFormDialog.vue::characteristicsReadonly), пока
+  // не перезагрузят карточку — сохранение других полей товара при этом
+  // работает как обычно (ключ characteristics просто не шлётся).
+  const characteristicsLoadError = ref<string | null>(null)
+  function markCharacteristicsDirty() {
+    characteristicsDirty.value = true
+  }
 
   // Photo upload state
   const photoFile     = ref<File | null>(null)
@@ -177,6 +205,11 @@ export function useProductsForm(options: {
     emptyAtOpen.description_44fz = true
     emptyAtOpen.price = true
     emptyAtOpen.photo = true
+    emptyAtOpen.characteristics = true
+    // Новый товар — характеристик грузить нечему, редактор сразу доступен.
+    characteristicsLoaded.value = true
+    characteristicsDirty.value = false
+    characteristicsLoadError.value = null
     dialog.value = true
   }
 
@@ -221,9 +254,19 @@ export function useProductsForm(options: {
     emptyAtOpen.description_44fz = !p.description_44fz?.trim()
     emptyAtOpen.price = p.price == null
     emptyAtOpen.photo = !p.has_photo
+    // characteristics не приходят в p (список) — временно считаем «пусто»
+    // (разрешает редактирование до ответа _loadCharacteristics), ниже
+    // корректируется реальным значением с сервера.
+    emptyAtOpen.characteristics = !(p.characteristics && p.characteristics.length)
     editMeta.updated_at = (p as any).updated_at || null
     editMeta.updated_by = (p as any).updated_by || null
     editMeta.import_note = (p as any).import_note || null
+    // Характеристики ещё НЕ загружены (form.characteristics выше — временный
+    // null из p) — save() не должен слать этот ключ, пока _loadCharacteristics
+    // не отработает (см. докстринг характеристик выше).
+    characteristicsLoaded.value = false
+    characteristicsDirty.value = false
+    characteristicsLoadError.value = null
     dialog.value = true
     void _loadCharacteristics(p.id)
   }
@@ -243,10 +286,18 @@ export function useProductsForm(options: {
       form.characteristics = full.characteristics ?? null
       form.manufacturer = full.manufacturer || ''
       form.article = full.article || ''
+      emptyAtOpen.characteristics = !(full.characteristics && full.characteristics.length)
+      characteristicsLoaded.value = true
     } catch {
-      // Молча — characteristics не критичны для остальной работы формы,
-      // save() их не требует; showSnack здесь только отвлекал бы внимание
-      // от основной задачи редактирования товара.
+      // QA (26.10.2026): раньше гасилось молча — характеристики «не
+      // критичны», но молчание и привело к потере данных (save() слал
+      // null, бэкенд стирал уже сохранённые характеристики). Теперь явная
+      // ошибка — ProductFormDialog.vue показывает её и держит редактор
+      // readonly; characteristicsLoaded остаётся false, поэтому save() этот
+      // ключ не отправит вовсе (остальные поля товара сохраняются как обычно).
+      if (editingId.value === productId) {
+        characteristicsLoadError.value = 'Характеристики не загрузились — сохранение их не изменит.'
+      }
     }
   }
 
@@ -284,6 +335,17 @@ export function useProductsForm(options: {
         price_links: form.priceLinks.filter(l => l.url.trim()).map(l => ({ url: l.url, price: numOrNull(l.price) })),
         pack_quantity: packActive ? numOrNull(form.pack_quantity) : null,
         pack_unit: packActive ? (form.pack_unit?.trim() || null) : null,
+      }
+      // QA (26.10.2026): характеристики шлём ТОЛЬКО если они реально
+      // загрузились (characteristicsLoaded) И пользователь их менял
+      // (characteristicsDirty) — иначе ключа в payload вовсе нет. Раньше
+      // `...form` всегда включал characteristics (в т.ч. временный null до
+      // ответа _loadCharacteristics или после её ошибки), backend стирал
+      // уже сохранённые характеристики (товар 50014). Бэкенд теперь и сам
+      // не трогает null (products.py), но ключ не отправляем и здесь —
+      // защита не только на одном слое.
+      if (!(characteristicsLoaded.value && characteristicsDirty.value)) {
+        delete payload.characteristics
       }
       // Пункт 8а (владелец, 14.10): PUT шлёт price только если ПОЛЕ формы
       // реально отличается от origPrice (загруженной/подтверждённой блоком
@@ -466,5 +528,6 @@ export function useProductsForm(options: {
     downloadingPhoto, deletingPhoto, clearUploadedPhoto, downloadSinglePhoto,
     duplicateDialog, duplicateExisting, confirmUseExisting, confirmCreateNew, cancelDuplicate,
     syncPriceFromHistory,
+    characteristicsLoaded, characteristicsDirty, characteristicsLoadError, markCharacteristicsDirty,
   }
 }

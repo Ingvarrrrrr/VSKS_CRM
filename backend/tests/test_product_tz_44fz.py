@@ -1018,6 +1018,96 @@ def test_p5_3_fire_class_token_kept_in_name_exact_string():
     assert "Габариты (ДхШхВ): от 28,4 до 34,7 х от 10,4 до 12,7 х от 9,9 до 12,1 см" in text
 
 
+# ------------------------- product_type как источник наименования -------
+# Владелец, 26.10.2026: «Наименование» в ТЗ 44-ФЗ берётся из Product.
+# product_type («Тип товара»), а не из названия, если product_type заполнен.
+# Приоритет: product_type > характеристика «Наименование» > название.
+
+
+def test_p6_product_type_overrides_name_prod_sample():
+    # Прод-пример владельца: name «Кусачки ГКС - 80 х», product_type
+    # «Кусачки гидравлические ГАСИ» → наименование из product_type целиком.
+    text, needs_review = build_tz_44fz(
+        name="Кусачки ГКС - 80 х",
+        characteristics=[
+            {"name": "Длина", "value": "80", "unit": "см"},
+        ],
+        description=None,
+        product_type="Кусачки гидравлические ГАСИ",
+    )
+    assert needs_review is False
+    lines = text.split("\n")
+    assert lines[0] == "Наименование: Кусачки гидравлические ГАСИ"
+
+
+def test_p6_product_type_runs_through_brand_cleanup():
+    # product_type с брендом внутри — чистится ТОЙ ЖЕ функцией, что и
+    # название (brands из каталога), бренд вырезается.
+    text, needs_review = build_tz_44fz(
+        name="Лампа светодиодная Smartbuy A60",
+        characteristics=[
+            {"name": "Мощность", "value": "9", "unit": "Вт"},
+        ],
+        description=None,
+        product_type="Лампа Smartbuy светодиодная",
+        brands=frozenset({"Smartbuy"}),
+    )
+    assert needs_review is False
+    lines = text.split("\n")
+    assert lines[0] == "Наименование: Лампа светодиодная"
+    assert "Smartbuy" not in text
+
+
+def test_p6_empty_product_type_falls_back_to_previous_behavior():
+    # Пустой/None product_type — поведение как раньше: характеристика
+    # «Наименование», иначе Product.name.
+    text_name_only, needs_review = build_tz_44fz(
+        name="Небулайзер компрессорный OMRON NE-C900-RU",
+        characteristics=[{"name": "Вес", "value": "3.5", "unit": "кг"}],
+        description=None,
+        manufacturer="OMRON",
+        article="NE-C900-RU",
+        product_type=None,
+    )
+    assert text_name_only.split("\n")[0] == "Наименование: Небулайзер компрессорный"
+
+    text_blank, _ = build_tz_44fz(
+        name="Небулайзер компрессорный OMRON NE-C900-RU",
+        characteristics=[{"name": "Вес", "value": "3.5", "unit": "кг"}],
+        description=None,
+        manufacturer="OMRON",
+        article="NE-C900-RU",
+        product_type="   ",
+    )
+    assert text_blank == text_name_only
+
+    text_characteristic, _ = build_tz_44fz(
+        name="Прибор",
+        characteristics=[
+            {"name": "Наименование", "value": "Прибор измерительный"},
+            {"name": "Вес", "value": "3.5", "unit": "кг"},
+        ],
+        description=None,
+        product_type=None,
+    )
+    assert text_characteristic.split("\n")[0] == "Наименование: Прибор измерительный"
+
+
+def test_p6_product_type_wins_over_naименование_characteristic():
+    # Приоритет: product_type > характеристика «Наименование» > название.
+    text, needs_review = build_tz_44fz(
+        name="Прибор",
+        characteristics=[
+            {"name": "Наименование", "value": "Прибор измерительный"},
+            {"name": "Вес", "value": "3.5", "unit": "кг"},
+        ],
+        description=None,
+        product_type="Прибор контрольно-измерительный",
+    )
+    assert needs_review is False
+    assert text.split("\n")[0] == "Наименование: Прибор контрольно-измерительный"
+
+
 # ------------------------------------------- роутер preview (401/404) ----
 
 

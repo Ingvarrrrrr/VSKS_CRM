@@ -70,5 +70,6 @@ async def preview_tz_44fz(
         manufacturer=product.manufacturer,
         article=product.article,
         brands=brands,
+        product_type=product.product_type,
     )
     return ProductTz44fzPreviewOut(text=text, needs_review=needs_review)

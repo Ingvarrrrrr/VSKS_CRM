@@ -51,11 +51,22 @@ export interface Product {
   avg_price_level?: string | null
   avg_price_region?: string | null
   avg_price_batch?: string | null
-  // Характеристики каталога — только показ, задача владельца 26.10,
-  // наполняются загрузчиком позже.
-  characteristics?: { name: string; value?: string | null; unit?: string | null }[] | null
+  // Характеристики каталога (владелец, 26.10) — раньше только показ
+  // (наполнялись загрузчиком поставщиков), теперь редактируются и в карточке
+  // (задача «ручное заполнение характеристик», 26.10.2026, см.
+  // ProductCharacteristicsEditor.vue). in_description — см. докстринг
+  // ProductCharacteristic в backend/app/schemas/products.py: только явное
+  // false исключает строку из собранного описания, не передано/true — видна.
+  characteristics?: ProductCharacteristic[] | null
   manufacturer?: string | null
   article?: string | null
+}
+
+export interface ProductCharacteristic {
+  name: string
+  value?: string | null
+  unit?: string | null
+  in_description?: boolean | null
 }
 
 // Форма 409 при удалении товара (backend/app/services/product_delete_impact.py,

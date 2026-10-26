@@ -201,38 +201,55 @@
                 <v-btn size="small" variant="text" @click="tz44Pending = null">Отмена</v-btn>
               </div>
             </v-alert>
+            <!-- Владелец: «нажимаю "Сформировать по характеристикам", если их
+                 нет — ничего не происходит, продолжаешь тыкать, не понимая»
+                 (26.10.2026) — явное сообщение вместо молчания + скролл к
+                 редактору характеристик ниже (characteristicsSectionRef). -->
+            <v-alert
+              v-if="tz44EmptyWarning"
+              type="warning" variant="tonal" density="comfortable" class="mt-2" closable
+              @click:close="tz44EmptyWarning = false"
+            >
+              Сформировать ТЗ 44-ФЗ нельзя: у товара нет характеристик и описания.
+              Заполните характеристики ниже или вставьте описание с сайта товара.
+            </v-alert>
+            <v-alert
+              v-if="tz44Error"
+              type="error" variant="tonal" density="comfortable" class="mt-2" closable
+              @click:close="tz44Error = null"
+            >
+              {{ tz44Error }}
+            </v-alert>
           </v-col>
 
-          <!-- Характеристики каталога (владелец, 26.10) — только показ, без
-               полей ввода: заполняет загрузчик из прайсов поставщиков
-               (app/services/catalog_gala/), карточка здесь их не редактирует. -->
-          <v-col cols="12" v-if="form.manufacturer || form.article || productLinkUrl || (form.characteristics && form.characteristics.length)">
-            <div class="text-subtitle-2 mb-2">Характеристики каталога</div>
+          <!-- Характеристики каталога (владелец, 26.10; редактирование —
+               задача «ручное заполнение характеристик», 26.10.2026): поля
+               наполняет либо загрузчик из прайсов поставщиков
+               (app/services/catalog_gala/), либо сотрудник вручную здесь —
+               тот же JSONB Product.characteristics, та же общая кнопка
+               «Сохранить» (ПРАВИЛО №6, второй механизм записи не заводим). -->
+          <v-col cols="12" ref="characteristicsSectionRef">
             <div v-if="form.manufacturer">Производитель: {{ form.manufacturer }}</div>
             <div v-if="form.article">Артикул: {{ form.article }}</div>
-            <!-- Владелец: «ссылка на товар при импорте не отображается» — форма её
-                 уже содержит (clarification_link/priceLinks из useProductsForm.ts),
-                 не показывалась только здесь. Фолбэк на первую ссылку из
-                 priceLinks ТОЛЬКО если clarification_link пуст (ПРАВИЛО №6 — тот
-                 же источник данных формы, второй механизм не заводим). -->
-            <div v-if="productLinkUrl">
-              Ссылка на товар:
-              <a :href="productLinkUrl" target="_blank" rel="noopener">{{ productLinkUrl }}</a>
-            </div>
-            <v-table v-if="form.characteristics && form.characteristics.length" density="compact" class="mt-2">
-              <thead>
-                <tr>
-                  <th>Характеристика</th>
-                  <th>Значение</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(c, idx) in form.characteristics" :key="idx">
-                  <td>{{ c.name }}</td>
-                  <td>{{ c.value }}{{ c.unit ? ' ' + c.unit : '' }}</td>
-                </tr>
-              </tbody>
-            </v-table>
+            <!-- QA (26.10.2026, товар 50014): пока характеристики не
+                 загрузились — явная ошибка, а не молчание (память проекта
+                 feedback_no_generic_error_snackbar), редактор readonly
+                 (characteristicsReadonly выше). -->
+            <v-alert
+              v-if="characteristicsLoadError"
+              type="warning" variant="tonal" density="comfortable" class="mt-2"
+            >
+              {{ characteristicsLoadError }}
+            </v-alert>
+            <ProductCharacteristicsEditor
+              class="mt-2"
+              :model-value="form.characteristics"
+              :readonly="characteristicsReadonly"
+              :mobile="mobile"
+              @update:model-value="onCharacteristicsUpdate"
+              @description-generated="onCharacteristicsDescription"
+              @error="onCharacteristicsError"
+            />
           </v-col>
 
           <!-- Фото -->
@@ -356,6 +373,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { apiFetch } from '@/api'
+import { describeApiError } from '@/utils/apiErrorMessage'
 import { formatDate } from '@/composables/products/productsTypes'
 import type { Product } from '@/composables/products/productsTypes'
 import { isLikelyImageUrl } from '@/utils/productPhoto'
@@ -365,6 +383,7 @@ import PurchaseCategoriesPicker from '@/components/products/PurchaseCategoriesPi
 import PurchasePriceHistory from '@/components/products/PurchasePriceHistory.vue'
 import ProductDescriptionHistory from '@/components/products/ProductDescriptionHistory.vue'
 import ProposeToCatalogDialog from '@/components/products/ProposeToCatalogDialog.vue'
+import ProductCharacteristicsEditor from '@/components/products/ProductCharacteristicsEditor.vue'
 
 const props = defineProps<{
   mobile: boolean
@@ -380,7 +399,15 @@ const props = defineProps<{
   // ОДИН раз (ПРАВИЛО №6), сюда приходит готовым. Без него нельзя отличить
   // «поле изначально пусто» от «пользователь только что стёр значение
   // локально» — это разные права.
-  emptyAtOpen: { description: boolean; description_44fz: boolean; price: boolean; photo: boolean }
+  emptyAtOpen: { description: boolean; description_44fz: boolean; price: boolean; photo: boolean; characteristics: boolean }
+  // QA (26.10.2026, товар 50014): характеристики грузятся отдельным запросом
+  // ПОСЛЕ открытия карточки (useProductsForm.ts::_loadCharacteristics) — пока
+  // characteristicsLoaded===false, редактор доступен, но save() у родителя
+  // не отправляет ключ characteristics вовсе (защита от перезаписи null).
+  // characteristicsLoadError — запрос упал: редактор становится readonly
+  // (characteristicsReadonly ниже), текст ошибки показан отдельным alert.
+  characteristicsLoaded: boolean
+  characteristicsLoadError: string | null
   editMeta: { updated_at: string | null; updated_by: string | null; import_note: string | null }
   form: Record<string, any>
   nameSuggestions: string[]
@@ -416,20 +443,14 @@ const emit = defineEmits<{
   // (addEntry/removeEntry) — родитель (useProductsForm.ts) обязан подхватить
   // новое значение, иначе следующее «Сохранить» перетрёт его назад.
   (e: 'price-synced', p: { price: number | null }): void
+  // QA (26.10.2026): характеристики менялись — родитель (useProductsForm.ts::
+  // markCharacteristicsDirty) взводит флаг, который save() читает, чтобы
+  // решить, слать ли ключ characteristics вообще (см. emptyAtOpen prop выше).
+  (e: 'characteristics-dirty'): void
 }>()
 
 const dialog = defineModel<boolean>('modelValue', { required: true })
 const nameSearch = defineModel<string>('nameSearch', { required: true })
-
-// Владелец: «ссылка на товар при импорте не отображается» — clarification_link
-// форма уже содержит (useProductsForm.ts:195), фолбэк на первую ссылку из
-// priceLinks (useProductsForm.ts:198) только если clarification_link пуст.
-const productLinkUrl = computed<string>(() => {
-  const direct = (props.form.clarification_link || '').trim()
-  if (direct) return direct
-  const firstPriceLink = (props.form.priceLinks || []).find((l: { url: string }) => (l.url || '').trim())
-  return firstPriceLink ? firstPriceLink.url.trim() : ''
-})
 
 // Этап В, п.1: правка СУЩЕСТВУЮЩЕГО товара без права — поля, не входящие в
 // "заполнение пустого" (название/категория/единица/тип и т.д.), только
@@ -446,6 +467,16 @@ const descriptionReadonly = computed(() => readonlyCatalog.value && !props.empty
 const description44Readonly = computed(() => readonlyCatalog.value && !props.emptyAtOpen.description_44fz)
 const priceReadonly = computed(() => readonlyCatalog.value && !props.emptyAtOpen.price)
 const photoReadonly = computed(() => readonlyCatalog.value && !props.emptyAtOpen.photo)
+// QA (26.10.2026): запрос характеристик упал (characteristicsLoadError) —
+// редактор readonly независимо от прав/эмптинесса, правка «вслепую» (без
+// реальных текущих данных) рискует молча потерять их при следующем save().
+const characteristicsReadonly = computed(() =>
+  (readonlyCatalog.value && !props.emptyAtOpen.characteristics) || !!props.characteristicsLoadError)
+
+function onCharacteristicsUpdate(value: any) {
+  props.form.characteristics = value
+  emit('characteristics-dirty')
+}
 
 // Кнопка «Сохранить» видна, если есть что сохранить: с галочкой — всегда;
 // без галочки у существующего товара — только если хотя бы одно из
@@ -453,7 +484,7 @@ const photoReadonly = computed(() => readonlyCatalog.value && !props.emptyAtOpen
 const canSaveSomething = computed(() => {
   if (!readonlyCatalog.value) return true
   const e = props.emptyAtOpen
-  return e.description || e.description_44fz || e.price || e.photo
+  return e.description || e.description_44fz || e.price || e.photo || e.characteristics
 })
 
 const proposeDialog = ref<{ show: boolean; field: 'description' | 'description_44fz' }>({
@@ -495,18 +526,35 @@ async function onHistoryReverted() {
 const generatingTz44 = ref(false)
 const tz44NeedsReview = ref(false)
 const tz44Pending = ref<string | null>(null)
+// Владелец: «если характеристик нет — ничего не происходит, продолжаешь
+// тыкать, не понимая» (26.10.2026) — явные состояния вместо молчаливого
+// return на пустом результате, плюс явная ошибка сервера (catch), не глотаем
+// (память проекта feedback_no_generic_error_snackbar).
+const tz44EmptyWarning = ref(false)
+const tz44Error = ref<string | null>(null)
+const characteristicsSectionRef = ref<any>(null)
+
+function scrollToCharacteristics() {
+  const el = characteristicsSectionRef.value?.$el ?? characteristicsSectionRef.value
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
 
 async function onGenerateTz44Click() {
   if (!props.editingId) return
   generatingTz44.value = true
   tz44NeedsReview.value = false
+  tz44EmptyWarning.value = false
+  tz44Error.value = null
   try {
     const result = await apiFetch<{ text: string | null; needs_review: boolean }>(
       `/products/${props.editingId}/tz-44fz/preview`,
       { method: 'POST' },
     )
     if (!result.text) {
-      tz44NeedsReview.value = false
+      tz44EmptyWarning.value = true
+      scrollToCharacteristics()
       return
     }
     tz44NeedsReview.value = result.needs_review
@@ -517,6 +565,8 @@ async function onGenerateTz44Click() {
     } else {
       props.form.description_44fz = result.text
     }
+  } catch (e: any) {
+    tz44Error.value = describeApiError(e, { fallback: 'Не удалось сформировать ТЗ 44-ФЗ', prefix: 'Ошибка' })
   } finally {
     generatingTz44.value = false
   }
@@ -527,5 +577,16 @@ function applyGeneratedTz44() {
     props.form.description_44fz = tz44Pending.value
   }
   tz44Pending.value = null
+}
+
+// Характеристики (владелец, задача «ручное заполнение характеристик»,
+// 26.10.2026): ProductCharacteristicsEditor.vue сам зовёт preview-роутер
+// /characteristics/describe — результат только кладём в форму/показываем
+// ошибку, сохраняет общая кнопка «Сохранить» (ПРАВИЛО №6).
+function onCharacteristicsDescription(text: string) {
+  props.form.description = text
+}
+function onCharacteristicsError(message: string) {
+  tz44Error.value = message
 }
 </script>

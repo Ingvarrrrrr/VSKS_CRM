@@ -29,10 +29,20 @@ class ProductCharacteristic(BaseModel):
     """Одна характеристика карточки товара — «название: значение ед.» (владелец,
     26.10). Единственная форма представления характеристик в проекте — та же
     форма отдают конвертеры app/services/catalog_gala/ и читает
-    app/services/product_tech_description.py::build_tech_description."""
+    app/services/product_tech_description.py::build_tech_description.
+    in_description (владелец, задача «ручное заполнение характеристик»,
+    26.10) — ТОЛЬКО явное False исключает строку из build_tech_description
+    (см. product_tech_description.py::_characteristic_line — проверка
+    `is False`, не `is not True`). Дефолт схемы — None, а не False: если
+    завести дефолт False, КАЖДАЯ характеристика, добавленная вручную без
+    этого флага, молча исключалась бы из собранного описания — ровно
+    противоположность задаче «заполнить характеристики → собрать из них
+    описание». None/отсутствие — характеристика видна в описании, как и у
+    существующих данных загрузчика поставщиков."""
     name: str
     value: Optional[str] = None
     unit: Optional[str] = None
+    in_description: Optional[bool] = None
 
 
 class PurchaseCategoryRef(BaseModel):
@@ -72,6 +82,14 @@ class ProductCreate(BaseModel):
     # purchase_categories; сохраняется отдельно от остальных полей (см.
     # routers/products.py — не колонка Product, а M2M связь).
     purchase_category_ids: List[int] = []
+    # Характеристики каталога — приём на вход (владелец, задача «ручное
+    # заполнение характеристик», 26.10.2026). Раньше ProductCharacteristic
+    # использовалась только в ProductOut (показ); теперь карточка товара
+    # может их и сохранять через тот же PUT/PATCH, что и description
+    # (routers/products.py, продолжение генерика data.items()). Валидация
+    # длины/отбрасывание пустых строк — явно в роутере, не только pydantic
+    # (см. app/services/product_characteristics_validate.py).
+    characteristics: Optional[List[ProductCharacteristic]] = None
 
 class ProductOut(ProductCreate):
     id: int
@@ -120,8 +138,11 @@ class ProductOut(ProductCreate):
     avg_price_level: Optional[str] = None
     avg_price_region: Optional[str] = None
     avg_price_batch: Optional[str] = None
-    # Характеристики каталога (владелец, 26.10) — только показ, см.
+    # Характеристики каталога (владелец, 26.10) — см.
     # app/models/product.py::Product.characteristics/manufacturer/article.
+    # Поле наследуется из ProductCreate уже как ЗАПИСЫВАЕМОЕ (задача «ручное
+    # заполнение характеристик», 26.10.2026) — редекларация здесь не меняет
+    # тип, оставлена только чтобы не потерять этот комментарий про manufacturer/article рядом.
     characteristics: Optional[List[ProductCharacteristic]] = None
     manufacturer: Optional[str] = None
     article: Optional[str] = None

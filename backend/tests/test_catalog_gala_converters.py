@@ -653,6 +653,72 @@ def test_store_nomenclature_rescue_medical_package_dims_excluded_from_descriptio
     assert "in_description" not in by_name2["Длина"]
 
 
+def test_store_nomenclature_is_junk_key():
+    """Задача (владелец, 26.10): фильтр мусорных ключей характеристик —
+    обрывки фраз, маркеры списка, код/артикул поставщика, текст про
+    логистику/цену, слишком длинные ключи."""
+    is_junk = from_store_nomenclature._is_junk_key
+    # обрывки фраз разобранного описания (начинаются со строчной буквы)
+    assert is_junk("неблагоприятных климатических воздействий") is True
+    assert is_junk("по основе") is True
+    assert is_junk("от -40⁰С до +40⁰С") is True
+    # маркеры списка
+    assert is_junk("- пункт списка") is True
+    assert is_junk("• пункт списка") is True
+    assert is_junk("– пункт списка") is True
+    assert is_junk("* пункт списка") is True
+    # логистика/цена магазина
+    assert is_junk("Цена, руб") is True
+    assert is_junk("Цена, ₽") is True
+    assert is_junk("Доставка по МКАД") is True
+    assert is_junk("Распродажа/уценка") is True
+    # код/артикул поставщика
+    assert is_junk("DSUS003") is True
+    assert is_junk("БВ-3-1") is True
+    assert is_junk("01-2611") is True
+    assert is_junk("б/н") is True
+    # слишком длинный
+    assert is_junk("Слово " * 7) is True  # >6 слов
+    assert is_junk("Х" * 61) is True  # >60 символов
+    # "руб" как ПОДСТРОКА внутри "трубка"/"патрубок"/"струбцина" — НЕ мусор
+    # (слова про трубы/зажим, не про рубли), а отдельное "руб"/"рублей" — мусор
+    assert is_junk("Длина трубки") is False
+    assert is_junk("Диаметр патрубков") is False
+    assert is_junk("Усл.проход вход.патрубка") is False
+    assert is_junk("Цена, руб") is True
+    assert is_junk("5690 руб.") is True
+    assert is_junk("Стоимость в рублях") is True
+    # нормальные ключи с единицами — НЕ мусор
+    assert is_junk("Вес (кг)") is False
+    assert is_junk("Диаметр, мм") is False
+    assert is_junk("Объем (л)") is False
+    assert is_junk("Ширина сиденья") is False
+    assert is_junk("Рабочее давление") is False
+    assert is_junk("IP-защита") is False
+    assert is_junk("Артикул") is False
+
+
+def test_store_nomenclature_drops_junk_keys_in_convert():
+    """Интеграционная проверка: мусорные ключи не попадают в characteristics
+    через convert(), нормальные — остаются."""
+    raw = [{
+        "name": "Товар", "category": "Кат", "unit": "шт", "price_rub": 100,
+        "source_store": "Магазин", "link_1": "", "photo_url": None,
+        "specifications": {
+            "неблагоприятных климатических воздействий": "отрицательных температур",
+            "- маркер списка": "значение",
+            "Доставка по МКАД": "бесплатно",
+            "DSUS003": "значение",
+            "б/н": "значение",
+            "Вес (кг)": "5",
+            "Рабочее давление": "10 МПа",
+        },
+    }]
+    item = from_store_nomenclature.convert(raw, "f.json")["items"][0]
+    names = {c["name"] for c in item["characteristics"]}
+    assert names == {"Вес", "Рабочее давление", "Магазин-источник"}
+
+
 def test_store_nomenclature_comma_unit_split():
     raw = [{
         "name": "Огнетушитель", "category": "Огнетушители", "unit": "шт", "price_rub": 100,

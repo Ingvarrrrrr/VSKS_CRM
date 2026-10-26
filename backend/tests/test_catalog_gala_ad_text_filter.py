@@ -79,7 +79,6 @@ def test_multiple_lines_each_filtered_independently():
 
 def test_marker_matches_case_insensitive_and_as_substring():
     assert strip_ad_sentences("Товар. КУПИТЬ можно здесь.") == "Товар."
-    assert strip_ad_sentences("Товар. Продажа и продаже запрещены без документов.") == "Товар."
 
 
 # --- Задача 2 (владелец, 26.10.2026, расширение _AD_MARKERS, пример — пояс
@@ -295,3 +294,78 @@ def test_marker_shirokiy_vybor_pattern():
 def test_marker_shirokiy_assortiment_pattern():
     text = "Широкий ассортимент аварийного и пожарного оборудования."
     assert strip_ad_sentences(text) is None
+
+
+# --- Задача 4 (владелец, 27.10.2026): корень "продаж" снят — ловил
+# технические поля (гарантия/дата/атрибут), где "продажи"/"продаже" не
+# реклама; см. strip_ads_from_descriptions.py --apply на prod CSV
+# (213 519 товаров) и докстринг _AD_MARKERS выше. Вместо широкого корня —
+# узкие формы ("продажа ... с доставкой"/"продажа ... по ... ценам"/
+# "осуществляем продажу") в _AD_MARKER_PATTERNS/_AD_MARKERS. -----------
+
+def test_marker_prodazha_s_dostavkoy_removed():
+    text = "Продажа огнетушителей ОП-4 с доставкой по городу."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_prodazha_po_cenam_removed():
+    text = "Осуществляем продажу пожарных рукавов по оптовым ценам для организаций."
+    assert strip_ad_sentences(text) is None
+
+
+def test_marker_osushestvlyaem_prodazhu_removed():
+    text = "Мы осуществляем продажу любых объёмов партий товара."
+    assert strip_ad_sentences(text) is None
+
+
+# --- 10 ложных срабатываний старого корня "продаж" (реальные тексты
+# prod CSV, отчёт 27.10.2026) — технические поля/гарантийные сроки, НЕ
+# реклама, теперь не удаляются. ---------------------------------------
+
+def test_fp_rasprodazha_net_not_removed():
+    assert strip_ad_sentences("Распродажа:\tНет") == "Распродажа:\tНет"
+
+
+def test_fp_edinica_prodazhi_not_removed():
+    text = "Единица продажи"
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_lider_prodazh_not_removed():
+    text = "Лидер продаж: Да"
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_garantijnye_obyazatelstva_so_dnya_prodazhi_not_removed():
+    text = "Гарантийные обязательства: 1 год со дня продажи."
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_kolichestvo_edinic_prodazh_v_upakovke_not_removed():
+    text = "Количество единиц продаж в транспортной упаковке"
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_srok_dejstviya_garantii_s_daty_prodazhi_not_removed():
+    text = "Срок действия гарантии: 12 месяцев с даты продажи"
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_srok_garantijnogo_obsluzhivaniya_s_daty_prodazhi_not_removed():
+    text = "Срок гарантийного обслуживания: 2 года (с даты продажи)"
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_garantijnyj_srok_ekspluatacii_so_dnya_prodazhi_not_removed():
+    text = "Гарантийный срок эксплуатации: 1 календарный год со дня продажи"
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_v_prodazhe_s_goda_not_removed():
+    text = "В продаже с:\t2018 года"
+    assert strip_ad_sentences(text) == text
+
+
+def test_fp_garantijnyj_srok_ekspluatacii_s_daty_prodazhi_mesyacev_not_removed():
+    text = "Гарантийный срок эксплуатации с даты продажи, месяцев не менее 12"
+    assert strip_ad_sentences(text) == text

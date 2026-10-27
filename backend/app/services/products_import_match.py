@@ -49,18 +49,19 @@ name+description — при совпадении названия, но друг
       затем с наименьшим id; многозначность — в reason. Кандидаты грузятся
       ОДНИМ запросом на весь файл (load_candidates_by_brand_article), не
       запрос на каждую строку.
-  (0.75) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026, ключ вида товара — пожарная
-      безопасность: огнетушитель/знак/рукав/шкаф, app.services.
-      product_type_keys) — если у строки распознан вид товара и полный
-      ключ (type_key), и в каталоге есть РОВНО ОДНА карточка ДРУГОГО
-      магазина с ТЕМ ЖЕ ключом, а в файле под этот ключ — РОВНО ОДНА
-      строка (правило однозначности, product_type_keys.keys_match_unique —
-      ЕДИНСТВЕННОЕ место этой логики, вторую проверку здесь не заводим) —
-      это тот же товар. Проверяется ПОСЛЕ (0.5) (бренд+артикул производителя
-      надёжнее — если он есть, этот критерий не нужен), ДО (а)/(б)/(в) по
-      названию. Кандидаты (продукты распознанных видов) и сравнение —
-      services/products_import_match_type_key.py (ПРАВИЛО №5, отдельный
-      файл — логика разбора видов товара объёмная).
+  (0.75) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026, название + индекс модели —
+      app.services.product_name_signature, ЗАМЕНЯЕТ прежний критерий «ключ
+      вида товара», ПРАВИЛО №6: один механизм «тот же товар» по названию) —
+      если у строки есть хотя бы один цифро-буквенный токен названия
+      (ProductSignature.digit_tokens непуст) и в каталоге есть РОВНО ОДНА
+      карточка ДРУГОГО магазина, для которой product_name_signature.match()
+      даёт decision == "auto" (бренд, вид товара, цифровые токены и свойства
+      совпадают, однозначность внутри каждого магазина проверена самим
+      match() через peers) — это тот же товар. Проверяется ПОСЛЕ (0.5)
+      (бренд+артикул производителя надёжнее — если он есть, этот критерий не
+      нужен), ДО (а)/(б)/(в) по названию. Кандидаты и сравнение —
+      services/products_import_match_name_model.py (ПРАВИЛО №5, отдельный
+      файл — предвыборка кандидатов объёмная).
   (а) точное совпадение «название+описание» после нормализации;
   (б) совпадение по названию, когда описание у кандидата из БД ИЛИ у строки
       файла — пустое (тогда это точно тот же товар, которому донаполняется
@@ -326,8 +327,8 @@ class ProductMatchIndex:
         self, products=(), store_article_candidates: Optional[dict] = None,
         brand_article_candidates: Optional[dict] = None,
         barcode_candidates: Optional[dict] = None,
-        type_key_candidates: Optional[dict] = None,
-        type_key_file_peers: Optional[dict] = None,
+        name_model_candidates: Optional[dict] = None,
+        name_model_file_peers: Optional[dict] = None,
     ):
         self._by_name_desc: dict[tuple[str, str], Product] = {}
         self._by_name: dict[str, list[Product]] = {}
@@ -341,14 +342,15 @@ class ProductMatchIndex:
         # Критерий (0.5) — {(fold_brand, fold_article): [_BrandArticleCandidate, ...]},
         # см. load_candidates_by_brand_article выше (владелец, 27.10.2026).
         self._by_brand_article: dict = dict(brand_article_candidates or {})
-        # Критерий (0.75) — {(kind, key): [TypeKeyCandidate, ...]}, см.
-        # app.services.products_import_match_type_key.load_type_key_candidates
-        # (владелец, 27.10.2026, пожарная безопасность). type_key_file_peers —
-        # {kind: [TypeKeyResult, ...]} ВСЕХ строк файла того же kind, считается
-        # вызывающим кодом один раз на весь файл (правило однозначности,
-        # ПРАВИЛО №6 — не второй проход по файлу).
-        self._type_key_candidates: dict = dict(type_key_candidates or {})
-        self._type_key_file_peers: dict = dict(type_key_file_peers or {})
+        # Критерий (0.75) — {frozenset(digit_tokens): [NameModelCandidate, ...]},
+        # см. app.services.products_import_match_name_model.
+        # load_name_model_candidates (владелец, 27.10.2026, название + индекс
+        # модели). name_model_file_peers — {frozenset(digit_tokens):
+        # [ProductSignature, ...]} ВСЕХ строк файла с тем же ключом, считается
+        # вызывающим кодом один раз на весь файл (ПРАВИЛО №6 — не второй
+        # проход по файлу).
+        self._name_model_candidates: dict = dict(name_model_candidates or {})
+        self._name_model_file_peers: dict = dict(name_model_file_peers or {})
         for p in products:
             self.add(p)
 
@@ -368,15 +370,15 @@ class ProductMatchIndex:
         contractor_id: Optional[int] = None, store_article: Optional[str] = None,
         manufacturer: Optional[str] = None, manufacturer_article: Optional[str] = None,
         barcodes: Optional[Iterable[str]] = None,
-        type_key_result=None,
+        name_signature=None,
     ) -> dict:
         """Возвращает {"product": Product|None, "reason": str|None,
         "matched_by": str|None}. `reason` заполнен, когда найдено НЕСКОЛЬКО
         товаров (многозначность) — независимо от того, какой из них в итоге
         выбран. `matched_by` — 'store_article' | 'barcode' | 'brand_article' |
-        'type_key' | None, для построчного отчёта импорта (апстрим пишет
+        'name_model' | None, для построчного отчёта импорта (апстрим пишет
         туда «сведено с №… по штрихкоду» / «по бренду и артикулу
-        производителя» / «по ключу вида товара»).
+        производителя» / «по названию и модели»).
 
         Критерий (0) (владелец, 27.10.2026) — ПЕРВЫЙ: contractor_id+
         store_article строки совпадает с уже известной строкой истории цены
@@ -436,15 +438,15 @@ class ProductMatchIndex:
                 chosen = max(eligible, key=lambda c: (c.history_count, -(c.product.id or 0)))
                 return {"product": chosen.product, "reason": reason, "matched_by": "brand_article"}
 
-        if type_key_result is not None and type_key_result.key is not None:
-            from app.services.products_import_match_type_key import find_type_key_match
-            file_peers = self._type_key_file_peers.get(type_key_result.kind) or [type_key_result]
-            match = find_type_key_match(
-                self._type_key_candidates, type_key_result, file_peers,
-                contractor_id=contractor_id,
+        if name_signature is not None and name_signature.digit_tokens:
+            from app.services.products_import_match_name_model import find_name_model_match
+            file_peers = self._name_model_file_peers.get(name_signature.digit_tokens) or [name_signature]
+            name_match = find_name_model_match(
+                self._name_model_candidates, name_signature, file_peers,
+                contractor_id=contractor_id, store_article=store_article,
             )
-            if match is not None:
-                return {"product": match.product, "reason": None, "matched_by": "type_key"}
+            if name_match is not None:
+                return {"product": name_match.product, "reason": None, "matched_by": "name_model"}
 
         name_key = norm_key(name)
         desc_key = norm_key(description)

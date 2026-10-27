@@ -14,13 +14,15 @@ find_similar_groups группирует карточки, чьё имя сод�
   - общий штрихкод (product_barcodes) — confidence='уверенно',
     match_key='barcode' — ПЕРВЫЙ, самый надёжный (решение владельца,
     27.10.2026: штрихкод — главный ключ сведения карточки);
-  - ключ вида товара (пожарная безопасность: огнетушитель/знак/рукав/шкаф,
-    app.services.product_type_keys) — ВТОРОЙ: полный ключ совпал →
-    confidence='уверенно', match_key='type_key'; совпал только partial
-    (бренд+модель/код) → confidence='проверить', match_key='type_key',
-    diff каждой карточки против winner'а — конкретное поле ключа, которое
-    разошлось (product_type_keys.diff_reason, ПРАВИЛО №6 — одна
-    формулировка причины, та же, что мог бы использовать eval_type_keys.py);
+  - название + индекс модели (ЕДИНОЕ правило «тот же товар», владелец,
+    27.10.2026, app.services.product_name_signature — заменяет прежнюю
+    группировку «ключ вида товара», ПРАВИЛО №6: один механизм) — ВТОРОЙ:
+    карточки с одинаковым набором цифро-буквенных токенов названия
+    (ProductSignature.digit_tokens), сравненные через match() с winner'ом —
+    decision=="auto" у всех → confidence='уверенно', match_key='name_model';
+    хоть одна "проверить" → confidence='проверить', diff каждой такой
+    карточки — match()["reason"] по-русски; decision=="no" (другой бренд/вид/
+    свойство) — карточка исключается из группы целиком, это другой товар;
   - (brand, manufacturer_code) — confidence='уверенно' — артикул
     производителя (Product.article у магазинов с article_is_manufacturer=True,
     иначе код вида "DHP482Z"/"14054DEK" из названия) строго совпадает у
@@ -47,8 +49,8 @@ from app.models.product_price_history import ProductPriceHistory
 from app.services.brand_code_fold import fold_brand_or_code
 from app.services.catalog_gala.stores import article_is_manufacturer_for_inn
 from app.services.product_catalog_match import _HOMOGLYPH_MAP, _WS_RE
-from app.services.product_type_keys import diff_reason as _type_key_diff_reason
-from app.services.product_type_keys import type_key as _type_key
+from app.services.product_name_signature import build_signature as _build_name_signature
+from app.services.product_name_signature import match as _name_signature_match
 
 MIN_QUERY_LEN = 3
 DEFAULT_LIMIT_GROUPS = 50
@@ -537,65 +539,78 @@ async def find_similar_groups(
         ))
         claimed_ids.update(p.id for p in products)
 
-    # 0.5) Ключ вида товара (пожарная безопасность: огнетушитель/знак/
-    # рукав/шкаф, владелец, 27.10.2026) — ВТОРОЙ по надёжности, после
-    # штрихкода. Полный ключ (TypeKeyResult.key) → confidence='уверенно';
-    # только partial (бренд+модель/код) без полного → confidence='проверить'
-    # с diff по конкретному полю (product_type_keys.diff_reason). Только
-    # карточки, НЕ уже сгруппированные по штрихкоду выше.
-    type_key_by_id: dict = {}
+    # 0.5) Название + индекс модели (ЕДИНОЕ правило «тот же товар», владелец,
+    # 27.10.2026, app.services.product_name_signature — заменяет прежнюю
+    # группировку «ключ вида товара», product_type_keys.py удалён, ПРАВИЛО
+    # №6: один механизм) — ВТОРОЙ по надёжности, после штрихкода. Группа —
+    # карточки (НЕ уже сгруппированные по штрихкоду выше) с ОДИНАКОВЫМ
+    # набором цифро-буквенных токенов названия (ProductSignature.
+    # digit_tokens — тот же жёсткий гейт, что у критерия (0.75) импорта,
+    # services/products_import_match_name_model.py). winner — _pick_winner;
+    # каждая другая карточка группы сравнивается с winner через match():
+    # decision=="no" (бренд/вид товара/свойство расходится) — карточка явно
+    # ДРУГОЙ товар, исключается из группы целиком; decision=="auto" у ВСЕХ
+    # оставшихся → confidence='уверенно'; хоть одна "check" →
+    # confidence='проверить', diff_tokens — match()["reason"] по-русски.
+    rows_by_id = {p.id: p for p in rows}
+
+    name_sig_by_id: dict = {}
     for p in rows:
         if p.id in claimed_ids:
             continue
-        r = _type_key(p.name, p.characteristics, p.manufacturer, None)
-        if r is not None:
-            type_key_by_id[p.id] = r
+        sig = _build_name_signature({
+            "name": p.name, "manufacturer": p.manufacturer,
+            "characteristics": p.characteristics or [],
+        })
+        if sig.digit_tokens:
+            name_sig_by_id[p.id] = sig
 
-    full_key_groups: dict[tuple, list] = {}
-    partial_key_groups: dict[tuple, list] = {}
-    for pid, r in type_key_by_id.items():
-        if r.key is not None:
-            full_key_groups.setdefault((r.kind, r.key), []).append(pid)
-        elif r.partial is not None:
-            partial_key_groups.setdefault((r.kind, r.partial), []).append(pid)
+    name_model_groups: dict = {}
+    for pid, sig in name_sig_by_id.items():
+        name_model_groups.setdefault(sig.digit_tokens, []).append(pid)
 
-    rows_by_id = {p.id: p for p in rows}
-
-    for (kind, _key), pids in full_key_groups.items():
+    for digit_key, pids in name_model_groups.items():
         products = [rows_by_id[pid] for pid in pids]
         if len(products) < 2 or len(_distinct_stores(products)) < 2:
             continue
         winner = _pick_winner(products, history_count_by_id, photo_ids)
-        cards = _build_cards(products, keys_by_id, winner, "уверенно", photo_ids, history_count_by_id)
-        result.append(SimilarGroup(
-            brand=keys_by_id[winner.id].brand_display or kind, base_model=kind,
-            confidence="уверенно", match_key="type_key",
-            suggested_winner_id=winner.id, cards=cards,
-            model_display=kind,
-        ))
-        claimed_ids.update(pids)
+        winner_sig = name_sig_by_id[winner.id]
 
-    for (kind, _partial), pids in partial_key_groups.items():
-        pids = [pid for pid in pids if pid not in claimed_ids]
-        products = [rows_by_id[pid] for pid in pids]
-        if len(products) < 2 or len(_distinct_stores(products)) < 2:
-            continue
-        winner = _pick_winner(products, history_count_by_id, photo_ids)
-        cards = _build_cards(products, keys_by_id, winner, "проверить", photo_ids, history_count_by_id)
-        winner_result = type_key_by_id[winner.id]
-        for card in cards:
-            if card.id == winner.id:
+        kept_pids = [winner.id]
+        decisions: dict[int, dict] = {}
+        for pid in pids:
+            if pid == winner.id:
                 continue
-            other_result = type_key_by_id.get(card.id)
-            if other_result is not None:
-                card.diff_tokens = (_type_key_diff_reason(winner_result, other_result),)
+            other_sig = name_sig_by_id[pid]
+            peers_a = tuple(name_sig_by_id[p2] for p2 in pids if p2 not in (winner.id, pid))
+            peers_b = peers_a
+            res = _name_signature_match(winner_sig, other_sig, peers_a=peers_a, peers_b=peers_b)
+            if res["decision"] == "no":
+                continue  # другой товар (бренд/вид/свойство разошлось) — не похожий, не в группу
+            kept_pids.append(pid)
+            decisions[pid] = res
+
+        kept_products = [rows_by_id[pid] for pid in kept_pids]
+        if len(kept_products) < 2 or len(_distinct_stores(kept_products)) < 2:
+            continue
+        confidence = "уверенно" if all(d["decision"] == "auto" for d in decisions.values()) else "проверить"
+        cards = _build_cards(kept_products, keys_by_id, winner, confidence, photo_ids, history_count_by_id)
+        if confidence == "проверить":
+            for card in cards:
+                if card.id == winner.id:
+                    continue
+                d = decisions.get(card.id)
+                if d is not None and d["decision"] == "check":
+                    card.diff_tokens = (d["reason"],)
+        label = winner_sig.product_type or ", ".join(sorted(digit_key))
         result.append(SimilarGroup(
-            brand=keys_by_id[winner.id].brand_display or kind, base_model=kind,
-            confidence="проверить", match_key="type_key",
+            brand=winner_sig.brand or keys_by_id[winner.id].brand_display or "",
+            base_model=", ".join(sorted(digit_key)),
+            confidence=confidence, match_key="name_model",
             suggested_winner_id=winner.id, cards=cards,
-            model_display=kind,
+            model_display=label,
         ))
-        claimed_ids.update(pids)
+        claimed_ids.update(kept_pids)
 
     # 1) Артикул производителя + бренд — confidence='уверенно' (только
     # карточки, НЕ уже сгруппированные по штрихкоду выше).

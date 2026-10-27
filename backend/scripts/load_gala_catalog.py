@@ -247,10 +247,12 @@ async def _load_one_file(path: str, user_id: int, dry_run: bool) -> dict:
         1 for r in result["rows"] if r.get("reason") and "по штрихкоду" in r["reason"]
     )
 
-    # «сведено с №… по ключу вида товара» — текст из products_import_apply.py
-    # (ЕДИНСТВЕННЫЙ источник формулировки, ПРАВИЛО №6), критерий (0.75).
-    matched_by_type_key = sum(
-        1 for r in result["rows"] if r.get("reason") and "по ключу вида товара" in r["reason"]
+    # «сведено с №… по названию и модели» — текст из products_import_apply.py
+    # (ЕДИНСТВЕННЫЙ источник формулировки, ПРАВИЛО №6), критерий (0.75),
+    # product_name_signature.match(). Заменяет прежний счётчик
+    # matched_by_type_key («по ключу вида товара» — критерий удалён).
+    matched_by_name_model = sum(
+        1 for r in result["rows"] if r.get("reason") and "по названию и модели" in r["reason"]
     )
 
     return {
@@ -264,7 +266,7 @@ async def _load_one_file(path: str, user_id: int, dry_run: bool) -> dict:
         "manufacturer_dropped": manufacturer_dropped,
         "matched_by_brand_article": matched_by_brand_article,
         "matched_by_barcode": matched_by_barcode,
-        "matched_by_type_key": matched_by_type_key,
+        "matched_by_name_model": matched_by_name_model,
         "barcodes_accepted": result["barcodes_accepted"],
         "barcodes_rejected": result["barcodes_rejected"],
         "seller_inn_replaced_by_store": seller_inn_replaced_by_store,
@@ -320,7 +322,7 @@ async def main_async(files, user_email, dry_run, photos, photos_limit):
         print(f"  производитель отброшен (брак/страна/тип товара): {report['manufacturer_dropped']}")
         print(f"  сведено с другим магазином по бренду+артикулу производителя: {report['matched_by_brand_article']}")
         print(f"  сведено с другим магазином по штрихкоду: {report['matched_by_barcode']}")
-        print(f"  сведено с другим магазином по ключу вида товара: {report['matched_by_type_key']}")
+        print(f"  сведено с другим магазином по названию и модели: {report['matched_by_name_model']}")
         print(f"  штрихкодов принято: {report['barcodes_accepted']}")
         print(f"  штрихкодов отброшено (неверная контрольная цифра): {report['barcodes_rejected']}")
         print(f"  ИНН из файла заменён по сайту магазина: {report['seller_inn_replaced_by_store']}")

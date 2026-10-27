@@ -8,6 +8,8 @@ app/services/products_import_match.py и app/services/products_import_apply.py.
 затирает существующую и не становится категорией нового товара (у нового —
 DEFAULT_PRODUCT_CATEGORY).
 """
+import random
+import string
 import uuid
 from decimal import Decimal
 
@@ -23,6 +25,15 @@ _UNIQ = "ТестМэтчИмпорт_20261026"
 
 def _uniq_name(suffix: str) -> str:
     return f"{_UNIQ} {suffix} {uuid.uuid4().hex[:8]}"
+
+
+def _uniq_marker() -> str:
+    """Уникальный маркер БЕЗ цифр (владелец, 27.10.2026, критерий (0.75)
+    «название + индекс модели») — в отличие от _uniq_name (hex-суффикс
+    почти всегда содержит цифры), этот маркер безопасно добавлять ОДИНАКОВО
+    в оба названия теста без изменения набора цифро-буквенных токенов
+    (ProductSignature.digit_tokens), который и есть ключ сравнения."""
+    return "".join(random.choices(string.ascii_uppercase, k=8))
 
 
 async def _count_by_name(db_session, name: str) -> int:
@@ -554,3 +565,112 @@ async def test_new_product_without_category_gets_default(db_session, test_user):
     assert result["created"] == 1
     product = (await db_session.execute(select(Product).where(Product.name == name))).scalar_one()
     assert product.category == DEFAULT_PRODUCT_CATEGORY
+
+
+@pytest.mark.asyncio
+async def test_name_model_match_merges_other_store_into_one_card(db_session, test_user):
+    """Критерий (0.75) (владелец, 27.10.2026, «название + индекс модели»,
+    products_import_match_name_model.py/product_name_signature.py) — тот же
+    товар у ДРУГОГО магазина, названный по-другому (доп. слова техописания),
+    но с тем же брендом и тем же цифро-буквенным индексом модели, сводится в
+    ОДНУ карточку (вторая строка истории цены — у той же карточки), без
+    manufacturer_article (критерий (0.5) здесь неприменим)."""
+    from app.models.product_price_history import ProductPriceHistory
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    marker = _uniq_marker()
+    old_name = f"Перфоратор MAKITA M8701B {marker}"
+    new_name = f"Перфоратор 800 Вт 2,3 Дж SDS-Plus Makita M8701B {marker}"
+
+    inn1 = "7702000011"
+    contractor1_id = await find_or_create_contractor(
+        db_session, "Магазин1 для теста name_model", inn1, match_by_name=False,
+    )
+    product = Product(name=old_name, category="Прочее", price=Decimal("1000"), manufacturer="MAKITA")
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+    db_session.add(ProductPriceHistory(
+        product_id=product.id, price=Decimal("1000"), source="import",
+        contractor_id=contractor1_id, store_article="NM-M1-001",
+    ))
+    await db_session.commit()
+
+    inn2 = "7702000022"
+    col_idx = {"name": 0, "price": 1, "seller_inn": 2, "store_article": 3, "manufacturer": 4}
+    data_rows = [(new_name, "1100", inn2, "NM-M2-777", "Makita")]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="name_model_merge.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 0, result
+    assert result["updated"] == 1, result
+    assert await _count_by_name(db_session, new_name) == 0, "второй магазин не должен создавать отдельную карточку"
+
+    await db_session.refresh(product)
+    assert product.name == old_name
+
+    hist = (await db_session.execute(
+        select(ProductPriceHistory).where(ProductPriceHistory.product_id == product.id)
+    )).scalars().all()
+    assert len(hist) == 2, "вторая строка истории (магазин 2) должна появиться у ТОЙ ЖЕ карточки"
+    assert "сведено" in result["rows"][0]["reason"] and "по названию и модели" in result["rows"][0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_name_model_different_product_type_same_code_not_merged(db_session, test_user):
+    """«Шкаф для огнетушителя» ≠ «Пенал для огнетушителя» — тот же артикул
+    производителя (82170) в названии, но разный вид товара (product_type) —
+    product_name_signature.match() даёт decision="no", критерий (0.75) не
+    сводит их, остаются ДВЕ разные карточки."""
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    marker = _uniq_marker()
+    cabinet_name = f"Шкаф для огнетушителя DAKEN Regon 82170 {marker}"
+    case_name = f"Пенал для огнетушителя DAKEN Regon 82170 {marker}"
+
+    product = Product(name=cabinet_name, category="Прочее", price=Decimal("2000"), manufacturer="DAKEN")
+    db_session.add(product)
+    await db_session.commit()
+
+    inn = "7702000033"
+    await find_or_create_contractor(db_session, "Магазин для теста Пенал/Шкаф", inn, match_by_name=False)
+
+    col_idx = {"name": 0, "price": 1, "seller_inn": 2, "store_article": 3, "manufacturer": 4}
+    data_rows = [(case_name, "500", inn, "NM-CASE-001", "DAKEN")]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="name_model_case_vs_cabinet.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 1, result
+    assert await _count_by_name(db_session, cabinet_name) == 1
+    assert await _count_by_name(db_session, case_name) == 1, "Пенал должен стать отдельной карточкой, не слиться со Шкафом"
+
+
+@pytest.mark.asyncio
+async def test_name_model_different_box_dimensions_not_merged(db_session, test_user):
+    """Гофрокороб д600 vs д500 — разные размеры в самих цифро-буквенных
+    токенах названия (жёсткий гейт digit_tokens, product_name_signature.py)
+    — критерий (0.75) НЕ сводит, остаются две разные карточки."""
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    marker = _uniq_marker()
+    box600_name = f"Гофрокороб д600*ш400*в400 мм, марка Т24, профиль С, {marker}"
+    box500_name = f"Гофрокороб д500*ш370*в120 мм, марка Т22, профиль С, {marker}"
+
+    product = Product(name=box600_name, category="Прочее", price=Decimal("50"))
+    db_session.add(product)
+    await db_session.commit()
+
+    inn = "7702000044"
+    await find_or_create_contractor(db_session, "Магазин для теста гофрокороба", inn, match_by_name=False)
+
+    col_idx = {"name": 0, "price": 1, "seller_inn": 2, "store_article": 3}
+    data_rows = [(box500_name, "45", inn, "NM-BOX-001")]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="name_model_box_dims.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 1, result
+    assert await _count_by_name(db_session, box600_name) == 1
+    assert await _count_by_name(db_session, box500_name) == 1, "д500 должен стать отдельной карточкой, не слиться с д600"

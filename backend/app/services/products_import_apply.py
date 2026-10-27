@@ -52,10 +52,8 @@ from app.services.products_import_match import (
     load_candidates_by_store_article, norm_key as _norm_key_for_match,
 )
 from app.services.products_import_match_barcode import load_candidates_by_barcode
-from app.services.products_import_match_type_key import (
-    KIND_KEY_LABELS, load_type_key_candidates,
-)
-from app.services.product_type_keys import type_key as _type_key
+from app.services.products_import_match_name_model import load_name_model_candidates
+from app.services.product_name_signature import build_signature as _build_name_signature
 from app.utils.chunking import chunked
 from app.services.text_case import capitalize_first
 from app.services.units import is_pack_unit
@@ -152,9 +150,10 @@ def _row_characteristics_raw(row, col_idx: dict):
     """Сырой список характеристик строки (владелец, 27.10.2026) — ТО ЖЕ
     значение, что и characteristics_val внутри основного цикла (БЕЗ
     str()-приведения, см. `_cell`), но доступно ДО цикла и НЕ зависит от
-    supplier_description — нужно критерию (0.75) ключа вида товара
-    (products_import_match_type_key.py), который разбирает название+
-    характеристики независимо от режима записи характеристик в Product."""
+    supplier_description — нужно критерию (0.75) «название + индекс модели»
+    (products_import_match_name_model.py / product_name_signature.py), который
+    разбирает название+характеристики независимо от режима записи
+    характеристик в Product."""
     idx = col_idx.get("characteristics")
     if idx is None or idx >= len(row):
         return None
@@ -391,25 +390,28 @@ async def apply_products_import(
         file_barcodes.update(_normalized)
     barcode_candidates = await load_candidates_by_barcode(db, file_barcodes)
 
-    # Критерий (0.75) сопоставления (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026, ключ
-    # вида товара — пожарная безопасность) — type_key() каждой строки файла
-    # считаем ЗАРАНЕЕ (та же функция, что и в цикле ниже, ПРАВИЛО №6 — не
-    # второй разбор), группируем по kind — правилу однозначности
-    # (keys_match_unique, products_import_match_type_key.py) нужен ПОЛНЫЙ
-    # список строк файла этого вида, не одна строка. Кандидаты каталога —
-    # один запрос на весь файл (load_type_key_candidates).
-    file_type_key_results_by_kind: dict = {}
+    # Критерий (0.75) сопоставления (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026, название +
+    # индекс модели, product_name_signature.build_signature) — сигнатуру
+    # каждой строки файла считаем ЗАРАНЕЕ (та же функция, что и в цикле ниже,
+    # ПРАВИЛО №6 — не второй разбор), группируем по digit_tokens — правилу
+    # однозначности внутри match() нужен ПОЛНЫЙ список строк файла с тем же
+    # ключом, не одна строка. Кандидаты каталога — один запрос на весь файл
+    # (load_name_model_candidates).
+    file_name_signatures_by_key: dict = {}
     for row in data_rows:
-        _name_for_tk = _cell(row, col_idx, "name")
-        if not _name_for_tk:
+        _name_for_sig = _cell(row, col_idx, "name")
+        if not _name_for_sig:
             continue
-        _tk = _type_key(
-            _name_for_tk, _row_characteristics_raw(row, col_idx),
-            _cell(row, col_idx, "manufacturer"), None,
-        )
-        if _tk is not None and _tk.key is not None:
-            file_type_key_results_by_kind.setdefault(_tk.kind, []).append(_tk)
-    type_key_candidates = await load_type_key_candidates(db)
+        _sig = _build_name_signature({
+            "name": _name_for_sig,
+            "manufacturer": _cell(row, col_idx, "manufacturer"),
+            "characteristics": _row_characteristics_raw(row, col_idx) or [],
+        })
+        if _sig.digit_tokens:
+            file_name_signatures_by_key.setdefault(_sig.digit_tokens, []).append(_sig)
+    name_model_candidates = await load_name_model_candidates(
+        db, [s for group in file_name_signatures_by_key.values() for s in group],
+    )
 
     # Единственный индекс сопоставления строки импорта с товаром каталога
     # (ПРАВИЛО №6, services/products_import_match.py) — пополняется новыми
@@ -418,7 +420,7 @@ async def apply_products_import(
     # плодит второй created (Задача 2).
     match_index = ProductMatchIndex(
         candidate_products, store_article_candidates, brand_article_candidates,
-        barcode_candidates, type_key_candidates, file_type_key_results_by_kind,
+        barcode_candidates, name_model_candidates, file_name_signatures_by_key,
     )
 
     # Штрихкоды строк (владелец, 27.10.2026) — КАЖДЫЙ (product, barcode,
@@ -590,14 +592,15 @@ async def apply_products_import(
 
                 row_barcodes, _, _ = _row_barcodes(row, col_idx)
                 # Критерий (0.75, владелец, 27.10.2026) — тот же разбор, что
-                # и в предварительном проходе выше (file_type_key_results_by_
-                # kind), но для ЭТОЙ строки — передаётся в match_index.find,
+                # и в предварительном проходе выше (file_name_signatures_by_
+                # key), но для ЭТОЙ строки — передаётся в match_index.find,
                 # который сам решает (0.75) через products_import_match_
-                # type_key.find_type_key_match (ПРАВИЛО №6).
-                row_type_key_result = _type_key(
-                    name, _row_characteristics_raw(row, col_idx),
-                    row_manufacturer_for_match, None,
-                )
+                # name_model.find_name_model_match (ПРАВИЛО №6).
+                row_name_signature = _build_name_signature({
+                    "name": name,
+                    "manufacturer": row_manufacturer_for_match,
+                    "characteristics": _row_characteristics_raw(row, col_idx) or [],
+                })
 
                 match = match_index.find(
                     name, desc_val,
@@ -605,7 +608,7 @@ async def apply_products_import(
                     manufacturer=row_manufacturer_for_match,
                     manufacturer_article=row_manufacturer_article_for_match,
                     barcodes=row_barcodes,
-                    type_key_result=row_type_key_result,
+                    name_signature=row_name_signature,
                 )
                 ep = match["product"]
                 dup_reason = match["reason"]
@@ -629,17 +632,13 @@ async def apply_products_import(
                         if ep is not None and ep.id is not None
                         else "сведено по бренду и артикулу производителя (товар этого же файла)"
                     )
-                # Критерий (0.75) — РЕШЕНИЕ ВЛАДЕЛЬЦА 27.10.2026 (ключ вида
-                # товара, пожарная безопасность): карточка найдена по
-                # совпадению ключа вида товара с ДРУГИМ магазином — отчёт
-                # должен явно показать состав ключа (KIND_KEY_LABELS,
-                # products_import_match_type_key.py, ПРАВИЛО №6 — один
-                # источник текста человекочитаемого состава ключа).
-                type_key_reason = None
-                if match.get("matched_by") == "type_key" and row_type_key_result is not None:
-                    _kind = row_type_key_result.kind
-                    _labels = KIND_KEY_LABELS.get(_kind, "")
-                    type_key_reason = f"сведено с №{ep.id} по ключу вида товара ({_kind}: {_labels})"
+                # Критерий (0.75) — РЕШЕНИЕ ВЛАДЕЛЬЦА 27.10.2026 (название +
+                # индекс модели, product_name_signature.py): карточка найдена
+                # по совпадению бренда+вида товара+цифровых токенов названия
+                # с ДРУГИМ магазином — отчёт должен показать это явно.
+                name_model_reason = None
+                if match.get("matched_by") == "name_model":
+                    name_model_reason = f"сведено с №{ep.id} по названию и модели"
 
                 if ep is not None:
                     is_new_unflushed = ep.id is None
@@ -816,7 +815,7 @@ async def apply_products_import(
                     product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price or ep.price})
                     _queue_barcodes(ep, row_barcodes, row_contractor_id)
 
-                    reasons = [r for r in (barcode_reason, brand_article_reason, type_key_reason, dup_reason, desc_reason) if r]
+                    reasons = [r for r in (barcode_reason, brand_article_reason, name_model_reason, dup_reason, desc_reason) if r]
                     if desc_reason and not changed:
                         skipped += 1
                         report_rows.append({"row": row_num, "action": "skipped", "name": name, "reason": "; ".join(reasons)})

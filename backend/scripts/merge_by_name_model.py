@@ -17,6 +17,30 @@ app.services.product_name_signature.build_signature()/match() для разбо�
 же единственная функция, что и POST /api/products/merge и
 scripts/merge_by_barcode.py).
 
+ПАМЯТЬ (дефект прода 27.10.2026 — пробный прогон убит OOM, anon-rss 1,77 ГБ
+на 4-гигабайтном сервере, где кроме этого скрипта живут БД и 4 контейнера):
+причина — ORM-select всего каталога (`select(Product)...scalars().all()`)
+грузил ВСЕ колонки (включая characteristics JSONB) ВСЕХ ~230 тыс. товаров
+сразу, плюс любые lazy='selectin'-связи Product срабатывают САМИ при ORM-
+загрузке, даже если к ним не обращаться. Поэтому ниже — ДВЕ фазы:
+  - фаза 1 (_load_candidate_groups) — Core select (кортежи, не ORM Product,
+    selectin не срабатывает) ТОЛЬКО 4 узких колонки, порциями по id
+    (keyset-пагинация, не OFFSET), сразу сворачивает в
+    frozenset(digit_tokens) → [(id, price_source_contractor_id), ...] и
+    отбрасывает всё, что не кандидат (нет цифровых токенов или в группе
+    осталась только одна карточка) — полные объекты Product в памяти не
+    живут вообще;
+  - между фазами — _apply_history_contractors: один DISTINCT-запрос
+    (product_id, contractor_id) из product_price_history, порциями по id
+    кандидатов, чтобы отбросить группы без ≥2 разных магазинов ДО того, как
+    фаза 2 полезет за тяжёлыми полями;
+  - фаза 2 (_plan) — дозагружает name/manufacturer/characteristics и
+    (contractor_id, store_article) истории ТОЛЬКО для id кандидатских групп,
+    порциями ≤2000 id, вызывает build_signature()/match() и сразу отдаёт
+    порцию сборщику мусора (локальные dict порции выходят из scope).
+Итог — в памяти одновременно никогда не находится больше одной порции
+полных карточек; широкий Core select фазы 1 держит только 4 узких поля.
+
 Группа карточек (один frozenset(digit_tokens)) мержится ТОЛЬКО если:
   - у них ≥2 РАЗНЫХ магазина (Product.price_source_contractor_id ИЛИ
     contractor_id строк истории product_price_history) — карточки одного-
@@ -60,7 +84,13 @@ from app.models.user import User
 from app.services.product_merge import merge_products
 from app.services.product_name_signature import build_signature, match
 
-BATCH_SIZE = 200
+BATCH_SIZE = 200  # порция слияния (--apply)
+
+# Порог памяти ~300 МБ (дефект прода 27.10.2026) — обе константы ниже держат
+# в памяти одновременно не больше одной порции: фаза 1 — узких кортежей,
+# фаза 2 — полных полей кандидатов.
+PHASE1_CHUNK = 5000   # строк каталога на один Core-select (keyset по id)
+PHASE2_CHUNK_IDS = 2000  # id кандидатов на одну дозагрузку полных полей
 
 
 async def _get_user(email: str):
@@ -72,58 +102,79 @@ async def _get_user(email: str):
         return user
 
 
-async def _load_name_model_groups(db) -> tuple:
-    """{frozenset(digit_tokens): set(product_id, ...)} — ТОЛЬКО группы с ≥2
-    РАЗНЫМИ product_id, у которых build_signature() дал непустой
-    digit_tokens (без него ключ ничего не отличает — см. докстринг
-    product_name_signature.py), products_by_id и signatures_by_id
-    (ProductSignature каждого — нужен дальше для match(), ПРАВИЛО №6 —
-    разбор ОДИН раз, не второй вызов build_signature на ту же карточку).
-    Один запрос на весь каталог (все активные товары — в отличие от
-    "ключа вида товара", здесь нет узкого ILIKE-паттерна по первому слову:
-    критерий общий, не привязан к пожарной безопасности)."""
-    rows = (await db.execute(select(Product).where(Product.is_active == True))).scalars().all()  # noqa: E712
-    groups: dict = defaultdict(set)
-    products_by_id: dict = {}
-    signatures_by_id: dict = {}
-    for p in rows:
-        sig = build_signature({
-            "name": p.name, "manufacturer": p.manufacturer,
-            "characteristics": p.characteristics or [],
-        })
-        if not sig.digit_tokens:
-            continue
-        groups[sig.digit_tokens].add(p.id)
-        products_by_id[p.id] = p
-        signatures_by_id[p.id] = sig
-    groups = {k: ids for k, ids in groups.items() if len(ids) >= 2}
-    return groups, products_by_id, signatures_by_id
+async def _load_candidate_groups(db) -> dict:
+    """Фаза 1 — потоково, Core select (НЕ ORM Product — иначе срабатывают
+    lazy='selectin'-связи и грузится весь каталог в объекты, см. докстринг
+    модуля). Берёт ТОЛЬКО 4 узкие колонки, порциями по id (keyset-
+    пагинация — ORDER BY id LIMIT, без OFFSET, чтобы порция не дорожала с
+    глубиной). build_signature() здесь без characteristics — функция и так
+    принимает их опционально (item.get("characteristics") or []), а
+    digit_tokens (всё, что нужно на этой фазе) считается только по name —
+    второй сигнатуры/функции под «облегчённый» режим не заводим (ПРАВИЛО
+    №6).
+
+    Возвращает {frozenset(digit_tokens): [(product_id, price_source_
+    contractor_id), ...]} — ТОЛЬКО группы, где после фазы 1 уже ≥2 РАЗНЫХ
+    product_id (ключи без цифровых токенов не копим вовсе — см. докстринг
+    product_name_signature.py)."""
+    groups: dict = defaultdict(list)
+    last_id = 0
+    total_rows = 0
+    while True:
+        rows = (await db.execute(
+            select(
+                Product.id, Product.name, Product.manufacturer,
+                Product.price_source_contractor_id,
+            )
+            .where(Product.is_active == True, Product.id > last_id)  # noqa: E712
+            .order_by(Product.id)
+            .limit(PHASE1_CHUNK)
+        )).all()
+        if not rows:
+            break
+        for pid, name, manufacturer, contractor_id in rows:
+            sig = build_signature({"name": name, "manufacturer": manufacturer})
+            if sig.digit_tokens:
+                groups[sig.digit_tokens].append((pid, contractor_id))
+        total_rows += len(rows)
+        last_id = rows[-1][0]
+        print(f"  фаза 1: обработано строк каталога: {total_rows}", file=sys.stderr)
+        if len(rows) < PHASE1_CHUNK:
+            break
+    groups = {key: ids for key, ids in groups.items() if len(ids) >= 2}
+    return groups
 
 
-async def _load_history(db, product_ids: set) -> tuple:
-    history_count_by_id: dict = {}
-    history_pairs_by_id: dict = {}
-    hist_rows = (await db.execute(
-        select(
-            ProductPriceHistory.product_id,
-            ProductPriceHistory.contractor_id,
-            ProductPriceHistory.store_article,
-        ).where(ProductPriceHistory.product_id.in_(product_ids))
-    )).all()
-    for product_id, contractor_id, store_article in hist_rows:
-        history_count_by_id[product_id] = history_count_by_id.get(product_id, 0) + 1
-        history_pairs_by_id.setdefault(product_id, []).append((contractor_id, store_article))
-    return history_count_by_id, history_pairs_by_id
+async def _apply_history_contractors(db, groups: dict) -> dict:
+    """Между фазами — добирает contractor_id из product_price_history ТОЛЬКО
+    для id кандидатов (один DISTINCT-запрос на порцию ≤PHASE2_CHUNK_IDS id,
+    без store_article — он нужен только фазе 2 для _has_store_conflict) и
+    отбрасывает группы, где после этого < 2 РАЗНЫХ магазина. Возвращает
+    {key: [product_id, ...]} — тройка (id, contractor) из фазы 1 больше не
+    нужна дальше, оставляем только id."""
+    all_ids = sorted({pid for ids in groups.values() for pid, _contractor in ids})
+    history_contractors: dict = defaultdict(set)
+    for i in range(0, len(all_ids), PHASE2_CHUNK_IDS):
+        chunk = all_ids[i:i + PHASE2_CHUNK_IDS]
+        rows = (await db.execute(
+            select(ProductPriceHistory.product_id, ProductPriceHistory.contractor_id)
+            .where(ProductPriceHistory.product_id.in_(chunk))
+            .distinct()
+        )).all()
+        for pid, cid in rows:
+            if cid is not None:
+                history_contractors[pid].add(cid)
 
-
-def _product_stores(product, history_pairs_by_id: dict) -> set:
-    stores = set()
-    if product.price_source_contractor_id is not None:
-        stores.add(product.price_source_contractor_id)
-    for cid, _sa in history_pairs_by_id.get(product.id, ()):
-        if cid is not None:
-            stores.add(cid)
-    return stores
+    filtered: dict = {}
+    for key, ids in groups.items():
+        stores = set()
+        for pid, contractor_id in ids:
+            if contractor_id is not None:
+                stores.add(contractor_id)
+            stores.update(history_contractors.get(pid, ()))
+        if len(stores) >= 2:
+            filtered[key] = [pid for pid, _contractor in ids]
+    return filtered
 
 
 def _has_store_conflict(product_ids: list, history_pairs_by_id: dict) -> bool:
@@ -163,46 +214,108 @@ def _is_group_unique(ids: list, signatures_by_id: dict) -> bool:
     return True
 
 
-async def _plan(db) -> list:
-    """Возвращает список {"key", "conflict", ...} — группы, готовые к
-    слиянию (без конфликтов, ≥2 разных магазина, 1-к-1 по match()). Не меняет
-    БД."""
-    groups, products_by_id, signatures_by_id = await _load_name_model_groups(db)
-    if not groups:
+async def _plan_batch(db, batch_groups: list) -> list:
+    """Фаза 2 для ОДНОЙ порции (суммарно ≤PHASE2_CHUNK_IDS id) — дозагружает
+    полные поля (name/manufacturer/characteristics; country_origin тоже
+    читаем — дешёвая скалярная колонка в том же Core select, вдруг
+    понадобится вызывающему коду отчёта) ТОЛЬКО для id этой порции, плюс
+    (contractor_id, store_article) истории ТОЛЬКО для них же. Всё, что
+    загружено здесь (products_by_id/signatures_by_id/history_*), — локальные
+    имена этой корутины: при возврате из функции порция уходит из scope и
+    освобождается, следующая порция её не держит."""
+    batch_ids = sorted({pid for _key, ids in batch_groups for pid in ids})
+    if not batch_ids:
         return []
 
-    all_product_ids = set()
-    for ids in groups.values():
-        all_product_ids.update(ids)
-    history_count_by_id, history_pairs_by_id = await _load_history(db, all_product_ids)
+    rows = (await db.execute(
+        select(
+            Product.id, Product.name, Product.manufacturer,
+            Product.country_origin, Product.characteristics,
+        ).where(Product.id.in_(batch_ids))
+    )).all()
+    products_by_id = {
+        pid: {"name": name, "manufacturer": manufacturer, "characteristics": characteristics or []}
+        for pid, name, manufacturer, _country, characteristics in rows
+    }
 
-    plan = []
-    for key, ids in groups.items():
+    hist_rows = (await db.execute(
+        select(
+            ProductPriceHistory.product_id,
+            ProductPriceHistory.contractor_id,
+            ProductPriceHistory.store_article,
+        ).where(ProductPriceHistory.product_id.in_(batch_ids))
+    )).all()
+    history_count_by_id: dict = {}
+    history_pairs_by_id: dict = {}
+    for pid, cid, sa in hist_rows:
+        history_count_by_id[pid] = history_count_by_id.get(pid, 0) + 1
+        history_pairs_by_id.setdefault(pid, []).append((cid, sa))
+
+    result = []
+    for key, ids in batch_groups:
         ids = [pid for pid in ids if pid in products_by_id]
         if len(ids) < 2:
             continue
-        distinct_stores = set()
-        for pid in ids:
-            distinct_stores.update(_product_stores(products_by_id[pid], history_pairs_by_id))
-        if len(distinct_stores) < 2:
-            continue  # все карточки одного и того же (или никакого) магазина
         if _has_store_conflict(ids, history_pairs_by_id):
-            plan.append({"key": key, "conflict": True, "reason": "store_article", "product_ids": ids})
+            result.append({"key": key, "conflict": True, "reason": "store_article", "product_ids": ids})
             continue
+        signatures_by_id = {pid: build_signature(products_by_id[pid]) for pid in ids}
         if not _is_group_unique(ids, signatures_by_id):
             # Неоднозначно (владелец, 27.10.2026) — автоматически НЕ сводим,
             # это повод для человека посмотреть в «Похожие товары»
             # (app/services/product_similar.py, тот же match() уже решает
             # её группы «уверенно»/«проверить»).
-            plan.append({"key": key, "conflict": True, "reason": "неоднозначно", "product_ids": ids})
+            result.append({"key": key, "conflict": True, "reason": "неоднозначно", "product_ids": ids})
             continue
         winner_id = _pick_winner_simple(ids, history_count_by_id)
         loser_ids = [pid for pid in ids if pid != winner_id]
-        plan.append({
+        result.append({
             "key": key, "conflict": False,
             "winner_id": winner_id, "loser_ids": loser_ids,
-            "names": {pid: products_by_id[pid].name for pid in ids},
+            "names": {pid: products_by_id[pid]["name"] for pid in ids},
         })
+    return result
+
+
+async def _plan(db) -> list:
+    """Возвращает список {"key", "conflict", ...} — группы, готовые к
+    слиянию (без конфликтов, ≥2 разных магазина, 1-к-1 по match()). Не меняет
+    БД. Фаза 1 → отбор по магазинам → фаза 2 порциями (см. докстринги
+    _load_candidate_groups/_apply_history_contractors/_plan_batch)."""
+    groups = await _load_candidate_groups(db)
+    print(f"  фаза 1: групп-кандидатов (общий цифровой ключ, ≥2 карточки): {len(groups)}", file=sys.stderr)
+    if not groups:
+        return []
+
+    groups = await _apply_history_contractors(db, groups)
+    print(f"  после проверки «≥2 разных магазина»: {len(groups)} групп", file=sys.stderr)
+    if not groups:
+        return []
+
+    plan: list = []
+    group_items = list(groups.items())
+    total_groups = len(group_items)
+    processed_groups = 0
+    batch_no = 0
+    batch_groups: list = []
+    batch_id_count = 0
+
+    for key, ids in group_items:
+        batch_groups.append((key, ids))
+        batch_id_count += len(ids)
+        if batch_id_count >= PHASE2_CHUNK_IDS:
+            batch_no += 1
+            plan.extend(await _plan_batch(db, batch_groups))
+            processed_groups += len(batch_groups)
+            print(f"  фаза 2: порция {batch_no}, групп обработано {processed_groups}/{total_groups}", file=sys.stderr)
+            batch_groups = []
+            batch_id_count = 0
+    if batch_groups:
+        batch_no += 1
+        plan.extend(await _plan_batch(db, batch_groups))
+        processed_groups += len(batch_groups)
+        print(f"  фаза 2: порция {batch_no}, групп обработано {processed_groups}/{total_groups}", file=sys.stderr)
+
     return plan
 
 
@@ -224,8 +337,8 @@ async def main_async(user_email: str, apply: bool) -> None:
     print(f"  неоднозначно (несколько карточек у какого-то магазина под этим ключом — см. «Похожие товары»): {len(ambiguous)}")
     print(f"  пропущено из-за конфликта «один магазин — две позиции»: {len(store_conflicts)}")
 
-    print("\nПримеры (до 10):")
-    for g in mergeable[:10]:
+    print("\nПримеры (до 20):")
+    for g in mergeable[:20]:
         loser_names = ", ".join(f"№{lid} «{g['names'][lid]}»" for lid in g["loser_ids"])
         print(f"  winner №{g['winner_id']} «{g['names'][g['winner_id']]}» ← {loser_names}")
 
@@ -252,12 +365,27 @@ async def main_async(user_email: str, apply: bool) -> None:
     print(f"\nГотово: слито групп {merged_groups}, удалено карточек {merged_cards}.")
 
 
+def _print_peak_memory() -> None:
+    """Пиковая память процесса (resource.ru_maxrss — КБ на Linux, где и
+    крутится backend_a/прод; на платформах без resource — пропускаем, не
+    падаем)."""
+    try:
+        import resource
+        peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        print(f"\nПиковая память процесса: {peak_kb / 1024:.1f} МБ (ru_maxrss)", file=sys.stderr)
+    except ImportError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--user-email", required=True, help="email пользователя, от имени которого идёт слияние")
     parser.add_argument("--apply", action="store_true", help="выполнить слияние (без флага — только пробный прогон)")
     args = parser.parse_args()
-    asyncio.run(main_async(args.user_email, args.apply))
+    try:
+        asyncio.run(main_async(args.user_email, args.apply))
+    finally:
+        _print_peak_memory()
 
 
 if __name__ == "__main__":

@@ -1,10 +1,17 @@
 // Диалоги организации: создать / редактировать / привязать к контрагенту / удалить.
 // Вынесено из HierarchyView.vue без изменения логики.
+//
+// «Новая организация» (2026-10-27): логика вынесена в composables/org/useOrgCreate.ts —
+// единый механизм создания для Иерархии И страницы «Организации» (Правило №6, задание
+// владельца: раньше «Организации» имели собственный, более бедный диалог создания).
+// Этот композабл зовёт useOrgCreate внутри себя и ре-экспортирует те же имена, что были
+// здесь раньше, чтобы HierarchyView.vue не пришлось переписывать.
 import { ref, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import { useContractorsStore } from '@/stores/contractors'
 import type { ToastType } from '@/composables/useToast'
 import type { GraphData, OrgLite } from './hierarchyTypes'
+import { useOrgCreate } from '@/composables/org/useOrgCreate'
 
 export interface HierarchyOrgDialogsOptions {
   lastGraphData: Ref<GraphData | null>
@@ -16,140 +23,28 @@ export interface HierarchyOrgDialogsOptions {
 export function useHierarchyOrgDialogs(opts: HierarchyOrgDialogsOptions) {
   const contractorsStore = useContractorsStore()
 
-  // ── New org ──────────────────────────────────────────────────────────────────
-  const newOrgDialog = ref({ show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', loading: false })
-  // 2026-09-01: аккаунт (головная организация) для новой org — только superadmin,
-  // см. app/services/org_account_resolution.py на бэкенде.
-  const newOrgAccountId = ref<number | null>(null)
-  const newOrgAccountOptions = ref<{ id: number; name: string }[]>([])
-  // 152-ФЗ (2026-10-14): account_owner, создающий организацию, становится её
-  // owner_user_id — чекбокс в HierarchyNewOrgDialog.vue, по умолчанию снят на
-  // КАЖДОЕ открытие (см. openNewOrgDialog ниже и сброс в createNewOrg).
-  const newOrgPoruchenieAccepted = ref(false)
-  async function openNewOrgDialog() {
-    newOrgDialog.value.show = true
-    newOrgPoruchenieAccepted.value = false
-    if (!opts.isSuperadmin) return
-    try {
-      newOrgAccountOptions.value = await apiFetch<{ id: number; name: string }[]>('/organizations/accounts')
-    } catch {
-      newOrgAccountOptions.value = []
-    }
-  }
-  const newOrgEgrulLoading = ref(false)
-  const newOrgEgrulMessage = ref('')
-  const newOrgEgrulMessageType = ref<'success' | 'info' | 'error'>('info')
-  const newOrgContractors = ref<any[]>([])
-  const newOrgContractorId = ref<number | null>(null)
-  let _newOrgContractorSearchTimeout: any = null
-
-  const orgContractorFilter = (_value: string, query: string, item?: any): boolean => {
-    const q = query.toLowerCase()
-    const name = (item?.raw?.name || '').toLowerCase()
-    const inn = (item?.raw?.inn || '').toLowerCase()
-    return name.includes(q) || inn.includes(q)
-  }
-  function onNewOrgContractorSearch(query: string) {
-    clearTimeout(_newOrgContractorSearchTimeout)
-    if (!query || query.length < 2) return
-    _newOrgContractorSearchTimeout = setTimeout(async () => {
-      const list = await contractorsStore.search(query, 50)
-      const existing = new Set(newOrgContractors.value.map((c: any) => c.id))
-      for (const c of list) {
-        if (!existing.has(c.id)) newOrgContractors.value.push(c)
-      }
-    }, 300)
-  }
-  function onNewOrgContractorSelect(id: number | null) {
-    if (!id) return
-    const c = newOrgContractors.value.find((x: any) => x.id === id)
-    if (!c) return
-    const d = newOrgDialog.value
-    if (c.name && !d.name.trim()) d.name = c.name
-    if (c.full_name && !d.full_name.trim()) d.full_name = c.full_name
-    if (c.inn && !d.inn.trim()) d.inn = c.inn
-    if (c.kpp && !d.kpp.trim()) d.kpp = c.kpp
-    if (c.ogrn && !d.ogrn.trim()) d.ogrn = c.ogrn
-    if (c.address && !d.address.trim()) d.address = c.address
-    if (c.signatory && !(d as any).signatory.trim()) (d as any).signatory = c.signatory
-    // ↑ поле signatory не объявлено в форме — сохранённая особенность исходника (не чиним).
-  }
-
-  async function createNewOrg() {
-    const name = newOrgDialog.value.name.trim()
-    if (!name) return
-    newOrgDialog.value.loading = true
-    try {
-      const d = newOrgDialog.value
-      const body: any = {
-        name,
-        full_name: d.full_name.trim() || null,
-        inn: d.inn.trim() || null,
-        kpp: d.kpp.trim() || null,
-        ogrn: d.ogrn.trim() || null,
-        address: d.address.trim() || null,
-        signatory_last_name: d.signatory_last_name.trim() || null,
-        signatory_first_name: d.signatory_first_name.trim() || null,
-        signatory_middle_name: d.signatory_middle_name.trim() || null,
-        signatory_position: d.signatory_position.trim() || null,
-        contractor_id: newOrgContractorId.value || null,
-        root_org_id: opts.isSuperadmin ? (newOrgAccountId.value || null) : null,
-        // Требуется backend'ом только когда создающий становится владельцем
-        // (account_owner) — для superadmin игнорируется, но передаём как есть.
-        poruchenie_accepted: newOrgPoruchenieAccepted.value,
-      }
-      await apiFetch('/organizations/', { method: 'POST', body })
-      opts.showSnack(`Организация "${name}" создана`)
-      newOrgDialog.value = { show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', loading: false }
-      newOrgContractorId.value = null
-      newOrgContractors.value = []
-      newOrgEgrulMessage.value = ''
-      newOrgAccountId.value = null
-      newOrgPoruchenieAccepted.value = false
-      await opts.loadGraph()
-    } catch (e: any) {
-      opts.showSnack(e?.message || 'Ошибка создания организации', 'error')
-    } finally {
-      newOrgDialog.value.loading = false
-    }
-  }
-
-  async function enrichNewOrgFromEgrul() {
-    const inn = newOrgDialog.value.inn.trim()
-    if (!inn || inn.length < 10) return
-    newOrgEgrulLoading.value = true
-    newOrgEgrulMessage.value = ''
-    try {
-      const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
-      if (data._source === 'npd') {
-        newOrgEgrulMessage.value = data._notice || `ИНН ${inn} — самозанятый, данных в ЕГРЮЛ нет`
-        newOrgEgrulMessageType.value = 'warning' as any
-        return
-      }
-      const d = newOrgDialog.value
-      if (data.name && !d.name.trim()) d.name = data.name
-      if (data.full_name) d.full_name = data.full_name
-      if (data.kpp) d.kpp = data.kpp
-      if (data.ogrn) d.ogrn = data.ogrn
-      if (data.address) d.address = data.address
-      if (data.signatory_last_name) d.signatory_last_name = data.signatory_last_name
-      if (data.signatory_first_name) d.signatory_first_name = data.signatory_first_name
-      if (data.signatory_middle_name) d.signatory_middle_name = data.signatory_middle_name
-      if (data.signatory_position) d.signatory_position = data.signatory_position
-      newOrgEgrulMessage.value = 'Данные заполнены из ЕГРЮЛ'
-      newOrgEgrulMessageType.value = 'success'
-    } catch (e: any) {
-      if (e?.payload?.code === 'INN_NOT_FOUND') {
-        newOrgEgrulMessage.value = e.payload.message
-        newOrgEgrulMessageType.value = 'warning' as any
-      } else {
-        newOrgEgrulMessage.value = e?.message || 'Ошибка запроса к ФНС'
-        newOrgEgrulMessageType.value = 'error'
-      }
-    } finally {
-      newOrgEgrulLoading.value = false
-    }
-  }
+  // ── New org — единый механизм, см. composables/org/useOrgCreate.ts ────────────
+  const orgCreate = useOrgCreate({
+    isSuperadmin: opts.isSuperadmin,
+    showSnack: opts.showSnack,
+    onCreated: () => opts.loadGraph(),
+  })
+  const newOrgShow = orgCreate.show
+  const newOrgDialog = orgCreate.form
+  const newOrgAccountId = orgCreate.accountId
+  const newOrgAccountOptions = orgCreate.accountOptions
+  const newOrgPoruchenieAccepted = orgCreate.poruchenieAccepted
+  const newOrgEgrulLoading = orgCreate.egrulLoading
+  const newOrgEgrulMessage = orgCreate.egrulMessage
+  const newOrgEgrulMessageType = orgCreate.egrulMessageType
+  const newOrgContractors = orgCreate.contractors
+  const newOrgContractorId = orgCreate.contractorId
+  const orgContractorFilter = orgCreate.contractorFilter
+  const openNewOrgDialog = orgCreate.open
+  const onNewOrgContractorSearch = orgCreate.onContractorSearch
+  const onNewOrgContractorSelect = orgCreate.onContractorSelect
+  const createNewOrg = orgCreate.createOrg
+  const enrichNewOrgFromEgrul = orgCreate.enrichFromEgrul
 
   // ── Edit org ─────────────────────────────────────────────────────────────────
   const editOrgDialog = ref({ show: false, id: 0, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', contractor_id: null as number | null })
@@ -331,7 +226,7 @@ export function useHierarchyOrgDialogs(opts: HierarchyOrgDialogsOptions) {
 
   return {
     contractorsStore,
-    newOrgDialog, newOrgAccountId, newOrgAccountOptions, newOrgPoruchenieAccepted, openNewOrgDialog,
+    newOrgShow, newOrgDialog, newOrgAccountId, newOrgAccountOptions, newOrgPoruchenieAccepted, openNewOrgDialog,
     newOrgEgrulLoading, newOrgEgrulMessage, newOrgEgrulMessageType,
     newOrgContractors, newOrgContractorId, orgContractorFilter,
     onNewOrgContractorSearch, onNewOrgContractorSelect, createNewOrg, enrichNewOrgFromEgrul,

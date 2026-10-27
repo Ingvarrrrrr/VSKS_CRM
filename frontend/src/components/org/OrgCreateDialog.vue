@@ -32,7 +32,7 @@
           :custom-filter="contractorFilter"
           :loading="searching"
           :menu-props="{ maxWidth: 560 }"
-          hint="Поиск по всей базе контрагентов (название или ИНН). Выбор заполнит поля ниже." persistent-hint
+          hint="Поиск по всей базе контрагентов (название или ИНН), либо автоматически по ИНН ниже. Выбор заполнит поля ниже." persistent-hint
           class="mb-4"
           @update:search="emit('contractor-search', $event)"
           @update:model-value="emit('contractor-select', $event)"
@@ -48,6 +48,21 @@
             </v-list-item>
           </template>
         </v-autocomplete>
+
+        <!-- Контрагент найден в нашей базе (авто по ИНН или выбран руками) —
+             реквизиты хранятся у него, здесь они только read-only, чтобы
+             правка в этой форме не терялась молча (backend не перезаписывает
+             карточку контрагента, когда contractor_id передан явно, см.
+             create_organization). -->
+        <v-alert
+          v-if="egrulMessage"
+          :type="egrulMessageType" density="compact" variant="tonal"
+          class="mb-3 text-caption" closable
+          @click:close="emit('clear-egrul-message')"
+        >
+          {{ egrulMessage }}
+        </v-alert>
+
         <v-text-field
           v-model="form.name"
           label="Краткое наименование *"
@@ -58,25 +73,32 @@
           v-model="form.full_name"
           label="Полное наименование"
           variant="outlined" density="compact" class="mb-2"
+          :readonly="locked"
+          :hint="locked ? 'Реквизиты хранятся в карточке контрагента' : ''"
+          :persistent-hint="locked"
         />
 
         <div class="d-flex gap-2 align-start mb-1">
           <v-text-field
             v-model="form.inn" label="ИНН"
             variant="outlined" density="compact" style="flex:1"
-            hint="10 (юр.лицо) или 12 (ИП) цифр" persistent-hint
+            :hint="locked ? 'Реквизиты хранятся в карточке контрагента' : '10 (юр.лицо) или 12 (ИП) цифр'" persistent-hint
+            :readonly="locked"
           />
           <v-text-field
             v-model="form.kpp" label="КПП"
             variant="outlined" density="compact" style="max-width:130px" hide-details
+            :readonly="locked"
           />
           <v-text-field
             v-model="form.ogrn" label="ОГРН"
             variant="outlined" density="compact" style="max-width:150px" hide-details
+            :readonly="locked"
           />
         </div>
 
         <v-btn
+          v-if="!locked"
           variant="tonal" color="deep-purple" size="small" class="mt-3 mb-2"
           prepend-icon="mdi-database-search-outline"
           :loading="egrulLoading"
@@ -86,32 +108,27 @@
           Заполнить на основании ИНН из ЕГРЮЛ
         </v-btn>
 
-        <v-alert
-          v-if="egrulMessage"
-          :type="egrulMessageType" density="compact" variant="tonal"
-          class="mb-2 text-caption" closable
-          @click:close="emit('clear-egrul-message')"
-        >
-          {{ egrulMessage }}
-        </v-alert>
-
         <v-text-field
           v-model="form.address" label="Адрес"
           variant="outlined" density="compact" class="mb-2"
+          :readonly="locked"
+          :hint="locked ? 'Реквизиты хранятся в карточке контрагента' : ''"
+          :persistent-hint="locked"
         />
         <v-text-field
           v-model="form.signatory_position" label="Должность подписанта"
           variant="outlined" density="compact" class="mb-2"
+          :readonly="locked"
         />
         <v-row dense class="mb-2">
           <v-col cols="4">
-            <v-text-field v-model="form.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details />
+            <v-text-field v-model="form.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details :readonly="locked" />
           </v-col>
           <v-col cols="4">
-            <v-text-field v-model="form.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details />
+            <v-text-field v-model="form.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details :readonly="locked" />
           </v-col>
           <v-col cols="4">
-            <v-text-field v-model="form.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details />
+            <v-text-field v-model="form.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details :readonly="locked" />
           </v-col>
         </v-row>
 
@@ -142,6 +159,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
 import PoruchenieCheckbox from '@/components/legal/PoruchenieCheckbox.vue'
 
@@ -176,4 +194,11 @@ const show = defineModel<boolean>({ default: false })
 const accountId = defineModel<number | null>('accountId', { default: null })
 const contractorId = defineModel<number | null>('contractorId', { default: null })
 const poruchenieAccepted = defineModel<boolean>('poruchenieAccepted', { default: false })
+
+// Контрагент привязан (авто по ИНН или выбран руками) — реквизиты read-only,
+// т.к. backend не перезаписывает карточку контрагента, когда contractor_id
+// передан явно (см. задание и create_organization): правки тут молча
+// пропали бы. Снять блокировку — очистить автокомплит (clearable) или
+// изменить ИНН (useOrgCreate.ts сам отвязывает при расхождении).
+const locked = computed(() => contractorId.value != null)
 </script>

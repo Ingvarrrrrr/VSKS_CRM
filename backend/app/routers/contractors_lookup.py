@@ -68,6 +68,7 @@ async def lookup_inn(
         return {
             "id": local_contractor.id,
             "name": local_contractor.name,
+            "full_name": local_contractor.full_name,
             "inn": local_contractor.inn,
             "kpp": local_contractor.kpp,
             "ogrn": local_contractor.ogrn,

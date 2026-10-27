@@ -180,8 +180,8 @@
       @confirm="confirmDeleteUser"
     />
 
-    <HierarchyNewOrgDialog
-      v-model="newOrgDialog.show"
+    <OrgCreateDialog
+      v-model="newOrgShow"
       v-model:account-id="newOrgAccountId"
       v-model:contractor-id="newOrgContractorId"
       v-model:poruchenie-accepted="newOrgPoruchenieAccepted"
@@ -225,7 +225,7 @@ import HierarchyOrgColorPickerDialog from '@/components/hierarchy/HierarchyOrgCo
 import HierarchyCopyUserDialog from '@/components/hierarchy/HierarchyCopyUserDialog.vue'
 import HierarchyUserInfoDialog from '@/components/hierarchy/HierarchyUserInfoDialog.vue'
 import HierarchyEditOrgDialog from '@/components/hierarchy/HierarchyEditOrgDialog.vue'
-import HierarchyNewOrgDialog from '@/components/hierarchy/HierarchyNewOrgDialog.vue'
+import OrgCreateDialog from '@/components/org/OrgCreateDialog.vue'
 import HierarchyNewDeptDialog from '@/components/hierarchy/HierarchyNewDeptDialog.vue'
 import HierarchyAddMemberDialog from '@/components/hierarchy/HierarchyAddMemberDialog.vue'
 import HierarchyDeleteDeptDialog from '@/components/hierarchy/HierarchyDeleteDeptDialog.vue'
@@ -263,7 +263,7 @@ const { ORG_COLORS_HV, getOrgColor, pickOrgColor, colorPickerVisible, applyOrgCo
 
 const {
   contractorsStore,
-  newOrgDialog, newOrgAccountId, newOrgAccountOptions, newOrgPoruchenieAccepted, openNewOrgDialog,
+  newOrgShow, newOrgDialog, newOrgAccountId, newOrgAccountOptions, newOrgPoruchenieAccepted, openNewOrgDialog,
   newOrgEgrulLoading, newOrgEgrulMessage, newOrgEgrulMessageType,
   newOrgContractors, newOrgContractorId, orgContractorFilter,
   onNewOrgContractorSearch, onNewOrgContractorSelect, createNewOrg, enrichNewOrgFromEgrul,

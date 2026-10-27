@@ -156,27 +156,12 @@
     </div>
     </div>
 
-    <!-- Edit org dialog -->
+    <!-- Edit org dialog — только редактирование существующих организаций;
+         создание вынесено в OrgCreateDialog.vue (единый механизм, Правило №6). -->
     <v-dialog v-model="editOrgDialog" max-width="640" scrollable :fullscreen="mobile">
       <v-card class="org-dialog-card">
-        <v-card-title class="pa-4">{{ editOrgItem.id ? 'Реквизиты организации' : 'Новая организация' }}</v-card-title>
+        <v-card-title class="pa-4">Реквизиты организации</v-card-title>
         <v-card-text class="pa-4 pt-0" style="max-height:75vh">
-          <!-- 2026-09-01: суперадмин один вправе выбрать, в какой АККАУНТ уходит
-               новая организация — иначе она рискует остаться «ничейной» (см. баг
-               с региональными отделениями ВСКС). Обычный account_owner ничего
-               не видит: аккаунт и так его собственный. -->
-          <v-select
-            v-if="isSuperadmin && !editOrgItem.id"
-            v-model="editOrgItem.root_org_id"
-            :items="accountOptions"
-            item-title="name" item-value="id"
-            label="Аккаунт (головная организация)"
-            hint="Куда привязать новую организацию. Не выбрано — уйдёт в ваш собственный аккаунт."
-            persistent-hint
-            clearable
-            variant="outlined" density="compact" class="mb-4"
-            prepend-inner-icon="mdi-domain"
-          />
           <v-alert
             v-if="editOrgItem.contractor_id"
             type="info" density="compact" variant="tonal" class="mb-3"
@@ -201,13 +186,6 @@
                 Открыть контрагента
               </v-btn>
             </div>
-          </v-alert>
-          <v-alert
-            v-if="!editOrgItem.contractor_id"
-            type="info" density="compact" variant="tonal" class="mb-3"
-            icon="mdi-information-outline"
-          >
-            <span class="text-caption">Укажите ИНН — будет создана карточка контрагента с полными реквизитами.</span>
           </v-alert>
 
           <v-text-field
@@ -305,6 +283,29 @@
       </v-card>
     </v-dialog>
 
+    <!-- Создание организации — единый механизм, тот же что в «Иерархии» (Правило №6). -->
+    <OrgCreateDialog
+      v-model="orgCreateShow"
+      v-model:account-id="orgCreateAccountId"
+      v-model:contractor-id="orgCreateContractorId"
+      v-model:poruchenie-accepted="orgCreatePoruchenieAccepted"
+      :form="orgCreateForm"
+      :is-superadmin="isSuperadmin"
+      :is-account-owner="isAccountOwner"
+      :account-options="orgCreateAccountOptions"
+      :contractors="orgCreateContractors"
+      :searching="orgCreateContractorsStore.searching"
+      :contractor-filter="orgCreateContractorFilter"
+      :egrul-loading="orgCreateEgrulLoading"
+      :egrul-message="orgCreateEgrulMessage"
+      :egrul-message-type="orgCreateEgrulMessageType"
+      @create="createOrgSubmit"
+      @enrich-egrul="enrichOrgCreateFromEgrul"
+      @clear-egrul-message="clearOrgCreateEgrulMessage"
+      @contractor-search="onOrgCreateContractorSearch"
+      @contractor-select="onOrgCreateContractorSelect"
+    />
+
     <!-- EGRUL diff confirm -->
     <v-dialog v-model="egrulDiffDialog" max-width="520" persistent :fullscreen="mobile">
       <v-card>
@@ -378,6 +379,8 @@ import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
+import OrgCreateDialog from '@/components/org/OrgCreateDialog.vue'
+import { useOrgCreate } from '@/composables/org/useOrgCreate'
 import { useToast, type ToastType } from '@/composables/useToast'
 
 interface Org {
@@ -420,17 +423,9 @@ const canCreateOrg = computed(() =>
   ['superadmin', 'account_owner'].includes(localStorage.getItem('user_role') || '')
 )
 const isSuperadmin = computed(() => localStorage.getItem('user_role') === 'superadmin')
-// 2026-09-01: список аккаунтов (головных организаций) для пикера superadmin —
-// GET /organizations/accounts, доступен только superadmin.
-const accountOptions = ref<{ id: number; name: string }[]>([])
-async function loadAccountOptions() {
-  if (!isSuperadmin.value) return
-  try {
-    accountOptions.value = await apiFetch<{ id: number; name: string }[]>('/organizations/accounts')
-  } catch {
-    accountOptions.value = []
-  }
-}
+// Та же логика, что в HierarchyView.vue — единственное место, где проверяется
+// account_owner (Правило №6: не плодить вторую формулу).
+const isAccountOwner = computed(() => localStorage.getItem('user_role') === 'account_owner')
 const registryArea = ref<HTMLElement | null>(null)
 const orgs = ref<Org[]>([])
 const loading = ref(false)
@@ -443,6 +438,25 @@ function debouncedLoad() {
 }
 const toast = useToast()
 const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
+
+// Создание организации — единый механизм с «Иерархия → Организация»
+// (Правило №6; composables/org/useOrgCreate.ts). onCreated перезагружает
+// список этой страницы.
+const {
+  show: orgCreateShow, form: orgCreateForm, accountId: orgCreateAccountId,
+  accountOptions: orgCreateAccountOptions, poruchenieAccepted: orgCreatePoruchenieAccepted,
+  contractorId: orgCreateContractorId, contractors: orgCreateContractors,
+  contractorFilter: orgCreateContractorFilter, egrulLoading: orgCreateEgrulLoading,
+  egrulMessage: orgCreateEgrulMessage, egrulMessageType: orgCreateEgrulMessageType,
+  open: openCreateOrg, onContractorSearch: onOrgCreateContractorSearch,
+  onContractorSelect: onOrgCreateContractorSelect, enrichFromEgrul: enrichOrgCreateFromEgrul,
+  createOrg: createOrgSubmit, clearEgrulMessage: clearOrgCreateEgrulMessage,
+  contractorsStore: orgCreateContractorsStore,
+} = useOrgCreate({
+  isSuperadmin: isSuperadmin.value,
+  showSnack,
+  onCreated: () => loadOrgs(),
+})
 
 const deleteDialog = reactive({ show: false, item: null as Org | null, deleting: false })
 
@@ -461,7 +475,6 @@ const editOrgItem = ref({
   signatory_middle_name: '',
   signatory_position: '',
   contractor_id: null as number | null,
-  root_org_id: null as number | null,
   region: null as string | null,
 })
 const egrulLoading = ref(false)
@@ -549,28 +562,6 @@ function applyEgrulDiff() {
   egrulMessageType.value = 'success'
 }
 
-function openCreateOrg() {
-  editOrgItem.value = {
-    id: 0,
-    name: '',
-    full_name: '',
-    inn: '',
-    kpp: '',
-    ogrn: '',
-    address: '',
-    signatory_last_name: '',
-    signatory_first_name: '',
-    signatory_middle_name: '',
-    signatory_position: '',
-    contractor_id: null,
-    root_org_id: null,
-    region: null,
-  }
-  egrulMessage.value = ''
-  editOrgDialog.value = true
-  loadAccountOptions()
-}
-
 async function openEditOrg(org: Org) {
   editOrgItem.value = {
     id: org.id,
@@ -585,7 +576,6 @@ async function openEditOrg(org: Org) {
     signatory_middle_name: (org as any).signatory_middle_name || '',
     signatory_position: (org as any).signatory_position || '',
     contractor_id: org.contractor_id ?? null,
-    root_org_id: null,
     region: org.region ?? null,
   }
   egrulMessage.value = ''
@@ -621,12 +611,13 @@ function goToContractor(contractorId: number) {
   router.push({ path: '/contractors', query: { id: String(contractorId) } })
 }
 
+// Только редактирование существующих организаций — создание вынесено в
+// useOrgCreate.ts/OrgCreateDialog.vue (единый механизм, Правило №6).
 async function saveOrg() {
   if (!editOrgItem.value.name?.trim()) {
     showSnack('Укажите краткое название организации', 'error')
     return
   }
-  const isCreate = !editOrgItem.value.id
   editOrgSaving.value = true
   try {
     const body = {
@@ -641,18 +632,11 @@ async function saveOrg() {
       signatory_middle_name: editOrgItem.value.signatory_middle_name || null,
       signatory_position: editOrgItem.value.signatory_position || null,
       contractor_id: editOrgItem.value.contractor_id ?? null,
-    } as Record<string, unknown>
-    if (isCreate) {
-      // Только superadmin реально видит поле — для остальных всегда null,
-      // бэкенд его в любом случае игнорирует не-superadmin ролям.
-      body.root_org_id = editOrgItem.value.root_org_id ?? null
-      await apiFetch(`/organizations/`, { method: 'POST', body })
-    } else {
-      await apiFetch(`/organizations/${editOrgItem.value.id}`, { method: 'PUT', body })
     }
+    await apiFetch(`/organizations/${editOrgItem.value.id}`, { method: 'PUT', body })
     editOrgDialog.value = false
     await loadOrgs()
-    showSnack(isCreate ? 'Организация создана' : 'Реквизиты сохранены')
+    showSnack('Реквизиты сохранены')
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.message || 'Ошибка сохранения', 'error')
   } finally {

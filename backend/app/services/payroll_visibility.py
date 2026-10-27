@@ -150,11 +150,17 @@ async def _on_demand_stage_payroll(db: AsyncSession, invisible_ids: list, rows_b
 
 
 async def _on_demand_budget_planned_payroll(db: AsyncSession, invisible_ids: list, rows_by_id: dict) -> dict:
-    """{sid: {"feo_payroll": x, "plan_payroll": y}} — та же функция, что
-    строит budget_payroll/planned_payroll при ?type_split=true
-    (app.routers.subsidies._calculate_feo_planned_tree_bulk(type_split=True)),
-    вызванная отдельно ТОЛЬКО для субсидий без права и ТОЛЬКО если строка ещё
-    не несёт budget_payroll (т.е. запрос пришёл без ?type_split=true).
+    """{sid: {"feo_payroll": x, "plan_payroll": y, "plan_full_payroll": z, ...}}
+    — та же функция, что строит budget_payroll/planned_payroll/planned_full_
+    payroll при ?type_split=true (app.routers.subsidies.
+    _calculate_feo_planned_tree_bulk(type_split=True) возвращает ПОЛНЫЙ
+    type_map из app.services.type_totals.subsidy_type_totals, который уже
+    несёт plan_full_<kind> — см. её докстринг, ПРАВИЛО №6, второй вызов не
+    заводится здесь), вызванная отдельно ТОЛЬКО для субсидий без права и
+    ТОЛЬКО если строка ещё не несёт budget_payroll (т.е. запрос пришёл без
+    ?type_split=true — planned_full_payroll появляется в строке ТОЙ ЖЕ веткой
+    dashboard_charts.py, что и budget_payroll, см. её комментарий у
+    row["planned_full_payroll"]).
     tree не передаём — для узкого списка субсидий дешевле построить заново,
     чем тащить сюда весь request-scoped кэш дерева."""
     need_ids = [sid for sid in invisible_ids if "budget_payroll" not in (rows_by_id.get(sid) or {})]
@@ -238,6 +244,17 @@ async def scrub_payroll_from_dashboard_charts(
         пересчитывается ТОЙ ЖЕ формулой free_basis=budget_basis−planned
         (subsidy_money_summary.py), просто на уже вычищенных budget/planned —
         не вторая формула;
+      - planned_full/planned_full_payroll (НАЙДЕНО владельцем 27.10.2026,
+        ДНР_Актуальная, payroll_view=exclude) — карточка «Запланировано» =
+        Σ ВСЕХ плановых позиций (planned_full, см. dashboard_charts.py/
+        subsidy_money_summary.py), ОТДЕЛЬНОЕ поле от planned_tree выше (разные
+        источники: full_display_<kind> vs display_<kind>/plan_<kind>, см.
+        feo_plan_tree.py) — поэтому вычищается ОТДЕЛЬНО, planned_payroll
+        urезанный НЕ годится как замена. planned_full_payroll — готовый при
+        ?type_split=true (plan_full_payroll из type_totals.py), иначе читается
+        из того же _on_demand_budget_planned_payroll (он УЖЕ несёт plan_full_
+        payroll — весь type_map _calculate_feo_planned_tree_bulk(type_split=True),
+        второй вызов не заводится);
       - balance_paid_marked/confirmed и balance_by_marks/by_statement —
         payroll-доля из paid_consumption_rows (тот же источник, что и сама
         расшифровка «Остаток субсидии», см. _payroll_balance_amounts), затем
@@ -368,6 +385,18 @@ async def scrub_payroll_from_dashboard_charts(
             p_amt = (on_demand_budget.get(sid) or {}).get("plan_payroll", 0.0)
         budget_payroll_amt[sid] = b_amt
         planned_payroll_amt[sid] = p_amt
+        # planned_full/planned_full_payroll (НАЙДЕНО владельцем 27.10.2026,
+        # ДНР_Актуальная, payroll_view=exclude) — ОТДЕЛЬНОЕ число от planned_
+        # tree/p_amt выше (full_display_<kind> vs display/plan_<kind>, см.
+        # docstring модуля) — вычитаем ПОЛНУЮ ФОТ-долю из ПОЛНОЙ суммы, урезанную
+        # planned_payroll (p_amt) сюда не подставляем, это другая величина.
+        if "planned_full_payroll" in row:
+            pf_amt = row.get("planned_full_payroll") or 0.0
+            row["planned_full_payroll"] = 0.0
+        else:
+            pf_amt = (on_demand_budget.get(sid) or {}).get("plan_full_payroll", 0.0)
+        if pf_amt and row.get("planned_full") is not None:
+            row["planned_full"] = round(row["planned_full"] - pf_amt, 2)
         if b_amt and row.get("feo_budget_total") is not None:
             row["feo_budget_total"] = round(row["feo_budget_total"] - b_amt, 2)
             # ИСПРАВЛЕНО (D3, живая приёмка 21.10.2026, ДНР id 61): "calculated_budget"
@@ -431,7 +460,10 @@ async def scrub_payroll_from_dashboard_charts(
             row["balance_by_statement"] = round(row["balance_by_statement"] + confirmed_amt - b_amt, 2)
 
     if dashboard_type_totals is not None:
-        for key in ("budget_payroll", "planned_payroll"):
+        # planned_full_payroll (НАЙДЕНО владельцем 27.10.2026) — добавлена к
+        # той же пересуммируемой паре, см. _agg в dashboard_charts.py (строка
+        # уже обнулена циклом выше, здесь только пересуммируется колонка).
+        for key in ("budget_payroll", "planned_payroll", "planned_full_payroll"):
             if key not in dashboard_type_totals:
                 continue
             # dashboard_type_totals — Σ уже ОБНУЛЁННЫХ по невидимым строкам

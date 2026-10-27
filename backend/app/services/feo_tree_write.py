@@ -266,10 +266,25 @@ async def align_budget_to_plan_all(
     массового действия budget == plan У ВСЕХ категорий сразу — глобальное
     превышение равно нулю по построению, второй проверки не требуется.
 
-    Возвращает {"count": сколько статей изменено, "total": сумма ФЭО по
-    ВСЕЙ субсидии после действия (Σ по всем категориям, не только
-    изменённым — именно это число показывает подтверждение на фронте: «ФЭО
-    станет равным плану у N статей на сумму X ₽»)}."""
+    Возвращает {"count": сколько ЛИСТОВЫХ статей (категорий без детей) реально
+    изменилось, "total": Бюджет (ФЭО) ВСЕЙ субсидии ПОСЛЕ действия — Σ ТОЛЬКО
+    по КОРНЕВЫМ категориям (parent_id IS NULL), результирующий бюджет каждого
+    корня = новый (plan+over), если корень менялся, иначе старый}.
+
+    ИСПРАВЛЕНО (владелец, 27.10.2026, ДНР_актуальная): раньше count/total
+    считали КАЖДУЮ изменённую категорию подряд — группу И её детей вместе.
+    node["plan"]/["over"] КУМУЛЯТИВНЫ по поддереву (compute_feo_plan_tree), то
+    есть сумма группы уже включает суммы её детей — добавляя их ЕЩЁ РАЗ через
+    сами дочерние категории, total задваивал деньги (у ДНР: план 62 973 630,53
+    ₽ превратился в показанные 99 215 853,86 ₽ у 41 "статьи", хотя реально
+    менялись только листья). Фикс — та же техника, что уже не даёт задвоения у
+    calculated_budget/feo_budget_total (subsidy_budget.py, dashboard_charts.py):
+    итоговая сумма — ТОЛЬКО по корневым узлам, а не по всем узлам дерева.
+    Группа (есть дочерние категории) — не «статья» сама по себе (её own-сумма
+    целиком состоит из листьев), поэтому в count не входит; её собственное
+    поле budget при этом ВСЁ РАВНО обновляется (как и раньше) — решение
+    владельца касается только того, ЧТО показывается/считается в count/total,
+    не того, какие записи обновляются в БД."""
     from app.services.feo_plan import compute_feo_plan_tree
 
     cat_rows = (await db.execute(
@@ -278,25 +293,37 @@ async def align_budget_to_plan_all(
     if not cat_rows:
         return {"count": 0, "total": 0.0}
 
+    # Группа — категория, у которой есть хоть один ребёнок в ЭТОЙ же субсидии
+    # (та же проверка, что фронт делает через hasChildren, см. docstring выше
+    # и AlignBudgetAllDialog.vue — одно решение «группа не статья», не вторая
+    # формула на фронте/бэке).
+    parent_ids_with_children = {c.parent_id for c in cat_rows if c.parent_id is not None}
+
     tree = await compute_feo_plan_tree(db, [subsidy_id])
     count = 0
-    total = Decimal("0")
+    root_result_budget: dict = {}
     for cat in cat_rows:
         node = tree.get(cat.id)
         if node is None:
             continue
         new_budget = Decimal(str(node["plan"] + node["over"])).quantize(Decimal("0.01"))
-        total += new_budget
         old_budget = float(cat.budget) if cat.budget is not None else None
-        if old_budget is not None and abs(old_budget - float(new_budget)) < 0.005:
+        changed = old_budget is None or abs(old_budget - float(new_budget)) >= 0.005
+
+        if cat.parent_id is None:
+            root_result_budget[cat.id] = float(new_budget) if changed else (old_budget or 0.0)
+
+        if not changed:
             continue  # уже равно плану — не плодить запись истории без изменения
+
         cat.budget = new_budget
         await feo_history.record_updated(
             db, feo_history.ENTITY_FEO_CATEGORY, cat.id, user,
             {"budget": old_budget}, {"budget": float(new_budget)},
             source=source, source_ref=source_ref, commit=False,
         )
-        count += 1
+        if cat.id not in parent_ids_with_children:  # лист — считаем как «статью»
+            count += 1
 
     await db.flush()
-    return {"count": count, "total": float(total)}
+    return {"count": count, "total": round(sum(root_result_budget.values()), 2)}

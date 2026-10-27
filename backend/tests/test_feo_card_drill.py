@@ -89,6 +89,79 @@ async def test_planned_card_dnr_like_368_positions_sum_matches_total(db_session,
 
 
 @pytest.mark.asyncio
+async def test_card_drill_payroll_view_exclude_and_only(db_session, test_org, make_user, client):
+    """НАЙДЕНО владельцем 27.10.2026 (ДНР_Актуальная) — GET /subsidies/{id}/
+    card-drill раньше не принимал ?payroll_view вовсе: клик на карточку
+    «Запланировано» в режиме «Только по закупкам» открывал окно С ФОТ, хотя
+    сама карточка уже без него (total окна != total карточки). payroll_view=
+    exclude обязан убирать строки kind='payroll' НЕЗАВИСИМО от права
+    (как у пользователя без subsidy.view_payroll), payroll_view=only —
+    наоборот, оставлять ТОЛЬКО их (совпадает с planned_full_payroll
+    карточки в режиме «Только ФОТ»)."""
+    from app.models.permission import UserOrgPermissionOverride
+    from app.models.user_org_access import UserOrgAccess
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
+    # _make_subsidy (test_feo_plan_tree_scenarios.py) не проставляет org_id —
+    # нужен для видимости /subsidies/{id}/card-drill под обычным manager'ом
+    # (get_visible_subsidy_ids), в отличие от прямых вызовов card_drill_rows
+    # выше в этом файле, которым auth не нужен.
+    subsidy.org_id = test_org.id
+    db_session.add(subsidy)
+    await db_session.commit()
+    payroll_cat = await _make_category(db_session, subsidy.id, name="ФОТ", is_payroll=True)
+    goods_cat = await _make_category(db_session, subsidy.id, name="Товары")
+    await _make_planned_item(db_session, payroll_cat.id, "ЗП", 1, 90_000)
+    item_goods = await _make_planned_item(db_session, goods_cat.id, "Товар", 1, 40_000)
+    item_goods.item_type = "товар"
+    await db_session.commit()
+
+    user = await make_user(role="manager", org_id=test_org.id)
+    uoa = UserOrgAccess(user_id=user.id, org_id=test_org.id, role="manager")
+    db_session.add(uoa)
+    await db_session.commit()
+    await db_session.refresh(uoa)
+    for tab in ("subsidies", "dashboard", "purchases"):
+        db_session.add(UserOrgPermissionOverride(user_org_access_id=uoa.id, key=tab, granted=True))
+    db_session.add(UserOrgPermissionOverride(
+        user_org_access_id=uoa.id, key="subsidy.view_payroll", granted=True,
+    ))
+    db_session.add(UserOrgPermissionOverride(
+        user_org_access_id=uoa.id, key="feo_budget.view_tree_amounts", granted=True,
+    ))
+    await db_session.commit()
+
+    from app.auth.jwt import create_access_token
+    headers = {"Authorization": f"Bearer {create_access_token({'sub': user.username, 'org_id': user.org_id})}"}
+
+    resp_all = await client.get(
+        f"/api/subsidies/{subsidy.id}/card-drill", params={"card": "planned", "kind": "all"}, headers=headers,
+    )
+    assert resp_all.status_code == 200
+    assert resp_all.json()["total"] == pytest.approx(130000.0, abs=0.01)
+
+    resp_exclude = await client.get(
+        f"/api/subsidies/{subsidy.id}/card-drill",
+        params={"card": "planned", "kind": "all", "payroll_view": "exclude"},
+        headers=headers,
+    )
+    assert resp_exclude.status_code == 200
+    body_exclude = resp_exclude.json()
+    assert body_exclude["total"] == pytest.approx(40000.0, abs=0.01)
+    assert all(r["kind"] != "payroll" for r in body_exclude["rows"])
+
+    resp_only = await client.get(
+        f"/api/subsidies/{subsidy.id}/card-drill",
+        params={"card": "planned", "kind": "all", "payroll_view": "only"},
+        headers=headers,
+    )
+    assert resp_only.status_code == 200
+    body_only = resp_only.json()
+    assert body_only["total"] == pytest.approx(90000.0, abs=0.01)
+    assert all(r["kind"] == "payroll" for r in body_only["rows"])
+
+
+@pytest.mark.asyncio
 async def test_planned_card_shows_category_with_all_zero_amount_items(db_session, test_org):
     """Боевая находка (10338 «ДНР (копия прода)», 07.10.2026): статьи 18081
     «Комплект оборудования для ССО»/18082 «Комплект оборудования для ШСО» —

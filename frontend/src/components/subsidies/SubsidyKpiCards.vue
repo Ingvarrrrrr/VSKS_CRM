@@ -597,6 +597,7 @@
     :subsidy-id="ctx.selectedId.value"
     :card="cardDrills.cardDrillCard.value"
     :kind="cardDrills.cardDrillKind.value"
+    :payroll-view="kpiPrefs.payrollView.value"
     @close="cardDrills.cardDrillVisible.value = false"
   />
 

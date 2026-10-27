@@ -14,7 +14,8 @@
       <v-divider />
       <v-card-text class="pt-4">
         <template v-if="state.count > 0">
-          <div>ФЭО станет равным плану у {{ state.count }} {{ pluralStatey(state.count) }} на сумму {{ formatCurrency(state.total) }}.</div>
+          <div>ФЭО станет равным плану у {{ state.count }} {{ pluralStatey(state.count) }}.</div>
+          <div class="mt-1">Бюджет (ФЭО) субсидии: сейчас {{ formatCurrency(state.budgetBefore) }} → станет {{ formatCurrency(state.budgetAfter) }}.</div>
           <div class="text-caption text-medium-emphasis mt-2">Остальные статьи субсидии уже равны плану — их финансирование не изменится.</div>
         </template>
         <template v-else>
@@ -34,15 +35,40 @@
 // POST /api/subsidies/{id}/feo/align-budget-to-plan-all (backend/app/routers/
 // feo_tree_ops.py) — ФЭО := план (plan+over, то же целевое значение, что у
 // одиночного «Приравнять», см. AlignBudgetDialog.vue) у КАЖДОЙ статьи
-// субсидии разом. N/X в подтверждении считаются из УЖЕ загруженного дерева
+// субсидии разом. N/A/B в подтверждении считаются из УЖЕ загруженного дерева
 // (ctx.feoCategories/ctx.planTreeByCat) — тот же источник, что одиночный
-// диалог читает для одной категории, здесь просто сумма по всем (Правило №6 —
-// не второй расчёт, та же формула budget:=plan+over на каждой категории).
+// диалог читает для одной категории (Правило №6 — не второй расчёт, та же
+// формула budget:=plan+over на каждой категории).
+//
+// НАЙДЕНО владельцем 27.10.2026 (ДНР_актуальная): «у 41 статьи на сумму
+// 99 215 853,86» при плане 62 973 630,53 — старый total считал newBudget по
+// КАЖДОМУ изменённому узлу дерева подряд (группы И их дети вместе), а
+// node['plan']/['over'] уже КУМУЛЯТИВНЫ по поддереву (см. compute_feo_plan_tree) —
+// сумма группы уже включает сумму детей, второй раз те же деньги добавлялись
+// через сами дети → задвоение. Плюс «на сумму X» было Σ НОВЫХ бюджетов, а не
+// разницы — владелец не мог понять, что это число значит.
+//
+// Исправление — три отдельные величины теперь:
+//   N (count)         — сколько ЛИСТОВЫХ статей (!hasChildren) реально меняются
+//                        (решение: ГРУППА — не «статья» сама по себе, её сумма
+//                        целиком складывается из листьев и дублировала бы их
+//                        при счёте; «статья» в терминах владельца — конечная
+//                        строка ФЭО, не агрегат направления).
+//   budgetBefore (A)  — ТОТ ЖЕ источник, что карточка «Бюджет (ФЭО)»
+//                        (ctx.selectedBudget, calculated_budget с сервера).
+//   budgetAfter (B)   — Σ ТОЛЬКО по КОРНЕВЫМ узлам (parent_id===null) НОВОГО
+//                        бюджета (plan+over, если корень меняется) или
+//                        СТАРОГО (если не меняется) — та же техника, что уже
+//                        не даёт задвоения у calculated_budget (Σ по корням,
+//                        не по всем узлам), см. backend align_budget_to_plan_all.
 import { reactive, ref } from 'vue'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { formatCurrency } from '@/composables/subsidies/format'
+// Формула count/budgetAfter — отдельный чистый модуль (ПРАВИЛО №5), юнит-тест
+// на синтетическом дереве см. alignBudgetAllPreview.spec.ts.
+import { computeAlignBudgetAllPreview } from '@/composables/subsidies/alignBudgetAllPreview'
 
 const ctx = useSubsidyDetailCtx()
 
@@ -61,25 +87,19 @@ function pluralStatey(n: number): string {
 }
 
 const loading = ref(false)
-const state = reactive<{ show: boolean; subsidyId: number | null; count: number; total: number }>({
-  show: false, subsidyId: null, count: 0, total: 0,
+const state = reactive<{
+  show: boolean; subsidyId: number | null; count: number
+  budgetBefore: number; budgetAfter: number
+}>({
+  show: false, subsidyId: null, count: 0, budgetBefore: 0, budgetAfter: 0,
 })
 
 function open(subsidyId: number) {
-  let count = 0
-  let total = 0
-  for (const cat of ctx.feoCategories.value) {
-    const t = ctx.planTreeByCat.value[cat.id]
-    const newBudget = Number(t?.plan || 0) + Number(t?.over || 0)
-    const oldBudget = Number(cat.budget || 0)
-    if (Math.abs(newBudget - oldBudget) > 0.005) {
-      count += 1
-      total += newBudget
-    }
-  }
+  const preview = computeAlignBudgetAllPreview(ctx.feoCategories.value, ctx.planTreeByCat.value)
   state.subsidyId = subsidyId
-  state.count = count
-  state.total = total
+  state.count = preview.count
+  state.budgetBefore = ctx.selectedBudget.value
+  state.budgetAfter = preview.budgetAfter
   state.show = true
 }
 
@@ -93,7 +113,15 @@ async function confirm() {
       { method: 'POST' },
     )
     state.show = false
-    showSnack(`ФЭО приравнено к плану у ${res.count} ${pluralStatey(res.count)} на сумму ${formatCurrency(res.total)}`, 'success')
+    // Текст тоста — ТОТ ЖЕ, что в диалоге (владелец, 27.10.2026): res.total —
+    // авторитетное B с сервера (Σ по корням ПОСЛЕ действия, backend/app/
+    // services/feo_tree_write.py::align_budget_to_plan_all), budgetBefore —
+    // A, захваченное при открытии диалога (тот же ctx.selectedBudget).
+    showSnack(
+      `ФЭО приравнено к плану у ${res.count} ${pluralStatey(res.count)}. `
+      + `Бюджет (ФЭО) субсидии: было ${formatCurrency(state.budgetBefore)}, стало ${formatCurrency(res.total)}`,
+      'success',
+    )
     if (ctx.selectedId.value) await ctx.loadFeo(ctx.selectedId.value)
     // Карточка субсидии («Бюджет (ФЭО)»/«Свободно») живёт на calculated_budget
     // строки субсидии, не на дереве — loadFeo выше её не трогает. Без этого

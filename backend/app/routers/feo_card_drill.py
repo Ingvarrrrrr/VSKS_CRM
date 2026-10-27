@@ -31,6 +31,20 @@ async def get_card_drill(
     subsidy_id: int,
     card: str = Query(..., regex=rf"^({'|'.join(CARDS)})$"),
     kind: str = Query("all", regex="^(all|goods|services|payroll|unspecified)$"),
+    # payroll_view (НАЙДЕНО владельцем 27.10.2026, ДНР_Актуальная) — тот же
+    # переключатель «Всё/Только закупки/Только ФОТ», что карточки/дашборд
+    # (dashboard_charts.py::payroll_view, kpiPrefs.ts). Раньше это окно его
+    # вовсе не принимало — клик на «Запланировано» в режиме «Только закупки»
+    # (kind='all' передаётся всегда, независимо от переключателя, см.
+    # SubsidyKpiCards.vue openCardDrill) открывал ВСЕ строки, включая ФОТ,
+    # хотя сама карточка уже без ФОТ — total окна не совпадал с total
+    # карточки. "exclude" убирает строки kind="payroll" НЕЗАВИСИМО от права
+    # (та же политика force_hide_all, что payroll_visibility.
+    # scrub_payroll_from_dashboard_charts — не вторая формула, то же решение
+    # «то же число видит пользователь без права»); "only" — наоборот,
+    # оставляет ТОЛЬКО kind="payroll" строки (совпадает с planned_full_payroll/
+    # budget_payroll карточки в режиме «Только ФОТ»).
+    payroll_view: str = Query("all", regex="^(all|exclude|only)$"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -64,11 +78,31 @@ async def get_card_drill(
     # Право «Видеть ФОТ» (владелец, 21.10.2026, часть 3) — kind='payroll'
     # строки (голые и внутри kind='all') без subsidy.view_payroll не отдаются,
     # total пересчитывается без них (ПРАВИЛО №6, app.services.payroll_visibility).
+    # payroll_view='exclude' (НАЙДЕНО владельцем 27.10.2026) — та же чистка,
+    # НЕЗАВИСИМО от права (force_hide, та же политика, что dashboard_charts.py/
+    # payroll_visibility.scrub_payroll_from_dashboard_charts(force_hide_all=True)
+    # — «Только закупки» отдаёт ТЕ ЖЕ числа, что видит пользователь без права).
     if kind in ("all", "payroll"):
-        from app.services.payroll_visibility import can_view_subsidy_payroll
-        if not await can_view_subsidy_payroll(current_user, db, subsidy_id):
+        force_hide = payroll_view == "exclude"
+        if force_hide:
+            hide_payroll = True
+        else:
+            from app.services.payroll_visibility import can_view_subsidy_payroll
+            hide_payroll = not await can_view_subsidy_payroll(current_user, db, subsidy_id)
+        if hide_payroll:
             removed = sum(r.get("amount", 0.0) or 0.0 for r in result["rows"] if r.get("kind") == "payroll")
             if removed:
                 result["rows"] = [r for r in result["rows"] if r.get("kind") != "payroll"]
                 result["total"] = round((result.get("total") or 0.0) - removed, 2)
+
+    # payroll_view='only' (НАЙДЕНО владельцем 27.10.2026) — наоборот, окно
+    # должно совпадать с карточкой, подменённой её payroll-долей
+    # (kpiPayrollOnly.ts): отбрасываем ВСЕ строки кроме kind='payroll', а не
+    # прячем payroll — second формула не вводится, тот же result["rows"]/
+    # ["total"], просто инверсия условия выше.
+    if payroll_view == "only":
+        removed = sum(r.get("amount", 0.0) or 0.0 for r in result["rows"] if r.get("kind") != "payroll")
+        if removed:
+            result["rows"] = [r for r in result["rows"] if r.get("kind") == "payroll"]
+            result["total"] = round((result.get("total") or 0.0) - removed, 2)
     return result

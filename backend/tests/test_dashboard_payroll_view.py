@@ -23,6 +23,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
 from app.models.user_org_access import UserOrgAccess
+from tests.test_feo_plan_tree_scenarios import _make_planned_item
 
 
 async def _make_subsidy(db_session, org_id):
@@ -212,3 +213,72 @@ class TestDashboardPayrollView:
         assert row_only["budget_payroll"] == pytest.approx(row_type_split["budget_payroll"], abs=0.01)
         assert row_only["budget_payroll"] == pytest.approx(90000.0, abs=0.01)
         assert row_only["paid_declared_by_kind"]["payroll"] == pytest.approx(90000.0, abs=0.01)
+
+    async def test_exclude_strips_planned_full(
+        self, client, db_session, test_org, make_user, superadmin_headers,
+    ):
+        """НАЙДЕНО владельцем 27.10.2026 (ДНР_Актуальная, payroll_view=exclude):
+        карточка «Запланировано» = planned_full (Σ ВСЕХ плановых позиций, БЕЗ
+        урезания до ФЭО, см. docstring subsidy_money_summary.py) раньше
+        НЕ вычищалась в режиме «Только по закупкам» — ФОТ оставался внутри,
+        хотя planned_tree/budget_payroll уже вычищались. planned_full —
+        ОТДЕЛЬНОЕ поле (другой источник: full_display_<kind> vs plan_<kind>),
+        его нужно вычищать своей payroll-долей (planned_full_payroll), а не
+        подставлять урезанную planned_payroll."""
+        subsidy = await _make_subsidy(db_session, test_org.id)
+        payroll_cat = FeoCategory(
+            subsidy_id=subsidy.id, level=1, parent_id=None, is_payroll=True,
+            budget=Decimal("90000"), name=f"ФОТ-{uuid.uuid4().hex[:6]}",
+        )
+        goods_cat = FeoCategory(
+            subsidy_id=subsidy.id, level=1, parent_id=None, is_payroll=False,
+            budget=Decimal("40000"), name=f"Товары-{uuid.uuid4().hex[:6]}",
+        )
+        db_session.add_all([payroll_cat, goods_cat])
+        await db_session.commit()
+        await db_session.refresh(payroll_cat)
+        await db_session.refresh(goods_cat)
+
+        await _make_planned_item(db_session, payroll_cat.id, "ЗП — план на год", 1, 90_000)
+        item_goods = await _make_planned_item(db_session, goods_cat.id, "Товар", 1, 40_000)
+        item_goods.item_type = "товар"
+        db_session.add(item_goods)
+        await db_session.commit()
+
+        manager_with_right, _ = await _manager_with_access(db_session, test_org, make_user, can_view_payroll=True)
+
+        # (а) без ?type_split=true — planned_full_payroll считается on-demand
+        # (_on_demand_budget_planned_payroll), ключ в ответе не появляется
+        # (та же конвенция, что и у budget_payroll, см. test_only_forces_
+        # type_split_payload выше), но planned_full всё равно без ФОТ.
+        resp_exclude = await client.get(
+            "/api/dashboard/charts", params={"scope": "dashboard", "payroll_view": "exclude"},
+            headers=_headers(manager_with_right),
+        )
+        assert resp_exclude.status_code == 200
+        row_exclude = _find_subsidy_row(resp_exclude.json(), subsidy.id)
+        assert "planned_full_payroll" not in row_exclude
+        assert row_exclude["planned_full"] == pytest.approx(40000.0, abs=0.01)
+
+        # (б) с ?type_split=true — planned_full_payroll обнулён явно, и
+        # planned_full по-прежнему без ФОТ.
+        resp_exclude_split = await client.get(
+            "/api/dashboard/charts",
+            params={"scope": "dashboard", "payroll_view": "exclude", "type_split": "true"},
+            headers=_headers(manager_with_right),
+        )
+        row_exclude_split = _find_subsidy_row(resp_exclude_split.json(), subsidy.id)
+        assert row_exclude_split["planned_full"] == pytest.approx(40000.0, abs=0.01)
+        assert row_exclude_split["planned_full_payroll"] == pytest.approx(0.0, abs=0.01)
+        assert row_exclude_split["planned_full_goods"] == pytest.approx(40000.0, abs=0.01)
+
+        # (в) без exclude (payroll_view=all, умолчание) — то же дерево даёт
+        # planned_full ПОЛНЫМ (130000 = 90000 ФОТ + 40000 товар), убеждаемся,
+        # что exclude реально что-то меняло.
+        resp_all_split = await client.get(
+            "/api/dashboard/charts", params={"scope": "dashboard", "type_split": "true"},
+            headers=_headers(manager_with_right),
+        )
+        row_all_split = _find_subsidy_row(resp_all_split.json(), subsidy.id)
+        assert row_all_split["planned_full"] == pytest.approx(130000.0, abs=0.01)
+        assert row_all_split["planned_full_payroll"] == pytest.approx(90000.0, abs=0.01)

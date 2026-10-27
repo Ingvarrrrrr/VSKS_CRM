@@ -46,6 +46,47 @@ async def test_align_all_sets_budget_equal_to_plan_everywhere(db_session, test_o
 
 
 @pytest.mark.asyncio
+async def test_align_all_group_and_children_no_double_count(db_session, test_org):
+    """НАЙДЕНО владельцем 27.10.2026 (ДНР_актуальная) — group(план 150 000,
+    кумулятивный по поддереву, см. compute_feo_plan_tree) + 2 листа-ребёнка
+    (100 000 + 50 000) ДОЛЖНЫ дать: count=2 (листья — «статьи», группа не
+    считается статьёй сама по себе), total=150 000 (Σ по КОРНЮ, не по
+    группа+оба_листа=300 000, которое задвоило бы деньги листьев)."""
+    from app.models.feo_category import FeoCategory
+
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=0)
+    group = await _make_category(db_session, subsidy.id, name="Направление", budget=None)
+    child_a = FeoCategory(
+        subsidy_id=subsidy.id, parent_id=group.id, level=2, name="Статья А (дочерняя)", budget=None,
+    )
+    child_b = FeoCategory(
+        subsidy_id=subsidy.id, parent_id=group.id, level=2, name="Статья Б (дочерняя)", budget=None,
+    )
+    db_session.add_all([child_a, child_b])
+    await db_session.commit()
+    await db_session.refresh(child_a)
+    await db_session.refresh(child_b)
+    await _make_planned_item(db_session, child_a.id, amount=100_000)
+    await _make_planned_item(db_session, child_b.id, amount=50_000)
+
+    user = _mk_admin_user(test_org.id)
+    result = await feo_tree_write.align_budget_to_plan_all(db_session, user, subsidy.id)
+    await db_session.commit()
+
+    assert result["count"] == 2  # ТОЛЬКО листья, группа не считается статьёй
+    assert result["total"] == pytest.approx(150_000.0)  # Σ по корню, без задвоения
+
+    await db_session.refresh(group)
+    await db_session.refresh(child_a)
+    await db_session.refresh(child_b)
+    # Собственное поле budget группы всё равно обновляется (как и раньше) —
+    # решение владельца касается только count/total, не записи в БД.
+    assert float(group.budget) == pytest.approx(150_000.0)
+    assert float(child_a.budget) == pytest.approx(100_000.0)
+    assert float(child_b.budget) == pytest.approx(50_000.0)
+
+
+@pytest.mark.asyncio
 async def test_align_all_empty_subsidy_returns_zero(db_session, test_org):
     subsidy = await _make_subsidy(db_session, test_org.id, budget=0)
     user = _mk_admin_user(test_org.id)

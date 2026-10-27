@@ -418,6 +418,14 @@ const props = defineProps<{
   subsidyId: number | null
   card: FeoCardDrillCard
   kind: ItemTypeKind | 'all'
+  // payrollView (НАЙДЕНО владельцем 27.10.2026, ДНР_Актуальная) — тот же
+  // переключатель «Всё/Только закупки/Только ФОТ» (kpiPrefs.payrollView),
+  // что уже определяет число самой карточки — без него окно «из чего
+  // сложено» показывало ВСЕ строки (включая ФОТ) даже когда карточка уже
+  // без ФОТ (payroll_view=exclude), total окна не совпадал с total карточки.
+  // Опционален — не передан (остальные вызовы этого диалога) ⇒ 'all', как и
+  // раньше.
+  payrollView?: 'all' | 'exclude' | 'only'
 }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
@@ -630,6 +638,9 @@ async function load() {
   loading.value = true
   try {
     const params = new URLSearchParams({ card: props.card, kind: props.kind })
+    if (props.payrollView && props.payrollView !== 'all') {
+      params.set('payroll_view', props.payrollView)
+    }
     const res = await apiFetch<{ total: number; rows: (BudgetFreeRow | PlannedRow | DirectionRow)[]; reason: string | null }>(
       `/subsidies/${props.subsidyId}/card-drill?${params.toString()}`,
     )
@@ -646,7 +657,7 @@ async function load() {
   }
 }
 
-watch(() => [props.visible, props.subsidyId, props.card, props.kind], async () => {
+watch(() => [props.visible, props.subsidyId, props.card, props.kind, props.payrollView], async () => {
   if (!props.visible) return
   search.reset()
   await load()

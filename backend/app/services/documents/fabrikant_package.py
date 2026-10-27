@@ -516,7 +516,7 @@ async def render_fabrikant_package_files(
     # (с *_position_genitive) — единый расчёт (ПРАВИЛО №6), перекрывает
     # черновые значения выше в этом же литерале context = {...}.
     add_subsidy_agreement_context(context, subsidy)
-    add_contractor_signatory_context(context, c)
+    add_contractor_signatory_context(context, c, customer_org=customer_org)
     add_customer_context(context, customer_org, customer_ctr)
     # Главный бухгалтер Заказчика — единственный расчёт (ПРАВИЛО №6), см.
     # contexts_org_people.add_chief_accountant_context (тот же вызывается из

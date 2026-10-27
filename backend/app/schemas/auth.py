@@ -173,6 +173,10 @@ class OrganizationCreate(BaseModel):
     head_user_id: Optional[int] = None
     # Fabrikant: город заключения договора
     contract_city: Optional[str] = None
+    # Владелец 27.10.2026: исключения регистра/написания для подстановки
+    # полного наименования организации в документы (app/services/documents/
+    # org_name_case.py). По одному слову/фразе в строке.
+    doc_name_exceptions: Optional[str] = None
     # 2026-09-01: явный выбор аккаунта (головной организации) при создании —
     # только superadmin; см. app/services/org_account_resolution.py. Для
     # остальных ролей игнорируется бэкендом (аккаунт = свой контур).
@@ -233,6 +237,9 @@ class OrganizationOut(BaseModel):
 class RegisterRequest(BaseModel):
     org_name: str
     org_inn: Optional[str] = None
+    # Владелец 27.10.2026: исключения регистра/написания для подстановки
+    # полного наименования организации в документы.
+    doc_name_exceptions: Optional[str] = None
     username: Optional[str] = None
     password: str
     full_name: Optional[str] = None

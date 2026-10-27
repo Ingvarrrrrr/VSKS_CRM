@@ -274,6 +274,18 @@
               <v-text-field v-model="editOrgItem.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details :readonly="!!editOrgItem.contractor_id" />
             </v-col>
           </v-row>
+
+          <v-textarea
+            v-model="editOrgItem.doc_name_exceptions"
+            label="Написание в документах — исключения"
+            variant="outlined"
+            density="compact"
+            rows="3"
+            auto-grow
+            class="mb-2"
+            hint="По одному слову или фразе в строке, как должно быть в документе: ВСКС, МЧС, Российской Федерации. Наименование из ЕГРЮЛ (заглавными) в документах пишется с заглавной только в начале и в кавычках, остальное — строчными; слова из этого списка — как вы их написали."
+            persistent-hint
+          />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -401,6 +413,10 @@ interface Org {
   // org_region_from_address.py), read-only на фронте. Нужен для средней цены по
   // региону в редакторе позиций заявки/закупки (см. utils/avgPrice.ts).
   region?: string | null
+  // Исключения написания при подстановке названия организации в документ —
+  // относится к самой Organization, не к контрагенту (поэтому без readonly
+  // по contractor_id, в отличие от full_name/inn выше).
+  doc_name_exceptions?: string | null
 }
 
 const EGRUL_FIELDS = [
@@ -476,6 +492,7 @@ const editOrgItem = ref({
   signatory_position: '',
   contractor_id: null as number | null,
   region: null as string | null,
+  doc_name_exceptions: '',
 })
 const egrulLoading = ref(false)
 const egrulMessage = ref('')
@@ -577,6 +594,7 @@ async function openEditOrg(org: Org) {
     signatory_position: (org as any).signatory_position || '',
     contractor_id: org.contractor_id ?? null,
     region: org.region ?? null,
+    doc_name_exceptions: org.doc_name_exceptions || '',
   }
   egrulMessage.value = ''
   editOrgDialog.value = true
@@ -632,6 +650,8 @@ async function saveOrg() {
       signatory_middle_name: editOrgItem.value.signatory_middle_name || null,
       signatory_position: editOrgItem.value.signatory_position || null,
       contractor_id: editOrgItem.value.contractor_id ?? null,
+      // '' (не null): сервер пропускает null как «не менять», пустая строка очищает поле
+      doc_name_exceptions: editOrgItem.value.doc_name_exceptions ?? '',
     }
     await apiFetch(`/organizations/${editOrgItem.value.id}`, { method: 'PUT', body })
     editOrgDialog.value = false

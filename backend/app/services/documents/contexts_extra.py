@@ -30,6 +30,9 @@ from app.services.contractor_pii import contractor_pii_doc_fields
 from app.services.documents.contexts_org_people import (
     responsible_case_context, _to_gen_org_name, _to_dat_org_name, _to_ablt_org_name,
 )
+from app.services.documents.org_name_case import (
+    doc_case_org_name, doc_case_org_name_case, doc_quotes_only, org_name_exceptions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +53,21 @@ def add_phase28_context(context: dict, subsidy, c, p: Purchase, can_view_pii: bo
     """
     try:
         # Реквизиты субсидии-грантодателя (для рамочных и региональных договоров)
-        # Phase 28: grantor_name / ministry_name берём из новых полей модели Subsidy
-        context["subsidy_grantor_name"] = (subsidy.grantor_name or "").strip() if subsidy else ""
+        # Phase 28: grantor_name / ministry_name берём из новых полей модели Subsidy.
+        # grantor_name заполняется вручную в форме субсидии, но тоже бывает
+        # капсом ("РОССИЙСКАЯ ФЕДЕРАЦИЯ") — тот же хелпер приведения регистра
+        # (владелец, 27.10.2026), что и для Заказчика/Исполнителя. У субсидии
+        # нет своей карточки исключений — только встроенные (РФ/ИНН/ОГРН).
+        context["subsidy_grantor_name"] = (
+            doc_case_org_name((subsidy.grantor_name or "").strip(), [])
+            if subsidy and subsidy.grantor_name else ""
+        )
         # Творительный падеж грантодателя (владелец, 22.10.2026):
         # {{subsidy_grantor_name_instrumental}} — через единственный разбор
         # головной группы _to_case_position (ПРАВИЛО №6).
         context["subsidy_grantor_name_instrumental"] = (
-            _to_ablt_org_name(context["subsidy_grantor_name"])
-            if context["subsidy_grantor_name"] else ""
+            doc_case_org_name_case((subsidy.grantor_name or "").strip(), [], 'ablt')
+            if subsidy and subsidy.grantor_name else ""
         )
         context["subsidy_ministry_name"] = (subsidy.ministry_name or "").strip() if subsidy else ""
         # subsidy_agreement_number/date — см. add_subsidy_agreement_context
@@ -166,6 +176,19 @@ def add_customer_context(context: dict, customer_org, customer_ctr) -> None:
         "Устава",
     )
 
+    # Владелец (27.10.2026): полное наименование из ЕГРЮЛ лежит КАПСОМ —
+    # app/services/documents/org_name_case.py приводит к обычному написанию
+    # (регистр/кавычки) перед подстановкой в документ, с исключениями из
+    # карточки организации (`organizations.doc_name_exceptions`). Краткое
+    # наименование обычно уже в нормальном регистре — ему только конвертируем
+    # кавычки (doc_quotes_only), регистр не трогаем.
+    _cust_exceptions = org_name_exceptions(customer_org)
+    _cust_full_raw = _cust_req.get('full_name') or ""
+    _cust_short_raw = _g(customer_org.name if customer_org else None,
+                          customer_ctr.name if customer_ctr else None)
+    _cust_full = doc_case_org_name(_cust_full_raw, _cust_exceptions)
+    _cust_short = doc_quotes_only(_cust_short_raw)
+
     context.update({
         # Владелец (16.10.2026): {{customer_name}} убран — единственные ключи
         # краткого/полного названия Заказчика — customer_short_name и
@@ -173,20 +196,20 @@ def add_customer_context(context: dict, customer_org, customer_ctr) -> None:
         # одного на другое (пусто — значит пусто в карточке).
         # customer_full_name — ТОЛЬКО поле «Полное наименование» (org_requisites,
         # контрагент — источник истины при org.contractor_id).
-        "customer_full_name":    _cust_req.get('full_name') or "",
+        "customer_full_name":    _cust_full,
         # customer_short_name — ТОЛЬКО поле «Краткое наименование»: organizations.name
         # (column_property, читает Contractor.name напрямую — app/models/
         # organization.py) либо, если org не передана — contractor.name.
-        "customer_short_name":   _g(customer_org.name if customer_org else None,
-                                    customer_ctr.name if customer_ctr else None),
+        "customer_short_name":   _cust_short,
         # Падежи названия Заказчика (владелец, 20.10.2026) — единственный
         # разбор _to_case_position, см. contexts_org_people._to_case_org_name.
-        "customer_full_name_genitive":  _to_gen_org_name(_cust_req.get('full_name') or ""),
-        "customer_full_name_dative":    _to_dat_org_name(_cust_req.get('full_name') or ""),
-        "customer_short_name_genitive": _to_gen_org_name(_g(customer_org.name if customer_org else None,
-                                                             customer_ctr.name if customer_ctr else None)),
-        "customer_short_name_dative":   _to_dat_org_name(_g(customer_org.name if customer_org else None,
-                                                             customer_ctr.name if customer_ctr else None)),
+        # Владелец (27.10.2026): склоняем уже приведённое к обычному регистру
+        # название (doc_case_org_name_case нормализует сама), короткое —
+        # склоняем результат doc_quotes_only (регистр короткого не меняем).
+        "customer_full_name_genitive":  doc_case_org_name_case(_cust_full_raw, _cust_exceptions, 'gent'),
+        "customer_full_name_dative":    doc_case_org_name_case(_cust_full_raw, _cust_exceptions, 'datv'),
+        "customer_short_name_genitive": _to_gen_org_name(_cust_short),
+        "customer_short_name_dative":   _to_dat_org_name(_cust_short),
         "customer_address":      _g(_cust_req.get('address')),
         # Город из юридического адреса (владелец, 20.10.2026) — см.
         # formatting._extract_city_from_address. НЕ contract_city (ниже) —
@@ -389,7 +412,12 @@ def contractor_org_type_for_docs(c) -> str:
     return ""
 
 
-def add_contractor_signatory_context(context: dict, c) -> None:
+def add_contractor_signatory_context(context: dict, c, customer_org=None) -> None:
+    """`customer_org` (владелец, 27.10.2026, опциональный — старые вызовы без
+    него продолжают работать, просто без приведения регистра контрагента):
+    исключения регистра для contractor_full_name берутся из карточки
+    ЗАКАЗЧИКА (organizations.doc_name_exceptions), а не контрагента —
+    контрагент (поставщик) своей карточки организации не имеет."""
     # Phase 23: расширенные поля подписанта Исполнителя (name_genitive, initials, ogrnip)
     ctr_sig = _signatory_split(
         c.signatory if c else "",
@@ -424,8 +452,11 @@ def add_contractor_signatory_context(context: dict, c) -> None:
         "contractor_ogrnip":                  (c.ogrn or "") if (c and (c.org_type or "").lower().startswith("ип")) else "",
         # Владелец (16.10.2026): полное наименование — ТОЛЬКО поле «Полное
         # наименование» контрагента, без фолбэка на краткое (contractor_name
-        # убран — он дублировал contractor_short_name).
-        "contractor_full_name":               (c.full_name or "") if c else "",
+        # убран — он дублировал contractor_short_name). Владелец (27.10.2026):
+        # приводим регистр из ЕГРЮЛ-капса тем же хелпером, что у Заказчика.
+        "contractor_full_name":               (
+            doc_case_org_name(c.full_name or "", org_name_exceptions(customer_org)) if c else ""
+        ),
         # ФИО подписанта Исполнителя по частям (владелец, 27.10.2026) — те же
         # значения, что _signatory_split уже разобрал для contractor_signatory_name
         # выше (ПРАВИЛО №6, второй разбор не заводим).

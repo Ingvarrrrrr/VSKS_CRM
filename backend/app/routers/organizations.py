@@ -93,6 +93,7 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         # Geo/delivery fields — нужны фронту для дефолта адреса доставки
         region=org.region or None,
         contract_city=org.contract_city or None,
+        doc_name_exceptions=org.doc_name_exceptions or None,
     )
 
 
@@ -411,6 +412,7 @@ async def create_organization(
         owner_user_id=current_user.id if _becomes_owner else None,
         contractor_id=data.contractor_id,
         color=data.color,
+        doc_name_exceptions=data.doc_name_exceptions or None,
     )
     maybe_set_org_region_from_address(org, data.address)
     db.add(org)
@@ -537,6 +539,8 @@ async def update_organization(
             raise HTTPException(400, f"Организация с ИНН {_inn} уже существует: «{_dup.name}» (id={_dup.id}).")
     if data.color is not None:
         org.color = data.color or None
+    if data.doc_name_exceptions is not None:
+        org.doc_name_exceptions = data.doc_name_exceptions or None
     # Explicit contractor_id override (allows un-linking by setting null)
     if data.contractor_id is not None:
         org.contractor_id = data.contractor_id

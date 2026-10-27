@@ -181,7 +181,7 @@ async def generate_document_bytes(
     await add_chief_accountant_context(context, db, customer_org)
     await add_fabrikant_context(context, db, p)
     add_misc_purchase_context(context, p, subsidy)
-    add_contractor_signatory_context(context, c)
+    add_contractor_signatory_context(context, c, customer_org=customer_org)
     add_prepayment_context(context, p)
     add_day_words_context(context, p)
 

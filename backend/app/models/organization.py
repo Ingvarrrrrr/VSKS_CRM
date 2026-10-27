@@ -67,6 +67,13 @@ class Organization(Base):
     director_first_name = Column(String(100), nullable=True)
     director_middle_name = Column(String(100), nullable=True)
     director_position = Column(String(255), nullable=True)
+    # Owner 27.10.2026: полное наименование из ЕГРЮЛ лежит КАПСОМ — в документы
+    # подставляется в обычном регистре через app/services/documents/org_name_case.py
+    # (doc_case_org_name). Строки ниже — слова/фразы, которые эта функция НЕ
+    # приводит к нижнему регистру по общим правилам, а берёт написание как есть
+    # (аббревиатуры вроде ВСКС/МЧС, устойчивые фразы с заглавной — Российской
+    # Федерации). По одной записи в строке, см. org_name_exceptions().
+    doc_name_exceptions = Column(String, nullable=True)
 
     users      = relationship("User", back_populates="organization", foreign_keys="User.org_id")
     child_orgs = relationship("Organization", foreign_keys="Organization.root_org_id", lazy="selectin")

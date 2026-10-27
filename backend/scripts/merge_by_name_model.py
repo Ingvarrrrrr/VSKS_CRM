@@ -95,7 +95,7 @@ from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
 from app.models.user import User
 from app.services.product_merge import merge_products
-from app.services.product_name_signature import build_signature, match
+from app.services.product_name_signature import build_signature, grouping_key, match
 
 BATCH_SIZE = 200  # порция слияния (--apply)
 
@@ -118,18 +118,26 @@ async def _get_user(email: str):
 async def _load_candidate_groups(db) -> dict:
     """Фаза 1 — потоково, Core select (НЕ ORM Product — иначе срабатывают
     lazy='selectin'-связи и грузится весь каталог в объекты, см. докстринг
-    модуля). Берёт ТОЛЬКО 4 узкие колонки, порциями по id (keyset-
+    модуля). Берёт ТОЛЬКО узкие колонки, порциями по id (keyset-
     пагинация — ORDER BY id LIMIT, без OFFSET, чтобы порция не дорожала с
     глубиной). build_signature() здесь без characteristics — функция и так
     принимает их опционально (item.get("characteristics") or []), а
-    digit_tokens (всё, что нужно на этой фазе) считается только по name —
-    второй сигнатуры/функции под «облегчённый» режим не заводим (ПРАВИЛО
-    №6).
+    digit_tokens/вид (всё, что нужно на этой фазе) считаются только по
+    name/product_type/category — второй сигнатуры/функции под
+    «облегчённый» режим не заводим (ПРАВИЛО №6).
 
-    Возвращает {frozenset(digit_tokens): [(product_id, price_source_
-    contractor_id), ...]} — ТОЛЬКО группы, где после фазы 1 уже ≥2 РАЗНЫХ
-    product_id (ключи без цифровых токенов не копим вовсе — см. докстринг
-    product_name_signature.py)."""
+    Группирует по grouping_key() = (вид товара, код модели) — владелец,
+    28.10.2026, п.1: ЕДИНАЯ функция product_name_signature.grouping_key, не
+    второй механизм здесь (ПРАВИЛО №6). Раньше группировка шла по ЛЮБОМУ
+    общему цифровому токену (включая голые числа без единой буквы — "43",
+    "6005") по ВСЕМУ каталогу разом — отсюда и мусорные группы ("Тапочки
+    размер 43"+"Коврик 43×28"+"KEDI Teste 43"). grouping_key() возвращает
+    None для сигнатур без буквенно-цифрового кода — такие вообще не
+    попадают в группы-кандидаты (не ключ поиска, см. докстринг
+    product_name_signature.grouping_key).
+
+    Возвращает {grouping_key: [(product_id, price_source_contractor_id),
+    ...]} — ТОЛЬКО группы, где после фазы 1 уже ≥2 РАЗНЫХ product_id."""
     groups: dict = defaultdict(list)
     last_id = 0
     total_rows = 0
@@ -137,6 +145,7 @@ async def _load_candidate_groups(db) -> dict:
         rows = (await db.execute(
             select(
                 Product.id, Product.name, Product.manufacturer,
+                Product.product_type, Product.category,
                 Product.price_source_contractor_id,
             )
             .where(Product.is_active == True, Product.id > last_id)  # noqa: E712
@@ -145,10 +154,14 @@ async def _load_candidate_groups(db) -> dict:
         )).all()
         if not rows:
             break
-        for pid, name, manufacturer, contractor_id in rows:
-            sig = build_signature({"name": name, "manufacturer": manufacturer})
-            if sig.digit_tokens:
-                groups[sig.digit_tokens].append((pid, contractor_id))
+        for pid, name, manufacturer, product_type, category, contractor_id in rows:
+            sig = build_signature({
+                "name": name, "manufacturer": manufacturer,
+                "product_type": product_type, "category": category,
+            })
+            key = grouping_key(sig)
+            if key is not None:
+                groups[key].append((pid, contractor_id))
         total_rows += len(rows)
         last_id = rows[-1][0]
         print(f"  фаза 1: обработано строк каталога: {total_rows}", file=sys.stderr)
@@ -277,13 +290,17 @@ async def _plan_batch(db, batch_groups: list) -> list:
         select(
             Product.id, Product.name, Product.manufacturer,
             Product.country_origin, Product.characteristics,
+            Product.product_type, Product.category,
             Product.price_source_contractor_id,
         ).where(Product.id.in_(batch_ids))
     )).all()
     products_by_id = {}
     price_source_by_id = {}
-    for pid, name, manufacturer, _country, characteristics, price_source_contractor_id in rows:
-        products_by_id[pid] = {"name": name, "manufacturer": manufacturer, "characteristics": characteristics or []}
+    for pid, name, manufacturer, _country, characteristics, product_type, category, price_source_contractor_id in rows:
+        products_by_id[pid] = {
+            "name": name, "manufacturer": manufacturer, "characteristics": characteristics or [],
+            "product_type": product_type, "category": category,
+        }
         price_source_by_id[pid] = price_source_contractor_id
 
     hist_rows = (await db.execute(

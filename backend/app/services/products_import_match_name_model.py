@@ -39,7 +39,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
-from app.services.product_name_signature import ProductSignature, build_signature, match
+from app.services.product_name_signature import (
+    ProductSignature, build_signature, grouping_key, match,
+)
 from app.services.products_import_match import conflicts_with_row_store
 from app.utils.chunking import chunked
 
@@ -109,10 +111,12 @@ class NameModelCandidate:
 async def load_name_model_candidates(
     db: AsyncSession, row_signatures: Iterable[ProductSignature],
 ) -> dict:
-    """{frozenset(digit_tokens): [NameModelCandidate, ...]} — ОДИН проход на
-    весь файл (см. докстринг модуля). `row_signatures` — ProductSignature
-    КАЖДОЙ строки файла (уже посчитанные вызывающим кодом, ПРАВИЛО №6 — не
-    второй разбор названия)."""
+    """{grouping_key: [NameModelCandidate, ...]} — ОДИН проход на весь файл
+    (см. докстринг модуля). `row_signatures` — ProductSignature КАЖДОЙ
+    строки файла (уже посчитанные вызывающим кодом, ПРАВИЛО №6 — не второй
+    разбор названия). Ключ группы — app.services.product_name_signature.
+    grouping_key() (вид товара + код модели, владелец, 28.10.2026, п.1) —
+    та же функция, что и у scripts/merge_by_name_model.py (ПРАВИЛО №6)."""
     tokens = {_search_token(sig) for sig in row_signatures}
     tokens.discard(None)
     if not tokens:
@@ -150,10 +154,12 @@ async def load_name_model_candidates(
         sig = build_signature({
             "name": p.name, "manufacturer": p.manufacturer,
             "characteristics": p.characteristics or [],
+            "product_type": p.product_type, "category": p.category,
         })
-        if not sig.digit_tokens:
+        key = grouping_key(sig)
+        if key is None:
             continue
-        result.setdefault(sig.digit_tokens, []).append(NameModelCandidate(
+        result.setdefault(key, []).append(NameModelCandidate(
             product=p, signature=sig,
             history_count=history_count_by_id.get(p.id, 0),
             store_pairs=store_pairs_by_id.get(p.id, set()),
@@ -184,9 +190,10 @@ def find_name_model_match(
     остальные строки файла под тем же ключом (однозначность с a-стороны,
     product_name_signature.match сам решает, конфликтует ли это с «уверенно»
     — см. `_ambiguity_reason`)."""
-    if not row_signature.digit_tokens:
+    key = grouping_key(row_signature)
+    if key is None:
         return None
-    group = candidates.get(row_signature.digit_tokens) or []
+    group = candidates.get(key) or []
     if not group:
         return None
 

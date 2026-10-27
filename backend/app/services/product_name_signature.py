@@ -71,10 +71,10 @@ from app.services.product_tz_44fz_rules import STOP_BRAND_WORDS
 from app.services.product_name_signature_props import (
     CARRY_CASE_PHRASES, CHARGER_PHRASES, COATING_PHRASES, COATING_WORDS,
     COLOR_WORDS, COUNTRY_WORDS, EXECUTION_PHRASES, EXECUTION_WORDS,
-    EXTRA_PACKAGING_PHRASES, FIRE_CLASS_RE, HOSE_TYPE_WORDS,
-    INSTALL_MODE_WORDS, MATERIAL_WORDS, PACKAGING_PHRASES,
-    PRODUCT_TYPE_PHRASES, PRODUCT_TYPE_WORDS, SHUTOFF_WORDS,
-    SIDEDNESS_WORDS, UNIT_WORDS,
+    EXTRA_PACKAGING_PHRASES, FIRE_CLASS_RE, FUSED_CODE_SUFFIX,
+    HOSE_TYPE_WORDS, INSTALL_MODE_WORDS, MATERIAL_WORDS, NOZZLE_TYPE_WORDS,
+    ORDER_REFERENCE_RE, PACKAGING_PHRASES, PRODUCT_TYPE_PHRASES,
+    PRODUCT_TYPE_WORDS, SHUTOFF_WORDS, SIDEDNESS_WORDS, UNIT_WORDS,
     _BATTERY_CAPACITY_RE, _BATTERY_COUNT_RE, _PACKAGING_SET_RE,
 )
 
@@ -199,7 +199,18 @@ def _is_store_tail_code(word: str, idx: int, total: int) -> bool:
 # тест test_corrugated_box_different_dimensions_and_grade)."""
 _UNIT_WORDS_ALT = "|".join(sorted((re.escape(u) for u in UNIT_WORDS), key=len, reverse=True))
 _UNIT_QUANTITY_RE = re.compile(
-    rf"(?<![0-9a-zA-Zа-яёА-ЯЁ])\d+(?:[.,]\d+)?(?:\s*[xXхХ]\s*\d+(?:[.,]\d+)?)*"
+    # Начало числа — ТОЛЬКО после пробела/открывающей скобки/начала строки
+    # (владелец, доп. ревью стволов РС-50, 28.10.2026): раньше достаточно
+    # было "не буква/цифра перед числом", а дефис перед числом (а он — не
+    # буква/цифра) этому не мешал — "РС-50А" ложно читалось как "РС-" +
+    # "50 Ампер" (буква "А" — тоже единица UNIT_WORDS, ампер) и терялся КАК
+    # КОД МОДЕЛИ целиком, хотя "А" здесь суффикс материала (алюминий), а не
+    # единица измерения. Числа-с-единицей в реальных названиях ВСЕГДА
+    # отделены пробелом/скобкой от предыдущего слова ("18 В", "(12В 40Ач)")
+    # — слитные с кодом модели через дефис/точку больше не считаются
+    # количеством.
+    rf"(?:(?<=^)|(?<=[\s([«]))\d+(?:[.,]\d+)?"
+    rf"(?:\s*[xXхХ]\s*\d+(?:[.,]\d+)?)*"
     rf"\s*(?:{_UNIT_WORDS_ALT})(?![0-9a-zA-Zа-яёА-ЯЁ])",
     re.IGNORECASE,
 )
@@ -224,6 +235,30 @@ def _strip_fire_class_spans(name: str) -> str:
     return FIRE_CLASS_RE.sub(" ", name or "")
 
 
+# Номер приказа/ГОСТа/ТУ ("№1164н", "приказ № 1080н", "ГОСТ 12.4.026") и
+# "аналог X" (владелец, доп. ревью 28.10.2026: "Ствол лафетный ЛС-П20
+# (аналог СЛК-П20)" ≠ "Ствол лафетный СЛК-П20 (ПЛС-П20)" — "аналог" это
+# ДРУГОЙ товар, код после слова "аналог" не относится к ЭТОМУ товару и не
+# должен участвовать в индексе/коде модели) — вырезаются из названия ДО
+# токенизации, тем же приёмом, что _strip_unit_quantities/_strip_fire_
+# class_spans выше (ОДНА функция-обёртка _pre_clean ниже, ПРАВИЛО №6 — не
+# повторять одну и ту же цепочку вызовов в каждом месте модуля).
+_ANALOG_RE = re.compile(r"аналог[а-яё]*\s+\S+", re.IGNORECASE)
+
+
+def _strip_reference_and_analog(name: str) -> str:
+    name = ORDER_REFERENCE_RE.sub(" ", name or "")
+    name = _ANALOG_RE.sub(" ", name)
+    return name
+
+
+def _pre_clean(name: Optional[str]) -> str:
+    """Общая чистка названия ПЕРЕД любой токенизацией (индекс/вид/бренд-
+    слова/размеры) — порядок: номер приказа/ГОСТ/"аналог X" → класс пожара
+    → число-с-единицей."""
+    return _strip_unit_quantities(_strip_fire_class_spans(_strip_reference_and_analog(name or "")))
+
+
 def _split_words(name: Optional[str]) -> list[str]:
     """Название → нормализованные слова (класс пожара вырезан, гомоглифы/
     регистр свёрнуты через fold_brand_or_code, пробелы схлопнуты, крайняя
@@ -232,7 +267,7 @@ def _split_words(name: Optional[str]) -> list[str]:
     без дефисов)."""
     if not name:
         return []
-    cleaned = _strip_unit_quantities(_strip_fire_class_spans(name))
+    cleaned = _pre_clean(name)
     folded = fold_brand_or_code(cleaned)
     words = []
     for raw in folded.split():
@@ -242,7 +277,7 @@ def _split_words(name: Optional[str]) -> list[str]:
     return words
 
 
-def _digit_tokens(words: list[str]) -> frozenset:
+def _digit_tokens(words: list[str]) -> tuple:
     """Любое слово с хотя бы одной цифрой — индекс/код/число (владелец,
     уточнение 2: это ОБЯЗАТЕЛЬНЫЙ гейт, не "похожесть"). Нормализация —
     только цифры и буквы (дефисы/скобки/точки/запятые убраны), поэтому
@@ -255,8 +290,16 @@ def _digit_tokens(words: list[str]) -> frozenset:
     (необязательное уточнение, п.4: "указано у одного, у другого нет — не
     противоречие"), а не код модели, который ОБЯЗАН совпасть — иначе
     у одного магазина в названии указана доп. классификация (55В, С, Е),
-    а у другого её просто нет, и ровно тот же товар ложно не сводится."""
+    а у другого её просто нет, и ровно тот же товар ложно не сводится.
+
+    Возвращает (frozenset(digit_tokens), fused_props) — fused_props —
+    {группа: set(значений)} для суффиксов FUSED_CODE_SUFFIX, слитных с
+    кодом без пробела ("РС-50А" → код "рс50" + материал "алюминий", см.
+    docstring FUSED_CODE_SUFFIX в product_name_signature_props.py);
+    build_signature сливает fused_props в name_props/check_props — второй
+    словарь свойств из цифрового токена здесь не заводим (ПРАВИЛО №6)."""
     out = set()
+    fused_props: dict = {}
     total = len(words)
     for i, w in enumerate(words):
         if _HAS_DIGIT_RE.search(w):
@@ -269,6 +312,14 @@ def _digit_tokens(words: list[str]) -> frozenset:
             if m and m.group(2) in UNIT_WORDS:
                 continue
             norm = _strip_known_market_suffix(norm)
+            # Суффикс материала/свойства, слитный с кодом (см. docstring
+            # FUSED_CODE_SUFFIX) — снимается ТОЛЬКО если перед ним стоит
+            # цифра (иначе это не суффикс кода модели, а обычная буква
+            # внутри слова, например часть аббревиатуры).
+            if len(norm) > 3 and norm[-1] in FUSED_CODE_SUFFIX and norm[-2].isdigit():
+                group, value = FUSED_CODE_SUFFIX[norm[-1]]
+                fused_props.setdefault(group, set()).add(value)
+                norm = norm[:-1]
             out.add(norm)
             # буква-модификатор модели сразу после кода (см. docstring
             # _MODEL_MODIFIER_LETTER_RE выше) — добавляем СОСТАВНЫМ токеном
@@ -281,11 +332,26 @@ def _digit_tokens(words: list[str]) -> frozenset:
                         and not _HAS_DIGIT_RE.search(nxt)
                         and nxt not in _STOPWORDS):
                     out.add(f"{norm}·{nxt}")
-    return frozenset(out)
+    return frozenset(out), fused_props
 
 
 def _word_set(words: list[str]) -> frozenset:
     return frozenset(w for w in words if not _HAS_DIGIT_RE.search(w) and w not in _STOPWORDS)
+
+
+_HAS_LETTER_RE = re.compile(r"[a-zа-яё]")
+
+
+def _model_code_tokens(digit_tokens: frozenset) -> frozenset:
+    """Подмножество digit_tokens, где ХОТЬ ОДНА буква есть в токене — это
+    настоящий код/индекс модели (РС-50, ОУ-5, СЛК-П20). "Голые" числа без
+    единой буквы (43, 6005, 3247) сюда не входят (владелец, 28.10.2026,
+    п.1 — "голые числа без букв сами по себе пары не образуют"): такие
+    токены остаются в digit_tokens (match() всё равно требует их точного
+    совпадения как и раньше — жёсткий гейт не ослабляем), но для ПОИСКА
+    кандидатов на сведение (group_key ниже) они недостаточны сами по
+    себе."""
+    return frozenset(t for t in digit_tokens if _HAS_LETTER_RE.search(t))
 
 
 _PRODUCT_TYPE_WINDOW = 5
@@ -312,7 +378,7 @@ def _extract_product_type(name: Optional[str]) -> Optional[str]:
     # только из-за формата написания класса пожара, а не потому что это
     # разный вид товара (регрессия на test_fire_class_fused_or_spaced_
     # still_matches, владелец, 27.10.2026).
-    cleaned = _strip_unit_quantities(_strip_fire_class_spans(name))
+    cleaned = _pre_clean(name)
     folded = fold_brand_or_code(cleaned)
     words = [w for w in (_EDGE_PUNCT_RE.sub("", w) for w in folded.split()) if w]
     window = words[:_PRODUCT_TYPE_WINDOW]
@@ -342,7 +408,7 @@ def _extract_product_type(name: Optional[str]) -> Optional[str]:
 def _first_raw_word(name: str) -> Optional[str]:
     """Первое слово названия БЕЗ fold_brand_or_code — для сравнения "первое
     слово = бренд целиком" простым .lower() (см. build_signature)."""
-    cleaned = _strip_unit_quantities(_strip_fire_class_spans(name or ""))
+    cleaned = _pre_clean(name)
     m = re.match(r"\S+", cleaned.strip())
     if not m:
         return None
@@ -390,7 +456,7 @@ def _extract_brand_like_words(name: Optional[str]) -> frozenset:
     буквы")."""
     if not name:
         return frozenset()
-    cleaned = _strip_unit_quantities(_strip_fire_class_spans(name))
+    cleaned = _pre_clean(name)
     words = (_EDGE_PUNCT_RE.sub("", w) for w in cleaned.split())
     return frozenset(w.lower() for w in words if w and _is_brand_like_word(w))
 
@@ -467,6 +533,7 @@ _CHECK_WORD_GROUPS = (
     ("тип рукава", HOSE_TYPE_WORDS),
     ("покрытие", COATING_WORDS),
     ("установка", INSTALL_MODE_WORDS),
+    ("тип ствола", NOZZLE_TYPE_WORDS),
 )
 _CHECK_PHRASE_GROUPS = (
     ("комплектация(доп)", EXTRA_PACKAGING_PHRASES),
@@ -704,11 +771,31 @@ _NAME_DIMENSIONS_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Та же величина, но единица измерения повторена ПРИ КАЖДОЙ оси ("300мм х
+# 300мм", а не слитное "300х300 мм") — владелец, доп. ревью клапанов,
+# 28.10.2026: "Клапан противопожарный КЛОП-1 300мм х 300мм" — без этого
+# разбора 300/300 не распознаются как Д×Ш вообще (не попадают ни в
+# digit_tokens как код — число+единица вырезается _strip_unit_quantities
+# ДО токенизации, — ни в _NAME_DIMENSIONS_RE, рассчитанный на ОДНУ единицу
+# в конце всей последовательности). Находим целый СПАН (две и более пары
+# "число+единица", разделённые х/x), затем разбираем его парами через
+# _DIM_PAIR_RE — отдельная единица на каждой оси допускает разные написания
+# на разных осях ("300мм х 30см"), что для Д×Ш×В магазинов не характерно,
+# но и не мешает (переводим обе в мм одной и той же таблицей).
+_DIM_PAIR_RE = re.compile(rf"(\d+(?:[.,]\d+)?)\s*({_DIM_LENGTH_UNIT_ALT})", re.IGNORECASE)
+_NAME_DIMENSIONS_SPACED_SPAN_RE = re.compile(
+    rf"(?<![0-9a-zA-Zа-яёА-ЯЁ])\d+(?:[.,]\d+)?\s*(?:{_DIM_LENGTH_UNIT_ALT})"
+    rf"(?:\s*[xXхХ]\s*\d+(?:[.,]\d+)?\s*(?:{_DIM_LENGTH_UNIT_ALT}))+"
+    rf"(?![0-9a-zA-Zа-яёА-ЯЁ])",
+    re.IGNORECASE,
+)
+
 
 def _extract_name_dimensions(name: Optional[str]) -> frozenset:
     """Множество кортежей чисел (в мм) — каждое найденное "NхNхN...+единица"
-    в названии как ЦЕЛАЯ последовательность (не отдельные числа, см.
-    docstring блока выше)."""
+    (фьюжн, _NAME_DIMENSIONS_RE) ИЛИ "N+единица х N+единица..." (единица на
+    каждой оси, _NAME_DIMENSIONS_SPACED_SPAN_RE) в названии как ЦЕЛАЯ
+    последовательность (не отдельные числа, см. docstring блока выше)."""
     if not name:
         return frozenset()
     folded = fold_brand_or_code(name)
@@ -725,6 +812,18 @@ def _extract_name_dimensions(name: Optional[str]) -> frozenset:
                 break
             nums.append(round(n * factor, 3))
         if nums:
+            out.add(tuple(nums))
+    for span in _NAME_DIMENSIONS_SPACED_SPAN_RE.finditer(folded):
+        pairs = _DIM_PAIR_RE.findall(span.group(0))
+        nums = []
+        for num_str, unit in pairs:
+            factor = _LENGTH_TO_MM.get(unit.lower())
+            n = _parse_number(num_str)
+            if factor is None or n is None:
+                nums = None
+                break
+            nums.append(round(n * factor, 3))
+        if nums and len(nums) >= 2:
             out.add(tuple(nums))
     return frozenset(out)
 
@@ -764,7 +863,53 @@ class ProductSignature:
     name_qty: dict = field(default_factory=dict)
     name_dims: frozenset = field(default_factory=frozenset)
     brand_like_words: frozenset = field(default_factory=frozenset)
+    # Подмножество digit_tokens с буквой — настоящий код/индекс модели (см.
+    # _model_code_tokens) — используется ТОЛЬКО для поиска кандидатов
+    # (grouping_key), match() как и раньше сравнивает ПОЛНЫЙ digit_tokens.
+    model_code_tokens: frozenset = field(default_factory=frozenset)
     raw_item: dict = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Вид товара — явное поле выгрузки/карточки (Product.product_type/item
+# ["product_type"]), ЕСЛИ оно содержательное, иначе — словарь по названию
+# (владелец, 28.10.2026, п.1). "Содержательное" проверяется ТЕМ ЖЕ словарём
+# PRODUCT_TYPE_WORDS/PHRASES (ПРАВИЛО №6 — не второй, менее строгий критерий
+# "не пусто"): на реальных выгрузках (k_spasatel) поле product_type часто
+# зашумлено брендом/моделью строки ("STRONG", "Aqua", "2-х") — такое значение
+# НЕ каноническое слово-вид, и его слепое доверие дало бы вид=бренд. Если
+# явное поле не подтверждено словарём ИЛИ совпадает с категорией (не несёт
+# доп. информации) — используется старый путь, _extract_product_type(name).
+# ---------------------------------------------------------------------------
+
+_INVISIBLE_RE = re.compile(r"[​‌‍﻿\xa0]")
+
+
+def _canon_product_type_value(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    cleaned = _INVISIBLE_RE.sub("", raw).strip()
+    if not cleaned:
+        return None
+    folded = fold_brand_or_code(cleaned).strip()
+    canon = PRODUCT_TYPE_WORDS.get(folded)
+    if canon:
+        return canon
+    for phrase, c in PRODUCT_TYPE_PHRASES.items():
+        if phrase in folded:
+            return c
+    return None
+
+
+def _resolve_product_type(item: dict, name: str) -> Optional[str]:
+    explicit = item.get("product_type")
+    category = item.get("category")
+    if explicit and (not category or _INVISIBLE_RE.sub("", explicit).strip().lower()
+                      != _INVISIBLE_RE.sub("", category).strip().lower()):
+        canon = _canon_product_type_value(explicit)
+        if canon:
+            return canon
+    return _extract_product_type(name)
 
 
 def build_signature(item: dict, brand_dictionary=None) -> ProductSignature:
@@ -806,37 +951,65 @@ def build_signature(item: dict, brand_dictionary=None) -> ProductSignature:
     # docstring _fold выше).
     brand_fold = _brand_compare_key(brand) if brand else ""
 
-    # Вид товара — теперь по словарю PRODUCT_TYPE_WORDS/PHRASES, найденному
-    # среди первых 5 слов (см. docstring _extract_product_type) — брендовое
-    # слово само по себе в словарь не входит (это не родовое существительное),
-    # поэтому отдельно "вид = бренд" больше не нужно отсекать, как было со
-    # старым правилом "вид = первое слово" (владелец, 27.10.2026, доп.
-    # ревью Кувалда↔Бауцентр): "Makita LXT DJR187Z" просто не находит вид
-    # ни в одном слове — не противоречие (п.4).
-    product_type = _extract_product_type(name)
+    # Вид товара — явное поле выгрузки, если содержательное (см.
+    # _resolve_product_type), иначе по словарю PRODUCT_TYPE_WORDS/PHRASES,
+    # найденному среди первых 5 слов (см. docstring _extract_product_type) —
+    # брендовое слово само по себе в словарь не входит (это не родовое
+    # существительное), поэтому отдельно "вид = бренд" больше не нужно
+    # отсекать, как было со старым правилом "вид = первое слово" (владелец,
+    # 27.10.2026, доп. ревью Кувалда↔Бауцентр): "Makita LXT DJR187Z" просто
+    # не находит вид ни в одном слове — не противоречие (п.4).
+    product_type = _resolve_product_type(item, name)
+
+    digit_tokens, fused_props = _digit_tokens(words)
+    name_props = _extract_name_properties(name)
+    check_props = _extract_check_properties(name)
+    # Суффиксы, слитные с кодом модели (см. FUSED_CODE_SUFFIX) — "материал"
+    # сливается в ту же жёсткую группу name_props (ПРАВИЛО №6, тот же ключ,
+    # что у MATERIAL_WORDS); "закачной" — в check_props (нет антонима,
+    # мягкое "указано у одного ⇒ check", см. _ONE_SIDED_CHECK_GROUP_ORDER).
+    for group, values in fused_props.items():
+        if group == "материал":
+            name_props.setdefault(group, set()).update(values)
+        else:
+            check_props.setdefault(group, set()).update(values)
 
     return ProductSignature(
         name=name,
         brand=brand,
         brand_fold=brand_fold,
-        digit_tokens=_digit_tokens(words),
+        digit_tokens=digit_tokens,
         word_set=_word_set(words),
-        name_props=_extract_name_properties(name),
-        check_props=_extract_check_properties(name),
+        name_props=name_props,
+        check_props=check_props,
         product_type=product_type,
         char_values=_characteristic_values(item.get("characteristics") or []),
         name_qty=_extract_name_quantities(name),
         name_dims=_extract_name_dimensions(name),
         brand_like_words=_extract_brand_like_words(name),
+        model_code_tokens=_model_code_tokens(digit_tokens),
         raw_item=item,
     )
 
 
-def digit_tokens_key(sig: ProductSignature) -> frozenset:
-    """Ключ для эффективного поиска кандидатов (группировка по индексу/
-    числам названия, не попарный перебор O(N×M) — см.
-    backend/scripts/eval_name_signature.py)."""
-    return sig.digit_tokens
+def grouping_key(sig: ProductSignature) -> Optional[tuple]:
+    """Ключ группировки кандидатов на сведение (владелец, 28.10.2026, п.1):
+    вид товара + код модели (цифро-буквенный токен, см.
+    _model_code_tokens) — ПРАВИЛО №6, одна функция, её использует и
+    scripts/merge_by_name_model.py, и services/products_import_match_name_
+    model.py (вместо прежней группировки по ЛЮБОМУ общему числу названия,
+    из-за которой "Тапочки размер 43"/"Коврик 43×28"/"KEDI Teste 43"
+    случайно оказывались кандидатами друг на друга — общий был только
+    голый номер без единой буквы).
+
+    Возвращает None, если у сигнатуры НЕТ ни одного буквенно-цифрового кода
+    в названии — "голые" числа сами по себе недостаточны как ключ поиска
+    кандидатов (match() всё равно потом жёстко сравнивает ПОЛНЫЙ
+    digit_tokens у конкретной пары — здесь только эффективный предварительный
+    отбор, не ослабление самого гейта)."""
+    if not sig.model_code_tokens:
+        return None
+    return (sig.product_type, sig.model_code_tokens)
 
 
 _PROPERTY_CHECK_ORDER = ("класс пожара", "комплектация", "исполнение", "материал")
@@ -852,24 +1025,39 @@ def _name_property_conflict(group: str, a: ProductSignature, b: ProductSignature
 
 _ONE_SIDED_CHECK_GROUP_ORDER = (
     "сторонность", "перекрывной", "тип рукава", "комплектация(доп)",
-    "покрытие", "зарядное устройство", "упаковка", "установка",
+    "покрытие", "зарядное устройство", "упаковка", "установка", "закачной",
+    "тип ствола",
 )
+
+# Группы, где расхождение у ОБЕИХ сторон — МЯГКИЙ сигнал ("check", не "no"):
+# владелец, доп. ревью стволов 28.10.2026 — "РСК-50 (комбинированный)" ≠
+# "РСК-50 (распылительный)" это, скорее всего, разные насадки, но не
+# настолько очевидно, как расхождение цвета/материала/страны, чтобы решать
+# автоматически "no" — решает человек. Остальные группы _ONE_SIDED_CHECK_
+# GROUP_ORDER при расхождении у обоих остаются "no" (прежнее поведение).
+_SOFT_CONFLICT_GROUPS = frozenset({"тип ствола"})
 
 
 def _one_sided_property_result(a: ProductSignature, b: ProductSignature) -> Optional[dict]:
     """Группы из п.2 (владелец, ревью 113 авто-пар, 27.10.2026): указано у
     ОБОИХ и множества не пересекаются → "no" (разные товары, та же логика,
-    что у _name_property_conflict); указано ТОЛЬКО у одного → "check" (не
-    противоречие, но и не "совсем не важно" — решает человек). Проверяем
-    ВСЕ группы (не выходим по первому "check"), чтобы "no" из группы,
-    проверенной позже, не потерялось за более ранним "check"."""
+    что у _name_property_conflict), КРОМЕ _SOFT_CONFLICT_GROUPS выше — там
+    расхождение у обоих тоже даёт только "check"; указано ТОЛЬКО у одного →
+    "check" (не противоречие, но и не "совсем не важно" — решает человек).
+    Проверяем ВСЕ группы (не выходим по первому "check"), чтобы "no" из
+    группы, проверенной позже, не потерялось за более ранним "check"."""
     check_reason = None
     for group in _ONE_SIDED_CHECK_GROUP_ORDER:
         va = a.check_props.get(group)
         vb = b.check_props.get(group)
         if va and vb:
             if not (va & vb):
-                return {"decision": "no", "reason": f"{group} {sorted(va)} ≠ {sorted(vb)}"}
+                reason = f"{group} {sorted(va)} ≠ {sorted(vb)}"
+                if group in _SOFT_CONFLICT_GROUPS:
+                    if check_reason is None:
+                        check_reason = reason
+                    continue
+                return {"decision": "no", "reason": reason}
         elif va or vb:
             if check_reason is None:
                 only = va or vb

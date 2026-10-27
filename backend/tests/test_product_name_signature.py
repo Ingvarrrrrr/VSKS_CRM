@@ -460,3 +460,137 @@ def test_battery_solo_vs_akb_count_not_auto():
     # разная → не auto (п.5).
     res = _decision("Шуруповёрт SKIL ID6739 solo", "Шуруповёрт SKIL ID6739 2 АКБ 4,0+2,0 Ач")
     assert res["decision"] != "auto", res
+
+
+# ---------------------------------------------------------------------------
+# Доп. ревью стволов РС-50 (Спасатель↔Магазин 01), 28.10.2026: вид товара
+# как ключ группировки + сокращения материала/закачного, слитные с кодом
+# модели ("РС-50А" = "РС-50 Алюм."), номер приказа/ГОСТ/ТУ и "аналог X" —
+# не код модели, размеры Д×Ш с единицей на каждой оси.
+# ---------------------------------------------------------------------------
+
+def test_fused_aluminum_suffix_matches_spelled_out_word():
+    # "РС-50А" (суффикс слитно с кодом) = "РС-50 Алюм." (слово отдельно) —
+    # ОДИН И ТОТ ЖЕ материал (владелец, 28.10.2026).
+    res = _decision(
+        "Ствол пожарный ручной РС-50 Алюм. (диам. 16мм)",
+        "Ствол пожарный РС-50А (диаметр 16 мм)",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_fused_material_suffix_conflict_plastic_vs_aluminum():
+    # "РС-50,01 Пластик" (слово) ≠ "РС-50.01А" (суффикс "А" = алюминий,
+    # десятичная запятая/точка в коде — тот же код "рс5001") — материал
+    # различается → no, а не ложное auto по совпавшему коду.
+    res = _decision(
+        "Ствол пожарный ручной РС-50,01 Пластик",
+        "Ствол пожарный РС-50.01А (под навязку)",
+    )
+    assert res["decision"] == "no", res
+    assert "материал" in res["reason"]
+
+
+def test_fused_suffix_does_not_break_plain_ampere_quantity():
+    # Контроль: "18 В" (число-с-единицей, пробел перед единицей) — ПО
+    # ПРЕЖНЕМУ вырезается как количество, суффикс-гейт его не трогает
+    # (регрессия на test_name_unit_quantity_is_not_model_index).
+    res = _decision(
+        "Аккумулятор ЗУБР АКБ-18-4 18 В 1х5,0 Ач 2,0 Дж",
+        "Аккумулятор ЗУБР АКБ-18-4",
+        a_manufacturer="ЗУБР", b_manufacturer="ЗУБР",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_belt_pouch_vs_carry_torch_axe_execution_conflict():
+    # "поясной" ≠ "носимый" — способ ношения, жёсткая группа "исполнение"
+    # (владелец, 28.10.2026): "Топор пожарного поясной ТПП-1" ≠ "... носимый
+    # ТПП-1".
+    res = _decision(
+        "Топор пожарного поясной ТПП-1",
+        "Топор пожарного носимый ТПП-1 (с диэлектрической ручкой)",
+    )
+    assert res["decision"] == "no", res
+    assert "исполнение" in res["reason"]
+
+
+def test_analog_reference_is_not_this_products_code():
+    # "Ствол лафетный ЛС-П20 (аналог СЛК-П20)" — код после "аналог" это
+    # ДРУГОЙ товар-аналог, не код ЭТОГО товара; "СЛК-П20 (ПЛС-П20)" — другой
+    # товар целиком (владелец, 28.10.2026) → не auto.
+    res = _decision(
+        "Ствол лафетный ЛС-П20 (аналог СЛК-П20)",
+        "Ствол лафетный СЛК-П20 (ПЛС-П20)",
+    )
+    assert res["decision"] != "auto", res
+
+
+def test_order_reference_number_is_not_model_code():
+    # "№1164н"/"приказ МИНЗДРАВА РФ №1164н" — номер нормативного документа,
+    # не код товара (владелец, 28.10.2026) — вырезается из названия до
+    # разбора индекса.
+    from app.services.product_name_signature import build_signature
+    sig = build_signature({"name": "КИМГЗ по Приказу МИНЗДРАВА РФ №1164н", "manufacturer": None, "characteristics": []})
+    assert not any("1164" in t for t in sig.digit_tokens), sig.digit_tokens
+
+
+def test_spaced_axis_dimensions_conflict_same_model_code():
+    # "300мм х 300мм" (единица ПОСЛЕ каждой оси) — тот же разбор Д×Ш, что и
+    # слитный "300х300 мм" (владелец, доп. ревью клапанов, 28.10.2026): при
+    # ОДНОМ И ТОМ ЖЕ коде модели разные размеры → no, изолируем переменную
+    # (код искусственно совпадает на обеих сторонах).
+    res = _decision(
+        "Клапан противопожарный КЛОП-1 300мм х 300мм",
+        "Клапан противопожарный КЛОП-1 250мм х 250мм",
+    )
+    assert res["decision"] == "no", res
+    assert "размеры" in res["reason"] or "длина" in res["reason"]
+
+
+def test_nozzle_type_both_specified_conflict_is_check_not_no():
+    # "комбинированный" ≠ "распылительный" — тип насадки ствола, владелец
+    # (доп. ревью, 28.10.2026) просит МЯГКОЕ решение при расхождении у ОБЕИХ
+    # сторон: check, не no (не так однозначно, как материал/цвет/страна).
+    res = _decision(
+        "Ствол пожарный ручной РСК-50 (комбинированный)",
+        "Ствол пожарный ручной РСК-50 (распылительный)",
+    )
+    assert res["decision"] == "check", res
+
+
+def test_minutes_duration_one_sided_still_auto():
+    # "(30 мин.)" указано только у одной стороны — не код модели, не
+    # противоречие (п.4), контроль на регрессию известной верной пары
+    # владельца (Феникс-2).
+    res = _decision(
+        "Самоспасатель Феникс-2 фильтрующий (30 мин.)",
+        "Фильтрующий универсальный самоспасатель ФЕНИКС-2 (ФУС ФЕНИКС-2)",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_bare_number_only_signature_has_no_model_code():
+    # "Тапочки размер 43"/"Коврик 43х28 см" — общий только ГОЛЫЙ номер без
+    # единой буквы: не код модели (владелец, 28.10.2026, п.1) — grouping_key
+    # не должен использовать такую сигнатуру как ключ поиска кандидатов.
+    from app.services.product_name_signature import build_signature, grouping_key
+    sig = build_signature({"name": "Тапочки размер 43", "manufacturer": None, "characteristics": []})
+    assert sig.model_code_tokens == frozenset()
+    assert grouping_key(sig) is None
+
+
+def test_grouping_key_requires_same_product_type():
+    # Один и тот же код модели, но РАЗНЫЙ явный вид (Product.product_type) —
+    # grouping_key их не объединяет (владелец, 28.10.2026, п.1: вид товара —
+    # первый уровень группировки).
+    from app.services.product_name_signature import build_signature, grouping_key
+    a = build_signature({
+        "name": "Деталь АБВ-100", "manufacturer": None, "characteristics": [],
+        "product_type": "Ствол", "category": "Другая категория",
+    })
+    b = build_signature({
+        "name": "Деталь АБВ-100", "manufacturer": None, "characteristics": [],
+        "product_type": "Рукав", "category": "Другая категория",
+    })
+    assert grouping_key(a) != grouping_key(b)

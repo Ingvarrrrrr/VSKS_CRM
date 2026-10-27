@@ -38,7 +38,7 @@ _PROJECT_ROOT = _BACKEND_DIR.parent
 sys.path.insert(0, str(_BACKEND_DIR))
 sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "catalog_enrich"))
 
-from app.services.product_name_signature import build_signature, match  # noqa: E402
+from app.services.product_name_signature import build_signature, grouping_key, match  # noqa: E402
 
 from brand_dictionary import BrandDictionary  # noqa: E402
 from gala_quality_loader import load_catalog_gala  # noqa: E402
@@ -92,28 +92,22 @@ def _build_brand_dictionary(quality, item_lists: list) -> BrandDictionary:
     return d
 
 
-def _specific_tokens(digit_tokens: frozenset) -> frozenset:
-    """Для КЛЮЧА индекса (не для самой проверки — match() по-прежнему
-    сравнивает ПОЛНЫЙ digit_tokens точно) выбрасываем "голые" числа длиной
-    1-2 без букв ("2", "10", "100"...) — проверено на sima_land_catalog_all
-    (152 652 товара): 132 таких ключа собирают >100 товаров каждый,
-    "10" — 1584 товара, "5" — 1413, "2" — 1316 и т.д. (количество/артикул-
-    остаток, не код модели). Без этого фильтра одна пара магазинов
-    (sima_land×baucenter) даёт 2 676 589 "no"-пар на 959 ключах — техническая
-    корректность не страдает (match() ниже всё равно жёстко проверяет полный
-    набор чисел), но для ЭФФЕКТИВНОСТИ (владелец: "не O(N×M) по 150 тыс")
-    такие ключи как якорь кандидатов бесполезны и только раздувают перебор."""
-    return frozenset(t for t in digit_tokens if not (t.isdigit() and len(t) <= 2))
-
-
 def _index_by_digits(sigs: list) -> dict:
-    """store -> {specific_tokens: [сигнатуры]}. Товары без цифр ИЛИ только
-    с "голыми" короткими числами в названии НЕ индексируются (слишком
-    неспецифичны для безопасного авто-сведения — см. _specific_tokens)."""
+    """store -> {grouping_key: [сигнатуры]} — ОДНА функция индексации,
+    product_name_signature.grouping_key() (вид товара + код модели,
+    владелец, 28.10.2026, п.1), та же, что у scripts/merge_by_name_model.py
+    и services/products_import_match_name_model.py (ПРАВИЛО №6). Раньше
+    ключ был ЛЮБОЙ общий цифровой токен без единой буквы, отфильтрованный
+    только по длине (_specific_tokens, удалена) — отсюда и мусорные
+    группы на реальных данных ("Тапочки размер 43"+"Коврик 43×28 см"+"KEDI
+    Teste 43" — общий был только голый номер без единой буквы). Товары без
+    буквенно-цифрового кода вида товара (grouping_key() вернула None) не
+    индексируются вовсе — слишком неспецифичны для безопасного авто-
+    сведения."""
     idx = defaultdict(list)
     for s in sigs:
-        key = _specific_tokens(s.digit_tokens)
-        if key:
+        key = grouping_key(s)
+        if key is not None:
             idx[key].append(s)
     return idx
 

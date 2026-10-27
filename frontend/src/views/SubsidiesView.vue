@@ -1239,6 +1239,7 @@ const subsidyDetailCtx = {
   isOnFeoSearchPath: feoTreeSearch.isOnFeoSearchPath,
   selectedBudget: feoTreeAmounts.selectedBudget,
   selectedPlannedTotal: feoTreeAmounts.selectedPlannedTotal,
+  selectedPlannedFullTotal: feoTreeAmounts.selectedPlannedFullTotal,
   selectedFree: feoTreeAmounts.selectedFree,
   selectedPaidMarkedTotal: feoTreeAmounts.selectedPaidMarkedTotal,
   selectedPaidConfirmedTotal: feoTreeAmounts.selectedPaidConfirmedTotal,

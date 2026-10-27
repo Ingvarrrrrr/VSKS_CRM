@@ -62,6 +62,11 @@ from app.models.purchase_item import PurchaseItem
 _EMPTY_TOTALS = {
     "plan_goods": 0.0, "plan_services": 0.0, "plan_payroll": 0.0, "plan_unspecified": 0.0,
     "feo_goods": 0.0, "feo_services": 0.0, "feo_payroll": 0.0, "feo_unspecified": 0.0,
+    # «Запланировано» по типу БЕЗ урезания до ФЭО (владелец, 27.10.2026) —
+    # читает уже готовый node['full_display_<kind>'] (см. compute_feo_plan_tree),
+    # НЕ plan_<kind> выше (та формула — контроль «план по типу над ФЭО по
+    # типу», её не трогаем, см. docstring модуля/SubsidyKpiCards.vue).
+    "plan_full_goods": 0.0, "plan_full_services": 0.0, "plan_full_payroll": 0.0, "plan_full_unspecified": 0.0,
 }
 
 
@@ -107,7 +112,14 @@ async def subsidy_type_totals(
     db: AsyncSession, subsidy_ids: List[int], *, tree: Optional[dict] = None,
 ) -> Dict[int, dict]:
     """{sid: {"plan_goods","plan_services","plan_unspecified",
-              "feo_goods","feo_services","feo_unspecified"}} для набора субсидий.
+              "feo_goods","feo_services","feo_unspecified",
+              "plan_full_goods","plan_full_services","plan_full_payroll",
+              "plan_full_unspecified"}} для набора субсидий.
+
+    plan_full_<kind> (владелец, 27.10.2026) — та же типизация, что и
+    plan_<kind>, но БЕЗ урезания до ФЭО (читает node['full_display_<kind>']):
+    используется ТОЛЬКО картой «Запланировано» (SubsidyKpiCards.vue), не
+    контролем «план по типу над ФЭО по типу» (тот остаётся на plan_<kind>).
 
     ЕДИНСТВЕННЫЙ проход — compute_feo_plan_tree (общий источник и для
     planned_tree, и, транзитивно, для feo_budget_total, см. докстринг модуля
@@ -143,5 +155,9 @@ async def subsidy_type_totals(
         d["feo_services"] += node["feo_services"]
         d["feo_payroll"] += node["feo_payroll"]
         d["feo_unspecified"] += node["feo_unspecified"]
+        d["plan_full_goods"] += node.get("full_display_goods", 0.0) or 0.0
+        d["plan_full_services"] += node.get("full_display_services", 0.0) or 0.0
+        d["plan_full_payroll"] += node.get("full_display_payroll", 0.0) or 0.0
+        d["plan_full_unspecified"] += node.get("full_display_unspecified", 0.0) or 0.0
 
     return result

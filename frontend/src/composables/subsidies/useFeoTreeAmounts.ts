@@ -700,6 +700,16 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   // просто больше не питает эту карточку.
   const selectedPlannedTotal = computed(() => Number(selectedSubsidy.value?.planned || 0))
 
+  // Задача владельца (27.10.2026) — карточка «Запланировано» должна
+  // показывать ПОЛНУЮ сумму ВСЕХ плановых позиций (без урезания до ФЭО
+  // статьи, совпадает с «Итого» в FeoCardDrillDialog card='planned'). Готовое
+  // поле строки субсидии (selectedSubsidy.planned_full, см. subsidyMoneyFields.ts
+  // и backend feo_plan_totals.py::feo_plan_subsidy_full_totals) — ничего не
+  // считаем здесь. selectedPlannedTotal выше (клэмп до ФЭО) НЕ трогается —
+  // от неё зависят selectedFree/«Можно перераспределить»/контроли блокировки
+  // превышения. Фолбэк на selectedPlannedTotal — старый бэк без planned_full.
+  const selectedPlannedFullTotal = computed(() => Number(selectedSubsidy.value?.planned_full ?? selectedSubsidy.value?.planned ?? 0))
+
   // «Свободно»/«Превышение» (та же находка 23.10.2026, см. комментарий у
   // selectedPlannedTotal выше) — ОДНА точка: remaining (= free_basis) готов
   // на ТОЙ ЖЕ строке субсидии /dashboard/charts, вычищен СИНХРОННО с
@@ -820,7 +830,7 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     feoChildrenPlanManualFor, feoChildrenWithPlanCountFor, mergedManualPriority,
     setMatchedReqFns,
     totalFeoBudget, totalFeoEffective, totalFeoDiff, totalFeoPurchased, totalFeoInPlanSchedule,
-    selectedBudget, selectedPlannedTotal, selectedFree, syncFeoFilled, getFeoPlanManual,
+    selectedBudget, selectedPlannedTotal, selectedPlannedFullTotal, selectedFree, syncFeoFilled, getFeoPlanManual,
     paidMarkedFor, paidConfirmedFor, selectedPaidMarkedTotal, selectedPaidConfirmedTotal,
     // Раздел C0 — «товары/услуги» по узлу (см. докстринги функций выше).
     planTypeSplitFor, feoTypeSplitFor, remainingTypeSplitFor,

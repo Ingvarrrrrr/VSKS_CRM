@@ -12,6 +12,13 @@ export interface SubsidyRow {
   id: number; name: string; year: number; budget: number | null
   calculated_budget?: number
   description?: string; planned: number; paid: number; contracted: number
+  // Задача владельца (27.10.2026) — ПОЛНАЯ сумма всех плановых позиций (Σ
+  // позиций, БЕЗ урезания до ФЭО статьи), источник карточки «Запланировано»
+  // (SubsidyKpiCards.vue) — см. subsidyMoneyFields.ts::pickSubsidyMoneyFields
+  // и backend/app/services/feo_plan_totals.py::feo_plan_subsidy_full_totals.
+  // `planned` выше (= planned_tree, урезанный до ФЭО) НЕ заменяется — он
+  // остаётся источником для контролей блокировки превышения.
+  planned_full?: number
   // Карточка «Оплачено» (владелец, 05.10.2026) — paid = «по отметке сотрудников»
   // (payment_amount + payment_amount_declared, см. backend/app/services/
   // subsidy_paid_breakdown.py::paid_breakdown_by_subsidy, ПРАВИЛО №6 — тот же
@@ -212,6 +219,15 @@ export interface SubsidyRow {
   planned_services?: number
   planned_payroll?: number
   planned_unspecified?: number
+  // «Запланировано» по типу БЕЗ урезания до ФЭО (владелец, 27.10.2026) — та
+  // же типизация, что planned_<kind> выше, но читает node['full_display_<kind>']
+  // (backend/app/services/type_totals.py::plan_full_<kind>). SubsidyKpiCards.vue
+  // ::rawSplitFor('plan_schedule') читает ЭТИ поля (не planned_<kind> выше) —
+  // согласованно с planned_full (= главное число карточки «Запланировано»).
+  planned_full_goods?: number
+  planned_full_services?: number
+  planned_full_payroll?: number
+  planned_full_unspecified?: number
 }
 
 // C4: участник (соредактор) черновой субсидии — калька wish_member без

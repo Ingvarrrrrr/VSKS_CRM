@@ -1909,6 +1909,16 @@ async def compute_feo_plan_tree(
             _display_kind[KIND_GOODS], _display_kind[KIND_SERVICES],
             _display_kind[KIND_PAYROLL], _display_kind[KIND_UNSPECIFIED],
         )
+        # full_display_<kind> — задача владельца (27.10.2026), typed-зеркало
+        # full_display (ПРАВИЛО №6 — _full_display_kind уже посчитан выше,
+        # здесь только разбор по переменным, без клэмпа _clamped/_display_kind):
+        # Σ по этим 4 == full_display (та же Σ plan_<kind>+over_<kind>, что и
+        # у _full_display_kind). Нужны app.services.type_totals.subsidy_type_
+        # totals — plan_full_<kind> карточки «Запланировано» по типу.
+        full_display_goods, full_display_services, full_display_payroll, full_display_unspecified = (
+            _full_display_kind[KIND_GOODS], _full_display_kind[KIND_SERVICES],
+            _full_display_kind[KIND_PAYROLL], _full_display_kind[KIND_UNSPECIFIED],
+        )
         feo_goods, feo_services, feo_payroll, feo_unspecified = (
             _feo_kind[KIND_GOODS], _feo_kind[KIND_SERVICES],
             _feo_kind[KIND_PAYROLL], _feo_kind[KIND_UNSPECIFIED],
@@ -2138,6 +2148,21 @@ async def compute_feo_plan_tree(
             "plan": plan,
             "budget": budget,
             "display": display,
+            # full_display — «настоящая» плановая сумма узла (Σ ВСЕХ плановых
+            # позиций узла+поддерева, БЕЗ урезания до ФЭО), уже посчитанная
+            # выше (см. комментарий у full_display = plan + over). Задача
+            # владельца (27.10.2026): карточка «Запланировано» должна
+            # показывать именно эту сумму (= «Итого» в FeoCardDrillDialog
+            # card='planned', совпадает с Σ typed-полей plan_goods/services/…
+            # этого же узла), а НЕ урезанный до бюджета `display`. ПРАВИЛО
+            # №6 — поле ТОЛЬКО добавлено в ответ, формула display/excess_*
+            # (контроли блокировки превышения, assert_no_unapproved_excess,
+            # PlanExcessApproval) не тронута ни на бит.
+            "full_display": full_display,
+            "full_display_goods": full_display_goods,
+            "full_display_services": full_display_services,
+            "full_display_payroll": full_display_payroll,
+            "full_display_unspecified": full_display_unspecified,
             "excess_amount": excess_amount,
             "excess_pending": excess_pending,
             "excess_approved": excess_approved,

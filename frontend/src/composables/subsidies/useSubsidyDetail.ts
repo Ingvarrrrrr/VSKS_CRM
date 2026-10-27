@@ -132,6 +132,10 @@ export interface SubsidyDetailContext {
   // волны) — здесь только ссылки на те же реактивные значения (Правило №6).
   selectedBudget: ComputedRef<number>
   selectedPlannedTotal: ComputedRef<number>
+  // Задача владельца (27.10.2026) — полная сумма всех плановых позиций (без
+  // урезания до ФЭО), источник карточки «Запланировано» (см. docstring у
+  // useFeoTreeAmounts.ts::selectedPlannedFullTotal).
+  selectedPlannedFullTotal: ComputedRef<number>
   // «Свободно»/«Превышение» карточки (ПРАВИЛО №6, 23.10.2026) — ОДНА точка,
   // см. useFeoTreeAmounts.ts::selectedFree за формулой (remaining/free_basis
   // строки субсидии /dashboard/charts, та же сводка, что budget/planned выше).

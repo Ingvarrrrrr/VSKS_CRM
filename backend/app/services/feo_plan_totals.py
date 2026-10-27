@@ -43,6 +43,35 @@ async def feo_plan_subsidy_totals(
     return result
 
 
+async def feo_plan_subsidy_full_totals(
+    db: AsyncSession, subsidy_ids: list[int], *, tree: Optional[dict] = None,
+) -> dict[int, float]:
+    """Σ full_display корневых узлов (parent_id IS NULL) дерева ФЭО per субсидия
+    — ПОЛНАЯ плановая сумма (Σ ВСЕХ плановых позиций), БЕЗ урезания до ФЭО-
+    бюджета статьи. Задача владельца (27.10.2026): карточка «Запланировано»
+    должна показывать эту сумму, а не feo_plan_subsidy_totals() (= Σ display,
+    урезанную до ФЭО там, где превышение не согласовано) — та остаётся
+    единственным источником для контролей блокировки (assert_no_unapproved_
+    excess/PlanExcessApproval/«Можно перераспределить»/потолок ФЭО), которые
+    эта функция НЕ подменяет и НЕ трогает.
+
+    Тонкая обёртка над compute_feo_plan_tree, ПРАВИЛО №6 — full_display уже
+    посчитан внутри _visit (см. её докстринг у full_display там), здесь
+    только суммируется по корням, как и в feo_plan_subsidy_totals выше.
+
+    `tree` — опционально уже посчитанный compute_feo_plan_tree(db, subsidy_ids)
+    этого же вызова (та же экономия, что и у feo_plan_subsidy_totals)."""
+    result = {sid: 0.0 for sid in subsidy_ids}
+    if not subsidy_ids:
+        return result
+    if tree is None:
+        tree = await compute_feo_plan_tree(db, subsidy_ids)
+    for node in tree.values():
+        if node["parent_id"] is None:
+            result[node["subsidy_id"]] = result.get(node["subsidy_id"], 0.0) + node["full_display"]
+    return result
+
+
 def build_category_path(cat, cat_by_id: dict) -> str:
     """Путь категории «Направление › Подкатегория › Лист» (сверху вниз).
 

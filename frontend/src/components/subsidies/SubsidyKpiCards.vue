@@ -99,11 +99,13 @@
           <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
           <div class="kpi-body">
             <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('plan_schedule') ?? 0) : kpiSubAnim_plan_schedule) }}</div>
-            <div class="kpi-label" title="Утверждённый план. Ожидающее согласования не входит">Запланировано</div>
-            <!-- Шаг 6 (план humble-stirring-emerson.md, 23.10.2026) — ссылка
-                 «на согласовании +N», сценарий владельца 100 → +2,1 на
-                 согласовании → 102,1. Вся логика/разметка в отдельном файле
-                 (Правило №5, PendingExcessNote.vue) — здесь только вызов, не
+            <div class="kpi-label" title="Сумма всех плановых позиций">Запланировано</div>
+            <!-- Шаг 6 (план humble-stirring-emerson.md, 23.10.2026), текст
+                 ПЕРЕРАБОТАН 27.10.2026 — ссылка «выше ФЭО на N» поясняет, что
+                 часть УЖЕ показанной полной суммы карточки лежит выше ФЭО
+                 статьи и ждёт решения согласующего (не блокирует карточку).
+                 Вся логика/разметка в отдельном файле (Правило №5,
+                 PendingExcessNote.vue) — здесь только вызов, не
                  конфликтует с раскладкой «по позициям/экономия/превышение»
                  ниже (другой исполнитель, тот же блок карточки).
                  Скрыта в exclude/only (владелец, план payroll_view,
@@ -125,9 +127,9 @@
                  Клик по КАЖДОЙ строке — ТЕ ЖЕ диалоги, что уже существуют
                  (FeoCardDrillDialog через openCardDrill — тот же, что при
                  клике по самой карточке; OrderSubstitutionDialog для
-                 экономии/превышения) — новое окно не заводим. Ссылка «на
-                 согласовании +N» (PendingExcessNote.vue) выше — ОТДЕЛЬНАЯ
-                 строка другого исполнителя, не трогаем. -->
+                 экономии/превышения) — новое окно не заводим. Ссылка «выше
+                 ФЭО на N» (PendingExcessNote.vue) выше — ОТДЕЛЬНАЯ строка
+                 другого исполнителя, не трогаем. -->
             <div v-if="!hidePendingAndCeilingNotes" class="kpi-plan-breakdown text-caption text-medium-emphasis">
               <div class="kpi-plan-breakdown-row kpi-plan-breakdown-row-clickable"
                 @click.stop="openCardDrill('plan_schedule', 'all')"
@@ -162,21 +164,15 @@
                 @click.stop="funding.openFundingSources({ subsidyId: ctx.selectedSubsidy.value!.id, amount: planOverCeilingAmount })"
               >Где взять деньги</v-btn>
             </div>
-            <!-- Правка координатора (найдено ревью tests/test_type_excess_own_sum_feo.py
-                 — backend-формулу plan_<kind> не трогаем, она нужна контролю
-                 «план по типу над ФЭО по типу», см. feo_type_excess_basis.py):
-                 разбивка товары/услуги СОХРАНЯЕТ старое число (несёт
-                 несогласованное превышение, см. usePendingExcessTotal.ts) —
-                 вместо правки суммы просто подписываем это словами владельца,
-                 когда pending > 0, title объясняет разницу с числом карточки. -->
-            <div v-if="isSplit && !isPayrollOnly && planScheduleSplitPendingTotal > 0.005" class="kpi-sub-note text-caption text-medium-emphasis" @click.stop>
-              вместе с тем, что на согласовании:
-            </div>
-            <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop
-              :title="planScheduleSplitPendingTotal > 0.005
-                ? `Разбивка по типам включает превышения, которые ждут согласования, поэтому сумма больше числа карточки на ${formatCurrency(planScheduleSplitPendingTotal)}`
-                : ''"
-            >
+            <!-- ИЗМЕНЕНО (27.10.2026, задача владельца): карточка теперь
+                 показывает ПОЛНУЮ сумму плановых позиций (kpiSubTarget_
+                 plan_schedule = selectedPlannedFullTotal, см. её комментарий
+                 выше) — та же база, что у typed-разбивки plan_goods/
+                 services/payroll/unspecified (node['plan_<kind>'] дерева
+                 ФЭО), поэтому Σ строк разбивки совпадает с числом карточки и
+                 поясняющая подпись «вместе с тем, что на согласовании» не
+                 нужна (прежний разрыв устранён в источнике, не подписью). -->
+            <div v-if="isSplit && !isPayrollOnly" class="kpi-split-rows" @click.stop>
               <template v-if="splitRowsFor('plan_schedule')">
                 <div v-for="row in splitRowsFor('plan_schedule')" :key="row.kind" class="kpi-split-row kpi-split-row-clickable"
                   @click="openCardDrill('plan_schedule', row.kind)">
@@ -751,7 +747,15 @@ watch(() => ctx.selectedId.value, (id) => { if (id) economyByMethod.load() }, { 
 interface SplitRow { kind: ItemTypeKind; label: string; amount: number | null }
 
 const kpiSubTarget_budget            = computed(() => ctx.selectedBudget.value)
-const kpiSubTarget_plan_schedule     = computed(() => ctx.selectedPlannedTotal.value)
+// Задача владельца (27.10.2026) — главное число карточки «Запланировано» =
+// ПОЛНАЯ сумма всех плановых позиций (Σ позиций, без урезания до ФЭО
+// статьи), то же число, что «Итого» в FeoCardDrillDialog (card='planned',
+// kind='all') — см. useFeoTreeAmounts.ts::selectedPlannedFullTotal.
+// ctx.selectedPlannedTotal (клэмп до ФЭО) больше НЕ питает эту карточку, но
+// сам НЕ изменён — он остаётся источником для selectedFree/«Можно
+// перераспределить»/контролей блокировки превышения (ПРАВИЛО №6, меняется
+// только показ карточки).
+const kpiSubTarget_plan_schedule     = computed(() => ctx.selectedPlannedFullTotal.value)
 // Жёсткий потолок субсидии (задача владельца 15.10.2026, ФАДМ 2026_3:
 // «Запланировано» 15 920 830 > «Бюджет (ФЭО)» 15 880 100, карточка никак не
 // кричала) — готовое поле бэкенда (app.services.subsidy_ceiling через
@@ -774,12 +778,6 @@ const ceilingOverMatchesCards = computed(() =>
 // ФЭО не входят в сравнение. pendingTotal — ТОТ ЖЕ composable, что и
 // PendingExcessNote.vue (ПРАВИЛО №6).
 const pendingExcessForCeilingNote = usePendingExcessTotal(ctx)
-// Правка координатора (ревью tests/test_type_excess_own_sum_feo.py — backend
-// plan_<kind> не трогаем): разбивка товары/услуги под «Запланировано»
-// (splitRowsFor('plan_schedule')) суммируется в число БОЛЬШЕ карточки ровно
-// на эту величину — тот же composable, что у PendingExcessNote.vue/
-// planCeilingNoteText выше, Правило №6, второй раз не считаем.
-const planScheduleSplitPendingTotal = computed(() => pendingExcessForCeilingNote.total.value)
 const planCeilingNoteText = computed(() => planCeilingNote({
   planOverCeilingAmount: planOverCeilingAmount.value,
   planCardValue: kpiSubTarget_plan_schedule.value,
@@ -938,9 +936,21 @@ function rawSplitFor(stage: SplitStageKey): { goods: number; services: number; p
       if (s.budget_goods === undefined) return null
       return { goods: s.budget_goods || 0, services: s.budget_services || 0, payroll: s.budget_payroll || 0, unspecified: s.budget_unspecified || 0 }
     }
-    // plan_schedule
-    if (s.planned_goods === undefined) return null
-    return { goods: s.planned_goods || 0, services: s.planned_services || 0, payroll: s.planned_payroll || 0, unspecified: s.planned_unspecified || 0 }
+    // plan_schedule — ИЗМЕНЕНО (владелец, 27.10.2026): главное число карточки
+    // теперь full_display (БЕЗ урезания до ФЭО, см. kpiSubTarget_plan_schedule
+    // выше) — разбивка по типу обязана читать ТУ ЖЕ базу (planned_full_<kind>
+    // = node['full_display_<kind>'], backend/app/services/type_totals.py),
+    // иначе Σ строк разошлась бы с числом карточки на величину клэмпа
+    // (planned_<kind> остаётся отдельным контролем «план по типу над ФЭО по
+    // типу», см. docstring type_totals.py — не трогаем его, просто не читаем
+    // здесь больше). Фолбэк на planned_goods — старый бэк без *_full_* полей.
+    if (s.planned_full_goods === undefined && s.planned_goods === undefined) return null
+    return {
+      goods: s.planned_full_goods ?? s.planned_goods ?? 0,
+      services: s.planned_full_services ?? s.planned_services ?? 0,
+      payroll: s.planned_full_payroll ?? s.planned_payroll ?? 0,
+      unspecified: s.planned_full_unspecified ?? s.planned_unspecified ?? 0,
+    }
   }
   // «Поставлено, не оплачено» (владелец, 05.10.2026) — по типам источник НЕ
   // widget.delivered_unpaid (тот означает status='delivered' без paid, его же

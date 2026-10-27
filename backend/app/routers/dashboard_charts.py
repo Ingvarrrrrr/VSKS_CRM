@@ -396,6 +396,12 @@ async def dashboard_charts(
     # функция сама звала calculate_budgets_bulk заново на тот же sid_list.
     money_summary_map = await _money_summary_fn(db, sid_list, tree=_shared_feo_tree, budgets=budgets)
     economy_by_subsidy_map = await _economy_by_subsidy_fn(db, sid_list)
+    # Задача владельца (27.10.2026) — карточка «Запланировано» должна
+    # показывать ПОЛНУЮ сумму плановых позиций (без урезания до ФЭО).
+    # money_summary_map (_money_summary_fn выше) уже несёт "planned_full" для
+    # каждой субсидии (subsidy_money_summary.py, Σ full_display корней того
+    # же _shared_feo_tree) — ПРАВИЛО №6, второй вызов feo_plan_subsidy_full_
+    # totals здесь не заводим, читаем готовое ниже через _money.get(...).
     # Карточка «Оплачено» (владелец, 05.10.2026) — ДВЕ величины: «по отметке
     # сотрудников» и «подтверждено выпиской» (+ товары/услуги). ПРАВИЛО №6 —
     # тот же источник, что дерево ФЭО (см. докстринг subsidy_paid_breakdown.py);
@@ -544,6 +550,13 @@ async def dashboard_charts(
             # «Запланировано» карточки БАЙТ-В-БАЙТ, одна точка расчёта.
             "total_feo_planned": planned_tree,
             "planned_tree": planned_tree,  # единый источник: план дерева ФЭО (ручные + заявки)
+            # «Запланировано» БЕЗ урезания до ФЭО (владелец, 27.10.2026,
+            # карточка SubsidyKpiCards.vue «Запланировано») — Σ full_display
+            # корней, см. app.services.subsidy_money_summary/
+            # app.services.feo_plan_totals.feo_plan_subsidy_full_totals.
+            # planned_tree выше (= Σ display) НЕ меняется и остаётся
+            # источником для «Свободно»/«Можно перераспределить»/потолка ФЭО.
+            "planned_full": _money.get("planned_full", planned_tree),
             "feo_budget_total": budget_basis,
             "feo_filled": calc > 0,
             # ОТМЕНЕНО (владелец, 07.10.2026): budget_from_plan теперь ВСЕГДА
@@ -931,6 +944,9 @@ async def dashboard_charts(
         _agg = {k: 0.0 for k in (
             "budget_goods", "budget_services", "budget_payroll", "budget_unspecified",
             "planned_goods", "planned_services", "planned_payroll", "planned_unspecified",
+            # «Запланировано» по типу БЕЗ урезания до ФЭО (владелец,
+            # 27.10.2026) — см. type_totals.py::plan_full_<kind>.
+            "planned_full_goods", "planned_full_services", "planned_full_payroll", "planned_full_unspecified",
         )}
         for row in subsidy_stats:
             sid = row["id"]
@@ -980,6 +996,14 @@ async def dashboard_charts(
             row["planned_services"] = tt.get("plan_services", 0.0)
             row["planned_payroll"] = tt.get("plan_payroll", 0.0)
             row["planned_unspecified"] = tt.get("plan_unspecified", 0.0)
+            # «Запланировано» по типу БЕЗ урезания до ФЭО (владелец,
+            # 27.10.2026) — та же разбивка, что splitRowsFor('plan_schedule')
+            # теперь читает под картой «Запланировано» (SubsidyKpiCards.vue),
+            # согласованно с главным числом карточки (row["planned_full"]).
+            row["planned_full_goods"] = tt.get("plan_full_goods", 0.0)
+            row["planned_full_services"] = tt.get("plan_full_services", 0.0)
+            row["planned_full_payroll"] = tt.get("plan_full_payroll", 0.0)
+            row["planned_full_unspecified"] = tt.get("plan_full_unspecified", 0.0)
             for k in _agg:
                 _agg[k] += row[k]
 

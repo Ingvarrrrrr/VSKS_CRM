@@ -278,6 +278,7 @@ async def subsidy_money_summary(
     {subsidy_id: {
         "budget": float,                      # эффективный бюджет субсидии (дерево ФЭО, фолбэк — ручное значение)
         "planned": float,                     # «Запланировано» = план дерева ФЭО (ручные позиции + заявки)
+        "planned_full": float,                # то же, БЕЗ урезания до ФЭО (владелец, 27.10.2026) — Σ full_display корней
         "committed": float,                   # «Законтрактовано» (шаг 1 плана — committed_amounts.py)
         "committed_by_kind": {"goods","services","unspecified"},
         "free": float,                        # budget − planned («Свободно»)
@@ -346,6 +347,13 @@ async def subsidy_money_summary(
     # planned_tree одним batch-вызовом на весь список.
     from app.routers.subsidies import _calculate_feo_planned_tree_bulk
     planned_tree_map = await _calculate_feo_planned_tree_bulk(db, subsidy_ids, tree=_tree)
+    # planned_full — Σ full_display корней, та же _tree (ПРАВИЛО №6, не
+    # вторая сборка дерева) — карточка «Запланировано» (владелец,
+    # 27.10.2026): полная сумма плановых позиций, БЕЗ урезания до ФЭО, см.
+    # docstring feo_plan_subsidy_full_totals. planned/display-контроли выше
+    # не трогаются.
+    from app.services.feo_plan_totals import feo_plan_subsidy_full_totals
+    planned_full_map = await feo_plan_subsidy_full_totals(db, subsidy_ids, tree=_tree)
 
     # Карточка «Можно перераспределить» БЕЗ обрезки по направлениям (владелец,
     # 06.10.2026, план sleepy-fluttering-walrus.md п.1) — см. докстринг
@@ -362,6 +370,7 @@ async def subsidy_money_summary(
         calc = calc_budget_map.get(sid, 0.0)
         budget = effective_subsidy_budget(calc, manual_budget_by_sid.get(sid))
         planned = planned_tree_map.get(sid, 0.0)
+        planned_full = planned_full_map.get(sid, 0.0)
         _committed = committed_map.get(sid) or {}
         committed = _committed.get("committed", 0.0)
         committed_by_kind = {
@@ -521,6 +530,10 @@ async def subsidy_money_summary(
         result[sid] = {
             "budget": budget,
             "planned": planned,
+            # «Запланировано» без урезания до ФЭО (владелец, 27.10.2026) — см.
+            # docstring feo_plan_subsidy_full_totals. Чисто справочное поле
+            # карточки, НЕ заменяет planned/free/redistributable выше.
+            "planned_full": planned_full,
             "committed": committed,
             "committed_by_kind": committed_by_kind,
             "free": budget - planned,

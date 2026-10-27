@@ -87,5 +87,23 @@ export function pickSubsidyMoneyFields(s: any) {
     planned_services: s.planned_services,
     planned_payroll: s.planned_payroll,
     planned_unspecified: s.planned_unspecified,
+    // Та же типизация, БЕЗ урезания до ФЭО (владелец, 27.10.2026) — см.
+    // SubsidyKpiCards.vue::rawSplitFor('plan_schedule') и backend
+    // app/services/type_totals.py::plan_full_<kind>. undefined, когда
+    // ?type_split не запрошен — та же причина, что у planned_goods выше.
+    planned_full_goods: s.planned_full_goods,
+    planned_full_services: s.planned_full_services,
+    planned_full_payroll: s.planned_full_payroll,
+    planned_full_unspecified: s.planned_full_unspecified,
+    // Задача владельца (27.10.2026) — ПОЛНАЯ сумма всех плановых позиций
+    // (БЕЗ урезания до ФЭО статьи), готовое поле /dashboard/charts
+    // (backend/app/services/feo_plan_totals.py::feo_plan_subsidy_full_totals,
+    // ПРАВИЛО №6, ничего не считаем здесь). Карточка «Запланировано»
+    // (SubsidyKpiCards.vue) читает ЕГО, а не `planned` (= planned_tree,
+    // урезанный до ФЭО — тот остаётся источником для контролей блокировки
+    // превышения/«Можно перераспределить»/потолка ФЭО, не трогается).
+    // ?? s.planned — старый бэк без этого поля продолжает показывать
+    // прежнее (урезанное) число, не ломаем карточку задним числом.
+    planned_full: s.planned_full ?? s.planned_tree ?? s.total_planned,
   }
 }

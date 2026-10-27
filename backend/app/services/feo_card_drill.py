@@ -29,7 +29,13 @@ compute_feo_plan_tree (order-substitution/floor/manual_sum/клэмп по budge
             введено ни у одной статьи субсидии (решение владельца 07.10.2026).
   planned — «Запланировано»: строки — ПЛАНОВЫЕ ПОЗИЦИИ (FeoPlannedItem), не
             статьи (владелец явно: окну нужны отдельные позиции, не агрегат
-            по статье). own-доля node['plan_{kind}'] статьи разносится между
+            по статье). ИЗМЕНЕНО (владелец, 27.10.2026) — own-доля читает
+            node['full_display_{kind}'] (ПОЛНАЯ сумма позиций, без урезания
+            до ФЭО при несогласованном превышении), НЕ node['plan_{kind}']
+            (та клэмпится по-другому и остаётся отдельным контролем «план по
+            типу над ФЭО по типу» — её не трогаем, см. field_prefix в
+            card_drill_rows). own-доля node['full_display_{kind}'] статьи
+            разносится между
             её активными плановыми позициями ПРОПОРЦИОНАЛЬНО их Σ amount
             внутри той же корзины kind (см. _split_rows_proportionally) —
             сохраняет сумму строк байт-в-байт равной own-доле статьи, даже
@@ -527,8 +533,9 @@ async def card_drill_rows(
 
     total — РОВНО то же число, что карточка на экране (см. докстринг модуля):
     budget/free читают Σ по корневым узлам node['feo_{kind}']/(feo-plan), planned
-    читает Σ по корневым узлам node['plan_{kind}'] (= node['display'], KPI
-    «Запланировано»). kind="all" — Σ по всем 4 корзинам."""
+    читает Σ по корневым узлам node['full_display_{kind}'] (= node['full_display'],
+    KPI «Запланировано» — ИЗМЕНЕНО 27.10.2026, была node['plan_{kind}']/
+    node['display'], см. field_prefix выше). kind="all" — Σ по всем 4 корзинам."""
     if card not in CARDS:
         raise ValueError(f"unknown card {card!r}")
     kinds = list(ALL_KINDS) if kind == "all" else [kind]
@@ -573,7 +580,15 @@ async def card_drill_rows(
     if card == CARD_BUDGET:
         field_prefix = "feo_"
     elif card == CARD_PLANNED:
-        field_prefix = "plan_"
+        # ИЗМЕНЕНО (владелец, 27.10.2026) — «Запланировано» теперь показывает
+        # ПОЛНУЮ сумму плановых позиций (full_display), без урезания до ФЭО
+        # при несогласованном превышении (см. SubsidyKpiCards.vue/
+        # feo_plan_totals.feo_plan_subsidy_full_totals); окно «из чего
+        # сложено» обязано читать ТОТ ЖЕ источник (ПРАВИЛО №6), иначе «Итого»
+        # окна разойдётся с числом карточки. plan_<kind> (клэмп по
+        # plan_manual) НЕ трогается — он остаётся контролем «план по типу над
+        # ФЭО по типу» (card='free'/'budget' продолжают читать его ниже).
+        field_prefix = "full_display_"
     else:  # free
         field_prefix = None  # считается как feo_X - plan_X, см. ниже
 
@@ -608,7 +623,9 @@ async def card_drill_rows(
 
     total = sum(
         sum((nodes[r].get(f"feo_{k}", 0.0) if card == CARD_BUDGET
-             else nodes[r].get(f"plan_{k}", 0.0) if card == CARD_PLANNED
+             # full_display_<kind> — см. field_prefix выше (ПРАВИЛО №6: тот
+             # же источник, что и own-декомпозиция ниже, не plan_<kind>).
+             else nodes[r].get(f"full_display_{k}", 0.0) if card == CARD_PLANNED
              else (nodes[r].get(f"feo_{k}", 0.0) - nodes[r].get(f"plan_{k}", 0.0))) or 0.0
             for k in kinds)
         for r in roots

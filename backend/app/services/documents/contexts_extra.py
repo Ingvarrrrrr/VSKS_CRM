@@ -221,8 +221,25 @@ def add_customer_context(context: dict, customer_org, customer_ctr) -> None:
         # Инициалы впереди: «Е.В. Козеев» (для строки подписи _________________ / И.О. Фамилия)
         "customer_signatory_name_initials":  _fio_to_initials_prefix(cust_sig["name_full"]),
         "customer_signatory_basis":          cust_signatory_basis,
+        # ФИО подписанта Заказчика по частям (владелец, 27.10.2026) — те же
+        # значения, что _signatory_split уже разобрал для customer_signatory_name
+        # выше (ПРАВИЛО №6, второй разбор не заводим).
+        "customer_signatory_last_name":      cust_sig["last"],
+        "customer_signatory_first_name":     cust_sig["first"],
+        "customer_signatory_middle_name":    cust_sig["middle"],
         # Город заключения — из поля Organization.contract_city; fallback «Москва»
         "contract_city": (customer_org.contract_city or "Москва") if customer_org else "Москва",
+        # Карточка контрагента Заказчика — поля, которых не было в
+        # org_requisites() (REQUISITE_FIELDS ограничен юр.реквизитами):
+        # сайт/ОКПО/ОКВЭД/дата регистрации/казначейские счета читаются
+        # напрямую из того же customer_ctr, что и bank_name/settlement_account
+        # выше — второй источник этих показателей не заводим (ПРАВИЛО №6).
+        "customer_website":                  _g(customer_ctr.website if customer_ctr else None),
+        "customer_okpo":                     _g(customer_ctr.okpo if customer_ctr else None),
+        "customer_okved":                    _g(customer_ctr.okved if customer_ctr else None),
+        "customer_registration_date":        (_fmt_date(customer_ctr.registration_date) if customer_ctr and customer_ctr.registration_date else ""),
+        "customer_treasury_account":          _g(customer_ctr.treasury_account if customer_ctr else None),
+        "customer_single_treasury_account":   _g(customer_ctr.single_treasury_account if customer_ctr else None),
     })
 
 
@@ -409,4 +426,20 @@ def add_contractor_signatory_context(context: dict, c) -> None:
         # наименование» контрагента, без фолбэка на краткое (contractor_name
         # убран — он дублировал contractor_short_name).
         "contractor_full_name":               (c.full_name or "") if c else "",
+        # ФИО подписанта Исполнителя по частям (владелец, 27.10.2026) — те же
+        # значения, что _signatory_split уже разобрал для contractor_signatory_name
+        # выше (ПРАВИЛО №6, второй разбор не заводим).
+        "contractor_signatory_last_name":      ctr_sig["last"],
+        "contractor_signatory_first_name":     ctr_sig["first"],
+        "contractor_signatory_middle_name":    ctr_sig["middle"],
+        # Поля карточки контрагента, которых не было в базовом литерале
+        # contexts_build.py/fabrikant_package.py (ПРАВИЛО №6: единственный
+        # расчёт — здесь, вызывается из обоих мест построения контекста).
+        "contractor_website":                  (c.website or "") if c else "",
+        "contractor_okpo":                      (c.okpo or "") if c else "",
+        "contractor_okved":                     (c.okved or "") if c else "",
+        "contractor_registration_date":         (_fmt_date(c.registration_date) if c and c.registration_date else ""),
+        "contractor_treasury_account":          (c.treasury_account or "") if c else "",
+        "contractor_single_treasury_account":   (c.single_treasury_account or "") if c else "",
+        "contractor_personal_account":           (c.personal_account or "") if c else "",
     })

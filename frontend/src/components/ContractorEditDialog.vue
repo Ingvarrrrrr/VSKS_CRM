@@ -189,6 +189,7 @@
               <v-text-field v-model="form.single_treasury_account" label="Единый казначейский счёт" variant="outlined" density="compact" hide-details maxlength="30" />
             </v-col>
           </v-row>
+          <v-text-field v-model="form.personal_account" label="Лицевой счёт" variant="outlined" density="compact" class="mt-2" hide-details maxlength="30" />
           <v-textarea v-model="form.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
           <!-- ── Реквизиты физ.лица (ГПХ) — только для Физ.лицо, и только с
@@ -405,6 +406,7 @@ interface ContractorFull {
   okved?: string
   treasury_account?: string
   single_treasury_account?: string
+  personal_account?: string
   signatory_position?: string
   signatory_last_name?: string
   signatory_first_name?: string
@@ -507,7 +509,7 @@ const emptyForm = () => ({
   passport_series: '', passport_number: '', passport_issuer: '',
   passport_issued_date: '', snils: '', registration_address: '', birth_date: '',
   website: '', registration_date: '', okpo: '', okved: '',
-  treasury_account: '', single_treasury_account: '', signatory_position: '',
+  treasury_account: '', single_treasury_account: '', personal_account: '', signatory_position: '',
   signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '',
 })
 const form = ref(emptyForm())
@@ -641,15 +643,30 @@ async function importFromCardFile() {
     fd.append('file', contractorCardFile.value)
     const data = await apiFetch<any>('/contractors/parse-file', { method: 'POST', body: fd })
     const fieldLabels: Record<string, string> = {
-      name: 'Наименование', inn: 'ИНН', kpp: 'КПП', ogrn: 'ОГРН',
-      address: 'Адрес', phone: 'Телефон', email: 'Email',
+      name: 'Наименование', full_name: 'Полное наименование', inn: 'ИНН', kpp: 'КПП', ogrn: 'ОГРН',
+      address: 'Адрес', postal_address: 'Почтовый адрес',
+      phone: 'Телефон', email: 'Email', org_phone: 'Телефон организации', org_email: 'Email организации',
       signatory: 'Подписант', bik: 'БИК', settlement_account: 'Р/С',
       correspondent_account: 'К/С', bank_name: 'Банк', org_type: 'Тип',
+      website: 'Сайт', okpo: 'ОКПО', okved: 'ОКВЭД', registration_date: 'Дата регистрации',
+      treasury_account: 'Казначейский счёт', single_treasury_account: 'Единый казначейский счёт',
+      personal_account: 'Лицевой счёт',
+      signatory_position: 'Должность подписанта', signatory_basis: 'Основание',
+      signatory_last_name: 'Фамилия подписанта', signatory_first_name: 'Имя подписанта',
+      signatory_middle_name: 'Отчество подписанта',
     }
     const filled: string[] = []
     for (const [field, label] of Object.entries(fieldLabels)) {
       if (data[field]) {
-        (form.value as any)[field] = data[field]
+        // Карточка казначейства отдаёт дату регистрации в формате ДД.ММ.ГГГГ —
+        // native <input type="date"> (registration_date) понимает только
+        // ГГГГ-ММ-ДД, иначе поле визуально остаётся пустым.
+        if (field === 'registration_date' && /^\d{2}\.\d{2}\.\d{4}$/.test(data[field])) {
+          const [d, m, y] = data[field].split('.')
+          ;(form.value as any)[field] = `${y}-${m}-${d}`
+        } else {
+          (form.value as any)[field] = data[field]
+        }
         filled.push(label)
       }
     }
@@ -712,6 +729,7 @@ function fillForm(c: ContractorFull) {
     okved:                c.okved                || '',
     treasury_account:     c.treasury_account     || '',
     single_treasury_account: c.single_treasury_account || '',
+    personal_account:     c.personal_account     || '',
     signatory_position:   c.signatory_position   || '',
   }
 }

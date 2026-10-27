@@ -62,6 +62,7 @@ class ContractorCreate(BaseModel):
     signatory_last_name: Optional[str] = None
     signatory_first_name: Optional[str] = None
     signatory_middle_name: Optional[str] = None
+    personal_account: Optional[str] = None  # лицевой счёт в казначействе
 
 class ContractorOut(ContractorCreate):
     id: int

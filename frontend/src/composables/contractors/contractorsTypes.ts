@@ -38,6 +38,7 @@ export interface ContractorWithStats {
   okved?: string
   treasury_account?: string
   single_treasury_account?: string
+  personal_account?: string
   signatory_position?: string
 }
 
@@ -88,5 +89,6 @@ export const CONTRACTOR_TARGET_FIELDS: ContractorTargetField[] = [
   { value: 'okved',                      title: 'ОКВЭД',              required: false },
   { value: 'treasury_account',           title: 'Казначейский счёт',  required: false },
   { value: 'single_treasury_account',    title: 'Единый казн. счёт',  required: false },
+  { value: 'personal_account',           title: 'Лицевой счёт',      required: false },
   { value: 'signatory_position',         title: 'Должность подписанта', required: false },
 ]

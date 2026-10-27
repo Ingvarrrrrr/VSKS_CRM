@@ -30,6 +30,7 @@ const _FIELD_KEYWORDS: Record<string, string[]> = {
   okved:                      ['оквэд', 'оквед'],
   treasury_account:           ['казначейск'],
   single_treasury_account:    ['единый казн'],
+  personal_account:           ['лицевой счет', 'лицевой счёт', 'л/сч'],
   signatory_position:         ['должност'],
 }
 
@@ -197,7 +198,7 @@ export function useContractorsImport(options: {
         'settlement_account', 'bank_name', 'bik', 'correspondent_account', 'bank_details',
         'manual_product_categories',
         'website', 'registration_date', 'okpo', 'okved',
-        'treasury_account', 'single_treasury_account', 'signatory_position',
+        'treasury_account', 'single_treasury_account', 'personal_account', 'signatory_position',
       ]
       for (const f of colFields) {
         if (m[f] != null) params.set(`col_${f}`, String(m[f]))

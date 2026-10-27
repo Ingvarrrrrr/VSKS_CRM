@@ -118,6 +118,7 @@ def _signatory_split(
                 "name_full": name_full,
                 "name_genitive": _fio_to_genitive(name_full),
                 "name_initials": _fio_to_initials(name_full),
+                "last": "", "first": "", "middle": "",
             }
         name_full = _compose_fio(last, first, middle) or signatory or ""
         return {
@@ -125,14 +126,25 @@ def _signatory_split(
             "name_full": name_full,
             "name_genitive": _fio_to_genitive(name_full),
             "name_initials": _fio_to_initials(name_full),
+            # ФИО по частям (владелец, 27.10.2026): *_signatory_last_name/
+            # _first_name/_middle_name для шаблонов — те же значения, что
+            # пошли в name_full выше (после возможной коррекции сдвига,
+            # см. looks_shifted), второй разбор не заводим (ПРАВИЛО №6).
+            "last": (last or "").strip(), "first": (first or "").strip(), "middle": (middle or "").strip(),
         }
 
     # Legacy heuristic path (no structured parts available)
     if not signatory:
-        return {"position": "", "name_full": "", "name_genitive": "", "name_initials": ""}
+        return {
+            "position": "", "name_full": "", "name_genitive": "", "name_initials": "",
+            "last": "", "first": "", "middle": "",
+        }
     parts = signatory.strip().split()
     if len(parts) <= 1:
-        return {"position": "", "name_full": signatory, "name_genitive": signatory, "name_initials": signatory}
+        return {
+            "position": "", "name_full": signatory, "name_genitive": signatory, "name_initials": signatory,
+            "last": signatory, "first": "", "middle": "",
+        }
     # Heuristic: ФИО = last 3 words if ≥4 words total, else last 2
     if len(parts) >= 4:
         pos_words = parts[:-3]
@@ -154,6 +166,9 @@ def _signatory_split(
         "name_full": name_full,
         "name_genitive": _fio_to_genitive(name_full),
         "name_initials": _fio_to_initials(name_full),
+        "last": fio_words[0] if fio_words else "",
+        "first": fio_words[1] if len(fio_words) >= 2 else "",
+        "middle": " ".join(fio_words[2:]) if len(fio_words) >= 3 else "",
     }
 
 

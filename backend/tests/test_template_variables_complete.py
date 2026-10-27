@@ -52,6 +52,11 @@ def _stub_contractor(**kw):
         signatory_first_name=None, signatory_middle_name=None, signatory_position=None,
         settlement_account="", bank_name="", bik="", correspondent_account="",
         personal_account="", org_type="ООО",
+        # Карточка контрагента, не вошедшие в базовый стаб выше — владелец,
+        # 27.10.2026: поля карточки казначейства, для которых не было
+        # переменных шаблона (см. test_*_extra_requisite_keys_* ниже).
+        website="", okpo="", okved="", registration_date=None,
+        treasury_account="", single_treasury_account="",
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -306,6 +311,59 @@ def test_customer_signatory_split_fixes_shifted_first_has_colon():
     add_customer_context(ctx, org, ctr)
     assert ctx["customer_signatory_name"] == "Мельников Олег Иванович"
     assert ctx["customer_signatory_position"] == "Председатель совета"
+
+
+# ── (ж) новые поля карточки казначейства — владелец, 27.10.2026 ─────────────
+
+def test_contractor_extra_requisite_keys_from_card_fields():
+    c = _stub_contractor(
+        website="https://romashka.ru", okpo="12345678", okved="94.99",
+        registration_date=__import__("datetime").date(2010, 3, 15),
+        treasury_account="03234643107010000001",
+        single_treasury_account="40102810000000000001",
+        personal_account="71234Ц56789",
+        signatory_last_name="Юрченкова", signatory_first_name="Анастасия",
+        signatory_middle_name="Евгеньевна",
+    )
+    ctx: dict = {}
+    add_contractor_signatory_context(ctx, c)
+    assert ctx["contractor_website"] == "https://romashka.ru"
+    assert ctx["contractor_okpo"] == "12345678"
+    assert ctx["contractor_okved"] == "94.99"
+    assert ctx["contractor_registration_date"] == "15.03.2010"
+    assert ctx["contractor_treasury_account"] == "03234643107010000001"
+    assert ctx["contractor_single_treasury_account"] == "40102810000000000001"
+    assert ctx["contractor_personal_account"] == "71234Ц56789"
+    assert ctx["contractor_signatory_last_name"] == "Юрченкова"
+    assert ctx["contractor_signatory_first_name"] == "Анастасия"
+    assert ctx["contractor_signatory_middle_name"] == "Евгеньевна"
+
+
+def test_customer_extra_requisite_keys_from_card_fields():
+    ctr = _stub_contractor(
+        website="https://primer.ru", okpo="87654321", okved="85.11",
+        registration_date=__import__("datetime").date(2012, 7, 1),
+        treasury_account="03234643107010000002",
+        single_treasury_account="40102810000000000002",
+        signatory_last_name="Артеева", signatory_first_name="Анна",
+        signatory_middle_name="Игоревна",
+    )
+    # customer_signatory_* читаются через org_requisites(org, ctr) — требует
+    # Organization, привязанную к контрагенту (как в тестах выше), а не "голый"
+    # контрагент без org (см. add_customer_context/org_requisites).
+    org = _stub_org_linked_to(ctr, signatory_last_name="Артеева", signatory_first_name="Анна",
+                               signatory_middle_name="Игоревна")
+    ctx: dict = {}
+    add_customer_context(ctx, org, ctr)
+    assert ctx["customer_website"] == "https://primer.ru"
+    assert ctx["customer_okpo"] == "87654321"
+    assert ctx["customer_okved"] == "85.11"
+    assert ctx["customer_registration_date"] == "01.07.2012"
+    assert ctx["customer_treasury_account"] == "03234643107010000002"
+    assert ctx["customer_single_treasury_account"] == "40102810000000000002"
+    assert ctx["customer_signatory_last_name"] == "Артеева"
+    assert ctx["customer_signatory_first_name"] == "Анна"
+    assert ctx["customer_signatory_middle_name"] == "Игоревна"
 
 
 def test_customer_signatory_split_initials_in_last_name_kept_as_is():

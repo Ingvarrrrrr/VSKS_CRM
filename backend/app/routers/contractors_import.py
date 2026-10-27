@@ -25,7 +25,7 @@ from app.models.contractor import Contractor
 from app.auth.jwt import get_current_user, get_single_org_id
 from app.auth.permissions import require_tab
 from app.models.user import User
-from app.services.contractor_file_parsing import _parse_file_to_rows
+from app.services.contractor_file_parsing import _parse_file_to_rows, _map_kv_key, _KV_LABEL_TO_FIELD
 
 try:
     from openpyxl import load_workbook
@@ -58,7 +58,14 @@ async def parse_contractor_file(
     values = all_rows[hdr_idx + 1] if len(all_rows) > hdr_idx + 1 else []
 
     result = {}
-    field_hints = {
+    # Фолбэк для заголовков, которые не распознаёт словарь карточки
+    # казначейства (_map_kv_key/_KV_LABEL_TO_FIELD ниже) — произвольные
+    # колонки Excel/PDF вроде «Орг. тип», которых нет в карточке-реквизитов.
+    # Карточка (ИНН/КПП/ОГРН/название/адрес/телефон/счета/подписант/сайт/
+    # ОКПО/ОКВЭД/казначейские счета/лицевой счёт и т.д.) распознаётся
+    # ЕДИНЫМ словарём _map_kv_key/_KV_LABEL_TO_FIELD (ПРАВИЛО №6) — второй
+    # список ключевых слов под те же поля здесь не заводим.
+    _fallback_hints = {
         'name': ('назван', 'наимен', 'name', 'органи', 'учредит'),
         'inn': ('инн', 'inn'),
         'kpp': ('кпп', 'kpp'),
@@ -82,15 +89,21 @@ async def parse_contractor_file(
         val = str(values[j]).strip() if values[j] is not None else ''
         if not val or val.lower() in ('none', 'null', '-', '—', ''):
             continue
-        for field, hints in field_hints.items():
-            if field not in result and any(x in h_str for x in hints):
-                # INN/KPP length limits
-                if field == 'inn' and len(val.replace(' ', '')) > 12:
-                    continue
-                if field == 'kpp' and len(val.replace(' ', '')) > 9:
-                    continue
-                result[field] = val
-                break
+
+        field = _KV_LABEL_TO_FIELD.get(_map_kv_key(h_str))
+        if field is None:
+            for fb_field, hints in _fallback_hints.items():
+                if fb_field not in result and any(x in h_str for x in hints):
+                    field = fb_field
+                    break
+        if field is None or field in result:
+            continue
+        # INN/KPP length limits
+        if field == 'inn' and len(val.replace(' ', '')) > 12:
+            continue
+        if field == 'kpp' and len(val.replace(' ', '')) > 9:
+            continue
+        result[field] = val
 
     return result
 

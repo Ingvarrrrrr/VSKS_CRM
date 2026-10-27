@@ -22,15 +22,16 @@ backtracking с мемоизацией по позиции).
 import re
 from typing import Optional
 
+from app.services.product_characteristics_parse import _split_line as _shared_split_line
 from app.services.product_tz_44fz_name import _strip_brand_mentions
 from app.services.product_tz_44fz_values import (
     _direction_for_name,
     _format_numeric_value,
     _is_boilerplate_value,
     _is_excluded_characteristic,
+    _split_label_qualifier,
 )
 
-_FALLBACK_LINE_RE = re.compile(r"^\s*([^:\n]{2,60}):\s*(.+?)\s*$")
 # Лейбл начинается на границе слова (начало строки или после пробела/
 # запятой/точки/тире) — без этого на длинном тексте regex мог начать матч
 # СЕРЕДИНОЙ слова (например "методом" → "одом"), если только так укладывал
@@ -40,6 +41,42 @@ _FALLBACK_INLINE_RE = re.compile(r"(?:^|(?<=[\s,;.\-—]))([A-Za-zА-Яа-яЁё
 # Метка не должна заканчиваться на цифры-значение, прилипшие к концу
 # строки ("Размер (мм)        1200" — это два слепленных поля, не метка).
 _TRAILING_DIGITS_RE = re.compile(r"\d\s*$")
+
+# Владелец, 27.10.2026 (товар 3002): двоеточие ВНУТРИ обычного предложения
+# ("Изделие подходит для оснащения различных объектов и помещений:
+# административных зданий...") ловилось построчным/inline-разбором как
+# пара характеристики. Коррекция владельца (та же дата, товар 32655):
+# жёсткий порог 5 слов/40 символов зарезал легитимную метку "Максимальный
+# диаметр перекусываемого стального прутка" (5 слов, 52 симв.) — порог
+# смягчён до >10 слов/>80 симв., основной сигнал — глагол-маркер
+# предложения в начале слова. Этот фильтр — ТОЛЬКО для разбора description
+# (построчного и inline); на характеристики товара (JSON) он не действует —
+# там имя задаёт сам каталог/поставщик, а не произвольный текст description.
+_SENTENCE_VERB_MARKERS = (
+    "подходит", "предназначен", "используется", "применяется",
+    "позволяет", "обеспечивает", "имеет", "является",
+)
+_SENTENCE_LABEL_MAX_CHARS = 80
+_SENTENCE_LABEL_MAX_WORDS = 10
+
+
+def _looks_like_sentence_label(label: str) -> bool:
+    """True — метка похожа на обычное предложение (описание товара), а не
+    на имя характеристики: длиннее 80 символов, больше 10 слов, или одно из
+    слов начинается с глагола-маркера предложения (_SENTENCE_VERB_MARKERS,
+    регистронезависимо, "по началу слова" — совпадение префикса, чтобы
+    ловить и "подходит"/"подходят", и "предназначен"/"предназначена")."""
+    s = (label or "").strip()
+    if not s or len(s) > _SENTENCE_LABEL_MAX_CHARS:
+        return True
+    words = s.split()
+    if len(words) > _SENTENCE_LABEL_MAX_WORDS:
+        return True
+    return any(
+        w.lower().startswith(marker)
+        for w in words
+        for marker in _SENTENCE_VERB_MARKERS
+    )
 
 
 def _is_valid_label(line: str) -> bool:
@@ -116,6 +153,18 @@ def _format_single_param(name, raw_value, unit, local_brand_words, global_brands
     raw_value = (raw_value or "").strip()
     if not name or not raw_value:
         return None
+
+    # Квалификатор "не более"/"не менее" (+ единица) ВНУТРИ имени — выносим
+    # наружу ДО всех проверок (27.10.2026, товар 4481 с прода): очищенное
+    # имя идёт и в проверку исключённых характеристик, и в дубль-проверку
+    # названия товара; хвостовая точка значения убирается, раз квалификатор
+    # уже явно задан меткой (значение "0.85." → "0.85").
+    name, forced_direction, forced_unit = _split_label_qualifier(name)
+    if forced_direction:
+        raw_value = raw_value.rstrip(".").strip()
+        if not raw_value:
+            return None
+
     if _is_excluded_characteristic(name):
         return None
     if _is_boilerplate_value(raw_value):
@@ -129,8 +178,11 @@ def _format_single_param(name, raw_value, unit, local_brand_words, global_brands
     if not value:
         return None
 
-    direction = _direction_for_name(name)
-    formatted = _format_numeric_value(value, unit or "", direction)
+    # Квалификатор из метки ПОБЕЖДАЕТ словарь направлений по имени (п.3,
+    # 27.10.2026) — на случай, если очищенное имя словарём читается иначе.
+    direction = forced_direction or _direction_for_name(name)
+    effective_unit = unit or forced_unit
+    formatted = _format_numeric_value(value, effective_unit or "", direction)
     if not formatted:
         return None
     line = f"{name}: {formatted}"
@@ -181,10 +233,29 @@ def _build_param_lines(item, local_brand_words, global_brands, product_name_lowe
 def _parse_description_fallback(description: Optional[str]) -> list:
     """Три попытки разобрать СВОБОДНЫЙ ТЕКСТ description в характеристики,
     когда у товара нет JSON characteristics вовсе:
-      1. Построчно "Название: значение".
-      2. То же самое, но внутри фразы (не с начала строки).
-      3. Чередующиеся строки "Название"/"значение" (см. _split_multiline_value/
-         _parse_pairs) — структурная проверка, без списка слов-заголовков."""
+      1. Построчно, ЕДИНЫМ построчным разборщиком _split_line из
+         app/services/product_characteristics_parse.py (ПРАВИЛО №6 — тот же
+         разбор "Метка: значение"/"Метка\\tзначение"/"Метка - значение"/
+         "Метка ..... значение", что и у вставки характеристик с сайта;
+         второго такого построчного разбора здесь не пишем). Юнит из
+         значения (если есть) НЕ отделяется здесь нарочно — им уже умеет
+         пользоваться _format_numeric_value (TRAIL-группа), второй раз
+         этим не занимаемся.
+      2. То же самое, но внутри фразы (не с начала строки) — своё регулярное
+         выражение _FALLBACK_INLINE_RE: paste-разборщик работает на весь
+         текст целиком и не умеет искать "label: value" В СЕРЕДИНЕ абзаца —
+         эта способность нужна только description (пользователь вставляет
+         связный текст, а не таблицу характеристик), второго места для неё
+         в проекте нет.
+      3. Чередующиеся строки "Название"/"значение" со СТРУКТУРНОЙ проверкой
+         group-заголовков (_parse_pairs/_is_valid_label, backtracking) —
+         paste-разборщик для "рваного" текста делает только наивное
+         деление пополам БЕЗ пропуска заголовков групп (там это оправдано:
+         пользователь вставляет таблицу без вложенных секций); реальные
+         описания каталога (id 582631/582099, 27.10.2026 — id 3002/4481)
+         содержат заголовки групп ("Общая информация", "Технические
+         характеристики") между парами — наивное деление даёт сдвиг пар,
+         поэтому backtracking-версия остаётся ТОЛЬКО здесь, под description."""
     if not description:
         return []
     result = []
@@ -193,12 +264,21 @@ def _parse_description_fallback(description: Optional[str]) -> list:
         line = raw_line.strip()
         if not line:
             continue
-        m = _FALLBACK_LINE_RE.match(line)
-        if m:
-            name, value = m.group(1).strip(), m.group(2).strip()
-            if name and value and (name, value) not in seen:
-                seen.add((name, value))
-                result.append({"name": name, "value": value, "unit": None})
+        pair = _shared_split_line(line)
+        if pair:
+            name, value = pair
+            if not name or not value or (name, value) in seen:
+                continue
+            # Проверяем ОЧИЩЕННУЮ (без квалификатора "не более"/"не менее" в
+            # метке, см. _split_label_qualifier) версию имени — иначе
+            # легитимные метки вида "Рассчитан на вес человека не более,
+            # кг." (4 слова после очистки) ложно отбраковывались бы по
+            # числу слов квалификатора+единицы.
+            base_name = _split_label_qualifier(name)[0]
+            if _looks_like_sentence_label(base_name):
+                continue
+            seen.add((name, value))
+            result.append({"name": name, "value": value, "unit": None})
     if result:
         return result
 
@@ -214,9 +294,12 @@ def _parse_description_fallback(description: Optional[str]) -> list:
     if len(description) <= 200:
         for m in _FALLBACK_INLINE_RE.finditer(description):
             name, value = m.group(1).strip(), m.group(2).strip()
-            if name and value and (name, value) not in seen:
-                seen.add((name, value))
-                result.append({"name": name, "value": value, "unit": None})
+            if not name or not value or (name, value) in seen:
+                continue
+            if _looks_like_sentence_label(_split_label_qualifier(name)[0]):
+                continue
+            seen.add((name, value))
+            result.append({"name": name, "value": value, "unit": None})
         if result:
             return result
 

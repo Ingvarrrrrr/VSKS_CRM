@@ -83,6 +83,38 @@ async def test_parse_dots_separator_format(client, auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_parse_dash_separator_format(client, auth_headers):
+    """27.10.2026, задача «нет данных — заполняются из описания» (товар 3002
+    с прода): "Метка - значение" / "Метка — значение" (дефис/тире, с
+    пробелами по обе стороны)."""
+    r = await client.post(
+        "/api/products/characteristics/parse", headers=auth_headers,
+        json={"text": "Высота огнетушителя  - 440 мм\nЦвет — Красный"},
+    )
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    by_name = {i["name"]: i for i in items}
+    assert by_name["Высота огнетушителя"]["value"] == "440"
+    assert by_name["Высота огнетушителя"]["unit"] == "мм"
+    assert by_name["Цвет"]["value"] == "Красный"
+
+
+@pytest.mark.asyncio
+async def test_parse_dash_does_not_split_hyphenated_range(client, auth_headers):
+    """Дефис БЕЗ пробелов (диапазон "108-112" или слово "литий-ионный") —
+    не разделитель метка/значение, строка остаётся нераспознанной."""
+    r = await client.post(
+        "/api/products/characteristics/parse", headers=auth_headers,
+        json={"text": "Типоразмер: 108-112 (XL)\nАккумулятор литий-ионный"},
+    )
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    by_name = {i["name"]: i for i in items}
+    assert by_name["Типоразмер"]["value"] == "108-112 (XL)"
+    assert "Аккумулятор литий-ионный" not in by_name
+
+
+@pytest.mark.asyncio
 async def test_parse_alternating_lines_format(client, auth_headers):
     r = await client.post(
         "/api/products/characteristics/parse", headers=auth_headers,

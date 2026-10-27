@@ -21,6 +21,7 @@ app/models — см. докстринг app/services/product_delete_impact.py, �
   - product_photos.product_id            (CASCADE, PK product_id) -> перенос, только если у winner фото нет
   - product_description_history.product_id    (CASCADE) -> перенос (история остаётся читаемой)
   - product_description_proposals.product_id  (CASCADE) -> перенос
+  - product_barcodes.product_id          (CASCADE, уник. product_id+barcode) -> перенос, дубль по barcode — удаляется (владелец, 27.10.2026)
 
 Пустые поля winner'а дозаполняются из loser'ов — ТОЛЬКО через
 product_description_history.set_product_description (ПРАВИЛО №6, единственный
@@ -45,6 +46,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.commercial_request import CommercialRequestOffer
 from app.models.contract_item import ContractItem
 from app.models.product import Product
+from app.models.product_barcode import ProductBarcode
 from app.models.product_description_history import ProductDescriptionHistory
 from app.models.product_description_proposal import ProductDescriptionProposal
 from app.models.product_photo import ProductPhoto
@@ -149,7 +151,7 @@ async def merge_products(
         "commercial_request_offers": 0, "product_price_history": 0,
         "supplier_products": 0, "product_purchase_categories": 0,
         "product_photo": 0, "product_description_history": 0,
-        "product_description_proposals": 0,
+        "product_description_proposals": 0, "product_barcodes": 0,
     }
     filled_fields: list[str] = []
 
@@ -162,6 +164,12 @@ async def merge_products(
     winner_has_photo = (await db.execute(
         select(ProductPhoto.product_id).where(ProductPhoto.product_id == winner_id)
     )).scalar_one_or_none() is not None
+
+    # Штрихкоды winner'а (владелец, 27.10.2026) — для объединения без дублей
+    # по UNIQUE(product_id, barcode), тот же приём, что у winner_category_ids.
+    winner_barcodes = set((await db.execute(
+        select(ProductBarcode.barcode).where(ProductBarcode.product_id == winner_id)
+    )).scalars().all())
 
     for loser in losers:
         loser_id = loser.id
@@ -249,6 +257,23 @@ async def merge_products(
             sa_delete(product_purchase_categories)
             .where(product_purchase_categories.c.product_id == loser_id)
         )
+
+        # --- штрихкоды: UNIQUE(product_id, barcode) — дубль по barcode
+        # удаляется, остальное переносится (владелец, 27.10.2026) ---
+        loser_barcode_rows = (await db.execute(
+            select(ProductBarcode.id, ProductBarcode.barcode)
+            .where(ProductBarcode.product_id == loser_id)
+        )).all()
+        for bc_id, barcode in loser_barcode_rows:
+            if barcode in winner_barcodes:
+                await db.execute(sa_delete(ProductBarcode).where(ProductBarcode.id == bc_id))
+            else:
+                await db.execute(
+                    sa_update(ProductBarcode).where(ProductBarcode.id == bc_id)
+                    .values(product_id=winner_id)
+                )
+                winner_barcodes.add(barcode)
+                transferred["product_barcodes"] += 1
 
         # --- фото: PK=product_id, переносим только если у winner его нет ---
         loser_photo = (await db.execute(

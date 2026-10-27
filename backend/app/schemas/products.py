@@ -146,7 +146,30 @@ class ProductOut(ProductCreate):
     characteristics: Optional[List[ProductCharacteristic]] = None
     manufacturer: Optional[str] = None
     article: Optional[str] = None
+    # Штрихкоды (владелец, 27.10.2026, app/models/product_barcode.py) —
+    # ТОЛЬКО показ (карточка товара, рядом с «Артикул производителя» — см.
+    # ProductFormDialog.vue); запись — только через products_import_apply.py/
+    # product_merge.py (ПРАВИЛО №6), не через этот or другой PUT/PATCH.
+    barcodes: List[str] = []
     model_config = {"from_attributes": True}
+
+    @model_validator(mode='before')
+    @classmethod
+    def _compute_barcodes(cls, data):
+        # Product.barcode_rows — relationship (lazy="selectin"), ORM-строки
+        # ProductBarcode; схема отдаёт плоский список строк. Тот же приём,
+        # что у _compute_has_photo ниже (ORM-объект vs dict на входе).
+        try:
+            if hasattr(data, 'barcode_rows'):
+                try:
+                    object.__setattr__(data, 'barcodes', [r.barcode for r in (data.barcode_rows or [])])
+                except Exception:
+                    pass
+            elif isinstance(data, dict) and 'barcodes' not in data:
+                data['barcodes'] = []
+        except Exception:
+            pass
+        return data
 
     @model_validator(mode='after')
     def _sync_purchase_category_ids(self):

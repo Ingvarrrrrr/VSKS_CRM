@@ -65,7 +65,7 @@ FIXED_COLUMNS = [
     "unit", "pack_quantity", "pack_unit", "photo_link", "is_reusable",
     "is_active", "characteristics", "manufacturer", "manufacturer_article",
     "store_article", "region", "country_origin",
-    "seller_inn", "source_url",
+    "seller_inn", "source_url", "barcodes",
 ] + [f"link_url_{n}" for n in range(1, _MAX_LINKS + 1)] + [
     f"link_price_{n}" for n in range(1, _MAX_LINKS + 1)
 ]
@@ -145,6 +145,11 @@ def item_to_row(item: dict) -> tuple:
     row[COL_IDX["country_origin"]] = item.get("country_origin")
     row[COL_IDX["seller_inn"]] = seller_inn
     row[COL_IDX["source_url"]] = item.get("source_url")
+    # barcodes (владелец, 27.10.2026, главный ключ сведения карточки) —
+    # сырой список строк, без приведения (как characteristics выше);
+    # нормализация/проверка контрольной цифры — ЕДИНСТВЕННО в
+    # apply_products_import (app.services.barcodes.normalize_barcode).
+    row[COL_IDX["barcodes"]] = item.get("barcodes") or []
     for i, link in enumerate((item.get("links") or [])[:_MAX_LINKS], start=1):
         row[COL_IDX[f"link_url_{i}"]] = link.get("url")
         row[COL_IDX[f"link_price_{i}"]] = _num_to_cell(link.get("price"))
@@ -236,6 +241,18 @@ async def _load_one_file(path: str, user_id: int, dry_run: bool) -> dict:
         1 for r in result["rows"] if r.get("reason") and "по бренду и артикулу производителя" in r["reason"]
     )
 
+    # «сведено с №… по штрихкоду» — текст из products_import_apply.py
+    # (ЕДИНСТВЕННЫЙ источник формулировки, ПРАВИЛО №6), критерий (0.25).
+    matched_by_barcode = sum(
+        1 for r in result["rows"] if r.get("reason") and "по штрихкоду" in r["reason"]
+    )
+
+    # «сведено с №… по ключу вида товара» — текст из products_import_apply.py
+    # (ЕДИНСТВЕННЫЙ источник формулировки, ПРАВИЛО №6), критерий (0.75).
+    matched_by_type_key = sum(
+        1 for r in result["rows"] if r.get("reason") and "по ключу вида товара" in r["reason"]
+    )
+
     return {
         "path": path,
         "items": len(items),
@@ -246,6 +263,10 @@ async def _load_one_file(path: str, user_id: int, dry_run: bool) -> dict:
         "multiple_same_name": multiple_same_name,
         "manufacturer_dropped": manufacturer_dropped,
         "matched_by_brand_article": matched_by_brand_article,
+        "matched_by_barcode": matched_by_barcode,
+        "matched_by_type_key": matched_by_type_key,
+        "barcodes_accepted": result["barcodes_accepted"],
+        "barcodes_rejected": result["barcodes_rejected"],
         "seller_inn_replaced_by_store": seller_inn_replaced_by_store,
         "seller_inn_invalid": seller_inn_invalid,
     }
@@ -298,6 +319,10 @@ async def main_async(files, user_email, dry_run, photos, photos_limit):
         print(f"  несколько одноимённых: {report['multiple_same_name']}")
         print(f"  производитель отброшен (брак/страна/тип товара): {report['manufacturer_dropped']}")
         print(f"  сведено с другим магазином по бренду+артикулу производителя: {report['matched_by_brand_article']}")
+        print(f"  сведено с другим магазином по штрихкоду: {report['matched_by_barcode']}")
+        print(f"  сведено с другим магазином по ключу вида товара: {report['matched_by_type_key']}")
+        print(f"  штрихкодов принято: {report['barcodes_accepted']}")
+        print(f"  штрихкодов отброшено (неверная контрольная цифра): {report['barcodes_rejected']}")
         print(f"  ИНН из файла заменён по сайту магазина: {report['seller_inn_replaced_by_store']}")
         print(f"  ИНН невалиден, магазин не определён: {report['seller_inn_invalid']}")
         errs = report["errors"]

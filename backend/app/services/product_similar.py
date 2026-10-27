@@ -9,8 +9,18 @@
 similarity_key раскладывает нормализованное имя на (brand, base_model,
 rest_tokens) — см. докстринг самой функции.
 
-find_similar_groups группирует карточки, чьё имя содержит запрос, ДВУМЯ
-ключами (владелец, 27.10.2026, правка после прогона на проде):
+find_similar_groups группирует карточки, чьё имя содержит запрос, ЧЕТЫРЬМЯ
+ключами, по убыванию надёжности (владелец, 27.10.2026):
+  - общий штрихкод (product_barcodes) — confidence='уверенно',
+    match_key='barcode' — ПЕРВЫЙ, самый надёжный (решение владельца,
+    27.10.2026: штрихкод — главный ключ сведения карточки);
+  - ключ вида товара (пожарная безопасность: огнетушитель/знак/рукав/шкаф,
+    app.services.product_type_keys) — ВТОРОЙ: полный ключ совпал →
+    confidence='уверенно', match_key='type_key'; совпал только partial
+    (бренд+модель/код) → confidence='проверить', match_key='type_key',
+    diff каждой карточки против winner'а — конкретное поле ключа, которое
+    разошлось (product_type_keys.diff_reason, ПРАВИЛО №6 — одна
+    формулировка причины, та же, что мог бы использовать eval_type_keys.py);
   - (brand, manufacturer_code) — confidence='уверенно' — артикул
     производителя (Product.article у магазинов с article_is_manufacturer=True,
     иначе код вида "DHP482Z"/"14054DEK" из названия) строго совпадает у
@@ -31,11 +41,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contractor import Contractor
 from app.models.product import Product
+from app.models.product_barcode import ProductBarcode
 from app.models.product_photo import ProductPhoto
 from app.models.product_price_history import ProductPriceHistory
 from app.services.brand_code_fold import fold_brand_or_code
 from app.services.catalog_gala.stores import article_is_manufacturer_for_inn
 from app.services.product_catalog_match import _HOMOGLYPH_MAP, _WS_RE
+from app.services.product_type_keys import diff_reason as _type_key_diff_reason
+from app.services.product_type_keys import type_key as _type_key
 
 MIN_QUERY_LEN = 3
 DEFAULT_LIMIT_GROUPS = 50
@@ -445,12 +458,16 @@ async def find_similar_groups(
     db: AsyncSession, q: str, limit_groups: int = DEFAULT_LIMIT_GROUPS,
 ) -> list[SimilarGroup]:
     """Карточки, чьё имя (ILIKE) содержит `q`, группированные СНАЧАЛА по
-    (brand, артикул производителя) — confidence='уверенно', ПОТОМ (среди
-    карточек, не попавших в группу по артикулу) по (brand, base_model) —
-    confidence='проверить'. Группа показывается только при ≥2 РАЗНЫХ
-    магазинах внутри (владелец, 27.10.2026, п.3 — карточки одного магазина
-    сами по себе всегда разные товары, слиянию нечего предложить). Ничего не
-    меняет в БД — чистое чтение для ручной проверки (эндпоинт/CLI)."""
+    ОБЩЕМУ ШТРИХКОДУ (владелец, 27.10.2026, решение «штрихкод — главный
+    ключ») — confidence='уверенно', match_key='barcode', ПЕРЕД артикулом и
+    моделью (надёжнее обоих); ПОТОМ (среди карточек, не попавших в группу по
+    штрихкоду) по (brand, артикул производителя) — confidence='уверенно',
+    ПОТОМ (среди карточек, не попавших ни в штрихкод, ни в артикул) по
+    (brand, base_model) — confidence='проверить'. Группа показывается только
+    при ≥2 РАЗНЫХ магазинах внутри (владелец, 27.10.2026, п.3 — карточки
+    одного магазина сами по себе всегда разные товары, слиянию нечего
+    предложить). Ничего не меняет в БД — чистое чтение для ручной проверки
+    (эндпоинт/CLI)."""
     q = (q or "").strip()
     if len(q) < MIN_QUERY_LEN:
         raise ValueError(f"q должен быть не короче {MIN_QUERY_LEN} символов")
@@ -493,9 +510,99 @@ async def find_similar_groups(
     result: list[SimilarGroup] = []
     claimed_ids: set[int] = set()
 
-    # 1) Артикул производителя + бренд — confidence='уверенно'.
+    # 0) Общий штрихкод — confidence='уверенно', match_key='barcode'
+    # (владелец, 27.10.2026, решение «штрихкод — главный ключ») — ПЕРВОЙ,
+    # до артикула и модели: совпадающий штрихкод надёжнее любого текстового
+    # разбора названия.
+    barcode_rows_by_product: dict[int, set] = {}
+    for product_id, barcode in (await db.execute(
+        select(ProductBarcode.product_id, ProductBarcode.barcode).where(ProductBarcode.product_id.in_(ids))
+    )).all():
+        barcode_rows_by_product.setdefault(product_id, set()).add(barcode)
+
+    barcode_groups: dict[str, list] = {}
+    for p in rows:
+        for bc in barcode_rows_by_product.get(p.id, ()):
+            barcode_groups.setdefault(bc, []).append(p)
+    for barcode, products in barcode_groups.items():
+        if len(products) < 2 or len(_distinct_stores(products)) < 2:
+            continue
+        winner = _pick_winner(products, history_count_by_id, photo_ids)
+        cards = _build_cards(products, keys_by_id, winner, "уверенно", photo_ids, history_count_by_id)
+        result.append(SimilarGroup(
+            brand=keys_by_id[winner.id].brand_display or "", base_model=barcode,
+            confidence="уверенно", match_key="barcode",
+            suggested_winner_id=winner.id, cards=cards,
+            model_display=barcode,
+        ))
+        claimed_ids.update(p.id for p in products)
+
+    # 0.5) Ключ вида товара (пожарная безопасность: огнетушитель/знак/
+    # рукав/шкаф, владелец, 27.10.2026) — ВТОРОЙ по надёжности, после
+    # штрихкода. Полный ключ (TypeKeyResult.key) → confidence='уверенно';
+    # только partial (бренд+модель/код) без полного → confidence='проверить'
+    # с diff по конкретному полю (product_type_keys.diff_reason). Только
+    # карточки, НЕ уже сгруппированные по штрихкоду выше.
+    type_key_by_id: dict = {}
+    for p in rows:
+        if p.id in claimed_ids:
+            continue
+        r = _type_key(p.name, p.characteristics, p.manufacturer, None)
+        if r is not None:
+            type_key_by_id[p.id] = r
+
+    full_key_groups: dict[tuple, list] = {}
+    partial_key_groups: dict[tuple, list] = {}
+    for pid, r in type_key_by_id.items():
+        if r.key is not None:
+            full_key_groups.setdefault((r.kind, r.key), []).append(pid)
+        elif r.partial is not None:
+            partial_key_groups.setdefault((r.kind, r.partial), []).append(pid)
+
+    rows_by_id = {p.id: p for p in rows}
+
+    for (kind, _key), pids in full_key_groups.items():
+        products = [rows_by_id[pid] for pid in pids]
+        if len(products) < 2 or len(_distinct_stores(products)) < 2:
+            continue
+        winner = _pick_winner(products, history_count_by_id, photo_ids)
+        cards = _build_cards(products, keys_by_id, winner, "уверенно", photo_ids, history_count_by_id)
+        result.append(SimilarGroup(
+            brand=keys_by_id[winner.id].brand_display or kind, base_model=kind,
+            confidence="уверенно", match_key="type_key",
+            suggested_winner_id=winner.id, cards=cards,
+            model_display=kind,
+        ))
+        claimed_ids.update(pids)
+
+    for (kind, _partial), pids in partial_key_groups.items():
+        pids = [pid for pid in pids if pid not in claimed_ids]
+        products = [rows_by_id[pid] for pid in pids]
+        if len(products) < 2 or len(_distinct_stores(products)) < 2:
+            continue
+        winner = _pick_winner(products, history_count_by_id, photo_ids)
+        cards = _build_cards(products, keys_by_id, winner, "проверить", photo_ids, history_count_by_id)
+        winner_result = type_key_by_id[winner.id]
+        for card in cards:
+            if card.id == winner.id:
+                continue
+            other_result = type_key_by_id.get(card.id)
+            if other_result is not None:
+                card.diff_tokens = (_type_key_diff_reason(winner_result, other_result),)
+        result.append(SimilarGroup(
+            brand=keys_by_id[winner.id].brand_display or kind, base_model=kind,
+            confidence="проверить", match_key="type_key",
+            suggested_winner_id=winner.id, cards=cards,
+            model_display=kind,
+        ))
+        claimed_ids.update(pids)
+
+    # 1) Артикул производителя + бренд — confidence='уверенно' (только
+    # карточки, НЕ уже сгруппированные по штрихкоду выше).
     article_groups: dict[tuple, list] = {}
     for p in rows:
+        if p.id in claimed_ids:
+            continue
         gk = keys_by_id[p.id].article_group_key
         if gk is not None:
             article_groups.setdefault(gk, []).append(p)

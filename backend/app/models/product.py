@@ -113,3 +113,14 @@ class Product(Base):
         backref="products",
         lazy="selectin",
     )
+
+    # Штрихкоды (владелец, 27.10.2026, app/models/product_barcode.py) —
+    # lazy="selectin", тот же приём, что у purchase_categories выше (один
+    # доп. SELECT на весь результат запроса, не N+1). Строки истории
+    # читаются/пишутся ТОЛЬКО через products_import_apply.py/product_merge.py
+    # (ПРАВИЛО №6) — здесь только связь для показа в ProductOut.barcodes.
+    barcode_rows = relationship(
+        "ProductBarcode",
+        lazy="selectin",
+        order_by="ProductBarcode.id",
+    )

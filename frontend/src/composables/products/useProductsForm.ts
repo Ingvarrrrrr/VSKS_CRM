@@ -130,6 +130,9 @@ export function useProductsForm(options: {
     characteristics: null as Product['characteristics'],
     manufacturer: '' as string,
     article: '' as string,
+    // Штрихкоды (владелец, 27.10.2026) — только показ, см. _loadCharacteristics
+    // ниже (та же догрузка GET /products/{id}, что и manufacturer/article).
+    barcodes: [] as string[],
   })
   const form = reactive(emptyForm())
   // Bumped when we re-download / re-upload so the <img> bypasses browser cache.
@@ -244,6 +247,7 @@ export function useProductsForm(options: {
       characteristics: p.characteristics ?? null,
       manufacturer: p.manufacturer || '',
       article: p.article || '',
+      barcodes: p.barcodes || [],
     })
     photoCacheBuster.value = Date.now()
     resetPhotoState()
@@ -286,6 +290,7 @@ export function useProductsForm(options: {
       form.characteristics = full.characteristics ?? null
       form.manufacturer = full.manufacturer || ''
       form.article = full.article || ''
+      form.barcodes = full.barcodes || []
       emptyAtOpen.characteristics = !(full.characteristics && full.characteristics.length)
       characteristicsLoaded.value = true
     } catch {

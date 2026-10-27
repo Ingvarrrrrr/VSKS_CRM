@@ -60,6 +60,9 @@ export interface Product {
   characteristics?: ProductCharacteristic[] | null
   manufacturer?: string | null
   article?: string | null
+  // Штрихкоды (владелец, 27.10.2026, app/models/product_barcode.py) — только
+  // показ, см. ProductFormDialog.vue/useProductsForm.ts.
+  barcodes?: string[]
 }
 
 export interface ProductCharacteristic {

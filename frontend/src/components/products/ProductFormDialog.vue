@@ -231,6 +231,10 @@
           <v-col cols="12" ref="characteristicsSectionRef">
             <div v-if="form.manufacturer">Производитель: {{ form.manufacturer }}</div>
             <div v-if="form.article">Артикул производителя: {{ form.article }}</div>
+            <!-- Штрихкод (владелец, 27.10.2026) — главный ключ сведения
+                 карточки из разных магазинов (app/models/product_barcode.py),
+                 только показ, редактируется загрузчиком каталога. -->
+            <div v-if="form.barcodes && form.barcodes.length">Штрихкод: {{ form.barcodes.join(', ') }}</div>
             <!-- QA (26.10.2026, товар 50014): пока характеристики не
                  загрузились — явная ошибка, а не молчание (память проекта
                  feedback_no_generic_error_snackbar), редактор readonly

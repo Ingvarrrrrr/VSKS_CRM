@@ -17,6 +17,21 @@ name+description — при совпадении названия, но друг
       грузятся ОДНИМ запросом на весь файл (load_candidate_products_by_
       store_article, порциями через app.utils.chunking.chunked), не запрос
       на каждую строку.
+  (0.25) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026, штрихкод — ГЛАВНЫЙ ключ сведения
+      одной карточки товара из разных магазинов) — если у строки есть хоть
+      один валидный штрихкод (app.services.barcodes.normalize_barcode,
+      проверяет и приводит EAN-13/EAN-8/UPC-12/GTIN-14 к одному ключу) и он
+      уже записан за какой-то карточкой (product_barcodes,
+      app/models/product_barcode.py) — это тот же товар, даже у другого
+      магазина, с другим названием, брендом или артикулом. Проверяется
+      ПЕРЕД (0.5) (штрихкод надёжнее бренда+артикула), ПОСЛЕ (0)
+      (store_article самого магазина строки — ещё надёжнее). «Один магазин
+      не продаёт товар дважды» действует и здесь (products_import_match_
+      barcode.BarcodeCandidate.conflicts_with_row_store, та же единственная
+      реализация правила, что у (0.5) — conflicts_with_row_store, вынесена
+      в module-level функцию). Кандидаты — одним запросом на весь файл
+      (products_import_match_barcode.load_candidates_by_barcode, ПРАВИЛО №5
+      — отдельный файл, не разрастающий этот модуль).
   (0.5) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026, товар новой выгрузки, совпавший по
       бренду+артикулу производителя с товаром ДРУГОГО магазина — сразу в ту
       же карточку) — если у строки есть непустой manufacturer (не «брак»,
@@ -34,6 +49,18 @@ name+description — при совпадении названия, но друг
       затем с наименьшим id; многозначность — в reason. Кандидаты грузятся
       ОДНИМ запросом на весь файл (load_candidates_by_brand_article), не
       запрос на каждую строку.
+  (0.75) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026, ключ вида товара — пожарная
+      безопасность: огнетушитель/знак/рукав/шкаф, app.services.
+      product_type_keys) — если у строки распознан вид товара и полный
+      ключ (type_key), и в каталоге есть РОВНО ОДНА карточка ДРУГОГО
+      магазина с ТЕМ ЖЕ ключом, а в файле под этот ключ — РОВНО ОДНА
+      строка (правило однозначности, product_type_keys.keys_match_unique —
+      ЕДИНСТВЕННОЕ место этой логики, вторую проверку здесь не заводим) —
+      это тот же товар. Проверяется ПОСЛЕ (0.5) (бренд+артикул производителя
+      надёжнее — если он есть, этот критерий не нужен), ДО (а)/(б)/(в) по
+      названию. Кандидаты (продукты распознанных видов) и сравнение —
+      services/products_import_match_type_key.py (ПРАВИЛО №5, отдельный
+      файл — логика разбора видов товара объёмная).
   (а) точное совпадение «название+описание» после нормализации;
   (б) совпадение по названию, когда описание у кандидата из БД ИЛИ у строки
       файла — пустое (тогда это точно тот же товар, которому донаполняется
@@ -161,6 +188,24 @@ async def load_candidates_by_store_article(
     }
 
 
+def conflicts_with_row_store(
+    store_pairs, contractor_id: Optional[int], store_article: Optional[str],
+) -> bool:
+    """«Один магазин не продаёт товар дважды» (владелец, 27.10.2026) — True,
+    если среди `store_pairs` ({(contractor_id, store_article), ...} строк
+    истории товара-кандидата) есть строка ЭТОГО ЖЕ магазина (contractor_id),
+    но с ДРУГИМ store_article: значит кандидат — действительно РАЗНЫЙ товар,
+    сводить нельзя. ЕДИНСТВЕННАЯ реализация правила (ПРАВИЛО №6) —
+    используется и критерием (0.5, бренд+артикул производителя, ниже), и
+    критерием (0.25, штрихкод, products_import_match_barcode.py)."""
+    if contractor_id is None:
+        return False
+    for cid, sa in store_pairs:
+        if cid == contractor_id and sa != store_article:
+            return True
+    return False
+
+
 @dataclass
 class _BrandArticleCandidate:
     """Товар-кандидат критерия (0.5) + его строки истории цены, нужные для
@@ -171,16 +216,7 @@ class _BrandArticleCandidate:
     store_pairs: set = field(default_factory=set)  # {(contractor_id, store_article), ...}
 
     def conflicts_with_row_store(self, contractor_id: Optional[int], store_article: Optional[str]) -> bool:
-        """True — у кандидата уже есть строка истории ЭТОГО ЖЕ магазина
-        (contractor_id строки), но с ДРУГИМ store_article: тот же магазин не
-        продаёт один товар дважды под разными артикулами — значит это
-        действительно РАЗНЫЙ товар, сводить нельзя."""
-        if contractor_id is None:
-            return False
-        for cid, sa in self.store_pairs:
-            if cid == contractor_id and sa != store_article:
-                return True
-        return False
+        return conflicts_with_row_store(self.store_pairs, contractor_id, store_article)
 
 
 async def load_candidates_by_brand_article(
@@ -289,15 +325,30 @@ class ProductMatchIndex:
     def __init__(
         self, products=(), store_article_candidates: Optional[dict] = None,
         brand_article_candidates: Optional[dict] = None,
+        barcode_candidates: Optional[dict] = None,
+        type_key_candidates: Optional[dict] = None,
+        type_key_file_peers: Optional[dict] = None,
     ):
         self._by_name_desc: dict[tuple[str, str], Product] = {}
         self._by_name: dict[str, list[Product]] = {}
         # Критерий (0) — {(contractor_id, store_article): Product}, см.
         # load_candidates_by_store_article выше (владелец, 27.10.2026).
         self._by_store_article: dict = dict(store_article_candidates or {})
+        # Критерий (0.25) — {barcode: [BarcodeCandidate, ...]}, см.
+        # app.services.products_import_match_barcode.load_candidates_by_barcode
+        # (владелец, 27.10.2026, решение «штрихкод — главный ключ»).
+        self._by_barcode: dict = dict(barcode_candidates or {})
         # Критерий (0.5) — {(fold_brand, fold_article): [_BrandArticleCandidate, ...]},
         # см. load_candidates_by_brand_article выше (владелец, 27.10.2026).
         self._by_brand_article: dict = dict(brand_article_candidates or {})
+        # Критерий (0.75) — {(kind, key): [TypeKeyCandidate, ...]}, см.
+        # app.services.products_import_match_type_key.load_type_key_candidates
+        # (владелец, 27.10.2026, пожарная безопасность). type_key_file_peers —
+        # {kind: [TypeKeyResult, ...]} ВСЕХ строк файла того же kind, считается
+        # вызывающим кодом один раз на весь файл (правило однозначности,
+        # ПРАВИЛО №6 — не второй проход по файлу).
+        self._type_key_candidates: dict = dict(type_key_candidates or {})
+        self._type_key_file_peers: dict = dict(type_key_file_peers or {})
         for p in products:
             self.add(p)
 
@@ -316,30 +367,62 @@ class ProductMatchIndex:
         self, name: str, description, *,
         contractor_id: Optional[int] = None, store_article: Optional[str] = None,
         manufacturer: Optional[str] = None, manufacturer_article: Optional[str] = None,
+        barcodes: Optional[Iterable[str]] = None,
+        type_key_result=None,
     ) -> dict:
         """Возвращает {"product": Product|None, "reason": str|None,
         "matched_by": str|None}. `reason` заполнен, когда найдено НЕСКОЛЬКО
         товаров (многозначность) — независимо от того, какой из них в итоге
-        выбран. `matched_by` — 'store_article' | 'brand_article' | None, для
-        построчного отчёта импорта (апстрим пишет туда «сведено с №… по
-        бренду и артикулу производителя»).
+        выбран. `matched_by` — 'store_article' | 'barcode' | 'brand_article' |
+        'type_key' | None, для построчного отчёта импорта (апстрим пишет
+        туда «сведено с №… по штрихкоду» / «по бренду и артикулу
+        производителя» / «по ключу вида товара»).
 
         Критерий (0) (владелец, 27.10.2026) — ПЕРВЫЙ: contractor_id+
         store_article строки совпадает с уже известной строкой истории цены
         → тот же товар, даже если название в файле изменилось.
 
-        Критерий (0.5) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026) — ВТОРОЙ, до
+        Критерий (0.25) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026, штрихкод — главный
+        ключ) — ВТОРОЙ, до бренда+артикула и до названия: любой из
+        `barcodes` строки уже записан (product_barcodes) за карточкой —
+        тот же товар, даже у другого магазина. «Один магазин не продаёт
+        товар дважды» (BarcodeCandidate.conflicts_with_row_store) исключает
+        кандидатов с историей ЭТОГО ЖЕ магазина под другим store_article.
+        Несколько штрихкодов строки указывают на РАЗНЫЕ карточки (редкий
+        случай плохих данных) → каждая такая карточка отдельно проверяется
+        на конфликт, из оставшихся — с наибольшим числом строк истории,
+        затем с наименьшим id; многозначность — в reason.
+
+        Критерий (0.5) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026) — ТРЕТИЙ, до
         совпадений по названию: manufacturer+manufacturer_article строки
         совпадают (после fold_brand_or_code) с уже известным товаром ДРУГОГО
         магазина — тот же товар. «Один магазин не продаёт товар дважды»
         (_BrandArticleCandidate.conflicts_with_row_store) исключает
         кандидатов с историей ЭТОГО ЖЕ магазина под другим store_article.
-        (а)/(б)/(в) по названию не проверяются вовсе, если сработал (0) или
-        (0.5)."""
+        (а)/(б)/(в) по названию не проверяются вовсе, если сработал (0),
+        (0.25) или (0.5)."""
         if contractor_id is not None and store_article:
             by_article = self._by_store_article.get((contractor_id, store_article))
             if by_article is not None:
                 return {"product": by_article, "reason": None, "matched_by": "store_article"}
+
+        if barcodes:
+            eligible = []
+            for bc in barcodes:
+                for cand in (self._by_barcode.get(bc) or []):
+                    if not cand.conflicts_with_row_store(contractor_id, store_article):
+                        eligible.append(cand)
+            if eligible:
+                reason = None
+                distinct_products = {c.product.id or id(c.product): c.product for c in eligible}
+                if len(distinct_products) > 1:
+                    ids = ",".join(
+                        str(p.id) if p.id is not None else "новый"
+                        for p in sorted(distinct_products.values(), key=_sort_key)
+                    )
+                    reason = f"несколько товаров с этим штрихкодом (id: {ids})"
+                chosen = max(eligible, key=lambda c: (c.history_count, -(c.product.id or 0)))
+                return {"product": chosen.product, "reason": reason, "matched_by": "barcode"}
 
         if manufacturer and manufacturer_article:
             key = (fold_brand_or_code(manufacturer), fold_brand_or_code(manufacturer_article))
@@ -352,6 +435,16 @@ class ProductMatchIndex:
                     reason = f"несколько товаров с этим брендом и артикулом производителя (id: {ids})"
                 chosen = max(eligible, key=lambda c: (c.history_count, -(c.product.id or 0)))
                 return {"product": chosen.product, "reason": reason, "matched_by": "brand_article"}
+
+        if type_key_result is not None and type_key_result.key is not None:
+            from app.services.products_import_match_type_key import find_type_key_match
+            file_peers = self._type_key_file_peers.get(type_key_result.kind) or [type_key_result]
+            match = find_type_key_match(
+                self._type_key_candidates, type_key_result, file_peers,
+                contractor_id=contractor_id,
+            )
+            if match is not None:
+                return {"product": match.product, "reason": None, "matched_by": "type_key"}
 
         name_key = norm_key(name)
         desc_key = norm_key(description)

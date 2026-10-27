@@ -78,6 +78,18 @@ services/catalog_gala/electro_consistency.py). Поле необязательн
                                       #   "Страна производства"; апстрим
                                       #   пишет в Product.country_origin,
                                       #   только если он пуст или = "РФ"
+  "barcodes": [str, ...] | None,     # опционально (владелец, 27.10.2026) —
+                                      #   штрихкоды товара (EAN-13/EAN-8/
+                                      #   UPC-12/GTIN-14), только цифры,
+                                      #   может быть несколько (на упаковке/
+                                      #   у разных поставок), пусто — [].
+                                      #   ГЛАВНЫЙ ключ сведения одной карточки
+                                      #   товара из разных магазинов — см.
+                                      #   app.services.barcodes.normalize_barcode
+                                      #   (контрольная цифра проверяется ТАМ,
+                                      #   не здесь — валидатор формата
+                                      #   проверяет только тип, невалидные
+                                      #   штрихкоды отбрасывает апстрим).
   "seller_inn": str | None,          # опционально (владелец, 26.10) — ИНН
                                       #   юрлица/ИП магазина-источника
                                       #   (ссылка товара → домен →
@@ -181,6 +193,10 @@ def validate_gala_catalog(data: dict) -> list:
         if "photos" in item and item["photos"] is not None:
             if not isinstance(item["photos"], list) or not all(isinstance(p, str) for p in item["photos"]):
                 _err(errors, idx, "photos должен быть списком строк")
+
+        if "barcodes" in item and item["barcodes"] is not None:
+            if not isinstance(item["barcodes"], list) or not all(isinstance(b, str) for b in item["barcodes"]):
+                _err(errors, idx, "barcodes должен быть списком строк")
 
         if "links" in item and item["links"] is not None:
             links = item["links"]

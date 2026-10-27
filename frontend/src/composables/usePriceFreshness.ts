@@ -5,6 +5,8 @@
 // TTL/FX/category logic; this composable only formats/renders what the
 // backend already decided — no business logic duplicated here.
 
+import { isUrl, linkDomain } from '@/utils/sourceRefLink'
+
 export interface PriceFreshness {
   is_stale: boolean
   age_days: number | null
@@ -53,6 +55,29 @@ export function formatDateDDMMYYYY(iso?: string | null): string | null {
 }
 
 /**
+ * Единственное место, где текстовое поле "номер/ссылка" источника цены
+ * (price_source_ref / source_ref) превращается в показываемый текст
+ * (Правило №6 — formatPriceStamp, ProductsActualizeDialog.vue,
+ * useFeoPlannedItemAddDialog.ts читают отсюда, не дублируют у себя):
+ * - ref — ссылка на страницу товара в магазине (isUrl) → короткий домен
+ *   ("sima-land.ru"), полный URL — в :title у вызывающего шаблона;
+ * - иначе — как раньше, с «№» перед номером, если его там ещё нет
+ *   ("Запрос КП №7" не превращается в "№Запрос КП №7").
+ */
+export function formatSourceRef(ref?: string | null): string {
+  if (!ref) return ''
+  if (isUrl(ref)) return linkDomain(ref)
+  return ref.includes('№') ? ref : `№${ref}`
+}
+
+/** Полный URL источника — для :title/подсказки, когда formatSourceRef уже
+ * свернул ссылку до домена (владелец, 27.10.2026: кликабельность не нужна,
+ * но полный адрес должен быть виден по наведению). '' — ref не ссылка/нет ref. */
+export function sourceRefFullUrl(ref?: string | null): string {
+  return ref && isUrl(ref) ? ref : ''
+}
+
+/**
  * 'от 14.06.2026 · договор №123-ОК' — дата актуализации + источник.
  * Без даты → 'дата не указана' (владелец, 2026-08-29: нейтральная подпись,
  * серым, не подсветка — см. reason='never' в price_freshness.py).
@@ -66,13 +91,13 @@ export function formatPriceStamp(
   if (!dateStr) return 'дата не указана'
   let out = `от ${dateStr}`
   const label = source ? (PRICE_SOURCE_LABELS[source] || source) : null
-  if (label && ref) {
-    // Не дублируем «№», если ref уже содержит собственный номер ("Запрос КП №7").
-    out += ` · ${label} ${ref.includes('№') ? ref : '№' + ref}`
+  const refText = formatSourceRef(ref)
+  if (label && refText) {
+    out += ` · ${label} ${refText}`
   } else if (label) {
     out += ` · ${label}`
-  } else if (ref) {
-    out += ` · ${ref}`
+  } else if (refText) {
+    out += ` · ${refText}`
   }
   return out
 }
@@ -106,6 +131,8 @@ export function usePriceFreshness() {
     PRICE_STALE_CLASS,
     formatDateDDMMYYYY,
     formatPriceStamp,
+    formatSourceRef,
+    sourceRefFullUrl,
     freshnessColor,
     freshnessIcon,
     freshnessTooltip,

@@ -93,6 +93,10 @@ export interface PriceHistoryEntry {
   contractor_id?: number | null; contractor_name?: string | null
   collected_at?: string | null; note?: string | null
   created_by?: string | null; created_at?: string
+  // store_article (владелец, 27.10.2026) — номер товара в КОНКРЕТНОМ
+  // магазине этой строки истории (не производителя) — показывается рядом
+  // с магазином в PurchasePriceHistory.vue.
+  store_article?: string | null
 }
 
 export interface DupProduct { id: number; name: string; category?: string; product_type?: string; has_photo?: boolean; has_description?: boolean; score?: number; match?: 'exact' | 'fuzzy' }
@@ -154,3 +158,14 @@ export function priceSourceLabel(source: string, sourceRef?: string | null): str
   if (source === 'import') return `${base}: ${sourceRef}`
   return base
 }
+
+// Ссылка на страницу товара/истории цены — единственное место, где source_ref
+// распознаётся как URL и короткий текст ссылки считается доменом (Правило №6;
+// перенесено из PurchasePriceHistory.vue, 27.10.2026, чтобы SimilarProducts
+// Dialog.vue не заводил вторую такую же пару функций). Полный URL — в :title
+// у вызывающего шаблона, не распозналось — показываем ссылку как есть.
+// Сами функции живут в utils/sourceRefLink.ts (27.10.2026) — usePriceFreshness.ts
+// тоже их использует (formatSourceRef), а он не может импортировать отсюда:
+// этот файл импортирует тип PriceFreshness из usePriceFreshness.ts (цикл).
+// Реэкспорт ниже сохраняет существующие импорты из productsTypes рабочими.
+export { isUrl, linkDomain } from '@/utils/sourceRefLink'

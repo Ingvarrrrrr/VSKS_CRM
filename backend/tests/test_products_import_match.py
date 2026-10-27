@@ -192,6 +192,48 @@ async def test_category_not_overwritten_by_empty_like_values(db_session, test_us
 
 
 @pytest.mark.asyncio
+async def test_store_article_match_updates_same_product_despite_renamed_title(db_session, test_user):
+    """Критерий (0) (владелец, 27.10.2026): вторая загрузка того же магазина
+    (contractor_id+store_article совпадают с уже существующей строкой
+    истории цены) обновляет ТОТ ЖЕ товар, даже если название в файле
+    изменилось — не создаёт дубль по новому названию."""
+    from app.models.product_price_history import ProductPriceHistory
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    inn = "7799887766"
+    store_article = "SA-99001"
+    old_name = _uniq_name("СтароеНазвание")
+    new_name = _uniq_name("НовоеНазвание")
+
+    contractor_id = await find_or_create_contractor(
+        db_session, "Магазин для теста store_article", inn, match_by_name=False,
+    )
+    product = Product(name=old_name, category="Прочее", price=Decimal("100"))
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+    db_session.add(ProductPriceHistory(
+        product_id=product.id, price=Decimal("100"), source="import",
+        contractor_id=contractor_id, store_article=store_article,
+    ))
+    await db_session.commit()
+
+    col_idx = {"name": 0, "price": 1, "seller_inn": 2, "store_article": 3}
+    data_rows = [(new_name, "150", inn, store_article)]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="store_article_rename.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 0, result
+    assert result["updated"] == 1, result
+    assert await _count_by_name(db_session, new_name) == 0, "по новому названию не создан отдельный товар"
+
+    await db_session.refresh(product)
+    assert product.name == old_name, "название товара не меняется этим механизмом"
+    assert product.price == Decimal("150")
+
+
+@pytest.mark.asyncio
 async def test_new_product_without_category_gets_default(db_session, test_user):
     name = _uniq_name("НоваяКатегорияДефолт")
     col_idx = {"name": 0, "category": 1}

@@ -245,9 +245,9 @@ async def deduplicate_products(
     await assert_can_edit_catalog(current_user, db)
     from app.product_matcher import name_similarity, _normalize
     from collections import defaultdict
-    from sqlalchemy import func, update as sa_update
-    from app.models.purchase_item import PurchaseItem
+    from sqlalchemy import func
     from app.services.product_dedup_sql import sql_dedup_normalized_name_expr
+    from app.services.product_merge import merge_products
 
     skipped_ids = set()
     if skip_ids:
@@ -354,20 +354,19 @@ async def deduplicate_products(
             "kept": total_products,
         }
 
+    # Слияние — через app.services.product_merge.merge_products (ПРАВИЛО №6,
+    # владелец 27.10.2026): раньше тут переносился только PurchaseItem.product_id
+    # и дубль удалялся — история цен/фото/описания (CASCADE) терялись,
+    # wish_items/contract_items/commercial_request получали NULL. Группировка
+    # (точное совпадение имени, приоритет winner'а) НЕ меняется — merge_products
+    # только переносит данные и дозаполняет пустые поля winner'а.
     deleted = 0
     for grp in duplicate_groups:
         winner_id = grp["winner"]["id"]
         dup_ids = [dup["id"] for dup in grp["duplicates"] if dup["id"] not in skipped_ids]
         if not dup_ids:
             continue
-        await db.execute(
-            sa_update(PurchaseItem)
-            .where(PurchaseItem.product_id.in_(dup_ids))
-            .values(product_id=winner_id)
-        )
-        await db.execute(
-            Product.__table__.delete().where(Product.id.in_(dup_ids))
-        )
+        await merge_products(db, winner_id, dup_ids, current_user)
         deleted += len(dup_ids)
 
     await db.commit()

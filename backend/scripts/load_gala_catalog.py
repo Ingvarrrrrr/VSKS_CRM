@@ -14,8 +14,15 @@
      цикл создания/обновления товаров — apply_products_import
      (services/products_import_apply.py), с supplier_description=True
      (описание строки = build_tech_description(характеристики, описание
-     поставщика), characteristics/manufacturer/article заполняются по
-     правилам этого режима — см. докстринг apply_products_import);
+     поставщика), characteristics/manufacturer/manufacturer_article
+     заполняются по правилам этого режима — см. докстринг
+     apply_products_import). Устаревшее item.article (владелец,
+     27.10.2026) раскладывается ЗДЕСЬ, в item_to_row, на
+     manufacturer_article/store_article по магазину строки (seller_inn →
+     catalog_gala.stores.split_legacy_article, ПРАВИЛО №6) — если конвертер
+     уже дал manufacturer_article/store_article явно, они приоритетнее;
+     store_article/region уходят только в историю цены, см. докстринг
+     apply_products_import;
   3. (--photos) скачивает фото новым/обновлённым товарам без photo_data —
      тем же services/product_photo_download.py, которым пользуется
      POST /api/products/download-photos (routers/products_photos.py), не
@@ -45,6 +52,7 @@ from app.database import async_session
 from app.models.product import Product
 from app.models.user import User
 from app.services.catalog_gala.format import validate_gala_catalog
+from app.services.catalog_gala.stores import split_legacy_article
 from app.services.product_catalog_guard import can_edit_catalog
 from app.services.product_photo_download import download_and_save_photo, pick_external_url
 from app.services.products_import_apply import apply_products_import
@@ -54,7 +62,8 @@ _MAX_LINKS = 9
 FIXED_COLUMNS = [
     "name", "description", "category", "product_type", "price", "price_date",
     "unit", "pack_quantity", "pack_unit", "photo_link", "is_reusable",
-    "is_active", "characteristics", "manufacturer", "article", "country_origin",
+    "is_active", "characteristics", "manufacturer", "manufacturer_article",
+    "store_article", "region", "country_origin",
     "seller_inn", "source_url",
 ] + [f"link_url_{n}" for n in range(1, _MAX_LINKS + 1)] + [
     f"link_price_{n}" for n in range(1, _MAX_LINKS + 1)
@@ -92,9 +101,20 @@ def item_to_row(item: dict) -> tuple:
     row[COL_IDX["is_active"]] = _bool_to_cell(item.get("is_active"))
     row[COL_IDX["characteristics"]] = item.get("characteristics") or []
     row[COL_IDX["manufacturer"]] = item.get("manufacturer")
-    row[COL_IDX["article"]] = item.get("article")
+    seller_inn = item.get("seller_inn")
+    # Трактовка устаревшего item.article (владелец, 27.10.2026, ПРАВИЛО №6,
+    # ЕДИНСТВЕННОЕ место — catalog_gala.stores.split_legacy_article): новые
+    # поля manufacturer_article/store_article, если конвертер уже их задал,
+    # ПРИОРИТЕТНЕЕ — article для них в этом случае игнорируется; иначе
+    # раскладываем article по магазину строки (seller_inn).
+    legacy_manufacturer_article, legacy_store_article = split_legacy_article(
+        item.get("article"), seller_inn
+    )
+    row[COL_IDX["manufacturer_article"]] = item.get("manufacturer_article") or legacy_manufacturer_article
+    row[COL_IDX["store_article"]] = item.get("store_article") or legacy_store_article
+    row[COL_IDX["region"]] = item.get("region")
     row[COL_IDX["country_origin"]] = item.get("country_origin")
-    row[COL_IDX["seller_inn"]] = item.get("seller_inn")
+    row[COL_IDX["seller_inn"]] = seller_inn
     row[COL_IDX["source_url"]] = item.get("source_url")
     for i, link in enumerate((item.get("links") or [])[:_MAX_LINKS], start=1):
         row[COL_IDX[f"link_url_{i}"]] = link.get("url")

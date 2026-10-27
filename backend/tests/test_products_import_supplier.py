@@ -25,7 +25,7 @@ def _uniq_name(suffix: str) -> str:
 async def test_new_product_gets_characteristics_manufacturer_article_and_built_description(db_session, test_user):
     name = _uniq_name("Новый")
     chars = [{"name": "Серия", "value": "Mosaic", "unit": None}]
-    col_idx = {"name": 0, "description": 1, "characteristics": 2, "manufacturer": 3, "article": 4}
+    col_idx = {"name": 0, "description": 1, "characteristics": 2, "manufacturer": 3, "manufacturer_article": 4}
     data_rows = [(name, "Накладка для розетки.", chars, "Legrand", "078604")]
 
     result = await apply_products_import(
@@ -61,7 +61,7 @@ async def test_existing_product_characteristics_replaced_manufacturer_article_fi
     await db_session.refresh(product)
 
     new_chars = [{"name": "Серия", "value": "Mosaic", "unit": None}]
-    col_idx = {"name": 0, "description": 1, "characteristics": 2, "manufacturer": 3, "article": 4}
+    col_idx = {"name": 0, "description": 1, "characteristics": 2, "manufacturer": 3, "manufacturer_article": 4}
     data_rows = [(name, "Текст поставщика.", new_chars, "Legrand", "078604")]
 
     result = await apply_products_import(

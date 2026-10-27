@@ -40,7 +40,12 @@
               <td>{{ r.collected_at || '—' }}</td>
               <td class="font-weight-medium">{{ r.price != null ? formatMoney(r.price) : '—' }}</td>
               <td>{{ r.sourceLabel }}</td>
-              <td>{{ r.contractor_name || '—' }}</td>
+              <td>
+                {{ r.contractor_name || '—' }}
+                <div v-if="r.store_article" class="text-caption text-medium-emphasis">
+                  арт. магазина {{ r.store_article }}
+                </div>
+              </td>
               <td>
                 <a v-if="r.linkUrl" :href="r.linkUrl" :title="r.linkUrl" target="_blank" rel="noopener noreferrer">{{ linkDomain(r.linkUrl) }}</a>
                 <span v-else-if="r.source_ref">{{ r.source_ref }}</span>
@@ -104,7 +109,7 @@ import { computed, watch } from 'vue'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import { useProductPriceHistory } from '@/composables/products/useProductPriceHistory'
 import type { DraftPriceEntry } from '@/composables/products/useProductPriceHistory'
-import { avgPriceBasisText, priceSourceLabel } from '@/composables/products/productsTypes'
+import { avgPriceBasisText, priceSourceLabel, isUrl, linkDomain } from '@/composables/products/productsTypes'
 import type { PriceLink } from '@/composables/products/productsTypes'
 import { useToast, type ToastType } from '@/composables/useToast'
 
@@ -164,27 +169,12 @@ interface DisplayRow {
   price: number | null
   sourceLabel: string
   contractor_name: string | null
+  store_article?: string | null
   source_ref: string | null
   linkUrl: string | null
   canDelete: boolean
   isDraft?: boolean
   draftIndex?: number
-}
-
-function isUrl(v: string | null | undefined): boolean {
-  return !!v && /^https?:\/\//i.test(v.trim())
-}
-
-// Короткий текст ссылки в таблице «Цены» (владелец, 26.10) — домен страницы
-// товара, полный URL — в title (см. :title в шаблоне). Не распозналось —
-// показываем ссылку как есть (длинную), чтобы не потерять данные.
-function linkDomain(url: string | null): string {
-  if (!url) return 'ссылка'
-  try {
-    return new URL(url).hostname.replace(/^www\./, '') || url
-  } catch {
-    return url
-  }
 }
 
 const rows = computed<DisplayRow[]>(() => {
@@ -195,6 +185,7 @@ const rows = computed<DisplayRow[]>(() => {
     price: e.price,
     sourceLabel: priceSourceLabel(e.source, e.source_ref),
     contractor_name: e.contractor_name || null,
+    store_article: e.store_article || null,
     source_ref: isUrl(e.source_ref) ? null : (e.source_ref || null),
     linkUrl: isUrl(e.source_ref) ? e.source_ref! : null,
     canDelete: !!e.created_by && e.created_by === currentUserName,

@@ -31,38 +31,58 @@ from typing import Optional
 # ОГРН у юрлиц, ОГРНИП у ИП — модель Contractor (app/models/contractor.py)
 # хранит оба в одном поле `ogrn`, поэтому здесь это единое поле без различения
 # по названию (как и в остальной БД).
-STORES: dict[str, dict[str, str]] = {
+#
+# article_is_manufacturer (владелец, 27.10.2026, задача product_similar п.4):
+# True — значение в колонке "Артикул" этого магазина — артикул ПРОИЗВОДИТЕЛЯ
+# (значит одинаковое у разных магазинов для одного и того же товара, можно
+# использовать как ключ сопоставления); False — это СВОЙ номер магазина
+# (у Сима-ленда «Артикул Сима-ленд», у Бауцентра «Артикул» — внутренний
+# номенклатурный номер, по проду 27.10.2026 у одного и того же товара
+# отличается между магазинами). Проверено на проде: True — electro-mpo.ru
+# (МПО Электромонтаж, пример 14054DEK), k-spasatel.ru (Высокая опора, пример
+# M34A TLN). False — sima-land.ru (1431671), baucenter.ru (643000047).
+# Остальные — False (пока не проверено на реальных файлах — безопасный
+# дефолт "не считать артикулом производителя").
+STORES: dict[str, dict] = {
     "sima-land.ru": {
         "name": "ООО ТД «Сима-ленд»", "inn": "6679104850",
         "ogrn": "1176658004929", "org_type": "Юр.лицо",
+        "article_is_manufacturer": False,
     },
     "baucenter.ru": {
         "name": "ООО «Бауцентр Рус»", "inn": "7702596813",
         "ogrn": "1067746357524", "org_type": "Юр.лицо",
+        "article_is_manufacturer": False,
     },
     "electro-mpo.ru": {
         "name": "ЗАО «МПО Электромонтаж»", "inn": "7719079370",
         "ogrn": "1037700089052", "org_type": "Юр.лицо",
+        "article_is_manufacturer": True,
     },
     "vkusvill.ru": {
         "name": "АО «Вкусвилл»", "inn": "7734443270",
         "ogrn": "1217700253671", "org_type": "Юр.лицо",
+        "article_is_manufacturer": False,
     },
     "k-spasatel.ru": {
         "name": "ООО «Высокая опора»", "inn": "9718172669",
         "ogrn": "1217700197219", "org_type": "Юр.лицо",
+        "article_is_manufacturer": True,
     },
     "magazin01.ru": {
         "name": "ООО «Торговая сеть «Магазин 01»»", "inn": "7718595621",
         "ogrn": "1067746872490", "org_type": "Юр.лицо",
+        "article_is_manufacturer": False,
     },
     "medtehno.ru": {
         "name": "ООО «Промедик»", "inn": "7725810446",
         "ogrn": "5137746124698", "org_type": "Юр.лицо",
+        "article_is_manufacturer": False,
     },
     "ice-age.ru": {
         "name": "ИП Оганов Артём Айкович", "inn": "772823702838",
         "ogrn": "305770000298252", "org_type": "ИП",
+        "article_is_manufacturer": False,
     },
 }
 
@@ -119,6 +139,32 @@ def store_for_inn(inn: Optional[str]) -> Optional[dict]:
         if info["inn"] == inn:
             return info
     return None
+
+
+def article_is_manufacturer_for_inn(inn: Optional[str]) -> bool:
+    """True, если у магазина с этим ИНН колонка "Артикул" несёт артикул
+    ПРОИЗВОДИТЕЛЯ (см. комментарий у STORES выше) — используется
+    app.services.product_similar для ключа сопоставления по артикулу.
+    Неизвестный ИНН/магазин → False (безопасный дефолт — не считать
+    незнакомое значение артикулом производителя)."""
+    info = store_for_inn(inn)
+    return bool(info and info.get("article_is_manufacturer"))
+
+
+def split_legacy_article(article: Optional[str], inn: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """ЕДИНСТВЕННОЕ место трактовки устаревшего поля item.article (ПРАВИЛО
+    №6, владелец 27.10.2026, см. докстринг item в format.py) — раскладывает
+    его на (manufacturer_article, store_article) по article_is_manufacturer_
+    for_inn(inn): True → (article, None), False/неизвестный ИНН → (None,
+    article). Пустой/None article → (None, None). Вызывают конвертеры
+    (from_*.py, когда у них ещё нет отдельных manufacturer_article/
+    store_article полей источника) и products_import_apply.py (трактовка
+    article старых файлов GALA без новых колонок)."""
+    if not article:
+        return None, None
+    if article_is_manufacturer_for_inn(inn):
+        return article, None
+    return None, article
 
 
 def seller_inn_for_url(url: Optional[str]) -> Optional[str]:

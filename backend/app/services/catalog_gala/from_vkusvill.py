@@ -46,6 +46,10 @@ description НЕ переносится (владелец, 2026-10-26): текс
 собирается только из characteristics (см.
 services/product_tech_description.py::build_tech_description).
 
+manufacturer_article/store_article (владелец, 27.10.2026): эта выгрузка не
+несёт никакого артикула вовсе (ни в плоском, ни в структурном формате) —
+оба поля всегда None.
+
 Названия поставщиков в "Состав"/"Пищевая и энергетическая ценность в 100 г"
 (владелец, 2026-10-26, Задача 2) — у части товаров значение собрано из
 нескольких поставщиков построчно, у каждой строки свой текст с префиксом/
@@ -147,7 +151,8 @@ def _convert_flat_item(row: dict) -> dict:
         "price_date": None,
         "currency": "RUB" if price is not None else None,
         "manufacturer": None,
-        "article": None,
+        "manufacturer_article": None,
+        "store_article": None,
         "description": None,  # реклама, не характеристика (владелец, 26.10)
         "characteristics": [],
         "photos": [photo] if photo else [],
@@ -226,7 +231,8 @@ def _convert_structured_item(row: dict) -> dict:
         "price_date": None,
         "currency": currency,
         "manufacturer": None,
-        "article": None,
+        "manufacturer_article": None,
+        "store_article": None,
         "description": None,  # реклама, не характеристика (владелец, 26.10)
         "characteristics": characteristics,
         "photos": photos,

@@ -41,7 +41,8 @@ def test_electro_mpo_converter():
     assert result["source"] == "electro_mpo"
     item = result["items"][0]
     assert item["manufacturer"] == "Legrand"
-    assert item["article"] == "078604"
+    assert item["manufacturer_article"] == "078604"
+    assert item["store_article"] is None
     assert item["product_type"] == "Розетка телефонная"
     # Задача 2 (26.10): «Высота» — габарит упаковки, не попадает в
     # техописание (in_description=False), но хранится в карточке полностью.
@@ -249,6 +250,51 @@ def test_validate_ok_on_minimal_item():
     assert validate_gala_catalog(envelope) == []
 
 
+# --- manufacturer_article/store_article/region (владелец, 27.10.2026) -------
+
+def test_validate_accepts_manufacturer_article_store_article_region():
+    envelope = _envelope("gala_sheet", [{
+        "name": "X", "manufacturer_article": "14054DEK", "store_article": "4878510",
+        "region": "Краснодарский край",
+    }])
+    assert validate_gala_catalog(envelope) == []
+
+
+def test_validate_accepts_null_manufacturer_article_store_article_region():
+    envelope = _envelope("gala_sheet", [{
+        "name": "X", "manufacturer_article": None, "store_article": None, "region": None,
+    }])
+    assert validate_gala_catalog(envelope) == []
+
+
+def test_validate_rejects_non_string_manufacturer_article_store_article_region():
+    envelope = _envelope("gala_sheet", [{"name": "X", "manufacturer_article": 123}])
+    errors = validate_gala_catalog(envelope)
+    assert any("manufacturer_article" in e for e in errors)
+
+    envelope2 = _envelope("gala_sheet", [{"name": "X", "store_article": 123}])
+    errors2 = validate_gala_catalog(envelope2)
+    assert any("store_article" in e for e in errors2)
+
+    envelope3 = _envelope("gala_sheet", [{"name": "X", "region": 123}])
+    errors3 = validate_gala_catalog(envelope3)
+    assert any("region" in e for e in errors3)
+
+
+def test_split_legacy_article_manufacturer_store_and_empty():
+    from app.services.catalog_gala.stores import split_legacy_article
+    # electro-mpo.ru — article_is_manufacturer=True → manufacturer_article
+    assert split_legacy_article("14054DEK", "7719079370") == ("14054DEK", None)
+    # sima-land.ru — article_is_manufacturer=False → store_article
+    assert split_legacy_article("4878510", "6679104850") == (None, "4878510")
+    # неизвестный/пустой ИНН — безопасный дефолт store_article
+    assert split_legacy_article("X1", None) == (None, "X1")
+    assert split_legacy_article("X1", "0000000000") == (None, "X1")
+    # пустой article — ничего не раскладываем
+    assert split_legacy_article(None, "7719079370") == (None, None)
+    assert split_legacy_article("", "7719079370") == (None, None)
+
+
 def test_validate_accepts_in_description_flag_and_excluded():
     envelope = _envelope("electro_mpo", [{
         "name": "X", "characteristics": [{"name": "Высота", "value": "1", "in_description": False}],
@@ -322,7 +368,8 @@ def test_baucenter_converter():
     assert item["category_path"] == ["Гипсокартон и ГВЛ"]
     assert item["product_type"] == "Гипсокартон и ГВЛ"
     assert item["manufacturer"] is None  # brand="" -> None
-    assert item["article"] == "506000393"
+    assert item["manufacturer_article"] is None
+    assert item["store_article"] == "506000393"
     assert item["unit"] is None  # unit="" -> None
     assert item["source_id"] == "982926"
     assert item["photos"] == ["https://baucenter.ru/upload/x-0.webp", "https://baucenter.ru/upload/x-11.webp"]
@@ -339,7 +386,7 @@ def test_baucenter_zero_price_is_null_and_photo_fallback():
     }]
     item = from_baucenter.convert(raw, "f.json")["items"][0]
     assert item["price"] is None
-    assert item["article"] is None
+    assert item["store_article"] is None
     assert item["photos"] == ["https://x/p.jpg"]
     assert item["links"] == []
 
@@ -561,7 +608,7 @@ def test_store_nomenclature_basic_mapping():
     assert item["category_path"] == ["Альпинистское снаряжение и промальп"]
     assert item["product_type"] is None
     assert item["price"] == 7490.0
-    assert item["article"] == "C068AA00"
+    assert item["store_article"] == "C068AA00"
     # Задача 1 (26.10, пересмотр): текст поставщика переносится, служебный
     # заголовок-повтор "Описание <название>" срезается.
     assert item["description"] == "Соответствует ГОСТ."
@@ -621,7 +668,7 @@ def test_store_nomenclature_article_and_manufacturer_priority():
         },
     }]
     item = from_store_nomenclature.convert(raw, "f.json")["items"][0]
-    assert item["article"] == "A1"
+    assert item["store_article"] == "A1"
     assert item["manufacturer"] == "ООО Медплант"
     names = {c["name"] for c in item["characteristics"]}
     assert "Производитель" not in names
@@ -765,7 +812,7 @@ def test_store_nomenclature_sima_land_fragment():
     result = from_store_nomenclature.convert(raw, "sima_land_catalog_all.json")
     item = result["items"][0]
     assert item["manufacturer"] == "Сима-ленд"
-    assert item["article"] == "4878510"
+    assert item["store_article"] == "4878510"
     assert item["country_origin"] == "Китай"
     # Задача 1 (26.10, пересмотр): текст без служебного префикса "Описание"
     # переносится как есть — это нормальный текст поставщика о товаре.
@@ -807,7 +854,7 @@ def test_store_nomenclature_sima_land_article_differs_kept_as_characteristic():
         "specifications": {"Артикул поставщика": "200"},
     }]
     item = from_store_nomenclature.convert(raw, "sima_land_catalog_all.json")["items"][0]
-    assert item["article"] == "100"
+    assert item["store_article"] == "100"
     by_name = {c["name"]: c for c in item["characteristics"]}
     assert by_name["Артикул поставщика"]["value"] == "200"
 
@@ -822,7 +869,25 @@ def test_store_nomenclature_top_level_brand_article_no_specs():
     }]
     item = from_store_nomenclature.convert(raw, "sima_land_catalog_all.json")["items"][0]
     assert item["manufacturer"] == "Сима-ленд"
-    assert item["article"] == "999"
+    assert item["store_article"] == "999"
+
+
+def test_store_nomenclature_k_spasatel_article_is_manufacturer_article():
+    """Владелец, 27.10.2026: k-spasatel.ru (article_is_manufacturer=True в
+    stores.py) — article этой строки — артикул ПРОИЗВОДИТЕЛЯ, не номер
+    магазина (пример владельца: M34A TLN). Решение принимается ПО СТРОКЕ
+    (через seller_inn магазина этой строки), не по имени файла — та же
+    выгрузка store_nomenclature обслуживает и Сима-ленд (store_article), и
+    k-spasatel.ru (manufacturer_article)."""
+    raw = [{
+        "name": "Высокая опора M34A TLN", "category": "Альпинистское снаряжение",
+        "unit": "шт", "price_rub": 15000, "source_store": "Высокая опора (k-spasatel.ru)",
+        "link_1": "https://k-spasatel.ru/product/m34a-tln", "photo_url": None,
+        "specifications": {"Артикул": "M34A TLN"},
+    }]
+    item = from_store_nomenclature.convert(raw, "k_spasatel_rescue_nomenclature.json")["items"][0]
+    assert item["manufacturer_article"] == "M34A TLN"
+    assert item["store_article"] is None
 
 
 # --- _strip_description_prefix (Задача 1, 26.10, пересмотр) -----------------

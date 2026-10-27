@@ -37,7 +37,31 @@ services/catalog_gala/electro_consistency.py). Поле необязательн
   "price_date": str | None,          # ISO-дата "YYYY-MM-DD"
   "currency": str | None,
   "manufacturer": str | None,
-  "article": str | None,
+  "article": str | None,             # УСТАРЕВШЕЕ (владелец, 27.10.2026, см.
+                                      #   ниже) — новые конвертеры должны
+                                      #   писать manufacturer_article/
+                                      #   store_article, article оставлен для
+                                      #   обратной совместимости старых файлов.
+  "manufacturer_article": str | None,  # опционально (владелец, 27.10.2026) —
+                                      #   артикул ПРОИЗВОДИТЕЛЯ, одинаковый у
+                                      #   товара во ВСЕХ магазинах, где он
+                                      #   продаётся (пример: 14054DEK у МПО
+                                      #   Электромонтаж, M34A TLN у
+                                      #   k-spasatel.ru — у обоих эти магазины
+                                      #   имеют stores.STORES[...]
+                                      #   ["article_is_manufacturer"]=True).
+  "store_article": str | None,       # опционально (владелец, 27.10.2026) —
+                                      #   номер товара в КОНКРЕТНОМ магазине
+                                      #   (специфичен для магазина, пример:
+                                      #   "Артикул Сима-ленд" 4878510,
+                                      #   «Артикул» Бауцентра 705003235 —
+                                      #   у обоих stores.py отмечает
+                                      #   article_is_manufacturer=False).
+  "region": str | None,               # опционально (владелец, 27.10.2026) —
+                                      #   субъект РФ, для которого действует
+                                      #   ЭТА цена; null = действует по всей
+                                      #   России (не путать с item['category']
+                                      #   и т.п. — это гео-регион цены).
   "description": str | None,         # вольный текст поставщика
   "characteristics": [
       {"name": str, "value": str | None, "unit": str | None,
@@ -66,6 +90,16 @@ services/catalog_gala/electro_consistency.py). Поле необязательн
                                       #   contractor_resolve.find_or_create_
                                       #   contractor).
 }
+
+Трактовка устаревшего article (владелец, 27.10.2026, без изменения поведения
+старых файлов): если в строке НЕ задано явно manufacturer_article/
+store_article — article трактуется по магазину строки (seller_inn →
+catalog_gala.stores.article_is_manufacturer_for_inn): True → это
+manufacturer_article, False (включая неизвестный seller_inn) → это
+store_article. Если manufacturer_article/store_article заданы в самой
+строке явно — article для соответствующей трактовки игнорируется (новое
+поле приоритетнее). Единственное место этого правила —
+catalog_gala.stores.split_legacy_article (ПРАВИЛО №6).
 """
 
 GALA_FORMAT_NAME = "gala-catalog"
@@ -75,6 +109,7 @@ _KNOWN_STRING_FIELDS = (
     "category", "product_type", "item_kind", "unit", "pack_unit",
     "price_date", "currency", "manufacturer", "article", "description",
     "source_url", "source_id", "country_origin", "seller_inn",
+    "manufacturer_article", "store_article", "region",
 )
 _KNOWN_NUMBER_OR_NULL_FIELDS = ("pack_quantity", "price")
 _KNOWN_BOOL_OR_NULL_FIELDS = ("is_reusable", "is_active")

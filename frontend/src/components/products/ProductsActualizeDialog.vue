@@ -56,7 +56,7 @@
             <tr v-for="h in dialog.history" :key="h.id">
               <td>{{ formatDateDDMMYYYY(h.collected_at || h.created_at) || '—' }}</td>
               <td>{{ Number(h.price).toLocaleString('ru-RU') }} ₽</td>
-              <td>{{ PRICE_SOURCE_LABELS[h.source] || h.source }}{{ h.source_ref ? ` · ${h.source_ref}` : '' }}</td>
+              <td>{{ PRICE_SOURCE_LABELS[h.source] || h.source }}{{ h.source_ref ? ` · ${formatSourceRef(h.source_ref)}` : '' }}</td>
               <td>{{ h.created_by || '—' }}</td>
             </tr>
           </tbody>
@@ -75,7 +75,7 @@
 
 <script setup lang="ts">
 import ContractorPicker from '@/components/ContractorPicker.vue'
-import { PRICE_SOURCE_LABELS, formatDateDDMMYYYY } from '@/composables/usePriceFreshness'
+import { PRICE_SOURCE_LABELS, formatDateDDMMYYYY, formatSourceRef } from '@/composables/usePriceFreshness'
 import type { Product, PriceHistoryEntry } from '@/composables/products/productsTypes'
 
 defineProps<{

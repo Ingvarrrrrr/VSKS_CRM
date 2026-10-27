@@ -40,13 +40,14 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.product import DEFAULT_PRODUCT_CATEGORY, Product
 from app.services.catalog_gala.stores import store_for_inn
 from app.services.contractor_resolve import find_or_create_contractor
-from app.services.price_actualization import actualize_product_price
+from app.services.price_actualization import actualize_product_price, record_price_point
 from app.services.product_unit import backfill_product_unit
 from app.services.product_description_merge import (
     is_new_description_shorter, merge_missing_lines,
 )
 from app.services.products_import_match import (
-    ProductMatchIndex, load_candidate_products, norm_key as _norm_key_for_match,
+    ProductMatchIndex, load_candidate_products, load_candidates_by_store_article,
+    norm_key as _norm_key_for_match,
 )
 from app.services.text_case import capitalize_first
 from app.services.units import is_pack_unit
@@ -198,8 +199,8 @@ async def apply_products_import(
     supplier_description (владелец, 2026-10-26, загрузчик каталогов
     поставщиков GALA) — col_idx может содержать поля "characteristics"
     (список [{"name","value","unit",...}], берётся из row как есть, БЕЗ
-    str()-приведения — в отличие от обычных ячеек) и "manufacturer"/"article"
-    (обычные текстовые ячейки). Когда True:
+    str()-приведения — в отличие от обычных ячеек) и "manufacturer"/
+    "manufacturer_article" (обычные текстовые ячейки). Когда True:
       - описание строки заменяется на
         build_tech_description(characteristics, description строки) —
         ЕДИНСТВЕННАЯ сборка техописания (ПРАВИЛО №6, см.
@@ -208,12 +209,24 @@ async def apply_products_import(
         set_product_description, с историей);
       - characteristics существующего товара заменяются файловыми, если в
         файле они непустые;
-      - manufacturer/article существующего товара заполняются, только если
-        у него эти поля были пусты (как и остальные _fill-поля);
+      - manufacturer/article (из "manufacturer_article") существующего
+        товара заполняются, только если у него эти поля были пусты (как и
+        остальные _fill-поля);
       - у НОВОГО товара заполняются все три поля (characteristics,
         manufacturer, article) из файла.
     Без supplier_description (дефолт False) — поведение прежнее, эти три
     поля не читаются и не трогаются.
+
+    "manufacturer_article" (владелец, 27.10.2026) — ЕДИНСТВЕННОЕ поле,
+    которое заполняет Product.article; устаревшее "article" (одноимённый
+    ключ col_idx) здесь больше не читается вовсе — трактовку старых файлов
+    GALA без новых колонок (article → manufacturer_article/store_article по
+    магазину строки) делает scripts/load_gala_catalog.py ДО вызова этой
+    функции, через catalog_gala.stores.split_legacy_article (ПРАВИЛО №6,
+    одно место трактовки). "store_article"/"region" (опционально, тоже
+    27.10.2026) — специфичны для магазина/гео строки, в Product НЕ попадают
+    вовсе, уходят только в строку истории цены (actualize_product_price/
+    record_price_point) того же магазина (row_contractor_id).
 
     Возвращает {created, updated, skipped, errors, product_ids,
     rows: [{row, action, name, reason}]}, action ∈
@@ -268,12 +281,34 @@ async def apply_products_import(
     file_names = {_cell(row, col_idx, "name") for row in data_rows}
     file_names.discard(None)
     candidate_products = await load_candidate_products(db, file_names)
+
+    # Критерий (0) сопоставления (владелец, 27.10.2026, manufacturer_article/
+    # store_article) — (contractor_id, store_article) со ВСЕХ строк файла,
+    # ОДНИМ запросом (products_import_match.load_candidates_by_store_article),
+    # не запрос на каждую строку. contractor_id нужен заранее — резолвим
+    # магазины ВСЕХ строк файла по их seller_inn сейчас же (та же функция/кэш
+    # _resolve_seller_contractor, что и ниже по циклу — повторный резолв того
+    # же ИНН просто берёт значение из _contractor_cache).
+    file_seller_inns = {_cell(row, col_idx, "seller_inn") for row in data_rows}
+    file_seller_inns.discard(None)
+    for _inn in file_seller_inns:
+        await _resolve_seller_contractor(_inn)
+    store_article_pairs = set()
+    for row in data_rows:
+        _inn = _cell(row, col_idx, "seller_inn")
+        _sa = _cell(row, col_idx, "store_article")
+        if _inn and _sa:
+            _cid = _contractor_cache.get(_inn)
+            if _cid is not None:
+                store_article_pairs.add((_cid, _sa))
+    store_article_candidates = await load_candidates_by_store_article(db, store_article_pairs)
+
     # Единственный индекс сопоставления строки импорта с товаром каталога
     # (ПРАВИЛО №6, services/products_import_match.py) — пополняется новыми
     # товарами СРАЗУ после создания (см. match_index.add(p) ниже), поэтому
     # повтор позиции внутри одного файла находит уже созданный товар, а не
     # плодит второй created (Задача 2).
-    match_index = ProductMatchIndex(candidate_products)
+    match_index = ProductMatchIndex(candidate_products, store_article_candidates)
 
     created = 0
     updated = 0
@@ -287,6 +322,14 @@ async def apply_products_import(
     # db.flush() ниже — актуализацию цены (и запись в историю) для них
     # откладываем до post-flush прохода (см. цикл после `await db.flush()`).
     pending_new_price: list = []
+    # Задача 2 (owner, 27.10.2026, product_merge): точки истории "второго
+    # магазина", которые НЕ должны стать текущей ценой товара (цена не более
+    # актуальна по _price_is_more_actual) — для товаров, созданных ЭТИМ ЖЕ
+    # файлом и ещё не flushed (нет product_id для записи истории сразу,
+    # см. _set_description выше по той же причине). Пишутся post-flush через
+    # record_price_point (update_product_price=False) — та же единственная
+    # точка записи истории, что и для существующих товаров ниже.
+    pending_new_price_point_only: list = []
     # Виртуальное "текущее" (цена, дата) для товаров без product.id —
     # нужно, чтобы повтор позиции внутри файла применял то же правило
     # «цена обновляется, только если дата строки не старше» (Задача 5), что
@@ -333,14 +376,20 @@ async def apply_products_import(
                 # scripts/load_gala_catalog.py) ---
                 characteristics_val = None
                 manufacturer_val = None
-                article_val = None
+                manufacturer_article_val = None
                 country_origin_val = None
                 if supplier_description:
                     _chars_idx = col_idx.get("characteristics")
                     if _chars_idx is not None and _chars_idx < len(row):
                         characteristics_val = row[_chars_idx] or None
                     manufacturer_val = _cell(row, col_idx, "manufacturer")
-                    article_val = _cell(row, col_idx, "article")
+                    # manufacturer_article (владелец, 27.10.2026) — ЕДИНСТВЕННОЕ
+                    # поле, заполняющее Product.article (устаревший "article"
+                    # больше не читается здесь напрямую — трактовку старых
+                    # файлов GALA без новых колонок делает load_gala_catalog.py
+                    # через catalog_gala.stores.split_legacy_article, ДО того,
+                    # как строка попадёт сюда).
+                    manufacturer_article_val = _cell(row, col_idx, "manufacturer_article")
                     country_origin_val = _cell(row, col_idx, "country_origin")
                     desc_val = build_tech_description(characteristics_val, desc_val)
                 effective_replace_descriptions = replace_descriptions or supplier_description
@@ -377,6 +426,13 @@ async def apply_products_import(
                     or filename
                 )
                 row_contractor_id = await _resolve_seller_contractor(_cell(row, col_idx, "seller_inn"))
+                # store_article/region (владелец, 27.10.2026) — специфичны
+                # для магазина/гео этой строки, уходят только в строку
+                # истории цены (ProductPriceHistory), НЕ на Product. Колонки
+                # опциональны — обычный Excel-импорт без них ведёт себя как
+                # раньше (оба None).
+                row_store_article = _cell(row, col_idx, "store_article")
+                row_region = _cell(row, col_idx, "region")
 
                 qty_str = _cell(row, col_idx, "quantity")
                 unit_raw = _cell(row, col_idx, "unit")  # без дефолта — для бэкфилла Product.unit
@@ -398,7 +454,10 @@ async def apply_products_import(
                     pack_quantity_val = _to_dec(_cell(row, col_idx, "pack_quantity"))
                     pack_unit_val = _cell(row, col_idx, "pack_unit")
 
-                match = match_index.find(name, desc_val)
+                match = match_index.find(
+                    name, desc_val,
+                    contractor_id=row_contractor_id, store_article=row_store_article,
+                )
                 ep = match["product"]
                 dup_reason = match["reason"]
 
@@ -419,7 +478,10 @@ async def apply_products_import(
 
                     if _price_is_more_actual(price, price_date_val, cur_price, cur_date):
                         if is_new_unflushed:
-                            pending_new_price.append((ep, price, price_date_val, row_source_ref, row_contractor_id))
+                            pending_new_price.append((
+                                ep, price, price_date_val, row_source_ref, row_contractor_id,
+                                row_store_article, row_region,
+                            ))
                             new_product_price_state[id(ep)] = {"price": price, "date": price_date_val}
                         else:
                             # Актуализация цены (владелец, 2026-08-29): цена пришла
@@ -428,14 +490,38 @@ async def apply_products_import(
                             # строки, иначе дата загрузки файла. source_ref/
                             # contractor_id (владелец, 26.10.2026) — ссылка на
                             # страницу товара и контрагент-магазин, см.
-                            # row_source_ref/row_contractor_id выше.
+                            # row_source_ref/row_contractor_id выше. store_article/
+                            # region (владелец, 27.10.2026) — см. выше.
                             await actualize_product_price(
                                 db, ep, price=price, source="import",
                                 source_ref=row_source_ref, contractor_id=row_contractor_id,
                                 collected_at=price_date_val,
                                 user=current_user,
+                                store_article=row_store_article,
+                                region=row_region,
                             )
                         changed = True
+                    elif row_contractor_id is not None and price is not None and price > 0:
+                        # Задача 2 (owner, 27.10.2026): цена этой строки не
+                        # стала "текущей" (другой магазин/дата старее/то же
+                        # значение), но строка несёт СВОЙ магазин — его цена
+                        # не должна потеряться, пишем отдельную точку истории
+                        # (не меняет product.price/изменения в отчёт не
+                        # попадает — ни одно поле товара не изменилось).
+                        if is_new_unflushed:
+                            pending_new_price_point_only.append((
+                                ep, price, price_date_val, row_source_ref, row_contractor_id,
+                                row_store_article, row_region,
+                            ))
+                        else:
+                            await record_price_point(
+                                db, ep, price=price, source="import",
+                                source_ref=row_source_ref, contractor_id=row_contractor_id,
+                                collected_at=price_date_val,
+                                user=current_user,
+                                store_article=row_store_article,
+                                region=row_region,
+                            )
 
                     def _fill(attr, val):
                         nonlocal changed
@@ -462,7 +548,7 @@ async def apply_products_import(
                             flag_modified(ep, "characteristics")
                             changed = True
                         _fill("manufacturer", manufacturer_val)
-                        _fill("article", article_val)
+                        _fill("article", manufacturer_article_val)
                         # "Страна производства" (Задача baucenter, 2026-10-26)
                         # — заполняем, только если у товара её нет или стоит
                         # дефолт "РФ" (не считаем это осмысленно заполненным
@@ -581,7 +667,7 @@ async def apply_products_import(
                     is_active=_to_bool(_cell(row, col_idx, "is_active")),
                     characteristics=characteristics_val,
                     manufacturer=manufacturer_val,
-                    article=article_val,
+                    article=manufacturer_article_val,
                     feo_category_id=feo_id,
                     price_links=price_links or [],
                     import_note=_import_note,
@@ -602,7 +688,10 @@ async def apply_products_import(
                 all_products.append(p)
                 product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price})
                 if price is not None and price > 0:
-                    pending_new_price.append((p, price, price_date_val, row_source_ref, row_contractor_id))
+                    pending_new_price.append((
+                        p, price, price_date_val, row_source_ref, row_contractor_id,
+                        row_store_article, row_region,
+                    ))
                     new_product_price_state[id(p)] = {"price": price, "date": price_date_val}
                 created += 1
                 report_rows.append({"row": row_num, "action": "created", "name": name, "reason": None})
@@ -617,12 +706,26 @@ async def apply_products_import(
         # теперь у них есть product.id (нужен для ProductPriceHistory.product_id
         # NOT NULL). Одна и та же функция-писатель, что и для существующих
         # (см. actualize_product_price выше) — не вторая формула/копия.
-        for _p, _price, _price_date, _source_ref, _contractor_id in pending_new_price:
+        for _p, _price, _price_date, _source_ref, _contractor_id, _store_article, _region in pending_new_price:
             await actualize_product_price(
                 db, _p, price=_price, source="import",
                 source_ref=_source_ref, contractor_id=_contractor_id,
                 collected_at=_price_date,
                 user=current_user,
+                store_article=_store_article,
+                region=_region,
+            )
+        # Задача 2: точки "второго магазина", отложенные выше, т.к. до flush
+        # у товара не было product_id — теперь есть, пишем через ту же
+        # единственную точку (record_price_point), без изменения product.price.
+        for _p, _price, _price_date, _source_ref, _contractor_id, _store_article, _region in pending_new_price_point_only:
+            await record_price_point(
+                db, _p, price=_price, source="import",
+                source_ref=_source_ref, contractor_id=_contractor_id,
+                collected_at=_price_date,
+                user=current_user,
+                store_article=_store_article,
+                region=_region,
             )
 
         product_ids = [p.id for p in all_products]

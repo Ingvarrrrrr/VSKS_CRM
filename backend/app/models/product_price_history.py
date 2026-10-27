@@ -42,3 +42,11 @@ class ProductPriceHistory(Base):
     quantity = Column(Numeric(15, 4), nullable=True)
     unit = Column(String(50), nullable=True)
     purchase_item_id = Column(Integer, ForeignKey("purchase_items.id", ondelete="SET NULL"), nullable=True)
+    # store_article (владелец, 27.10.2026, manufacturer_article/store_article) —
+    # номер товара в КОНКРЕТНОМ магазине (contractor_id этой строки), не
+    # производителя — специфичен для магазина, поэтому хранится построчно в
+    # истории, а не на Product (там только manufacturer_article, см.
+    # Product.article и app/services/products_import_apply.py). Частичный
+    # индекс (contractor_id, store_article) WHERE store_article IS NOT NULL —
+    # см. миграцию a4b6c8d0e2f4 — ускоряет products_import_match.py.
+    store_article = Column(String(200), nullable=True)

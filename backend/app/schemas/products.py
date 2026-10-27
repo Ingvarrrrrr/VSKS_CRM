@@ -225,6 +225,11 @@ class ProductPriceHistoryOut(BaseModel):
     note: Optional[str] = None
     created_by: Optional[int] = None
     created_at: Optional[datetime] = None
+    # store_article (владелец, 27.10.2026) — номер товара в КОНКРЕТНОМ
+    # магазине этой строки истории (не производителя, см.
+    # app/models/product_price_history.py); показывается рядом с магазином
+    # в карточке товара (PurchasePriceHistory.vue).
+    store_article: Optional[str] = None
     model_config = {"from_attributes": True}
 
 

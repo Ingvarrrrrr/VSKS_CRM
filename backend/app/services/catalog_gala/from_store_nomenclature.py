@@ -123,6 +123,14 @@ nomenclature.json, sima_land_catalog_all.json) → формат GALA (см. form
   - item_kind = "товар". is_reusable/is_active/manufacturer(без спецификации)/
     article/pack_quantity/pack_unit/price_date/source_id — не определены в
     исходнике → None.
+  - manufacturer_article/store_article (владелец, 27.10.2026) — ЗАМЕНЯЮТ
+    устаревшее item["article"] выше: эта выгрузка объединяет несколько
+    магазинов (Сима-ленд/ice-age.ru/Магазин 01/k-spasatel.ru и др.), поэтому
+    решение принимается ПО СТРОКЕ через ИНН магазина (домен товарной ссылки,
+    иначе текст "Магазин-источник") — catalog_gala.stores.split_legacy_
+    article (ПРАВИЛО №6, единственное место трактовки): article_is_
+    manufacturer=True у магазина строки (k-spasatel.ru) → manufacturer_
+    article; иначе (Сима-ленд, остальные/неизвестные) → store_article.
 """
 import re
 
@@ -130,7 +138,9 @@ from app.services.catalog_gala.ad_text_filter import strip_ad_sentences
 from app.services.catalog_gala.clean import clean_text
 from app.services.catalog_gala.country_names import COUNTRY_KEY_NAMES, norm_country_key
 from app.services.catalog_gala.spec_parse import split_key_unit
-from app.services.catalog_gala.stores import seller_inn_for_url, seller_inn_for_source_store
+from app.services.catalog_gala.stores import (
+    seller_inn_for_url, seller_inn_for_source_store, split_legacy_article,
+)
 
 _PURE_DIGIT_RE = re.compile(r"^[\d\s№]+$")
 _STUB_RE = re.compile(r"^#.+#$")
@@ -345,6 +355,18 @@ def convert(raw: list, source_file: str) -> dict:
         url = row.get("link_1") or None
         links = [{"url": url, "price": price}] if url else []
 
+        # manufacturer_article/store_article (владелец, 27.10.2026) — эта
+        # выгрузка объединяет НЕСКОЛЬКО магазинов (Сима-ленд, ice-age.ru,
+        # Магазин 01, k-spasatel.ru у rescue_medical/fire_equipment и др.) —
+        # магазин строки определяется по домену товарной ссылки, иначе по
+        # тексту "Магазин-источник" (store, та же логика, что у seller_inn
+        # ниже), трактовка article по этому магазину — ЕДИНСТВЕННАЯ функция
+        # catalog_gala.stores.split_legacy_article (ПРАВИЛО №6), решение по
+        # каждому магазину там же, не хардкод per-файл, как у electro_mpo/
+        # baucenter (там всегда один и тот же магазин).
+        row_seller_inn = seller_inn_for_url(url) or seller_inn_for_source_store(store)
+        manufacturer_article, store_level_article = split_legacy_article(article, row_seller_inn)
+
         photo = row.get("photo_url") or None
         photos = [photo] if photo else []
 
@@ -369,7 +391,8 @@ def convert(raw: list, source_file: str) -> dict:
             "price_date": None,
             "currency": "RUB" if price is not None else None,
             "manufacturer": manufacturer,
-            "article": article,
+            "manufacturer_article": manufacturer_article,
+            "store_article": store_level_article,
             "description": description,  # base_text поставщика, см. докстринг модуля (26.10, Задача 1)
             "characteristics": characteristics,
             "country_origin": country_origin,
@@ -382,7 +405,7 @@ def convert(raw: list, source_file: str) -> dict:
             # Магазин этой строки — сначала по домену товарной ссылки, иначе
             # по тексту "Магазин-источник" (store, вида «Сима-ленд
             # (sima-land.ru)») — тот же справочник stores.py (ПРАВИЛО №6).
-            "seller_inn": seller_inn_for_url(url) or seller_inn_for_source_store(store),
+            "seller_inn": row_seller_inn,
         })
 
     return {"source": "store_nomenclature", "items": items}

@@ -230,7 +230,7 @@
                «Сохранить» (ПРАВИЛО №6, второй механизм записи не заводим). -->
           <v-col cols="12" ref="characteristicsSectionRef">
             <div v-if="form.manufacturer">Производитель: {{ form.manufacturer }}</div>
-            <div v-if="form.article">Артикул: {{ form.article }}</div>
+            <div v-if="form.article">Артикул производителя: {{ form.article }}</div>
             <!-- QA (26.10.2026, товар 50014): пока характеристики не
                  загрузились — явная ошибка, а не молчание (память проекта
                  feedback_no_generic_error_snackbar), редактор readonly

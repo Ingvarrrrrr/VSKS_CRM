@@ -43,6 +43,14 @@ BATCH_RANGES = (
 class _HistoryRowLike(Protocol):
     price: Optional[Decimal]
     collected_at: Optional[_date]
+    # Опциональные поля (owner, 27.10.2026, задача product_merge п.3 — "один
+    # магазин, один голос"): если вызывающий код их не передаёт (getattr
+    # вернёт None), дедуп по магазину просто не находит ничего (source не
+    # 'import' либо нет contractor_id) и строка идёт в расчёт как раньше —
+    # старые вызовы без этих колонок в SELECT не меняют поведение.
+    source: Optional[str]
+    contractor_id: Optional[int]
+    id: Optional[int]
 
 
 @dataclass
@@ -106,6 +114,38 @@ def _unit_matches(row_unit: Optional[str], product_unit: Optional[str]) -> bool:
     return bool(row_unit) and _norm_unit(row_unit) == _norm_unit(product_unit)
 
 
+def _one_vote_per_contractor(rows: list) -> list:
+    """«Один магазин — один голос» (owner, 27.10.2026, задача product_merge
+    п.3): среди строк с source='import' и непустым contractor_id оставляем
+    на каждый contractor_id только САМУЮ СВЕЖУЮ по collected_at (при
+    равенстве дат — с большим id, иначе последнюю по порядку) — иначе
+    магазин, загруженный импортом 3 раза, весил бы втрое. Остальные строки
+    (contract/kp/manual/monitoring, import без contractor_id) не трогаем.
+
+    ЕДИНСТВЕННОЕ место, где это решается (ПРАВИЛО №6) — вызывается в
+    compute_price_stats ПЕРЕД _all_rule и перед лестницей уровней, так что
+    и одиночный расчёт (GET .../price-stats), и пакетный
+    (compute_price_stats_bulk), и региональная лестница видят уже
+    отфильтрованный набор."""
+    best_by_contractor: dict = {}
+    other_rows: list = []
+    for r in rows:
+        source = getattr(r, "source", None)
+        contractor_id = getattr(r, "contractor_id", None)
+        if source != "import" or contractor_id is None:
+            other_rows.append(r)
+            continue
+        cur = best_by_contractor.get(contractor_id)
+        if cur is None:
+            best_by_contractor[contractor_id] = r
+            continue
+        cur_key = (cur.collected_at or _date.min, getattr(cur, "id", None) or 0)
+        r_key = (r.collected_at or _date.min, getattr(r, "id", None) or 0)
+        if r_key >= cur_key:
+            best_by_contractor[contractor_id] = r
+    return other_rows + list(best_by_contractor.values())
+
+
 def _all_rule(history_rows: Iterable[_HistoryRowLike], today: _date) -> PriceStats:
     """Старое правило БЕЗ ФИЛЬТРА (owner, 2026-09-16) — буквально не менялось:
     окно 60 дней, иначе последние 3, иначе всё, что есть; stale на фолбэке."""
@@ -160,7 +200,7 @@ def compute_price_stats(
     договоров (source_ref), иначе уровень считается «данных не хватает» и
     поиск идёт на следующую ступень лестницы, вплоть до "all"."""
     today = today or _date.today()
-    rows = list(history_rows)
+    rows = _one_vote_per_contractor(list(history_rows))
     target_batch = batch_label(quantity)
 
     if not target_region and target_batch is None:
@@ -266,6 +306,7 @@ async def compute_price_stats_bulk(
     for ids_chunk in chunked(product_ids):
         rows.extend((await db.execute(
             select(
+                ProductPriceHistory.id,
                 ProductPriceHistory.product_id,
                 ProductPriceHistory.price,
                 ProductPriceHistory.collected_at,
@@ -273,6 +314,8 @@ async def compute_price_stats_bulk(
                 ProductPriceHistory.quantity,
                 ProductPriceHistory.unit,
                 ProductPriceHistory.source_ref,
+                ProductPriceHistory.source,
+                ProductPriceHistory.contractor_id,
             ).where(ProductPriceHistory.product_id.in_(ids_chunk))
         )).all())
 

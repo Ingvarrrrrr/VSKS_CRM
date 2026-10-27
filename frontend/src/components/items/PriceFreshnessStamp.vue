@@ -4,7 +4,7 @@
       <template #activator="{ props: tip }">
         <span v-bind="tip" class="d-inline-flex align-center ga-1" style="white-space:normal">
           <v-icon v-if="isStale" size="12">mdi-alert-outline</v-icon>
-          <span>{{ stampText }}</span>
+          <span :title="refFullUrl || undefined">{{ stampText }}</span>
         </span>
       </template>
     </v-tooltip>
@@ -17,7 +17,7 @@
 // разметки для ItemsTableFlat/ItemsCardsView/ItemsTableStages/ItemsTableWish (и
 // ProductsView), чтобы не плодить 4 копии одной и той же логики.
 import { computed } from 'vue'
-import { formatPriceStamp, freshnessTooltip, PRICE_STALE_CLASS, type PriceFreshness } from '@/composables/usePriceFreshness'
+import { formatPriceStamp, freshnessTooltip, sourceRefFullUrl, PRICE_STALE_CLASS, type PriceFreshness } from '@/composables/usePriceFreshness'
 
 interface PriceMetaLike {
   price_updated_at?: string | null
@@ -42,4 +42,7 @@ const stampText = computed(() => formatPriceStamp(
   props.priceMeta?.price_source_ref,
 ))
 const tooltipText = computed(() => props.priceMeta?.price_freshness ? freshnessTooltip(props.priceMeta.price_freshness) : '')
+// Ref-ссылка показывается доменом (formatSourceRef в stampText) — полный
+// адрес виден по наведению, без клика (владелец, 27.10.2026).
+const refFullUrl = computed(() => sourceRefFullUrl(props.priceMeta?.price_source_ref))
 </script>

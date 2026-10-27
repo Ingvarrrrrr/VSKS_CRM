@@ -72,6 +72,7 @@ async def actualize_product_price(
     purchase_item_id: Optional[int] = None,
     skip_if_older: bool = False,
     update_product_price: bool = True,
+    store_article: Optional[str] = None,
 ) -> Optional[_date]:
     """Проставляет цену + метаданные актуализации на product и (по умолчанию)
     пишет строку в product_price_history. Не коммитит — вызывающий код
@@ -93,6 +94,11 @@ async def actualize_product_price(
 
     Возвращает collected_date (распарсенную дату точки) — чтобы вызывающий
     код мог залогировать/проверить решение, без второго парсинга даты.
+
+    `store_article` (владелец, 27.10.2026, manufacturer_article/store_article)
+    — номер товара в КОНКРЕТНОМ магазине этой строки (contractor_id), пишется
+    в строку истории как есть (не на Product — там только производительский
+    manufacturer_article, см. Product.article/products_import_apply.py).
     """
     if price is not None and not isinstance(price, Decimal):
         price = Decimal(str(price))
@@ -126,9 +132,67 @@ async def actualize_product_price(
             quantity=quantity,
             unit=unit,
             purchase_item_id=purchase_item_id,
+            store_article=store_article,
         ))
 
     return collected_date
+
+
+async def record_price_point(
+    db: AsyncSession,
+    product: Product,
+    *,
+    price,
+    source: str,
+    source_ref: Optional[str] = None,
+    contractor_id: Optional[int] = None,
+    collected_at=None,
+    user=None,
+    region: Optional[str] = None,
+    quantity=None,
+    unit: Optional[str] = None,
+    store_article: Optional[str] = None,
+) -> bool:
+    """Пишет ТОЛЬКО точку истории цены — product.price/price_source* не
+    трогает (= actualize_product_price(update_product_price=False), тот же
+    единственный INSERT в ProductPriceHistory, ПРАВИЛО №6, второй такой
+    вставки в проекте не заводить).
+
+    Нужна там, где за один импорт у товара несколько магазинов и у каждого
+    должна остаться СВОЯ строка истории, даже если его цена не стала
+    "текущей" ценой товара (владелец, 27.10.2026, задача product_merge п.2,
+    app/services/products_import_apply.py). Требует persisted product.id —
+    для ещё не сохранённых (unflushed) товаров дедуп/откладывание до flush
+    делает вызывающий код сам.
+
+    Защита от точного повтора (тот же product_id+contractor_id+price+
+    collected_at+store_article уже есть в истории) — не пишет вторую
+    одинаковую строку, возвращает False. store_article включён в дедуп-ключ
+    (владелец, 27.10.2026): разные store_article у одного магазина/цены/даты
+    считаются РАЗНЫМИ строками (например, перевыгрузка с измененившимся
+    номером товара в магазине не должна молча проглатываться как дубль).
+    Иначе пишет строку и возвращает True."""
+    collected_date = _parse_collected_date(collected_at)
+    if product.id is not None and contractor_id is not None:
+        dup = (await db.execute(
+            select(ProductPriceHistory.id).where(
+                ProductPriceHistory.product_id == product.id,
+                ProductPriceHistory.contractor_id == contractor_id,
+                ProductPriceHistory.price == price,
+                ProductPriceHistory.collected_at == collected_date,
+                ProductPriceHistory.store_article == store_article,
+            ).limit(1)
+        )).scalar_one_or_none()
+        if dup is not None:
+            return False
+    await actualize_product_price(
+        db, product, price=price, source=source, source_ref=source_ref,
+        contractor_id=contractor_id, collected_at=collected_at, user=user,
+        region=region, quantity=quantity, unit=unit,
+        update_product_price=False,
+        store_article=store_article,
+    )
+    return True
 
 
 async def actualize_contract_item_prices(

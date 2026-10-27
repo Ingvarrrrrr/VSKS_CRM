@@ -10,6 +10,7 @@ import { debounce } from 'lodash-es'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { numOrNull } from '@/utils/numberFormat'
+import { formatSourceRef } from '@/composables/usePriceFreshness'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import { leftGroupInfo } from './feoCategoryUtils'
 import { pushFeoUndo } from './useFeoUndoStack'
@@ -285,7 +286,7 @@ const addPlannedPriceCaption = computed<string | null>(() => {
   const parts: string[] = [dateStr ? `цена из каталога от ${dateStr}` : 'цена из каталога, дата актуализации не указана']
   const sourceLabel = meta?.price_source ? (PLANNED_PRICE_SOURCE_LABELS[meta.price_source] || meta.price_source) : null
   if (sourceLabel) {
-    parts.push(`источник: ${sourceLabel}${meta?.price_source_ref ? ` · ${meta.price_source_ref}` : ''}`)
+    parts.push(`источник: ${sourceLabel}${meta?.price_source_ref ? ` · ${formatSourceRef(meta.price_source_ref)}` : ''}`)
   } else {
     parts.push('источник не указан')
   }

@@ -68,6 +68,11 @@ from app.services.catalog_gala.country_names import COUNTRY_KEY_NAMES, norm_coun
 from app.services.catalog_gala.spec_parse import split_key_unit
 from app.services.catalog_gala.stores import seller_inn_for_url
 
+# baucenter.ru — article_is_manufacturer=False (stores.py): "article" этой
+# выгрузки — номер товара в КАТАЛОГЕ БАУЦЕНТРА (своя нумерация магазина, не
+# производителя) — владелец, 27.10.2026. Эта выгрузка всегда Бауцентр, решение
+# фиксировано здесь (как у electro_mpo, не через split_legacy_article).
+
 _CONSTRUCTION_CATEGORY = "Строительные и отделочные материалы"
 
 
@@ -132,7 +137,8 @@ def _convert_row(row: dict) -> dict:
         "price_date": None,
         "currency": "RUB" if price is not None else None,
         "manufacturer": brand,
-        "article": row.get("article") or None,
+        "manufacturer_article": None,
+        "store_article": row.get("article") or None,
         "description": None,  # реклама, не характеристика (владелец, 26.10)
         "characteristics": characteristics,
         "country_origin": country_origin,

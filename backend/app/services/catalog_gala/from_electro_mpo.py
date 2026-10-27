@@ -70,6 +70,15 @@ from app.services.catalog_gala.electro_consistency import check_cable_consistenc
 from app.services.catalog_gala.spec_parse import clean_key as _clean_key, split_key_unit
 from app.services.catalog_gala.stores import seller_inn_for_url
 
+# electro-mpo.ru — article_is_manufacturer=True (stores.py): "Номера
+# поставщика" этой выгрузки — артикул ПРОИЗВОДИТЕЛЯ, одинаковый во всех
+# магазинах, где продаётся товар (владелец, 27.10.2026). Эта выгрузка — всегда
+# МПО Электромонтаж независимо от наличия url, поэтому решение фиксировано
+# здесь (не через split_legacy_article/seller_inn — у части строк url может
+# быть пуст, а домен магазина этой выгрузки от этого не меняется). Отдельного
+# "своего номера магазина" в исходных колонках этой выгрузки нет —
+# store_article не заполняется.
+
 # Задача 2 — характеристики, которые есть в карточке (characteristics
 # хранятся полностью), но НЕ попадают в собранное техописание.
 # ПЕРЕСМОТРЕНО 26.10.2026 (Задача 1б): "хрупкость" и "объём" убраны отсюда —
@@ -189,7 +198,8 @@ def convert(raw: list, source_file: str) -> dict:
             "price_date": None,
             "currency": None,
             "manufacturer": manufacturer,
-            "article": article,
+            "manufacturer_article": article,
+            "store_article": None,
             "description": None,
             "characteristics": characteristics,
             "photos": photos,

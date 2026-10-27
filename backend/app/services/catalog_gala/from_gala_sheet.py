@@ -31,6 +31,8 @@ price_date "ДД.ММ.ГГГГ", link_1..3/price_1..3, photo_url, is_reusable
   - name/description чистятся через catalog_gala.clean.clean_text (ПРАВИЛО
     №6, HTML-сущности/<br>/теги — на случай, если внутренняя таблица ГАЛА
     когда-то содержала скопированный HTML-текст).
+  - manufacturer_article/store_article (владелец, 27.10.2026) — исходник не
+    содержит артикула вовсе — оба поля всегда None.
 """
 import re
 from datetime import datetime
@@ -111,7 +113,8 @@ def _convert_row(row: dict) -> dict:
         "price_date": _parse_date(row.get("price_date")),
         "currency": "RUB" if price is not None else None,
         "manufacturer": None,
-        "article": None,
+        "manufacturer_article": None,
+        "store_article": None,
         "description": clean_text(row.get("description")),
         "characteristics": [],
         "photos": [photo_url] if photo_url else [],

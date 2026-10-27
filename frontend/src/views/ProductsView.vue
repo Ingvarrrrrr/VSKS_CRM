@@ -6,6 +6,7 @@
       :deduplicating="deduplicating"
       :mobile="mobile"
       :view-mode="viewMode"
+      :can-edit-catalog="canEditCatalog"
       @download-template="downloadTemplate"
       @open-import="importDialog.show = true"
       @open-download-photos="openDownloadPhotosDialog"
@@ -13,6 +14,7 @@
       @create="openCreate"
       @open-column-config="colConfigDialog = true"
       @update:view-mode="viewMode = $event"
+      @open-similar-products="similarProductsDialog = true"
     />
 
     <!-- Предложения правок каталога (Этап В, план item-tz-description.md,
@@ -31,6 +33,14 @@
     <ProductDescriptionProposals
       v-model="proposalsDialogShow"
       @changed="loadPendingProposalsCount"
+    />
+
+    <!-- «Похожие товары» (владелец, 27.10.2026) — ручная проверка карточек,
+         возможно, одного товара у разных магазинов, слияние через кнопку
+         ProductsToolbar.vue (видна только тому же canEditCatalog). -->
+    <SimilarProductsDialog
+      v-model="similarProductsDialog"
+      :reload-products="load"
     />
 
     <ProductsFilterBar
@@ -242,6 +252,7 @@ import ProductsColumnConfigDialog from '@/components/products/ProductsColumnConf
 import ProductsDedupDialog from '@/components/products/ProductsDedupDialog.vue'
 import ProductsActualizeDialog from '@/components/products/ProductsActualizeDialog.vue'
 import ProductDescriptionProposals from '@/components/products/ProductDescriptionProposals.vue'
+import SimilarProductsDialog from '@/components/products/SimilarProductsDialog.vue'
 
 import { useProductsData } from '@/composables/products/useProductsData'
 import { useProductsColumns, ALL_COLUMNS } from '@/composables/products/useProductsColumns'
@@ -265,6 +276,7 @@ const authStore = useAuthStore()
 const canEditCatalog = computed(() => authStore.hasAction(ACTIONS.PRODUCTS_EDIT_CATALOG!))
 
 const proposalsDialogShow = ref(false)
+const similarProductsDialog = ref(false)
 const pendingProposalsCount = ref(0)
 async function loadPendingProposalsCount() {
   if (!canEditCatalog.value) { pendingProposalsCount.value = 0; return }

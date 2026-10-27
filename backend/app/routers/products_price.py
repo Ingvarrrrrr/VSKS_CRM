@@ -165,7 +165,13 @@ async def get_price_stats(
     if not product:
         raise HTTPException(404, "Товар не найден")
     rows = (await db.execute(
-        select(ProductPriceHistory.price, ProductPriceHistory.collected_at)
+        select(
+            ProductPriceHistory.id,
+            ProductPriceHistory.price,
+            ProductPriceHistory.collected_at,
+            ProductPriceHistory.source,
+            ProductPriceHistory.contractor_id,
+        )
         .where(ProductPriceHistory.product_id == product_id)
     )).all()
     stats = compute_price_stats(rows)

@@ -66,6 +66,7 @@ from app.routers import subsidy_finance
 # соседями.
 from app.routers import products_summary
 from app.routers import products_match
+from app.routers import products_merge
 from app.routers import products_photos
 from app.routers import products_import
 from app.routers import products_price
@@ -456,6 +457,7 @@ def register_routes(app: FastAPI) -> None:
     # products_price — рядом, конфликтов по форме нет.
     app.include_router(products_summary.router)
     app.include_router(products_match.router)
+    app.include_router(products_merge.router)
     app.include_router(products_photos.router)
     app.include_router(products_import.router)
     app.include_router(products_price.router)

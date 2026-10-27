@@ -1,0 +1,40 @@
+<!--
+СИНТЕТИЧЕСКАЯ фикстура (НЕ снята живым запросом — владелец прямо запретил
+живые запросы к magazin01.ru на время прогона tools/catalog_enrich по этому
+магазину). Разметка воспроизведена по уже подтверждённому на реальных
+страницах разбору из tools/catalog_enrich/extractors.py (комментарий в
+начале файла, 27.10.2026: magazin01.ru отдаёт тот же JSON-LD @type=Product,
+что kuvalda.ru, brand.name="НПО Пульс", sku — 13-значный внутренний код) и
+по HTML-классу properties__title/properties__value из старого
+harvest_all_fire_now.py. Характеристики ниже — ПРИМЕР формы разметки, не
+проверены этим заданием на живой странице — см. "нужна доработка" в
+докстринге stores/magazin01.py и в финальном отчёте задания.
+-->
+<html>
+<head>
+<script type="application/ld+json">
+{"@type":"Product","name":"Огнетушитель порошковый ОП-4(з) АВСЕ","image":"//magazin01.ru/img/op4.jpg","description":"Огнетушитель порошковый закачной ОП-4 класс АВСЕ, заряд 4 кг.","offers":{"@type":"Offer","price":"1450"}, "sku":"4601234567890"}
+</script>
+</head>
+<body>
+<h1>Огнетушитель порошковый ОП-4(з) АВСЕ</h1>
+<div class="properties">
+    <div class="properties__item">
+        <div class="properties__title">Марка</div><span>:</span>
+        <div class="properties__value">ОП-4(з)</div>
+    </div>
+    <div class="properties__item">
+        <div class="properties__title">Класс пожара</div><span>:</span>
+        <div class="properties__value">А, В, С, Е</div>
+    </div>
+    <div class="properties__item">
+        <div class="properties__title">Масса заряда, кг</div><span>:</span>
+        <div class="properties__value">4</div>
+    </div>
+    <div class="properties__item">
+        <div class="properties__title">Ранг тушения</div><span>:</span>
+        <div class="properties__value">2А, 55В, С</div>
+    </div>
+</div>
+</body>
+</html>

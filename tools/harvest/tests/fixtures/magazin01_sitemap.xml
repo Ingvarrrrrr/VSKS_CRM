@@ -1,0 +1,9 @@
+<!-- СИНТЕТИЧЕСКАЯ фикстура воспроизводит структуру sitemap-iblock-206.xml,
+     которую magazin01.ru реально отдаёт (формат подтверждён старым
+     harvest_all_fire_now.py, URL товаров содержат "/product/") — сам
+     список URL ниже придуман для теста, живым запросом НЕ снят. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://magazin01.ru/product/ognetushitel-poroshkovyy-op-4z-avse/</loc></url>
+  <url><loc>https://magazin01.ru/product/rukav-pozharnyy-napornyy-du-51-20m/</loc></url>
+  <url><loc>https://magazin01.ru/category/ognetushiteli/</loc></url>
+</urlset>

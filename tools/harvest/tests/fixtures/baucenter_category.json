@@ -1,0 +1,488 @@
+{
+  "pageProps": {
+    "initialState": {
+      "products": {
+        "list": [
+          {
+            "id": 358076,
+            "title": "Грунтовка глубокого проникновения Церезит CT 17 PRO 10 л",
+            "code": "gruntovka-glubokogo-proniknoveniya-tserezit-ct-17-pro-10-l",
+            "url": "/product/gruntovka-glubokogo-proniknoveniya-tserezit-ct-17-pro-10-l-ctg-36829-30816-29124-511690211/",
+            "article": "511690211",
+            "rating": 4.9,
+            "allreviews": 75,
+            "images": [
+              {
+                "type": "image",
+                "title": "Грунтовка глубокого проникновения Церезит CT 17 PRO 10 л - baucenter.ru",
+                "path": "https://baucenter.ru/upload/pictures/51/511690211-0.webp?1738251024",
+                "alternative": "Грунтовка глубокого проникновения Церезит CT 17 PRO 10 л"
+              },
+              {
+                "type": "image",
+                "title": "Грунтовка глубокого проникновения Церезит CT 17 PRO 10 л - baucenter.ru",
+                "path": "https://baucenter.ru/upload/pictures/51/511690211-1.webp?1738251024",
+                "alternative": "Грунтовка глубокого проникновения Церезит CT 17 PRO 10 л"
+              },
+              {
+                "type": "image",
+                "title": "Грунтовка глубокого проникновения Церезит CT 17 PRO 10 л - baucenter.ru",
+                "path": "https://baucenter.ru/upload/pictures/51/511690211-31.webp?1738251024",
+                "alternative": "Грунтовка глубокого проникновения Церезит CT 17 PRO 10 л"
+              }
+            ],
+            "price": {
+              "main": {
+                "price": 114900,
+                "currency": "RUB",
+                "unit": "шт.",
+                "basePrice": null,
+                "bonus": 4596,
+                "extraBonus": null
+              },
+              "alternative": null,
+              "additional": [],
+              "accounting": {
+                "price": 114900,
+                "currency": "RUB",
+                "unit": "шт.",
+                "basePrice": null,
+                "bonus": 4596,
+                "extraBonus": null
+              },
+              "bonus": 4596,
+              "extraBonus": null
+            },
+            "availability": [
+              {
+                "title": "Наличие",
+                "type": "store",
+                "availabilityCount": {
+                  "amount": 1651,
+                  "unit": "шт.",
+                  "text": "Доступно к заказу 1651 шт."
+                },
+                "stores": [
+                  {
+                    "store": {
+                      "id": 1100000037,
+                      "title": "Ростовское шоссе",
+                      "address": "Ростовское шоссе, 28/7",
+                      "storeType": "store",
+                      "latitude": "45.096446027864",
+                      "longitude": "38.993938457672",
+                      "workingHours": {
+                        "title": "Ежедневно",
+                        "from": "8:00",
+                        "to": "22:00"
+                      },
+                      "availabilityDate": null
+                    },
+                    "planDate": "",
+                    "planDateText": "",
+                    "amount": 810,
+                    "unit": "шт.",
+                    "availText": "810 шт.",
+                    "placements": [
+                      "76 ряд 12 место",
+                      "80 ряд 18 место"
+                    ],
+                    "extra": null,
+                    "exposurePlacements": null,
+                    "availabilityDate": null
+                  },
+                  {
+                    "store": {
+                      "id": 1100000036,
+                      "title": "Селезнева",
+                      "address": "ул. Селезнева, 4",
+                      "storeType": "store",
+                      "latitude": "45.027553000019",
+                      "longitude": "39.020585915344",
+                      "workingHours": {
+                        "title": "Ежедневно",
+                        "from": "08:00",
+                        "to": "22:00"
+                      },
+                      "availabilityDate": null
+                    },
+                    "planDate": "",
+                    "planDateText": "",
+                    "amount": 535,
+                    "unit": "шт.",
+                    "availText": "535 шт.",
+                    "placements": [
+                      "30 ряд 13 место",
+                      "33 ряд 14 место",
+                      "60 ряд 2 место"
+                    ],
+                    "extra": null,
+                    "exposurePlacements": null,
+                    "availabilityDate": null
+                  },
+                  {
+                    "store": {
+                      "id": 1100742766,
+                      "title": "Данилы Волкореза",
+                      "address": "ул. им. Данилы Волкореза, 2",
+                      "storeType": "store",
+                      "latitude": "45.008113",
+                      "longitude": "39.124811",
+                      "workingHours": {
+                        "title": "Ежедневно",
+                        "from": "08:00",
+                        "to": "22:00"
+                      },
+                      "availabilityDate": null
+                    },
+                    "planDate": "",
+                    "planDateText": "",
+                    "amount": 306,
+                    "unit": "шт.",
+                    "availText": "306 шт.",
+                    "placements": [],
+                    "extra": null,
+                    "exposurePlacements": null,
+                    "availabilityDate": null
+                  }
+                ],
+                "availabilityDate": null,
+                "hint": null
+              }
+            ],
+            "availableType": "online",
+            "sectionId": 29124,
+            "categoryName": "Грунтовки строительные",
+            "brand": "Церезит",
+            "inBasket": 0,
+            "inWishList": 0,
+            "quantityInWishLists": [],
+            "multiple": 1,
+            "is24": false,
+            "isNoticeReceiptExist": false,
+            "nameplates": [],
+            "canBeFloat": false,
+            "productOfferId": 358076
+          },
+          {
+            "id": 697707,
+            "title": "Грунтовка-концентрат глубокого проникновения Церезит CT 17 Concentrate 10 л",
+            "code": "gruntovka-kontsentrat-glubokogo-proniknoveniya-tserezit-ct-17-concentrate-10-l",
+            "url": "/product/gruntovka-kontsentrat-glubokogo-proniknoveniya-tserezit-ct-17-concentrate-10-l-ctg-36829-30816-29124-515001215/",
+            "article": "515001215",
+            "rating": 5,
+            "allreviews": 14,
+            "images": [
+              {
+                "type": "image",
+                "title": "Грунтовка-концентрат глубокого проникновения Церезит CT 17 Concentrate 10 л - baucenter.ru",
+                "path": "https://baucenter.ru/upload/pictures/51/515001215-0.webp?1738251032",
+                "alternative": "Грунтовка-концентрат глубокого проникновения Церезит CT 17 Concentrate 10 л"
+              },
+              {
+                "type": "image",
+                "title": "Грунтовка-концентрат глубокого проникновения Церезит CT 17 Concentrate 10 л - baucenter.ru",
+                "path": "https://baucenter.ru/upload/pictures/51/515001215-1.webp?1738251033",
+                "alternative": "Грунтовка-концентрат глубокого проникновения Церезит CT 17 Concentrate 10 л"
+              },
+              {
+                "type": "image",
+                "title": "Грунтовка-концентрат глубокого проникновения Церезит CT 17 Concentrate 10 л - baucenter.ru",
+                "path": "https://baucenter.ru/upload/pictures/51/515001215-31.webp?1738251033",
+                "alternative": "Грунтовка-концентрат глубокого проникновения Церезит CT 17 Concentrate 10 л"
+              }
+            ],
+            "price": {
+              "main": {
+                "price": 439000,
+                "currency": "RUB",
+                "unit": "шт.",
+                "basePrice": null,
+                "bonus": 17560,
+                "extraBonus": null
+              },
+              "alternative": null,
+              "additional": [],
+              "accounting": {
+                "price": 439000,
+                "currency": "RUB",
+                "unit": "шт.",
+                "basePrice": null,
+                "bonus": 17560,
+                "extraBonus": null
+              },
+              "bonus": 17560,
+              "extraBonus": null
+            },
+            "availability": [
+              {
+                "title": "Наличие",
+                "type": "store",
+                "availabilityCount": {
+                  "amount": 193,
+                  "unit": "шт.",
+                  "text": "Доступно к заказу 193 шт."
+                },
+                "stores": [
+                  {
+                    "store": {
+                      "id": 1100000037,
+                      "title": "Ростовское шоссе",
+                      "address": "Ростовское шоссе, 28/7",
+                      "storeType": "store",
+                      "latitude": "45.096446027864",
+                      "longitude": "38.993938457672",
+                      "workingHours": {
+                        "title": "Ежедневно",
+                        "from": "8:00",
+                        "to": "22:00"
+                      },
+                      "availabilityDate": null
+                    },
+                    "planDate": "",
+                    "planDateText": "",
+                    "amount": 127,
+                    "unit": "шт.",
+                    "availText": "127 шт.",
+                    "placements": [
+                      "76 ряд 10 место"
+                    ],
+                    "extra": null,
+                    "exposurePlacements": null,
+                    "availabilityDate": null
+                  },
+                  {
+                    "store": {
+                      "id": 1100000036,
+                      "title": "Селезнева",
+                      "address": "ул. Селезнева, 4",
+                      "storeType": "store",
+                      "latitude": "45.027553000019",
+                      "longitude": "39.020585915344",
+                      "workingHours": {
+                        "title": "Ежедневно",
+                        "from": "08:00",
+                        "to": "22:00"
+                      },
+                      "availabilityDate": null
+                    },
+                    "planDate": "",
+                    "planDateText": "",
+                    "amount": 30,
+                    "unit": "шт.",
+                    "availText": "30 шт.",
+                    "placements": [
+                      "30 ряд 15 место"
+                    ],
+                    "extra": null,
+                    "exposurePlacements": null,
+                    "availabilityDate": null
+                  },
+                  {
+                    "store": {
+                      "id": 1100742766,
+                      "title": "Данилы Волкореза",
+                      "address": "ул. им. Данилы Волкореза, 2",
+                      "storeType": "store",
+                      "latitude": "45.008113",
+                      "longitude": "39.124811",
+                      "workingHours": {
+                        "title": "Ежедневно",
+                        "from": "08:00",
+                        "to": "22:00"
+                      },
+                      "availabilityDate": null
+                    },
+                    "planDate": "",
+                    "planDateText": "",
+                    "amount": 36,
+                    "unit": "шт.",
+                    "availText": "36 шт.",
+                    "placements": [],
+                    "extra": null,
+                    "exposurePlacements": null,
+                    "availabilityDate": null
+                  }
+                ],
+                "availabilityDate": null,
+                "hint": null
+              }
+            ],
+            "availableType": "online",
+            "sectionId": 29124,
+            "categoryName": "Грунтовки строительные",
+            "brand": "Церезит",
+            "inBasket": 0,
+            "inWishList": 0,
+            "quantityInWishLists": [],
+            "multiple": 1,
+            "is24": false,
+            "isNoticeReceiptExist": false,
+            "nameplates": [],
+            "canBeFloat": false,
+            "productOfferId": 697707
+          },
+          {
+            "id": 358050,
+            "title": "Грунтовка адгезионная Церезит CT 19 Бетонконтакт 15 кг",
+            "code": "gruntovka-adgezionnaya-tserezit-ct-19-betonkontakt-15-kg",
+            "url": "/product/gruntovka-adgezionnaya-tserezit-ct-19-betonkontakt-15-kg-ctg-36829-30816-29124-515000356/",
+            "article": "515000356",
+            "rating": 4.7,
+            "allreviews": 15,
+            "images": [
+              {
+                "type": "image",
+                "title": "Грунтовка адгезионная Церезит CT 19 Бетонконтакт 15 кг - baucenter.ru",
+                "path": "https://baucenter.ru/upload/pictures/51/515000356-0.webp?1738251030",
+                "alternative": "Грунтовка адгезионная Церезит CT 19 Бетонконтакт 15 кг"
+              },
+              {
+                "type": "image",
+                "title": "Грунтовка адгезионная Церезит CT 19 Бетонконтакт 15 кг - baucenter.ru",
+                "path": "https://baucenter.ru/upload/pictures/51/515000356-1.webp?1738251031",
+                "alternative": "Грунтовка адгезионная Церезит CT 19 Бетонконтакт 15 кг"
+              },
+              {
+                "type": "image",
+                "title": "Грунтовка адгезионная Церезит CT 19 Бетонконтакт 15 кг - baucenter.ru",
+                "path": "https://baucenter.ru/upload/pictures/51/515000356-31.webp?1738251031",
+                "alternative": "Грунтовка адгезионная Церезит CT 19 Бетонконтакт 15 кг"
+              }
+            ],
+            "price": {
+              "main": {
+                "price": 209000,
+                "currency": "RUB",
+                "unit": "шт.",
+                "basePrice": null,
+                "bonus": 8360,
+                "extraBonus": null
+              },
+              "alternative": null,
+              "additional": [],
+              "accounting": {
+                "price": 209000,
+                "currency": "RUB",
+                "unit": "шт.",
+                "basePrice": null,
+                "bonus": 8360,
+                "extraBonus": null
+              },
+              "bonus": 8360,
+              "extraBonus": null
+            },
+            "availability": [
+              {
+                "title": "Наличие",
+                "type": "store",
+                "availabilityCount": {
+                  "amount": 152,
+                  "unit": "шт.",
+                  "text": "Доступно к заказу 152 шт."
+                },
+                "stores": [
+                  {
+                    "store": {
+                      "id": 1100000037,
+                      "title": "Ростовское шоссе",
+                      "address": "Ростовское шоссе, 28/7",
+                      "storeType": "store",
+                      "latitude": "45.096446027864",
+                      "longitude": "38.993938457672",
+                      "workingHours": {
+                        "title": "Ежедневно",
+                        "from": "8:00",
+                        "to": "22:00"
+                      },
+                      "availabilityDate": null
+                    },
+                    "planDate": "",
+                    "planDateText": "",
+                    "amount": 98,
+                    "unit": "шт.",
+                    "availText": "98 шт.",
+                    "placements": [
+                      "76 ряд 8 место"
+                    ],
+                    "extra": null,
+                    "exposurePlacements": null,
+                    "availabilityDate": null
+                  },
+                  {
+                    "store": {
+                      "id": 1100000036,
+                      "title": "Селезнева",
+                      "address": "ул. Селезнева, 4",
+                      "storeType": "store",
+                      "latitude": "45.027553000019",
+                      "longitude": "39.020585915344",
+                      "workingHours": {
+                        "title": "Ежедневно",
+                        "from": "08:00",
+                        "to": "22:00"
+                      },
+                      "availabilityDate": null
+                    },
+                    "planDate": "",
+                    "planDateText": "",
+                    "amount": 38,
+                    "unit": "шт.",
+                    "availText": "38 шт.",
+                    "placements": [
+                      "68 ряд 9 место"
+                    ],
+                    "extra": null,
+                    "exposurePlacements": null,
+                    "availabilityDate": null
+                  },
+                  {
+                    "store": {
+                      "id": 1100742766,
+                      "title": "Данилы Волкореза",
+                      "address": "ул. им. Данилы Волкореза, 2",
+                      "storeType": "store",
+                      "latitude": "45.008113",
+                      "longitude": "39.124811",
+                      "workingHours": {
+                        "title": "Ежедневно",
+                        "from": "08:00",
+                        "to": "22:00"
+                      },
+                      "availabilityDate": null
+                    },
+                    "planDate": "",
+                    "planDateText": "",
+                    "amount": 16,
+                    "unit": "шт.",
+                    "availText": "16 шт.",
+                    "placements": [],
+                    "extra": null,
+                    "exposurePlacements": null,
+                    "availabilityDate": null
+                  }
+                ],
+                "availabilityDate": null,
+                "hint": null
+              }
+            ],
+            "availableType": "online",
+            "sectionId": 29124,
+            "categoryName": "Грунтовки строительные",
+            "brand": "Церезит",
+            "inBasket": 0,
+            "inWishList": 0,
+            "quantityInWishLists": [],
+            "multiple": 1,
+            "is24": false,
+            "isNoticeReceiptExist": false,
+            "nameplates": [],
+            "canBeFloat": false,
+            "productOfferId": 358050
+          }
+        ],
+        "count": 58
+      }
+    }
+  }
+}

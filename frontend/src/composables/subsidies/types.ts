@@ -428,6 +428,16 @@ export interface FeoPlannedItem {
   // ФЭО. Поле может пока отсутствовать на бэкенде (раздельная выкладка фронта/
   // бэкенда) — undefined читается как «нет дублей», чип не рисуется.
   source_duplicates?: { item_id: number; category_id: number; category_name: string }[]
+  // Категория/вид каталога по ТОЧНОМУ совпадению нормализованного имени
+  // (задача владельца, 27.10.2026) — считается ТОЛЬКО GET /feo-planned-items/
+  // comparison (backend/app/routers/feo_planned_items_reports.py::get_comparison,
+  // app/services/feo_plan_catalog_category.py). null — товара с таким именем в
+  // каталоге нет, либо у совпавших товаров категория/вид расходятся (не
+  // угадываем). Используется переключателем «Позиции: По категориям/Категории
+  // + виды» (FeoTreeToolbar.vue feoItemsGroupBy) для группировки плановых
+  // позиций — см. useFeoPlannedItemGroups.ts.
+  catalog_category?: string | null
+  catalog_product_type?: string | null
 }
 
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура

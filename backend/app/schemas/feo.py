@@ -155,6 +155,17 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     # заполнять это поле не обязательно (дефолт [] безопасен), только
     # get_comparison ниже реально его считает.
     source_duplicates: list[dict] = []
+    # Категория/вид каталога по ТОЧНОМУ совпадению нормализованного имени
+    # (задача владельца, 27.10.2026, FeoTreeToolbar.vue feoItemsGroupBy) —
+    # плановая позиция сама не хранит product_id (см. докстринг product_id
+    # выше), поэтому группировка по категории/виду для неё считается тут же,
+    # в get_comparison (app.services.feo_plan_catalog_category, единственная
+    # формула, Правило №6). None — товара с таким именем нет в каталоге, либо
+    # у совпавших товаров категория/вид расходятся (неоднозначно). Считается
+    # ТОЛЬКО в get_comparison (см. комментарий item_type_effective выше) —
+    # остальные эндпоинты оставляют дефолт None.
+    catalog_category: Optional[str] = None
+    catalog_product_type: Optional[str] = None
     model_config = {"from_attributes": True}
 
 

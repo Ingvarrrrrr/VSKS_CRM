@@ -69,6 +69,65 @@ export function withNameColumnFloor(base: Record<string, string>, selectModeActi
 // Функция ЧИСТАЯ (не зависит от состояния дерева) — используется и в самом дереве
 // ФЭО (SubsidiesView.vue), и в PlannedItemAddDialog.vue (openCreatePlannedFromActual)
 // — один источник, не две копии (Правило №6).
+// ── Группировка «Позиции: По категориям / Категории + виды» — общее ядро ────
+// Переключатель FeoTreeToolbar.vue (ctx.feoItemsGroupBy) группирует ДВА разных
+// списка: виртуальные позиции «из заявок» (useFeoReqItems.ts::reqItemRowsFor)
+// и плановые позиции листа (useFeoPlannedItemGroups.ts, задача владельца
+// 27.10.2026 — категория/вид у них теперь из каталога по точному совпадению
+// имени, см. FeoPlannedItem.catalog_category/catalog_product_type). Сама
+// механика сортировки/вставки строк-заголовков («Без категории»/«Без вида» —
+// фолбэк, как и у виртуальных позиций закупок, feo_plan_reads.py) — ОДНА
+// функция (Правило №6), второй копии цикла с curCat/curType не заводим.
+export interface CategoryGroupRow<T> {
+  key: string
+  header: string
+  level: number
+  count: number
+  sum: number
+  item: T | null
+}
+
+export function buildCategoryGroupedRows<T>(
+  items: T[],
+  mode: 'none' | 'category' | 'category_type',
+  getCategory: (x: T) => string,
+  getProductType: (x: T) => string,
+  getName: (x: T) => string,
+  getSum: (x: T) => number,
+): CategoryGroupRow<T>[] {
+  const itemRow = (x: T): CategoryGroupRow<T> => ({ key: `i-${normName(getName(x))}`, header: '', level: 0, count: 1, sum: getSum(x), item: x })
+  if (mode === 'none') {
+    return items.map(itemRow)
+  }
+  const sorted = [...items].sort((a, b) =>
+    getCategory(a).localeCompare(getCategory(b), 'ru')
+    || getProductType(a).localeCompare(getProductType(b), 'ru')
+    || getName(a).localeCompare(getName(b), 'ru'))
+  const rows: CategoryGroupRow<T>[] = []
+  let curCat: string | null = null
+  let curType: string | null = null
+  const headerRow = (key: string, header: string, level: number, grp: T[]): CategoryGroupRow<T> => ({
+    key, header, level, count: grp.length, sum: grp.reduce((s, x) => s + getSum(x), 0), item: null,
+  })
+  for (const g of sorted) {
+    const cat = getCategory(g)
+    if (cat !== curCat) {
+      curCat = cat
+      curType = null
+      rows.push(headerRow(`c-${curCat}`, curCat, 1, sorted.filter(x => getCategory(x) === curCat)))
+    }
+    if (mode === 'category_type') {
+      const type = getProductType(g)
+      if (type !== curType) {
+        curType = type
+        rows.push(headerRow(`c-${curCat}-t-${type}`, type, 2, sorted.filter(x => getCategory(x) === curCat && getProductType(x) === curType)))
+      }
+    }
+    rows.push(itemRow(g))
+  }
+  return rows
+}
+
 export function leftGroupInfo(actual: FeoActualItem): FeoLeftGroupInfo {
   const stages = actual.stages || []
   const contract = stages.find(s => s.key === 'contract')

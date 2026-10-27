@@ -413,9 +413,17 @@ async def get_comparison(
         from app.services.feo_item_source_duplicates import find_source_row_duplicates
         source_duplicates_map = await find_source_row_duplicates(db, subsidy_id)
 
+    # Категория/вид каталога по точному совпадению имени (задача владельца,
+    # 27.10.2026) — один запрос на весь набор плановых позиций этой категории,
+    # не в цикле (app.services.feo_plan_catalog_category, Правило №6 — та же
+    # нормализация, что у resolve_product_for_planned_item в item_types.py).
+    from app.services.feo_plan_catalog_category import catalog_categories_by_normalized_name, catalog_category_for_name
+    _catalog_cat_map = await catalog_categories_by_normalized_name(db, [r.name for r in planned_rows])
+
     planned_out: list[FeoPlannedItemOut] = []
     for r in planned_rows:
         out = FeoPlannedItemOut.model_validate(r)
+        out.catalog_category, out.catalog_product_type = catalog_category_for_name(r.name, _catalog_cat_map)
         _own_type = r.item_type
         if _own_type:
             out.item_type_effective = _own_type

@@ -112,7 +112,25 @@
                 </div>
               </td>
             </tr>
-            <template v-for="(planned, pIdx) in ctx.displayPlannedRowsFor(node)" :key="`p-${planned.id}`">
+            <template v-for="entry in plannedGroupEntriesFor(node)" :key="entry.key">
+              <!-- Группировка «Позиции: По категориям/Категории + виды» (задача
+                   владельца 27.10.2026, ctx.feoItemsGroupBy) — заголовок
+                   категории/вида перед позициями этой группы. Категория/вид —
+                   FeoPlannedItem.catalog_category/catalog_product_type (точное
+                   совпадение имени с товаром каталога, см. useFeoPlannedItemGroups.ts
+                   и backend/app/services/feo_plan_catalog_category.py). -->
+              <tr v-if="entry.kind === 'header'" class="feo-planned-group-header">
+                <td colspan="8" :style="{ paddingLeft: `${ctx.plannedItemIndentPx(node) + (entry.level - 1) * 16}px` }"
+                  style="padding:4px 8px;font-weight:600;color:#0f766e;background:#F0FDFA;border-bottom:1px solid #99F6E4;font-size:12px">
+                  {{ entry.label }} <span style="color:#64748b;font-weight:400">· {{ entry.count }} · {{ formatCurrency(entry.sum) }}</span>
+                </td>
+              </tr>
+              <!-- index плановой позиции внутри ЭТОГО v-for (entry.index) — исходная
+                   позиция в несгруппированном ctx.displayPlannedRowsFor(node) (как
+                   группировка строила её, см. docstring useFeoPlannedItemGroups.ts) —
+                   реордер (кнопки вверх/вниз ниже) работает с ней, а не с видимым
+                   («сгруппированным») порядком. -->
+              <template v-for="planned in (entry.kind === 'item' ? [entry.item] : [])" :key="planned.id">
               <!-- data-feo-planned-item-id — цель прокрутки+подсветки поиска по субсидии
                    (useFeoTreeSearch.ts::scrollAndHighlight), тот же приём, что и
                    data-feo-node-id у строки категории (FeoTreeRow.vue). -->
@@ -512,16 +530,16 @@
                   <div class="d-flex align-center flex-wrap justify-center" style="gap:0">
                     <template v-if="!planned.isManual">
                       <v-btn icon="mdi-chevron-up" variant="text" size="x-small" color="grey-darken-1"
-                        :disabled="pIdx === 0"
+                        :disabled="entry.kind === 'item' && entry.index === 0"
                         :loading="ctx.reorderingPlannedItemId.value === planned.id"
                         title="Переместить выше"
-                        @click.stop="ctx.reorderPlannedItem(node, pIdx, 'up')"
+                        @click.stop="entry.kind === 'item' && ctx.reorderPlannedItem(node, entry.index, 'up')"
                       />
                       <v-btn icon="mdi-chevron-down" variant="text" size="x-small" color="grey-darken-1"
-                        :disabled="pIdx === ctx.displayPlannedRowsFor(node).length - 1"
+                        :disabled="entry.kind === 'item' && entry.index === ctx.displayPlannedRowsFor(node).length - 1"
                         :loading="ctx.reorderingPlannedItemId.value === planned.id"
                         title="Переместить ниже"
-                        @click.stop="ctx.reorderPlannedItem(node, pIdx, 'down')"
+                        @click.stop="entry.kind === 'item' && ctx.reorderPlannedItem(node, entry.index, 'down')"
                       />
                     </template>
                   </div>
@@ -778,6 +796,7 @@
                   </div>
                 </td>
               </tr>
+              </template>
             </template>
 
             <tr v-if="!ctx.displayPlannedRowsFor(node).length && !ctx.comparisonData.value[node.id]!.actual.length">
@@ -871,6 +890,7 @@ import { useFeoLevel5Api } from '@/composables/subsidies/useFeoLevel5'
 import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { leftGroupInfo, withNameColumnFloor } from '@/composables/subsidies/feoCategoryUtils'
+import { buildPlannedGroupEntries, type FeoPlannedGroupEntry } from '@/composables/subsidies/useFeoPlannedItemGroups'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { purchaseStatusLabel, purchaseStatusColor, PURCHASE_STATUS_ORDER } from '@/constants/purchaseStatus'
 import { planStageBackground, planStageTooltip, type PlanStageStyle } from '@/utils/planStageBackground'
@@ -983,6 +1003,15 @@ const planToRequest = usePlanToRequest()
 // feoResiduals, что и режим «Создать закупку на основе плана» (Правило №6,
 // второй расчёт остатка не заводим); ensureResidualsLoaded уже вызван один
 // раз на всю субсидию в FeoTreeToolbar.vue, здесь только читаем.
+// Группировка «Позиции: По категориям/Категории + виды» для плановых позиций
+// (задача владельца 27.10.2026) — см. докстринг useFeoPlannedItemGroups.ts.
+// ctx.feoItemsGroupBy — тот же переключатель FeoTreeToolbar.vue, которым уже
+// группируются виртуальные позиции «из заявок» (useFeoReqItems.ts), второй
+// переключатель не заводим (Правило №6). displayPlannedRowsFor(node) —
+// единственный источник списка позиций листа (тот же, что уже рисует таблицу).
+function plannedGroupEntriesFor(node: FeoNode): FeoPlannedGroupEntry[] {
+  return buildPlannedGroupEntries(ctx.displayPlannedRowsFor(node), ctx.feoItemsGroupBy.value)
+}
 function isRowFullyPurchased(planned: FeoPlannedItem & { isManual?: boolean }): boolean {
   return planned.isManual
     ? planToRequest.isCategoryPlanFullyTaken(node.id)

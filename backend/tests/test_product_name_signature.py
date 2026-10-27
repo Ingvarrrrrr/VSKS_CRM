@@ -198,3 +198,188 @@ def test_missing_property_on_one_side_is_not_a_conflict():
     # Цвет указан только у одного — это НЕ противоречие (п.4).
     res = _decision("Шлем ШКПС", "Шлем ШКПС белый")
     assert res["decision"] != "no"
+
+
+# ---------------------------------------------------------------------------
+# Ревью 113 авто-пар на проде, 27.10.2026, правило «название + индекс
+# модели» — найденные ложные сведения (должны стать НЕ auto) и контроль,
+# что правильные пары того же ревью остаются auto/check.
+# ---------------------------------------------------------------------------
+
+def test_model_modifier_letter_din():
+    # "Д" отдельным словом сразу после кода модели ДИН2 — часть индекса
+    # (п.1), не "похожесть"; есть у одного, нет у другого → no.
+    res = _decision(
+        "Светоуказатель Кристалл-24 ДИН2 с динамическим табло (24В)",
+        "Светоуказатель двусторонний Кристалл-24 ДИН2 Д с динамическим табло",
+    )
+    assert res["decision"] == "no", res
+
+
+def test_model_modifier_letter_gps():
+    res = _decision("Генератор пены ГПС-200", "Генератор пены ГПС-200 П - Перекрывной")
+    assert res["decision"] == "no", res
+
+
+def test_model_modifier_letter_szp():
+    res = _decision("Станция зарядная порошковая СЗП-02ГУ", "Станция зарядная порошковая СЗП-02ГУ М")
+    assert res["decision"] == "no", res
+
+
+def test_szu_complect_one_sided_is_check_not_auto():
+    # "с комплектацией" указано только у одного (п.2) — check, не auto.
+    res = _decision(
+        "Станция зарядная углекислотная СЗУ-03НД",
+        "Станция зарядная углекислотная СЗУ-03НД с комплектацией",
+    )
+    assert res["decision"] == "check", res
+
+
+def test_hose_type_both_specified_different_is_no():
+    # "всасывающий" ≠ "напорно-всасывающий" — указано у ОБОИХ и разное → no.
+    res = _decision(
+        "Рукав всасывающий гофрированный 125 мм",
+        "Рукав напорно-всасывающий гофрированный 125 мм",
+    )
+    assert res["decision"] == "no", res
+
+
+def test_coating_word_one_sided_not_auto():
+    # "никель" указано только у одного (п.2, группа "покрытие") — не auto.
+    res = _decision(
+        "Огнетушитель воздушно-эмульсионный ОВЭ-5 Ратоборец",
+        "Огнетушитель воздушно-эмульсионный ОВЭ-5 ТД Русинтэк никель",
+    )
+    assert res["decision"] != "auto", res
+
+
+def test_known_good_sign_e21_still_auto():
+    res = _decision("Знак E21 'Пункт (место) сбора' 200х200 мм", "Знак E21 Пункт (место) сбора")
+    assert res["decision"] == "auto", res
+
+
+def test_known_good_piroplate_still_auto():
+    res = _decision("ПироПластина Ф-30 автономное устройство пожаротушения", "ПироПластина Ф-30")
+    assert res["decision"] == "auto", res
+
+
+def test_known_good_extinguisher_cover_still_auto():
+    res = _decision("Чехол для огнетушителя ОП-70 360*1070 мм", "Чехол ОП-70 360*1070 мм")
+    assert res["decision"] == "auto", res
+
+
+def test_known_good_makita_battery_still_auto():
+    res = _decision("Аккумулятор Makita тип BL1860B", "Аккумулятор 18 В 6,0 Ач Makita LXT BL1860B",
+                     a_manufacturer="MAKITA", b_manufacturer="MAKITA")
+    assert res["decision"] == "auto", res
+
+
+def test_known_good_self_rescuer_minutes_note_still_auto():
+    res = _decision(
+        "Самоспасатель СПИ-50 (не менее 50 мин.)",
+        "Самоспасатель СПИ-50 (50 мин.)",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_known_good_install_mode_one_sided_check_is_acceptable():
+    # "стационарный" указан только у одного — check допустим (владелец:
+    # если ГПСС бывают только стационарными, check — не регрессия).
+    res = _decision("Генератор пены ГПСС-2000 стационарный", "Генератор пены ГПСС-2000")
+    assert res["decision"] == "check", res
+
+
+def test_known_good_zinc_coating_one_sided_check_is_acceptable():
+    res = _decision("Зажим рукавный ЗПР-80", "Зажим рукавный ЗПР-80 оцинкованный")
+    assert res["decision"] == "check", res
+
+
+# ---------------------------------------------------------------------------
+# Доп. ревью Кувалда↔Бауцентр, 27.10.2026: хвостовые коды магазина,
+# региональный суффикс артикула, комплектация по батарее.
+# ---------------------------------------------------------------------------
+
+def test_store_tail_code_in_parens_and_repeated_ignored():
+    res = _decision(
+        "Дрель безударная сетевая DEKO DKSD400W (063-4086) 063-4086",
+        "Дрель безударная сетевая DEKO DKSD400W",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_market_suffix_se00_same_index():
+    res = _decision(
+        "Перфоратор сетевой SKIL RH1183 SDS+ RH1183SE00",
+        "Перфоратор SDS-Plus 1500 Вт 5,0 Дж SKIL RH1183SE00",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_market_suffix_xj_same_index():
+    res = _decision("Дрель-шуруповёрт DEWALT DCF887N", "Дрель-шуруповёрт DEWALT DCF887N-XJ",
+                     a_manufacturer="DEWALT", b_manufacturer="DEWALT")
+    assert res["decision"] == "auto", res
+
+
+def test_unknown_suffix_not_stripped_different_configuration():
+    # DHR242Z ≠ DHR242RT — "Z"/"RT" НЕ в закрытом списке суффиксов, это
+    # разная комплектация, не региональный суффикс (п.4).
+    res = _decision("Дрель-шуруповёрт DEWALT DHR242Z", "Дрель-шуруповёрт DEWALT DHR242RT",
+                     a_manufacturer="DEWALT", b_manufacturer="DEWALT")
+    assert res["decision"] == "no", res
+
+
+def test_ean_like_long_numeric_tail_code_ignored():
+    # EAN-хвост игнорируется, "станок циркулярный"/"распиловочный станок" —
+    # тот же словарный вид "станок" (вид ищем среди первых 5 слов). НО
+    # мощность в названии теперь сравнивается с переводом единиц (владелец,
+    # посл. правка, 27.10.2026): 2,0 кВт = 2000 Вт ≠ 2500 Вт → no.
+    res = _decision(
+        "Станок циркулярный Jib 3255A-2 2,0 кВт, 230В 0111020231000",
+        "Распиловочный станок 2500 Вт 254 мм + станина JIB 3255A-2",
+    )
+    assert res["decision"] == "no", res
+    assert "мощность" in res["reason"]
+
+
+def test_power_mentioned_only_on_one_side_still_auto():
+    # Мощность указана только у Бауцентра — НЕ противоречие (п.4).
+    res = _decision(
+        "Перфоратор MAKITA M8701B",
+        "Перфоратор 800 Вт 2,3 Дж SDS-Plus Makita M8701B",
+        a_manufacturer="MAKITA", b_manufacturer="MAKITA",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_product_type_adjective_first_hammer_still_matches():
+    # Бауцентр ставит прилагательное первым словом ("Отбойный молоток") —
+    # вид ищем среди первых 5 слов, не только по первому слову (п. доп.
+    # ревью). "Молот" = "молоток" (синоним-основа).
+    res = _decision(
+        "Молот ударный сетевой SKIL RH1792 RH1792SE00",
+        "Отбойный молоток SDS-Max 1150 Вт 12 Дж SKIL RH1792SE00",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_product_type_adjective_first_grinder_still_matches():
+    res = _decision(
+        "Шлифмашина ленточная сетевая HANSKONNER HBS8512",
+        "Ленточная шлифмашина Hanskonner HBS8512, 1200 Вт 76х533 мм",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_product_type_cabinet_vs_case_still_no():
+    res = _decision("Шкаф для огнетушителя DAKEN Regon 82170",
+                     "Пенал для огнетушителя DAKEN Regon 82170")
+    assert res["decision"] == "no", res
+    assert "вид товара" in res["reason"]
+
+
+def test_battery_solo_vs_akb_count_not_auto():
+    # "solo" ≠ "2 АКБ ..." — комплектация по батарее указана у обоих и
+    # разная → не auto (п.5).
+    res = _decision("Шуруповёрт SKIL ID6739 solo", "Шуруповёрт SKIL ID6739 2 АКБ 4,0+2,0 Ач")
+    assert res["decision"] != "auto", res

@@ -7,7 +7,7 @@
 // Module-level singleton (как useKpiDrilldown.ts).
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { Router } from 'vue-router'
-import { normName } from './feoCategoryUtils'
+import { buildCategoryGroupedRows, normName } from './feoCategoryUtils'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER } from '@/constants/purchaseStatus'
 import { makeCtxSingleton } from './ctxSingleton'
 import type {
@@ -210,43 +210,28 @@ function buildFeoReqItems(ctx: FeoReqItemsCtx) {
     return map
   })
 
+  // Механика сортировки/вставки заголовков категория/вид — ОБЩАЯ с плановыми
+  // позициями листа (useFeoPlannedItemGroups.ts), buildCategoryGroupedRows
+  // (feoCategoryUtils.ts, Правило №6). Здесь ключ строки-позиции — исторический
+  // `g-${normName(name)}` (itemKeyPrefix: 'g', совпадает с reqPanelKey), и
+  // нужны sumQty/items — виртуальная группа закупок объединяет несколько
+  // FeoReqItem (getItems). Режим 'none' в билдере не сортирует сам — сортируем
+  // по имени на входе, как раньше.
   function reqItemRowsFor(node: FeoNode): FeoReqRow[] {
-    const groupsList = virtualGroupsFor(node)
-    const mode = feoItemsGroupBy.value
-    const groupRowOf = (g: FeoVirtualGroup): FeoReqRow =>
-      ({ key: `g-${normName(g.name)}`, header: '', level: 0, count: g.items.length, sumQty: g.qty, sum: g.total, group: g, items: g.items })
-    if (mode === 'none') {
-      return [...groupsList].sort((a, b) => a.name.localeCompare(b.name, 'ru')).map(groupRowOf)
-    }
-    const sorted = [...groupsList].sort((a, b) =>
-      a.category.localeCompare(b.category, 'ru')
-      || a.product_type.localeCompare(b.product_type, 'ru')
-      || a.name.localeCompare(b.name, 'ru'))
-    const rows: FeoReqRow[] = []
-    let curCat: string | null = null
-    let curType: string | null = null
-    const headerRow = (key: string, header: string, level: number, grp: FeoVirtualGroup[]): FeoReqRow => ({
-      key, header, level,
-      count: grp.reduce((s, x) => s + x.items.length, 0),
-      sumQty: Math.round(grp.reduce((s, x) => s + x.qty, 0) * 10000) / 10000,
-      sum: grp.reduce((s, x) => s + x.total, 0),
-      group: null,
-      items: grp.flatMap(x => x.items),
-    })
-    for (const g of sorted) {
-      if (g.category !== curCat) {
-        curCat = g.category
-        curType = null
-        rows.push(headerRow(`c-${curCat}`, curCat, 1, sorted.filter(x => x.category === curCat)))
-      }
-      if (mode === 'category_type' && g.product_type !== curType) {
-        curType = g.product_type
-        rows.push(headerRow(`c-${curCat}-t-${curType}`, curType, 2,
-          sorted.filter(x => x.category === curCat && x.product_type === curType)))
-      }
-      rows.push(groupRowOf(g))
-    }
-    return rows
+    const sortedGroups = [...virtualGroupsFor(node)].sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+    const rows = buildCategoryGroupedRows<FeoVirtualGroup, FeoReqItem>(
+      sortedGroups,
+      feoItemsGroupBy.value,
+      g => g.category,
+      g => g.product_type,
+      g => g.name,
+      g => g.total,
+      { getQty: g => g.qty, getItems: g => g.items, itemKeyPrefix: 'g' },
+    )
+    return rows.map((row): FeoReqRow => ({
+      key: row.key, header: row.header, level: row.level, count: row.count,
+      sumQty: row.sumQty ?? 0, sum: row.sum, group: row.item, items: row.items ?? [],
+    }))
   }
 
   function reqRowIndent(node: FeoNode, row: FeoReqRow): string {

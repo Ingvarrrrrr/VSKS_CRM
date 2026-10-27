@@ -78,24 +78,53 @@ export function withNameColumnFloor(base: Record<string, string>, selectModeActi
 // механика сортировки/вставки строк-заголовков («Без категории»/«Без вида» —
 // фолбэк, как и у виртуальных позиций закупок, feo_plan_reads.py) — ОДНА
 // функция (Правило №6), второй копии цикла с curCat/curType не заводим.
-export interface CategoryGroupRow<T> {
+export interface CategoryGroupRow<T, I = never> {
   key: string
   header: string
   level: number
   count: number
   sum: number
+  // Опционально: сумма количества (round-4) и плоский список вложенных элементов
+  // группы — нужны useFeoReqItems.ts::reqItemRowsFor (виртуальные позиции
+  // закупок состоят из нескольких FeoReqItem), useFeoPlannedItemGroups.ts их не
+  // запрашивает (opts не передаёт) — поля остаются undefined, старое поведение
+  // не меняется.
+  sumQty?: number
+  items?: I[]
   item: T | null
 }
 
-export function buildCategoryGroupedRows<T>(
+export interface BuildCategoryGroupedRowsOpts<T, I> {
+  getQty?: (x: T) => number
+  getItems?: (x: T) => I[]
+  // Префикс ключа строки-позиции (`${prefix}-${normName(name)}`) — по умолчанию
+  // 'i', useFeoReqItems.ts передаёт 'g' (исторический ключ `g-...` виртуальных
+  // групп, совпадает с reqPanelKey/normName в этом же файле).
+  itemKeyPrefix?: string
+}
+
+export function buildCategoryGroupedRows<T, I = never>(
   items: T[],
   mode: 'none' | 'category' | 'category_type',
   getCategory: (x: T) => string,
   getProductType: (x: T) => string,
   getName: (x: T) => string,
   getSum: (x: T) => number,
-): CategoryGroupRow<T>[] {
-  const itemRow = (x: T): CategoryGroupRow<T> => ({ key: `i-${normName(getName(x))}`, header: '', level: 0, count: 1, sum: getSum(x), item: x })
+  opts?: BuildCategoryGroupedRowsOpts<T, I>,
+): CategoryGroupRow<T, I>[] {
+  const prefix = opts?.itemKeyPrefix ?? 'i'
+  const getQty = opts?.getQty
+  const getItems = opts?.getItems
+  const itemRow = (x: T): CategoryGroupRow<T, I> => ({
+    key: `${prefix}-${normName(getName(x))}`,
+    header: '',
+    level: 0,
+    count: getItems ? getItems(x).length : 1,
+    sum: getSum(x),
+    ...(getQty ? { sumQty: getQty(x) } : {}),
+    ...(getItems ? { items: getItems(x) } : {}),
+    item: x,
+  })
   if (mode === 'none') {
     return items.map(itemRow)
   }
@@ -103,11 +132,18 @@ export function buildCategoryGroupedRows<T>(
     getCategory(a).localeCompare(getCategory(b), 'ru')
     || getProductType(a).localeCompare(getProductType(b), 'ru')
     || getName(a).localeCompare(getName(b), 'ru'))
-  const rows: CategoryGroupRow<T>[] = []
+  const rows: CategoryGroupRow<T, I>[] = []
   let curCat: string | null = null
   let curType: string | null = null
-  const headerRow = (key: string, header: string, level: number, grp: T[]): CategoryGroupRow<T> => ({
-    key, header, level, count: grp.length, sum: grp.reduce((s, x) => s + getSum(x), 0), item: null,
+  const headerRow = (key: string, header: string, level: number, grp: T[]): CategoryGroupRow<T, I> => ({
+    key,
+    header,
+    level,
+    count: getItems ? grp.reduce((s, x) => s + getItems(x).length, 0) : grp.length,
+    sum: grp.reduce((s, x) => s + getSum(x), 0),
+    ...(getQty ? { sumQty: Math.round(grp.reduce((s, x) => s + getQty(x), 0) * 10000) / 10000 } : {}),
+    ...(getItems ? { items: grp.flatMap(getItems) } : {}),
+    item: null,
   })
   for (const g of sorted) {
     const cat = getCategory(g)

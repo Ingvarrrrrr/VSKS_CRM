@@ -46,8 +46,8 @@ from app.services.product_description_merge import (
     is_new_description_shorter, merge_missing_lines,
 )
 from app.services.products_import_match import (
-    ProductMatchIndex, load_candidate_products, load_candidates_by_store_article,
-    norm_key as _norm_key_for_match,
+    ProductMatchIndex, load_candidate_products, load_candidates_by_brand_article,
+    load_candidates_by_store_article, norm_key as _norm_key_for_match,
 )
 from app.services.text_case import capitalize_first
 from app.services.units import is_pack_unit
@@ -303,12 +303,26 @@ async def apply_products_import(
                 store_article_pairs.add((_cid, _sa))
     store_article_candidates = await load_candidates_by_store_article(db, store_article_pairs)
 
+    # Критерий (0.5) сопоставления (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026) — бренд +
+    # артикул производителя со ВСЕХ строк файла, одним запросом
+    # (products_import_match.load_candidates_by_brand_article), не запрос на
+    # каждую строку. manufacturer/manufacturer_article читаются напрямую из
+    # col_idx (не только в режиме supplier_description) — та же пара полей,
+    # что ниже по циклу заполняет Product (ПРАВИЛО №6, одно чтение).
+    brand_article_pairs = set()
+    for row in data_rows:
+        _mfr = _cell(row, col_idx, "manufacturer")
+        _mfr_article = _cell(row, col_idx, "manufacturer_article")
+        if _mfr and _mfr_article:
+            brand_article_pairs.add((_mfr, _mfr_article))
+    brand_article_candidates = await load_candidates_by_brand_article(db, brand_article_pairs)
+
     # Единственный индекс сопоставления строки импорта с товаром каталога
     # (ПРАВИЛО №6, services/products_import_match.py) — пополняется новыми
     # товарами СРАЗУ после создания (см. match_index.add(p) ниже), поэтому
     # повтор позиции внутри одного файла находит уже созданный товар, а не
     # плодит второй created (Задача 2).
-    match_index = ProductMatchIndex(candidate_products, store_article_candidates)
+    match_index = ProductMatchIndex(candidate_products, store_article_candidates, brand_article_candidates)
 
     created = 0
     updated = 0
@@ -378,18 +392,23 @@ async def apply_products_import(
                 manufacturer_val = None
                 manufacturer_article_val = None
                 country_origin_val = None
+                # row_manufacturer_for_match/row_manufacturer_article_for_match
+                # (владелец, 27.10.2026) — читаются ВСЕГДА (не только при
+                # supplier_description), т.к. нужны ТОЛЬКО критерию (0.5)
+                # сопоставления (products_import_match.ProductMatchIndex.find)
+                # — поиск совпадения не должен зависеть от того, пишет ли
+                # этот вызов manufacturer/article в Product. manufacturer_val/
+                # manufacturer_article_val (запись в Product, _fill ниже)
+                # ОСТАЮТСЯ None без supplier_description — как и раньше,
+                # обычный Excel-импорт не трогает эти поля вовсе.
+                row_manufacturer_for_match = _cell(row, col_idx, "manufacturer")
+                row_manufacturer_article_for_match = _cell(row, col_idx, "manufacturer_article")
                 if supplier_description:
                     _chars_idx = col_idx.get("characteristics")
                     if _chars_idx is not None and _chars_idx < len(row):
                         characteristics_val = row[_chars_idx] or None
-                    manufacturer_val = _cell(row, col_idx, "manufacturer")
-                    # manufacturer_article (владелец, 27.10.2026) — ЕДИНСТВЕННОЕ
-                    # поле, заполняющее Product.article (устаревший "article"
-                    # больше не читается здесь напрямую — трактовку старых
-                    # файлов GALA без новых колонок делает load_gala_catalog.py
-                    # через catalog_gala.stores.split_legacy_article, ДО того,
-                    # как строка попадёт сюда).
-                    manufacturer_article_val = _cell(row, col_idx, "manufacturer_article")
+                    manufacturer_val = row_manufacturer_for_match
+                    manufacturer_article_val = row_manufacturer_article_for_match
                     country_origin_val = _cell(row, col_idx, "country_origin")
                     desc_val = build_tech_description(characteristics_val, desc_val)
                 effective_replace_descriptions = replace_descriptions or supplier_description
@@ -457,9 +476,24 @@ async def apply_products_import(
                 match = match_index.find(
                     name, desc_val,
                     contractor_id=row_contractor_id, store_article=row_store_article,
+                    manufacturer=row_manufacturer_for_match,
+                    manufacturer_article=row_manufacturer_article_for_match,
                 )
                 ep = match["product"]
                 dup_reason = match["reason"]
+                # Критерий (0.5) — РЕШЕНИЕ ВЛАДЕЛЬЦА 27.10.2026: карточка
+                # найдена по бренду+артикулу производителя (другой магазин) —
+                # построчный отчёт импорта должен показать это явно, не как
+                # обычное "обновлён". ep.id может быть None (товар создан
+                # предыдущей строкой ЭТОГО ЖЕ файла, ещё до flush) — тогда
+                # номер показать нечем, помечаем без номера.
+                brand_article_reason = None
+                if match.get("matched_by") == "brand_article":
+                    brand_article_reason = (
+                        f"сведено с №{ep.id} по бренду и артикулу производителя"
+                        if ep is not None and ep.id is not None
+                        else "сведено по бренду и артикулу производителя (товар этого же файла)"
+                    )
 
                 if ep is not None:
                     is_new_unflushed = ep.id is None
@@ -635,7 +669,7 @@ async def apply_products_import(
                     all_products.append(ep)
                     product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price or ep.price})
 
-                    reasons = [r for r in (dup_reason, desc_reason) if r]
+                    reasons = [r for r in (brand_article_reason, dup_reason, desc_reason) if r]
                     if desc_reason and not changed:
                         skipped += 1
                         report_rows.append({"row": row_num, "action": "skipped", "name": name, "reason": "; ".join(reasons)})

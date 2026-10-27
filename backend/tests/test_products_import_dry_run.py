@@ -12,6 +12,7 @@ dry_run=true не пишет в БД; на всякий случай тест в
 общей транзакции db_session/client (conftest.py) — ничего не переживёт
 teardown, даже при ошибке в проверке.
 """
+import uuid
 from io import BytesIO
 
 import pytest
@@ -20,6 +21,8 @@ try:
     from openpyxl import Workbook
 except ImportError:
     Workbook = None
+
+_SWITCH_NAME = f"Коммутатор D-Link DGS-1024D/J1A {uuid.uuid4().hex[:8]}"
 
 
 def _build_tz_like_workbook() -> bytes:
@@ -34,7 +37,7 @@ def _build_tz_like_workbook() -> bytes:
     ws.append([1, None, None, "Цифровая техника", "Ноутбук",
                "Ноутбук Lenovo IdeaPad", "Многоразовое", "Описание 1", "шт.", 50000])
     ws.append([2, None, None, "Сетевое оборудование", "Сетевой коммутатор",
-               "Коммутатор D-Link DGS-1024D/J1A", "Многоразовое", "Описание 2", "шт.", 12000])
+               _SWITCH_NAME, "Многоразовое", "Описание 2", "шт.", 12000])
     ws.append([3, None, None, "Цифровая техника", "Принтер",
                None, "Многоразовое", "Описание 3", "шт.", 8000])  # нет наименования — row 4
     ws.append([4, None, None, "Мебель", "Стол",
@@ -101,7 +104,7 @@ async def test_preview_then_mapped_dry_run_reports_rows_and_reasons(client, auth
     assert rows_by_num[2]["name"] == "Ноутбук Lenovo IdeaPad"
 
     assert rows_by_num[3]["action"] == "created"
-    assert rows_by_num[3]["name"] == "Коммутатор D-Link DGS-1024D/J1A"
+    assert rows_by_num[3]["name"] == _SWITCH_NAME
     # Дефект №2: имя НЕ должно превратиться в значение колонки «Категория товара»
     assert rows_by_num[3]["name"] != "Сетевое оборудование"
 

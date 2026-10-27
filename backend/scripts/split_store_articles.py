@@ -50,68 +50,24 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import bindparam, select, text, tuple_  # noqa: E402
+from sqlalchemy import bindparam, text  # noqa: E402
 
 from app.database import async_session  # noqa: E402
-from app.models.contractor import Contractor  # noqa: E402
-from app.models.product import Product  # noqa: E402
-from app.models.product_price_history import ProductPriceHistory  # noqa: E402
-from app.services.catalog_gala.stores import article_is_manufacturer_for_inn  # noqa: E402
-from app.utils.chunking import chunked  # noqa: E402
+from app.services.catalog_gala.store_article_split import (  # noqa: E402
+    collect_pending_split_candidates,
+    history_row_counts,
+)
 
 BATCH_SIZE = 5000
 
 
-async def _collect_candidates(db):
-    """Возвращает список (product_id, product_name, article, contractor_id,
-    inn) — товары с непустым article, чей price_source_contractor_id
-    указывает на магазин НЕ-производителя (см. докстринг модуля)."""
-    rows = (await db.execute(
-        select(
-            Product.id, Product.name, Product.article,
-            Product.price_source_contractor_id, Contractor.inn,
-        )
-        .join(Contractor, Contractor.id == Product.price_source_contractor_id)
-        .where(Product.article.isnot(None), Product.article != "")
-    )).all()
-    return [
-        (pid, name, article, contractor_id, inn)
-        for pid, name, article, contractor_id, inn in rows
-        if not article_is_manufacturer_for_inn(inn)
-    ]
-
-
-async def _history_row_counts(db, pairs) -> dict:
-    """Для набора (product_id, contractor_id) — число строк
-    product_price_history с source='import' и пустым store_article (те, что
-    получат store_article при --apply). Пара без строк не попадает в
-    результат (а не 0) — удобно отличать has_history от no_history ниже."""
-    valid_pairs = [(pid, cid) for pid, cid in pairs if pid is not None and cid is not None]
-    if not valid_pairs:
-        return {}
-    counts: dict = {}
-    for chunk in chunked(valid_pairs):
-        rows = (await db.execute(
-            select(ProductPriceHistory.product_id, ProductPriceHistory.contractor_id)
-            .where(
-                tuple_(ProductPriceHistory.product_id, ProductPriceHistory.contractor_id).in_(chunk),
-                ProductPriceHistory.source == "import",
-                ProductPriceHistory.store_article.is_(None),
-            )
-        )).all()
-        for product_id, contractor_id in rows:
-            key = (product_id, contractor_id)
-            counts[key] = counts.get(key, 0) + 1
-    return counts
-
-
 async def dry_run(db) -> None:
-    candidates = await _collect_candidates(db)
+    candidates = await collect_pending_split_candidates(db)
     if not candidates:
         print("Нет товаров-кандидатов (article пуст либо магазин — производитель).")
         return
 
-    counts = await _history_row_counts(db, [(pid, cid) for pid, _, _, cid, _ in candidates])
+    counts = await history_row_counts(db, [(pid, cid) for pid, _, _, cid, _ in candidates])
 
     by_store_affected: dict = {}
     by_store_no_history: dict = {}
@@ -151,8 +107,8 @@ async def dry_run(db) -> None:
 
 
 async def apply(db) -> None:
-    candidates = await _collect_candidates(db)
-    counts = await _history_row_counts(db, [(pid, cid) for pid, _, _, cid, _ in candidates])
+    candidates = await collect_pending_split_candidates(db)
+    counts = await history_row_counts(db, [(pid, cid) for pid, _, _, cid, _ in candidates])
     affected_ids = [pid for pid, _, _, cid, _ in candidates if counts.get((pid, cid), 0) > 0]
 
     if not affected_ids:

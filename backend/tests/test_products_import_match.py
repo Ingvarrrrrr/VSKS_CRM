@@ -234,6 +234,316 @@ async def test_store_article_match_updates_same_product_despite_renamed_title(db
 
 
 @pytest.mark.asyncio
+async def test_brand_article_match_merges_other_store_into_one_card(db_session, test_user):
+    """Критерий (0.5) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026): товар новой выгрузки,
+    совпавший с уже имеющимся товаром ДРУГОГО магазина по бренду и артикулу
+    производителя — сразу в ту же карточку (новая карточка не создаётся,
+    цена второго магазина — отдельная строка истории)."""
+    from app.models.product_price_history import ProductPriceHistory
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    brand = "ЗУБР"
+    article = "ЗДА-600"
+    old_name = _uniq_name("БрендАртикулМагазин1")
+    new_name = _uniq_name("БрендАртикулМагазин2")
+
+    inn1 = "7701000011"
+    contractor1_id = await find_or_create_contractor(
+        db_session, "Магазин1 для теста brand_article", inn1, match_by_name=False,
+    )
+    product = Product(name=old_name, category="Прочее", price=Decimal("100"), manufacturer=brand, article=article)
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+    db_session.add(ProductPriceHistory(
+        product_id=product.id, price=Decimal("100"), source="import",
+        contractor_id=contractor1_id, store_article="SA-M1-001",
+    ))
+    await db_session.commit()
+
+    inn2 = "7701000022"
+    col_idx = {
+        "name": 0, "price": 1, "seller_inn": 2, "store_article": 3,
+        "manufacturer": 4, "manufacturer_article": 5,
+    }
+    data_rows = [(new_name, "150", inn2, "SA-M2-777", brand, article)]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="brand_article_merge.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 0, result
+    assert result["updated"] == 1, result
+    assert await _count_by_name(db_session, new_name) == 0, "второй магазин не должен создавать отдельную карточку"
+
+    await db_session.refresh(product)
+    assert product.name == old_name, "название существующей карточки не переписывается"
+
+    hist = (await db_session.execute(
+        select(ProductPriceHistory).where(ProductPriceHistory.product_id == product.id)
+    )).scalars().all()
+    assert len(hist) == 2, "вторая строка истории (магазин 2) должна появиться у ТОЙ ЖЕ карточки"
+    assert "сведено" in result["rows"][0]["reason"] and "бренду и артикулу производителя" in result["rows"][0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_brand_article_same_store_different_store_article_not_merged(db_session, test_user):
+    """Правило «один магазин не продаёт товар дважды»: кандидат уже имеет
+    строку истории ЭТОГО ЖЕ магазина (contractor_id) с ДРУГИМ store_article —
+    это разные товары, критерий (0.5) не сводит их."""
+    from app.models.product_price_history import ProductPriceHistory
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    brand = "ЗУБР"
+    article = "ЗП-150"
+    existing_name = _uniq_name("ОдинМагазинСтарый")
+    new_name = _uniq_name("ОдинМагазинНовый")
+
+    inn = "7701000033"
+    contractor_id = await find_or_create_contractor(
+        db_session, "Магазин для теста один-товар-дважды", inn, match_by_name=False,
+    )
+    product = Product(name=existing_name, category="Прочее", price=Decimal("200"), manufacturer=brand, article=article)
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+    db_session.add(ProductPriceHistory(
+        product_id=product.id, price=Decimal("200"), source="import",
+        contractor_id=contractor_id, store_article="OLD-ART-1",
+    ))
+    await db_session.commit()
+
+    col_idx = {
+        "name": 0, "price": 1, "seller_inn": 2, "store_article": 3,
+        "manufacturer": 4, "manufacturer_article": 5,
+    }
+    # Та же пара (бренд, артикул производителя), ТОТ ЖЕ магазин, но ДРУГОЙ
+    # store_article — не тот же товар.
+    data_rows = [(new_name, "210", inn, "NEW-ART-2", brand, article)]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="brand_article_same_store.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 1, result
+    assert await _count_by_name(db_session, new_name) == 1, "тот же магазин под другим артикулом — отдельный товар"
+    await db_session.refresh(product)
+    assert product.price == Decimal("200"), "существующая карточка не должна была измениться"
+
+
+@pytest.mark.asyncio
+async def test_brand_article_bogus_manufacturer_never_merges(db_session, test_user):
+    """manufacturer-«брак» (is_bogus_manufacturer решает ТОЛЬКО
+    load_gala_catalog.item_to_row — здесь просто проверяем, что пустое
+    manufacturer в строке не задействует критерий (0.5) вовсе)."""
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    article = "ЛЕСТ-100"
+    existing_name = _uniq_name("БракПроизводительСтарый")
+    new_name = _uniq_name("БракПроизводительНовый")
+
+    product = Product(name=existing_name, category="Прочее", price=Decimal("50"), manufacturer=None, article=article)
+    db_session.add(product)
+    await db_session.commit()
+
+    inn = "7701000044"
+    await find_or_create_contractor(db_session, "Магазин брак-производитель", inn, match_by_name=False)
+
+    col_idx = {
+        "name": 0, "price": 1, "seller_inn": 2, "store_article": 3,
+        "manufacturer": 4, "manufacturer_article": 5,
+    }
+    # manufacturer пустой в строке (как после отбраковки load_gala_catalog.
+    # item_to_row) — критерий (0.5) требует непустой manufacturer, не сработает.
+    data_rows = [(new_name, "60", inn, "SA-BRAK-1", None, article)]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="brand_article_bogus.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 1, "без manufacturer критерий (0.5) не сводит — создан отдельный товар"
+    assert await _count_by_name(db_session, new_name) == 1
+
+
+@pytest.mark.asyncio
+async def test_brand_article_different_brands_same_code_not_merged(db_session, test_user):
+    """CR2016 — типоразмер батарейки, одинаковый у разных производителей
+    (Philips/Kodak) — РАЗНЫЕ бренды с одинаковым кодом не сводятся (критерий
+    (0.5) требует совпадения И бренда, И кода вместе)."""
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    code = "CR2016"
+    philips_name = _uniq_name("PhilipsCR2016")
+    kodak_name = _uniq_name("KodakCR2016")
+
+    product = Product(name=philips_name, category="Прочее", price=Decimal("30"), manufacturer="Philips", article=code)
+    db_session.add(product)
+    await db_session.commit()
+
+    inn = "7701000055"
+    await find_or_create_contractor(db_session, "Магазин для теста CR2016", inn, match_by_name=False)
+
+    col_idx = {
+        "name": 0, "price": 1, "seller_inn": 2, "store_article": 3,
+        "manufacturer": 4, "manufacturer_article": 5,
+    }
+    data_rows = [(kodak_name, "35", inn, "SA-KODAK-1", "Kodak", code)]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="brand_article_cr2016.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 1, "разные бренды с одним кодом — разные товары"
+    assert await _count_by_name(db_session, kodak_name) == 1
+    assert await _count_by_name(db_session, philips_name) == 1
+
+
+@pytest.mark.asyncio
+async def test_brand_article_pending_store_split_not_merged(db_session, test_user):
+    """Гард (владелец, 27.10.2026, риск Сима-ленда/Бауцентра): карточка, чей
+    price_source_contractor — Сима-ленд (article_is_manufacturer=False, см.
+    app.services.catalog_gala.stores.STORES), и у неё Product.article =
+    НОМЕР МАГАЗИНА (старая трактовка, перенос split_store_articles.py --apply
+    для неё ещё НЕ сделан — нет строки истории с заполненным store_article)
+    — критерий (0.5) не должен сводить с ней товар другого магазина по
+    случайному совпадению бренда + "артикля"-номера магазина."""
+    from app.models.product_price_history import ProductPriceHistory
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    brand = "Ярпожинвест"
+    legacy_article = "4878510"  # на деле номер товара в Сима-ленде, не артикул производителя
+    old_name = _uniq_name("СимаЛендНеПеренесён")
+    new_name = _uniq_name("ДругойМагазинЯрпож")
+
+    sima_contractor_id = await find_or_create_contractor(
+        db_session, "ООО ТД «Сима-ленд»", "6679104850", match_by_name=False,
+    )
+    product = Product(
+        name=old_name, category="Прочее", price=Decimal("100"),
+        manufacturer=brand, article=legacy_article,
+        price_source_contractor_id=sima_contractor_id,
+    )
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+    # Строка истории ЭТОГО магазина с ПУСТЫМ store_article — перенос ещё не
+    # выполнен (ровно то, что split_store_articles.py --apply перенесёт
+    # следующим прогоном).
+    db_session.add(ProductPriceHistory(
+        product_id=product.id, price=Decimal("100"), source="import",
+        contractor_id=sima_contractor_id, store_article=None,
+    ))
+    await db_session.commit()
+
+    inn2 = "7701000066"
+    await find_or_create_contractor(db_session, "Другой магазин для теста split-гарда", inn2, match_by_name=False)
+
+    col_idx = {
+        "name": 0, "price": 1, "seller_inn": 2, "store_article": 3,
+        "manufacturer": 4, "manufacturer_article": 5,
+    }
+    data_rows = [(new_name, "110", inn2, "SA-OTHER-1", brand, legacy_article)]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="brand_article_pending_split.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 1, "карточка, ждущая переноса артикула, не должна сводиться по номеру магазина"
+    assert await _count_by_name(db_session, new_name) == 1
+    await db_session.refresh(product)
+    assert product.price == Decimal("100"), "существующая карточка Сима-ленда не должна была измениться"
+
+
+@pytest.mark.asyncio
+async def test_brand_article_after_split_still_not_merged_by_legacy_article(db_session, test_user):
+    """После переноса (split_store_articles.py --apply): Product.article =
+    NULL, store_article перенесён в историю — товар и так не попадёт в
+    SQL-предвыборку load_candidates_by_brand_article (требует article IS NOT
+    NULL), гард не нужен, но поведение должно оставаться «не сводится»."""
+    from app.models.product_price_history import ProductPriceHistory
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    brand = "Ярпожинвест"
+    legacy_article = "4878510"
+    old_name = _uniq_name("СимаЛендПеренесён")
+    new_name = _uniq_name("ДругойМагазинПослеПереноса")
+
+    sima_contractor_id = await find_or_create_contractor(
+        db_session, "ООО ТД «Сима-ленд» переноc", "6679104850", match_by_name=False,
+    )
+    product = Product(
+        name=old_name, category="Прочее", price=Decimal("100"),
+        manufacturer=brand, article=None,  # перенос уже выполнен
+        price_source_contractor_id=sima_contractor_id,
+    )
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+    db_session.add(ProductPriceHistory(
+        product_id=product.id, price=Decimal("100"), source="import",
+        contractor_id=sima_contractor_id, store_article=legacy_article,
+    ))
+    await db_session.commit()
+
+    inn2 = "7701000077"
+    await find_or_create_contractor(db_session, "Другой магазин после переноса", inn2, match_by_name=False)
+
+    col_idx = {
+        "name": 0, "price": 1, "seller_inn": 2, "store_article": 3,
+        "manufacturer": 4, "manufacturer_article": 5,
+    }
+    data_rows = [(new_name, "120", inn2, "SA-OTHER-2", brand, legacy_article)]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="brand_article_after_split.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 1, "после переноса Product.article пуст — критерий (0.5) не находит кандидата вовсе"
+    assert await _count_by_name(db_session, new_name) == 1
+
+
+@pytest.mark.asyncio
+async def test_brand_article_manufacturer_store_card_still_merges(db_session, test_user):
+    """Контрольный пример: магазин-производитель (МПО Электромонтаж,
+    article_is_manufacturer=True) — гард его не касается, критерий (0.5)
+    продолжает сводить карточки как раньше."""
+    from app.models.product_price_history import ProductPriceHistory
+    from app.services.contractor_resolve import find_or_create_contractor
+
+    brand = "DEKraft"
+    article = "14054DEK"
+    old_name = _uniq_name("МПОСтарый")
+    new_name = _uniq_name("МПОНовый")
+
+    mpo_contractor_id = await find_or_create_contractor(
+        db_session, "ЗАО «МПО Электромонтаж»", "7719079370", match_by_name=False,
+    )
+    product = Product(
+        name=old_name, category="Прочее", price=Decimal("500"),
+        manufacturer=brand, article=article,
+        price_source_contractor_id=mpo_contractor_id,
+    )
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+    db_session.add(ProductPriceHistory(
+        product_id=product.id, price=Decimal("500"), source="import",
+        contractor_id=mpo_contractor_id, store_article="MPO-001",
+    ))
+    await db_session.commit()
+
+    inn2 = "7701000088"
+    await find_or_create_contractor(db_session, "Другой магазин для DEKraft", inn2, match_by_name=False)
+
+    col_idx = {
+        "name": 0, "price": 1, "seller_inn": 2, "store_article": 3,
+        "manufacturer": 4, "manufacturer_article": 5,
+    }
+    data_rows = [(new_name, "520", inn2, "SA-OTHER-3", brand, article)]
+    result = await apply_products_import(
+        db_session, data_rows, col_idx,
+        filename="brand_article_mpo.xlsx", current_user=test_user,
+    )
+    assert result["created"] == 0, result
+    assert result["updated"] == 1, result
+    assert await _count_by_name(db_session, new_name) == 0, "магазин-производитель — гард не исключает, карточки сводятся"
+
+
+@pytest.mark.asyncio
 async def test_new_product_without_category_gets_default(db_session, test_user):
     name = _uniq_name("НоваяКатегорияДефолт")
     col_idx = {"name": 0, "category": 1}

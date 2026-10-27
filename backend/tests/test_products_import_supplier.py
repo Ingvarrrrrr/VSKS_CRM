@@ -21,12 +21,20 @@ def _uniq_name(suffix: str) -> str:
     return f"{_UNIQ} {suffix} {uuid.uuid4().hex[:8]}"
 
 
+def _uniq_manufacturer_article() -> tuple[str, str]:
+    """Бренд+артикул уникальны на прогон — критерий сопоставления «бренд +
+    артикул производителя» не должен находить реальный товар в БД."""
+    tag = uuid.uuid4().hex[:8]
+    return f"Legrand_TEST_{tag}", f"078604-{tag}"
+
+
 @pytest.mark.asyncio
 async def test_new_product_gets_characteristics_manufacturer_article_and_built_description(db_session, test_user):
     name = _uniq_name("Новый")
+    brand, article = _uniq_manufacturer_article()
     chars = [{"name": "Серия", "value": "Mosaic", "unit": None}]
     col_idx = {"name": 0, "description": 1, "characteristics": 2, "manufacturer": 3, "manufacturer_article": 4}
-    data_rows = [(name, "Накладка для розетки.", chars, "Legrand", "078604")]
+    data_rows = [(name, "Накладка для розетки.", chars, brand, article)]
 
     result = await apply_products_import(
         db_session, data_rows, col_idx,
@@ -37,8 +45,8 @@ async def test_new_product_gets_characteristics_manufacturer_article_and_built_d
 
     product = (await db_session.execute(select(Product).where(Product.name == name))).scalar_one()
     assert product.characteristics == chars
-    assert product.manufacturer == "Legrand"
-    assert product.article == "078604"
+    assert product.manufacturer == brand
+    assert product.article == article
     assert product.description == "Накладка для розетки.\n\nСерия: Mosaic"
 
 
@@ -49,6 +57,7 @@ async def test_existing_product_characteristics_replaced_manufacturer_article_fi
     # заменяет описание файловым безусловно — но так тест нагляднее проверяет
     # именно характеристики/manufacturer/article, а не замену текста).
     name = _uniq_name("Существующий")
+    brand, article = _uniq_manufacturer_article()
     product = Product(
         name=name, category="Прочее",
         description="Текст поставщика",
@@ -62,7 +71,7 @@ async def test_existing_product_characteristics_replaced_manufacturer_article_fi
 
     new_chars = [{"name": "Серия", "value": "Mosaic", "unit": None}]
     col_idx = {"name": 0, "description": 1, "characteristics": 2, "manufacturer": 3, "manufacturer_article": 4}
-    data_rows = [(name, "Текст поставщика.", new_chars, "Legrand", "078604")]
+    data_rows = [(name, "Текст поставщика.", new_chars, brand, article)]
 
     result = await apply_products_import(
         db_session, data_rows, col_idx,
@@ -74,7 +83,7 @@ async def test_existing_product_characteristics_replaced_manufacturer_article_fi
     await db_session.refresh(product)
     assert product.characteristics == new_chars, "characteristics заменяются файловыми"
     assert product.manufacturer == "Старый производитель", "manufacturer не пуст — не трогаем"
-    assert product.article == "078604", "article был пуст — заполняем"
+    assert product.article == article, "article был пуст — заполняем"
     assert product.description == "Текст поставщика.\n\nСерия: Mosaic"
 
     hist = (await db_session.execute(

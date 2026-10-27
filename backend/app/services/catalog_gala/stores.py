@@ -26,7 +26,7 @@ seller_inn_for_url просто возвращает None (ОК по докст�
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Iterable, Optional
 
 # ОГРН у юрлиц, ОГРНИП у ИП — модель Contractor (app/models/contractor.py)
 # хранит оба в одном поле `ogrn`, поэтому здесь это единое поле без различения
@@ -41,6 +41,12 @@ from typing import Optional
 # отличается между магазинами). Проверено на проде: True — electro-mpo.ru
 # (МПО Электромонтаж, пример 14054DEK), k-spasatel.ru (Высокая опора, пример
 # M34A TLN). False — sima-land.ru (1431671), baucenter.ru (643000047).
+#
+# Обновлено 27.10.2026 (повторная проверка на проде): ice-age.ru и
+# medtehno.ru переведены в True — в их «артикуле» в основном артикул
+# производителя (ice-age: D020AA00 у Petzl I'D S, 037801-BU, SN75UKO009;
+# Промедик: KZ 0307, DE 0504, «1002213 [VR6118L]»), а не внутренний номер
+# магазина.
 # Остальные — False (пока не проверено на реальных файлах — безопасный
 # дефолт "не считать артикулом производителя").
 STORES: dict[str, dict] = {
@@ -77,13 +83,49 @@ STORES: dict[str, dict] = {
     "medtehno.ru": {
         "name": "ООО «Промедик»", "inn": "7725810446",
         "ogrn": "5137746124698", "org_type": "Юр.лицо",
-        "article_is_manufacturer": False,
+        "article_is_manufacturer": True,
     },
     "ice-age.ru": {
         "name": "ИП Оганов Артём Айкович", "inn": "772823702838",
         "ogrn": "305770000298252", "org_type": "ИП",
+        "article_is_manufacturer": True,
+    },
+    # Реквизиты с сайта магазина, сверены 27.10.2026 (владелец: seller_inn в
+    # новых выгрузках kns/regard/kuvalda/safe/promalper — НЕВЕРНЫЕ, не
+    # проходят контрольную цифру ИНН и не принадлежат магазину; ниже —
+    # настоящие реквизиты). article_is_manufacturer=False — эти магазины
+    # дают manufacturer_article/store_article отдельными полями явно,
+    # устаревший флаг article_is_manufacturer (трактовка item.article) их не
+    # касается.
+    "kns.ru": {
+        "name": "ООО «КОМПЬЮЛАН»", "inn": "9723033526",
+        "ogrn": "1177746877220", "org_type": "Юр.лицо",
         "article_is_manufacturer": False,
     },
+    "regard.ru": {
+        "name": "ООО «Регард МСК»", "inn": "7730234438",
+        "ogrn": "1177746406584", "org_type": "Юр.лицо",
+        "article_is_manufacturer": False,
+    },
+    "kuvalda.ru": {
+        "name": "ООО «Энтузиаст-С»", "inn": "6319060894",
+        "ogrn": "1026301703010", "org_type": "Юр.лицо",
+        "article_is_manufacturer": False,
+    },
+    "safe.ru": {
+        "name": "ООО «НПО Промет»", "inn": "7751009218",
+        "ogrn": "1155003003121", "org_type": "Юр.лицо",
+        "article_is_manufacturer": False,
+    },
+    "promalper.com": {
+        "name": "ООО «Технологии Промышленной Безопасности»", "inn": "7806293316",
+        "ogrn": "1177847338074", "org_type": "Юр.лицо",
+        "article_is_manufacturer": False,
+    },
+    # inari.pro — реквизиты НЕ подтверждены (ИНН из файла 1832034960 не
+    # проходит контрольную цифру, владелец 27.10.2026) — в справочник
+    # сознательно НЕ добавлен; seller_inn_for_* для него вернёт None, пока
+    # владелец не найдёт настоящий ИНН.
 }
 
 _DOMAIN_RE = re.compile(r"^(?:https?://)?(?:www\.)?([^/?#]+)", re.IGNORECASE)
@@ -175,3 +217,66 @@ def seller_inn_for_url(url: Optional[str]) -> Optional[str]:
 def seller_inn_for_source_store(text: Optional[str]) -> Optional[str]:
     info = store_for_source_store(text)
     return info["inn"] if info else None
+
+
+def inn_checksum_valid(inn: Optional[str]) -> bool:
+    """Контрольная цифра ИНН РФ (владелец, 27.10.2026, повод — seller_inn
+    новых выгрузок kns/regard/kuvalda/safe/promalper/inari: 5 из 6 оказались
+    НЕВЕРНЫМИ, ни один не принадлежал магазину). 10 знаков — юрлицо (девятая
+    цифра контрольная), 12 — ИП (11-я и 12-я контрольные). Не 10/12 цифр или
+    не только цифры → False. Единственный валидатор контрольной цифры ИНН в
+    проекте (grep по 'checksum'/'контрольн' на момент написания не нашёл ни
+    одного — не плодить второй, ПРАВИЛО №6)."""
+    if not inn or not inn.isdigit():
+        return False
+    if len(inn) == 10:
+        w = (2, 4, 10, 3, 5, 9, 4, 6, 8)
+        check = sum(int(d) * wi for d, wi in zip(inn[:9], w)) % 11 % 10
+        return check == int(inn[9])
+    if len(inn) == 12:
+        w11 = (7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
+        w12 = (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
+        d11 = sum(int(d) * wi for d, wi in zip(inn[:10], w11)) % 11 % 10
+        d12 = sum(int(d) * wi for d, wi in zip(inn[:11], w12)) % 11 % 10
+        return d11 == int(inn[10]) and d12 == int(inn[11])
+    return False
+
+
+def resolve_seller_inn(
+    file_inn: Optional[str], url_candidates: Iterable[Optional[str]],
+) -> tuple[Optional[str], Optional[str]]:
+    """РЕШЕНИЕ ВЛАДЕЛЬЦА (27.10.2026) — ЕДИНСТВЕННОЕ место, определяющее
+    seller_inn строки импорта каталога (вызывает load_gala_catalog.
+    item_to_row): seller_inn файла (item["seller_inn"]) оказался НЕВЕРНЫМ у
+    5 из 6 новых магазинов (не проходил контрольную цифру и/или не
+    принадлежал магазину по его реквизитам с сайта).
+
+    Правило:
+      1. Если домен хоть одной из `url_candidates` (товарные ссылки строки —
+         links[0].url/source_url конвертера, в порядке приоритета) известен
+         в STORES → seller_inn ВСЕГДА берётся из STORES, значение файла
+         игнорируется. file_inn, отличающийся от табличного — не ошибка
+         вызывающего, просто другой ИНН в источнике; возвращается
+         reason="ИНН из файла заменён по сайту магазина" (для счётчика
+         загрузки), если file_inn был непустым и отличался.
+      2. Домен не известен STORES → используется file_inn, но ТОЛЬКО если
+         он проходит контрольную цифру (inn_checksum_valid, 10/12 знаков) —
+         иначе seller_inn=None, reason="ИНН невалиден, магазин не определён".
+
+    Возвращает (seller_inn, reason); reason=None — ничего менять не
+    потребовалось (домен неизвестен, file_inn пуст либо прошёл проверку без
+    конфликта с известным магазином)."""
+    for url in url_candidates:
+        info = store_for_url(url)
+        if info is not None:
+            reason = None
+            if file_inn and file_inn.strip() and file_inn.strip() != info["inn"]:
+                reason = "ИНН из файла заменён по сайту магазина"
+            return info["inn"], reason
+
+    inn_norm = (file_inn or "").strip()
+    if not inn_norm:
+        return None, None
+    if inn_checksum_valid(inn_norm):
+        return inn_norm, None
+    return None, "ИНН невалиден, магазин не определён"

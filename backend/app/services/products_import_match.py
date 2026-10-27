@@ -17,6 +17,23 @@ name+description — при совпадении названия, но друг
       грузятся ОДНИМ запросом на весь файл (load_candidate_products_by_
       store_article, порциями через app.utils.chunking.chunked), не запрос
       на каждую строку.
+  (0.5) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026, товар новой выгрузки, совпавший по
+      бренду+артикулу производителя с товаром ДРУГОГО магазина — сразу в ту
+      же карточку) — если у строки есть непустой manufacturer (не «брак»,
+      is_bogus_manufacturer решает ТОЛЬКО вызывающий load_gala_catalog.
+      item_to_row/конвертер — этот модуль просто использует переданное
+      значение) и manufacturer_article, и в каталоге уже есть товар с тем же
+      fold(manufacturer)+fold(article) (app.services.brand_code_fold.
+      fold_brand_or_code — ПРАВИЛО №6, та же нормализация, что у
+      product_similar.py, вторая не завелась) — это тот же товар. Проверяется
+      ПОСЛЕ (0) (store_article надёжнее), ДО (а)/(б)/(в) по названию (артикул
+      производителя надёжнее названия). «Один магазин не продаёт товар
+      дважды»: кандидат с историей ЭТОГО ЖЕ магазина (contractor_id строки) и
+      ДРУГИМ store_article — не тот же товар, пропускается. Несколько
+      оставшихся кандидатов — выбирается с наибольшим числом строк истории,
+      затем с наименьшим id; многозначность — в reason. Кандидаты грузятся
+      ОДНИМ запросом на весь файл (load_candidates_by_brand_article), не
+      запрос на каждую строку.
   (а) точное совпадение «название+описание» после нормализации;
   (б) совпадение по названию, когда описание у кандидата из БД ИЛИ у строки
       файла — пустое (тогда это точно тот же товар, которому донаполняется
@@ -33,6 +50,7 @@ Fuzzy/похожие названия НЕ сопоставляются — то
   id. Такая многозначность возвращается вызывающему через `reason`, чтобы
   попасть в построчный отчёт импорта.
 """
+from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from sqlalchemy import func, select, tuple_
@@ -40,6 +58,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
+from app.services.brand_code_fold import fold_brand_or_code
+from app.services.catalog_gala.store_article_split import pending_split_product_ids
 from app.utils.chunking import chunked
 
 
@@ -141,6 +161,118 @@ async def load_candidates_by_store_article(
     }
 
 
+@dataclass
+class _BrandArticleCandidate:
+    """Товар-кандидат критерия (0.5) + его строки истории цены, нужные для
+    правила «один магазин не продаёт товар дважды» и выбора при нескольких
+    кандидатах (владелец, 27.10.2026)."""
+    product: Product
+    history_count: int = 0
+    store_pairs: set = field(default_factory=set)  # {(contractor_id, store_article), ...}
+
+    def conflicts_with_row_store(self, contractor_id: Optional[int], store_article: Optional[str]) -> bool:
+        """True — у кандидата уже есть строка истории ЭТОГО ЖЕ магазина
+        (contractor_id строки), но с ДРУГИМ store_article: тот же магазин не
+        продаёт один товар дважды под разными артикулами — значит это
+        действительно РАЗНЫЙ товар, сводить нельзя."""
+        if contractor_id is None:
+            return False
+        for cid, sa in self.store_pairs:
+            if cid == contractor_id and sa != store_article:
+                return True
+        return False
+
+
+async def load_candidates_by_brand_article(
+    db: AsyncSession, pairs: Iterable[tuple]
+) -> dict:
+    """Критерий (0.5) модуля (владелец, 27.10.2026) — для набора СЫРЫХ пар
+    (manufacturer, manufacturer_article) со всех строк файла (уже
+    отфильтрованных от «брака» вызывающим — is_bogus_manufacturer, см.
+    catalog_gala.manufacturer_quality — этот модуль только использует
+    переданное значение, второй проверки брака здесь нет) возвращает
+    {(fold(manufacturer), fold(manufacturer_article)): [_BrandArticleCandidate, ...]}.
+
+    SQL сужает кандидатов по lower(Product.article) IN (сырые коды файла,
+    порциями через `chunked`, ПРАВИЛО №6 — тот же приём, что у
+    load_candidate_products/load_candidates_by_store_article) — это ТОЛЬКО
+    предвыборка (убирает заведомо непохожие артикулы), финальное сравнение —
+    точный fold(manufacturer)+fold(article) в Python, как и везде в этом
+    модуле. Код, совпадающий с файлом ТОЛЬКО по гомоглифу/дефису (не по
+    строчному значению) и ни разу — по `lower()`, предвыборкой не найдётся;
+    на реальных данных магазины печатают один и тот же артикул производителя
+    почти буквально одинаково (регистр — единственное частое отличие),
+    этого достаточно без второй, дорогой нормализации в самом SQL.
+
+    ГАРД (владелец, 27.10.2026, риск Сима-ленда/Бауцентра) — ДО переноса
+    backend/scripts/split_store_articles.py --apply у ~174 тыс. товаров этих
+    магазинов Product.article — НОМЕР МАГАЗИНА (старая трактовка поля), не
+    артикул производителя; совпадение бренда с чужим артикулом производителя
+    по ТАКОМУ "артиклю" было бы случайным и свело бы товар в чужую карточку.
+    Кандидаты, чей id входит в app.services.catalog_gala.store_article_split.
+    pending_split_product_ids (тот же отбор, что у самого скрипта переноса —
+    ПРАВИЛО №6, не дублировать условие), исключаются из результата целиком —
+    после переноса их Product.article становится NULL и они и так не попали
+    бы в SQL-предвыборку ниже."""
+    raw_pairs = [(m, a) for m, a in pairs if m and a]
+    if not raw_pairs:
+        return {}
+    norm_keys = {(fold_brand_or_code(m), fold_brand_or_code(a)) for m, a in raw_pairs}
+    norm_keys.discard(("", ""))
+    norm_keys = {(m, a) for m, a in norm_keys if m and a}
+    if not norm_keys:
+        return {}
+
+    raw_codes = list({a for _, a in raw_pairs})
+    candidates: dict[int, Product] = {}
+    for chunk in chunked(raw_codes):
+        rows = (await db.execute(
+            select(Product).where(
+                Product.article.isnot(None),
+                Product.manufacturer.isnot(None),
+                func.lower(Product.article).in_([c.lower() for c in chunk]),
+            )
+        )).scalars().all()
+        for p in rows:
+            candidates[p.id] = p
+    if not candidates:
+        return {}
+
+    pending_ids = await pending_split_product_ids(db)
+    if pending_ids:
+        candidates = {pid: p for pid, p in candidates.items() if pid not in pending_ids}
+    if not candidates:
+        return {}
+
+    ids = list(candidates.keys())
+    history_count_by_id: dict[int, int] = {}
+    store_pairs_by_id: dict[int, set] = {}
+    for chunk in chunked(ids):
+        rows = (await db.execute(
+            select(
+                ProductPriceHistory.product_id,
+                ProductPriceHistory.contractor_id,
+                ProductPriceHistory.store_article,
+            ).where(ProductPriceHistory.product_id.in_(chunk))
+        )).all()
+        for product_id, contractor_id, store_article in rows:
+            history_count_by_id[product_id] = history_count_by_id.get(product_id, 0) + 1
+            if contractor_id is not None and store_article:
+                store_pairs_by_id.setdefault(product_id, set()).add((contractor_id, store_article))
+
+    result: dict[tuple, list] = {}
+    for p in candidates.values():
+        key = (fold_brand_or_code(p.manufacturer), fold_brand_or_code(p.article))
+        if key not in norm_keys:
+            continue
+        result.setdefault(key, []).append(_BrandArticleCandidate(
+            product=p,
+            history_count=history_count_by_id.get(p.id, 0),
+            store_pairs=store_pairs_by_id.get(p.id, set()),
+        ))
+    return result
+
+
 def _sort_key(p: Product):
     # Ещё не сохранённый (id=None) товар этого же прогона импорта —
     # приоритетнее любого товара с настоящим id (наименьший сначала).
@@ -154,12 +286,18 @@ class ProductMatchIndex:
     позиции внутри одного файла находил товар, созданный предыдущей строкой,
     а не создавал второй created."""
 
-    def __init__(self, products=(), store_article_candidates: Optional[dict] = None):
+    def __init__(
+        self, products=(), store_article_candidates: Optional[dict] = None,
+        brand_article_candidates: Optional[dict] = None,
+    ):
         self._by_name_desc: dict[tuple[str, str], Product] = {}
         self._by_name: dict[str, list[Product]] = {}
         # Критерий (0) — {(contractor_id, store_article): Product}, см.
         # load_candidates_by_store_article выше (владелец, 27.10.2026).
         self._by_store_article: dict = dict(store_article_candidates or {})
+        # Критерий (0.5) — {(fold_brand, fold_article): [_BrandArticleCandidate, ...]},
+        # см. load_candidates_by_brand_article выше (владелец, 27.10.2026).
+        self._by_brand_article: dict = dict(brand_article_candidates or {})
         for p in products:
             self.add(p)
 
@@ -177,20 +315,43 @@ class ProductMatchIndex:
     def find(
         self, name: str, description, *,
         contractor_id: Optional[int] = None, store_article: Optional[str] = None,
+        manufacturer: Optional[str] = None, manufacturer_article: Optional[str] = None,
     ) -> dict:
-        """Возвращает {"product": Product|None, "reason": str|None}.
-        `reason` заполнен, когда по названию в БД найдено НЕСКОЛЬКО товаров
-        (многозначность уже существующих дублей) — независимо от того, какой
-        из них в итоге выбран.
+        """Возвращает {"product": Product|None, "reason": str|None,
+        "matched_by": str|None}. `reason` заполнен, когда найдено НЕСКОЛЬКО
+        товаров (многозначность) — независимо от того, какой из них в итоге
+        выбран. `matched_by` — 'store_article' | 'brand_article' | None, для
+        построчного отчёта импорта (апстрим пишет туда «сведено с №… по
+        бренду и артикулу производителя»).
 
         Критерий (0) (владелец, 27.10.2026) — ПЕРВЫЙ: contractor_id+
         store_article строки совпадает с уже известной строкой истории цены
-        → тот же товар, даже если название в файле изменилось; (а)/(б)/(в)
-        по названию не проверяются вовсе в этом случае."""
+        → тот же товар, даже если название в файле изменилось.
+
+        Критерий (0.5) (РЕШЕНИЕ ВЛАДЕЛЬЦА, 27.10.2026) — ВТОРОЙ, до
+        совпадений по названию: manufacturer+manufacturer_article строки
+        совпадают (после fold_brand_or_code) с уже известным товаром ДРУГОГО
+        магазина — тот же товар. «Один магазин не продаёт товар дважды»
+        (_BrandArticleCandidate.conflicts_with_row_store) исключает
+        кандидатов с историей ЭТОГО ЖЕ магазина под другим store_article.
+        (а)/(б)/(в) по названию не проверяются вовсе, если сработал (0) или
+        (0.5)."""
         if contractor_id is not None and store_article:
             by_article = self._by_store_article.get((contractor_id, store_article))
             if by_article is not None:
-                return {"product": by_article, "reason": None}
+                return {"product": by_article, "reason": None, "matched_by": "store_article"}
+
+        if manufacturer and manufacturer_article:
+            key = (fold_brand_or_code(manufacturer), fold_brand_or_code(manufacturer_article))
+            group = self._by_brand_article.get(key) or []
+            eligible = [c for c in group if not c.conflicts_with_row_store(contractor_id, store_article)]
+            if eligible:
+                reason = None
+                if len(eligible) > 1:
+                    ids = ",".join(str(c.product.id) for c in sorted(eligible, key=lambda c: c.product.id or -1))
+                    reason = f"несколько товаров с этим брендом и артикулом производителя (id: {ids})"
+                chosen = max(eligible, key=lambda c: (c.history_count, -(c.product.id or 0)))
+                return {"product": chosen.product, "reason": reason, "matched_by": "brand_article"}
 
         name_key = norm_key(name)
         desc_key = norm_key(description)

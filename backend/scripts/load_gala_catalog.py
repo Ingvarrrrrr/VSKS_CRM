@@ -52,7 +52,8 @@ from app.database import async_session
 from app.models.product import Product
 from app.models.user import User
 from app.services.catalog_gala.format import validate_gala_catalog
-from app.services.catalog_gala.stores import split_legacy_article
+from app.services.catalog_gala.manufacturer_quality import is_bogus_manufacturer
+from app.services.catalog_gala.stores import resolve_seller_inn, split_legacy_article
 from app.services.product_catalog_guard import can_edit_catalog
 from app.services.product_photo_download import download_and_save_photo, pick_external_url
 from app.services.products_import_apply import apply_products_import
@@ -84,6 +85,19 @@ def _num_to_cell(value):
     return str(value) if value is not None else None
 
 
+def _resolve_item_seller_inn(item: dict) -> tuple:
+    """seller_inn строки + reason (владелец, 27.10.2026, ПРАВИЛО №6 —
+    ЕДИНСТВЕННОЕ построение url_candidates для catalog_gala.stores.
+    resolve_seller_inn, вызывается и из item_to_row (эффект — что попадёт в
+    строку), и из _load_one_file (счётчики отчёта загрузки) — тем же кодом,
+    не второй копией логики, см. аналогичный приём is_bogus_manufacturer /
+    manufacturer_dropped выше). Первая непустая товарная ссылка строки —
+    links[0].url, иначе source_url (owner, 27.10.2026)."""
+    links = item.get("links") or []
+    url_candidates = [links[0].get("url") if links else None, item.get("source_url")]
+    return resolve_seller_inn(item.get("seller_inn"), url_candidates)
+
+
 def item_to_row(item: dict) -> tuple:
     row = [None] * len(FIXED_COLUMNS)
     row[COL_IDX["name"]] = item.get("name")
@@ -100,8 +114,23 @@ def item_to_row(item: dict) -> tuple:
     row[COL_IDX["is_reusable"]] = _bool_to_cell(item.get("is_reusable"))
     row[COL_IDX["is_active"]] = _bool_to_cell(item.get("is_active"))
     row[COL_IDX["characteristics"]] = item.get("characteristics") or []
-    row[COL_IDX["manufacturer"]] = item.get("manufacturer")
-    seller_inn = item.get("seller_inn")
+    # manufacturer (владелец, 27.10.2026, ПРАВИЛО №6 — ЕДИНСТВЕННОЕ место
+    # отбраковки, is_bogus_manufacturer, catalog_gala.manufacturer_quality):
+    # пустой/заглушка/название страны/тип товара, принятый источником файла
+    # за бренд (kuvalda_tools_hardware_equipment.json — 12089 из 13644 строк)
+    # — manufacturer в строку НЕ передаётся: не пишется в Product.manufacturer
+    # (products_import_apply._fill не находит значения) и не участвует в
+    # критерии сопоставления по бренду+артикулу производителя
+    # (products_import_match.py, (0.5)) — там требуется непустой manufacturer.
+    # Счётчик для отчёта загрузки — _load_one_file ниже (ТА ЖЕ функция,
+    # не вторая проверка).
+    _mfr = item.get("manufacturer")
+    row[COL_IDX["manufacturer"]] = None if is_bogus_manufacturer(_mfr, item.get("name")) else _mfr
+    # seller_inn (владелец, 27.10.2026 — аудит: seller_inn новых выгрузок
+    # kns/regard/kuvalda/safe/promalper/inari был НЕВЕРНЫМ у 5 из 6
+    # магазинов, ни один не принадлежал магазину) — см.
+    # catalog_gala.stores.resolve_seller_inn (ЕДИНСТВЕННОЕ место решения).
+    seller_inn, _ = _resolve_item_seller_inn(item)
     # Трактовка устаревшего item.article (владелец, 27.10.2026, ПРАВИЛО №6,
     # ЕДИНСТВЕННОЕ место — catalog_gala.stores.split_legacy_article): новые
     # поля manufacturer_article/store_article, если конвертер уже их задал,
@@ -159,6 +188,25 @@ async def _load_one_file(path: str, user_id: int, dry_run: bool) -> dict:
 
     items = envelope.get("items", [])
     data_rows = [item_to_row(item) for item in items]
+    # Счётчик «производитель отброшен» (владелец, 27.10.2026, задача 2) —
+    # та же функция, что решает в item_to_row выше (ПРАВИЛО №6, не вторая
+    # проверка) — считает строки, где manufacturer В ФАЙЛЕ был непустым, но
+    # признан «браком» и в строку не попал.
+    manufacturer_dropped = sum(
+        1 for it in items
+        if (it.get("manufacturer") or "").strip()
+        and is_bogus_manufacturer(it.get("manufacturer"), it.get("name"))
+    )
+    # seller_inn (владелец, 27.10.2026, аудит реквизитов новых магазинов) —
+    # та же функция, что решает в item_to_row (_resolve_item_seller_inn,
+    # ПРАВИЛО №6, не вторая проверка).
+    _seller_inn_reasons = [_resolve_item_seller_inn(it)[1] for it in items]
+    seller_inn_replaced_by_store = sum(
+        1 for r in _seller_inn_reasons if r == "ИНН из файла заменён по сайту магазина"
+    )
+    seller_inn_invalid = sum(
+        1 for r in _seller_inn_reasons if r == "ИНН невалиден, магазин не определён"
+    )
 
     async with async_session() as db:
         user = await db.get(User, user_id)
@@ -181,6 +229,12 @@ async def _load_one_file(path: str, user_id: int, dry_run: bool) -> dict:
     multiple_same_name = sum(
         1 for r in result["rows"] if r.get("reason") and "несколько товаров с этим названием" in r["reason"]
     )
+    # «сведено с №… по бренду и артикулу производителя» — текст из
+    # products_import_apply.py (ЕДИНСТВЕННЫЙ источник формулировки, ПРАВИЛО
+    # №6), критерий (0.5) products_import_match.py.
+    matched_by_brand_article = sum(
+        1 for r in result["rows"] if r.get("reason") and "по бренду и артикулу производителя" in r["reason"]
+    )
 
     return {
         "path": path,
@@ -190,6 +244,10 @@ async def _load_one_file(path: str, user_id: int, dry_run: bool) -> dict:
         "skipped": result["skipped"],
         "errors": result["errors"],
         "multiple_same_name": multiple_same_name,
+        "manufacturer_dropped": manufacturer_dropped,
+        "matched_by_brand_article": matched_by_brand_article,
+        "seller_inn_replaced_by_store": seller_inn_replaced_by_store,
+        "seller_inn_invalid": seller_inn_invalid,
     }
 
 
@@ -238,6 +296,10 @@ async def main_async(files, user_email, dry_run, photos, photos_limit):
         print(f"  позиций в файле: {report['items']}")
         print(f"  created={report['created']} updated={report['updated']} skipped={report['skipped']}")
         print(f"  несколько одноимённых: {report['multiple_same_name']}")
+        print(f"  производитель отброшен (брак/страна/тип товара): {report['manufacturer_dropped']}")
+        print(f"  сведено с другим магазином по бренду+артикулу производителя: {report['matched_by_brand_article']}")
+        print(f"  ИНН из файла заменён по сайту магазина: {report['seller_inn_replaced_by_store']}")
+        print(f"  ИНН невалиден, магазин не определён: {report['seller_inn_invalid']}")
         errs = report["errors"]
         print(f"  ошибок: {len(errs)}")
         for e in errs[:10]:

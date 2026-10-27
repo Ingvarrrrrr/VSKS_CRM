@@ -608,7 +608,11 @@ def test_store_nomenclature_basic_mapping():
     assert item["category_path"] == ["Альпинистское снаряжение и промальп"]
     assert item["product_type"] is None
     assert item["price"] == 7490.0
-    assert item["store_article"] == "C068AA00"
+    # ice-age.ru переведён в article_is_manufacturer=True (владелец, 27.10.2026,
+    # повторная проверка на проде) — "Артикул" теперь трактуется как артикул
+    # производителя, не внутренний номер магазина.
+    assert item["manufacturer_article"] == "C068AA00"
+    assert item["store_article"] is None
     # Задача 1 (26.10, пересмотр): текст поставщика переносится, служебный
     # заголовок-повтор "Описание <название>" срезается.
     assert item["description"] == "Соответствует ГОСТ."

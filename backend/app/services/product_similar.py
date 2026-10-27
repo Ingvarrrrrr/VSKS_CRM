@@ -33,8 +33,9 @@ from app.models.contractor import Contractor
 from app.models.product import Product
 from app.models.product_photo import ProductPhoto
 from app.models.product_price_history import ProductPriceHistory
+from app.services.brand_code_fold import fold_brand_or_code
 from app.services.catalog_gala.stores import article_is_manufacturer_for_inn
-from app.services.product_catalog_match import _CHAR_FOLD_MAP, _HOMOGLYPH_MAP, _WS_RE
+from app.services.product_catalog_match import _HOMOGLYPH_MAP, _WS_RE
 
 MIN_QUERY_LEN = 3
 DEFAULT_LIMIT_GROUPS = 50
@@ -48,20 +49,6 @@ MIN_MANUFACTURER_CODE_LEN = 5
 # ровно нужное поведение (все NULL схлопываются в одно значение) — сентинел
 # только для читаемости кода/отчёта, по значению эквивалентен None.
 _NO_STORE = "__no_store__"
-
-# Та же таблица символ-в-символ, что и для точного сопоставления каталога
-# (гомоглифы кириллица/латиница, ё→е, пробелы/дефисы/кавычки,
-# app.services.product_catalog_match._CHAR_FOLD_MAP, ПРАВИЛО №6), НО БЕЗ
-# цифро-буквенных пар (0→о, 3→з, 4→ч) — владелец, 27.10.2026, прогон на
-# проде: та свёртка 0→о СЪЕДАЕТ хвостовые нули в коде модели ("ОП-10"/
-# "ОП-100" становились "оп-1о"/"оп-1оо", т.е. после отбрасывания непохожих
-# символов — ОДНО И ТО ЖЕ "оп1" для 1/10/100 — разные товары слипались).
-# Там, где цифра правда опечатка буквы ("0У-2" вместо "ОУ-2"), эту задачу
-# решает отдельный, уже существующий normalize_product_name (точное
-# сопоставление дублей) — здесь цели другие: НЕ потерять числовое различие
-# модели, второй словарь замен не завели, просто исключили 3 ключа.
-_SIMILAR_FOLD_MAP = {k: v for k, v in _CHAR_FOLD_MAP.items() if k not in ("0", "3", "4")}
-_SIMILAR_FOLD_TABLE = str.maketrans(_SIMILAR_FOLD_MAP)
 
 # Город в скобках после названия — «(г. Ярославль)» — не несёт отличительной
 # информации о самом товаре, убирается целиком.
@@ -136,15 +123,11 @@ def _latinize_code_candidate(word: str) -> Optional[str]:
     return "".join(out)
 
 
-def _fold(text: str) -> str:
-    """Нормализация символов для similarity_key — та же таблица, что и для
-    точного сопоставления каталога, БЕЗ цифро-буквенных пар (см. докстринг
-    _SIMILAR_FOLD_TABLE выше, ПРАВИЛО №6 — переиспользуем тот же единственный
-    _CHAR_FOLD_MAP, не вторую нормализацию с нуля)."""
-    if not text:
-        return ""
-    folded = text.translate(_SIMILAR_FOLD_TABLE)
-    return _WS_RE.sub(" ", folded.strip()).lower()
+# _fold — алиас на единственную нормализацию бренда/кода (ПРАВИЛО №6,
+# app.services.brand_code_fold.fold_brand_or_code; раньше была своя копия
+# таблицы здесь — вынесена в общий модуль при появлении второго потребителя,
+# products_import_match.py).
+_fold = fold_brand_or_code
 
 
 def _clean_word(word: str) -> str:

@@ -30,10 +30,21 @@ def test_brand_and_article_come_from_goodslist_not_default():
     assert all(c["brand"] != "Производитель" for c in with_brand)
 
 
-def test_category_always_needs_product_visit():
+def test_candidates_with_brand_and_article_skip_visit():
+    # Владелец, 27.10.2026: GA4 уже даёт бренд+PN пачкой в разделе — визит
+    # на characteristics/ нужен только когда GA4 этого не дал (иначе новый
+    # сборщик медленнее старого, который вообще не заходил на товар).
     html = _read("kns_category.html")
     candidates = kns.parse_category_page(html)
-    assert all(kns.needs_product_visit(c) for c in candidates)
+    with_both = [c for c in candidates if c["brand"] and c["manufacturer_article"]]
+    assert with_both
+    assert not any(kns.needs_product_visit(c) for c in with_both)
+
+
+def test_candidate_missing_brand_or_article_needs_visit():
+    assert kns.needs_product_visit({"brand": None, "manufacturer_article": "X"}) is True
+    assert kns.needs_product_visit({"brand": "Huawei", "manufacturer_article": None}) is True
+    assert kns.needs_product_visit({"brand": "Huawei", "manufacturer_article": "X"}) is False
 
 
 def test_parse_product_page_real_characteristics_not_placeholder():

@@ -77,3 +77,29 @@ def test_seller_inn_matches_stores_dictionary_not_hardcoded():
     url = "https://www.regard.ru/product/757301/x"
     expected = contracts.store_for_url(url)["inn"]
     assert seller_inn_for(url) == expected
+
+
+def test_needs_product_visit_false_by_default():
+    # Владелец, 27.10.2026: по умолчанию regard не открывает товар вообще
+    # (как старый сборщик) — визит только по --with-details.
+    html = _read("regard_category.html")
+    candidates = regard.parse_category_page(html)
+    assert candidates
+    assert not any(regard.needs_product_visit(c) for c in candidates)
+
+
+def test_build_item_without_visit_uses_name_dictionary_and_trailing_code():
+    candidate = {
+        "name": "Процессор Intel Core i5-12400F (BX8071512400F)",
+        "url": "https://www.regard.ru/product/999999/x",
+        "price": 15990.0,
+        "photos": [],
+    }
+    item = regard.build_item(candidate, {}, set())
+    assert item["manufacturer"] == "intel"
+    assert item["manufacturer_article"] == "BX8071512400F"
+    assert item["characteristics"] == []
+
+
+def test_spec_supports_details_flag():
+    assert regard.SPEC.supports_details is True

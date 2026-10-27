@@ -2,20 +2,27 @@
 обхода разделов/товаров, троттлинг, чекпоинт и сборка item живут в
 tools.harvest.core.runner / gala_writer (ПРАВИЛО №5/№6).
 
-Проверено на живых фикстурах (tools/harvest/tests/fixtures/kuvalda_*.html,
-27.10.2026):
-  - Страница РАЗДЕЛА отдаёт JSON-LD "OfferCatalog" (itemListElement c
-    name/url/price/image) — БЕЗ бренда и характеристик, поэтому
-    needs_product_visit() для kuvalda всегда True.
-  - Страница ТОВАРА отдаёт JSON-LD "Product" с полями brand
-    ({"@type":"Brand","name":"MAKITA"}) и sku ("DP4010" — явный артикул
-    производителя, печатается в конце названия товара) — брать ИМЕННО
-    отсюда, не угадывать по первому слову названия (брак старого
-    harvest_kuvalda_massive_catalog.py).
-  - На странице товара есть настоящие пары характеристик
-    class="product-specs__characteristics-item"><span>Имя</span>
-    <span>Значение</span> — используются как characteristics, НЕ как
-    "Параметр N" (второй брак старого сборщика)."""
+Пакетный источник (раздел, ВСЕГДА используется, живой запрос один на
+страницу раздела): JSON-LD "OfferCatalog" (itemListElement c
+name/url/price/image) — несёт name/url/price/photos/source_id ПАЧКОЙ на все
+товары страницы разом. Явного бренда/артикула/характеристик в этом пакетном
+источнике НЕТ.
+
+Страница ТОВАРА (needs_product_visit) — владелец, 27.10.2026, по итогам 843
+полученных страниц в соседнем прогоне (tools/catalog_enrich): "у 842 из 843
+товаров Кувалды бренд со страницы и так стоит в названии" → бренд для
+Кувалды НЕ требует визита вообще, берётся словарным поиском целым словом по
+названию (gala_writer.find_brand_in_name(), импорт алгоритма из
+tools/catalog_enrich/brand_dictionary.py — ПРАВИЛО №6, без своей второй
+"угадайки"). needs_product_visit() == True ТОЛЬКО для той ~0.1% строк, где
+словарь не нашёл известный бренд в названии — у них нет другого пакетного
+способа получить бренд/артикул/характеристики, и только эти редкие строки
+идут на страницу товара (JSON-LD "Product": brand {"@type":"Brand",
+"name":"MAKITA"}, sku="DP4010" — явный артикул производителя, и пары
+характеристик class="product-specs__characteristics-item"><span>Имя</span>
+<span>Значение</span> — НЕ "Параметр N", как делал старый
+harvest_kuvalda_massive_catalog.py, который вообще не заходил на товар и
+угадывал бренд/артикул по первому/последнему слову названия)."""
 from __future__ import annotations
 
 import json
@@ -103,9 +110,10 @@ def parse_category_page(html: str) -> list[dict]:
 
 
 def needs_product_visit(candidate: dict) -> bool:
-    # Раздел kuvalda никогда не несёт бренд/характеристики — визит на
-    # страницу товара обязателен всегда.
-    return True
+    # Визит нужен ТОЛЬКО если словарь брендов не нашёл известный бренд в
+    # названии (см. докстринг модуля — ~0.1% строк по данным владельца).
+    name = candidate.get("name")
+    return gala_writer.find_brand_in_name(name, set()) is None
 
 
 def parse_product_page(html: str, url: str) -> dict:
@@ -130,9 +138,21 @@ def build_item(candidate: dict, enrichment: dict, known_brands: set) -> Optional
     url = candidate.get("url")
     characteristics = enrichment.get("characteristics") or []
 
-    manufacturer = gala_writer.resolve_manufacturer(
-        name, enrichment.get("jsonld_brand"), characteristics, known_brands,
-    )
+    if enrichment:
+        # Эта строка попала на страницу товара (словарь не нашёл бренд в
+        # названии, см. needs_product_visit) — артикул/характеристики
+        # берём ИМЕННО со страницы, не выдумываем.
+        manufacturer = gala_writer.resolve_manufacturer(
+            name, enrichment.get("jsonld_brand"), characteristics, known_brands,
+        )
+        manufacturer_article = enrichment.get("manufacturer_article")
+        description = enrichment.get("description")
+    else:
+        # Без визита: бренд — тем же словарным поиском, что принял решение
+        # не заходить на страницу (needs_product_visit).
+        manufacturer = gala_writer.find_brand_in_name(name, known_brands)
+        manufacturer_article = None
+        description = None
 
     return gala_writer.build_item(
         name=name,
@@ -140,9 +160,9 @@ def build_item(candidate: dict, enrichment: dict, known_brands: set) -> Optional
         price=candidate.get("price"),
         currency="RUB" if candidate.get("price") is not None else None,
         manufacturer=manufacturer,
-        manufacturer_article=enrichment.get("manufacturer_article"),
+        manufacturer_article=manufacturer_article,
         store_article=candidate.get("source_id"),
-        description=enrichment.get("description"),
+        description=description,
         characteristics=characteristics,
         photos=candidate.get("photos"),
         links=[{"url": url, "price": candidate.get("price")}] if url else [],
@@ -161,8 +181,28 @@ SPEC = StoreSpec(
     parse_product_page=parse_product_page,
     build_item=build_item,
     max_pages_per_category=3,
+    # Старый harvest_kuvalda_massive_catalog.py был однопоточным (sleep
+    # 0.8-1.5с между запросами, без ThreadPoolExecutor) — он НИКОГДА не
+    # заходил на товар, поэтому concurrency здесь не для товарных визитов
+    # имеет значение (их почти нет), а для той редкой ветки, где визит
+    # всё же нужен.
+    concurrency=1,
+    default_pause_per_domain=1.0,
+    category_has_price=True,
 )
 
 
-def harvest(out_path: str, limit_categories: Optional[int] = None, resume: bool = False, pause_per_domain: float = 1.0) -> dict:
-    return _run_harvest(SPEC, out_path, limit_categories=limit_categories, resume=resume, pause_per_domain=pause_per_domain)
+def harvest(
+    out_path: str,
+    limit_categories: Optional[int] = None,
+    resume: bool = False,
+    pause_per_domain: Optional[float] = None,
+    previous_items: Optional[list] = None,
+    prices_only: bool = False,
+    with_details: bool = False,
+) -> dict:
+    return _run_harvest(
+        SPEC, out_path, limit_categories=limit_categories, resume=resume,
+        pause_per_domain=pause_per_domain, previous_items=previous_items, prices_only=prices_only,
+        with_details=with_details,
+    )

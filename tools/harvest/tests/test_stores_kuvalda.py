@@ -21,10 +21,35 @@ def test_parse_category_page_finds_offers():
         assert c["url"].startswith("https://www.kuvalda.ru/")
 
 
-def test_category_page_never_needs_no_product_visit():
+def test_category_candidates_skip_visit_when_brand_in_name():
+    # Владелец, 27.10.2026: бренд почти всегда уже стоит в названии —
+    # needs_product_visit должен находить его словарём и НЕ требовать визит
+    # (иначе новый сборщик медленнее старого, который вообще не заходил на
+    # товар). Раздел фикстуры — категория Makita, имя несёт "MAKITA".
     html = _read("kuvalda_category.html")
     candidates = kuvalda.parse_category_page(html)
-    assert all(kuvalda.needs_product_visit(c) for c in candidates)
+    assert candidates
+    assert not any(kuvalda.needs_product_visit(c) for c in candidates)
+
+
+def test_needs_product_visit_true_when_no_known_brand_in_name():
+    candidate = {"name": "Лестница алюминиевая раздвижная трехсекционная", "url": "https://www.kuvalda.ru/x/"}
+    assert kuvalda.needs_product_visit(candidate) is True
+
+
+def test_build_item_without_visit_resolves_brand_from_name_only():
+    candidate = {
+        "name": "Дрель безударная сетевая MAKITA DP 4010",
+        "url": "https://www.kuvalda.ru/catalog/9045/product-23241/",
+        "price": 11699.0,
+        "photos": [],
+        "source_id": "23241",
+    }
+    assert kuvalda.needs_product_visit(candidate) is False
+    item = kuvalda.build_item(candidate, {}, set())
+    assert item["manufacturer"] == "makita"
+    assert item["manufacturer_article"] is None
+    assert item["characteristics"] == []
 
 
 def test_parse_product_page_brand_from_jsonld():

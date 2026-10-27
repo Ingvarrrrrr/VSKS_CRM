@@ -144,8 +144,27 @@ SPEC = StoreSpec(
     parse_product_page=parse_product_page,
     build_item=build_item,
     max_pages_per_category=3,
+    # Старый harvest_sima_land_resilient.py: ThreadPoolExecutor
+    # max_workers=10-12, адаптивная пауза ~0.5с с бэкоффом на 429. Владелец,
+    # 27.10.2026: пауза sima-land не больше 0,3с — используем верхнюю
+    # границу старой конкурентности (10) и пониженную паузу.
+    concurrency=10,
+    default_pause_per_domain=0.3,
+    category_has_price=True,
 )
 
 
-def harvest(out_path: str, limit_categories: Optional[int] = None, resume: bool = False, pause_per_domain: float = 1.0) -> dict:
-    return _run_harvest(SPEC, out_path, limit_categories=limit_categories, resume=resume, pause_per_domain=pause_per_domain)
+def harvest(
+    out_path: str,
+    limit_categories: Optional[int] = None,
+    resume: bool = False,
+    pause_per_domain: Optional[float] = None,
+    previous_items: Optional[list] = None,
+    prices_only: bool = False,
+    with_details: bool = False,
+) -> dict:
+    return _run_harvest(
+        SPEC, out_path, limit_categories=limit_categories, resume=resume,
+        pause_per_domain=pause_per_domain, previous_items=previous_items, prices_only=prices_only,
+        with_details=with_details,
+    )

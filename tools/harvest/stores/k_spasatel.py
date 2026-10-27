@@ -169,8 +169,27 @@ SPEC = StoreSpec(
     parse_product_page=parse_product_page,
     build_item=build_item,
     max_pages_per_category=3,
+    # Старый harvest_all_kspasatel_nomenclature.py: ThreadPoolExecutor
+    # max_workers=25 — нет пакетного API ни в фикстурах, ни в старых
+    # скриптах (только HTML карточки), needs_product_visit=True остаётся
+    # (визит неизбежен), скорость — за счёт concurrency.
+    concurrency=25,
+    default_pause_per_domain=0.3,
+    category_has_price=False,  # цена только на странице товара (см. докстринг)
 )
 
 
-def harvest(out_path: str, limit_categories: Optional[int] = None, resume: bool = False, pause_per_domain: float = 1.0) -> dict:
-    return _run_harvest(SPEC, out_path, limit_categories=limit_categories, resume=resume, pause_per_domain=pause_per_domain)
+def harvest(
+    out_path: str,
+    limit_categories: Optional[int] = None,
+    resume: bool = False,
+    pause_per_domain: Optional[float] = None,
+    previous_items: Optional[list] = None,
+    prices_only: bool = False,
+    with_details: bool = False,
+) -> dict:
+    return _run_harvest(
+        SPEC, out_path, limit_categories=limit_categories, resume=resume,
+        pause_per_domain=pause_per_domain, previous_items=previous_items, prices_only=prices_only,
+        with_details=with_details,
+    )

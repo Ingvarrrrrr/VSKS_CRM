@@ -13,6 +13,54 @@ from tools.harvest.core.gala_contracts import load_gala_contracts
 
 _CONTRACTS = load_gala_contracts()
 
+
+def _brand_dictionary_module():
+    """Импорт (НЕ копия, ПРАВИЛО №6) tools/catalog_enrich/brand_dictionary.py
+    — та же BrandDictionary/целословный поиск бренда в тексте, что
+    используется для дозаполнения Кувалды (stores/kuvalda.py). Сам модуль
+    не тянет backend/app (только json/re/pathlib) — тяжёлый
+    fold_brand_or_code (app.services.brand_code_fold) сознательно НЕ
+    используется здесь: он транзитивно требует app.models.product +
+    SQLAlchemy, то есть БД-слой, которого у tools/harvest по конструкции
+    нет (gala_contracts.py существует именно для того, чтобы его не тянуть).
+    Поэтому find_brand_in_name() ниже передаёт в BrandDictionary лёгкий
+    quality-шим: is_bogus_manufacturer — настоящий (из gala_contracts),
+    fold_brand_or_code — упрощённый (регистр/пробелы, без свёртки
+    гомоглифов кириллица/латиница) — осознанное отличие от полного
+    fold_brand_or_code, не брак."""
+    import importlib
+    return importlib.import_module("tools.catalog_enrich.brand_dictionary")
+
+
+class _LightFoldQuality:
+    """Квалити-шим для BrandDictionary (см. _brand_dictionary_module) — тот
+    же интерфейс (fold_brand_or_code/is_bogus_manufacturer), что ждёт
+    tools/catalog_enrich/brand_dictionary.py, без тяги backend БД-слоя."""
+
+    def fold_brand_or_code(self, text) -> str:
+        if not text:
+            return ""
+        return " ".join(str(text).strip().lower().split())
+
+    def is_bogus_manufacturer(self, manufacturer, name=None) -> bool:
+        return _CONTRACTS.is_bogus_manufacturer(manufacturer, name)
+
+
+def find_brand_in_name(name: str, known_brands: set[str]) -> Optional[str]:
+    """Ищет известный бренд (seed ∪ known_brands, собранные в этом прогоне)
+    целым словом прямо в названии товара — ТЕМ ЖЕ алгоритмом/классом, что
+    tools/catalog_enrich/brand_dictionary.BrandDictionary (владелец,
+    27.10.2026: "у 842 из 843 товаров Кувалды бренд со страницы и так стоит
+    в названии" — для магазинов без бренда/характеристик в разделе этого
+    достаточно, чтобы НЕ открывать страницу товара вообще)."""
+    mod = _brand_dictionary_module()
+    quality = _LightFoldQuality()
+    d = mod.BrandDictionary(quality)
+    for brand in KNOWN_BRANDS_SEED | {b for b in known_brands or set()}:
+        d.add(brand)
+    d.finalize()
+    return d.find_in_name(name)
+
 # Ручное дополнение словаря известных брендов (владелец: держать ТОЛЬКО тут,
 # не плодить по store-модулям) — явные бренды, которые могут не встретиться
 # среди уже собранных "хороших" строк текущего прогона.

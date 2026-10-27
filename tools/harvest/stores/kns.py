@@ -19,10 +19,15 @@ tools.harvest.core.runner / gala_writer (ПРАВИЛО №5/№6).
     `<div class="... field-ex-name ...">Имя</div>` + `<div class="...
     word-break-all ...">Значение</div>` (47 настоящих пар на живой
     фикстуре: Производитель/Модель/PN/CPU/RAM/экран/порты/вес и т.д.).
-    needs_product_visit() всегда True, и candidate["url"] для визита —
-    ИМЕННО characteristics-страница (product_url для ссылки покупателю
-    хранится отдельно в candidate["product_url"], чтобы gala_writer
-    получил ссылку на карточку товара, а не на вкладку характеристик).
+    Батч-API характеристик по многим товарам сразу не найден (ни в живых
+    фикстурах, ни в старых скриптах Antigravity) — только через эту
+    подстраницу. needs_product_visit() == True ТОЛЬКО если GA4-данные
+    раздела не дали бренд ИЛИ PN (владелец, 27.10.2026 — у большинства
+    строк бренд+PN уже есть пачкой, визит нужен не всегда); candidate["url"]
+    для визита — ИМЕННО characteristics-страница (product_url для ссылки
+    покупателю хранится отдельно в candidate["product_url"], чтобы
+    gala_writer получил ссылку на карточку товара, а не на вкладку
+    характеристик).
   - Описание товара живёт на основной странице (не на characteristics/) —
     сознательно не забирается (один доп. визит на товар ради description
     не укладывается в бюджет живых запросов этого задания); description
@@ -105,8 +110,14 @@ def parse_category_page(html: str) -> list[dict]:
 
 
 def needs_product_visit(candidate: dict) -> bool:
-    # Настоящие характеристики есть только на подстранице characteristics/.
-    return True
+    # Бренд и артикул производителя (PN) уже приходят ПАЧКОЙ в разделе
+    # (GA4 item_brand/item_variant, см. докстринг модуля) — для строки с
+    # обоими полями characteristics/ подстраница нужна только ради
+    # характеристик, которые необязательны для валидного item (у них уже
+    # есть identity-данные). Визит оставлен ТОЛЬКО если GA4 не дал бренд
+    # или артикул — тогда характеристики (где внутри таблицы тоже есть
+    # "Производитель"/"PN") становятся единственным способом их добрать.
+    return not (candidate.get("brand") and candidate.get("manufacturer_article"))
 
 
 def parse_product_page(html: str, url: str) -> dict:
@@ -169,8 +180,27 @@ SPEC = StoreSpec(
     parse_product_page=parse_product_page,
     build_item=build_item,
     max_pages_per_category=3,
+    # Старый harvest_kns_massive.py был однопоточным (sleep 0.4-1с, без
+    # ThreadPoolExecutor) и НИКОГДА не заходил на товар — характеристики
+    # у него были "Параметр N" из описания. needs_product_visit теперь
+    # заходит только когда GA4 не дал бренд/PN (редкая строка).
+    concurrency=1,
+    default_pause_per_domain=0.4,
+    category_has_price=True,
 )
 
 
-def harvest(out_path: str, limit_categories: Optional[int] = None, resume: bool = False, pause_per_domain: float = 1.0) -> dict:
-    return _run_harvest(SPEC, out_path, limit_categories=limit_categories, resume=resume, pause_per_domain=pause_per_domain)
+def harvest(
+    out_path: str,
+    limit_categories: Optional[int] = None,
+    resume: bool = False,
+    pause_per_domain: Optional[float] = None,
+    previous_items: Optional[list] = None,
+    prices_only: bool = False,
+    with_details: bool = False,
+) -> dict:
+    return _run_harvest(
+        SPEC, out_path, limit_categories=limit_categories, resume=resume,
+        pause_per_domain=pause_per_domain, previous_items=previous_items, prices_only=prices_only,
+        with_details=with_details,
+    )

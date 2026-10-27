@@ -22,10 +22,12 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from brand_dictionary import build_kuvalda_brand_dictionary  # noqa: E402
+from caps_brand_rule import find_caps_brand  # noqa: E402
 from extractors import extract_kuvalda, extract_regard, trailing_code_from_name  # noqa: E402
 from gala_quality_loader import load_catalog_gala  # noqa: E402
 from http_client import PoliteFetcher  # noqa: E402
@@ -93,19 +95,108 @@ def looks_like_manufacturer_code(code: str, store_article, source_id) -> bool:
 
 
 # --------------------------------------------------------------------------
-# kuvalda
+# kuvalda — полная пересборка бренда БЕЗ СЕТИ (владелец, 27.10.2026, третье
+# решение по Кувалде): исходному manufacturer файла не доверять вовсе — у
+# ~2190 строк там второе слово названия, а не бренд (is_bogus_manufacturer
+# ловит только совпадение с ПЕРВЫМ словом, такой мусор пропускал). Бренд
+# собирается заново для ВСЕХ строк, одно правило в одном месте:
+#   1) словарь имени (brand_dictionary.py, целым словом/самое длинное,
+#      ГДЕ-ЛИБО в названии — не только в начале);
+#   2) иначе — правило ЗАГЛАВНЫХ (caps_brand_rule.py);
+#   3) иначе — null (не выдумываем).
+# Мусор по is_bogus_manufacturer на любом шаге — null. Сети НЕ требует.
+#
+# Владелец, 27.10.2026 (вторая правка) — словарь приоритетнее заглавной
+# последовательности, даже когда бренд стоит ДАЛЬШЕ в названии, чем слово,
+# пойманное правилом 2 ("Зажим для труб CS (хомут) HUSQVARNA" → HUSQVARNA,
+# не CS): два прохода по всем строкам.
+#   Проход 1 — словарь (как он есть) → иначе правило 2, со счётчиком частоты
+#   найденных так брендов.
+#   Между проходами — бренды правила 2 с частотой ≥2 в проходе 1 ДОБАВЛЯЮТСЯ
+#   в словарь (повтор на разных товарах — подтверждение, что это настоящий
+#   бренд, не случайное совпадение).
+#   Проход 2 (итоговый) — словарь (уже расширенный) ищет по ВСЕМУ названию
+#   и сам выбирает самое длинное совпадение где угодно в строке; поэтому
+#   бренд, узнанный из других строк, перебивает более раннее, но более
+#   слабое совпадение правила 2 в этой же строке.
+_CAPS_BRAND_MIN_FREQ_TO_PROMOTE = 2
 # --------------------------------------------------------------------------
 
-def process_kuvalda(items: list, quality, fetcher: PoliteFetcher, cache: dict,
+def rebuild_kuvalda_brands_offline(items: list, quality, cache_path: Path, log_path: Path,
+                                    other_catalogs_dir: Path, limit: int = 0) -> dict:
+    stats = {"processed": 0, "matched_by_name": 0, "matched_by_caps": 0, "no_match": 0}
+    caps_brand_counts: dict[str, int] = {}
+
+    brand_dict = build_kuvalda_brand_dictionary(quality, cache_path, items, other_catalogs_dir)
+    log_line(log_path, f"kuvalda (offline-пересборка): словарь брендов построен, {len(brand_dict)} записей, "
+                        f"всего строк = {len(items)}")
+
+    # Проход 1 — только чтобы собрать частоты брендов правила 2 (word->count).
+    for item in items:
+        name = item.get("name") or ""
+        if brand_dict.find_in_name(name):
+            continue
+        caps_brand = find_caps_brand(name)
+        if caps_brand and not quality.is_bogus_manufacturer(caps_brand, name):
+            caps_brand_counts[caps_brand] = caps_brand_counts.get(caps_brand, 0) + 1
+
+    promoted = 0
+    for brand, count in caps_brand_counts.items():
+        if count >= _CAPS_BRAND_MIN_FREQ_TO_PROMOTE:
+            brand_dict.add(brand)
+            promoted += 1
+    brand_dict.finalize()
+    log_line(log_path, f"kuvalda (offline-пересборка): в словарь добавлено {promoted} брендов правила 2 "
+                        f"(частота ≥{_CAPS_BRAND_MIN_FREQ_TO_PROMOTE}), словарь теперь {len(brand_dict)} записей")
+
+    # Проход 2 — итоговый, с расширенным словарём.
+    caps_brand_counts = {}  # пересчитаем по финальному выбору для отчёта
+    for item in items:
+        if limit and stats["processed"] >= limit:
+            break
+        name = item.get("name") or ""
+        characteristics = item.setdefault("characteristics", []) or []
+
+        brand = brand_dict.find_in_name(name)
+        if brand:
+            stats["matched_by_name"] += 1
+        else:
+            caps_brand = find_caps_brand(name)
+            if caps_brand and not quality.is_bogus_manufacturer(caps_brand, name):
+                brand = caps_brand
+                stats["matched_by_caps"] += 1
+                caps_brand_counts[caps_brand] = caps_brand_counts.get(caps_brand, 0) + 1
+            else:
+                stats["no_match"] += 1
+
+        item["manufacturer"] = brand  # исходному значению не доверяем — перезаписываем всегда
+        if brand:
+            set_characteristic(characteristics, "Бренд", brand)
+
+        stats["processed"] += 1
+        if stats["processed"] % 2000 == 0:
+            log_line(log_path, f"kuvalda (offline-пересборка): обработано {stats['processed']}/{len(items)}")
+
+    stats["caps_brand_counts"] = caps_brand_counts
+    return stats
+
+
+def process_kuvalda(items: list, quality, fetcher: Optional[PoliteFetcher], cache: dict,
                      cache_path: Path, log_path: Path, limit: int,
-                     other_catalogs_dir: Path) -> dict:
+                     other_catalogs_dir: Path, no_fetch: bool = False) -> dict:
     """Владелец, 27.10.2026: у 842/843 проверенных страниц бренд со страницы
     и так стоит в названии товара — ДО похода на страницу пробуем найти
     бренд прямо в названии по словарю (brand_dictionary.py); страница
-    запрашивается только если словарь не дал совпадения."""
+    запрашивается только если словарь не дал совпадения.
+
+    no_fetch=True (владелец, 27.10.2026, второе решение по Кувалде — по
+    страницам больше не ходить): страница НЕ запрашивается вовсе — только
+    словарь + уже имеющийся кэш страниц; не нашлось ни там, ни там →
+    manufacturer остаётся как было (бренд не выдумывается), считается в
+    stats["no_match"]. fetcher может быть None в этом режиме."""
     stats = {"processed": 0, "manufacturer_fixed": 0, "articles_added": 0,
               "characteristics_replaced": 0, "errors": 0, "skipped_no_url": 0,
-              "matched_by_name": 0, "fetched_pages": 0}
+              "matched_by_name": 0, "fetched_pages": 0, "no_match": 0}
     todo = [it for it in items if quality.is_bogus_manufacturer(it.get("manufacturer"), it.get("name"))]
     log_line(log_path, f"kuvalda: строк с неправильным производителем = {len(todo)}")
 
@@ -138,6 +229,12 @@ def process_kuvalda(items: list, quality, fetcher: PoliteFetcher, cache: dict,
 
         rec = cache.get(url)
         if rec is None:
+            if no_fetch:
+                item["manufacturer"] = None  # бренд не выдумываем — явный null
+                stats["no_match"] += 1
+                stats["processed"] += 1
+                done += 1
+                continue
             result = fetcher.fetch(url)
             if not result.ok:
                 log_line(log_path, f"ПРОПУСК (ошибка сети): {url} — {result.error}")
@@ -373,6 +470,9 @@ def main() -> int:
     parser.add_argument("--mode", required=True, choices=["kuvalda", "regard", "promalper", "magazin01"])
     parser.add_argument("--limit", type=int, default=0, help="обработать не более N подходящих строк (0 = все)")
     parser.add_argument("--min-interval", type=float, default=1.0, help="мин. секунд между запросами")
+    parser.add_argument("--no-fetch", action="store_true",
+                         help="kuvalda: не ходить на страницы вообще — только словарь имени + уже имеющийся кэш; "
+                              "не нашлось ни там, ни там → manufacturer=null")
     args = parser.parse_args()
 
     quality = load_catalog_gala()
@@ -388,6 +488,9 @@ def main() -> int:
 
     if args.mode == "promalper":
         stats = process_promalper(items, quality, args.limit)
+    elif args.mode == "kuvalda" and args.no_fetch:
+        log_line(log_path, "kuvalda --no-fetch: полная пересборка бренда без сети (исходный manufacturer не используется)")
+        stats = rebuild_kuvalda_brands_offline(items, quality, cache_path, log_path, args.path.parent, args.limit)
     else:
         fetcher = PoliteFetcher(min_interval=args.min_interval)
         cache = load_cache(cache_path)
@@ -409,18 +512,27 @@ def main() -> int:
 
     output_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    summary = (
-        f"ИТОГ [{args.mode}] {args.path.name}: "
-        f"обработано={stats.get('processed', 0)}, "
-        f"производителей исправлено={stats.get('manufacturer_fixed', 0)}, "
-        f"осталось неправильных={stats.get('remaining_bogus', '?')} (было {stats.get('total_bogus_before', '?')}), "
-        f"характеристик заменено={stats.get('characteristics_replaced', 0)}, "
-        f"артикулов добавлено={stats.get('articles_added', 0)}, "
-        + (f"из них по словарю имени={stats.get('matched_by_name', 0)}, "
-           f"со страниц={stats.get('fetched_pages', 0)}, " if args.mode == "kuvalda" else "")
-        + f"ошибок сети={stats.get('errors', 0)}, "
-        f"валидация: {'ОК' if not errors else f'{len(errors)} ошибок'} → {output_path}"
-    )
+    if args.mode == "kuvalda" and args.no_fetch:
+        summary = (
+            f"ИТОГ [kuvalda --no-fetch] {args.path.name}: обработано={stats['processed']}, "
+            f"словарь={stats['matched_by_name']}, заглавные={stats['matched_by_caps']}, "
+            f"null={stats['no_match']}, "
+            f"валидация: {'ОК' if not errors else f'{len(errors)} ошибок'} → {output_path}"
+        )
+    else:
+        summary = (
+            f"ИТОГ [{args.mode}] {args.path.name}: "
+            f"обработано={stats.get('processed', 0)}, "
+            f"производителей исправлено={stats.get('manufacturer_fixed', 0)}, "
+            f"осталось неправильных={stats.get('remaining_bogus', '?')} (было {stats.get('total_bogus_before', '?')}), "
+            f"характеристик заменено={stats.get('characteristics_replaced', 0)}, "
+            f"артикулов добавлено={stats.get('articles_added', 0)}, "
+            + (f"из них по словарю имени={stats.get('matched_by_name', 0)}, "
+               f"со страниц(кэш)={stats.get('fetched_pages', 0)}, "
+               f"осталось null={stats.get('no_match', 0)}, " if args.mode == "kuvalda" else "")
+            + f"ошибок сети={stats.get('errors', 0)}, "
+            f"валидация: {'ОК' if not errors else f'{len(errors)} ошибок'} → {output_path}"
+        )
     log_line(log_path, summary)
     return 0
 

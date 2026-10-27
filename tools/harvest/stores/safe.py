@@ -152,8 +152,26 @@ SPEC = StoreSpec(
     parse_product_page=parse_product_page,
     build_item=build_item,
     max_pages_per_category=3,
+    # Старый harvest_all_safe_ru.py: ThreadPoolExecutor max_workers=7/25 —
+    # берём верхнюю границу. Нет пакетного API, needs_product_visit=True
+    # остаётся (визит неизбежен).
+    concurrency=25,
+    default_pause_per_domain=0.3,
+    category_has_price=False,  # цена только на странице товара
 )
 
 
-def harvest(out_path: str, limit_categories: Optional[int] = None, resume: bool = False, pause_per_domain: float = 1.0) -> dict:
-    return _run_harvest(SPEC, out_path, limit_categories=limit_categories, resume=resume, pause_per_domain=pause_per_domain)
+def harvest(
+    out_path: str,
+    limit_categories: Optional[int] = None,
+    resume: bool = False,
+    pause_per_domain: Optional[float] = None,
+    previous_items: Optional[list] = None,
+    prices_only: bool = False,
+    with_details: bool = False,
+) -> dict:
+    return _run_harvest(
+        SPEC, out_path, limit_categories=limit_categories, resume=resume,
+        pause_per_domain=pause_per_domain, previous_items=previous_items, prices_only=prices_only,
+        with_details=with_details,
+    )

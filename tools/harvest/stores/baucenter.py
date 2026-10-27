@@ -210,12 +210,32 @@ SPEC = StoreSpec(
     parse_product_page=parse_product_page,
     build_item=build_item,
     max_pages_per_category=3,
+    # Старые pull_baucenter_bulk.py/enrich_baucenter_all.py/
+    # export_baucenter_electro_and_tools.py: ThreadPoolExecutor
+    # max_workers=25..50 (JSON data-роуты Next.js — легче обычного HTML).
+    # Берём верхнюю границу (50), чтобы не быть медленнее эталона.
+    concurrency=50,
+    default_pause_per_domain=0.2,
+    category_has_price=True,
 )
 
 
-def harvest(out_path: str, limit_categories: Optional[int] = None, resume: bool = False, pause_per_domain: float = 1.0) -> dict:
-    client = HttpClient(STORE_NAME, pause_per_domain=pause_per_domain)
+def harvest(
+    out_path: str,
+    limit_categories: Optional[int] = None,
+    resume: bool = False,
+    pause_per_domain: Optional[float] = None,
+    previous_items: Optional[list] = None,
+    prices_only: bool = False,
+    with_details: bool = False,
+) -> dict:
+    effective_pause = pause_per_domain if pause_per_domain is not None else SPEC.default_pause_per_domain
+    client = HttpClient(STORE_NAME, pause_per_domain=effective_pause, concurrency=SPEC.concurrency)
     build_id = discover_build_id(client)
     spec = SPEC
     spec.page_url = make_page_url(build_id)
-    return _run_harvest(spec, out_path, limit_categories=limit_categories, resume=resume, pause_per_domain=pause_per_domain)
+    return _run_harvest(
+        spec, out_path, limit_categories=limit_categories, resume=resume,
+        pause_per_domain=pause_per_domain, previous_items=previous_items, prices_only=prices_only,
+        with_details=with_details,
+    )

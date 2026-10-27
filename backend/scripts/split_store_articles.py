@@ -57,6 +57,7 @@ from app.services.catalog_gala.store_article_split import (  # noqa: E402
     collect_pending_split_candidates,
     history_row_counts,
 )
+from app.utils.chunking import chunked  # noqa: E402
 
 BATCH_SIZE = 5000
 
@@ -106,8 +107,13 @@ async def dry_run(db) -> None:
     print(f"  ИТОГО без истории: {no_history_total}")
 
 
-async def apply(db) -> None:
+async def apply(db, product_ids: set | None = None) -> None:
+    """product_ids — только для тестов: ограничивает перенос этим множеством
+    id товаров (чтобы тест не трогал чужие локальные данные сверх
+    необходимого). В проде не передаётся — обрабатываются все кандидаты БД."""
     candidates = await collect_pending_split_candidates(db)
+    if product_ids is not None:
+        candidates = [c for c in candidates if c[0] in product_ids]
     counts = await history_row_counts(db, [(pid, cid) for pid, _, _, cid, _ in candidates])
     affected_ids = [pid for pid, _, _, cid, _ in candidates if counts.get((pid, cid), 0) > 0]
 

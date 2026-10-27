@@ -580,6 +580,32 @@ def test_bare_number_only_signature_has_no_model_code():
     assert grouping_key(sig) is None
 
 
+def test_bare_diagonal_number_does_not_block_monitor_match():
+    # Срочная правка (прод, 998 "неоднозначных" групп, 28.10.2026): голое
+    # число диагонали "27" без кода рядом — не часть индекса; код "27g3q"
+    # совпадает → auto, а не "no" по голому числу.
+    res = _decision('Монитор Hisense 27G3Q', 'Монитор Hisense 27" 27G3Q')
+    assert res["decision"] == "auto", res
+
+
+def test_bare_diagonal_number_dell_still_matches():
+    res = _decision("Dell E2425HM", 'Dell 24" Pro E2425HM')
+    assert res["decision"] == "auto", res
+
+
+def test_bare_diagonal_number_cbr_still_matches():
+    res = _decision("CBR MQ-3201", 'CBR 32" MQ-3201')
+    assert res["decision"] == "auto", res
+
+
+def test_diagonal_inch_conflict_same_code_different_size():
+    # Диагональ указана у ОБЕИХ сторон и различается → no (не голое число
+    # без контекста — именно единица "дюйм"/«"»).
+    res = _decision('Монитор Dell 24" E2425HM', 'Монитор Dell 27" E2425HM')
+    assert res["decision"] == "no", res
+    assert "диагональ" in res["reason"]
+
+
 def test_grouping_key_requires_same_product_type():
     # Один и тот же код модели, но РАЗНЫЙ явный вид (Product.product_type) —
     # grouping_key их не объединяет (владелец, 28.10.2026, п.1: вид товара —

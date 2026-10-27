@@ -252,11 +252,43 @@ def _strip_reference_and_analog(name: str) -> str:
     return name
 
 
+# Диагональ в дюймах ("27\"", "24''", "32 дюйма") — владелец, срочная правка
+# 28.10.2026 (прод, 998 "неоднозначных" групп): "Монитор Hisense 27G3Q" ≠
+# "Монитор Hisense 27\" 27G3Q" ложно получали no — голое число "27" (из
+# диагонали, БЕЗ кода модели рядом) попадало в digit_tokens и требовало
+# точного совпадения множества, хотя это СВОЙСТВО (диагональ экрана), а не
+# индекс/код. Вырезается из названия ДО токенизации кода (как число-с-
+# единицей), значение — отдельно в name_qty (группа "диагональ", см.
+# _extract_name_quantities) — ОДНА функция/группа чисел-с-единицей, вторую
+# не заводим (ПРАВИЛО №6)."""
+_INCH_RE = re.compile(
+    r"(?<![0-9a-zA-Zа-яёА-ЯЁ])(\d+(?:[.,]\d+)?)\s*(?:\"|''|дюйм(?:а|ов)?\.?)"
+    r"(?![0-9a-zA-Zа-яёА-ЯЁ])",
+    re.IGNORECASE,
+)
+
+
+def _strip_inch_spans(name: str) -> str:
+    return _INCH_RE.sub(" ", name or "")
+
+
+def _extract_inch_diagonal(name: Optional[str]) -> set:
+    if not name:
+        return set()
+    vals = set()
+    for m in _INCH_RE.finditer(name):
+        n = _parse_number(m.group(1))
+        if n is not None:
+            vals.add(round(n, 2))
+    return vals
+
+
 def _pre_clean(name: Optional[str]) -> str:
     """Общая чистка названия ПЕРЕД любой токенизацией (индекс/вид/бренд-
-    слова/размеры) — порядок: номер приказа/ГОСТ/"аналог X" → класс пожара
-    → число-с-единицей."""
-    return _strip_unit_quantities(_strip_fire_class_spans(_strip_reference_and_analog(name or "")))
+    слова/размеры) — порядок: номер приказа/ГОСТ/"аналог X" → диагональ в
+    дюймах → класс пожара → число-с-единицей."""
+    return _strip_unit_quantities(_strip_fire_class_spans(
+        _strip_inch_spans(_strip_reference_and_analog(name or ""))))
 
 
 def _split_words(name: Optional[str]) -> list[str]:
@@ -735,6 +767,9 @@ def _extract_name_quantities(name: Optional[str]) -> dict:
             values.add(round(number * table[unit], 3))
         if values:
             out[group] = values
+    inch_vals = _extract_inch_diagonal(name)
+    if inch_vals:
+        out["диагональ"] = inch_vals
     return out
 
 
@@ -1079,10 +1114,29 @@ def match(a: ProductSignature, b: ProductSignature, peers_a: tuple = (), peers_b
     if a.product_type and b.product_type and a.product_type != b.product_type:
         return {"decision": "no", "reason": f"вид товара {a.product_type} ≠ {b.product_type}"}
 
-    if a.digit_tokens != b.digit_tokens:
+    # Код модели (буква+цифра, model_code_tokens) — ЖЁСТКИЙ гейт, как и
+    # раньше. "Голые" числа без единой буквы (digit_tokens - model_code_
+    # tokens) — срочная правка владельца, 28.10.2026 (прод, 998
+    # "неоднозначных" групп): "Монитор Hisense 27G3Q" ≠ "Монитор Hisense
+    # 27\" 27G3Q" ложно получали "no" — голое число диагонали "27" требовало
+    # точного совпадения множества вместе с кодом "27g3q". Теперь голые
+    # числа — СВОЙСТВО: противоречие ТОЛЬКО если они есть у ОБЕИХ сторон И
+    # множества различаются (гофрокороб д600 vs д500 остаётся no — там
+    # цифры внутри буквенно-цифровых токенов "д600"/"ш400", то есть часть
+    # model_code_tokens, не голые числа); указано только у одной стороны —
+    # не противоречие (та же логика п.4, что и у остальных свойств).
+    if a.model_code_tokens != b.model_code_tokens:
         return {
             "decision": "no",
-            "reason": f"числа/индекс в названии {sorted(a.digit_tokens)} ≠ {sorted(b.digit_tokens)}",
+            "reason": f"код модели в названии {sorted(a.model_code_tokens)} ≠ {sorted(b.model_code_tokens)}",
+        }
+
+    a_bare_numbers = a.digit_tokens - a.model_code_tokens
+    b_bare_numbers = b.digit_tokens - b.model_code_tokens
+    if a_bare_numbers and b_bare_numbers and a_bare_numbers != b_bare_numbers:
+        return {
+            "decision": "no",
+            "reason": f"голые числа в названии {sorted(a_bare_numbers)} ≠ {sorted(b_bare_numbers)}",
         }
 
     # Брендов manufacturer/словарь НЕ подтвердил совпадение — но в названии

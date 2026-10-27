@@ -13,10 +13,13 @@ dropdowns: enum → dropdown + лист «Справочники»).
 """
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.subsidy import Subsidy
 from app.services.historical_fact_import import columns as columns_mod
 from app.services.historical_fact_import import statuses as statuses_mod
+from app.services.historical_fact_import.template_common import entry_name_and_levels
 from app.services.plan_catalog import load_plan_catalog
 
 
@@ -26,6 +29,10 @@ async def build_template_workbook(db: AsyncSession, subsidy_id: int) -> bytes:
     from openpyxl.worksheet.datavalidation import DataValidation
 
     catalog = await load_plan_catalog(db, subsidy_id)
+    # Багфикс (владелец): колонка «Субсидия» была зашита константой «ХО_2026»
+    # для ЛЮБОЙ субсидии — подставляем реальное имя строки Subsidy.
+    subsidy = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    subsidy_name = subsidy.name if subsidy else None
 
     wb = Workbook()
     ws = wb.active
@@ -33,18 +40,10 @@ async def build_template_workbook(db: AsyncSession, subsidy_id: int) -> bytes:
     ws.append(columns_mod.TEMPLATE_HEADER)
 
     for entry in catalog:
-        path_parts = [p for p in (entry.get("path") or "").split(" › ") if p]
-        if entry.get("kind") == "planned_item":
-            plan_item_name = entry.get("name")
-        else:
-            # Лист дерева без собственной FeoPlannedItem — сама категория и
-            # есть «плановая позиция» шаблона.
-            path_parts = path_parts + [entry.get("name")] if path_parts else [entry.get("name")]
-            plan_item_name = None
-        levels = ([None] * 3 + path_parts)[-3:]  # последние 3 уровня → l2/l3/l4
+        plan_item_name, levels = entry_name_and_levels(entry, depth=3)  # l2/l3/l4
 
         row = [None] * len(columns_mod.TEMPLATE_HEADER)
-        row[0] = "ХО_2026" if subsidy_id else None
+        row[0] = subsidy_name
         row[4], row[5], row[6] = levels[0], levels[1], levels[2]
         row[7] = plan_item_name
         row[15] = entry.get("quantity")

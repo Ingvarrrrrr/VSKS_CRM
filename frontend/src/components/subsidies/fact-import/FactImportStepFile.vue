@@ -3,10 +3,16 @@
     Загрузите файл учёта закупок (Excel) — тот же, по которому ведётся субсидия.
     План в GALA этот шаг не меняет, он только привязывает уже совершённые
     закупки к плановым позициям.
-    <div class="mt-2">
-      <v-btn size="small" variant="text" color="primary" prepend-icon="mdi-download-outline" @click="downloadTemplate">
-        Скачать шаблон
+    <div class="mt-2 d-flex flex-wrap ga-2">
+      <v-btn size="small" variant="text" color="primary" prepend-icon="mdi-download-outline" @click="downloadTemplate('single')">
+        Шаблон: статус одной колонкой
       </v-btn>
+      <v-btn size="small" variant="text" color="primary" prepend-icon="mdi-download-outline" @click="downloadTemplate('stages')">
+        Шаблон: статусы по колонкам Да/Нет (как GoodsService)
+      </v-btn>
+    </div>
+    <div class="text-caption text-medium-emphasis mt-1">
+      Загрузка понимает оба формата — какой шаблон ни скачайте, система сама распознает его при загрузке файла.
     </div>
   </v-alert>
   <v-file-input

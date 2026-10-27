@@ -673,10 +673,10 @@ export function useFactImport() {
   // что и downloadFeoTemplate (SubsidiesView.vue) / остальные export-хелперы
   // проекта (apiFetch не отдаёт Blob, поэтому здесь сырой fetch + auth-заголовок,
   // ПРАВИЛО №6 — переиспользован приём, не апи-обёртка).
-  async function downloadTemplate() {
+  async function downloadTemplate(layout: 'single' | 'stages' = 'single') {
     if (!factImport.subsidyId) return
     try {
-      const res = await fetch(`/api${basePath()}/template`, {
+      const res = await fetch(`/api${basePath()}/template?layout=${layout}`, {
         headers: {},
       })
       if (!res.ok) {
@@ -688,7 +688,7 @@ export function useFactImport() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'Шаблон_импорта_факта.xlsx'
+      a.download = layout === 'stages' ? 'Шаблон_импорта_факта_статусы_по_колонкам.xlsx' : 'Шаблон_импорта_факта.xlsx'
       a.click()
       URL.revokeObjectURL(url)
     } catch (e: any) {

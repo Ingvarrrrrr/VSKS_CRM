@@ -54,14 +54,23 @@ def _parse_json_form(raw: Optional[str], field_name: str) -> Optional[dict]:
 @router.get("/template")
 async def fact_import_template(
     subsidy_id: int,
+    layout: str = Query("single", description="single — статус одной колонкой (ХО); stages — статус в нескольких колонках Да/Нет (GoodsService)"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     await _check_permission(subsidy_id, db, current_user)
-    from app.services.historical_fact_import.template import build_template_workbook
 
-    content = await build_template_workbook(db, subsidy_id)
-    filename = f"fact_import_template_{subsidy_id}.xlsx"
+    if layout == "single":
+        from app.services.historical_fact_import.template import build_template_workbook
+        content = await build_template_workbook(db, subsidy_id)
+        filename = f"fact_import_template_{subsidy_id}.xlsx"
+    elif layout == "stages":
+        from app.services.historical_fact_import.template_stages import build_stages_template_workbook
+        content = await build_stages_template_workbook(db, subsidy_id)
+        filename = f"Шаблон_импорта_факта_статусы_по_колонкам_{subsidy_id}.xlsx"
+    else:
+        raise HTTPException(400, f"Неизвестная раскладка шаблона «{layout}» — допустимо «single» или «stages»")
+
     return StreamingResponse(
         BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

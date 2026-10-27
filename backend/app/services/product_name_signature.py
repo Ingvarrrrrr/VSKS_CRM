@@ -36,6 +36,18 @@ build_signature() отсюда, а не писать вторую «похоже
 цифровые токены здесь — НЕ часть "похожести", а отдельный ОБЯЗАТЕЛЬНЫЙ гейт,
 который overlap-коэффициент не может переопределить.
 
+ПОВОД «бренд латиницей не распознан → порог обойти нельзя» (владелец, доп.
+ревью пробного прогона merge_by_name_model, 27.10.2026, п.2): "Аккумуляторная
+батарея Delta DT 1240" и "... Security Force SF 1240" были сведены — бренды
+РАЗНЫЕ, manufacturer/словарь их не знают, а совпавший словарный вид товара
+обходил overlap-порог. Теперь обход порога по совпавшему виду ДОПУСТИМ ТОЛЬКО
+если у обоих распознан (manufacturer/словарь) ОДИНАКОВЫЙ бренд; иначе, если в
+названии с обеих сторон есть латинское слово-кандидат в бренд (Title Case/
+ВСЕ ЗАГЛАВНЫЕ) и множества таких слов не пересекаются — `decision: "no"`
+("вероятно разные бренды"), см. `_extract_brand_like_words`. Там же —
+размеры Д×Ш×В через "х" ("198х166х170" ≠ "195х165х170") сравниваются целой
+последовательностью осей, не отдельными числами, см. `_extract_name_dimensions`.
+
 Переиспользуется (ПРАВИЛО №6, не копируется):
   - app.services.brand_code_fold.fold_brand_or_code — свёртка
     кириллица/латиница-гомоглифов и регистра для сравнения;
@@ -345,6 +357,45 @@ def _overlap_coefficient(a: frozenset, b: frozenset) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Слово, "похожее на бренд", латиницей (владелец, доп. ревью Delta/Security
+# Force/BT аккумуляторов, 27.10.2026, п.2 дефекта пробного прогона
+# merge_by_name_model: "Delta DT 1240" и "Security Force SF 1240" были
+# сведены — бренды РАЗНЫЕ, но ни manufacturer, ни словарь брендов их не
+# распознали, а порог похожести слов (_overlap_coefficient) был обойдён,
+# т.к. совпал словарный вид товара "аккумулятор"). Если официальный бренд
+# НЕ подтвердил совпадение (пустой или не совпал хотя бы с одной стороны —
+# иначе разный brand_fold уже дал бы "no" раньше в match()), а в названии
+# есть латинское слово с заглавной буквы (Title Case, "Delta") или ВСЕ
+# ЗАГЛАВНЫЕ ("SF", "BT", "DT", не словарное слово вида/свойства — те все
+# кириллические, см. product_name_signature_props.py, поэтому отдельно их
+# исключать не нужно) — это, скорее всего, тоже бренд/код, который словарь
+# просто не знает. Обе стороны назвали такое слово и множества НЕ
+# пересекаются → разные бренды, не повод доверять overlap общих родовых слов
+# названия ("аккумуляторная батарея").
+_LATIN_WORD_RE = re.compile(r"^[A-Za-z]+$")
+
+
+def _is_brand_like_word(word: str) -> bool:
+    if len(word) < 2 or not _LATIN_WORD_RE.match(word):
+        return False
+    return word.isupper() or (word[0].isupper() and word[1:].islower())
+
+
+def _extract_brand_like_words(name: Optional[str]) -> frozenset:
+    """Латинские слова-кандидаты в бренд — из ОРИГИНАЛЬНОГО текста (НЕ через
+    fold_brand_or_code: та функция схлопывает часть латиницы в кириллицу-
+    гомоглиф и ломает регистр, а здесь важен именно регистр написания, см.
+    docstring выше). Чистка единиц/класса пожара — та же, что у _split_words
+    (для единообразия; "200х200" и т.п. всё равно отсеются фильтром "только
+    буквы")."""
+    if not name:
+        return frozenset()
+    cleaned = _strip_unit_quantities(_strip_fire_class_spans(name))
+    words = (_EDGE_PUNCT_RE.sub("", w) for w in cleaned.split())
+    return frozenset(w.lower() for w in words if w and _is_brand_like_word(w))
+
+
+# ---------------------------------------------------------------------------
 # Свойства из названия (цвет/материал/страна/класс пожара/комплектация/
 # исполнение) — группы и словари см. product_name_signature_props.py.
 # ---------------------------------------------------------------------------
@@ -635,6 +686,67 @@ def _name_quantity_conflict(a_qty: dict, b_qty: dict) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Размеры Д*Ш*В ЧЕРЕЗ "х"/"x" ПРЯМО В НАЗВАНИИ (владелец, доп. ревью Delta/
+# Security Force/BT аккумуляторов, 27.10.2026, п.2 дефекта: "198х166х170 мм"
+# ≠ "195х165х170 мм" — последняя ось совпала, но это НЕ повод считать
+# габарит одним и тем же). ОТДЕЛЬНО от _NAME_QUANTITY_GROUPS выше (ПРАВИЛО
+# №6 — это не дубль той же проверки, а другая форма данных): там "указано у
+# обоих хоть одно совпавшее значение — не противоречие" — верно для ОДНОЙ
+# физической величины, измеренной по-разному; здесь — ТРИ РАЗНЫЕ оси одного
+# габарита разом, совпадение одной оси ("170") ничего не говорит об
+# остальных, поэтому сравниваем целую последовательность чисел, а не
+# множество отдельных значений. Единицы — ТЕ ЖЕ _LENGTH_TO_MM (ПРАВИЛО №6,
+# второй список единиц длины не заводим).
+_DIM_LENGTH_UNIT_ALT = "|".join(sorted((re.escape(u) for u in _LENGTH_TO_MM), key=len, reverse=True))
+_NAME_DIMENSIONS_RE = re.compile(
+    rf"(?<![0-9a-zA-Zа-яёА-ЯЁ])(\d+(?:[.,]\d+)?(?:\s*[xXхХ]\s*\d+(?:[.,]\d+)?)+)"
+    rf"\s*({_DIM_LENGTH_UNIT_ALT})(?![0-9a-zA-Zа-яёА-ЯЁ])",
+    re.IGNORECASE,
+)
+
+
+def _extract_name_dimensions(name: Optional[str]) -> frozenset:
+    """Множество кортежей чисел (в мм) — каждое найденное "NхNхN...+единица"
+    в названии как ЦЕЛАЯ последовательность (не отдельные числа, см.
+    docstring блока выше)."""
+    if not name:
+        return frozenset()
+    folded = fold_brand_or_code(name)
+    out = set()
+    for m in _NAME_DIMENSIONS_RE.finditer(folded):
+        factor = _LENGTH_TO_MM.get(m.group(2))
+        if factor is None:
+            continue
+        nums = []
+        for part in re.split(r"[xXхХ]", m.group(1)):
+            n = _parse_number(part)
+            if n is None:
+                nums = None
+                break
+            nums.append(round(n * factor, 3))
+        if nums:
+            out.add(tuple(nums))
+    return frozenset(out)
+
+
+def _name_dimensions_conflict(a_dims: frozenset, b_dims: frozenset) -> Optional[str]:
+    """Указано у ОБЕИХ сторон (хотя бы один габарит с каждой) и НИ ОДНА пара
+    одинаковой длины (кол-ва осей) не совпадает по ВСЕМ осям разом (с
+    допуском на округление) → противоречие; указано только у одной — не
+    противоречие (п.4)."""
+    if not a_dims or not b_dims:
+        return None
+    tol = lambda v: max(0.5, 0.01 * abs(v))  # noqa: E731
+    for a_tuple in a_dims:
+        for b_tuple in b_dims:
+            if len(a_tuple) == len(b_tuple) and all(
+                abs(x - y) <= max(tol(x), tol(y)) for x, y in zip(a_tuple, b_tuple)
+            ):
+                return None
+    return f"размеры в названии {sorted(a_dims)} ≠ {sorted(b_dims)}"
+
+
+# ---------------------------------------------------------------------------
 # Сигнатура товара и match()
 # ---------------------------------------------------------------------------
 
@@ -650,6 +762,8 @@ class ProductSignature:
     product_type: Optional[str] = None
     char_values: dict = field(default_factory=dict)
     name_qty: dict = field(default_factory=dict)
+    name_dims: frozenset = field(default_factory=frozenset)
+    brand_like_words: frozenset = field(default_factory=frozenset)
     raw_item: dict = field(default_factory=dict)
 
 
@@ -712,6 +826,8 @@ def build_signature(item: dict, brand_dictionary=None) -> ProductSignature:
         product_type=product_type,
         char_values=_characteristic_values(item.get("characteristics") or []),
         name_qty=_extract_name_quantities(name),
+        name_dims=_extract_name_dimensions(name),
+        brand_like_words=_extract_brand_like_words(name),
         raw_item=item,
     )
 
@@ -781,6 +897,22 @@ def match(a: ProductSignature, b: ProductSignature, peers_a: tuple = (), peers_b
             "reason": f"числа/индекс в названии {sorted(a.digit_tokens)} ≠ {sorted(b.digit_tokens)}",
         }
 
+    # Брендов manufacturer/словарь НЕ подтвердил совпадение — но в названии
+    # с обеих сторон есть латинское слово-кандидат в бренд, и множества не
+    # пересекаются ("Delta" ≠ "Security Force" ≠ "BT") — вероятно разные
+    # бренды, не словарные (см. docstring _extract_brand_like_words).
+    # Проверяем ТОЛЬКО когда официальный бренд НЕ подтвердил совпадение —
+    # иначе лишнее латинское слово у одной стороны при уже подтверждённом
+    # общем бренде (manufacturer) не должно ложно давать "no" (тест ИБП CBR/
+    # HP — там manufacturer совпадает, эта проверка не должна срабатывать).
+    confirmed_same_brand = bool(a.brand_fold) and bool(b.brand_fold) and a.brand_fold == b.brand_fold
+    if (not confirmed_same_brand and a.brand_like_words and b.brand_like_words
+            and not (a.brand_like_words & b.brand_like_words)):
+        return {
+            "decision": "no",
+            "reason": f"вероятно разные бренды: {sorted(a.brand_like_words)} ≠ {sorted(b.brand_like_words)}",
+        }
+
     # Порядок проверки (владелец, уточнение 2): цвет → вес → страна →
     # остальные характеристики JSON → свойства из названия.
     color_conflict = _name_property_conflict("цвет", a, b)
@@ -794,6 +926,10 @@ def match(a: ProductSignature, b: ProductSignature, peers_a: tuple = (), peers_b
     name_qty_conflict = _name_quantity_conflict(a.name_qty, b.name_qty)
     if name_qty_conflict:
         return {"decision": "no", "reason": name_qty_conflict}
+
+    name_dims_conflict = _name_dimensions_conflict(a.name_dims, b.name_dims)
+    if name_dims_conflict:
+        return {"decision": "no", "reason": name_dims_conflict}
 
     country_conflict = _name_property_conflict("страна", a, b)
     if country_conflict:
@@ -826,8 +962,19 @@ def match(a: ProductSignature, b: ProductSignature, peers_a: tuple = (), peers_b
     # но слова вокруг (ударный/сетевой/SDS-Max/отбойный) не overlap'ятся —
     # не повод уходить в check, раз словарный вид явно подтверждён с обеих
     # сторон (сюда доходим только когда a.product_type == b.product_type,
-    # иначе вид-конфликт уже вернул "no" выше).
-    if not (a.product_type and b.product_type):
+    # иначе вид-конфликт уже вернул "no" выше). ИСПРАВЛЕНО (владелец, доп.
+    # ревью Delta/Security Force/BT, 27.10.2026, п.2 дефекта): обход порога
+    # по виду товара допустим ТОЛЬКО если у ОБЕИХ сторон бренд совпал —
+    # официально (manufacturer/словарь, confirmed_same_brand) ИЛИ через то
+    # же латинское слово-кандидат ("SKIL"/"Hanskonner" встречается с обеих
+    # сторон — тот же сигнал, что и у гейта "вероятно разные бренды" выше,
+    # только здесь пересечение, а не его отсутствие). Иначе совпавший
+    # родовой вид ("аккумулятор") при НЕИЗВЕСТНОМ/РАЗНОМ бренде больше не
+    # обходит порог похожести слов (ровно так ложно сошлись Delta/Security
+    # Force/BT — общие слова "аккумуляторная батарея" держали overlap выше
+    # порога).
+    brand_confirmed_match = confirmed_same_brand or bool(a.brand_like_words & b.brand_like_words)
+    if not (a.product_type and b.product_type and brand_confirmed_match):
         overlap = _overlap_coefficient(a.word_set, b.word_set)
         if overlap < NAME_OVERLAP_CHECK_THRESHOLD:
             return {

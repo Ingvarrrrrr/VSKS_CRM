@@ -46,13 +46,26 @@ scripts/merge_by_barcode.py).
     contractor_id строк истории product_price_history) — карточки одного-
     единственного магазина сами по себе всегда разные товары (тот же принцип,
     что у merge_by_barcode.py/product_similar.py::_distinct_stores);
+  - НЕ БОЛЬШЕ ОДНОЙ карточки НА КАЖДЫЙ магазин (владелец, доп. дефект
+    пробного прогона 27.10.2026, "один магазин не продаёт товар дважды" +
+    "автоматически — только однозначные пары 1-к-1"): магазин карточки —
+    Product.price_source_contractor_id, если не NULL, иначе ЕДИНСТВЕННЫЙ
+    contractor_id из её истории цен; карточка без определённого магазина
+    (ни price_source, ни единственного contractor_id в истории) — "свой
+    источник", но ДВЕ такие карточки без магазина в одной группе — тоже
+    неоднозначно (см. _store_key/_has_duplicate_store_cards). Найден на
+    «Огнетушитель ... ОУ-50 ВСЕ ...» — 3 карточки магазина Спасатель +
+    1 карточка другого магазина были слиты в одну (разные варианты
+    магазина Спасатель, не один и тот же товар); нарушение — группа
+    КОНСЕРВАТИВНО пропускается целиком (попадает в счётчик "conflict");
   - «один магазин не продаёт товар дважды» (владелец, 27.10.2026): если
     какой-то магазин группы имеет историю (contractor_id, store_article) с
     РАЗНЫМИ store_article у РАЗНЫХ карточек этой же группы — группа
     КОНСЕРВАТИВНО пропускается целиком (попадает в счётчик "conflict"
     пробного прогона, та же проверка, что в merge_by_barcode.py/merge_by_
     type_key.py — ПРАВИЛО №6);
-  - ОДНОЗНАЧНОСТЬ — для КАЖДОЙ пары карточек группы (из РАЗНЫХ магазинов)
+  - ОДНОЗНАЧНОСТЬ — для КАЖДОЙ пары карточек группы (из РАЗНЫХ магазинов,
+    гарантировано проверкой "не больше одной на магазин" выше)
     product_name_signature.match(a, b, peers_a, peers_b) должен вернуть
     decision == "auto" (peers_* — ProductSignature всех ОСТАЛЬНЫХ карточек
     группы — своя же функция match() решает однозначность через свой
@@ -177,6 +190,39 @@ async def _apply_history_contractors(db, groups: dict) -> dict:
     return filtered
 
 
+def _store_key(pid: int, price_source_contractor_id, history_pairs: tuple) -> tuple:
+    """Магазин ОДНОЙ карточки (владелец, 27.10.2026, доп. дефект пробного
+    прогона — см. докстринг модуля): price_source_contractor_id, если
+    известен; иначе — ЕДИНСТВЕННЫЙ contractor_id из её истории цен; если
+    история пуста или называет НЕСКОЛЬКО разных магазинов — у карточки
+    нет определённого магазина, и она считается "своим источником"
+    (ключ ("none",) — ОДИН И ТОТ ЖЕ для всех таких карточек НАРОЧНО: см.
+    _has_duplicate_store_cards, где повтор этого ключа тоже конфликт)."""
+    if price_source_contractor_id is not None:
+        return ("csrc", price_source_contractor_id)
+    cids = {cid for cid, _sa in history_pairs if cid is not None}
+    if len(cids) == 1:
+        return ("hist", next(iter(cids)))
+    return ("none",)
+
+
+def _has_duplicate_store_cards(product_ids: list, price_source_by_id: dict, history_pairs_by_id: dict) -> bool:
+    """«Один магазин не продаёт товар дважды» (владелец, 27.10.2026, доп.
+    дефект пробного прогона — найден на «Огнетушитель ... ОУ-50 ВСЕ ...»:
+    3 карточки магазина Спасатель + 1 другого магазина были слиты в одну,
+    хотя 3 карточки одного магазина под общим индексом названия — РАЗНЫЕ
+    варианты товара, не один и тот же). True, если в группе хотя бы у
+    одного магазина (см. _store_key, включая "своего источника" без
+    определённого магазина) больше ОДНОЙ карточки — группа ТОГДА
+    консервативно пропускается целиком, даже если каждая пара карточек
+    формально прошла бы product_name_signature.match() как "auto"."""
+    counts: dict = {}
+    for pid in product_ids:
+        key = _store_key(pid, price_source_by_id.get(pid), tuple(history_pairs_by_id.get(pid, ())))
+        counts[key] = counts.get(key, 0) + 1
+    return any(c > 1 for c in counts.values())
+
+
 def _has_store_conflict(product_ids: list, history_pairs_by_id: dict) -> bool:
     """«Один магазин не продаёт товар дважды» (владелец, 27.10.2026) — та же
     проверка, что merge_by_barcode.py/merge_by_type_key.py::
@@ -231,12 +277,14 @@ async def _plan_batch(db, batch_groups: list) -> list:
         select(
             Product.id, Product.name, Product.manufacturer,
             Product.country_origin, Product.characteristics,
+            Product.price_source_contractor_id,
         ).where(Product.id.in_(batch_ids))
     )).all()
-    products_by_id = {
-        pid: {"name": name, "manufacturer": manufacturer, "characteristics": characteristics or []}
-        for pid, name, manufacturer, _country, characteristics in rows
-    }
+    products_by_id = {}
+    price_source_by_id = {}
+    for pid, name, manufacturer, _country, characteristics, price_source_contractor_id in rows:
+        products_by_id[pid] = {"name": name, "manufacturer": manufacturer, "characteristics": characteristics or []}
+        price_source_by_id[pid] = price_source_contractor_id
 
     hist_rows = (await db.execute(
         select(
@@ -255,6 +303,15 @@ async def _plan_batch(db, batch_groups: list) -> list:
     for key, ids in batch_groups:
         ids = [pid for pid in ids if pid in products_by_id]
         if len(ids) < 2:
+            continue
+        if _has_duplicate_store_cards(ids, price_source_by_id, history_pairs_by_id):
+            # «Один магазин не продаёт товар дважды» (владелец, доп. дефект
+            # пробного прогона, см. докстринг модуля) — ПЕРЕД проверкой
+            # store_article и ПЕРЕД попарным match(): несколько карточек
+            # одного магазина под общим индексом названия всегда
+            # неоднозначны, даже если каждая пара прошла бы match() как
+            # "auto" (пример ОУ-50 — 3 варианта магазина Спасатель).
+            result.append({"key": key, "conflict": True, "reason": "один магазин — несколько карточек", "product_ids": ids})
             continue
         if _has_store_conflict(ids, history_pairs_by_id):
             result.append({"key": key, "conflict": True, "reason": "store_article", "product_ids": ids})
@@ -330,12 +387,14 @@ async def main_async(user_email: str, apply: bool) -> None:
     cards_to_remove = sum(len(g["loser_ids"]) for g in mergeable)
 
     ambiguous = [g for g in conflicts if g.get("reason") == "неоднозначно"]
+    duplicate_store_cards = [g for g in conflicts if g.get("reason") == "один магазин — несколько карточек"]
     store_conflicts = [g for g in conflicts if g.get("reason") == "store_article"]
 
     print(f"Групп с общей сигнатурой названия (≥2 магазина): {len(mergeable) + len(conflicts)}")
     print(f"  готовых к слиянию (1-к-1, product_name_signature.match): {len(mergeable)} (карточек будет удалено: {cards_to_remove})")
     print(f"  неоднозначно (несколько карточек у какого-то магазина под этим ключом — см. «Похожие товары»): {len(ambiguous)}")
-    print(f"  пропущено из-за конфликта «один магазин — две позиции»: {len(store_conflicts)}")
+    print(f"  пропущено — у какого-то магазина больше одной карточки в группе (ОУ-50/P04, не 1-к-1): {len(duplicate_store_cards)}")
+    print(f"  пропущено из-за конфликта «один магазин — две позиции» (разные store_article): {len(store_conflicts)}")
 
     print("\nПримеры (до 20):")
     for g in mergeable[:20]:

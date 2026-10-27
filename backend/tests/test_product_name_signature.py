@@ -378,6 +378,83 @@ def test_product_type_cabinet_vs_case_still_no():
     assert "вид товара" in res["reason"]
 
 
+# ---------------------------------------------------------------------------
+# Доп. ревью Delta/Security Force/BT аккумуляторов, 27.10.2026, п.2 дефекта
+# пробного прогона merge_by_name_model: бренды не распознаны (manufacturer
+# не передан), совпавший вид товара "аккумулятор" обходил порог похожести
+# слов, хотя латинские слова-кандидаты в бренд разные ("Delta" ≠ "Security
+# Force" ≠ "BT"), а габариты отличаются.
+# ---------------------------------------------------------------------------
+
+def test_brand_like_words_differ_delta_vs_security_force():
+    res = _decision(
+        "Аккумуляторная батарея Delta DT 1240 (12В 40Ач) 198х166х170 мм",
+        "Аккумуляторная батарея Security Force SF 1240 (12В 40Ач) 195х165х170 мм",
+    )
+    assert res["decision"] == "no", res
+    assert "бренд" in res["reason"]
+
+
+def test_brand_like_words_differ_delta_vs_bt():
+    res = _decision(
+        "Аккумуляторная батарея Delta DT 1240 (12В 40Ач) 198х166х170 мм",
+        "Аккумуляторная батарея BT 1240 (12В 40Ач) 195х165х170 мм",
+    )
+    assert res["decision"] == "no", res
+    assert "бренд" in res["reason"]
+
+
+def test_brand_like_words_differ_security_force_vs_bt():
+    res = _decision(
+        "Аккумуляторная батарея Security Force SF 1240 (12В 40Ач) 195х165х170 мм",
+        "Аккумуляторная батарея BT 1240 (12В 40Ач) 195х165х170 мм",
+    )
+    assert res["decision"] == "no", res
+    assert "бренд" in res["reason"]
+
+
+def test_dimensions_differ_even_with_same_confirmed_brand():
+    # Изолируем переменную (не брендовый гейт, а именно размеры через «х»):
+    # manufacturer ОДИНАКОВЫЙ у обоих — confirmed_same_brand=True, значит
+    # гейт "вероятно разные бренды" тут не сработает, и единственная причина
+    # "no" — несовпавшие габариты Д×Ш×В ("170" совпадает, но первые две оси
+    # разные).
+    res = _decision(
+        "Аккумуляторная батарея Delta DT 1240 198х166х170 мм",
+        "Аккумуляторная батарея Delta DT 1240 195х165х170 мм",
+        a_manufacturer="Delta", b_manufacturer="Delta",
+    )
+    assert res["decision"] == "no", res
+    assert "размеры" in res["reason"]
+
+
+def test_dimensions_match_when_axes_equal():
+    res = _decision(
+        "Аккумуляторная батарея Delta DT 1240 198х166х170 мм",
+        "Аккумуляторная батарея Delta DT 1240 198х166х170 мм",
+        a_manufacturer="Delta", b_manufacturer="Delta",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_brand_like_word_overlap_does_not_block_known_good_pairs():
+    # Прежние правильные пары того же ревью (владелец) остаются auto:
+    # общее латинское слово-кандидат в бренд ("CBR"/"HP") есть с обеих
+    # сторон — гейт "вероятно разные бренды" не срабатывает (пересечение
+    # не пустое), и обход overlap-порога по виду товара тоже разрешён.
+    res_cbr = _decision(
+        "ИБП CBR ESN-1KT-4I-LCHERSC",
+        "ИБП CBR Essence Online Tower ESN-1KT-4I-LCHERSC",
+    )
+    assert res_cbr["decision"] == "auto", res_cbr
+
+    res_hp = _decision(
+        "Компьютер HP Z2 G9 TWR 4N3U8AV",
+        "Настольный компьютер HP Z2 Tower G9 Workstation (4N3U8AV)",
+    )
+    assert res_hp["decision"] == "auto", res_hp
+
+
 def test_battery_solo_vs_akb_count_not_auto():
     # "solo" ≠ "2 АКБ ..." — комплектация по батарее указана у обоих и
     # разная → не auto (п.5).

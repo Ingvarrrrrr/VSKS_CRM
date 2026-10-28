@@ -55,6 +55,9 @@ x-backend-common: &backend-common
     PROVERKACHEKA_TOKEN: ${PROVERKACHEKA_TOKEN:-}
     FABRIKANT_LOGIN: ${FABRIKANT_LOGIN:-}
     FABRIKANT_PASSWORD: ${FABRIKANT_PASSWORD:-}
+    # Общий интеграционный токен Росэлторг.Бизнес (запасной: личный токен из
+    # «Учётки площадок» пользователя важнее). Значение — только в .env на сервере.
+    ROSELTORG_TOKEN: ${ROSELTORG_TOKEN:-}
     PLATFORM_CRED_KEY: ${PLATFORM_CRED_KEY:-}
     # Аудит безопасности 2026-10-20: /docs, /redoc, /openapi.json выключаются
     # в app/main.py при ENVIRONMENT=production. По умолчанию (локальный

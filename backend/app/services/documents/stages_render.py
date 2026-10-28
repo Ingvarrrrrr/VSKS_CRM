@@ -1,4 +1,4 @@
-"""generate_document: tpl.render() with custom-template auto-fallback.
+"""generate_document: render_docx() with custom-template auto-fallback.
 
 Split out of app/routers/documents.py::generate_document (wave 3f refactor).
 """
@@ -8,6 +8,7 @@ import logging
 from docxtpl import DocxTemplate
 
 from app.services.documents.doc_types import TEMPLATES_DIR, SUBSIDY_TEMPLATES_DIR
+from app.services.documents.blank_placeholders import render_docx
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ def render_template(tpl: DocxTemplate, context: dict, template_path: str, doc_ty
     unless a broken custom template silently fell back to the base one."""
     _fallback_info = None  # phase31-02: track silent fallback for response header
     try:
-        tpl.render(context)
+        render_docx(tpl, context)
     except Exception as render_err:
         # phase26-nn: auto-fallback на базовый шаблон если кастомный из БД сломан.
         # Lessons.md (2026-05-15): кастомные шаблоны с {% tr %} вне таблицы или
@@ -39,7 +40,7 @@ def render_template(tpl: DocxTemplate, context: dict, template_path: str, doc_ty
                 }
                 tpl = DocxTemplate(base_path)
                 template_path = base_path
-                tpl.render(context)
+                render_docx(tpl, context)
             else:
                 raise
         else:

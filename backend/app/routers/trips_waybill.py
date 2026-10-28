@@ -41,6 +41,7 @@ from app.models.user import User
 from app.models.external_driver import ExternalDriver
 from app.models.organization import Organization
 from app.routers.trips import _can_see_vehicle, _load_trip_or_404
+from app.services.documents.blank_placeholders import render_docx
 
 router = APIRouter(prefix="/api/trips", tags=["vehicles"])
 
@@ -266,7 +267,7 @@ async def render_trip(
     try:
         tpl = DocxTemplate(template_path)
         ctx = _build_trip_context(trip, vehicle, driver, org)
-        tpl.render(ctx)
+        render_docx(tpl, ctx)
         buf = BytesIO()
         tpl.save(buf)
         buf.seek(0)

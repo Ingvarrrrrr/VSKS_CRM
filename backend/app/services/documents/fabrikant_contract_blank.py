@@ -19,6 +19,11 @@ context без изменений.
 
 from __future__ import annotations
 
+# "__.__.____" — один источник (ПРАВИЛО №6): не считаем вторую копию этой
+# константы, а берём её из общего модуля, который применяет то же гашение
+# дат/номеров ко ВСЕМ документам (apply_blank_placeholders/render_docx).
+from .blank_placeholders import BLANK_DATE as _BLANK_DATE
+
 # Длина линии подобрана по месту переменной в шаблоне — см. текст вокруг
 # подстановки в backend/templates/fabrikant_contract_project.docx:
 #   'Договор поставки № {{ contract_number }}'
@@ -31,7 +36,7 @@ _BLANK_DAY = "__"                    # «__» — день
 _BLANK_MONTH = "__________"          # месяц словом
 _BLANK_YEAR = "____"                 # год (далее в шаблоне литерал " г." → "____ г.")
 _BLANK_NUMBER = "__________"         # номер договора / протокола закупки
-_BLANK_DATE = "__.__.____"           # полная дата (contract_date/contract_end_date/delivery_date)
+# _BLANK_DATE — см. импорт BLANK_DATE из blank_placeholders.py выше (ПРАВИЛО №6)
 _BLANK_MONEY_NUM = "______________"  # цена цифрами
 _BLANK_MONEY_WORDS = "____________________________________"  # цена словами, в скобках
 _BLANK_VAT_RATE = "__"               # ставка НДС (на проекте не печатается — vat_undetermined=True,

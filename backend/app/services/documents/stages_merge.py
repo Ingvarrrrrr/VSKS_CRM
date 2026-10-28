@@ -14,6 +14,7 @@ from app.services.documents.doc_types import DOC_TYPES
 # расхождения при будущих правках резолвера (см. _resolve_doc_template_path
 # docstring и жалобу владельца 2026-09-17 про service_note_advance).
 from app.services.documents.templates import _resolve_doc_template_path
+from app.services.documents.blank_placeholders import render_docx
 
 
 def merge_secondary_doc(buf: BytesIO, merge, doc_type: str, context: dict, p, filename_base: str):
@@ -31,7 +32,7 @@ def merge_secondary_doc(buf: BytesIO, merge, doc_type: str, context: dict, p, fi
 
             if os.path.exists(secondary_path):
                 sec_tpl = _Tpl(secondary_path)
-                sec_tpl.render(context)
+                render_docx(sec_tpl, context)
                 sec_buf = BytesIO()
                 sec_tpl.save(sec_buf)
                 sec_buf.seek(0)

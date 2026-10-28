@@ -52,6 +52,7 @@ from app.routers.documents import (
 # только локальный /api/products/photos/<file> и не знавшая про photo_data.
 from app.services.documents.stages_template_engine import make_photo_resolver
 from app.services.documents.docx_post import strip_template_legend
+from app.services.documents.blank_placeholders import render_docx
 # Правило №6 — единственный резолвер пути к шаблону документа (субсидийный
 # override → глобальный → DOC_TYPE_FALLBACK_FILES). До 2026-09-17 здесь жила
 # урезанная копия-дубль (PRIMARY_FILE/FALLBACK_FILE ниже), которая не умела
@@ -316,7 +317,7 @@ async def generate_wish_service_note(
 
     # ── Render template ──────────────────────────────────────────────────────
     try:
-        tpl.render(context)
+        render_docx(tpl, context)
         buf = BytesIO()
         tpl.save(buf)
         buf.seek(0)
@@ -439,7 +440,7 @@ async def generate_wish_tech_spec(
     }
 
     try:
-        tpl.render(context)
+        render_docx(tpl, context)
         buf = BytesIO()
         tpl.save(buf)
         buf.seek(0)

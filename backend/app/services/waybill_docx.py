@@ -11,6 +11,8 @@ import logging
 from io import BytesIO
 from pathlib import Path
 
+from app.services.documents.blank_placeholders import render_docx
+
 logger = logging.getLogger(__name__)
 
 # Путь к шаблону — работает как из Docker (/app/...) так и локально
@@ -188,7 +190,7 @@ async def render_waybill_docx(waybill, db) -> bytes:
         "post_trip_doctor_result": getattr(waybill, "post_trip_doctor_result", None) or "",
     }
 
-    tpl.render(ctx)
+    render_docx(tpl, ctx)
     out = BytesIO()
     tpl.save(out)
     out.seek(0)

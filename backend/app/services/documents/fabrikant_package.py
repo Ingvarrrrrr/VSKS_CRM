@@ -51,6 +51,7 @@ from app.services.purchase_amounts import contract_amount as _contract_amount_fn
 from app.services.purchase_economy import purchase_economy_one as _purchase_economy_one_fn
 from .contractor_override import load_contractor_override, merge_contractor_override
 from .fabrikant_contract_blank import apply_contract_project_blanks
+from .blank_placeholders import render_docx
 from .contexts_extra import (
     add_prepayment_context,
     add_day_words_context,
@@ -681,7 +682,7 @@ async def render_fabrikant_package_files(
                     {**_it, "photo": _resolve_photo_z(_prod)}
                     for _it, _prod in zip(items_list, items_products)
                 ]
-                _tpl.render({**context, "items": _items_with_photo})
+                render_docx(_tpl, {**context, "items": _items_with_photo})
             elif doc_key == "fabrikant_contract_project":
                 # ПРОЕКТ договора вешается на площадку ДО выбора поставщика —
                 # цена/номер/дата договора, протокол закупки и весь блок
@@ -690,9 +691,9 @@ async def render_fabrikant_package_files(
                 # определяющее этот список полей — fabrikant_contract_blank.py
                 # (ПРАВИЛО №6); остальные 4 документа пакета рендерятся общим
                 # context без изменений.
-                _tpl.render(apply_contract_project_blanks(context))
+                render_docx(_tpl, apply_contract_project_blanks(context))
             else:
-                _tpl.render(context)
+                render_docx(_tpl, context)
             _buf = BytesIO()
             _tpl.save(_buf)
             _rendered_bytes = _buf.getvalue()

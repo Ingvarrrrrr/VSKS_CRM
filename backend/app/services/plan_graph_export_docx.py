@@ -8,6 +8,8 @@ import io
 import os
 from datetime import datetime
 
+from app.services.documents.blank_placeholders import render_docx
+
 try:
     from docxtpl import DocxTemplate
 except ImportError:
@@ -65,7 +67,7 @@ def render_plan_graph_docx(template_path: str, sub, latest_ver) -> io.BytesIO:
     }
 
     doc = DocxTemplate(template_path)
-    doc.render(context)
+    render_docx(doc, context)
 
     buf = io.BytesIO()
     doc.save(buf)

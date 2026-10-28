@@ -206,6 +206,7 @@ async def _poll_fabrikant_result(
     attach_documents: bool = False,
     purchase_id_str: str = "",
     purchase_db_id: int = 0,
+    no_nmcd: bool = False,
 ):
     """Poll checkRequest every 30s until responseIsReady, then update publication."""
     MAX_ATTEMPTS = 20  # 10 minutes max
@@ -255,6 +256,7 @@ async def _poll_fabrikant_result(
                     attach_documents=attach_documents,
                     purchase_id_str=purchase_id_str,
                     purchase_db_id=purchase_db_id,
+                    no_nmcd=no_nmcd,
                 )
             else:
                 await _set_pub_error(pub_id, f"Фабрикант: таймаут ожидания результата (requestId={request_id})")
@@ -293,7 +295,7 @@ async def _poll_fabrikant_result(
                         purchase_id_str=purchase_id_str or request_id,
                         purchase_db_id=purchase_db_id,
                         auth=auth,
-                        no_nmcd=bool(payload.get("no_nmcd")),
+                        no_nmcd=no_nmcd,
                     )
                 except Exception as _ae:
                     logger.error("Fabrikant attach_documents failed pub=%d: %s", pub_id, _ae)
@@ -339,6 +341,7 @@ async def _poll_fabrikant_result(
                 attach_documents=attach_documents,
                 purchase_id_str=purchase_id_str,
                 purchase_db_id=purchase_db_id,
+                no_nmcd=no_nmcd,
             )
         else:
             await _set_pub_error(pub_id, f"Фабрикант: ошибка опроса результата: {str(e)[:200]}")
@@ -457,6 +460,7 @@ async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None
                 attach_documents=attach_documents,
                 purchase_id_str=purchase_id_str,
                 purchase_db_id=int(payload.get("purchase_id", 0)),
+                no_nmcd=bool(payload.get("no_nmcd")),
             )
         else:
             fault = re.search(r"<[^:>\s]*:?faultstring[^>]*>([^<]+)<", resp_text)

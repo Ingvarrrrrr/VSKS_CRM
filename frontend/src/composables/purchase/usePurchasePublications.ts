@@ -41,11 +41,13 @@ export const PUB_STATUS_LABEL: Record<string, string> = {
   error:      'Ошибка',
 }
 
+// Сверено владельцем живьём 28.10.2026 (GET /templates на площадке): только
+// шаблоны 8 и 9 подходят под закупку товаров/услуг (10 — продажа, 11 —
+// мультивалютная, 12 — продажа недвижимости, не предлагаются). Коды шаблонов —
+// ROSELTORG_TEMPLATE_IDS (backend/app/services/roseltorg/auth.py), не дублируются.
 export const ROSELTORG_PROCEDURE_TYPES = [
-  { value: 'request_quotations', title: 'Запрос котировок' },
-  { value: 'request_proposals',  title: 'Запрос предложений' },
-  { value: 'competition',        title: 'Конкурс' },
-  { value: 'auction',            title: 'Аукцион' },
+  { value: 'request_quotations', title: 'Закупка с выбором победителя' },
+  { value: 'request_proposals',  title: 'Закупка без выбора победителя (анализ рынка)' },
 ]
 
 export const FABRIKANT_PROCEDURE_TYPES = [
@@ -194,6 +196,7 @@ export function usePurchasePublications(
     publications.value.some(p => p.platform === platform && (p.status === 'published' || p.status === 'draft'))
 
   const refreshingPubId = ref<number | null>(null)
+  const publishingDraftPubId = ref<number | null>(null)
 
   async function loadPublications() {
     if (!purchaseId.value) return
@@ -252,6 +255,16 @@ export function usePurchasePublications(
           body.auction_bet_limit_to = numOrNull(fabrikantAuctionBetTo.value)
         }
         // price_monitoring: no no_nmcd, no determination_date, no auction fields
+      } else if (platform === 'roseltorg_rb') {
+        // ОКПД2 и даты (конец приёма/подведение итогов) — то же состояние
+        // диалога, что у Фабриканта (fabrikantOkpd2/fabrikantDates), ПРАВИЛО
+        // №6: не второй набор полей. Начало приёма площадка ставит сама
+        // (сегодня) — proposal_start для Росэлторга не отправляем.
+        if (fabrikantOkpd2.value) body.okpd2_code = fabrikantOkpd2.value
+        if (fabrikantDates.value.proposal_end) body.proposal_end = fabrikantDates.value.proposal_end
+        if (fabrikantDates.value.summing_up_date) body.summing_up_date = fabrikantDates.value.summing_up_date
+        // «Без НМЦД» — то же состояние, что у Фабриканта (ПРАВИЛО №6)
+        body.no_nmcd = fabrikantNoNmcd.value
       }
       const pub = await apiFetch<Publication>(`/publications/purchases/${purchaseId.value}`, {
         method: 'POST',
@@ -288,6 +301,29 @@ export function usePurchasePublications(
       }
     } finally {
       publishingPlatform.value = null
+    }
+  }
+
+  // Размещение ранее созданного черновика (сейчас — только Росэлторг.Бизнес,
+  // владелец: не публиковать автоматически). Подтверждение — в самой карточке
+  // (confirm() запрещён в карточке), см. publishDraftConfirm в PurchasePlatformCard.vue.
+  async function publishDraft(pub: Publication) {
+    publishingDraftPubId.value = pub.id
+    try {
+      const updated = await apiFetch<Publication>(`/publications/${pub.id}/publish-draft`, { method: 'POST' })
+      const idx = publications.value.findIndex(p => p.id === pub.id)
+      if (idx >= 0) publications.value[idx] = updated
+      showSnack(
+        updated.status === 'published'
+          ? `Процедура размещена на ${PLATFORM_LABELS[pub.platform] || pub.platform}`
+          : 'Не удалось подтвердить размещение — проверьте статус',
+        updated.status === 'published' ? 'success' : 'warning',
+      )
+    } catch (e: any) {
+      const msg = e?.payload?.message || e?.detail || e?.message || 'Не удалось разместить черновик'
+      showSnack(msg, 'error')
+    } finally {
+      publishingDraftPubId.value = null
     }
   }
 
@@ -378,6 +414,7 @@ export function usePurchasePublications(
   }
 
   return {
+    publishingDraftPubId, publishDraft,
     publications, publishDialog, publishingPlatform, pendingPlatform, roseltorgProcedureType, publishErrors,
     fabrikantDates, fabrikantOkpd2, okpd2Items, okpd2Loading, okpd2Error, okpd2ItemTitle, searchOkpd2,
     fabrikantAttachDocs, fabrikantNoNmcd, fabrikantProcedureType,

@@ -1692,6 +1692,8 @@
         :delete-fabrikant-override="deleteFabrikantOverride"
         :trigger-fabrikant-upload="triggerFabrikantUpload"
         v-model:no-nmcd="form.fabrikant_no_nmcd"
+        :publishing-draft-pub-id="publishingDraftPubId"
+        :publish-draft="publishDraft"
       />
       <!-- Скрытый file-input оверрайда пакета Фабрикант (см. PurchasePlatformCard.vue
            — ref-биндинг не переносится в дочерний компонент без forwarding'а). -->
@@ -3858,6 +3860,7 @@ const {
   // fabrikantErrorTarget/pollPublication не деструктурируются — используются только
   // внутри самого composable (doPublish/openFabrikantRetry/поллинг), view их не вызывает.
   openFabrikantRetry,
+  publishingDraftPubId, publishDraft,
 } = usePurchasePublications(
   purchaseId, showSnack, form, items, subsidies, isEdit, performAutosave, autosaveState,
   resolveRegionOkato, customerPreview, displayNmck, savedNmck, guideArrowTo,

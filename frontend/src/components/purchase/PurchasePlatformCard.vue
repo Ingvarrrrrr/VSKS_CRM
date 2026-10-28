@@ -67,7 +67,14 @@
             </td>
             <td class="text-caption">
               <!-- Черновик: ссылка недоступна до размещения — показываем пояснение -->
-              <template v-if="pub.status === 'draft'">
+              <template v-if="pub.status === 'draft' && pub.platform === 'roseltorg_rb'">
+                <span class="text-orange-darken-2">
+                  Черновик №{{ pub.platform_number || pub.external_id || '—' }} на Росэлторге —
+                  <a v-if="pub.external_url" :href="pub.external_url" target="_blank" class="text-blue-darken-2 text-decoration-none">открыть кабинет</a>
+                  и разместить его (кнопка слева) или сразу в личном кабинете площадки.
+                </span>
+              </template>
+              <template v-else-if="pub.status === 'draft'">
                 <span class="text-orange-darken-2">
                   Черновик №{{ pub.platform_number || '—' }} создан на Фабриканте.
                   Разместите его в личном кабинете площадки — до размещения ссылка недоступна.
@@ -85,7 +92,7 @@
             <td style="width:72px" class="text-right">
               <!-- Обновить статус: для черновика и опубликованного (состояние может меняться) -->
               <v-btn
-                v-if="pub.platform === 'fabrikant' && (pub.status === 'draft' || pub.status === 'published')"
+                v-if="(pub.platform === 'fabrikant' || pub.platform === 'roseltorg_rb') && (pub.status === 'draft' || pub.status === 'published')"
                 icon="mdi-refresh"
                 size="x-small"
                 variant="text"
@@ -94,6 +101,23 @@
                 title="Обновить статус с площадки"
                 @click="refreshPubStatus(pub)"
               />
+              <!-- Размещение черновика Росэлторг (владелец: не публиковать
+                   автоматически — отдельный шаг с подтверждением внутри страницы) -->
+              <template v-if="pub.platform === 'roseltorg_rb' && pub.status === 'draft'">
+                <v-btn v-if="publishDraftConfirmId !== pub.id"
+                  icon="mdi-upload-outline" size="x-small" variant="text" color="deep-purple"
+                  title="Опубликовать черновик"
+                  @click="publishDraftConfirmId = pub.id"
+                />
+                <template v-else>
+                  <v-btn size="x-small" variant="tonal" color="deep-purple" class="mr-1"
+                    :loading="publishingDraftPubId === pub.id"
+                    @click="publishDraft(pub); publishDraftConfirmId = null">
+                    Разместить?
+                  </v-btn>
+                  <v-btn icon="mdi-close" size="x-small" variant="text" @click="publishDraftConfirmId = null" />
+                </template>
+              </template>
               <!-- Ретрай при ошибке -->
               <v-btn v-if="pub.status === 'error'" icon="mdi-send" size="x-small" variant="text"
                 color="deep-purple" @click="pub.platform === 'fabrikant' ? openFabrikantRetry(pub.platform) : retryPublish(pub.platform)" />
@@ -169,9 +193,18 @@ defineProps<{
   // через v-model:no-nmcd="form.fabrikant_no_nmcd" у родителя; автосейв
   // карточки (watch(form, ...) в CreateOrderView.vue) сохраняет сам.
   noNmcd: boolean
+  // Размещение черновика Росэлторг.Бизнес (POST /publications/{id}/publish-draft)
+  publishingDraftPubId: number | null
+  publishDraft: (pub: any) => void
 }>()
 
 const emit = defineEmits<{
   'update:noNmcd': [value: boolean]
 }>()
+
+// Подтверждение «Опубликовать черновик» прямо в карточке (confirm() запрещён
+// в артефактах/UI-правилах проекта) — id публикации, для которой сейчас
+// показана кнопка-подтверждение, вместо второй кнопки.
+import { ref } from 'vue'
+const publishDraftConfirmId = ref<number | null>(null)
 </script>

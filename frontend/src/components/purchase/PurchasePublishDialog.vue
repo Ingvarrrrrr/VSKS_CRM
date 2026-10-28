@@ -227,17 +227,91 @@
           <v-expand-transition>
             <div v-if="pendingPlatform === 'roseltorg_rb'" class="mt-3 px-1">
               <v-divider class="mb-3" />
-              <div class="text-subtitle-2 mb-2">Тип процедуры Росэлторг.Бизнес</div>
+              <div class="text-subtitle-2 mb-2">Параметры публикации на Росэлторг.Бизнес</div>
               <v-select
                 v-model="roseltorgProcedureType"
                 :items="ROSELTORG_PROCEDURE_TYPES"
                 item-title="title"
                 item-value="value"
-                label="Выберите тип процедуры"
+                label="Тип процедуры"
                 variant="outlined"
                 density="compact"
                 hide-details
+                class="mb-3"
               />
+
+              <!-- ОКПД2 — НЕ обязателен для Росэлторга (живая проверка
+                   площадки, уточнение владельца 28.10.2026: пустой okpd2Code
+                   принимается, 400 был только когда ключа не было вовсе в
+                   теле — это чинится на уровне сборки позиций) — то же
+                   поле/поиск, что у Фабриканта (ПРАВИЛО №6: один источник на
+                   всю закупку, payload["okpd2_code"]), не второй автокомплит -->
+              <v-autocomplete
+                v-model="fabrikantOkpd2"
+                :items="okpd2Items"
+                :item-value="(i: {code: string}) => i.code"
+                :item-title="(i: {code: string; name: string}) => okpd2ItemTitle(i)"
+                :no-filter="true"
+                :loading="okpd2Loading"
+                clearable
+                label="Код ОКПД2 (необязательно)"
+                variant="outlined"
+                density="compact"
+                class="mb-3"
+                @update:search="searchOkpd2"
+              >
+                <template #no-data>
+                  <v-list-item>
+                    <v-list-item-title class="text-caption" :class="okpd2Error ? 'text-error' : 'text-medium-emphasis'">
+                      {{ okpd2Error || 'Ничего не найдено' }}
+                    </v-list-item-title>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
+
+              <!-- «Без НМЦД» — ТО ЖЕ состояние/поле, что у Фабриканта
+                   (fabrikantNoNmcd → purchase.fabrikant_no_nmcd → payload["no_nmcd"],
+                   ПРАВИЛО №6, не второй флаг) — живая проверка площадки
+                   (28.10.2026): лот без initialSum создаётся штатно
+                   (methodToSpecifyLotPrice="initial", 37 из 57 лотов на
+                   площадке именно такие). -->
+              <v-checkbox
+                v-model="fabrikantNoNmcd"
+                label="Без НМЦД (цены не публикуются)"
+                density="compact"
+                hide-details
+                color="orange-darken-2"
+                class="mb-3"
+              />
+
+              <!-- Дата начала приёма площадка всегда ставит сама — «сегодня»
+                   (проверка площадки: начало ≤ текущей даты), поле не показываем.
+                   Конец/подведение итогов — то же состояние fabrikantDates, что
+                   у Фабриканта (один PublishRequest.proposal_end/summing_up_date). -->
+              <v-row dense>
+                <v-col cols="12" sm="6">
+                  <v-text-field
+                    v-model="fabrikantDates.proposal_end"
+                    type="datetime-local"
+                    label="Конец приёма предложений"
+                    variant="outlined" density="compact"
+                  />
+                </v-col>
+                <v-col cols="12" sm="6">
+                  <v-text-field
+                    v-model="fabrikantDates.summing_up_date"
+                    type="datetime-local"
+                    label="Подведение итогов"
+                    variant="outlined" density="compact"
+                  />
+                </v-col>
+              </v-row>
+
+              <v-alert type="info" variant="tonal" density="compact" class="mt-2 mb-2 text-caption">
+                Результат — черновик процедуры на площадке. Размещать его нужно отдельно,
+                кнопкой «Опубликовать черновик» в карточке публикаций.
+              </v-alert>
+
               <div class="d-flex gap-2 mt-3">
                 <v-btn variant="text" @click="pendingPlatform = null; roseltorgProcedureType = null">Назад</v-btn>
                 <v-btn
@@ -245,7 +319,7 @@
                   :disabled="!roseltorgProcedureType"
                   :loading="publishingPlatform === 'roseltorg_rb'"
                   @click="doPublish('roseltorg_rb', roseltorgProcedureType)"
-                >Опубликовать на Росэлторг</v-btn>
+                >Создать черновик на Росэлторг</v-btn>
               </div>
             </div>
           </v-expand-transition>

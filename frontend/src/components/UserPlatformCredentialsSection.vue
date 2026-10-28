@@ -7,7 +7,7 @@
 
     <v-card-text class="pa-4 pt-2">
       <!-- Fabrikant block -->
-      <div class="mb-1">
+      <div class="mb-5">
         <div class="text-body-2 font-weight-medium mb-3 d-flex align-center">
           <v-icon size="15" class="mr-1" color="blue-grey">mdi-web</v-icon>
           Фабрикант
@@ -16,26 +16,26 @@
         <v-row dense class="mb-2">
           <v-col cols="12">
             <v-text-field
-              v-model="form.login"
+              v-model="fab.form.login"
               label="Логин Фабрикант"
               variant="outlined"
               density="compact"
               hide-details="auto"
               autocomplete="off"
-              :disabled="saving"
+              :disabled="fab.saving.value"
             />
           </v-col>
           <v-col cols="12" class="mt-2">
             <v-text-field
-              v-model="form.password"
+              v-model="fab.form.password"
               label="Пароль"
-              :placeholder="cred && cred.has_password ? '••• (задан)' : ''"
+              :placeholder="fab.cred.value && fab.cred.value.has_password ? '••• (задан)' : ''"
               type="password"
               variant="outlined"
               density="compact"
               autocomplete="new-password"
-              :disabled="saving"
-              :hint="cred && cred.has_password ? 'Оставьте пустым, чтобы не менять пароль' : ''"
+              :disabled="fab.saving.value"
+              :hint="fab.cred.value && fab.cred.value.has_password ? 'Оставьте пустым, чтобы не менять пароль' : ''"
               persistent-hint
             />
           </v-col>
@@ -43,66 +43,110 @@
 
         <div class="d-flex align-center gap-3 mt-2">
           <v-btn
-            color="primary"
-            variant="tonal"
-            size="small"
-            :loading="saving"
-            :disabled="!form.login.trim()"
+            color="primary" variant="tonal" size="small"
+            :loading="fab.saving.value"
+            :disabled="!fab.form.login.trim()"
             prepend-icon="mdi-content-save-outline"
-            @click="saveCred"
+            @click="onSave(fab)"
           >Сохранить</v-btn>
 
           <v-btn
-            v-if="cred"
-            color="error"
-            variant="text"
-            size="small"
-            :loading="deleting"
-            :disabled="saving"
+            v-if="fab.cred.value"
+            color="error" variant="text" size="small"
+            :loading="fab.deleting.value"
+            :disabled="fab.saving.value"
             prepend-icon="mdi-delete-outline"
-            @click="confirmDelete"
+            @click="fab.confirmDelete()"
           >Удалить</v-btn>
 
-          <v-progress-circular
-            v-if="loading"
-            size="18"
-            width="2"
-            indeterminate
-            color="primary"
-            class="ml-2"
-          />
+          <v-progress-circular v-if="fab.loading.value" size="18" width="2" indeterminate color="primary" class="ml-2" />
 
           <v-spacer />
 
-          <v-chip
-            v-if="cred"
-            size="x-small"
-            color="success"
-            variant="tonal"
-            prepend-icon="mdi-check-circle-outline"
-          >Учётка задана</v-chip>
-          <v-chip
-            v-else-if="!loading"
-            size="x-small"
-            color="default"
-            variant="tonal"
-            prepend-icon="mdi-minus-circle-outline"
-          >Не задана</v-chip>
+          <v-chip v-if="fab.cred.value" size="x-small" color="success" variant="tonal" prepend-icon="mdi-check-circle-outline">Учётка задана</v-chip>
+          <v-chip v-else-if="!fab.loading.value" size="x-small" color="default" variant="tonal" prepend-icon="mdi-minus-circle-outline">Не задана</v-chip>
+        </div>
+      </div>
+
+      <v-divider class="mb-5" />
+
+      <!-- Roseltorg.Business block: только интеграционный токен, логина у площадки нет -->
+      <div>
+        <div class="text-body-2 font-weight-medium mb-3 d-flex align-center">
+          <v-icon size="15" class="mr-1" color="blue-grey">mdi-web</v-icon>
+          Росэлторг.Бизнес
+        </div>
+
+        <v-row dense class="mb-2">
+          <v-col cols="12">
+            <v-text-field
+              v-model="ros.form.password"
+              label="Интеграционный токен"
+              :placeholder="ros.cred.value && ros.cred.value.has_password ? '••• (задан)' : ''"
+              type="password"
+              variant="outlined"
+              density="compact"
+              autocomplete="new-password"
+              :disabled="ros.saving.value"
+              hint="Выпускается в Росэлторг.ID → Компания → Управление правами доступа → Внешние интеграции → Создать токен"
+              persistent-hint
+            />
+          </v-col>
+        </v-row>
+
+        <div class="d-flex align-center gap-3 mt-2">
+          <v-btn
+            color="primary" variant="tonal" size="small"
+            :loading="ros.saving.value"
+            :disabled="!ros.form.password.trim() && !ros.cred.value"
+            prepend-icon="mdi-content-save-outline"
+            @click="onSave(ros)"
+          >Сохранить</v-btn>
+
+          <v-btn
+            v-if="ros.cred.value"
+            color="error" variant="text" size="small"
+            :loading="ros.deleting.value"
+            :disabled="ros.saving.value"
+            prepend-icon="mdi-delete-outline"
+            @click="ros.confirmDelete()"
+          >Удалить</v-btn>
+
+          <v-progress-circular v-if="ros.loading.value" size="18" width="2" indeterminate color="primary" class="ml-2" />
+
+          <v-spacer />
+
+          <v-chip v-if="ros.cred.value" size="x-small" color="success" variant="tonal" prepend-icon="mdi-check-circle-outline">Токен задан</v-chip>
+          <v-chip v-else-if="!ros.loading.value" size="x-small" color="default" variant="tonal" prepend-icon="mdi-minus-circle-outline">Не задан</v-chip>
         </div>
       </div>
     </v-card-text>
 
-    <!-- Confirm delete dialog -->
-    <v-dialog v-model="deleteConfirm" max-width="360">
+    <!-- Confirm delete dialogs -->
+    <v-dialog v-model="fab.deleteConfirm.value" max-width="360">
       <v-card>
         <v-card-title class="pa-4">Удалить учётку Фабрикант?</v-card-title>
         <v-card-text class="pa-4 pt-0 text-body-2">
-          Логин <strong>{{ cred?.login }}</strong> будет удалён. Действие нельзя отменить.
+          Логин <strong>{{ fab.cred.value?.login }}</strong> будет удалён. Действие нельзя отменить.
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" @click="deleteConfirm = false">Отмена</v-btn>
-          <v-btn color="error" variant="flat" :loading="deleting" @click="doDelete">Удалить</v-btn>
+          <v-btn variant="text" @click="fab.deleteConfirm.value = false">Отмена</v-btn>
+          <v-btn color="error" variant="flat" :loading="fab.deleting.value" @click="onDelete(fab)">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="ros.deleteConfirm.value" max-width="360">
+      <v-card>
+        <v-card-title class="pa-4">Удалить токен Росэлторг.Бизнес?</v-card-title>
+        <v-card-text class="pa-4 pt-0 text-body-2">
+          Интеграционный токен будет удалён. Действие нельзя отменить.
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="ros.deleteConfirm.value = false">Отмена</v-btn>
+          <v-btn color="error" variant="flat" :loading="ros.deleting.value" @click="onDelete(ros)">Удалить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -110,8 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
-import { apiFetch } from '../api'
+import { usePlatformCredential } from '../composables/usePlatformCredential'
 
 const props = defineProps<{
   userId: number
@@ -121,83 +164,24 @@ const emit = defineEmits<{
   (e: 'error', msg: string): void
 }>()
 
-interface PlatformCred {
-  platform: string
-  login: string
-  has_password: boolean
-}
+// ПРАВИЛО №6: один и тот же composable (usePlatformCredential) для обеих
+// площадок — разница только в platform/requireLogin, не второй механизм CRUD.
+const fab = usePlatformCredential(() => props.userId, 'fabrikant', true)
+const ros = usePlatformCredential(() => props.userId, 'roseltorg', false)
 
-const PLATFORM = 'fabrikant'
-
-const loading = ref(false)
-const saving = ref(false)
-const deleting = ref(false)
-const deleteConfirm = ref(false)
-
-const cred = ref<PlatformCred | null>(null)
-const form = reactive({ login: '', password: '' })
-
-async function loadCreds() {
-  loading.value = true
+async function onSave(block: typeof fab | typeof ros) {
   try {
-    const data = await apiFetch<PlatformCred[]>(`/users/${props.userId}/platform-credentials`)
-    const found = data.find(c => c.platform === PLATFORM) ?? null
-    cred.value = found
-    form.login = found?.login ?? ''
-    form.password = ''
+    await block.saveCred()
   } catch (e: any) {
-    const msg = e?.payload?.message || e?.message || 'Ошибка загрузки учётки'
-    emit('error', msg)
-  } finally {
-    loading.value = false
+    emit('error', e?.message || 'Ошибка сохранения')
   }
 }
 
-async function saveCred() {
-  if (!form.login.trim()) return
-  saving.value = true
+async function onDelete(block: typeof fab | typeof ros) {
   try {
-    const body: Record<string, string> = { login: form.login.trim() }
-    if (form.password) body.password = form.password
-    await apiFetch(`/users/${props.userId}/platform-credentials/${PLATFORM}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    })
-    form.password = ''
-    await loadCreds()
+    await block.doDelete()
   } catch (e: any) {
-    const msg = e?.payload?.message || e?.message || 'Ошибка сохранения'
-    emit('error', msg)
-  } finally {
-    saving.value = false
+    emit('error', e?.message || 'Ошибка удаления')
   }
 }
-
-function confirmDelete() {
-  deleteConfirm.value = true
-}
-
-async function doDelete() {
-  deleting.value = true
-  try {
-    await apiFetch(`/users/${props.userId}/platform-credentials/${PLATFORM}`, {
-      method: 'DELETE',
-    })
-    cred.value = null
-    form.login = ''
-    form.password = ''
-    deleteConfirm.value = false
-  } catch (e: any) {
-    const msg = e?.payload?.message || e?.message || 'Ошибка удаления'
-    emit('error', msg)
-    deleteConfirm.value = false
-  } finally {
-    deleting.value = false
-  }
-}
-
-// Load when userId changes (dialog reused for different users)
-watch(() => props.userId, (id) => {
-  if (id) loadCreds()
-}, { immediate: true })
 </script>

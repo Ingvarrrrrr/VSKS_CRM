@@ -21,6 +21,8 @@ from app.services.publications_fabrikant_client import (
     _fabrikant_procedure_state,
 )
 from app.services.publications_roseltorg_client import _call_roseltorg
+from app.services.roseltorg.client import publish_roseltorg_draft, refresh_roseltorg_status
+from app.auth.object_visibility import ensure_purchase_visible
 
 router = APIRouter(prefix="/api/publications", tags=["publications"])
 
@@ -111,6 +113,11 @@ async def publish_purchase(
         payload["summing_up_date"] = body.summing_up_date
     if body.okpd2_code:
         payload["okpd2_code"] = body.okpd2_code.strip()
+        if body.platform == "roseltorg_rb":
+            from app.models.okpd2_code import Okpd2Code
+            okpd2_row = await db.get(Okpd2Code, payload["okpd2_code"])
+            if okpd2_row:
+                payload["okpd2_name"] = okpd2_row.name
     if body.auction_date_start:
         payload["auction_date_start"] = body.auction_date_start
     if body.auction_bet_limit_from is not None:
@@ -132,6 +139,10 @@ async def publish_purchase(
             if preflight_errors:
                 raise HTTPException(422, "; ".join(preflight_errors))
 
+    # Росэлторг.Бизнес: ОКПД2 НЕ обязателен (владелец, уточнение 28.10.2026,
+    # живая проверка на черновике 303879) — позиция с okpd2Code="" создаётся
+    # успешно, площадка не требует код. Preflight здесь не нужен.
+
     pub = PlatformPublication(
         purchase_id=purchase_id,
         platform=body.platform,
@@ -147,7 +158,10 @@ async def publish_purchase(
             body.attach_documents,
         )
     elif body.platform == "roseltorg_rb":
-        background_tasks.add_task(_call_roseltorg, pub.id, payload)
+        background_tasks.add_task(
+            _call_roseltorg, pub.id, payload, current_user.id,
+            body.attach_documents,
+        )
 
     return pub
 
@@ -167,8 +181,15 @@ async def refresh_publication_status(
     if not pub:
         raise HTTPException(404, "Публикация не найдена")
 
+    if pub.platform == "roseltorg_rb":
+        result = await refresh_roseltorg_status(pub_id, current_user.id)
+        if not result["ok"]:
+            raise HTTPException(502, result["detail"])
+        await db.refresh(pub)
+        return pub
+
     if pub.platform != "fabrikant":
-        raise HTTPException(400, f"Обновление статуса поддерживается только для Фабриканта, а не для {pub.platform}")
+        raise HTTPException(400, f"Обновление статуса поддерживается только для Фабриканта и Росэлторг.Бизнес, а не для {pub.platform}")
 
     # Получаем credentials текущего пользователя (или env-fallback)
     login = FABRIKANT_LOGIN
@@ -219,6 +240,37 @@ async def refresh_publication_status(
     pub.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
+    await db.refresh(pub)
+    return pub
+
+
+@router.post("/{pub_id}/publish-draft", response_model=PublicationOut)
+async def publish_draft(
+    pub_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_action('publication.create')),
+):
+    """Размещает ранее созданный черновик процедуры (сейчас — только Росэлторг.Бизнес,
+    POST /notices/{id}/publish). Фабрикант такого отдельного шага не требует —
+    площадка публикует процедуру сама в рамках SOAP-вызова размещения.
+
+    ПРАВИЛО №8: та же видимая закупка + то же право publication.create, что
+    при создании публикации; ошибки площадки — текстом в detail 4xx, не 500.
+    """
+    res = await db.execute(select(PlatformPublication).where(PlatformPublication.id == pub_id))
+    pub = res.scalar_one_or_none()
+    if not pub:
+        raise HTTPException(404, "Публикация не найдена")
+
+    await ensure_purchase_visible(current_user, pub.purchase_id, db)
+
+    if pub.platform != "roseltorg_rb":
+        raise HTTPException(400, f"Размещение черновика поддерживается только для Росэлторг.Бизнес, а не для {pub.platform}")
+
+    result = await publish_roseltorg_draft(pub_id, current_user.id)
+    if not result["ok"]:
+        raise HTTPException(422, result["detail"])
+
     await db.refresh(pub)
     return pub
 

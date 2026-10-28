@@ -34,7 +34,7 @@ async def test_publication_granted_via_override_returns_200(
     services/publications_fabrikant_client / _roseltorg_client; same rule as
     for Фабрикант — no live calls from tests).
     """
-    async def _fake_call_roseltorg(pub_id, payload):
+    async def _fake_call_roseltorg(pub_id, payload, *args, **kwargs):
         return None
 
     monkeypatch.setattr(

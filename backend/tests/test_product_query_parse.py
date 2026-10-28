@@ -166,3 +166,144 @@ async def test_manufacturer_brand_dictionary_builds_from_db(db_session):
     # нового запроса в БД (идентичность объекта как доказательство кэша).
     dictionary2 = await get_manufacturer_brand_dictionary(db_session)
     assert dictionary2 is dictionary
+
+
+# ── кириллическое написание латинского бренда («болгарка макита») ──────────
+# владелец, 28.10.2026: бренды в словаре латиницей, люди пишут кириллицей —
+# fold_brand_or_code (гомоглифы/регистр) этого не берёт, нужен фонетический
+# ключ + малая ручная таблица алиасов (см. docstring product_query_parse.py
+# у ManufacturerBrandDictionary._find_phonetic).
+
+_PHONETIC_BRANDS = ["Makita", "Bosch", "Karcher", "DeWalt", "Stihl", "Husqvarna", "Metabo", "Ryobi"]
+
+
+@pytest.mark.parametrize(
+    "word,expected_brand",
+    [
+        ("макита", "Makita"),
+        ("бош", "Bosch"),
+        ("керхер", "Karcher"),
+        ("кархер", "Karcher"),
+        ("деволт", "DeWalt"),
+        ("девольт", "DeWalt"),
+        ("штиль", "Stihl"),
+        ("хускварна", "Husqvarna"),
+        ("метабо", "Metabo"),
+        ("риоби", "Ryobi"),
+    ],
+)
+def test_cyrillic_brand_spelling_resolves_to_latin_canon(word, expected_brand):
+    dictionary = ManufacturerBrandDictionary(_PHONETIC_BRANDS)
+    assert dictionary.find_in_name(word) == expected_brand
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "болгарка",
+        "огнетушитель",
+        "кабель медный",
+        "перчатки",
+        "костюм горка",
+        "масло моторное",
+        "шкаф металлический",
+        "лопата штыковая",
+    ],
+)
+def test_cyrillic_phonetic_brand_no_false_positive(phrase):
+    """Виды товара/материалы/стоп-слова не должны фонетически «находить»
+    бренд, которого в запросе нет (владелец, 28.10.2026, проверка перед
+    подключением фонетики — см. ПРАВИЛО №2 раздела в задании)."""
+    dictionary = ManufacturerBrandDictionary(_PHONETIC_BRANDS)
+    assert dictionary.find_in_name(phrase) is None
+
+
+def test_cyrillic_brand_spelling_makes_query_specific():
+    dictionary = ManufacturerBrandDictionary(_PHONETIC_BRANDS)
+    parsed = parse_query("болгарка макита", dictionary)
+    assert parsed.specific is True
+    assert parsed.brand == "Makita"
+    assert "Makita" in parsed.required
+
+    parsed_with_size = parse_query("болгарка макита 125", dictionary)
+    assert parsed_with_size.specific is True
+    assert "125" in parsed_with_size.required
+
+
+# ── короткие/буквенно-цифровые "бренды" из прод-словаря manufacturer ──────
+# владелец, 28.10.2026: аудит прод-словаря (3733 значения) нашёл ложные
+# срабатывания на ТОЧНОМ пути (self._combined) — короткие коды упаковки/
+# размера, случайно попавшие в manufacturer, распознавались как бренд:
+# «бумага офисная А4»→«А4», «футболка XL»→XL, «кабель SE»→SE, «аптечка
+# ST»→ST, «рация GT»→GT, «трос ET»→ET, «фонарь GP»→GP. При этом настоящие
+# короткие бренды (HP, LG, WD...) должны находиться — белый список
+# _SHORT_BRAND_WHITELIST решает это, не убирая короткие коды совсем.
+
+_PROD_SHORT_DICT_SAMPLE = [
+    "А4", "XL", "ST", "SE", "GT", "ET", "GP", "QF",  # ложные (не бренды)
+    "HP", "LG", "WD",  # настоящие короткие бренды (белый список)
+    "Makita", "Bosch", "Зубр",  # обычные бренды — для контроля, что фильтр их не ломает
+]
+
+
+@pytest.mark.parametrize(
+    "word",
+    ["А4", "XL", "ST", "SE", "GT", "ET", "GP", "QF"],
+)
+def test_short_non_whitelisted_code_is_not_a_brand(word):
+    dictionary = ManufacturerBrandDictionary(_PROD_SHORT_DICT_SAMPLE)
+    assert dictionary.find_in_name(word) is None
+
+
+@pytest.mark.parametrize(
+    "word,expected_brand",
+    [
+        ("HP", "HP"),
+        ("LG", "LG"),
+        ("WD", "WD"),
+        ("Makita", "Makita"),
+        ("бош", "Bosch"),
+        ("зубр", "Зубр"),
+    ],
+)
+def test_whitelisted_short_or_normal_brand_still_found(word, expected_brand):
+    dictionary = ManufacturerBrandDictionary(_PROD_SHORT_DICT_SAMPLE)
+    assert dictionary.find_in_name(word) == expected_brand
+
+
+def test_short_code_inside_phrase_does_not_block_real_brand_elsewhere():
+    """«бумага офисная А4» не даёт бренд, но «картридж HP» — даёт (тот же
+    словарь, оба пути — точный/фонетический — используют общий фильтр
+    _is_recognizable_brand_word)."""
+    dictionary = ManufacturerBrandDictionary(_PROD_SHORT_DICT_SAMPLE)
+    assert dictionary.find_in_name("бумага офисная А4") is None
+    assert dictionary.find_in_name("картридж HP") == "HP"
+
+
+# ── размерные обозначения (одежда/бумага) — никогда не бренд ───────────────
+
+@pytest.mark.parametrize("size", ["XL", "XXL", "XXXL", "S", "M", "L", "А4"])
+def test_size_token_never_a_brand_even_if_whitelisted_by_mistake(size):
+    # Даже если бы размер случайно оказался в белом списке — _SIZE_TOKENS
+    # исключает его безусловно (владелец, 28.10.2026, п.3 задания).
+    dictionary = ManufacturerBrandDictionary([size, "Makita"])
+    assert dictionary.find_in_name(f"товар {size} размер") is None
+
+
+# ── предлог/союз или вид товара, совпавший со значением manufacturer, —
+#    не бренд (общий фильтр _is_recognizable_brand_word, п.2 задания).
+#    Длина ключа у этих слов >3 — короткий gate (п.1) их не ловит, нужен
+#    именно общий хелпер фильтра стоп-слов/видов товара.
+
+def test_preposition_matching_manufacturer_value_is_not_a_brand():
+    # "для" — предлог (_PREPOSITION_STOPWORDS), гипотетически попавший в
+    # manufacturer при грязном импорте — не должен мешать обычным фразам.
+    dictionary = ManufacturerBrandDictionary(["для", "Makita"])
+    assert dictionary.find_in_name("чехол для дрели") is None
+
+
+def test_product_type_word_matching_manufacturer_value_is_not_a_brand():
+    # "лопата" — вид товара (PRODUCT_TYPE_WORDS), гипотетически попавший в
+    # manufacturer, — не должен мешать фразе "лопата штыковая".
+    dictionary = ManufacturerBrandDictionary(["лопата", "Makita"])
+    assert dictionary.find_in_name("лопата штыковая") is None

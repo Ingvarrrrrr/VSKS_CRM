@@ -615,6 +615,33 @@ async def test_hybrid_ranking_pagination_no_dup_no_gap_across_groups(db_session,
     assert set(seen) == expected_ids, "пропуски через границу групп А/Б"
 
 
+@pytest.mark.asyncio
+async def test_inflected_type_word_matches_same_as_base_form(db_session):
+    """"болгарку" (словоформа) должна находить ТО ЖЕ, что "болгарка" —
+    владелец, 28.10.2026, QA-находка после доработки синонимов вида товара:
+    раньше "болгарка"→14, "болгарку"→2 на проде (стем-распознавание вида
+    не было подключено, OR-группа синонимов не строилась). "Фаззислово28" —
+    уникальный маркер, чтобы не зависеть от объёма реального каталога."""
+    import app.services.product_query_parse as pq_mod
+    pq_mod._type_stem_cache["index"] = None
+    pq_mod._type_stem_cache["built_at"] = 0.0
+
+    a = _mk(db_session, name="УШМ Фаззислово28 Makita")
+    b = _mk(db_session, name="Угловая шлифовальная машина Фаззислово28 Bosch")
+    await db_session.commit()
+
+    filters_base = ProductSearchFilters(search="болгарка Фаззислово28")
+    items_base, total_base, _ = await search_products(db_session, filters_base, limit=50, offset=0)
+    filters_inflected = ProductSearchFilters(search="болгарку Фаззислово28")
+    items_inflected, total_inflected, _ = await search_products(db_session, filters_inflected, limit=50, offset=0)
+
+    assert total_base == total_inflected
+    ids_base = {p.id for p in items_base}
+    ids_inflected = {p.id for p in items_inflected}
+    assert ids_base == ids_inflected
+    assert a.id in ids_base and b.id in ids_base
+
+
 # ── QA-находки 28.10.2026 (ревью «этап 0») ─────────────────────────────────
 
 @pytest.mark.asyncio

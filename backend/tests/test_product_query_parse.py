@@ -295,6 +295,37 @@ def test_size_token_never_a_brand_even_if_whitelisted_by_mistake(size):
 #    Длина ключа у этих слов >3 — короткий gate (п.1) их не ловит, нужен
 #    именно общий хелпер фильтра стоп-слов/видов товара.
 
+# ── вид товара по словоформе (владелец, 28.10.2026, QA-находка: "болгарку"
+#    должна находить то же, что "болгарка" — через ts_lexize('russian_stem'),
+#    тот же стеммер, что у to_tsvector('russian', ...) в product_search.py,
+#    см. docstring resolve_type_by_stem) ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_resolve_type_by_stem_recognizes_inflected_form(db_session):
+    product_query_parse_module._type_stem_cache["index"] = None
+    product_query_parse_module._type_stem_cache["built_at"] = 0.0
+
+    parsed = parse_query("болгарку")
+    assert parsed.product_type is None  # точно (буквально) не распознано
+
+    resolved = await product_query_parse_module.resolve_type_by_stem(db_session, parsed)
+    assert resolved.product_type == "шлифмашина"
+    assert resolved.type_literal == "болгарку"
+    assert "болгарку" in resolved.required
+    assert "болгарку" not in resolved.optional
+
+
+@pytest.mark.asyncio
+async def test_resolve_type_by_stem_skips_db_when_already_recognized():
+    """Если parse_query() УЖЕ нашла вид буквально — resolve_type_by_stem
+    не идёт в БД вовсе (возвращает тот же объект без изменений) — db=None
+    не должен уронить вызов."""
+    parsed = parse_query("болгарка")
+    assert parsed.product_type == "шлифмашина"
+    resolved = await product_query_parse_module.resolve_type_by_stem(None, parsed)
+    assert resolved is parsed
+
+
 def test_preposition_matching_manufacturer_value_is_not_a_brand():
     # "для" — предлог (_PREPOSITION_STOPWORDS), гипотетически попавший в
     # manufacturer при грязном импорте — не должен мешать обычным фразам.

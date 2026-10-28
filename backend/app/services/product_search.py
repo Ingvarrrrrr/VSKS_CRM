@@ -54,7 +54,14 @@ from sqlalchemy.orm import defer
 from app.models.product import Product
 from app.services.price_freshness import FreshnessContext
 from app.services.price_freshness_sql import apply_stale_join
-from app.services.product_query_parse import ParsedQuery, get_manufacturer_brand_dictionary, parse_query
+from app.services.product_name_signature_props import ACCESSORY_MARKERS
+from app.services.product_query_parse import (
+    ParsedQuery,
+    get_manufacturer_brand_dictionary,
+    parse_query,
+    product_type_synonyms,
+    resolve_type_by_stem,
+)
 from app.services.product_words_correction import correct_unknown_words
 
 DEFAULT_LIMIT = 50
@@ -412,6 +419,26 @@ async def _fetch_hybrid_page(
 # f3t5s7q9u1e3_product_fts_index.py (Правило №6, один источник формулы) —
 # иначе планировщик не свяжет запрос с GIN-индексом ix_products_fts (сверено
 # EXPLAIN ANALYZE, см. отчёт сессии).
+#
+# ДОРАБОТКА (владелец, 28.10.2026, QA-проверка на проде, 247 174 товара):
+#   1. СИНОНИМЫ ВИДА ТОВАРА — required-токен вида товара (ParsedQuery.
+#      type_literal) расширяется до OR-группы ВСЕХ его написаний из
+#      PRODUCT_TYPE_WORDS/PHRASES (_tsquery_type_group,
+#      product_query_parse.product_type_synonyms) — "болгарка" находит и
+#      "УШМ"/"угловая шлифмашина" (тот же канонический вид "шлифмашина",
+#      Правило №6 — второй словарь не завели).
+#   2. РАНЖИРОВАНИЕ ПО ГЛАВНОМУ СЛОВУ — _type_position_rank_term: бонус,
+#      если синоним вида товара — в первых 1-2 словах названия; штраф,
+#      если названию предшествует слово-принадлежность (ACCESSORY_MARKERS в
+#      product_name_signature_props.py) — "Комплект для зарядки порошковых
+#      огнетушителей" не обгоняет сам "Огнетушитель порошковый".
+#   3. ОГНЕТУШИТЕЛЬ: марка ОП-N/ОУ-N/ОВП-N/ОВЭ-N = N кг/л заряда —
+#      _numeric_condition(product_type="огнетушитель") добавляет ОР-условие
+#      по regex марки ТОЧНЫМ (не ослабленным) шагом лестницы.
+#   4. ОСЛАБЛЕНИЕ БЕЗ ТЕКСТА — Шаг 1.6 в search_products: если required
+#      целиком цифровой (бренд/вид не распознаны), optional-слова
+#      поднимаются в required-текст (AND) — "масло лукойл 5w40 4л" находит
+#      хотя бы "масло"/"лукойл" вместо total=0.
 # ---------------------------------------------------------------------------
 
 _SINGLE_TOKEN_WITH_DIGIT_RE = re.compile(r"^\S*\d\S*$")
@@ -482,6 +509,23 @@ def _tsquery_token(token: str, *, prefix: bool) -> Optional[str]:
     return " & ".join(parts)
 
 
+def _tsquery_type_group(product_type: Optional[str]) -> Optional[str]:
+    """Вид товара → OR-группа tsquery-фрагментов ВСЕХ его написаний
+    (product_query_parse.product_type_synonyms) — владелец, 28.10.2026, п.1
+    задания «поиск как помнит», доработка синонимов: запрос «болгарка»
+    должен найти товар, названный «УШМ»/«угловая шлифмашина» — ОДНА tsquery
+    "(болгарка) | (ушм) | (углошлифмашина) | ..." вместо литерального
+    "болгарка:*" (без префикса — группа заменяет единственный required-
+    токен вида, не последнее слово всей фразы, см. вызов в _fetch_fts_page).
+    None, если синонимов нет (защита — не должно происходить, см. docstring
+    product_type_synonyms)."""
+    synonyms = product_type_synonyms(product_type)
+    parts = [p for p in (_tsquery_token(s, prefix=False) for s in synonyms) if p]
+    if not parts:
+        return None
+    return " | ".join(f"({p})" for p in parts)
+
+
 _VISCOSITY_NORM_RE = re.compile(r"^(\d+)([a-zа-яёA-ZА-ЯЁ])-(\d+)$")
 _QUANTITY_NORM_RE = re.compile(r"^(\d+(?:[.,]\d+)?)\s+(\S+)$")
 
@@ -514,13 +558,37 @@ def _split_required_tokens(required: list) -> tuple[list[str], list[str]]:
     return text_tokens, numeric_tokens
 
 
-def _numeric_condition(token: str):
+# Марка огнетушителя (владелец, 28.10.2026, п.3 задания «поиск как помнит»):
+# ОП-N/ОУ-N/ОВП-N/ОВЭ-N — буквенный код типа заряда + число = МАССА заряда
+# в кг (порошковые/углекислотные/пенные/эмульсионные) ИЛИ объём в л (ОВП/ОВЭ
+# иногда маркируются по литражу раствора — тот же номер, та же проверка:
+# различать литры/кг для этого правила не нужно, число совпадает буквально).
+# Запрос «огнетушитель порошковый 4 кг» ДОЛЖЕН считать «ОП-4» ТОЧНЫМ
+# совпадением (не ослаблением) — это и обычное понимание маркировки
+# снабженцем, см. задание. Применяется ТОЛЬКО когда literal-вид запроса —
+# огнетушитель (parsed.product_type, см. _numeric_condition) и единица
+# величины — масса/объём (кг/г/т/л/мл), не любое число вообще.
+_FIRE_EXTINGUISHER_MASS_UNITS = {"кг", "г", "т", "мл", "л"}
+_FIRE_EXTINGUISHER_PREFIXES = ("ОП", "ОУ", "ОВП", "ОВЭ")
+_FIRE_EXTINGUISHER_PREFIX_ALT = "|".join(_FIRE_EXTINGUISHER_PREFIXES)
+
+
+def _fire_extinguisher_grade_regex(num: str) -> str:
+    return rf"(?<![0-9A-Za-zА-Яа-яЁё])(?:{_FIRE_EXTINGUISHER_PREFIX_ALT})-?{re.escape(num)}(?![0-9A-Za-zА-Яа-яЁё])"
+
+
+def _numeric_condition(token: str, *, product_type: Optional[str] = None):
     pattern = _numeric_token_regex(token)
-    return or_(
+    conditions = [
         Product.name.op("~*")(pattern),
         Product.article.op("~*")(pattern),
         Product.manufacturer.op("~*")(pattern),
-    )
+    ]
+    if product_type == "огнетушитель":
+        m = _QUANTITY_NORM_RE.match(token)
+        if m and m.group(2).lower() in _FIRE_EXTINGUISHER_MASS_UNITS:
+            conditions.append(Product.name.op("~*")(_fire_extinguisher_grade_regex(m.group(1))))
+    return or_(*conditions)
 
 
 _BARE_NUMBER_RE = re.compile(r"^(\d+)")
@@ -534,6 +602,55 @@ def _bare_number(token: str) -> Optional[str]:
     СЕБЕ где-то в тексте есть — это «похоже», ранжируем выше."""
     m = _BARE_NUMBER_RE.match(token)
     return m.group(1) if m else None
+
+
+_ACCESSORY_ALTERNATION = "|".join(re.escape(m) for m in ACCESSORY_MARKERS)
+
+
+def _type_position_rank_term(product_type: Optional[str], type_literal: Optional[str]):
+    """SQL CASE-ранг по позиции вида товара в названии (владелец, 28.10.2026,
+    п.2 задания «поиск как помнит» — ранжирование по главному слову):
+      2 — вид товара (любое написание-синоним из product_type_synonyms)
+          стоит В НАЧАЛЕ названия (само первое слово или сразу после
+          ОДНОГО прилагательного — "Угловая шлифмашина");
+      0 — названию ПРЕДШЕСТВУЕТ слово-принадлежность (ACCESSORY_MARKERS:
+          "комплект для", "набор для", "зарядки", "чехол для", "подставка
+          для", "запчасть"...) — товар, скорее всего, АКСЕССУАР к виду, не
+          сам вид ("Комплект для зарядки порошковых огнетушителей");
+      1 — нейтрально (ни то, ни другое не распознано в начале/вообще).
+    Первый член ORDER BY (важнее бонуса по числу/ts_rank) — иначе аксессуар
+    с тем же словом в названии обгоняет сам товар по релевантности текста.
+    None — когда вид товара не распознан (literal-слово не нашлось в
+    required, см. ParsedQuery.type_literal) — ранжирование не меняется."""
+    if not product_type or not type_literal:
+        return None
+    synonyms = product_type_synonyms(product_type)
+    if not synonyms:
+        return None
+    syn_alt = "|".join(re.escape(s.replace(" ", r"\s+")) for s in synonyms)
+    # "начало названия" — само первое слово ИЛИ второе слово (после одного
+    # прилагательного, см. _PRODUCT_TYPE_WINDOW в product_name_signature.py
+    # — та же идея "вид может быть не первым словом", здесь упрощена до 2
+    # слов, см. задание п.2: "первые 1-2 слова"). ВАЖНО: проверяем против
+    # Product.name НАПРЯМУЮ, НЕ против _FTS_DOC_SQL::text — приведение
+    # tsvector к text даёт лексемы в АЛФАВИТНОМ порядке с номерами позиций
+    # ("'зарядк':2 'огнетушител':4 ...'"), а не исходный порядок слов
+    # названия; позиционная проверка на таком касте всегда давала
+    # бессмысленный результат (найдено живой проверкой на стенде,
+    # 28.10.2026 — "Комплект для зарядки..." обгонял сам "Огнетушитель",
+    # хотя штраф за слово-аксессуар должен был сработать раньше бонуса).
+    start_pattern = rf"^\s*(?:\S+\s+){{0,1}}(?:{syn_alt})(?![a-zа-яё0-9])"
+    accessory_pattern = _ACCESSORY_ALTERNATION
+    # coalesce(name,'') — та же голая ссылка на колонку, что и в _FTS_DOC_SQL
+    # выше (без алиаса таблицы): во всех вызывающих запросах products —
+    # единственный источник колонки name, остальные join'ы (apply_stale_join
+    # → fx_rates) её не добавляют.
+    return text(
+        "(CASE "
+        "WHEN coalesce(name,'') ~* :type_start_pattern THEN 2 "
+        "WHEN coalesce(name,'') ~* :type_accessory_pattern THEN 0 "
+        "ELSE 1 END) DESC"
+    ).bindparams(type_start_pattern=start_pattern, type_accessory_pattern=accessory_pattern)
 
 
 async def _fetch_fts_page(
@@ -555,7 +672,17 @@ async def _fetch_fts_page(
 
     required_parts = []
     for i, tok in enumerate(text_tokens):
-        part = _tsquery_token(tok, prefix=(i == len(text_tokens) - 1))
+        # Required-токен вида товара (parsed.type_literal) — ЕДИНСТВЕННЫЙ
+        # случай, когда литеральное слово из запроса заменяется OR-группой
+        # всех написаний того же канонического вида (владелец, 28.10.2026,
+        # п.1 задания, доработка синонимов) — "болгарка" ищет и "УШМ"/
+        # "угловая шлифмашина". Префикс :* (поиск по мере ввода) здесь не
+        # ставим — он не применим к OR-группе целиком и теряет смысл для
+        # распознанного словарного слова (не последнего недописанного).
+        if parsed.type_literal and tok == parsed.type_literal:
+            part = _tsquery_type_group(parsed.product_type)
+        else:
+            part = _tsquery_token(tok, prefix=(i == len(text_tokens) - 1))
         if part:
             required_parts.append(part)
     required_tsquery = " & ".join(f"({p})" for p in required_parts) if required_parts else None
@@ -584,13 +711,19 @@ async def _fetch_fts_page(
             )
         if apply_numeric:
             for tok in numeric_tokens:
-                q = q.where(_numeric_condition(tok))
+                q = q.where(_numeric_condition(tok, product_type=parsed.product_type))
         return q
 
     count_q = select(func.count()).select_from(_base(Product.id).subquery())
     total = (await db.execute(count_q)).scalar_one()
 
     order_terms = []
+    type_rank_term = _type_position_rank_term(parsed.product_type, parsed.type_literal)
+    if type_rank_term is not None:
+        # САМЫЙ ПЕРВЫЙ член сортировки (владелец, 28.10.2026, п.2 задания) —
+        # важнее бонуса по числу и ts_rank: "Комплект для зарядки порошковых
+        # огнетушителей" не должен обгонять сам "Огнетушитель порошковый".
+        order_terms.append(type_rank_term)
     if bare_numbers:
         # «похоже» бонус: голое число где-то в тексте (без строгой границы
         # единицы/формата) — считается ПЕРВЫМ (важнее ts_rank), чтобы
@@ -757,6 +890,11 @@ async def search_products(
 
     brand_dictionary = await get_manufacturer_brand_dictionary(db)
     parsed = parse_query(raw, brand_dictionary=brand_dictionary)
+    # Вид товара по словоформе (владелец, 28.10.2026, QA-находка: "болгарку"
+    # должна находить то же, что "болгарка" — см. docstring
+    # resolve_type_by_stem в product_query_parse.py). Без похода в БД, если
+    # вид УЖЕ распознан буквально (быстрый путь).
+    parsed = await resolve_type_by_stem(db, parsed)
     if result_meta is not None:
         result_meta["query_specific"] = parsed.specific
 
@@ -786,6 +924,7 @@ async def search_products(
             raw=parsed.raw, required=[*req_text, *req_numeric], optional=opt,
             dropped_stopwords=parsed.dropped_stopwords, specific=parsed.specific,
             brand=parsed.brand, product_type=parsed.product_type,
+            type_literal=parsed.type_literal,
         )
 
     # Шаг 1 — точное.
@@ -811,12 +950,49 @@ async def search_products(
     if total > 0:
         return list(items), total, False
 
+    # Шаг 1.6 — НЕТ required-ТЕКСТА вообще (required был ЧИСТО цифровым:
+    # бренд не распознан, вид товара не распознан — только модель/величина,
+    # "масло лукойл 5w40 4л"→required=["5W-40","4 л"]) — владелец,
+    # 28.10.2026, п.4 задания «поиск как помнит»: без текста шаг 1 искал
+    # ТОЛЬКО по цифрам (без AND по словам), а если формат чисел в каталоге
+    # чуть другой — total=0 и лестница сразу обрывается, не находя даже
+    # "масло"/"лукойл". ПОДНИМАЕМ optional-слова в required-текст (AND) —
+    # то же "повышение", что и в promoted-ветке выше, но здесь required НЕ
+    # пуст (есть цифры), поэтому promoted=False и та ветка не сработала.
+    numeric_relaxed_here = False
+    text_promoted_from_optional = False
+    if not text_tokens and optional:
+        text_promoted_from_optional = True
+        promoted_text_tokens = list(optional)
+        fts_parsed = _mk_parsed(promoted_text_tokens, numeric_tokens, [])
+        items, total = await _fetch_fts_page(
+            db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+            apply_numeric=True,
+        )
+        if total == 0 and numeric_tokens:
+            items, total = await _fetch_fts_page(
+                db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+                apply_numeric=False,
+            )
+            numeric_relaxed_here = True
+            if total > 0 and result_meta is not None:
+                result_meta["relaxed"] = list(numeric_tokens)
+        if total > 0:
+            return list(items), total, False
+        # Дальше (шаги 2-4) продолжаем с promoted-токенами — слова из
+        # optional теперь единственный required-текст, на котором держится
+        # и ослабление цифр, и исправление опечаток, и OR ниже.
+        text_tokens = promoted_text_tokens
+        optional = []
+
     # Шаг 2 — ослабить цифры/величины (владелец, 28.10.2026, доработка).
     # ТОЛЬКО если есть required-ТЕКСТ, на котором держится фильтр — иначе
     # (required был чисто цифровым, "зюзюкремлик 4125"→required=["4125"])
     # снятие единственного условия отдало бы всю таблицу (см. защиту внутри
-    # _fetch_fts_page, здесь — чтобы не тратить лишний запрос в БД).
-    if numeric_tokens and text_tokens:
+    # _fetch_fts_page, здесь — чтобы не тратить лишний запрос в БД). Если
+    # цифры уже ослаблялись выше (Шаг 1.6, numeric_relaxed_here) — повторно
+    # тот же запрос не шлём.
+    if numeric_tokens and text_tokens and not numeric_relaxed_here:
         items, total = await _fetch_fts_page(
             db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
             apply_numeric=False,
@@ -864,10 +1040,12 @@ async def search_products(
             return list(items), total, False
 
     # Шаг 4 — ослабить AND до OR, но ТОЛЬКО если required был «повышен» из
-    # optional (нераспознанная фраза) — распознанный вид товара/бренд
-    # ослаблять до «любое слово из фразы» не нужно (это сломало бы точность
-    # для реально специфичных запросов). Последний шаг — самый нестрогий.
-    if promoted and text_tokens:
+    # optional — либо ВЕСЬ (promoted, нераспознанная фраза), либо ЧАСТИЧНО
+    # (text_promoted_from_optional, Шаг 1.6 — required-текста не было
+    # вовсе) — распознанный вид товара/бренд ослаблять до «любое слово из
+    # фразы» не нужно (это сломало бы точность для реально специфичных
+    # запросов). Последний шаг — самый нестрогий.
+    if (promoted or text_promoted_from_optional) and text_tokens:
         items, total = await _fetch_fts_page_or(
             db, filters, text_tokens, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
         )

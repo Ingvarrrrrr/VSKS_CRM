@@ -35,7 +35,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import bindparam, select, String, text as sa_text
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -44,6 +45,7 @@ from app.services.brand_code_fold import fold_brand_or_code
 from app.services.product_name_signature import (
     _brand_compare_key,
     _HAS_DIGIT_RE,
+    _PRODUCT_TYPE_WINDOW,
     _split_words,
     _STOPWORDS as _PREPOSITION_STOPWORDS,
     build_signature,
@@ -95,6 +97,14 @@ class ParsedQuery:
     specific: bool = False
     brand: Optional[str] = None
     product_type: Optional[str] = None
+    # type_literal — ТО ЖЕ значение, что добавлено в required как «вид
+    # товара» (литеральное слово/фраза ИЗ ЗАПРОСА, см. комментарий у
+    # type_literal в parse_query ниже) — выделено отдельным полем, чтобы
+    # product_search.py мог НАЙТИ этот конкретный required-токен и
+    # заменить его на OR-группу всех написаний вида (product_type_synonyms)
+    # без угадывания по совпадению строки (владелец, 28.10.2026, п.1
+    # задания «поиск как помнит», доработка — синонимы вида товара)."""
+    type_literal: Optional[str] = None
 
 
 _MODEL_VISCOSITY_RE = re.compile(r"^(\d+)([a-zа-яё]+)(\d+)$")
@@ -229,7 +239,134 @@ def parse_query(q: Optional[str], brand_dictionary=None) -> ParsedQuery:
         specific=specific,
         brand=sig.brand,
         product_type=sig.product_type,
+        type_literal=type_literal,
     )
+
+
+# ---------------------------------------------------------------------------
+# Синонимы вида товара для РАСШИРЕНИЯ поискового запроса (владелец,
+# 28.10.2026, п.1 задания «поиск как помнит», доработка): «болгарка» и
+# «УШМ»/«угловая шлифмашина» — ОДИН канонический вид в PRODUCT_TYPE_WORDS/
+# PRODUCT_TYPE_PHRASES (Правило №6 — тот же словарь, что и у build_signature
+# для сравнения «тот же товар», второй словарь видов не заводим), но для
+# ПОИСКА по тексту каталога нужны ВСЕ написания этого вида (не только то,
+# что ввёл пользователь) — товар может называться в каталоге любым из них.
+# ---------------------------------------------------------------------------
+
+def product_type_synonyms(product_type: Optional[str]) -> list[str]:
+    """Все слова (PRODUCT_TYPE_WORDS) и фразы (PRODUCT_TYPE_PHRASES) из
+    словаря, которые канонизируются в данный `product_type` — для
+    product_search.py: tsquery по виду товара строится как OR этих
+    написаний вместо ОДНОГО литерального слова из запроса. Пустой список —
+    если product_type не передан или в словаре нет ни одной записи с таким
+    каноном (защита от опечатки в вызывающем коде, не должно происходить
+    на реальных данных — product_type всегда берётся из sig.product_type,
+    который САМ построен из этого же словаря)."""
+    if not product_type:
+        return []
+    out: set = set()
+    for word, canon in PRODUCT_TYPE_WORDS.items():
+        if canon == product_type:
+            out.add(word)
+    for phrase, canon in PRODUCT_TYPE_PHRASES.items():
+        if canon == product_type:
+            out.add(phrase)
+    return sorted(out)
+
+
+# ---------------------------------------------------------------------------
+# Распознавание вида товара ПО СЛОВОФОРМЕ (владелец, 28.10.2026, QA-находка
+# после доработки синонимов: "болгарка"→14, "болгарку"→2 — type_literal в
+# parse_query() ищет ТОЧНОЕ слово из PRODUCT_TYPE_WORDS, "болгарку"/
+# "болгарки"/"огнетушителя"/"рацию" (падежные формы) в словаре нет буквально,
+# поэтому вид не распознаётся вовсе, OR-группа синонимов НЕ строится, и
+# запрос уходит в общий "promoted" путь без расширения). ПРАВИЛО №6 — второй
+# стеммер не пишем: используем ТОТ ЖЕ 'russian_stem' словарь Postgres, что
+# и to_tsvector('russian', ...) в product_search.py (_FTS_DOC_SQL) — если
+# стем словоформы запроса совпал со стемом слова из PRODUCT_TYPE_WORDS, вид
+# товара распознан, даже когда буквального совпадения нет. Требует БД
+# (ts_lexize — функция Postgres), поэтому синхронный parse_query() эту
+# проверку не делает сам — отдельная async-функция, вызывается из
+# product_search.search_products() ОДИН РАЗ, когда parse_query() вида не
+# нашла (быстрый путь "нашли буквально" не трогаем лишним запросом).
+# ---------------------------------------------------------------------------
+
+_TYPE_STEM_CACHE_TTL_SECONDS = 30 * 60
+_type_stem_cache: dict = {"index": None, "built_at": 0.0}
+
+
+async def _get_type_stem_index(db: AsyncSession) -> dict:
+    """stem(слово PRODUCT_TYPE_WORDS) → канонический вид — кэш в памяти
+    процесса (тот же паттерн TTL, что у get_manufacturer_brand_dictionary
+    выше): один SQL-запрос (unnest + ts_lexize по ВСЕМ словам словаря), не
+    по запросу на слово. Коллизия стема (два разных слова с одним стемом,
+    разные канон) — последнее в словаре побеждает, на реальном словаре не
+    встречалось (словарь — одно слово на один канон почти всегда)."""
+    now = time.monotonic()
+    cached = _type_stem_cache["index"]
+    if cached is not None and (now - _type_stem_cache["built_at"]) < _TYPE_STEM_CACHE_TTL_SECONDS:
+        return cached
+
+    words = sorted(PRODUCT_TYPE_WORDS.keys())
+    stmt = sa_text(
+        "SELECT w, (ts_lexize('russian_stem', w))[1] AS stem FROM unnest(:words) AS w"
+    ).bindparams(bindparam("words", type_=PG_ARRAY(String)))
+    rows = (await db.execute(stmt, {"words": words})).all()
+    index: dict = {}
+    for word, stem in rows:
+        if stem:
+            index[stem] = PRODUCT_TYPE_WORDS[word]
+    _type_stem_cache["index"] = index
+    _type_stem_cache["built_at"] = now
+    return index
+
+
+async def resolve_type_by_stem(db: AsyncSession, parsed: ParsedQuery) -> ParsedQuery:
+    """Если parse_query() НЕ распознала вид товара буквально
+    (parsed.product_type is None) — пробуем по СТЕМУ (см. docstring блока
+    выше): слова исходной фразы (окно _PRODUCT_TYPE_WINDOW — то же, что у
+    product_name_signature._extract_product_type, Правило №6 — то же
+    окно, не второе) по очереди стемим и ищем в _get_type_stem_index.
+    Первое совпадение — литеральное слово запроса переносится из optional
+    в required (как type_literal), product_type проставляется каноном.
+    Если parsed.product_type уже распознан (точным путём) — возвращает
+    parsed БЕЗ ИЗМЕНЕНИЙ и БЕЗ похода в БД (быстрый путь не трогаем)."""
+    if parsed.product_type is not None:
+        return parsed
+
+    words = _split_words(parsed.raw)[:_PRODUCT_TYPE_WINDOW]
+    # Только слова, которые parse_query() оставила в optional (не бренд, не
+    # цифра, не стоп-слово) — кандидаты на вид товара.
+    candidates = [w for w in words if w in parsed.optional]
+    if not candidates:
+        return parsed
+
+    index = await _get_type_stem_index(db)
+    if not index:
+        return parsed
+
+    stmt = sa_text(
+        "SELECT w, (ts_lexize('russian_stem', w))[1] AS stem FROM unnest(:words) AS w"
+    ).bindparams(bindparam("words", type_=PG_ARRAY(String)))
+    rows = (await db.execute(stmt, {"words": candidates})).all()
+    stem_by_word = {word: stem for word, stem in rows}
+
+    for w in candidates:
+        canon = index.get(stem_by_word.get(w))
+        if canon:
+            new_required = [*parsed.required, w]
+            new_optional = [o for o in parsed.optional if o != w]
+            return ParsedQuery(
+                raw=parsed.raw,
+                required=new_required,
+                optional=new_optional,
+                dropped_stopwords=parsed.dropped_stopwords,
+                specific=parsed.specific,
+                brand=parsed.brand,
+                product_type=canon,
+                type_literal=w,
+            )
+    return parsed
 
 
 # ---------------------------------------------------------------------------

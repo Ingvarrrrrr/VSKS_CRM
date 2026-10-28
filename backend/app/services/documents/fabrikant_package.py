@@ -40,7 +40,7 @@ from app.services.item_amounts import vat_included_amount as _vat_included_amoun
 # Правило №6 — единственный резолвер пути к шаблону (субсидийный override →
 # глобальный → DOC_TYPE_FALLBACK_FILES). Раньше здесь жили две копии-дубли
 # той же логики приоритета (ниже — tech_spec_request и цикл рендера пакета).
-from .templates import _resolve_vat_exemption_basis, _vat_exemption_missing_hint, _resolve_doc_template_path, _purchase_method_label
+from .templates import _resolve_vat_exemption_basis, _resolve_doc_template_path, _purchase_method_label
 from .doc_types import _PURCHASE_METHOD_LABELS
 from .morphology import _inflect_phrase_genitive
 from .docx_post import strip_template_legend
@@ -48,6 +48,7 @@ from app.services.acceptance_docs import derived_scalars as _acceptance_derived_
 from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
 from app.services.purchase_economy import purchase_economy_one as _purchase_economy_one_fn
 from .contractor_override import load_contractor_override, merge_contractor_override
+from .fabrikant_contract_blank import apply_contract_project_blanks
 from .contexts_extra import (
     add_prepayment_context,
     add_day_words_context,
@@ -62,6 +63,33 @@ from app.services.contractor_pii import contractor_pii_doc_fields, user_can_view
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# (doc_key, archive_name used in ZIP) — legacy internal short Russian names.
+# Module-level (не внутри функции): это и единственный источник соответствия
+# doc_key → короткое имя файла в ZIP для /fabrikant-package (ПРАВИЛО №6).
+# Раньше documents.py назначал эти же имена ПО ПОЗИЦИИ в списке `rendered`
+# (next() по отдельному списку-дублю) — если render_fabrikant_package_files
+# пропускал один документ (ошибка рендера), имена всех следующих в ZIP
+# съезжали на одну позицию. Теперь соответствие — по doc_key/ascii-базе
+# конкретного документа, не по порядку в списке.
+_PKG_DOCS_LEGACY = [
+    ("fabrikant_instruction",      "Инструкция.docx"),
+    ("fabrikant_application_form", "Форма_заявки.docx"),
+    ("fabrikant_documentation",    "Документация.docx"),
+    ("fabrikant_contract_project", "Проект_договора.docx"),
+    ("tech_spec_request",          "ТЗ.docx"),
+]
+
+# ascii-база (имя файла из FABRIKANT_PKG_FILE_NAMES без расширения) →
+# короткая русская база для ZIP. Override-файлы (см. _overrides ниже)
+# сохраняют ту же ascii-базу, меняя только расширение — ключ остаётся
+# валидным и для них.
+FABRIKANT_PKG_ZIP_BASENAMES: dict[str, str] = {
+    os.path.splitext(ascii_name)[0]: os.path.splitext(legacy_arc)[0]
+    for (_doc_key, ascii_name, _ru_title), (_legacy_doc_key, legacy_arc)
+    in zip(FABRIKANT_PKG_FILE_NAMES, _PKG_DOCS_LEGACY)
+}
 
 
 async def render_fabrikant_package_files(
@@ -437,6 +465,17 @@ async def render_fabrikant_package_files(
         "vat_amount_num": _fmt_money_plain(vat_amount_val),
         "vat_amount_words": _rubles_to_words(vat_amount_val),
         "vat_exemption_article": ("" if vat_app else art),
+        # fabrikant_contract_project.docx — ПРОЕКТ договора, показывается
+        # участникам ДО выбора поставщика: на этом этапе ни ставка НДС, ни
+        # основание освобождения не могут быть известны (зависят от того,
+        # кто станет поставщиком). Печатать выдуманное значение нельзя, но и
+        # отказывать в сборке всего пакета из-за этого — нельзя (28.10.2026,
+        # закупка 4441/субсидия 111 осталась без договора в пакете). Вместо
+        # отказа — признак «НДС пока не определён»; шаблон сам решает, что
+        # написать в п.4.1 (см. fabrikant_contract_project.docx).
+        "vat_undetermined": bool(
+            (vat_app and vat_rate_val is None) or ((not vat_app) and not art)
+        ),
         "vat_info_line": vat_info_line,
         "contract_price_num": _fmt_money_plain(p.contract_price),
         "contract_price_words": _rubles_to_words(p.contract_price),
@@ -549,15 +588,6 @@ async def render_fabrikant_package_files(
     # резолвер (субсидия → глобальный → DOC_TYPE_FALLBACK_FILES), Правило №6.
     _tz_path, _tz_file, _tz_base = _resolve_doc_template_path("tech_spec_request", p.subsidy_id)
 
-    # (doc_key, archive_name used in ZIP) — legacy internal names, kept for ZIP endpoint
-    _pkg_docs_legacy = [
-        ("fabrikant_instruction",      "Инструкция.docx"),
-        ("fabrikant_application_form", "Форма_заявки.docx"),
-        ("fabrikant_documentation",    "Документация.docx"),
-        ("fabrikant_contract_project", "Проект_договора.docx"),
-        ("tech_spec_request",          "ТЗ.docx"),
-    ]
-
     # ── Override file_type → doc_key mapping ─────────────────────────────────
     _override_map = {
         "fabrikant_instruction":      "fabrikant_instruction",
@@ -587,7 +617,7 @@ async def render_fabrikant_package_files(
     rendered: list[tuple[str, str, bytes]] = []
     errors: list[str] = []
 
-    for (doc_key, ascii_name, ru_title), (_doc_key2, legacy_arc) in zip(FABRIKANT_PKG_FILE_NAMES, _pkg_docs_legacy):
+    for (doc_key, ascii_name, ru_title), (_doc_key2, legacy_arc) in zip(FABRIKANT_PKG_FILE_NAMES, _PKG_DOCS_LEGACY):
         override_ft = _override_map.get(doc_key)
         if override_ft and override_ft in _overrides:
             _pf_ov = _overrides[override_ft]
@@ -610,21 +640,12 @@ async def render_fabrikant_package_files(
             continue
 
         try:
-            # fabrikant_contract_project.docx — единственный шаблон в этом
-            # пакете, реально печатающий данные о НДС ({{vat_rate}} /
-            # {{vat_exemption_article}}). Оба случая («ставка не указана» и
-            # «основание освобождения не указано») — печатать выдуманное
-            # значение нельзя, отказываем именно по этому документу (остальные
-            # 4 рендерятся дальше как обычно, см. try/except-цикл).
-            if doc_key == "fabrikant_contract_project" and vat_app and vat_rate_val is None:
-                raise ValueError(
-                    "Не указана ставка НДС: закупка отмечена как облагаемая НДС, "
-                    "но поле «Ставка НДС» в карточке закупки пустое. Заполните "
-                    "ставку (0, 10 или 20 — как у поставщика), либо снимите "
-                    "отметку «Облагается НДС», если это верно."
-                )
-            if doc_key == "fabrikant_contract_project" and not vat_app and not _resolve_vat_exemption_basis(p):
-                raise ValueError("Не указано основание освобождения от НДС. " + _vat_exemption_missing_hint(p))
+            # fabrikant_contract_project.docx — ПРОЕКТ договора, идёт в пакет
+            # участникам до выбора поставщика: НДС на этом этапе объективно
+            # не определён (зависит от будущего поставщика), поэтому отказа
+            # по НДС для этого документа больше нет (28.10.2026) — вместо
+            # выдуманного значения шаблон печатает условную фразу по
+            # context["vat_undetermined"] (посчитан выше, при сборке context).
             _tpl = _DxTpl(tpl_path)
             if doc_key == "tech_spec_request":
                 # Единственный шаблон пакета с колонкой «Фото» — резолвим
@@ -637,6 +658,15 @@ async def render_fabrikant_package_files(
                     for _it, _prod in zip(items_list, items_products)
                 ]
                 _tpl.render({**context, "items": _items_with_photo})
+            elif doc_key == "fabrikant_contract_project":
+                # ПРОЕКТ договора вешается на площадку ДО выбора поставщика —
+                # цена/номер/дата договора, протокол закупки и весь блок
+                # Поставщика (contractor_*) на этом этапе физически не
+                # существуют (владелец, 28.10.2026). Единственное место,
+                # определяющее этот список полей — fabrikant_contract_blank.py
+                # (ПРАВИЛО №6); остальные 4 документа пакета рендерятся общим
+                # context без изменений.
+                _tpl.render(apply_contract_project_blanks(context))
             else:
                 _tpl.render(context)
             _buf = BytesIO()
@@ -653,3 +683,31 @@ async def render_fabrikant_package_files(
             logger.warning("fabrikant-package render error for %s (purchase %s): %s", doc_key, purchase_id, _re)
 
     return rendered, errors
+
+
+def build_fabrikant_zip_bytes(
+    rendered: list[tuple[str, str, bytes]],
+    errors: list[str],
+) -> bytes:
+    """Собирает ZIP пакета Фабрикант из результата render_fabrikant_package_files.
+
+    Имя файла в архиве назначается ПО САМОМУ ДОКУМЕНТУ (через
+    FABRIKANT_PKG_ZIP_BASENAMES, по ascii-базе файла), а не по позиции в
+    списке `rendered` — раньше (баг, исправлен 28.10.2026) позиционное
+    назначение съезжало на одну позицию, если render_fabrikant_package_files
+    пропускала не отрендерившийся документ: ТЗ попадало в архив под именем
+    «Проект_договора.docx». Вынесено в отдельную чистую функцию, чтобы
+    покрыть этот случай юнит-тестом без HTTP/БД, см. tests/test_fabrikant_zip_names.py.
+    """
+    import zipfile as _zipfile
+
+    zip_buf = BytesIO()
+    with _zipfile.ZipFile(zip_buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+        for ascii_name, _ru_title, data in rendered:
+            _ascii_base = os.path.splitext(ascii_name)[0]
+            _ru_base = FABRIKANT_PKG_ZIP_BASENAMES.get(_ascii_base, _ascii_base)
+            _ext = os.path.splitext(ascii_name)[1] or ".docx"
+            zf.writestr(_ru_base + _ext, data)
+        if errors:
+            zf.writestr("errors.txt", "\n\n".join(errors))
+    return zip_buf.getvalue()

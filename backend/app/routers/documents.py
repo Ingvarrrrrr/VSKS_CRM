@@ -91,7 +91,7 @@ from app.services.documents.contexts import (
     _format_service_term,
 )
 from app.services.documents.docx_post import strip_template_legend, _strip_word_comments
-from app.services.documents.fabrikant_package import render_fabrikant_package_files
+from app.services.documents.fabrikant_package import render_fabrikant_package_files, build_fabrikant_zip_bytes
 from app.services.documents.kp_xlsx import build_kp_xlsx
 from app.services.documents.generate import generate_document_bytes
 
@@ -139,8 +139,6 @@ async def download_fabrikant_package(
     Individual render failures are tolerated: the failed doc is omitted from
     the ZIP and listed in errors.txt.  If ALL docs fail → HTTP 500.
     """
-    import zipfile as _zipfile
-
     # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
     from app.auth.object_visibility import ensure_purchase_visible
     await ensure_purchase_visible(current_user, pid, db)
@@ -157,18 +155,10 @@ async def download_fabrikant_package(
             },
         )
 
-    # ZIP archive names: Russian base + actual extension from ascii_name
-    _ru_bases = ["Инструкция", "Форма_заявки", "Документация", "Проект_договора", "ТЗ"]
-    zip_buf = BytesIO()
-    with _zipfile.ZipFile(zip_buf, "w", _zipfile.ZIP_DEFLATED) as zf:
-        _ru_iter = iter(_ru_bases)
-        for ascii_name, ru_title, data in rendered:
-            _ru_base = next(_ru_iter, os.path.splitext(ascii_name)[0])
-            _ext = os.path.splitext(ascii_name)[1] or ".docx"
-            zf.writestr(_ru_base + _ext, data)
-        if errors:
-            zf.writestr("errors.txt", "\n\n".join(errors))
-    zip_buf.seek(0)
+    # ZIP-имена назначаются по самому документу, не по позиции в `rendered`
+    # (баг, исправлен 28.10.2026 — см. build_fabrikant_zip_bytes, единственный
+    # источник этой логики, ПРАВИЛО №6).
+    zip_buf = BytesIO(build_fabrikant_zip_bytes(rendered, errors))
 
     safe_zip_name = f"Фабрикант_закупка_{pid}.zip"
     encoded_zip_name = quote(safe_zip_name, safe="-_.~")

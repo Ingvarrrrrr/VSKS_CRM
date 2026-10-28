@@ -26,8 +26,9 @@ build_signature) в памяти процесса на BRAND_CACHE_TTL_SECONDS �
 и чистый (без похода в БД) — вызывающая сторона передаёт brand_dictionary
 по желанию (как и у build_signature); без него required-токен «бренд»
 просто не определяется (specific по бренду не сработает), что для «этапа 0»
-допустимо — получение/проводка словаря в search_products() — следующий шаг
-(ПРИОСТАНОВЛЕН владельцем 28.10.2026, см. TASKS.md)."""
+допустимо — product_search.search_products() и store_search.service.
+search_stores() оба передают сюда get_manufacturer_brand_dictionary(db)
+(ПРАВИЛО №6 — один словарь на оба вызывающих, не второй механизм)."""
 from __future__ import annotations
 
 import re
@@ -373,8 +374,9 @@ async def resolve_type_by_stem(db: AsyncSession, parsed: ParsedQuery) -> ParsedQ
 # Словарь брендов из своей БД (manufacturer), с кэшем в памяти процесса —
 # см. docstring модуля, почему НЕ tools/catalog_enrich/brand_dictionary
 # (та собирается из офлайн-файлов, не годится для горячего HTTP-пути).
-# Подключение в product_search.py — следующий шаг, см. TASKS.md
-# (приостановлено владельцем 28.10.2026).
+# Подключено в product_search.py (search_products) И store_search/
+# service.py (search_stores) — оба вызывающих используют этот же словарь
+# (ПРАВИЛО №6).
 # ---------------------------------------------------------------------------
 
 BRAND_CACHE_TTL_SECONDS = 30 * 60

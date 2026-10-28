@@ -98,6 +98,10 @@ from app.routers import products_tz44
 # "/api/products/characteristics/..." длиннее catch-all "/{product_id}" ровно
 # как у products_tz44 выше, тот же порядок регистрации — ДО products.router.
 from app.routers import products_characteristics
+# Живой поиск товара в магазинах (этап 1, владелец, 28.10.2026) — GET
+# "/api/products/store-search", ОДИН литеральный сегмент, тот же порядок
+# регистрации, что у products_* соседей выше — ДО products.router.
+from app.routers import store_search
 # Разрезание feo_categories.py (Правило №5, сессия 2026-09-07): feo_plan_reads,
 # feo_import, feo_tree_ops содержат ТОЛЬКО статические/литеральные пути на
 # префиксе /api/feo-categories (feo_plan_reads/feo_import — без {cat_id} вовсе;
@@ -467,6 +471,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(product_description.router)
     app.include_router(products_tz44.router)
     app.include_router(products_characteristics.router)
+    app.include_router(store_search.router)
     app.include_router(products.router)
     app.include_router(price_freshness_router.router)
     app.include_router(purchase_files.router)

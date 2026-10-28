@@ -62,7 +62,7 @@ async def search_products_page(
     price_min: Optional[Decimal] = Query(None, ge=0),
     price_max: Optional[Decimal] = Query(None, ge=0),
     stale_only: bool = Query(False),
-    sort: str = Query("name"),
+    sort: Optional[str] = Query(None, description="Колонка сортировки — задаётся ТОЛЬКО когда пользователь явно выбрал её (стрелка в заголовке); без параметра — умолчание (name asc без search, релевантность с search)"),
     order: str = Query("asc"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0, le=1_000_000),
@@ -71,8 +71,10 @@ async def search_products_page(
 ):
     # Валидация ДО запроса в БД (ПРАВИЛО №8 п.6) — sort/order вне белого
     # списка это ошибка клиента (422), не повод строить ORDER BY по
-    # произвольной строке и падать 500 на несуществующей колонке.
-    if sort not in SORTABLE_COLUMNS:
+    # произвольной строке и падать 500 на несуществующей колонке. sort=None
+    # (параметр не передан — умолчание, никто явно не выбрал колонку) —
+    # валидный случай, пропускаем проверку.
+    if sort is not None and sort not in SORTABLE_COLUMNS:
         raise HTTPException(422, f"Параметр sort: допустимые значения — {', '.join(sorted(SORTABLE_COLUMNS))}")
     if order not in _VALID_ORDERS:
         raise HTTPException(422, "Параметр order: 'asc' или 'desc'")

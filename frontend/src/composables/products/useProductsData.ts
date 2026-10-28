@@ -90,22 +90,43 @@ export function useProductsData(showSnack: (text: string, color?: ToastType) => 
   // диапазоне 1-2 (эффективно всё ещё «пусто») дёргал бы повторный запрос.
   const effectiveSearch = computed(() => isSearchTooShort(search.value) ? '' : search.value.trim())
 
+  // v-model.number на <v-text-field type="number"> (ProductsFilterBar.vue)
+  // после стирания значения отдаёт '' (не null) — ".number" не приводит
+  // пустую строку к числу. Без нормализации '' шло на сервер буквально
+  // (price_min=) → 422 «Ошибка загрузки» (владелец, 29.10.2026, QA на
+  // проде). ОДНО место (Правило №6) — здесь и в useProductSearch.ts::
+  // buildQuery (двойная защита: здесь на входе в фильтры, там — на сборке
+  // query, на случай другого вызывающего той же ручки).
+  function normalizePriceFilter(v: unknown): number | null {
+    if (v === '' || v === null || v === undefined) return null
+    const n = typeof v === 'number' ? v : Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+
   function filterParams() {
     return {
       search: effectiveSearch.value,
       category: filterCategory.value,
       productType: filterType.value,
       isActive: filterActive.value,
-      priceMin: filterPriceMin.value,
-      priceMax: filterPriceMax.value,
+      priceMin: normalizePriceFilter(filterPriceMin.value),
+      priceMax: normalizePriceFilter(filterPriceMax.value),
       staleOnly: filterStaleOnly.value,
     }
   }
 
-  function activeSort(): { sort: string; order: 'asc' | 'desc' } {
+  // sort/order НЕ возвращаются (undefined), если пользователь НЕ выбрал
+  // колонку сортировки явно (тогда tableSortBy пуст — так и приходит из
+  // v-data-table-server::update:options, пока по заголовку не кликнули) —
+  // backend (ProductSearchFilters.sort=None) отличает «умолчание» от
+  // «выбрано name asc» (владелец, 29.10.2026, QA на проде: раньше default
+  // всегда был {sort:'name',order:'asc'}, из-за чего при search сортировка
+  // по релевантности ВСЕГДА перезаписывалась бы, если бы backend её
+  // применял буквально — теперь явный выбор отличим).
+  function activeSort(): { sort?: string; order?: 'asc' | 'desc' } {
     const s = tableSortBy.value[0]
     if (s && SORTABLE_KEYS.has(s.key)) return { sort: s.key, order: s.order }
-    return { sort: 'name', order: 'asc' }
+    return {}
   }
 
   async function loadTable() {
@@ -117,9 +138,13 @@ export function useProductsData(showSnack: (text: string, color?: ToastType) => 
   }
 
   async function loadCards() {
+    // Без sort (владелец, 29.10.2026, задание п.B: «карточки — без sort») —
+    // карточки не дают пользователю выбрать колонку, умолчание backend'а
+    // (name asc без search / релевантность с search) — то же самое,
+    // чего карточки раньше добивались явным {sort:'name',order:'asc'},
+    // но без ослепления сортировкой лестницы поиска при непустом search.
     await searchApi.load({
       ...filterParams(),
-      sort: 'name', order: 'asc',
       limit: CARDS_PAGE_SIZE,
       offset: (cardsPage.value - 1) * CARDS_PAGE_SIZE,
     })
@@ -143,7 +168,7 @@ export function useProductsData(showSnack: (text: string, color?: ToastType) => 
       const limit = tableItemsPerPage.value === -1 ? 200 : tableItemsPerPage.value
       searchApi.loadDebounced({ ...filterParams(), sort, order, limit, offset: 0 })
     } else {
-      searchApi.loadDebounced({ ...filterParams(), sort: 'name', order: 'asc', limit: CARDS_PAGE_SIZE, offset: 0 })
+      searchApi.loadDebounced({ ...filterParams(), limit: CARDS_PAGE_SIZE, offset: 0 })
     }
   }
 

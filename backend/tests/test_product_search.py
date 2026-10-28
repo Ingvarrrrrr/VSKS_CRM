@@ -709,6 +709,65 @@ async def test_page_endpoint_sort_outside_whitelist_is_422(client, auth_headers)
     assert resp.status_code == 422
 
 
+# ── Явный sort=price&order=desc — NULLS LAST в ОБОИХ направлениях (владелец,
+#    29.10.2026, QA на проде GET /api/products/page: PostgreSQL по умолчанию
+#    DESC=NULLS FIRST — товары без цены шли первыми, «стрелки ни на что не
+#    влияют»). _explicit_sort_terms — ЕДИНЫЙ хелпер (Правило №6), применяется
+#    и без search, и ПОВЕРХ лестницы поиска, не меняя WHERE/total. ─────────
+
+@pytest.mark.asyncio
+async def test_sort_price_desc_without_search_nulls_last(db_session):
+    # Категория-метка уникальна для теста (owner's БД здесь — не пустая
+    # тестовая, а реальное подключение с существующим каталогом, см.
+    # conftest.py::db_session — rollback только откатывает ЗАПИСИ этого
+    # теста, но limit=50 без фильтра зачерпнул бы ЧУЖИЕ дорогие товары) —
+    # category сужает WHERE до только этих трёх строк, порядок внутри них
+    # всё равно решает sort=price&order=desc.
+    cat = "Сорт-тест-без-search-29-10"
+    no_price = _mk(db_session, name="Сорт-без-цены", category=cat)
+    cheap = _mk(db_session, name="Сорт-дёшево", category=cat, price=Decimal("10"))
+    expensive = _mk(db_session, name="Сорт-дорого", category=cat, price=Decimal("1000"))
+    await db_session.commit()
+
+    filters = ProductSearchFilters(category=[cat], sort="price", order="desc")
+    items, total, _ = await search_products(db_session, filters, limit=50, offset=0)
+    assert total == 3
+    ids_order = [p.id for p in items]
+    # дорогой → дешёвый → NULL (NULLS LAST даже при order=desc)
+    assert ids_order == [expensive.id, cheap.id, no_price.id]
+
+
+@pytest.mark.asyncio
+async def test_sort_price_desc_with_search_nulls_last(db_session):
+    """Та же сортировка ПОВЕРХ результатов поиска (FTS-лестница) — явный sort
+    побеждает ранжирование по релевантности, WHERE/total (какие товары
+    найдены) не меняется."""
+    no_price = _mk(db_session, name="Сортпоисктовар без цены")
+    cheap = _mk(db_session, name="Сортпоисктовар дёшево", price=Decimal("10"))
+    expensive = _mk(db_session, name="Сортпоисктовар дорого", price=Decimal("1000"))
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="Сортпоисктовар", sort="price", order="desc")
+    items, total, _ = await search_products(db_session, filters, limit=50, offset=0)
+    assert total == 3
+    ids_order = [p.id for p in items if p.id in {no_price.id, cheap.id, expensive.id}]
+    assert ids_order == [expensive.id, cheap.id, no_price.id]
+
+
+@pytest.mark.asyncio
+async def test_search_without_explicit_sort_keeps_relevance_order(db_session):
+    """Без явного sort (filters.sort=None, умолчание) — поиск идёт по
+    релевантности лестницы, как и раньше (регрессия на смену default
+    sort='name' → None в ProductSearchFilters: поведение без явного выбора
+    колонки не должно меняться)."""
+    _mk(db_session, name="носилки металлические складные Сорт-регрессия")
+    await db_session.commit()
+    filters = ProductSearchFilters(search="носилки металлические складные Сорт-регрессия")
+    items, total, capped = await search_products(db_session, filters, limit=50, offset=0)
+    assert total >= 1
+    assert capped is False
+
+
 @pytest.mark.asyncio
 async def test_page_endpoint_happy_path_shape(client, auth_headers, db_session):
     _mk(db_session, name="Page-shape-товар")

@@ -86,8 +86,13 @@ function buildQuery(params: ProductSearchParams): string {
   for (const t of params.productType || []) q.append('product_type', t)
   if (params.isActive !== null && params.isActive !== undefined) q.set('is_active', String(params.isActive))
   if (params.feoCategoryId != null) q.set('feo_category_id', String(params.feoCategoryId))
-  if (params.priceMin != null) q.set('price_min', String(params.priceMin))
-  if (params.priceMax != null) q.set('price_max', String(params.priceMax))
+  // Number.isFinite — не только null/undefined (как было), но и NaN/''
+  // (владелец, 29.10.2026: '' после стирания в <v-text-field type="number">
+  // v-model.number не приводит к null, см. useProductsData.ts::
+  // normalizePriceFilter — та же защита здесь ещё раз, на случай другого
+  // вызывающего той же ручки, не второй механизм, тот же критерий).
+  if (Number.isFinite(params.priceMin)) q.set('price_min', String(params.priceMin))
+  if (Number.isFinite(params.priceMax)) q.set('price_max', String(params.priceMax))
   if (params.staleOnly) q.set('stale_only', 'true')
   if (params.sort) q.set('sort', params.sort)
   if (params.order) q.set('order', params.order)

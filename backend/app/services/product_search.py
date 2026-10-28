@@ -154,7 +154,15 @@ class ProductSearchFilters:
     price_min: Optional[Decimal] = None
     price_max: Optional[Decimal] = None
     stale_only: bool = False
-    sort: str = "name"
+    # None — сортировка НЕ выбрана явно пользователем (умолчание: без
+    # search — name asc, с search — релевантность лестницы). Непустая
+    # строка — явный выбор колонки (белый список SORTABLE_COLUMNS,
+    # проверяется ДО сюда вызывающей стороной — products_page.py) —
+    # см. _explicit_sort_terms, единственное место, которое превращает
+    # явный выбор в ORDER BY (Правило №6, QA 29.10.2026: раньше default
+    # всегда был "name"/"asc", и бэк не мог отличить «так выбрал
+    # пользователь» от «фронт прислал умолчание»).
+    sort: Optional[str] = None
     order: str = "asc"
 
 
@@ -245,6 +253,32 @@ def _startswith_condition(filters: "ProductSearchFilters"):
     return cond
 
 
+def _explicit_sort_terms(filters: "ProductSearchFilters") -> Optional[list]:
+    """ЕДИНСТВЕННОЕ место, строящее ORDER BY для явно выбранной пользователем
+    колонки (Правило №6) — используется и без search (build_product_search_
+    query), и во ВСЕХ путях с search (_fetch_fts_page/_fetch_fts_page_or/
+    _search_legacy_page) при явном sort: лестница поиска (WHERE/total/
+    result_meta) не трогается, меняется только порядок строк страницы.
+
+    .nulls_last() в ОБОИХ направлениях (владелец, QA на проде 29.10.2026):
+    PostgreSQL по умолчанию ASC=NULLS LAST (и так было видно верно), но
+    DESC=NULLS FIRST — товары с price=NULL шли ПЕРВЫМИ при sort=price&
+    order=desc, хотя стрелка «по убыванию» должна показывать дорогие
+    товары, а не пустые цены ("стрелки ни на что не влияют"). Второй член
+    — Product.id тем же направлением, что и раньше (детерминизм страницы
+    при равных значениях колонки).
+
+    None — filters.sort не задан явно (sort=None, умолчание) — вызывающая
+    сторона использует свой порядок по умолчанию (name asc без search /
+    релевантность лестницы с search)."""
+    if not filters.sort:
+        return None
+    sort_col = SORTABLE_COLUMNS.get(filters.sort, Product.name)
+    if filters.order == "desc":
+        return [sort_col.desc().nulls_last(), Product.id.desc()]
+    return [sort_col.asc().nulls_last(), Product.id.asc()]
+
+
 def build_product_search_query(
     *,
     filters: ProductSearchFilters,
@@ -259,7 +293,13 @@ def build_product_search_query(
         q = q.options(defer(Product.characteristics))
     q = _apply_filters(q, filters, freshness_ctx)
 
-    if filters.search:
+    sort_terms = _explicit_sort_terms(filters)
+    if sort_terms is not None:
+        # Явный выбор колонки — побеждает ЛЮБОЕ ранжирование по релевантности
+        # (search или нет, см. docstring _explicit_sort_terms) — один и тот
+        # же порядок, что и для страницы без search.
+        q = q.order_by(*sort_terms)
+    elif filters.search:
         if _all_words_too_short_for_trigram(filters.search):
             # Все результаты тут и так startswith (см. _apply_filters) —
             # similarity() по короткому слову не индексируется и не нужна,
@@ -273,11 +313,7 @@ def build_product_search_query(
             similarity_rank = func.similarity(Product.name, filters.search.strip())
             q = q.order_by(exact_rank, startswith_rank, similarity_rank.desc(), Product.name)
     else:
-        sort_col = SORTABLE_COLUMNS.get(filters.sort, Product.name)
-        if filters.order == "desc":
-            q = q.order_by(sort_col.desc(), Product.id.desc())
-        else:
-            q = q.order_by(sort_col.asc(), Product.id.asc())
+        q = q.order_by(Product.name.asc(), Product.id.asc())
     return q
 
 
@@ -884,7 +920,14 @@ async def _fetch_fts_page(
         order_terms.append(text(f"{rank_sql} DESC").bindparams(**rank_params))
 
     page_q = _base(Product).options(defer(Product.characteristics))
-    page_q = page_q.order_by(*order_terms, Product.name.asc(), Product.id.asc())
+    sort_terms = _explicit_sort_terms(filters)
+    if sort_terms is not None:
+        # Явный sort — побеждает всю лестницу ранжирования выше (type_rank/
+        # toy_penalty/brand_bonus/bare_numbers/ts_rank) — WHERE (required_
+        # tsquery/numeric_tokens) и total не трогаются, см. _explicit_sort_terms.
+        page_q = page_q.order_by(*sort_terms)
+    else:
+        page_q = page_q.order_by(*order_terms, Product.name.asc(), Product.id.asc())
     page_q = page_q.limit(limit).offset(offset)
     items = (await db.execute(page_q)).scalars().all()
     return list(items), total
@@ -993,11 +1036,15 @@ async def _fetch_fts_page_or(
     count_q = select(func.count()).select_from(_base(Product.id).subquery())
     total = (await db.execute(count_q)).scalar_one()
 
-    rank_expr = text(
-        f"ts_rank({_FTS_DOC_SQL}, to_tsquery('russian', :or_tsquery_r)) DESC"
-    ).bindparams(or_tsquery_r=or_tsquery)
     page_q = _base(Product).options(defer(Product.characteristics))
-    page_q = page_q.order_by(rank_expr, Product.name.asc(), Product.id.asc())
+    sort_terms = _explicit_sort_terms(filters)
+    if sort_terms is not None:
+        page_q = page_q.order_by(*sort_terms)
+    else:
+        rank_expr = text(
+            f"ts_rank({_FTS_DOC_SQL}, to_tsquery('russian', :or_tsquery_r)) DESC"
+        ).bindparams(or_tsquery_r=or_tsquery)
+        page_q = page_q.order_by(rank_expr, Product.name.asc(), Product.id.asc())
     page_q = page_q.limit(limit).offset(offset)
     items = (await db.execute(page_q)).scalars().all()
     return list(items), total
@@ -1018,7 +1065,15 @@ async def _search_legacy_page(
     (_fetch_fts_page) дал 0 строк, перед fuzzy (владелец, 28.10.2026,
     ревью «этап 0»)."""
     total, total_capped = await count_products(db, filters, freshness_ctx)
-    if total > RANK_FULL_THRESHOLD and offset + limit <= HYBRID_OFFSET_LIMIT_CAP:
+    # Явный sort — НЕ в гибридный путь (тот строит порядок startswith/name
+    # вручную в Python, явную колонку не умеет) — всегда build_product_
+    # search_query, которая сама применит _explicit_sort_terms (задание,
+    # п.A: «гибридный путь при явной сортировке не использовать»).
+    if (
+        _explicit_sort_terms(filters) is None
+        and total > RANK_FULL_THRESHOLD
+        and offset + limit <= HYBRID_OFFSET_LIMIT_CAP
+    ):
         items = await _fetch_hybrid_page(db, filters, freshness_ctx, limit=limit, offset=offset)
     else:
         q = build_product_search_query(filters=filters, freshness_ctx=freshness_ctx)

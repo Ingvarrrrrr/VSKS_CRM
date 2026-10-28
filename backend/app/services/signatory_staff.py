@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import hash_password
+from app.models.organization import Organization
 from app.models.user import User
 from app.models.user_organization import UserOrganization
 from app.services.fio import compose_fio
@@ -93,3 +94,47 @@ async def get_or_create_signatory_staff_user(
     db.add(UserOrganization(user_id=user.id, org_id=org_id, position=position))
     await db.flush()
     return user
+
+
+async def ensure_signatory_staff_for_org(db: AsyncSession, org: Organization) -> Optional[User]:
+    """Автоматическая версия POST /api/organizations/{id}/signatory-to-staff
+    (кнопка владельца, routers/organizations.py::materialize_signatory_as_staff) —
+    тот же единственный источник подписанта (org_requisites → Contractor.signatory_*,
+    ПРАВИЛО №6) и тот же find-or-create (get_or_create_signatory_staff_user выше,
+    идемпотентно по точному ФИО, без fuzzy — feedback_dedup_exact_only).
+
+    Жалоба владельца (28.10.2026, субсидия «ЗО_актуальная»/орг «ЗРО ВСКС»,
+    id=69): руководитель из ЕГРЮЛ (Юрченкова А.Е., «Председатель совета»)
+    не попадал в штат организации — карточку сотрудника заводили только
+    вручную кнопкой, а эта кнопка в CreateOrderView была скрыта, когда у
+    организации уже числился ЛЮБОЙ штат (условие signatoryCandidate), даже
+    если среди него не было именно подписанта. Эта функция вызывается
+    автоматически там, где организация получает/обновляет связь с
+    контрагентом (ЕГРЮЛ) — app/services/org_dedup.py::
+    _materialize_org_from_contractor — и скриптом backfill для уже
+    существующих организаций (backend/scripts/backfill_signatory_staff.py),
+    чтобы не ждать, что кто-то догадается нажать кнопку.
+
+    Ничего не делает (возвращает None), если:
+      • у организации нет contractor_id или подписант не заполнен в карточке
+        контрагента (нет last_name/first_name);
+      • подписант уже числится сотрудником (get_or_create_signatory_staff_user
+        сам находит его по точному ФИО — вызов безопасен повторять).
+
+    Не коммитит — ответственность вызывающего (как и get_or_create_signatory_staff_user).
+    """
+    if org is None or org.id is None:
+        return None
+    from app.models.contractor import Contractor
+    from app.services.org_requisites import org_requisites
+
+    contractor = None
+    if org.contractor_id:
+        contractor = await db.get(Contractor, org.contractor_id)
+    req = org_requisites(org, contractor)
+    last, first, middle = req.get("signatory_last_name"), req.get("signatory_first_name"), req.get("signatory_middle_name")
+    if not (last or first):
+        return None
+    return await get_or_create_signatory_staff_user(
+        db, org.id, last, first, middle, position=req.get("signatory_position"),
+    )

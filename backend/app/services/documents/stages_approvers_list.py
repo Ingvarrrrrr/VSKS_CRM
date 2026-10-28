@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.purchase import Purchase
 from app.services.documents.morphology import _to_gen_fio, _to_gen_phrase
-from app.services.documents.formatting import _fmt_money, _format_initials_safe
+from app.services.documents.formatting import _fmt_money, _format_initials_safe, _fmt_date
 from app.services.responsible_role import is_responsible_role, is_blank_person_name, RESPONSIBLE_PLACEHOLDER
 
 
@@ -67,7 +67,7 @@ def build_approvers_list(selected_approvers, item_feo_paths, feo_path, p: Purcha
         if pa and pa.signature_data and pa.signature_algorithm == "visual":
             signature_img = base64_to_inline(tpl, pa.signature_data)
             if pa.decided_at:
-                decided_date = pa.decided_at.strftime("%d.%m.%Y")
+                decided_date = _fmt_date(pa.decided_at)
 
         approvers_list.append({
             "num": i + 1,

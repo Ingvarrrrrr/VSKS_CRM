@@ -363,7 +363,7 @@ def add_misc_purchase_context(context: dict, p: Purchase, subsidy) -> None:
         _next = p.submission_deadline.date() + _td(days=1)
         while _next.weekday() >= 5:  # 5=сб, 6=вс
             _next += _td(days=1)
-        context["applications_review_date"] = _next.strftime("%d.%m.%Y")
+        context["applications_review_date"] = _fmt_date(_next)
     else:
         context["applications_review_date"] = ""
 

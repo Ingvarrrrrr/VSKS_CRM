@@ -1,5 +1,13 @@
 <template>
-  <div class="tz-rows-section">
+  <div class="tz-rows-section" id="pub-target-tz-duplicates" style="position:relative">
+    <!-- Якорь для стрелки-гида (useGuideArrow.ts::guideArrowTo, target
+         'tz-duplicates') — владелец (28.10.2026): сообщение о нерешённых
+         дублях ТЗ (DocErrorDialog.vue) должно вести сюда стрелкой, а не
+         просто показывать текст (ПРАВИЛО №6 — тот же pub-pointer/pub-glow
+         механизм, что и у остальных целей guideArrowTo, второй не завели). -->
+    <div v-if="pointerTarget === 'tz-duplicates'" class="pub-pointer" style="top:-8px;left:50%;">
+      <span class="mdi mdi-arrow-down-bold" />
+    </div>
     <!-- Баннер нерешённых дублей (закупка) / информационный баннер (заявка) —
          21.09, corrections-21-09.md W3. Текст групп строится из tz.rowsForGroup,
          а не пересчётом дублей на фронте (Правило №6). -->
@@ -9,6 +17,7 @@
       variant="tonal"
       density="comfortable"
       class="mb-3"
+      :class="pointerTarget === 'tz-duplicates' ? 'pub-glow' : ''"
     >
       <div class="d-flex align-center flex-wrap ga-2">
         <span>Повторяющиеся позиции: {{ unresolvedSummaryText }}</span>
@@ -177,6 +186,10 @@ const props = withDefaults(defineProps<{
   // сюда свой showSnack(text, color?: ToastType, opts?), a `color?: string`
   // здесь был бы шире цели (TS2322: contravariance), не принимается.
   showSnack?: (msg: string, color?: 'success' | 'error' | 'info' | 'warning') => void
+  // Владелец (28.10.2026): guideArrowTo пишет сюда 'tz-duplicates', когда
+  // стрелка ведёт к блоку решения дублей — тот же pointerTarget, что уже
+  // прокидывается в PurchaseVatBlock.vue (Правило №6, единый механизм).
+  pointerTarget?: string | null
 }>(), {
   purchaseId: null,
   wishId: null,
@@ -280,7 +293,7 @@ function onReturned() {
   returnDialogShow.value = false
 }
 
-defineExpose({ refresh: tz.refresh, hasUnresolved: tz.hasUnresolved })
+defineExpose({ refresh: tz.refresh, hasUnresolved: tz.hasUnresolved, openDialog })
 </script>
 
 <style scoped>

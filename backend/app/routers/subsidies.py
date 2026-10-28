@@ -285,6 +285,26 @@ async def list_subsidies(
     granted_ids = set((await db.execute(
         select(UserSubsidyAccess.subsidy_id).where(UserSubsidyAccess.user_id == current_user.id)
     )).scalars().all())
+    # Баг с прода (заявка, 28.10.2026): закупка/заявка создана на субсидии «ЗО_актуальная»
+    # (id=111, org_id=69) пользователем, который не состоит в орг 69 (ни membership,
+    # ни manager, ни грант) — но ВИДИТ закупку этой субсидии (назначен исполнителем/
+    # согласующим). wish_org.py::resolve_wish_org_id → auth/object_visibility.py::
+    # ensure_subsidy_visible уже считает такую субсидию видимой пользователю через
+    # тот же фолбэк «есть видимая закупка этой субсидии» (build_visibility_clause,
+    # doc_type='purchase') — заявку можно сохранить с subsidy_id=111. Но ЭТОТ пикер
+    # (scope=wishes/strict выше) не знал о фолбэке — второй, более узкий источник
+    # «видна ли субсидия» (ПРАВИЛО №6): субсидия пропадала из выпадающего списка,
+    # хотя уже стояла в заявке (фронт показывал raw id «111» вместо имени —
+    # Vuetify v-select без совпадающего item). Переиспользуем ТОТ ЖЕ фолбэк, что и
+    # ensure_subsidy_visible, вместо второго механизма.
+    if scope in ("wishes", "strict") and current_user.role not in ('superadmin', 'account_owner'):
+        from app.auth.visibility import build_visibility_clause
+        purchase_clause = await build_visibility_clause(current_user, db, "purchase")
+        if purchase_clause is not None:
+            visible_purchase_subsidy_ids = (await db.execute(
+                select(Purchase.subsidy_id).where(purchase_clause, Purchase.subsidy_id.isnot(None)).distinct()
+            )).scalars().all()
+            granted_ids |= {int(sid) for sid in visible_purchase_subsidy_ids if sid}
     # Пикер (orders/wishes): пермиссивный member-union scope + кросс-орг гранты.
     # Управление ВИДИМОСТЬЮ субсидий (страница «Субсидии») — отдельно, в dashboard
     # charts через get_visible_subsidy_ids. Здесь НЕ сужаем до грантов, иначе ломается

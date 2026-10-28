@@ -107,17 +107,25 @@ async def _attach_documents_to_notice(
     purchase_id_str: str,
     purchase_db_id: int,
     auth: str,
+    no_nmcd: bool = False,
 ):
     """Рендерит 5 документов и прикрепляет каждый к извещению Фабрикант.
 
     Частичный сбой прикрепления НЕ меняет статус публикации — только
     записывает детали в attachments_result.
+
+    `no_nmcd` (владелец, 28.10.2026, TASKS.md «без НМЦД» → «Не определена»):
+    приходит из payload["no_nmcd"] того же запроса публикации (см.
+    _call_fabrikant ниже) — чтобы приложенные документы не показывали
+    настоящую НМЦД, когда она явно не отправлена на площадку.
     """
     # Импорт внутри функции чтобы избежать циклического импорта
     from app.routers.documents import render_fabrikant_package_files
 
     async with async_session() as db:
-        rendered, render_errors = await render_fabrikant_package_files(db, purchase_db_id)
+        rendered, render_errors = await render_fabrikant_package_files(
+            db, purchase_db_id, no_nmcd=no_nmcd,
+        )
 
     results = []
 
@@ -285,6 +293,7 @@ async def _poll_fabrikant_result(
                         purchase_id_str=purchase_id_str or request_id,
                         purchase_db_id=purchase_db_id,
                         auth=auth,
+                        no_nmcd=bool(payload.get("no_nmcd")),
                     )
                 except Exception as _ae:
                     logger.error("Fabrikant attach_documents failed pub=%d: %s", pub_id, _ae)

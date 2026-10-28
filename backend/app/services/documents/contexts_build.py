@@ -235,7 +235,7 @@ async def build_base_context_part2(
         # Дата окончания срока действия договора (п. 8.1) — поле Purchase.contract_end_date
         "contract_end_date":       _fmt_date(p.contract_end_date),
         # Phase 19: submission deadline (дата+время завершения приёма заявок)
-        "submission_deadline_date":     p.submission_deadline.date().isoformat() if p.submission_deadline else "",
+        "submission_deadline_date":     _fmt_date(p.submission_deadline.date()) if p.submission_deadline else "",
         "submission_deadline_time":     p.submission_deadline.strftime("%H:%M") if p.submission_deadline else "",
         "submission_deadline_datetime": p.submission_deadline.strftime("%d.%m.%Y %H:%M") if p.submission_deadline else "",
         # Phase 19: delivery location

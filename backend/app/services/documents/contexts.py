@@ -220,12 +220,6 @@ def _build_acceptance_doc_context(p, doc_type: str, doc_indices_csv: str | None)
 
             if selected:
                 def _fmt_doc_date(raw_date) -> str:
-                    if isinstance(raw_date, str) and raw_date:
-                        try:
-                            from datetime import date as _date
-                            return _date.fromisoformat(raw_date).strftime("%d.%m.%Y")
-                        except ValueError:
-                            return raw_date
                     return _fmt_date(raw_date)
 
                 total_amount = sum(float(d.get("amount") or 0) for d in selected)
@@ -610,6 +604,20 @@ def _require_tz_duplicates_resolved_for_doc(p) -> None:
             "code": "TZ_DUPLICATES_UNRESOLVED",
             "message": f"Решите, что делать с повторяющимися позициями: {names}",
             "duplicate_keys": [g["key"] for g in unresolved],
+            # Владелец (28.10.2026): фронту нужна не только сводка по группам,
+            # но и id конкретных строк-дублей — чтобы стрелка-указатель
+            # (DocErrorDialog.vue → reveal-field → guideArrowTo) могла довести
+            # до блока решения дублей в ТЗ закупки (TzRowsSection.vue), а не
+            # просто показать текст. group["items"] — PurchaseItem ORM-объекты
+            # (см. find_duplicate_groups выше), берём id.
+            "duplicate_groups": [
+                {
+                    "key": g["key"],
+                    "name": g["name"],
+                    "item_ids": [it.id for it in g["items"] if getattr(it, "id", None) is not None],
+                }
+                for g in unresolved
+            ],
         },
     )
 
@@ -703,8 +711,8 @@ def _format_service_term(p) -> str:
     mode = getattr(p, "service_term_mode", None)
     if mode == "range" and p.service_start_date and p.service_end_date:
         return (
-            f"с {p.service_start_date.strftime('%d.%m.%Y')} "
-            f"по {p.service_end_date.strftime('%d.%m.%Y')}"
+            f"с {_fmt_date(p.service_start_date)} "
+            f"по {_fmt_date(p.service_end_date)}"
         )
     if mode == "duration" and getattr(p, "service_term_days", None):
         type_name = {
@@ -713,5 +721,5 @@ def _format_service_term(p) -> str:
         }.get(getattr(p, "service_term_type", None) or "calendar", "календарных")
         return f"в течение {p.service_term_days} {type_name} дней после заключения договора"
     if mode == "deadline" and getattr(p, "service_deadline_date", None):
-        return f"до {p.service_deadline_date.strftime('%d.%m.%Y')} включительно"
+        return f"до {_fmt_date(p.service_deadline_date)} включительно"
     return ""

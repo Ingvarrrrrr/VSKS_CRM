@@ -18,6 +18,14 @@ SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates"
 # параграф на настоящую docx-таблицу с PNG чеков в каждой ячейке.
 RECEIPTS_TABLE_MARKER = "[[RECEIPTS_TABLE_2COL]]"
 
+# Владелец (28.10.2026, TASKS.md «без НМЦД» → «Не определена»): когда
+# публикация на Фабрикант идёт с выбором «Опубликовать без НМЦД»
+# (PublishRequest.no_nmcd), во ВСЕХ переменных НМЦД пакета документов
+# (total_nmcd/total_nmck/nmck — три алиаса одного значения, ПРАВИЛО №6)
+# должна стоять ровно эта строка, а не 0/"0,00"/пустая строка. Единственная
+# константа — см. app.services.documents.fabrikant_package.render_fabrikant_package_files.
+NMCD_UNDETERMINED_TEXT = "Не определена"
+
 
 DOC_TYPES = {
     "service_note_delivery": ("service_note_delivery.docx", "Служебная_записка_выдача"),

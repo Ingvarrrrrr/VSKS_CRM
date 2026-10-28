@@ -58,6 +58,16 @@ async def _materialize_org_from_contractor(db: AsyncSession, contractor, account
         await db.flush()
     elif org.contractor_id is None:
         org.contractor_id = contractor.id
+    # Жалоба владельца (28.10.2026): организация-грантополучатель (эта функция)
+    # зеркалит ЕГРЮЛ-данные контрагента, но без штата — выбрать подписанта
+    # (руководителя из ЕГРЮЛ, Contractor.signatory_*) исполнителем/подписантом
+    # закупки/заявки было некем, карточки сотрудника для него не было. Тот же
+    # единственный механизм, что у кнопки «Добавить подписанта сотрудником»
+    # (app/services/signatory_staff.py::get_or_create_signatory_staff_user) —
+    # здесь только автовызов при материализации/обновлении связи орг-контрагент,
+    # второй механизм не заводим. Идемпотентно — повторный вызов не дублирует.
+    from app.services.signatory_staff import ensure_signatory_staff_for_org
+    await ensure_signatory_staff_for_org(db, org)
     await db.commit()
     return org
 

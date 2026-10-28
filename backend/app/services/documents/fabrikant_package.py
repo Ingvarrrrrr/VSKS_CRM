@@ -20,6 +20,7 @@ from .doc_types import (
     CONTRACT_FAMILY_DOC_TYPES,
     FABRIKANT_PKG_FILE_NAMES,
 )
+from .nmcd_undetermined import apply_no_nmcd_override
 from .contract_terms import warranty_period_text as _warranty_period_text
 from .contexts import (
     _build_contract_items_context, _format_service_term,
@@ -99,6 +100,7 @@ async def render_fabrikant_package_files(
     db: AsyncSession,
     purchase_id: int,
     current_user=None,
+    no_nmcd: bool = False,
 ) -> tuple[list[tuple[str, str, bytes]], list[str]]:
     """Render 5 Fabrikant documents for *purchase_id*.
 
@@ -108,6 +110,18 @@ async def render_fabrikant_package_files(
     что в contexts_extra.py::add_phase28_context). `None` — сохранённая
     обратная совместимость для прочих/тестовых вызовов без HTTP-контекста;
     тогда ПДн не блокируются (как было раньше).
+
+    `no_nmcd` (владелец, 28.10.2026, TASKS.md «без НМЦД» → «Не определена»):
+    пришедший из payload["no_nmcd"] выбор «Опубликовать без НМЦД»
+    (PublishRequest.no_nmcd, см. app/routers/publications.py) — при публикации
+    SOAP-пакет Фабриканту уже не шлёт элемент НМЦД вовсе
+    (publications_fabrikant_soap.py::_initial_sum_xml), но приложенные к той
+    же публикации docx-документы (в т.ч. «Документация.docx») раньше печатали
+    настоящую НМЦД независимо от этого выбора — несогласованно с тем, что
+    уходит на площадку. Единственное место переопределения — ниже, сразу
+    после расчёта total_nmcd/total_nmck/nmck (ПРАВИЛО №6: не заводить вторую
+    проверку флага, значение переопределяется один раз, во всех трёх алиасах
+    сразу).
 
     Returns:
         rendered: list of (ascii_file_name, ru_title, bytes)
@@ -365,7 +379,7 @@ async def render_fabrikant_package_files(
         _next = p.submission_deadline.date() + _tds(days=1)
         while _next.weekday() >= 5:
             _next += _tds(days=1)
-        _app_review_date = _next.strftime("%d.%m.%Y")
+        _app_review_date = _fmt_date(_next)
     else:
         _app_review_date = ""
 
@@ -467,7 +481,7 @@ async def render_fabrikant_package_files(
         "today": _fmt_date(date.today()),
         "today_iso": date.today().isoformat(),
         "service_name": p.subject or "",
-        "submission_deadline_date": p.submission_deadline.date().isoformat() if p.submission_deadline else "",
+        "submission_deadline_date": _fmt_date(p.submission_deadline.date()) if p.submission_deadline else "",
         "submission_deadline_time": p.submission_deadline.strftime("%H:%M") if p.submission_deadline else "",
         "submission_deadline_datetime": p.submission_deadline.strftime("%d.%m.%Y %H:%M") if p.submission_deadline else "",
         "subsidy_agreement_text": (subsidy.agreement_text if (subsidy and subsidy.agreement_text) else ""),
@@ -607,6 +621,15 @@ async def render_fabrikant_package_files(
     context["contractor_bank_details"] = (c.bank_name or "") if c else ""
     # Единый расчёт (ПРАВИЛО №6), см. contexts_extra.contractor_org_type_for_docs.
     context["contractor_org_type"] = contractor_org_type_for_docs(c)
+
+    # Владелец (28.10.2026, TASKS.md «без НМЦД» → «Не определена»): выбор
+    # «Опубликовать без НМЦД» (payload["no_nmcd"], app/routers/publications.py)
+    # уже не шлёт НМЦД в SOAP Фабриканту (_initial_sum_xml пропускает элемент),
+    # но приложенные к той же публикации docx-документы («Документация.docx»
+    # и др.) до этой правки продолжали печатать настоящую НМЦД — несогласованно
+    # с тем, что уходит на площадку. Вынесено в отдельную чистую функцию ради
+    # юнит-теста без БД (см. test_doc_dates.py / test_nmcd_undetermined.py).
+    apply_no_nmcd_override(context, no_nmcd)
 
     # ── Which templates to render ─────────────────────────────────────────────
     # tech_spec_request with fallback to contract_tz — резолюция ЧЕРЕЗ единый

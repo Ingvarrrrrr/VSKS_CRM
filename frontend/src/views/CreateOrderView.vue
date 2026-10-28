@@ -962,6 +962,7 @@
             :resolve-local-item="resolveTzLocalItem"
             :active-description="activeDescription"
             :show-snack="showSnack"
+            :pointer-target="pointerTarget"
             @unresolved-changed="tzHasUnresolved = $event"
           >
             <template #row-extra="{ row }">
@@ -3196,19 +3197,25 @@ async function loadStaffUsers() {
   } catch { staffUsersList.value = [] }
 }
 
-// Правило владельца (28.10.2026): если в организации субсидии ещё нет ни
-// одного сотрудника (staffUsersList пуст), но в её карточке (из ЕГРЮЛ) есть
-// подписант — предлагаем завести его сотрудником без входа в систему (см.
-// backend/app/services/signatory_staff.py), чтобы его можно было выбрать
-// ответственным исполнителем. Источник данных — уже загруженный
-// customerPreview (та же org, без второго запроса, ПРАВИЛО №6).
+// Правило владельца (28.10.2026, уточнено после жалобы на субсидии
+// «ЗО_актуальная»/орг «ЗРО ВСКС»): показывать баннер «завести подписанта
+// сотрудником», если подписанта из ЕГРЮЛ ЕЩЁ НЕТ среди штата — а не только
+// когда штат пуст целиком. У org 69 уже был штат (Копылова, Титов), но среди
+// него не было руководителя из ЕГРЮЛ (Юрченкова А.Е., «Председатель
+// совета») — баннер молчал, и выбрать её было нельзя ни исполнителем, ни
+// подписантом. Сравнение по точному ФИО (без fuzzy — feedback_dedup_exact_only),
+// та же идемпотентность, что у backend/app/services/signatory_staff.py::
+// get_or_create_signatory_staff_user (повторный вызов найдёт уже созданного).
+// Источник данных — уже загруженный customerPreview (та же org, без второго
+// запроса, ПРАВИЛО №6).
 const signatoryCandidate = computed(() => {
-  if (staffUsersList.value.length > 0) return null
   const org = customerPreview.value
   if (!org || !currentSubsidyOrgId.value) return null
   const name = [org.signatory_last_name, org.signatory_first_name, org.signatory_middle_name]
     .filter(Boolean).join(' ')
   if (!name) return null
+  const alreadyStaff = staffUsersList.value.some(u => u.full_name === name)
+  if (alreadyStaff) return null
   return { name, position: org.signatory_position || '' }
 })
 const addingSignatoryAsAssigned = ref(false)
@@ -3442,6 +3449,7 @@ const GUIDE_ARROW_TARGET_LABELS: Record<string, string> = {
   okpd2: '«Код ОКПД2» в диалоге публикации на Фабрикант',
   'auction-date': '«Дата начала редукциона» в диалоге публикации на Фабрикант',
   'auction-bet': '«Границы ставки редукциона» в диалоге публикации на Фабрикант',
+  'tz-duplicates': 'блок повторяющихся позиций в разделе «Техническое задание»',
 }
 const {
   guideArrowVisible, guideArrowPos, guideArrowAngle, guideArrowArrived, guideTrail,
@@ -3451,7 +3459,7 @@ const {
   (target) => {
     publishDialog.value = false
     pendingPlatform.value = null
-    if (target === 'items' || target.startsWith('item:')) {
+    if (target === 'items' || target === 'tz-duplicates' || target.startsWith('item:')) {
       tzCollapsed.value = false
     }
   },
@@ -3504,6 +3512,10 @@ const GUIDE_TARGET_RESOLVED: Record<string, () => boolean> = {
     if (form.vat_applicable === null) return true
     return form.vat_applicable ? form.vat_rate != null : !!form.vat_exemption_article?.trim()
   },
+  // Владелец (28.10.2026): указатель на блок дублей ТЗ гаснет, как только
+  // tzHasUnresolved (единственный источник — TzRowsSection.vue через
+  // @unresolved-changed, Правило №6) сообщит, что решения приняты.
+  'tz-duplicates': () => !tzHasUnresolved.value,
 }
 const activeGuidePointerTarget = computed<string | null>(() => {
   if (okpd2Pointer.value) return 'okpd2'

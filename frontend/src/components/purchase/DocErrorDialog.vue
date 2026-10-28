@@ -1,10 +1,22 @@
 <template>
-  <!-- Phase 23.2: диалог ошибки генерации документа -->
+  <!-- Phase 23.2: диалог ошибки генерации документа.
+       Владелец (28.10.2026, карточка закупки): TZ_DUPLICATES_UNRESOLVED (и
+       прочие коды из ACTION_REQUIRED_DOC_CODES — «нужно решить», не баг)
+       рисовались как красная «Ошибка генерации документа» со «Скопировать
+       ошибку» — хотя это обычное сообщение, которое ждёт решения человека.
+       Для этого класса кодов — та же оболочка диалога, но нейтральный
+       (не error) заголовок/иконка и без кнопки «Скопировать ошибку» (ей
+       нечего копировать — это не баг, трассировки/correlation_id нет смысла
+       показывать). ПРАВИЛО №6: список кодов — один, в
+       utils/actionRequiredDocCodes.ts, переиспользуется отсюда. -->
   <v-dialog v-model="open" max-width="640">
     <v-card>
-      <v-card-title class="d-flex align-center pa-4 bg-error-lighten-5">
-        <v-icon icon="mdi-alert-circle" color="error" class="mr-2" />
-        <span class="text-error">Ошибка генерации документа</span>
+      <v-card-title class="d-flex align-center pa-4" :class="isActionRequired ? 'bg-amber-lighten-5' : 'bg-error-lighten-5'">
+        <v-icon :icon="isActionRequired ? 'mdi-clipboard-text-clock-outline' : 'mdi-alert-circle'"
+          :color="isActionRequired ? 'warning' : 'error'" class="mr-2" />
+        <span :class="isActionRequired ? 'text-warning-darken-2' : 'text-error'">
+          {{ isActionRequired ? 'Нужно решить перед формированием документа' : 'Ошибка генерации документа' }}
+        </span>
         <v-spacer />
         <v-btn icon="mdi-close" variant="text" size="small" @click="open = false" />
       </v-card-title>
@@ -14,7 +26,10 @@
           <v-icon size="14" class="mr-1">mdi-file-document-outline</v-icon>
           {{ info.template_source }}: <code>{{ info.template }}</code>
         </div>
-        <div class="text-caption text-medium-emphasis mb-3">
+        <!-- Код/correlation_id — техническая деталь для баг-репорта, у
+             «решите сами» сообщений нет смысла её показывать (см. комментарий
+             выше). -->
+        <div v-if="!isActionRequired" class="text-caption text-medium-emphasis mb-3">
           <span v-if="info.code">Код: <code>{{ info.code }}</code></span>
           <span v-if="info.code && info.correlation_id"> · </span>
           <span v-if="info.correlation_id">ID: <code>{{ info.correlation_id }}</code></span>
@@ -22,6 +37,28 @@
         <v-alert v-if="info.hint" type="info" variant="tonal" density="compact" class="mb-3">
           <div class="text-body-2" style="white-space: pre-line">{{ info.hint }}</div>
         </v-alert>
+        <!-- Владелец (28.10.2026): «от сообщения о дублях не идёт стрелочка
+             туда, где это надо разместить» — info.duplicate_groups (см.
+             backend/app/services/documents/contexts.py::
+             _require_tz_duplicates_resolved_for_doc) приходит при
+             TZ_DUPLICATES_UNRESOLVED; одна общая кнопка «Показать», а не по
+             кнопке на группу — решение принимается ОДНИМ диалогом
+             (DuplicateMergeDialog через TzRowsSection.vue), а не по месту
+             каждой строки. target 'tz-duplicates' — тот же guideArrowTo,
+             что и у других целей (pub-target-tz-duplicates в
+             TzRowsSection.vue), второй механизм стрелки не заводим. -->
+        <v-list v-if="info.duplicate_groups?.length" density="compact" class="mb-3 bg-transparent">
+          <v-list-item v-for="g in info.duplicate_groups" :key="g.key"
+            class="px-2" style="border:1px solid rgba(0,0,0,0.08);border-radius:6px" :class="{ 'mb-1': true }">
+            <v-list-item-title class="text-body-2">«{{ g.name }}»</v-list-item-title>
+            <template #append>
+              <v-btn size="small" variant="tonal" color="warning" prepend-icon="mdi-arrow-down-bold"
+                @click="open = false; $emit('reveal-field', 'tz-duplicates')">
+                Показать
+              </v-btn>
+            </template>
+          </v-list-item>
+        </v-list>
         <!-- Владелец (30.09, ФАДМ_2026): «ставки указаны с чеков, что меня
              просят заполнить? нет стрелочки» — общая кнопка «Показать блок
              НДС» уводила к шапке, а не к конкретной строке. Когда бэкенд
@@ -44,7 +81,7 @@
             </template>
           </v-list-item>
         </v-list>
-        <v-expansion-panels v-if="info.error_raw || info.error_class" variant="accordion" :model-value="[]" class="mt-2">
+        <v-expansion-panels v-if="!isActionRequired && (info.error_raw || info.error_class)" variant="accordion" :model-value="[]" class="mt-2">
           <v-expansion-panel>
             <v-expansion-panel-title class="text-caption">
               Технические детали ({{ info.error_class }})
@@ -56,7 +93,10 @@
         </v-expansion-panels>
       </v-card-text>
       <v-card-actions class="pa-4 flex-wrap">
-        <v-btn variant="tonal" color="primary" prepend-icon="mdi-content-copy"
+        <!-- «Скопировать ошибку» — нечего копировать для «решите сами»:
+             это не баг, трассировки нет, а скопированный текст сбивал бы с
+             толку (владелец, 28.10.2026). -->
+        <v-btn v-if="!isActionRequired" variant="tonal" color="primary" prepend-icon="mdi-content-copy"
           @click="copyDocError">
           Скопировать ошибку
         </v-btn>
@@ -94,7 +134,9 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { isActionRequiredDocCode } from '@/utils/actionRequiredDocCodes'
 
 const open = defineModel<boolean>({ default: false })
 
@@ -105,6 +147,11 @@ const props = defineProps<{
 }>()
 
 defineEmits<{ (e: 'reveal-field', target: string): void }>()
+
+// Владелец (28.10.2026): «это не ошибка, а просто сообщение» — коды из
+// ACTION_REQUIRED_DOC_CODES (ПРАВИЛО №6, единый список) рисуются
+// нейтральным/жёлтым заголовком без «Скопировать ошибку», см. шаблон выше.
+const isActionRequired = computed(() => isActionRequiredDocCode(props.info?.code))
 
 const toast = useToast()
 function showSnack(text: string, color: ToastType = 'success', opts?: { duration?: number }) {

@@ -79,8 +79,14 @@ def test_quantity_with_space_normalizes_and_type_required():
 
 def test_quantity_fused_without_space_normalizes_with_space():
     parsed = parse_query("масло 4л")
-    assert parsed.required == ["4 л"]
-    assert parsed.optional == ["масло"]
+    # "масло" — вид товара (владелец, 28.10.2026, доработка «порядок
+    # ослабления» по QA на проде: без слова в PRODUCT_TYPE_WORDS при
+    # ослаблении бренда не оставалось текстового якоря, кроме самого
+    # бренда — см. docstring продукта в product_name_signature_props.py) —
+    # теперь required, не optional.
+    assert parsed.product_type == "масло"
+    assert parsed.required == ["масло", "4 л"]
+    assert parsed.optional == []
     assert parsed.specific is True
 
 
@@ -90,9 +96,10 @@ def test_model_viscosity_token_normalizes():
     parsed = parse_query("масло лукойл 5w40 4л")
     assert "5W-40" in parsed.required
     assert "4 л" in parsed.required
-    # "масло" и "лукойл" — ни вид товара (нет в словаре), ни бренд (словарь
-    # брендов не передан) — остаются optional, не required.
-    assert set(parsed.optional) == {"масло", "лукойл"}
+    # "масло" — вид товара (required, см. тест выше); "лукойл" — не бренд
+    # (словарь брендов не передан в этом тесте) — остаётся optional.
+    assert "масло" in parsed.required
+    assert set(parsed.optional) == {"лукойл"}
     assert parsed.specific is True
 
 

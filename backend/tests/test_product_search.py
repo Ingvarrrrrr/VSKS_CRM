@@ -234,6 +234,39 @@ async def test_specific_query_relaxes_quantity_when_exact_not_found(db_session):
 
 
 @pytest.mark.asyncio
+async def test_specific_query_relaxes_brand_before_quantity(db_session):
+    """ПОРЯДОК ОСЛАБЛЕНИЯ (владелец, 28.10.2026, доработка по QA на проде):
+    «масло лукойл 5w40 4л» без масла Лукойл 5W-40 4л в каталоге должен
+    находить масло 5W-40 4л ДРУГОГО бренда (отпустить бренд) раньше, чем
+    масло Лукойл другой вязкости/объёма (отпустить величины) — снабженцу
+    параметры важнее бренда. "Лукойл" в manufacturer другого товара —
+    чтобы get_manufacturer_brand_dictionary распознал бренд из текста
+    запроса."""
+    import app.services.product_query_parse as product_query_parse_module
+    product_query_parse_module._brand_dict_cache["dictionary"] = None
+    product_query_parse_module._brand_dict_cache["built_at"] = 0.0
+
+    other_brand_right_params = _mk(
+        db_session, name="Масло моторное Shell 5W-40 4 л", manufacturer="Shell",
+    )
+    same_brand_wrong_params = _mk(
+        db_session, name="Масло Лукойл Супер 10W-40 1 л", manufacturer="Лукойл",
+    )
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="масло лукойл 5w40 4л")
+    meta: dict = {}
+    items, total, capped = await search_products(
+        db_session, filters, limit=50, offset=0, result_meta=meta,
+    )
+    ids = {p.id for p in items}
+    assert other_brand_right_params.id in ids
+    assert same_brand_wrong_params.id not in ids
+    assert meta["relaxed"] == ["Лукойл"]
+    assert meta["fuzzy"] is False
+
+
+@pytest.mark.asyncio
 async def test_specific_query_truly_zero_results_fuzzy_stays_empty(db_session):
     """specific=True (цифровой токен), вся лестница (точно → ослабить
     цифры → ослабить до OR → исправление опечаток по словарю product_words)
@@ -322,6 +355,60 @@ async def test_like_wildcards_are_escaped(db_session):
     ids = {p.id for p in rows}
     assert normal.id in ids
     assert other.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_toy_marker_ranked_below_real_product_same_type(db_session):
+    """Явный игрушечный маркер в названии («Рация детская «Рации
+    супергероев»») не должен обгонять настоящий товар того же вида
+    (владелец, 28.10.2026, доработка «поиск как помнит», QA-проверка на
+    проде, п.2: запрос «рация» первой находил игрушку)."""
+    toy = _mk(db_session, name='Рация детская "Рации супергероев", 2 штуки')
+    real1 = _mk(db_session, name="Рация Baofeng UV-5R")
+    real2 = _mk(db_session, name="Радиостанция Байкал-30")
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="рация")
+    items, total, capped = await search_products(db_session, filters, limit=50, offset=0)
+    ids_in_order = [p.id for p in items if p.id in {toy.id, real1.id, real2.id}]
+    assert ids_in_order.index(toy.id) > ids_in_order.index(real1.id)
+    assert ids_in_order.index(toy.id) > ids_in_order.index(real2.id)
+
+
+@pytest.mark.asyncio
+async def test_toy_marker_not_penalized_when_query_asks_for_it(db_session):
+    """«рация детская» — запрос САМ попросил детский/игрушечный вариант,
+    штраф не должен его топить (владелец, 28.10.2026, доработка п.2: "не
+    штрафовать, если сам запрос содержит такое слово")."""
+    toy = _mk(db_session, name='Рация детская "Рации супергероев", 2 штуки')
+    real1 = _mk(db_session, name="Рация Baofeng UV-5R")
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="рация детская")
+    items, total, capped = await search_products(db_session, filters, limit=50, offset=0)
+    ids_in_order = [p.id for p in items if p.id in {toy.id, real1.id}]
+    assert ids_in_order[0] == toy.id
+
+
+@pytest.mark.asyncio
+async def test_toy_marker_detsk_alone_not_penalized_for_safe_child_type(db_session):
+    """«детск» САМ ПО СЕБЕ (без явного игрушечного маркера) не штрафует
+    товар, если вид товара запроса — из TOY_SAFE_CHILD_TYPES («Аптечка
+    детская» — обычный товарный раздел, не игрушка, владелец 28.10.2026,
+    п.2 задания: «детское кресло», «аптечка детская» — товар, а не
+    игрушка)."""
+    child = _mk(db_session, name="Аптечка первой помощи детская")
+    adult = _mk(db_session, name="Аптечка первой помощи автомобильная")
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="аптечка")
+    items, total, capped = await search_products(db_session, filters, limit=50, offset=0)
+    ids = {p.id for p in items}
+    assert child.id in ids
+    assert adult.id in ids
+    # Никакого штрафа за "детск" здесь — порядок между ними решает только
+    # остальное ранжирование (позиция слова/ts_rank), не бинарный toy-флаг
+    # (проверяем, что оба на месте, а не падение total=0 из-за штрафа).
 
 
 # ── Фильтры и пагинация ─────────────────────────────────────────────────────

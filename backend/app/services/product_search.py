@@ -54,7 +54,11 @@ from sqlalchemy.orm import defer
 from app.models.product import Product
 from app.services.price_freshness import FreshnessContext
 from app.services.price_freshness_sql import apply_stale_join
-from app.services.product_name_signature_props import ACCESSORY_MARKERS
+from app.services.product_name_signature_props import (
+    ACCESSORY_MARKERS,
+    TOY_MARKERS,
+    TOY_SAFE_CHILD_TYPES,
+)
 from app.services.product_query_parse import (
     ParsedQuery,
     get_manufacturer_brand_dictionary,
@@ -435,10 +439,27 @@ async def _fetch_hybrid_page(
 #   3. ОГНЕТУШИТЕЛЬ: марка ОП-N/ОУ-N/ОВП-N/ОВЭ-N = N кг/л заряда —
 #      _numeric_condition(product_type="огнетушитель") добавляет ОР-условие
 #      по regex марки ТОЧНЫМ (не ослабленным) шагом лестницы.
-#   4. ОСЛАБЛЕНИЕ БЕЗ ТЕКСТА — Шаг 1.6 в search_products: если required
+#   4. ОСЛАБЛЕНИЕ БЕЗ ТЕКСТА — Шаг 3 в search_products: если required
 #      целиком цифровой (бренд/вид не распознаны), optional-слова
-#      поднимаются в required-текст (AND) — "масло лукойл 5w40 4л" находит
-#      хотя бы "масло"/"лукойл" вместо total=0.
+#      поднимаются в required-текст (AND) — "зюзюкремлик 4125" находит
+#      хотя бы соседние слова вместо total=0.
+#
+# ДОРАБОТКА (владелец, 28.10.2026, доп. QA-проверка на проде, 247 174
+# товара, ревью прошлой доработки):
+#   5. ПОРЯДОК ОСЛАБЛЕНИЯ — Шаг 2 в search_products отпускает БРЕНД ПЕРВЫМ
+#      (раньше величин): "масло лукойл 5w40 4л" без масла Лукойл 5W-40 4л
+#      в каталоге раньше сразу ослаблял вязкость+объём и находил ЕДИНСТВЕННЫЙ
+#      товар "Лукойл" другой вязкости (бренд совпал, параметры — нет) —
+#      снабженцу параметры важнее бренда. Теперь: точно → без бренда (вид +
+#      величины) → без величин (вид + бренд, если есть) → опечатки → OR.
+#      _brand_bonus_term — бренд, который всё равно совпал в тексте (хотя
+#      уже не required), ранжируется выше безбрендовых строк.
+#   6. ИГРУШКИ НИЖЕ — _toy_penalty_term: "рацию" не должна находить первой
+#      детскую игрушку-рацию ("Рация детская «Рации супергероев»") —
+#      TOY_MARKERS/TOY_SAFE_CHILD_TYPES в product_name_signature_props.py,
+#      тот же механизм (отдельный член ORDER BY), что и штраф за
+#      ACCESSORY_MARKERS в п.2 выше; не штрафует, если маркер — часть
+#      самого запроса ("рация детская" → детская остаётся выше).
 # ---------------------------------------------------------------------------
 
 _SINGLE_TOKEN_WITH_DIGIT_RE = re.compile(r"^\S*\d\S*$")
@@ -653,6 +674,59 @@ def _type_position_rank_term(product_type: Optional[str], type_literal: Optional
     ).bindparams(type_start_pattern=start_pattern, type_accessory_pattern=accessory_pattern)
 
 
+def _toy_penalty_term(raw_query: str, product_type: Optional[str]):
+    """Штраф за игрушечные/сувенирные маркеры в названии (владелец,
+    28.10.2026, доработка «поиск как помнит», QA-проверка на проде, п.2):
+    «рацию» находила первой «Рация детская «Рации супергероев»» — ТОТ ЖЕ
+    механизм (отдельный член ORDER BY CASE DESC), что и
+    _type_position_rank_term выше, но независимый сигнал: «Рация детская»
+    и «Рация Baofeng» ОБЕ начинаются с «рация» (одинаковый позиционный
+    бонус) — этот штраф разводит их по словам TOY_MARKERS
+    (product_name_signature_props.py, Правило №6 — тот же механизм, второй
+    словарь).
+
+    Маркер НЕ штрафует, если он САМ встречается в запросе пользователя
+    (владелец: «рация детская» → детская товар должен быть выше — запрос
+    явно попросил игрушку/детский вариант).
+
+    «детск» — особый маркер списка: штрафуется ТОЛЬКО если распознанный
+    вид товара запроса НЕ входит в TOY_SAFE_CHILD_TYPES (см. docstring
+    там — «детская аптечка»/«детское кресло» обычный товар, не игрушка;
+    «детская рация» — нетипичное сочетание, сигнал игрушки).
+
+    None — если после фильтрации не осталось ни одного маркера (запрос сам
+    использовал все слова списка, или вид товара в безопасном списке и
+    других маркеров нет) — порядок не меняется, лишний CASE не строим."""
+    query_fold = raw_query.lower()
+    markers = [m for m in TOY_MARKERS if m not in query_fold]
+    if product_type in TOY_SAFE_CHILD_TYPES:
+        markers = [m for m in markers if m != "детск"]
+    if not markers:
+        return None
+    alternation = "|".join(re.escape(m) for m in markers)
+    return text(
+        f"(CASE WHEN coalesce(name,'') ~* '({alternation})' THEN 0 ELSE 1 END) DESC"
+    )
+
+
+def _brand_bonus_term(brand: Optional[str]):
+    """Бонус в ранжировании за совпадение бренда (владелец, 28.10.2026,
+    доработка «порядок ослабления»): Шаг 2 лестницы (см. search_products)
+    отпускает БРЕНД из required первым — товар, который бренд всё равно
+    упоминает, должен ранжироваться выше того, что бренд не упоминает
+    вовсе. Безвреден на остальных шагах лестницы, где бренд ЕЩЁ required
+    (AND-фильтр) — там ВСЕ строки результата дают бонус 1 одинаково,
+    порядок не меняется, лишний проход по данным стоит недорого (один
+    CASE, не JOIN). None — бренд не распознан (нечего бонусировать)."""
+    if not brand:
+        return None
+    pattern = re.escape(brand).replace(r"\ ", r"\s+")
+    return text(
+        "(CASE WHEN coalesce(name,'') ~* :brand_bonus_pattern "
+        "OR coalesce(manufacturer,'') ~* :brand_bonus_pattern THEN 1 ELSE 0 END) DESC"
+    ).bindparams(brand_bonus_pattern=pattern)
+
+
 async def _fetch_fts_page(
     db: AsyncSession,
     filters: ProductSearchFilters,
@@ -724,6 +798,16 @@ async def _fetch_fts_page(
         # важнее бонуса по числу и ts_rank: "Комплект для зарядки порошковых
         # огнетушителей" не должен обгонять сам "Огнетушитель порошковый".
         order_terms.append(type_rank_term)
+    toy_term = _toy_penalty_term(parsed.raw, parsed.product_type)
+    if toy_term is not None:
+        # ВТОРОЙ член — важнее бонуса бренда/числа/ts_rank (владелец,
+        # 28.10.2026, доработка п.2 QA-проверки): «Рация детская» не должна
+        # обгонять «Рация Baofeng» по совпадению слов, только по позиции
+        # вида товара (type_rank_term выше, у обоих одинаковый).
+        order_terms.append(toy_term)
+    brand_bonus_term = _brand_bonus_term(parsed.brand)
+    if brand_bonus_term is not None:
+        order_terms.append(brand_bonus_term)
     if bare_numbers:
         # «похоже» бонус: голое число где-то в тексте (без строгой границы
         # единицы/формата) — считается ПЕРВЫМ (важнее ts_rank), чтобы
@@ -836,22 +920,31 @@ async def search_products(
          величина-токены — СТРОГИЙ пост-фильтр по регулярке (граница числа).
          (1.5 — старый containment-путь как ещё одна «точная» попытка, см.
          комментарий у вызова _search_legacy_page ниже.)
-      2. Если (1)=0 и были цифровые/величина-токены (и есть required-текст,
-         на котором держится фильтр) — те же required, но БЕЗ строгого
-         цифрового фильтра (apply_numeric=False) — только мягкий бонус
-         ранга, если голое число где-то есть. result_meta["relaxed"] —
-         список ослабленных токенов.
-      3. Если (2)=0 (или пропущен) — ИСПРАВЛЕНИЕ ОПЕЧАТОК ПО СЛОВАМ
+      2. Если (1)=0 и был распознан БРЕНД — тот же required, но БЕЗ бренда
+         (вид товара + величины остаются required) — владелец, 28.10.2026,
+         доработка «порядок ослабления» по QA на проде: снабженцу параметры
+         (вязкость/объём) важнее бренда, бренд отпускаем ПЕРВЫМ, не величины
+         (см. докстринг Шага 2 у кода ниже). result_meta["relaxed"] = [бренд].
+      3. Если required был ЧИСТО цифровым (вид товара не распознан) —
+         поднимаем optional-слова в required-текст (той же попыткой, что и
+         «повышение» ниже) — без этого шаг 1/2 искал бы только по числам.
+      4. Если (2-3)=0 и были цифровые/величина-токены (и есть required-
+         текст, на котором держится фильтр) — те же required (БРЕНД, если
+         есть — остаётся), но БЕЗ строгого цифрового фильтра
+         (apply_numeric=False) — только мягкий бонус ранга, если голое
+         число где-то есть. result_meta["relaxed"] — список ослабленных
+         токенов (величины).
+      5. Если (4)=0 (или пропущен) — ИСПРАВЛЕНИЕ ОПЕЧАТОК ПО СЛОВАМ
          (product_words_correction.correct_unknown_words): каждое
          неизвестное слово required заменяется на ближайшее слово словаря
-         каталога (MV product_words, similarity >= 0.5), лестница 1-2
+         каталога (MV product_words, similarity >= 0.5), лестница 1-4
          повторяется с исправленными словами. result_meta["fuzzy"]=True,
-         result_meta["corrected"]={исходное: исправленное}. ПЕРЕД шагом 4
+         result_meta["corrected"]={исходное: исправленное}. ПЕРЕД шагом 6
          (не после) — живая проверка на стенде показала: OR по
          нераспознанным словам раньше находил посторонние товары по
          совпавшему-но-не-опечатанному слову, пока опечатка в ДРУГОМ слове
          не исправлена.
-      4. Если (3)=0 и required был «повышен» из optional (т.е. parse_query
+      6. Если (5)=0 и required был «повышен» из optional (т.е. parse_query
          ничего специфичного не нашёл — полностью нераспознанная фраза) —
          AND ослабляется до OR (_fetch_fts_page_or): товар должен содержать
          ХОТЯ БЫ ОДНО из слов, не все. Самый нестрогий шаг, последний.
@@ -950,15 +1043,45 @@ async def search_products(
     if total > 0:
         return list(items), total, False
 
-    # Шаг 1.6 — НЕТ required-ТЕКСТА вообще (required был ЧИСТО цифровым:
+    # Шаг 2 — отпустить БРЕНД (владелец, 28.10.2026, доработка «порядок
+    # ослабления» по QA-проверке на проде: «масло лукойл 5w40 4л» без
+    # масла Лукойл 5W-40 4л в каталоге раньше ослаблял СРАЗУ вязкость и
+    # объём (бывший Шаг 2, см. ниже), оставляя бренд, и находил ЕДИНСТВЕННЫЙ
+    # товар «Лукойл» другой вязкости — снабженцу параметры важнее бренда.
+    # Теперь сначала отпускаем бренд (вид товара "масло" + величины 5W-40/
+    # 4 л остаются required) — находит масло 5W-40 4л ЛЮБОГО бренда; только
+    # если и так пусто — переходим к ослаблению величин (Шаг 3). Если
+    # текстового якоря без бренда не осталось (вид товара не распознан) —
+    # поднимаем optional-слова в этой ОДНОЙ попытке (тот же приём, что Шаг
+    # 3 ниже, но НЕ сохраняется в text_tokens — при неудаче бренд
+    # возвращается для Шага 3). result_meta["relaxed"] = [бренд] — что
+    # именно отпущено (задание: "В meta relaxed указать, что отпущено").
+    if parsed.brand and parsed.brand in text_tokens:
+        no_brand_text = [t for t in text_tokens if t != parsed.brand]
+        no_brand_optional = optional
+        if not no_brand_text and no_brand_optional:
+            no_brand_text = list(no_brand_optional)
+            no_brand_optional = []
+        if no_brand_text or numeric_tokens:
+            no_brand_parsed = _mk_parsed(no_brand_text, numeric_tokens, no_brand_optional)
+            items, total = await _fetch_fts_page(
+                db, filters, no_brand_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+                apply_numeric=True,
+            )
+            if total > 0:
+                if result_meta is not None:
+                    result_meta["relaxed"] = [parsed.brand]
+                return list(items), total, False
+
+    # Шаг 3 — НЕТ required-ТЕКСТА вообще (required был ЧИСТО цифровым:
     # бренд не распознан, вид товара не распознан — только модель/величина,
-    # "масло лукойл 5w40 4л"→required=["5W-40","4 л"]) — владелец,
-    # 28.10.2026, п.4 задания «поиск как помнит»: без текста шаг 1 искал
-    # ТОЛЬКО по цифрам (без AND по словам), а если формат чисел в каталоге
-    # чуть другой — total=0 и лестница сразу обрывается, не находя даже
-    # "масло"/"лукойл". ПОДНИМАЕМ optional-слова в required-текст (AND) —
-    # то же "повышение", что и в promoted-ветке выше, но здесь required НЕ
-    # пуст (есть цифры), поэтому promoted=False и та ветка не сработала.
+    # "зюзюкремлик 4125") — владелец, 28.10.2026, п.4 задания «поиск как
+    # помнит»: без текста шаг 1 искал ТОЛЬКО по цифрам (без AND по словам),
+    # а если формат чисел в каталоге чуть другой — total=0 и лестница сразу
+    # обрывается, не находя даже соседних слов. ПОДНИМАЕМ optional-слова в
+    # required-текст (AND) — то же "повышение", что и в promoted-ветке
+    # выше, но здесь required НЕ пуст (есть цифры), поэтому promoted=False
+    # и та ветка не сработала.
     numeric_relaxed_here = False
     text_promoted_from_optional = False
     if not text_tokens and optional:
@@ -985,12 +1108,15 @@ async def search_products(
         text_tokens = promoted_text_tokens
         optional = []
 
-    # Шаг 2 — ослабить цифры/величины (владелец, 28.10.2026, доработка).
-    # ТОЛЬКО если есть required-ТЕКСТ, на котором держится фильтр — иначе
-    # (required был чисто цифровым, "зюзюкремлик 4125"→required=["4125"])
-    # снятие единственного условия отдало бы всю таблицу (см. защиту внутри
+    # Шаг 4 — ослабить величины, оставив бренд, ЕСЛИ он есть (владелец,
+    # 28.10.2026, доработка «порядок ослабления» — бывший Шаг 2, теперь
+    # ПОСЛЕ Шага 2 "без бренда": если и без бренда ничего не нашлось,
+    # отпускаем величины, бренд в required остаётся как есть). ТОЛЬКО если
+    # есть required-ТЕКСТ, на котором держится фильтр — иначе (required
+    # был чисто цифровым, "зюзюкремлик 4125"→required=["4125"]) снятие
+    # единственного условия отдало бы всю таблицу (см. защиту внутри
     # _fetch_fts_page, здесь — чтобы не тратить лишний запрос в БД). Если
-    # цифры уже ослаблялись выше (Шаг 1.6, numeric_relaxed_here) — повторно
+    # цифры уже ослаблялись выше (Шаг 3, numeric_relaxed_here) — повторно
     # тот же запрос не шлём.
     if numeric_tokens and text_tokens and not numeric_relaxed_here:
         items, total = await _fetch_fts_page(
@@ -1002,7 +1128,7 @@ async def search_products(
                 result_meta["relaxed"] = list(numeric_tokens)
             return list(items), total, False
 
-    # Шаг 3 — исправление опечаток ПО СЛОВАМ (словарь product_words,
+    # Шаг 5 — исправление опечаток ПО СЛОВАМ (словарь product_words,
     # Правило №6 — единственный механизм опечаток, старый trgm-по-всей-
     # строке убран). ПЕРЕД ослаблением AND→OR (владелец, 28.10.2026,
     # доработка после живой проверки на стенде: «огнитушитель порошковый»
@@ -1039,9 +1165,9 @@ async def search_products(
                 result_meta["relaxed"] = relaxed
             return list(items), total, False
 
-    # Шаг 4 — ослабить AND до OR, но ТОЛЬКО если required был «повышен» из
+    # Шаг 6 — ослабить AND до OR, но ТОЛЬКО если required был «повышен» из
     # optional — либо ВЕСЬ (promoted, нераспознанная фраза), либо ЧАСТИЧНО
-    # (text_promoted_from_optional, Шаг 1.6 — required-текста не было
+    # (text_promoted_from_optional, Шаг 3 — required-текста не было
     # вовсе) — распознанный вид товара/бренд ослаблять до «любое слово из
     # фразы» не нужно (это сломало бы точность для реально специфичных
     # запросов). Последний шаг — самый нестрогий.

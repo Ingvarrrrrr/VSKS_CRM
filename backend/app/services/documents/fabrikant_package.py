@@ -42,7 +42,7 @@ from app.services.item_amounts import vat_included_amount as _vat_included_amoun
 # той же логики приоритета (ниже — tech_spec_request и цикл рендера пакета).
 from .templates import _resolve_vat_exemption_basis, _resolve_doc_template_path, _purchase_method_label
 from .doc_types import _PURCHASE_METHOD_LABELS
-from .morphology import _inflect_phrase_genitive
+from .morphology import _inflect_phrase_genitive, _to_gen_phrase
 from .docx_post import strip_template_legend
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
 from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
@@ -57,7 +57,10 @@ from .contexts_extra import (
     add_contractor_signatory_context,
     add_customer_context,
 )
-from .contexts_org_people import responsible_case_context, add_chief_accountant_context, _to_ablt_org_name
+from .contexts_org_people import (
+    responsible_case_context, resolve_responsible_position,
+    add_chief_accountant_context, _to_ablt_org_name,
+)
 from app.services.contractor_pii import contractor_pii_doc_fields, user_can_view_contractor_pii
 
 import logging
@@ -124,6 +127,10 @@ async def render_fabrikant_package_files(
             selectinload(Purchase.feo_category),
             selectinload(Purchase.contract_items),
             selectinload(Purchase.assigned_user),
+            # Владелец (28.10.2026): fallback «Ответственный исполнитель» = автор
+            # СЗ — тот же приоритет, что в stages_relations.resolve_responsible_person
+            # (generate.py), нужен для resolve_responsible_position ниже.
+            selectinload(Purchase.service_note_author),
         )
         .where(Purchase.id == purchase_id)
     )
@@ -190,7 +197,11 @@ async def render_fabrikant_package_files(
         return f"{surname} {''.join(initials)}".strip()
 
     assigned_full = (getattr(p.assigned_user, "full_name", None) or "") if getattr(p, "assigned_user", None) else ""
-    raw_responsible = assigned_full or p.responsible_person or ""
+    service_note_author_full = (
+        (getattr(p.service_note_author, "full_name", None) or "")
+        if getattr(p, "service_note_author", None) else ""
+    )
+    raw_responsible = assigned_full or p.responsible_person or service_note_author_full or ""
     resolved_responsible = _fmt_initials(raw_responsible) if raw_responsible else ""
 
     # Этот эндпоинт всегда рендерит один и тот же фиксированный набор из 5
@@ -569,9 +580,23 @@ async def render_fabrikant_package_files(
     context["initiator_position_gen"] = ""
     # responsible_name_gen/_dat + инициалы — единственный расчёт (ПРАВИЛО №6),
     # см. contexts_org_people.responsible_case_context (тот же вызывается из
-    # add_genitive_forms в contexts_extra.py на пути generate.py).
-    context.update(responsible_case_context(resolved_responsible))
-    context["responsible_position_gen"] = ""
+    # add_genitive_forms в contexts_extra.py на пути generate.py). Вход —
+    # ПОЛНОЕ ФИО (raw_responsible, до _fmt_initials), не сокращённое
+    # resolved_responsible — см. докстринг responsible_case_context (баг
+    # 28.10.2026, «Титов Р.А.» не склонялось).
+    context.update(responsible_case_context(raw_responsible))
+    # Должность ответственного — единственный расчёт resolve_responsible_position
+    # (ПРАВИЛО №6), тот же вызывается из add_genitive_forms (generate.py).
+    # Этот пакет не принимает ?responsible_name= явно (нет такого параметра у
+    # render_fabrikant_package_files) — приоритет начинается с assigned_user.
+    _responsible_position = await resolve_responsible_position(
+        db, subsidy.org_id if subsidy else None,
+        assigned_user=getattr(p, "assigned_user", None),
+        responsible_person_name=p.responsible_person,
+        fallback_user=getattr(p, "service_note_author", None),
+    )
+    context["responsible_position"] = _responsible_position
+    context["responsible_position_gen"] = _to_gen_phrase(_responsible_position) if _responsible_position else ""
     context["initiator_dept_gen"] = ""
     context["service_name_gen"] = _inflect_phrase_genitive(p.subject or "")
     context["contractor_signatory_line"] = (

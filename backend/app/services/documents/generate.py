@@ -180,7 +180,10 @@ async def generate_document_bytes(
     # 2026-10-08; app/services/contractor_pii.py, ПРАВИЛО №6).
     _can_view_pii = await user_can_view_contractor_pii(current_user, db)
     add_phase28_context(context, subsidy, c, p, can_view_pii=_can_view_pii)
-    add_genitive_forms(context, p, resolved_responsible)
+    await add_genitive_forms(
+        context, p, resolved_responsible_full, db,
+        getattr(subsidy, "org_id", None), responsible_name,
+    )
     add_customer_context(context, customer_org, customer_ctr)
     # Главный бухгалтер Заказчика — единственный расчёт (ПРАВИЛО №6), см.
     # contexts_org_people.add_chief_accountant_context (тот же вызывается из

@@ -28,7 +28,8 @@ from app.services.documents.contexts import _signatory_split
 from app.services.documents.contract_terms import warranty_period_text
 from app.services.contractor_pii import contractor_pii_doc_fields
 from app.services.documents.contexts_org_people import (
-    responsible_case_context, _to_gen_org_name, _to_dat_org_name, _to_ablt_org_name,
+    responsible_case_context, resolve_responsible_position,
+    _to_gen_org_name, _to_dat_org_name, _to_ablt_org_name,
 )
 from app.services.documents.org_name_case import (
     doc_case_org_name, doc_case_org_name_case, doc_quotes_only, org_name_exceptions,
@@ -120,15 +121,39 @@ def add_phase28_context(context: dict, subsidy, c, p: Purchase, can_view_pii: bo
         logging.getLogger(__name__).warning("Phase 28 context keys failed: %s", _e28)
 
 
-def add_genitive_forms(context: dict, p: Purchase, resolved_responsible: str) -> None:
+async def add_genitive_forms(
+    context: dict,
+    p: Purchase,
+    resolved_responsible_full: str,
+    db,
+    org_id,
+    responsible_name: str | None = None,
+) -> None:
     # Phase 26-V: родительный падеж для инициатора и ответственного
     context["initiator_name_gen"] = _to_gen_fio(context.get("initiator_name", ""))
     context["initiator_position_gen"] = _to_gen_phrase(context.get("initiator_role", ""))
     # responsible_name_gen/_dat + сокращённые инициалы — единственный расчёт
     # (ПРАВИЛО №6), см. contexts_org_people.responsible_case_context — тот же
-    # вызывается из fabrikant_package.py, второй копии не заводим.
-    context.update(responsible_case_context(resolved_responsible))
-    context["responsible_position_gen"] = _to_gen_phrase(p.responsible_position or "" if hasattr(p, "responsible_position") else "")
+    # вызывается из fabrikant_package.py, второй копии не заводим. Вход —
+    # ПОЛНОЕ ФИО (resolved_responsible_full), не уже сокращённое — см.
+    # докстринг responsible_case_context (баг 28.10.2026, «Титов Р.А.» не
+    # склонялось).
+    context.update(responsible_case_context(resolved_responsible_full))
+    # Должность ответственного — тот же единственный расчёт
+    # resolve_responsible_position (ПРАВИЛО №6), p.assigned_user и
+    # p.service_note_author здесь гарантированно eager-loaded
+    # (stages_load.load_purchase_and_relations), Purchase.responsible_position
+    # как поля модели не существует — старое `hasattr(p, "responsible_position")`
+    # было всегда False, должность никогда не считалась.
+    _responsible_position = await resolve_responsible_position(
+        db, org_id,
+        explicit_name=responsible_name,
+        assigned_user=getattr(p, "assigned_user", None),
+        responsible_person_name=p.responsible_person,
+        fallback_user=getattr(p, "service_note_author", None),
+    )
+    context["responsible_position"] = _responsible_position
+    context["responsible_position_gen"] = _to_gen_phrase(_responsible_position) if _responsible_position else ""
 
     # Phase 27.2-10: дедуп тавтологии "отдел Отдела ..." + gent для отдела
     # Если в должности уже есть корень "отдел*" — убираем leading "Отдел*" из имени отдела.

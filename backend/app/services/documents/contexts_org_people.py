@@ -11,9 +11,12 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from typing import Optional
+
 from app.models.user import User
 from app.models.user_organization import UserOrganization
 from app.services.user_position import resolve_user_position, bulk_load_memberships
+from app.services.service_note_initiators import org_staff_user_ids
 from app.services.documents.morphology import (
     _to_case_position, _to_gen_fio, _to_dat_fio, _to_gen_fio_initials, _to_dat_fio_initials,
 )
@@ -70,7 +73,7 @@ def _to_ablt_org_name(name: str) -> str:
     return _to_case_org_name(name, 'ablt')
 
 
-def responsible_case_context(resolved_responsible: str) -> dict:
+def responsible_case_context(resolved_responsible_full: str) -> dict:
     """Падежи/сокращения ФИО «Ответственного исполнителя» — единственный
     расчёт (ПРАВИЛО №6). До этой функции `responsible_name_gen` считался
     дважды: в `add_genitive_forms` (contexts_extra.py, путь generate.py) и
@@ -79,17 +82,100 @@ def responsible_case_context(resolved_responsible: str) -> dict:
     дательном — новые переменные (владелец, 20.10.2026), добавлены сюда же,
     чтобы оба пути их получили одним вызовом.
 
-    `resolved_responsible` — то же значение, что уже кладётся в
-    `responsible_person`/`responsible_name_gen` раньше (полное ФИО либо,
-    для нетипичного ФИО, уже сокращённая форма — `_to_case_fio`
-    возвращает такие строки без изменений, это ожидаемо).
+    Владелец (28.10.2026, баг «Титов Р.А.» не склонялось): вход — ПОЛНОЕ
+    ФИО (`resolved_responsible_full`, то же значение, что кладётся в
+    `responsible_person_full`), а не уже сокращённая «Фамилия И.О.». До
+    этой правки оба вызывающих места передавали сюда уже сокращённую
+    строку (`resolved_responsible`, после `_format_initials`) — `_to_gen_fio`
+    на двух словах («Титов Р.А.») не распознаёт классическое ФИО (нужно 3
+    слова с отчеством) и возвращает строку без изменений, поэтому падежи
+    не появлялись. `_to_gen_fio`/`_to_dat_fio` на полном ФИО — полное ФИО
+    в падеже («Титова Ростислава Алексеевича»); `_to_gen_fio_initials`/
+    `_to_dat_fio_initials` — «Фамилия И.О.» уже в падеже («Титова Р.А.»),
+    это и есть то сокращение, что печатают приказы (см. справочник
+    template_variables.py — описание `responsible_name_gen` говорит «ФИО…
+    в родительном падеже», это полная форма; для сокращённой — отдельная
+    переменная `responsible_initials_gen`, шаблоны должны использовать её,
+    если нужна короткая форма).
+
+    Если полного ФИО нет (пустая строка) — поведение не изменилось: все
+    четыре `_to_*` на пустой/нетиповой строке возвращают её без изменений.
     """
     return {
-        "responsible_name_gen": _to_gen_fio(resolved_responsible),
-        "responsible_name_dat": _to_dat_fio(resolved_responsible),
-        "responsible_initials_gen": _to_gen_fio_initials(resolved_responsible),
-        "responsible_initials_dat": _to_dat_fio_initials(resolved_responsible),
+        "responsible_name_gen": _to_gen_fio(resolved_responsible_full),
+        "responsible_name_dat": _to_dat_fio(resolved_responsible_full),
+        "responsible_initials_gen": _to_gen_fio_initials(resolved_responsible_full),
+        "responsible_initials_dat": _to_dat_fio_initials(resolved_responsible_full),
     }
+
+
+async def _find_staff_user_by_full_name(db: AsyncSession, org_id: Optional[int], full_name: Optional[str]):
+    """Находит пользователя среди «штата» организации `org_id`
+    (app.services.service_note_initiators.org_staff_user_ids — единственная
+    формула штата, ПРАВИЛО №6) по ТОЧНОМУ совпадению `full_name` (без
+    fuzzy-матчинга, см. feedback_dedup_exact_only). Несколько совпадений или
+    ни одного — None (должность в этом случае остаётся пустой, не гадаем)."""
+    name = (full_name or "").strip()
+    if not name or not org_id:
+        return None
+    staff_ids = await org_staff_user_ids(db, org_id)
+    if not staff_ids:
+        return None
+    rows = (
+        await db.execute(select(User).where(User.id.in_(staff_ids), User.full_name == name))
+    ).scalars().all()
+    return rows[0] if len(rows) == 1 else None
+
+
+async def resolve_responsible_position(
+    db: AsyncSession,
+    org_id: Optional[int],
+    *,
+    explicit_name: Optional[str] = None,
+    assigned_user=None,
+    responsible_person_name: Optional[str] = None,
+    fallback_user=None,
+) -> str:
+    """Должность «Ответственного исполнителя» закупки для
+    `{{responsible_position}}`/`{{responsible_position_gen}}` — единственный
+    расчёт (ПРАВИЛО №6), вызывается и из generate.py (путь обычных
+    документов, через `add_genitive_forms`), и из fabrikant_package.py —
+    второй копии не заводим.
+
+    Приоритет определения ПОЛЬЗОВАТЕЛЯ — тот же, что в
+    `stages_relations.resolve_responsible_person` (явно выбранное имя →
+    `p.assigned_user` → `p.responsible_person` → автор служебки), но здесь
+    принимает уже разложенные кандидаты, а не сам объект Purchase — чтобы не
+    трогать `p.service_note_author`/`p.assigned_user` без уверенности, что
+    они eager-loaded (иначе async-лениволадка упадёт).
+
+    Строковые кандидаты (`explicit_name`/`responsible_person_name`) не
+    являются объектом User — ищутся среди штата `org_id` ТОЛЬКО по точному
+    совпадению ФИО (`_find_staff_user_by_full_name`); несколько совпадений
+    или ни одного — должность остаётся пустой.
+
+    Должность самого найденного пользователя берётся ЕДИНСТВЕННЫМ
+    резолвером `app.services.user_position.resolve_user_position` (не
+    `users.position`/`user_organizations.position` напрямую).
+    """
+    if not org_id:
+        return ""
+
+    user = None
+    if explicit_name:
+        user = await _find_staff_user_by_full_name(db, org_id, explicit_name)
+    elif assigned_user is not None:
+        user = assigned_user
+    elif responsible_person_name:
+        user = await _find_staff_user_by_full_name(db, org_id, responsible_person_name)
+    elif fallback_user is not None:
+        user = fallback_user
+
+    if not user:
+        return ""
+
+    memberships = await bulk_load_memberships(db, {user.id})
+    return resolve_user_position(user, org_id=org_id, memberships=memberships.get(user.id)) or ""
 
 
 _CHIEF_ACCOUNTANT_KEYS = (

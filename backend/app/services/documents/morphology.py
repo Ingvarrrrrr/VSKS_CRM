@@ -435,6 +435,23 @@ def _is_patronymic(word: str) -> bool:
     return lower.endswith(('вич', 'вна', 'чна', 'ична'))
 
 
+import re as _re_initials
+
+_INITIALS_TOKEN_RE = _re_initials.compile(r'^[А-ЯA-ZЁ]\.(?:[А-ЯA-ZЁ]\.)?$')
+
+
+def _looks_like_initials_token(word: str) -> bool:
+    """«И.» или «И.О.» — одна/две заглавные буквы с точками, без остального
+    текста ФИО (используется для bare «Фамилия И.О.» ниже)."""
+    return bool(_INITIALS_TOKEN_RE.match(word))
+
+
+# Типичные окончания ЖЕНСКИХ фамилий (androgynous-формы разные в самом
+# именительном падеже — в отличие от имени/отчества, род фамилии обычно
+# можно определить по её окончанию без отдельного патронимика).
+_FEMALE_SURNAME_ENDINGS = ('ова', 'ева', 'ина', 'ына', 'ская', 'цкая', 'ая')
+
+
 def _to_case_fio(full_name: str, case_name: str) -> str:
     """Склонить ФИО в заданный падеж через petrovich.
 
@@ -526,6 +543,17 @@ def _to_case_fio_initials(full_name: str, case_name: str) -> str:
     Неклассическое ФИО или недоступный petrovich — возвращается
     `_fio_to_initials(full_name)` без падежа (лучше неизменённые инициалы,
     чем выдуманное окончание).
+
+    Владелец (28.10.2026, баг «Титов Р.А.» не склонялось в приказе —
+    полного ФИО не было, пришла уже сокращённая строка «Фамилия И.О.»):
+    когда на вход приходит РОВНО «Фамилия И.О.»/«Фамилия И.» (2 слова,
+    второе — инициалы с точками, без отчества — отличить от отчества
+    нельзя, пол неизвестен), склоняем хотя бы фамилию — пол угадываем по
+    типичным окончаниям женских фамилий (-ова/-ева/-ина/-ая и т.п., см.
+    `_FEMALE_SURNAME_ENDINGS`), иначе мужской (большинство русских фамилий
+    разных родов и так различаются в именительном падеже — см. docstring
+    `_to_case_fio` про общий механизм). Инициалы не трогаем — это не ФИО,
+    а уже сокращение.
     """
     if not full_name or not full_name.strip():
         return full_name
@@ -537,7 +565,15 @@ def _to_case_fio_initials(full_name: str, case_name: str) -> str:
     is_classic = (len(parts) == 3 and _is_patronymic(parts[2])) or (
         len(parts) == 4 and parts[3].lower() in ogly_kyzy
     )
+
     if not is_classic:
+        if len(parts) == 2 and _looks_like_initials_token(parts[1]):
+            # `_fio_to_initials` выше считает исходную строку ещё НЕ
+            # сокращённым ФИО — на 2 словах берёт только первую букву
+            # второго слова («Титов Р.А.» → «Титов Р.», теряя «.А.»).
+            # Здесь вход уже «Фамилия И.О.» — инициалы берём как есть,
+            # склоняем только фамилию.
+            return _decline_bare_surname_initials(parts[0], parts[1], case_name)
         return nominative_initials
 
     petro_pack = _get_petro()
@@ -560,6 +596,27 @@ def _to_case_fio_initials(full_name: str, case_name: str) -> str:
     if parts[0][0].isupper():
         out = out[0].upper() + out[1:]
     return out
+
+
+def _decline_bare_surname_initials(surname: str, initials_token: str, case_name: str) -> str:
+    """Склоняет только ФАМИЛИЮ из уже сокращённого «Фамилия И.О.» — см.
+    докстринг `_to_case_fio_initials` (ветка bare-surname). Пол неизвестен
+    (нет отчества) — угадывается по окончанию фамилии. `initials_token` —
+    второе слово как есть («Р.А.»/«Р.»), не трогается."""
+    nominative = f"{surname} {initials_token}"
+    petro_pack = _get_petro()
+    if not petro_pack:
+        return nominative
+    petro, Case, Gender = petro_pack
+    case = getattr(Case, case_name)
+    gender = Gender.FEMALE if surname.lower().endswith(_FEMALE_SURNAME_ENDINGS) else Gender.MALE
+    try:
+        declined = _decline_name_part(petro, 'lastname', surname, case, case_name, gender)
+    except Exception:
+        return nominative
+    if surname[0].isupper():
+        declined = declined[0].upper() + declined[1:]
+    return f"{declined} {initials_token}"
 
 
 def _to_gen_fio_initials(full_name: str) -> str:

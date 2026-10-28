@@ -92,6 +92,7 @@ from app.services.documents.contexts import (
 )
 from app.services.documents.docx_post import strip_template_legend, _strip_word_comments
 from app.services.documents.fabrikant_package import render_fabrikant_package_files, build_fabrikant_zip_bytes
+from app.services.documents.roseltorg_package import render_roseltorg_package_files, build_roseltorg_zip_bytes
 from app.services.documents.kp_xlsx import build_kp_xlsx
 from app.services.documents.generate import generate_document_bytes
 
@@ -143,7 +144,14 @@ async def download_fabrikant_package(
     from app.auth.object_visibility import ensure_purchase_visible
     await ensure_purchase_visible(current_user, pid, db)
 
-    rendered, errors = await render_fabrikant_package_files(db, pid, current_user)
+    # «Без НМЦД» при скачивании без отправки (владелец, 28.10.2026): читаем
+    # ЕДИНСТВЕННОЕ хранимое состояние с самой закупки (ПРАВИЛО №6) — то же
+    # поле, которое читает/пишет диалог отправки (publish_purchase ниже).
+    from app.models.purchase import Purchase as _Purchase
+    purchase_for_nmcd = await db.get(_Purchase, pid)
+    no_nmcd = bool(purchase_for_nmcd.fabrikant_no_nmcd) if purchase_for_nmcd else False
+
+    rendered, errors = await render_fabrikant_package_files(db, pid, current_user, no_nmcd=no_nmcd)
 
     if not rendered:
         raise HTTPException(
@@ -161,6 +169,47 @@ async def download_fabrikant_package(
     zip_buf = BytesIO(build_fabrikant_zip_bytes(rendered, errors))
 
     safe_zip_name = f"Фабрикант_закупка_{pid}.zip"
+    encoded_zip_name = quote(safe_zip_name, safe="-_.~")
+    return StreamingResponse(
+        zip_buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_zip_name}"},
+    )
+
+
+@router.get("/{pid}/roseltorg-package")
+async def download_roseltorg_package(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Render and ZIP the lot-items xlsx for ЭТП Roseltorg.
+
+    По аналогии с /fabrikant-package: сейчас в пакете один файл
+    («Позиции_по_лоту.xlsx» по шаблону площадки).
+    """
+    # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
+
+    try:
+        files, errors = await render_roseltorg_package_files(db, pid, current_user)
+    except ValueError as e:
+        raise HTTPException(422, detail={"code": "ROSELTORG_LIMIT_EXCEEDED", "message": str(e)})
+
+    if not files:
+        raise HTTPException(
+            500,
+            detail={
+                "code": "TEMPLATE_RENDER_ERROR",
+                "message": "Не удалось сформировать пакет для Росэлторга",
+                "error_raw": "\n".join(errors),
+            },
+        )
+
+    zip_buf = BytesIO(build_roseltorg_zip_bytes(files, errors))
+
+    safe_zip_name = f"Росэлторг_закупка_{pid}.zip"
     encoded_zip_name = quote(safe_zip_name, safe="-_.~")
     return StreamingResponse(
         zip_buf,

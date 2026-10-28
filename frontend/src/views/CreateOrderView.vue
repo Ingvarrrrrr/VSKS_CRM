@@ -1676,6 +1676,7 @@
         v-if="isEdit && isSectionVisible('platform_publication') && canPublish"
         :doc-loading="docLoading"
         :download-fabrikant-package="downloadFabrikantPackage"
+        :download-roseltorg-package="downloadRoseltorgPackage"
         :open-publish-dialog="openPublishDialog"
         :publications="publications"
         :PLATFORM_LABELS="PLATFORM_LABELS"
@@ -1690,6 +1691,7 @@
         :download-file="downloadFile"
         :delete-fabrikant-override="deleteFabrikantOverride"
         :trigger-fabrikant-upload="triggerFabrikantUpload"
+        v-model:no-nmcd="form.fabrikant_no_nmcd"
       />
       <!-- Скрытый file-input оверрайда пакета Фабрикант (см. PurchasePlatformCard.vue
            — ref-биндинг не переносится в дочерний компонент без forwarding'а). -->
@@ -2576,6 +2578,10 @@ const form = reactive({
   // Владелец (жалоба п.10, 2026-09-17): срок оплаты после поставки/приёмки
   // (постоплата) — было в модели/PATCHABLE_FIELDS, но нигде на форме
   payment_term_days: null as number | null,
+  // Fabrikant: «Без НМЦД» (владелец, 28.10.2026) — ЕДИНСТВЕННОЕ хранимое
+  // состояние (ПРАВИЛО №6), читают/пишут и чекбокс в PurchasePlatformCard.vue
+  // (скачивание ZIP без отправки), и диалог «Опубликовать» (usePurchasePublications.ts).
+  fabrikant_no_nmcd: false as boolean,
   stage_label: '' as string,
   // Авансовый отчёт: кому возмещать
   reimbursement_user_id: null as number | null,
@@ -2761,6 +2767,7 @@ function serializeFormForAutosave() {
     is_prepayment: f.is_prepayment,
     prepayment_date: f.prepayment_date || null,
     payment_term_days: numOrNull(f.payment_term_days),
+    fabrikant_no_nmcd: f.fabrikant_no_nmcd ?? false,
     stage_label: f.stage_label || null,
     // Phase 28 B4: ответственный исполнитель — не шлём null, только валидное id
     ...(f.assigned_user_id ? { assigned_user_id: f.assigned_user_id } : {}),
@@ -3862,7 +3869,10 @@ function openPublishDialog() {
   publishErrors.value = checkPublishReady()
   publishDialog.value = true
   pendingPlatform.value = null
-  fabrikantNoNmcd.value = !(publishNmck.value > 0)
+  // fabrikantNoNmcd больше не сбрасывается эвристикой здесь — он читает
+  // purchase.fabrikant_no_nmcd (ПРАВИЛО №6, см. usePurchasePublications.ts) и
+  // должен показывать ПРОШЛЫЙ сохранённый выбор, а не затирать его при
+  // каждом открытии диалога.
 }
 
 // Auto-sync contract_price when mode is auto
@@ -4531,6 +4541,7 @@ const loadPurchase = async () => {
     is_prepayment: !!data.is_prepayment,
     prepayment_date: data.prepayment_date || '',
     payment_term_days: data.payment_term_days ?? null,
+    fabrikant_no_nmcd: !!data.fabrikant_no_nmcd,
     stage_label: data.stage_label || '',
     event_id: data.event_id ?? null,
     reimbursement_user_id: data.reimbursement_user_id ?? null,
@@ -5700,6 +5711,7 @@ const downloadDoc = async (docType: string, extraParams = '', loadingKey?: strin
 // composables/purchase/useFabrikantPackage.ts ──
 const {
   downloadFabrikantPackage,
+  downloadRoseltorgPackage,
   fabrikantFileInputEl, fabrikantPendingFt, fabrikantOverride,
   triggerFabrikantUpload, uploadFabrikantOverride, deleteFabrikantOverride,
 } = useFabrikantPackage(purchaseId, showSnack, docErrorInfo, docErrorDialog, docLoading, uploadedFiles, EDITABLE_MIME, uploading)

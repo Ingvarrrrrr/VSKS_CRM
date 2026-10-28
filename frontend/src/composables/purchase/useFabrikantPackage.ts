@@ -20,11 +20,15 @@ export function useFabrikantPackage(
   editableMime: Set<string>,
   uploading: Ref<boolean>,
 ) {
-  async function downloadFabrikantPackage() {
+  // Общее скачивание ZIP-пакета документов площадки (Фабрикант/Росэлторг) —
+  // один и тот же запрос/разбор ошибки/имени файла, разница только в url,
+  // ключе docLoading и дефолтном имени файла (ПРАВИЛО №6: не копировать тело
+  // запроса второй раз под новую площадку).
+  async function downloadZip(url: string, loadingKey: string, fallbackName: string) {
     if (!purchaseId.value) return
-    docLoading.value = 'fabrikant_package'
+    docLoading.value = loadingKey
     try {
-      const res = await fetch(`/api/purchases/${purchaseId.value}/fabrikant-package`, {
+      const res = await fetch(url, {
         headers: {},
       })
       if (!res.ok) {
@@ -47,7 +51,7 @@ export function useFabrikantPackage(
       }
       const blob = await res.blob()
       const disposition = res.headers.get('Content-Disposition') || ''
-      let filename = `Фабрикант_закупка_${purchaseId.value}.zip`
+      let filename = fallbackName
       const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
       if (utf8Match) {
         try { filename = decodeURIComponent(utf8Match[1]!) } catch { filename = utf8Match[1]! }
@@ -55,15 +59,33 @@ export function useFabrikantPackage(
         const plain = disposition.match(/filename="?([^";]+)"?/)
         if (plain) filename = plain[1]!
       }
-      const url = URL.createObjectURL(blob)
+      const blobUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = url; a.download = filename; a.click()
-      URL.revokeObjectURL(url)
+      a.href = blobUrl; a.download = filename; a.click()
+      URL.revokeObjectURL(blobUrl)
     } catch {
       showSnack('Ошибка скачивания пакета документов', 'error')
     } finally {
       docLoading.value = null
     }
+  }
+
+  async function downloadFabrikantPackage() {
+    if (!purchaseId.value) return
+    await downloadZip(
+      `/api/purchases/${purchaseId.value}/fabrikant-package`,
+      'fabrikant_package',
+      `Фабрикант_закупка_${purchaseId.value}.zip`,
+    )
+  }
+
+  async function downloadRoseltorgPackage() {
+    if (!purchaseId.value) return
+    await downloadZip(
+      `/api/purchases/${purchaseId.value}/roseltorg-package`,
+      'roseltorg_package',
+      `Росэлторг_закупка_${purchaseId.value}.zip`,
+    )
   }
 
   // ── Фабрикант: override-файлы пакета ─────────────────────────────────────
@@ -127,6 +149,7 @@ export function useFabrikantPackage(
 
   return {
     downloadFabrikantPackage,
+    downloadRoseltorgPackage,
     fabrikantFileInputEl, fabrikantPendingFt, fabrikantOverride,
     triggerFabrikantUpload, uploadFabrikantOverride, deleteFabrikantOverride,
   }

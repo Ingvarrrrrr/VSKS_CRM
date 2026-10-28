@@ -431,6 +431,40 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
     return items_list
 
 
+def _purchase_item_doc_values(p, item, row, description_mode=None) -> dict:
+    """Сырые (нефосматированные) числа и текст одной плановой позиции.
+
+    ПРАВИЛО №6: единственный расчёт quantity/unit_price/description/name/unit
+    плановой позиции (item_tz._effective_item_tz(_44fz)/item_amounts.
+    document_unit_price). _build_items_list_from_purchase_items форматирует
+    эти значения для docx-шаблонов (_fmt_money/_fmt_quantity — строки);
+    пакет Росэлторг (roseltorg_package.py) берёт отсюда те же сырые числа
+    для xlsx напрямую, без второй параллельной сборки.
+
+    `row` — элемент `build_tz_rows(...)["rows"]` (item/quantity/unit_price/
+    total_price уже слиты с учётом решений по дублям ТЗ).
+    """
+    description_mode = description_mode or getattr(p, "description_mode", None) or "exact"
+    total = row["total_price"]
+    _tz_vat_mode = getattr(p, "vat_mode", None) or "uniform"
+    _tz_header_on_top = bool(getattr(p, "tz_vat_on_top", False))
+    _on_top = _effective_vat_on_top(getattr(item, "vat_on_top", None), _tz_header_on_top, _tz_vat_mode)
+    unit_price_display = _document_unit_price(row["unit_price"], total, row["quantity"], _on_top)
+    description = (
+        _effective_item_tz_44fz(item, item.product) if description_mode == "44fz"
+        else _effective_item_tz(item, item.product)
+    ) or ""
+    return {
+        "name": item.item_name or "",
+        "description": description,
+        "quantity": row["quantity"],
+        "unit": item.unit or "",
+        "unit_price": unit_price_display,
+        "total": total,
+        "product": item.product,
+    }
+
+
 def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_photo=None) -> list[dict]:
     """items_list для плановых документов — из purchase_items (как раньше).
 
@@ -441,31 +475,24 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
     description_mode = tz_override_mode or getattr(p, "description_mode", None) or "exact"
     items_list: list[dict] = []
     _tz = build_tz_rows(getattr(p, "items", None) or [], getattr(p, "tz_duplicate_decisions", None))
-    _tz_vat_mode = getattr(p, "vat_mode", None) or "uniform"
-    _tz_header_on_top = bool(getattr(p, "tz_vat_on_top", False))
     for idx, row in enumerate(_tz["rows"], start=1):
         item = row["item"]
         total = row["total_price"]
         # «Проживание и питание»: форма по строке (item.item_form) — см.
         # комментарий у _build_items_list_from_contract_items выше.
         item_form = item_form_for_purchase_item(p, item)
-        _on_top = _effective_vat_on_top(getattr(item, "vat_on_top", None), _tz_header_on_top, _tz_vat_mode)
-        unit_price_display = _document_unit_price(row["unit_price"], total, row["quantity"], _on_top)
+        # Сырые quantity/unit_price/description — единый расчёт, см.
+        # _purchase_item_doc_values выше (ПРАВИЛО №6).
+        _raw = _purchase_item_doc_values(p, item, row, description_mode)
         items_list.append({
             "num": idx,
-            "name": item.item_name or "",
-            # ПРАВИЛО №6: effective_item_tz/effective_item_tz_44fz (владелец
-            # 14.10.2026) — item.tz_description (WishItem/PurchaseItem), если
-            # непустое, иначе ТЗ каталога в нужном режиме.
-            "description": (
-                _effective_item_tz_44fz(item, item.product) if description_mode == "44fz"
-                else _effective_item_tz(item, item.product)
-            ) or "",
+            "name": _raw["name"],
+            "description": _raw["description"],
             "type": item.item_type or "",
             "item_kind": (item.product.item_kind if item.product else None) or "товар",
-            "quantity": _fmt_quantity(row["quantity"]),
-            "unit": item.unit or "",
-            "unit_price": _fmt_money(unit_price_display),
+            "quantity": _fmt_quantity(_raw["quantity"]),
+            "unit": _raw["unit"],
+            "unit_price": _fmt_money(_raw["unit_price"]),
             "total_price": _fmt_money(total),
             "total": _fmt_money(total),
             "photo": resolve_photo(item.product) if resolve_photo else "",

@@ -10,7 +10,12 @@
         <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-folder-zip"
           :loading="docLoading === 'fabrikant_package'"
           @click="downloadFabrikantPackage">
-          Скачать пакет (ZIP)
+          Пакет Фабрикант (ZIP)
+        </v-btn>
+        <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-folder-zip-outline"
+          :loading="docLoading === 'roseltorg_package'"
+          @click="downloadRoseltorgPackage">
+          Пакет Росэлторг (ZIP)
         </v-btn>
         <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-upload-network"
           @click="openPublishDialog">
@@ -19,6 +24,16 @@
       </div>
     </v-card-title>
     <v-card-text class="px-4 pb-3">
+      <!-- «Без НМЦД» (владелец, 28.10.2026): то же хранимое поле закупки
+           (purchase.fabrikant_no_nmcd, ПРАВИЛО №6), что читает скачивание ZIP
+           выше и диалог «Опубликовать» — один чекбокс, одно состояние, оба
+           места читают и пишут его через автосейв карточки. -->
+      <v-checkbox
+        :model-value="noNmcd"
+        @update:model-value="emit('update:noNmcd', !!$event)"
+        label="Без НМЦД (в документах — «Не определена»)"
+        density="compact" hide-details class="mb-2"
+      />
       <div v-if="!publications.length" class="text-medium-emphasis text-caption">
         Закупка ещё не публиковалась ни на одной площадке
       </div>
@@ -135,6 +150,7 @@
 defineProps<{
   docLoading: string | null
   downloadFabrikantPackage: () => void
+  downloadRoseltorgPackage: () => void
   openPublishDialog: () => void
   publications: any[]
   PLATFORM_LABELS: Record<string, string>
@@ -149,5 +165,13 @@ defineProps<{
   downloadFile: (id: number, filename: string) => void
   deleteFabrikantOverride: (id: number) => void
   triggerFabrikantUpload: (ft: string) => void
+  // «Без НМЦД» (владелец, 28.10.2026) — зеркалит purchase.fabrikant_no_nmcd
+  // через v-model:no-nmcd="form.fabrikant_no_nmcd" у родителя; автосейв
+  // карточки (watch(form, ...) в CreateOrderView.vue) сохраняет сам.
+  noNmcd: boolean
+}>()
+
+const emit = defineEmits<{
+  'update:noNmcd': [value: boolean]
 }>()
 </script>

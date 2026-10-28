@@ -71,12 +71,20 @@ interface ProductSearchPageOut {
   items: Product[]
   total: number
   total_capped: boolean
+  // query_specific — backend/app/schemas/products.py::ProductSearchPageOut
+  // (владелец, 28.10.2026, «поиск как помнит»): есть бренд/модель/величина
+  // в разборе фразы, не только вид товара. Живой поиск в магазинах
+  // (useProductsData.ts/ProductPickerDialog.vue) авто-запускается ТОЛЬКО
+  // когда это true — «огнетушитель» (один вид, широко) не должен сам
+  // уходить в магазины при total===0, только по кнопке.
+  query_specific?: boolean
 }
 
 export interface ProductSearchResult {
   items: Product[]
   total: number
   totalCapped: boolean
+  querySpecific: boolean
 }
 
 function buildQuery(params: ProductSearchParams): string {
@@ -107,6 +115,7 @@ export function useProductSearch(opts: { debounceMs?: number } = {}) {
   const items = ref<Product[]>([])
   const total = ref(0)
   const totalCapped = ref(false)
+  const querySpecific = ref(false)
   const loading = ref(false)
 
   const guard = createLatestRequestGuard()
@@ -127,7 +136,8 @@ export function useProductSearch(opts: { debounceMs?: number } = {}) {
       items.value = data.items
       total.value = data.total
       totalCapped.value = data.total_capped
-      return { items: data.items, total: data.total, totalCapped: data.total_capped }
+      querySpecific.value = data.query_specific ?? false
+      return { items: data.items, total: data.total, totalCapped: data.total_capped, querySpecific: querySpecific.value }
     } catch (e: any) {
       if (e?.name === 'AbortError') return null
       throw e
@@ -143,11 +153,17 @@ export function useProductSearch(opts: { debounceMs?: number } = {}) {
   }
 
   /** Отложенный запрос (ввод в текстовое поле поиска) — debounceMs мс простоя
-      ввода. Повторный вызов до срабатывания сдвигает таймер, не копит их. */
-  function loadDebounced(params: ProductSearchParams): void {
+      ввода. Повторный вызов до срабатывания сдвигает таймер, не копит их.
+      Возвращает промис, который разрешается РЕЗУЛЬТАТОМ запроса (а не сразу) —
+      вызывающий (useProductsData.ts) ждёт реального ответа базы, прежде чем
+      решать, авто-запускать ли живой поиск в магазинах (не на каждый ввод
+      символа, а один раз после паузы — тот же дебаунс, второй не заводим). */
+  function loadDebounced(params: ProductSearchParams): Promise<ProductSearchResult | null> {
     if (timer) clearTimeout(timer)
-    timer = setTimeout(() => { void run(params) }, debounceMs)
+    return new Promise((resolve) => {
+      timer = setTimeout(() => { void run(params).then(resolve) }, debounceMs)
+    })
   }
 
-  return { items, total, totalCapped, loading, load, loadDebounced }
+  return { items, total, totalCapped, querySpecific, loading, load, loadDebounced }
 }

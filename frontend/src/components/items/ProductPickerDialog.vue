@@ -74,6 +74,28 @@
             </tr>
           </tbody>
         </v-table>
+
+        <!-- Живой поиск в магазинах (этап 1, владелец, 28.10.2026; правка QA
+             29.10.2026 — кнопка видна ВСЕГДА под результатами нашей базы,
+             когда введён текст поиска, не только когда наш каталог ничего
+             не нашёл: владелец хочет дособрать предложения из магазинов и
+             когда results.length>0. Авто-запуск остаётся прежним — только
+             results.length===0 && querySpecific, см. ниже scheduleAutoStoreSearch). -->
+        <div v-if="search.trim() && !isSearchTooShort(search)" class="mt-4">
+          <v-btn v-if="!storeSearch.hasSearched.value" variant="text" size="small" prepend-icon="mdi-storefront-search-outline"
+            @click="runStoreSearch">
+            Искать в магазинах
+          </v-btn>
+          <StoreOffersPanel
+            v-else
+            :offers="storeSearch.offers.value"
+            :stores="storeSearch.stores.value"
+            :loading="storeSearch.loading.value"
+            :error="storeSearch.error.value"
+            :has-searched="storeSearch.hasSearched.value"
+            class="mt-2 text-left"
+          />
+        </div>
       </v-card-text>
       <v-card-actions class="px-4 pb-3 d-flex flex-wrap" style="gap:6px">
         <v-btn v-if="supportsFullProductDialog"
@@ -90,13 +112,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import type { ProductLike } from '@/components/items/types'
 import { useDisplay } from 'vuetify'
 import { formatUnitWithPack } from '@/utils/units'
 // Подсказка минимума символов — ЕДИНЫЙ источник (ПРАВИЛО №6), см. docstring
 // useProductSearch.ts/useItemsCatalog.ts::runPickerSearch.
-import { SEARCH_PLACEHOLDER, searchRemainingHint } from '@/composables/products/useProductSearch'
+import { SEARCH_PLACEHOLDER, searchRemainingHint, isSearchTooShort } from '@/composables/products/useProductSearch'
+import { useStoreSearch } from '@/composables/products/useStoreSearch'
+import StoreOffersPanel from '@/components/products/StoreOffersPanel.vue'
 
 const { mobile } = useDisplay()
 
@@ -110,6 +134,13 @@ const props = defineProps<{
   title?: string
   /** Resolves the row photo src (parent's productPhotoSrc helper). */
   photoSrc: (p: ProductLike | null | undefined) => string | undefined
+  /** query_specific ответа /products/page (useProductSearch.ts) — владелец,
+      28.10.2026, правка «вторая волна»: авто-запуск живого поиска в магазинах
+      ТОЛЬКО когда backend нашёл в разборе фразы бренд/модель/величину, не
+      просто широкий вид товара. Родитель, который ищет НЕ через /page (нет
+      такого поля — PlanToRequestDialog.vue), просто не передаёт пропс —
+      тогда авто-запуска нет, остаётся только кнопка. */
+  querySpecific?: boolean
 }>()
 
 const remainingHint = computed(() => searchRemainingHint(props.search))
@@ -120,4 +151,40 @@ const emit = defineEmits<{
   pick: [product: ProductLike]
   'create-new': []
 }>()
+
+// Живой поиск в магазинах — свой экземпляр композабла (диалог сам по себе
+// самодостаточный UI-блок, ПРАВИЛО №6: один и тот же useStoreSearch.ts, не
+// второй механизм, просто без лишней прокладки через родителя). Сбрасывается
+// при каждом новом открытии/смене текста поиска — старые результаты не
+// должны остаться висеть при новом запросе.
+const storeSearch = useStoreSearch()
+
+function runStoreSearch(): void {
+  void storeSearch.search(props.search)
+}
+
+watch(() => props.search, () => storeSearch.reset())
+watch(() => props.modelValue, (open) => { if (!open) storeSearch.reset() })
+
+// Наш каталог ничего не нашёл по осмысленному запросу (не короче
+// MIN_SEARCH_CHARS) И querySpecific===true (бренд/модель/величина в
+// разборе фразы, не просто широкий вид товара — владелец, 28.10.2026,
+// правка «вторая волна») → запускаем поиск в магазинах сами. Иначе — только
+// кнопка «Искать в магазинах» выше. Не чаще одного авто-запуска на один и
+// тот же текст поиска (lastAutoStoreQuery) — props.results.length может
+// остаться 0 при повторных срабатываниях реактивности без изменения текста.
+let lastAutoStoreQuery: string | null = null
+watch(
+  () => props.results.length,
+  (len) => {
+    const text = props.search
+    if (
+      len === 0 && props.querySpecific && !isSearchTooShort(text)
+      && lastAutoStoreQuery !== text
+    ) {
+      lastAutoStoreQuery = text
+      runStoreSearch()
+    }
+  },
+)
 </script>

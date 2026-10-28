@@ -12,6 +12,7 @@ import type { ToastType } from '@/composables/useToast'
 import { productPhotoSrc } from '@/utils/productPhoto'
 import { useProductSearch, isSearchTooShort } from './useProductSearch'
 import { useProductOptions } from './useProductOptions'
+import { useStoreSearch } from './useStoreSearch'
 
 // Белый список сортируемых колонок — зеркало SORTABLE_COLUMNS backend'а
 // (app/services/product_search.py). Сортировка вне списка тут не нужна,
@@ -159,23 +160,56 @@ export function useProductsData(showSnack: (text: string, color?: ToastType) => 
     }
   }
 
-  // Текстовый поиск — debounce 300 мс (внутри useProductSearch.loadDebounced).
-  // Остальные фильтры/сортировка/страница — сразу: владелец ждёт отклика на
-  // клик по чекбоксу/селекту, не только на ввод в текстовое поле.
-  function loadSearchDebounced() {
-    const { sort, order } = activeSort()
-    if (effectiveView.value === 'table') {
-      const limit = tableItemsPerPage.value === -1 ? 200 : tableItemsPerPage.value
-      searchApi.loadDebounced({ ...filterParams(), sort, order, limit, offset: 0 })
-    } else {
-      searchApi.loadDebounced({ ...filterParams(), limit: CARDS_PAGE_SIZE, offset: 0 })
+  // Живой поиск в магазинах (этап 1, владелец, 28.10.2026; правка владельца
+  // 28.10.2026 «вторая волна»: авто-запуск только когда total===0 И
+  // querySpecific===true — т.е. в разборе фразы backend'ом нашёлся бренд/
+  // модель/величина, не только широкий вид товара типа «огнетушитель»; иначе
+  // — только кнопка, см. ProductsView.vue). Тот же useStoreSearch.ts, что и у
+  // ProductPickerDialog.vue (ПРАВИЛО №6, второй механизм не заводим). В
+  // каталог НИЧЕГО не пишем (этап 2).
+  const storeSearch = useStoreSearch()
+  function runStoreSearch() {
+    void storeSearch.search(effectiveSearch.value)
+  }
+
+  // Не чаще одного авто-запуска на один и тот же текст (не на каждый
+  // ререндер/каждое совпадение total===0 при неизменном запросе) — текст,
+  // для которого авто-запуск уже случился.
+  let lastAutoStoreQuery: string | null = null
+  function maybeAutoTriggerStoreSearch(resultTotal: number, querySpecific: boolean) {
+    const text = effectiveSearch.value
+    if (resultTotal === 0 && querySpecific && text && lastAutoStoreQuery !== text) {
+      lastAutoStoreQuery = text
+      runStoreSearch()
     }
+  }
+
+  // Текстовый поиск — debounce 300 мс (внутри useProductSearch.loadDebounced,
+  // теперь возвращает промис результата, см. docstring там) — авто-запуск в
+  // магазины решается ИМЕННО по результату этого ответа базы (после паузы
+  // ввода и реального ответа, не раньше), второй дебаунс не заводим.
+  // Остальные фильтры/сортировка/страница — сразу: владелец ждёт отклика на
+  // клик по чекбоксу/селекту, не только на ввод в текстовое поле (и там
+  // авто-запуск в магазины НЕ нужен — только по изменению самого текста).
+  async function loadSearchDebounced() {
+    const { sort, order } = activeSort()
+    const result = effectiveView.value === 'table'
+      ? await searchApi.loadDebounced({
+          ...filterParams(), sort, order,
+          limit: tableItemsPerPage.value === -1 ? 200 : tableItemsPerPage.value, offset: 0,
+        })
+      : await searchApi.loadDebounced({
+          ...filterParams(), limit: CARDS_PAGE_SIZE, offset: 0,
+        })
+    if (!result) return // отменено более новым запросом (гонка/новый ввод) — не решаем по устаревшему ответу
+    maybeAutoTriggerStoreSearch(result.total, result.querySpecific)
   }
 
   watch(effectiveSearch, () => {
     tablePage.value = 1
     cardsPage.value = 1
-    loadSearchDebounced()
+    storeSearch.reset()
+    void loadSearchDebounced()
   })
   watch([filterType, filterCategory, filterActive, filterPriceMin, filterPriceMax, filterStaleOnly], () => {
     tablePage.value = 1
@@ -215,5 +249,6 @@ export function useProductsData(showSnack: (text: string, color?: ToastType) => 
     tablePage, tableItemsPerPage, tableSortBy, onTableOptions,
     cardsPage, cardsTotalPages, onCardsPage,
     cardPhotoSrc,
+    storeSearch, runStoreSearch,
   }
 }

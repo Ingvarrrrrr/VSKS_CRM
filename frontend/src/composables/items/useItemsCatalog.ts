@@ -290,6 +290,11 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   const PICKER_LIMIT = 60
   const pickerSearchApi = useProductSearch({ debounceMs: 300 })
   const productPickerResults = computed(() => pickerSearchApi.items.value)
+  // query_specific ответа /products/page — прокидывается в ProductPickerDialog.vue
+  // как условие авто-запуска живого поиска в магазинах (владелец, 28.10.2026,
+  // правка «вторая волна»: не на любой total===0, только когда разбор фразы
+  // нашёл бренд/модель/величину).
+  const productPickerQuerySpecific = computed(() => pickerSearchApi.querySpecific.value)
 
   // Короче MIN_SEARCH_CHARS (useProductSearch.ts, решение владельца
   // 26.10.2026) — запрос на сервер не уходит вовсе, результаты пустые
@@ -386,6 +391,7 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     productFilter, hasProducts, onItemProductSelect,
     onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
     productPickerDialog, productPickerSearch, productPickerIdx, productPickerResults,
+    productPickerQuerySpecific,
     pickerMode, pickerTitle, bindProductToItem,
     openProductPicker, openRepickPicker, selectFromPicker, createProductFromPicker,
   }

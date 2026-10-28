@@ -288,3 +288,42 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     emitLoading()
   }
 }
+
+// Живой поиск товара в магазинах (этап 1, владелец, 28.10.2026) — GET
+// /api/products/store-search, в нашу базу ничего не пишет (этап 2). Один
+// метод здесь (ПРАВИЛО №5) — композабл useStoreSearch.ts зовёт его, а не
+// строит свой apiFetch-вызов (единая точка добавления заголовков/обработки
+// ошибок, как и у остальных экспортов этого файла).
+export interface StoreOfferDTO {
+  store_key: string
+  store_name: string
+  seller_inn: string | null
+  name: string
+  price: string | number | null
+  currency: string
+  url: string
+  image_url: string | null
+  store_article: string | null
+  manufacturer: string | null
+}
+
+export interface StoreStatusDTO {
+  key: string
+  name: string
+  status: 'ok' | 'timeout' | 'error' | 'blocked' | 'rate_limited'
+  count: number
+  ms: number
+}
+
+export interface StoreSearchResponse {
+  query_sent: string
+  offers: StoreOfferDTO[]
+  stores: StoreStatusDTO[]
+}
+
+export async function fetchStoreSearch(q: string, stores?: string[], signal?: AbortSignal): Promise<StoreSearchResponse> {
+  const params = new URLSearchParams()
+  params.set('q', q)
+  for (const s of stores || []) params.append('stores', s)
+  return apiFetch<StoreSearchResponse>(`/products/store-search?${params.toString()}`, { signal })
+}

@@ -644,6 +644,7 @@
       v-model="productPickerDialog"
       :search="productPickerSearch"
       :results="productPickerResults"
+      :query-specific="productPickerQuerySpecific"
       :supports-full-product-dialog="props.supportsFullProductDialog"
       :title="pickerTitle"
       :photo-src="productPhotoSrc"
@@ -2079,6 +2080,7 @@ const {
   hasUncatalogedSelected, uncatalogedSelectedCount, bulkAddCatalogLoading, bulkAddToCatalog,
   onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
   productPickerDialog, productPickerSearch, productPickerResults,
+  productPickerQuerySpecific,
   pickerTitle, bindProductToItem,
   openProductPicker, openRepickPicker, selectFromPicker, createProductFromPicker,
 } = useItemsCatalog({

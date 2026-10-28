@@ -57,6 +57,29 @@
       @reset="resetFilters"
     />
 
+    <!-- Живой поиск в магазинах (этап 1, владелец, 28.10.2026; правка QA
+         29.10.2026 — кнопка видна ВСЕГДА под результатами нашей базы, когда
+         введён текст поиска, не только когда total===0: владелец хочет
+         дособрать предложения из магазинов и когда наш каталог что-то
+         нашёл. Авто-запуск остаётся прежним — только total===0 &&
+         querySpecific, см. useProductsData.ts maybeAutoTriggerStoreSearch). -->
+    <div v-if="!loading && search.trim()" class="mb-4">
+      <v-btn
+        v-if="!storeSearch.hasSearched.value" variant="tonal" color="primary"
+        prepend-icon="mdi-storefront-search-outline" @click="runStoreSearch"
+      >
+        Искать в магазинах
+      </v-btn>
+      <StoreOffersPanel
+        v-else
+        :offers="storeSearch.offers.value"
+        :stores="storeSearch.stores.value"
+        :loading="storeSearch.loading.value"
+        :error="storeSearch.error.value"
+        :has-searched="storeSearch.hasSearched.value"
+      />
+    </div>
+
     <!-- Table — серверная пагинация/сортировка (владелец, 26.10.2026), items —
          уже страница результатов, не весь каталог (см. useProductsData.ts). -->
     <ProductsTable
@@ -253,6 +276,7 @@ import ProductsDedupDialog from '@/components/products/ProductsDedupDialog.vue'
 import ProductsActualizeDialog from '@/components/products/ProductsActualizeDialog.vue'
 import ProductDescriptionProposals from '@/components/products/ProductDescriptionProposals.vue'
 import SimilarProductsDialog from '@/components/products/SimilarProductsDialog.vue'
+import StoreOffersPanel from '@/components/products/StoreOffersPanel.vue'
 
 import { useProductsData } from '@/composables/products/useProductsData'
 import { useProductsColumns, ALL_COLUMNS } from '@/composables/products/useProductsColumns'
@@ -301,6 +325,7 @@ const {
   tablePage, tableItemsPerPage, onTableOptions,
   cardsPage, cardsTotalPages, onCardsPage,
   cardPhotoSrc,
+  storeSearch, runStoreSearch,
 } = useProductsData(showSnack)
 
 const {

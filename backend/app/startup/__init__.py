@@ -26,12 +26,21 @@ from app.database import ensure_phase22_columns
 from app.background.deadline_reminders import _deadline_reminder_loop
 from app.background.vehicle_alerts import _vehicle_alerts_task_creator
 from app.background.waybill_overdue import _waybill_overdue_loop
+from app.background.product_words_refresh import _product_words_refresh_loop
 from app.startup import legacy_ddl, permission_seeds, backfills, smoke_and_seeds
 
 
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     task = asyncio.create_task(_deadline_reminder_loop())
+    # Доработка «этап 0» (владелец, 28.10.2026): раз в сутки — REFRESH
+    # product_words (словарь исправления опечаток), см. app/background/
+    # product_words_refresh.py.
+    try:
+        task_product_words = asyncio.create_task(_product_words_refresh_loop())
+    except Exception as _e_pw:
+        logging.getLogger(__name__).warning(f"product_words_refresh task start skipped: {_e_pw}")
+        task_product_words = None
     # Phase 29 D-17: daily vehicle expiry alerts
     try:
         task_vehicle_alerts = asyncio.create_task(_vehicle_alerts_task_creator())
@@ -72,5 +81,11 @@ async def lifespan(app_: FastAPI):
         task_waybill_overdue.cancel()
         try:
             await task_waybill_overdue
+        except asyncio.CancelledError:
+            pass
+    if task_product_words is not None:
+        task_product_words.cancel()
+        try:
+            await task_product_words
         except asyncio.CancelledError:
             pass

@@ -42,6 +42,7 @@ stale_only/stale_total — читают app/services/price_freshness_sql.py
 ::stale_condition (тот же источник правды, что price_freshness.evaluate,
 см. докстринг там).
 """
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Iterable, Optional, Sequence
@@ -53,6 +54,8 @@ from sqlalchemy.orm import defer
 from app.models.product import Product
 from app.services.price_freshness import FreshnessContext
 from app.services.price_freshness_sql import apply_stale_join
+from app.services.product_query_parse import ParsedQuery, get_manufacturer_brand_dictionary, parse_query
+from app.services.product_words_correction import correct_unknown_words
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
@@ -383,6 +386,302 @@ async def _fetch_hybrid_page(
         await db.execute(text("SET LOCAL max_parallel_workers_per_gather = DEFAULT"))
 
 
+# ---------------------------------------------------------------------------
+# «Этап 0» — поиск по фразе «как помнит» (владелец, 28.10.2026, доработка
+# ревью того же дня): встроенный полнотекстовый поиск PostgreSQL
+# (to_tsvector('russian', ...) — стемминг русских окончаний средствами
+# Postgres, не ручной обрезкой) + pg_trgm для опечаток — ТЕПЕРЬ для ЛЮБОГО
+# многословного/словарного запроса (не только когда parse_query() находит
+# специфичный признак), см. _looks_like_article_query ниже про единственное
+# исключение. Повод ревью: «болгарка», «огнетушителя» (словоформа), «кабель
+# медный в изоляции» (лишние слова) должны находиться стеммером/ранжированием,
+# а не старым AND по КАЖДОМУ слову — ради этого этап и затевался.
+#
+# required-токены → AND в tsquery('russian', ...) — ТОЛЬКО текстовые (вид
+# товара/бренд/прочие значимые слова, когда ParsedQuery.required пуст — см.
+# search_products, «повышение» optional→required целиком, иначе остался бы
+# десяток несвязанных слов без единого обязательного — расхождение со старым
+# строгим AND для полностью нераспознанных фраз); цифровые/модельные/величины
+# — ОТДЕЛЬНЫЙ пост-фильтр по регулярке через оператор ~* (word-boundary,
+# "125" ≠ "1250"), т.к. русский стеммер Postgres цифры не понимает. У
+# ПОСЛЕДНЕГО текстового required-токена — префикс `:*` (поиск по мере
+# ввода). optional-токены → OR в tsquery, ТОЛЬКО для ts_rank-бонуса
+# ранжирования, ничего не исключают.
+#
+# ВЫРАЖЕНИЕ _FTS_DOC_SQL ОБЯЗАНО текстуально совпадать с индексом в миграции
+# f3t5s7q9u1e3_product_fts_index.py (Правило №6, один источник формулы) —
+# иначе планировщик не свяжет запрос с GIN-индексом ix_products_fts (сверено
+# EXPLAIN ANALYZE, см. отчёт сессии).
+# ---------------------------------------------------------------------------
+
+_SINGLE_TOKEN_WITH_DIGIT_RE = re.compile(r"^\S*\d\S*$")
+
+# QA-находка (владелец, 28.10.2026): search="%%%" (ни буквы, ни цифры) шёл в
+# «повысить optional→required», required становился из символов, которые
+# _tsquery_word/численный фильтр целиком вычищают → ПУСТОЕ условие →
+# запрос без WHERE по тексту → вся таблица (26 349). Защита ниже — до
+# построения FTS-запроса.
+_HAS_LETTER_OR_DIGIT_RE = re.compile(r"[0-9a-zA-Zа-яёА-ЯЁ]")
+
+
+def _has_letter_or_digit(raw: str) -> bool:
+    return bool(_HAS_LETTER_OR_DIGIT_RE.search(raw))
+
+
+def _required_has_usable_token(required: list) -> bool:
+    """После «повышения» optional→required (см. search_products) токены
+    могут оказаться чистым мусором (операторы tsquery, одни знаки) —
+    _tsquery_word вычищает их в пустую строку, а цифр там нет. Если ни
+    один required-токен не даёт ни цифры, ни непустого текста после
+    очистки — строить FTS-запрос БЕЗ единого реального условия нельзя
+    (найдёт всё/ничего не осмысленно) — уходим на легаси-путь напрямую."""
+    for tok in required:
+        if any(ch.isdigit() for ch in tok):
+            return True
+        if _tsquery_word(tok).strip():
+            return True
+    return False
+
+
+def _looks_like_article_query(raw: str) -> bool:
+    """Один токен (без пробелов) с хотя бы одной цифрой — похоже на
+    артикул/код производителя (владелец, 28.10.2026, ревью «этап 0»): такие
+    запросы остаются на старом containment-пути (ILIKE across name/
+    article/manufacturer, build_product_search_query/_fetch_hybrid_page)
+    — «не ухудшить» существующее поведение поиска по артикулу/коду. Коды —
+    не словарные слова, русский стеммер им не нужен и может быть хуже
+    (коды иногда СОВПАДАЮТ с обычными словами после агрессивной нормализации
+    стеммера — не проверено, не рискуем)."""
+    words = raw.split()
+    return len(words) == 1 and bool(_SINGLE_TOKEN_WITH_DIGIT_RE.match(words[0]))
+
+_FTS_DOC_SQL = (
+    "to_tsvector('russian', coalesce(name,'') || ' ' || "
+    "coalesce(manufacturer,'') || ' ' || coalesce(article,''))"
+)
+
+# Слово «как есть» могло прийти с пользовательским вводом — для to_tsquery
+# держим только буквы/цифры/пробелы/дефис (операторы tsquery & | ! : ( ) '
+# из пользовательского текста ВСЕГДА вычищаются, см. _tsquery_word).
+_TSQUERY_SAFE_RE = re.compile(r"[^0-9a-zA-Zа-яёА-ЯЁ\s-]")
+
+
+def _tsquery_word(word: str) -> str:
+    return _TSQUERY_SAFE_RE.sub(" ", word).strip()
+
+
+def _tsquery_token(token: str, *, prefix: bool) -> Optional[str]:
+    """required/optional-токен (может быть из нескольких слов — напр. бренд
+    "Security Force") → фрагмент синтаксиса tsquery, слова токена через &.
+    prefix=True — у ПОСЛЕДНЕГО слова токена ставится :* (поиск по мере
+    ввода)."""
+    words = [w for w in _tsquery_word(token).split() if w]
+    if not words:
+        return None
+    parts = [f"{w}:*" if prefix and i == len(words) - 1 else w for i, w in enumerate(words)]
+    return " & ".join(parts)
+
+
+_VISCOSITY_NORM_RE = re.compile(r"^(\d+)([a-zа-яёA-ZА-ЯЁ])-(\d+)$")
+_QUANTITY_NORM_RE = re.compile(r"^(\d+(?:[.,]\d+)?)\s+(\S+)$")
+
+
+def _numeric_token_regex(token: str) -> str:
+    """required-токен с цифрой (из product_query_parse.parse_query) →
+    POSIX-regex для оператора ~* с границей числа — «125» не должно найти
+    «1250» (владелец, 28.10.2026). Три формы ровно те, что строит parse_query:
+    вязкость («5W-40»), величина с единицей («4 л»), голый цифровой/
+    модельный код («125», составной «код·буква» из product_name_signature)."""
+    m = _VISCOSITY_NORM_RE.match(token)
+    if m:
+        num1, letter, num2 = m.groups()
+        return rf"(?<!\d){re.escape(num1)}{re.escape(letter)}-?{re.escape(num2)}(?!\d)"
+    m = _QUANTITY_NORM_RE.match(token)
+    if m:
+        num, unit = m.groups()
+        return rf"(?<!\d){re.escape(num)}\s*{re.escape(unit)}(?!\w)"
+    core = token.replace("·", "")
+    return rf"(?<![0-9a-zа-яёA-ZА-ЯЁ]){re.escape(core)}(?![0-9a-zа-яёA-ZА-ЯЁ])"
+
+
+def _split_required_tokens(required: list) -> tuple[list[str], list[str]]:
+    text_tokens, numeric_tokens = [], []
+    for tok in required:
+        if any(ch.isdigit() for ch in tok):
+            numeric_tokens.append(tok)
+        else:
+            text_tokens.append(tok)
+    return text_tokens, numeric_tokens
+
+
+def _numeric_condition(token: str):
+    pattern = _numeric_token_regex(token)
+    return or_(
+        Product.name.op("~*")(pattern),
+        Product.article.op("~*")(pattern),
+        Product.manufacturer.op("~*")(pattern),
+    )
+
+
+_BARE_NUMBER_RE = re.compile(r"^(\d+)")
+
+
+def _bare_number(token: str) -> Optional[str]:
+    """Голое число из цифрового/модельного/величина-токена («4 кг»→«4»,
+    «125»→«125», «5W-40»→«5») — для «ослабленного» ранжирования шага 2
+    (владелец, 28.10.2026, «этап 0», доработка): когда точный numeric-
+    фильтр (границы единицы/формата) НИЧЕГО не нашёл, но число САМО ПО
+    СЕБЕ где-то в тексте есть — это «похоже», ранжируем выше."""
+    m = _BARE_NUMBER_RE.match(token)
+    return m.group(1) if m else None
+
+
+async def _fetch_fts_page(
+    db: AsyncSession,
+    filters: ProductSearchFilters,
+    parsed: ParsedQuery,
+    *,
+    limit: int,
+    offset: int,
+    freshness_ctx: Optional[FreshnessContext],
+    apply_numeric: bool = True,
+) -> tuple[list[Product], int]:
+    """apply_numeric=False — «ослабленный» шаг 2 лестницы (владелец,
+    28.10.2026, доработка): цифровые/величина-токены НЕ фильтруют (WHERE),
+    только мягко поднимают ранг, если голое число (_bare_number) где-то
+    встретилось — «Огнетушитель порошковый ОП-2» находится по «огнетушитель
+    порошковый 4 кг», когда точного «4 кг» в тексте нет."""
+    text_tokens, numeric_tokens = _split_required_tokens(parsed.required)
+
+    required_parts = []
+    for i, tok in enumerate(text_tokens):
+        part = _tsquery_token(tok, prefix=(i == len(text_tokens) - 1))
+        if part:
+            required_parts.append(part)
+    required_tsquery = " & ".join(f"({p})" for p in required_parts) if required_parts else None
+
+    optional_parts = [p for p in (_tsquery_token(t, prefix=False) for t in parsed.optional) if p]
+    optional_tsquery = " | ".join(f"({p})" for p in optional_parts) if optional_parts else None
+
+    # Защита (владелец, 28.10.2026, QA-находка): apply_numeric=False СНИМАЕТ
+    # цифровой фильтр — если при этом required-текста тоже нет (required
+    # был ТОЛЬКО из цифровых токенов, "зюзюкремлик 4125" → required=["4125"]
+    # после parse_query), WHERE остаётся ПУСТЫМ и запрос вернул бы ВСЮ
+    # таблицу. Такую комбинацию (ослаблять единственное условие) запрещаем
+    # прямо здесь — не только на уровне вызывающего search_products.
+    if not apply_numeric and not required_tsquery and numeric_tokens:
+        return [], 0
+
+    bare_numbers = [n for n in (_bare_number(t) for t in numeric_tokens) if n] if not apply_numeric else []
+
+    def _base(entity):
+        q = select(entity)
+        q = _apply_non_search_filters(q, filters, freshness_ctx)
+        if required_tsquery:
+            q = q.where(
+                text(f"{_FTS_DOC_SQL} @@ to_tsquery('russian', :req_tsquery_w)")
+                .bindparams(req_tsquery_w=required_tsquery)
+            )
+        if apply_numeric:
+            for tok in numeric_tokens:
+                q = q.where(_numeric_condition(tok))
+        return q
+
+    count_q = select(func.count()).select_from(_base(Product.id).subquery())
+    total = (await db.execute(count_q)).scalar_one()
+
+    order_terms = []
+    if bare_numbers:
+        # «похоже» бонус: голое число где-то в тексте (без строгой границы
+        # единицы/формата) — считается ПЕРВЫМ (важнее ts_rank), чтобы
+        # «ближе по величине» реально поднимало строку выше.
+        bonus_pattern = "|".join(rf"(?<!\d){re.escape(n)}(?!\d)" for n in bare_numbers)
+        order_terms.append(
+            text(
+                f"(CASE WHEN {_FTS_DOC_SQL}::text ~* :bare_num_pattern THEN 1 ELSE 0 END) DESC"
+            ).bindparams(bare_num_pattern=bonus_pattern)
+        )
+    if required_tsquery or optional_tsquery:
+        rank_sql = f"ts_rank({_FTS_DOC_SQL}, to_tsquery('russian', :req_tsquery_r))" if required_tsquery else "0"
+        rank_params = {"req_tsquery_r": required_tsquery} if required_tsquery else {}
+        if optional_tsquery:
+            rank_sql += f" + COALESCE(ts_rank({_FTS_DOC_SQL}, to_tsquery('russian', :opt_tsquery_r)), 0)"
+            rank_params["opt_tsquery_r"] = optional_tsquery
+        order_terms.append(text(f"{rank_sql} DESC").bindparams(**rank_params))
+
+    page_q = _base(Product).options(defer(Product.characteristics))
+    page_q = page_q.order_by(*order_terms, Product.name.asc(), Product.id.asc())
+    page_q = page_q.limit(limit).offset(offset)
+    items = (await db.execute(page_q)).scalars().all()
+    return list(items), total
+
+
+async def _fetch_fts_page_or(
+    db: AsyncSession,
+    filters: ProductSearchFilters,
+    words: list,
+    *,
+    limit: int,
+    offset: int,
+    freshness_ctx: Optional[FreshnessContext],
+) -> tuple[list[Product], int]:
+    """Шаг 3 лестницы (владелец, 28.10.2026): слова, которые были
+    «повышены» из optional в required (ничего специфичного parse_query не
+    нашло — полностью нераспознанная фраза), ослабляются с AND до OR — та
+    же OR-группа, что у optional-ранжирования, но теперь как САМ фильтр
+    (WHERE), не только бонус ранга. Используется ТОЛЬКО когда исходных
+    required (бренд/вид/цифра/величина) не было вовсе — см. search_products."""
+    parts = [p for p in (_tsquery_token(w, prefix=False) for w in words) if p]
+    or_tsquery = " | ".join(f"({p})" for p in parts) if parts else None
+    if not or_tsquery:
+        return [], 0
+
+    def _base(entity):
+        q = select(entity)
+        q = _apply_non_search_filters(q, filters, freshness_ctx)
+        q = q.where(
+            text(f"{_FTS_DOC_SQL} @@ to_tsquery('russian', :or_tsquery_w)")
+            .bindparams(or_tsquery_w=or_tsquery)
+        )
+        return q
+
+    count_q = select(func.count()).select_from(_base(Product.id).subquery())
+    total = (await db.execute(count_q)).scalar_one()
+
+    rank_expr = text(
+        f"ts_rank({_FTS_DOC_SQL}, to_tsquery('russian', :or_tsquery_r)) DESC"
+    ).bindparams(or_tsquery_r=or_tsquery)
+    page_q = _base(Product).options(defer(Product.characteristics))
+    page_q = page_q.order_by(rank_expr, Product.name.asc(), Product.id.asc())
+    page_q = page_q.limit(limit).offset(offset)
+    items = (await db.execute(page_q)).scalars().all()
+    return list(items), total
+
+
+async def _search_legacy_page(
+    db: AsyncSession,
+    filters: ProductSearchFilters,
+    *,
+    limit: int,
+    offset: int,
+    freshness_ctx: Optional[FreshnessContext],
+) -> tuple[list[Product], int, bool]:
+    """Старый containment-путь (AND ILIKE по словам + гибридное
+    startswith-ранжирование широких запросов) — теперь используется для:
+    1) запросов-артикулов/кодов (_looks_like_article_query); 2) слов короче
+    MIN_TRIGRAM_WORD_LEN; 3) ЗАПАСНЫМ путём, если полнотекстовый поиск
+    (_fetch_fts_page) дал 0 строк, перед fuzzy (владелец, 28.10.2026,
+    ревью «этап 0»)."""
+    total, total_capped = await count_products(db, filters, freshness_ctx)
+    if total > RANK_FULL_THRESHOLD and offset + limit <= HYBRID_OFFSET_LIMIT_CAP:
+        items = await _fetch_hybrid_page(db, filters, freshness_ctx, limit=limit, offset=offset)
+    else:
+        q = build_product_search_query(filters=filters, freshness_ctx=freshness_ctx)
+        q = q.limit(limit).offset(offset)
+        items = (await db.execute(q)).scalars().all()
+    return list(items), total, total_capped
+
+
 async def search_products(
     db: AsyncSession,
     filters: ProductSearchFilters,
@@ -390,27 +689,191 @@ async def search_products(
     limit: int,
     offset: int,
     freshness_ctx: Optional[FreshnessContext] = None,
+    result_meta: Optional[dict] = None,
 ) -> tuple[list[Product], int, bool]:
     """Возвращает (товары страницы, total по тем же фильтрам, total_capped).
-    total — ОТДЕЛЬНЫЙ count-запрос по тем же условиям (не COUNT(*) OVER() —
-    страница рассчитана на limit<=200, второй лёгкий запрос дешевле, чем
-    тащить window-функцию по каждой строке первого); count_products() всегда
-    точный, без потолка (см. докстринг там). При search —
-    total считается ПЕРВЫМ и его же значение решает, идти ли гибридным
-    путём (total > RANK_FULL_THRESHOLD) — второго count-запроса на принятие
-    решения не нужно (Правило №6)."""
-    if filters.search:
+
+    При search (владелец, 28.10.2026, ревью «этап 0», ДОРАБОТКА того же
+    дня — старый «фаззи по всей строке» матчил посторонние товары,
+    «огнетушитель порошковый 4 кг» находил кабели) — артикул/код/слишком
+    короткие слова — как раньше (_search_legacy_page, без исправления
+    опечаток — коды не словарные слова). Иначе — ЛЕСТНИЦА (первый шаг,
+    давший total>0, побеждает):
+      1. Точное: FTS required (AND, последнее слово — с :*) + цифровые/
+         величина-токены — СТРОГИЙ пост-фильтр по регулярке (граница числа).
+         (1.5 — старый containment-путь как ещё одна «точная» попытка, см.
+         комментарий у вызова _search_legacy_page ниже.)
+      2. Если (1)=0 и были цифровые/величина-токены (и есть required-текст,
+         на котором держится фильтр) — те же required, но БЕЗ строгого
+         цифрового фильтра (apply_numeric=False) — только мягкий бонус
+         ранга, если голое число где-то есть. result_meta["relaxed"] —
+         список ослабленных токенов.
+      3. Если (2)=0 (или пропущен) — ИСПРАВЛЕНИЕ ОПЕЧАТОК ПО СЛОВАМ
+         (product_words_correction.correct_unknown_words): каждое
+         неизвестное слово required заменяется на ближайшее слово словаря
+         каталога (MV product_words, similarity >= 0.5), лестница 1-2
+         повторяется с исправленными словами. result_meta["fuzzy"]=True,
+         result_meta["corrected"]={исходное: исправленное}. ПЕРЕД шагом 4
+         (не после) — живая проверка на стенде показала: OR по
+         нераспознанным словам раньше находил посторонние товары по
+         совпавшему-но-не-опечатанному слову, пока опечатка в ДРУГОМ слове
+         не исправлена.
+      4. Если (3)=0 и required был «повышен» из optional (т.е. parse_query
+         ничего специфичного не нашёл — полностью нераспознанная фраза) —
+         AND ослабляется до OR (_fetch_fts_page_or): товар должен содержать
+         ХОТЯ БЫ ОДНО из слов, не все. Самый нестрогий шаг, последний.
+      Ничего не нашлось — total=0, без похода в trgm по всей строке (тот
+      механизм убран, Правило №6 — один механизм опечаток).
+
+    result_meta — опциональный dict ДЛЯ ЧТЕНИЯ ВЫЗЫВАЮЩЕЙ СТОРОНОЙ
+    (products_page.py): query_specific/fuzzy/relaxed/corrected — сигнатура/
+    контракт самого search_products НЕ меняется (3-tuple, как раньше)."""
+    if result_meta is not None:
+        result_meta.setdefault("query_specific", False)
+        result_meta.setdefault("fuzzy", False)
+        result_meta.setdefault("relaxed", [])
+        result_meta.setdefault("corrected", {})
+
+    if not filters.search:
+        q = build_product_search_query(filters=filters, freshness_ctx=freshness_ctx)
+        q = q.limit(limit).offset(offset)
+        items = (await db.execute(q)).scalars().all()
         total, total_capped = await count_products(db, filters, freshness_ctx)
-        if total > RANK_FULL_THRESHOLD and offset + limit <= HYBRID_OFFSET_LIMIT_CAP:
-            items = await _fetch_hybrid_page(db, filters, freshness_ctx, limit=limit, offset=offset)
-        else:
-            q = build_product_search_query(filters=filters, freshness_ctx=freshness_ctx)
-            q = q.limit(limit).offset(offset)
-            items = (await db.execute(q)).scalars().all()
         return list(items), total, total_capped
 
-    q = build_product_search_query(filters=filters, freshness_ctx=freshness_ctx)
-    q = q.limit(limit).offset(offset)
-    items = (await db.execute(q)).scalars().all()
-    total, total_capped = await count_products(db, filters, freshness_ctx)
-    return list(items), total, total_capped
+    raw = filters.search
+
+    # Ни буквы, ни цифры во всей строке ("%%%", "...", одни пробелы/
+    # спецсимволы) — осмысленного условия построить не из чего, пустой
+    # результат БЕЗ похода в БД (владелец, 28.10.2026, QA-находка (б)).
+    if not _has_letter_or_digit(raw):
+        return [], 0, False
+
+    if _all_words_too_short_for_trigram(raw) or _looks_like_article_query(raw):
+        items, total, _total_capped = await _search_legacy_page(
+            db, filters, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+        )
+        return list(items), total, False
+
+    brand_dictionary = await get_manufacturer_brand_dictionary(db)
+    parsed = parse_query(raw, brand_dictionary=brand_dictionary)
+    if result_meta is not None:
+        result_meta["query_specific"] = parsed.specific
+
+    required, optional = parsed.required, parsed.optional
+    promoted = not required
+    if promoted:
+        # Ничего специфичного (бренд/цифра/величина/распознанный вид
+        # товара) — «повышаем» ВСЕ значимые слова до required (AND), иначе
+        # полностью нераспознанная фраза искалась бы без единого
+        # обязательного условия (расхождение со старым строгим AND).
+        required, optional = optional, []
+    if not _required_has_usable_token(required):
+        # Required целиком — мусор после очистки (операторы/спецсимволы,
+        # "a:b & | !(" — буквы в исходной строке есть, но ни один токен не
+        # даёт ни цифры, ни непустого текста) — FTS-запрос БЕЗ единого
+        # реального условия строить нельзя, прямиком на легаси (владелец,
+        # 28.10.2026, QA-находка (б)).
+        items, total, _ = await _search_legacy_page(
+            db, filters, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+        )
+        return list(items), total, False
+
+    text_tokens, numeric_tokens = _split_required_tokens(required)
+
+    def _mk_parsed(req_text: list, req_numeric: list, opt: list) -> ParsedQuery:
+        return ParsedQuery(
+            raw=parsed.raw, required=[*req_text, *req_numeric], optional=opt,
+            dropped_stopwords=parsed.dropped_stopwords, specific=parsed.specific,
+            brand=parsed.brand, product_type=parsed.product_type,
+        )
+
+    # Шаг 1 — точное.
+    fts_parsed = _mk_parsed(text_tokens, numeric_tokens, optional)
+    items, total = await _fetch_fts_page(
+        db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+        apply_numeric=True,
+    )
+    if total > 0:
+        return list(items), total, False
+
+    # Шаг 1.5 — старый containment-путь (AND ILIKE) КАК ЕЩЁ ОДНА «точная»
+    # попытка (не ослабление): to_tsquery() для многосложных hyphen-слов
+    # строит фразовый запрос по ЧАСТЯМ compound-лексемы (Postgres hword-
+    # разбор) и может не совпасть с документом, где то же слово — часть
+    # БОЛЕЕ ДЛИННОГО составного токена (напр. запрос «стейл-тест» против
+    # названия «Старый-стейл-тест» — 3-словный compound, а не 2-словный,
+    # разные позиции лексем) — ILIKE по подстроке таких границ не знает и
+    # находит. Если и тут 0 — переходим к ОСЛАБЛЕНИЮ (шаги 2-4).
+    items, total, _ = await _search_legacy_page(
+        db, filters, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+    )
+    if total > 0:
+        return list(items), total, False
+
+    # Шаг 2 — ослабить цифры/величины (владелец, 28.10.2026, доработка).
+    # ТОЛЬКО если есть required-ТЕКСТ, на котором держится фильтр — иначе
+    # (required был чисто цифровым, "зюзюкремлик 4125"→required=["4125"])
+    # снятие единственного условия отдало бы всю таблицу (см. защиту внутри
+    # _fetch_fts_page, здесь — чтобы не тратить лишний запрос в БД).
+    if numeric_tokens and text_tokens:
+        items, total = await _fetch_fts_page(
+            db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+            apply_numeric=False,
+        )
+        if total > 0:
+            if result_meta is not None:
+                result_meta["relaxed"] = list(numeric_tokens)
+            return list(items), total, False
+
+    # Шаг 3 — исправление опечаток ПО СЛОВАМ (словарь product_words,
+    # Правило №6 — единственный механизм опечаток, старый trgm-по-всей-
+    # строке убран). ПЕРЕД ослаблением AND→OR (владелец, 28.10.2026,
+    # доработка после живой проверки на стенде: «огнитушитель порошковый»
+    # — оба слова нераспознанные/опечатка — OR находил ПОСТОРОННИЕ товары
+    # по слову «порошковый» (проволока порошковая, модуль порошкового
+    # пожаротушения) РАНЬШЕ, чем срабатывала точная коррекция «огнитушитель»
+    # → «огнетушитель»; сначала чиним слово, потом — если всё равно 0 —
+    # ослабляем AND до OR).
+    correction_words: list = []
+    for tok in text_tokens:
+        correction_words.extend(_tsquery_word(tok).split())
+    corrections = await correct_unknown_words(db, correction_words)
+    if corrections:
+        corrected_text_tokens = [
+            " ".join(corrections.get(w, w) for w in _tsquery_word(tok).split()) or tok
+            for tok in text_tokens
+        ]
+        corrected_parsed = _mk_parsed(corrected_text_tokens, numeric_tokens, optional)
+        items, total = await _fetch_fts_page(
+            db, filters, corrected_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+            apply_numeric=True,
+        )
+        relaxed: list = []
+        if total == 0 and numeric_tokens and text_tokens:
+            items, total = await _fetch_fts_page(
+                db, filters, corrected_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+                apply_numeric=False,
+            )
+            relaxed = list(numeric_tokens)
+        if total > 0:
+            if result_meta is not None:
+                result_meta["fuzzy"] = True
+                result_meta["corrected"] = corrections
+                result_meta["relaxed"] = relaxed
+            return list(items), total, False
+
+    # Шаг 4 — ослабить AND до OR, но ТОЛЬКО если required был «повышен» из
+    # optional (нераспознанная фраза) — распознанный вид товара/бренд
+    # ослаблять до «любое слово из фразы» не нужно (это сломало бы точность
+    # для реально специфичных запросов). Последний шаг — самый нестрогий.
+    if promoted and text_tokens:
+        items, total = await _fetch_fts_page_or(
+            db, filters, text_tokens, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+        )
+        if total > 0:
+            if result_meta is not None:
+                result_meta["relaxed"] = list(text_tokens)
+            return list(items), total, False
+
+    return [], 0, False

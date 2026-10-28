@@ -1,5 +1,5 @@
 """Products, pricing, and dashboard summary schemas (extracted from schemas.py)."""
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
@@ -153,6 +153,36 @@ class ProductOut(ProductCreate):
     barcodes: List[str] = []
     model_config = {"from_attributes": True}
 
+    # НЕ-Optional bool-поля, у которых в БД колонка nullable (нет NOT NULL —
+    # SQLAlchemy default=... действует только при INSERT без явного
+    # значения, а не как DB-constraint) — владелец, QA-находка 28.10.2026:
+    # HTTP 500 на /api/products/page, 14 товаров с price_shared IS NULL
+    # (напр. id 812302), на проде, вероятно, больше. field_validator(mode=
+    # 'before') — per-field, получает уже ИЗВЛЕЧЁННОЕ из ORM-объекта
+    # значение (НЕ сам ORM-объект) — безопасно, в отличие от
+    # object.__setattr__(data, ...) в _compute_has_photo/_compute_barcodes
+    # ниже: там это НЕ реальные колонки Product, а здесь price_shared/
+    # is_active — реальные mapped-колонки, и запись через __setattr__
+    # пометила бы ORM-объект dirty → риск случайно ЗАПИСАТЬ False/True в
+    # БД при следующем commit той же сессии («данные в БД не трогать»).
+    # Тип для фронта остаётся bool (не Optional) — None сюда не долетает.
+    #
+    # Сверено со всеми bool-колонками app/models/product.py: is_reusable
+    # уже Optional[bool] в ProductCreate (None проходит валидацию без
+    # ошибки, править не нужно); price_shared и is_active — НЕ Optional,
+    # обе нуждались в фиксе (is_active на деве сейчас 0 NULL-строк, но тип
+    # тот же, что у price_shared — тот же сбой НЕИЗБЕЖЕН при появлении
+    # NULL, чиним заранее).
+    @field_validator('price_shared', mode='before')
+    @classmethod
+    def _price_shared_none_to_false(cls, v):
+        return False if v is None else v
+
+    @field_validator('is_active', mode='before')
+    @classmethod
+    def _is_active_none_to_true(cls, v):
+        return True if v is None else v
+
     @model_validator(mode='before')
     @classmethod
     def _compute_barcodes(cls, data):
@@ -216,6 +246,21 @@ class ProductSearchPageOut(BaseModel):
     # product_search.py::TOTAL_COUNT_CAP — единственное место, где считается
     # сам потолок) и является ОЦЕНКОЙ «минимум total», не точным числом.
     total_capped: bool = False
+    # query_specific/fuzzy — «этап 0» поиска по фразе (владелец, 28.10.2026,
+    # см. app/services/product_query_parse.py::ParsedQuery.specific и
+    # app/services/product_search.py::search_products(result_meta=...)).
+    # Опциональные, со значением по умолчанию — фронт их пока не читает,
+    # добавлены для будущего шага (подсказка «возможно, вы имели в виду»).
+    query_specific: bool = False
+    fuzzy: bool = False
+    # relaxed/corrected — лестница поиска (владелец, 28.10.2026, доработка
+    # «этап 0»): relaxed — какие цифровые/величина-токены или слова были
+    # ОСЛАБЛЕНЫ (не совпали точно, см. search_products шаги 2/3), чтобы
+    # найти хоть что-то — фронт может показать «точно не нашлось, похожие»;
+    # corrected — {исходное: исправленное} слово при срабатывании шага 4
+    # (product_words_correction, словарь слов каталога).
+    relaxed: List[str] = []
+    corrected: dict = {}
 
 
 # GET /api/products/stale-count — счётчик для бейджа «требует актуализации»,

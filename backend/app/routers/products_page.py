@@ -94,12 +94,20 @@ async def search_products_page(
         sort=sort,
         order=order,
     )
+    result_meta: dict = {}
     items, total, total_capped = await search_products(
         db, filters, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+        result_meta=result_meta,
     )
 
     await postprocess_catalog_list(db, items, current_user)
-    return ProductSearchPageOut(items=items, total=total, total_capped=total_capped)
+    return ProductSearchPageOut(
+        items=items, total=total, total_capped=total_capped,
+        query_specific=result_meta.get("query_specific", False),
+        fuzzy=result_meta.get("fuzzy", False),
+        relaxed=result_meta.get("relaxed", []),
+        corrected=result_meta.get("corrected", {}),
+    )
 
 
 @router.get("/stale-count", response_model=ProductStaleCountOut)

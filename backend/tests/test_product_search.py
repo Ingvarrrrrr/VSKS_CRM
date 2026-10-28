@@ -267,6 +267,72 @@ async def test_specific_query_relaxes_brand_before_quantity(db_session):
 
 
 @pytest.mark.asyncio
+async def test_specific_query_keeps_brand_when_relaxing_quantity_only(db_session):
+    """Шаг 4 (без величин, НО С БРЕНДОМ) — владелец, 28.10.2026, повторная
+    QA-проверка на 247 тыс. товаров (бренд "потерялся" на проде, когда и
+    без-бренда, и без-величин оба пусто кроме этого шага): при наличии
+    ТОЛЬКО товара бренда "Лукойл" неверного объёма/вязкости и постороннего
+    "масла" без бренда — находит именно Лукойл, посторонний "массажный"
+    товар не попадает в выдачу вовсе (нет ни вида, ни бренда — "масло" у
+    него тоже есть, но без "Лукойл" не должен найтись, когда есть товар
+    самого бренда)."""
+    import app.services.product_query_parse as product_query_parse_module
+    product_query_parse_module._brand_dict_cache["dictionary"] = None
+    product_query_parse_module._brand_dict_cache["built_at"] = 0.0
+
+    lukoil_wrong_qty = _mk(
+        db_session, name="ЛУКОЙЛ МОТО 2Т масло 1 л", manufacturer="Лукойл",
+    )
+    unrelated_oil = _mk(db_session, name="Масло массажное")
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="масло лукойл 5w40 4л")
+    meta: dict = {}
+    items, total, capped = await search_products(
+        db_session, filters, limit=50, offset=0, result_meta=meta,
+    )
+    ids = [p.id for p in items]
+    assert ids and ids[0] == lukoil_wrong_qty.id
+    assert unrelated_oil.id not in ids
+    assert meta["relaxed"] == ["5W-40", "4 л"]
+
+
+@pytest.mark.asyncio
+async def test_promoted_or_step_requires_majority_not_one_word(db_session):
+    """Шаг 6 (AND→OR) требует СТРОГОГО БОЛЬШИНСТВА слов, не ОДНОГО
+    (владелец, 28.10.2026, повторная QA-проверка на 247 тыс. товаров):
+    «пускатель магнитный» (оба слова не распознаны словарём вида товара) —
+    без пускателей в каталоге честный total=0, а не выдача по одному
+    слову "магнитный" (магниты/игрушки/конструкторы)."""
+    toy1 = _mk(db_session, name="Магнитная игра для малышей")
+    toy2 = _mk(db_session, name="Браслет магнитный лечебный")
+    toy3 = _mk(db_session, name="Конструктор магнитный детский")
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="пускатель магнитный")
+    items, total, capped = await search_products(db_session, filters, limit=50, offset=0)
+    assert total == 0
+    assert items == []
+
+
+@pytest.mark.asyncio
+async def test_promoted_or_step_finds_real_product_with_both_words(db_session):
+    """Тот же запрос «пускатель магнитный» — с настоящим «Пускатель
+    магнитный ПМЛ-1100» в каталоге должен находить именно его первым, не
+    магнитные игрушки/браслеты (владелец, 28.10.2026, повторная QA-
+    проверка)."""
+    real = _mk(db_session, name="Пускатель магнитный ПМЛ-1100")
+    toy = _mk(db_session, name="Магнитная игра для малышей")
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="пускатель магнитный")
+    items, total, capped = await search_products(db_session, filters, limit=50, offset=0)
+    ids = [p.id for p in items]
+    assert ids and ids[0] == real.id
+    assert toy.id not in ids
+
+
+@pytest.mark.asyncio
 async def test_specific_query_truly_zero_results_fuzzy_stays_empty(db_session):
     """specific=True (цифровой токен), вся лестница (точно → ослабить
     цифры → ослабить до OR → исправление опечаток по словарю product_words)

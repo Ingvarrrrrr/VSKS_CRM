@@ -907,7 +907,7 @@ import FeoPlannedTakenBy from '@/components/items/feo-planned/FeoPlannedTakenBy.
 // разбор item_type здесь не пишем). ⚠️ Файл пишет параллельный агент —
 // на момент написания этого компонента ещё не существовал, импорт по
 // согласованному пути; npx vue-tsc --noEmit перепроверить, когда появится.
-import { kindOf, ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
+import { kindOf, ITEM_TYPE_OPTIONS, matchesItemTypeFilter } from '@/utils/itemTypeKind'
 import { NEED_LEVEL_LABELS, NEED_LEVEL_SHORT_LABELS } from '@/utils/planNeedLevel'
 import { useFeoLevel5ItemType } from '@/composables/subsidies/useFeoLevel5ItemType'
 import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
@@ -1010,7 +1010,17 @@ const planToRequest = usePlanToRequest()
 // переключатель не заводим (Правило №6). displayPlannedRowsFor(node) —
 // единственный источник списка позиций листа (тот же, что уже рисует таблицу).
 function plannedGroupEntriesFor(node: FeoNode): FeoPlannedGroupEntry[] {
-  return buildPlannedGroupEntries(ctx.displayPlannedRowsFor(node), ctx.feoItemsGroupBy.value)
+  // 'category_subsidy' (задача 28.10.2026) заменяет ВСЁ дерево на
+  // SubsidyCategoryPanel.vue (см. SubsidiesView.vue) — эта функция в таком
+  // режиме не вызывается, но ctx.feoItemsGroupBy — общий тип на 4 значения
+  // (useFeoTreePrefs.ts), поэтому страхуемся фолбэком на 'category_type'
+  // вместо расширения buildPlannedGroupEntries() под значение, которое сюда
+  // не долетает по построению экрана.
+  const mode = ctx.feoItemsGroupBy.value === 'category_subsidy' ? 'category_type' : ctx.feoItemsGroupBy.value
+  return buildPlannedGroupEntries(
+    ctx.displayPlannedRowsFor(node).filter(p => matchesItemTypeFilter(p.item_type_effective, ctx.feoItemTypeFilter.value)),
+    mode,
+  )
 }
 function isRowFullyPurchased(planned: FeoPlannedItem & { isManual?: boolean }): boolean {
   return planned.isManual

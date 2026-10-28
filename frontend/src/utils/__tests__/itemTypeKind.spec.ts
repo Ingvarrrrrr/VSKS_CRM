@@ -8,7 +8,7 @@
 // тест закрепляет три сценария из задания: бюджет по типу не введён вовсе,
 // частично введён, и нормальный случай с реальным превышением.
 import { describe, expect, it } from 'vitest'
-import { freeByKindFromTypeTotals } from '../itemTypeKind'
+import { freeByKindFromTypeTotals, matchesItemTypeFilter } from '../itemTypeKind'
 
 describe('freeByKindFromTypeTotals', () => {
   it('без разбивки бюджета по типу вовсе (feo_goods=feo_services=0) — обе корзины "нет данных", не превышение', () => {
@@ -45,5 +45,32 @@ describe('freeByKindFromTypeTotals', () => {
     )
     expect(Math.abs(result.goods ?? NaN)).toBe(0)
     expect(Math.abs(result.services ?? NaN)).toBe(0)
+  })
+})
+
+// Фильтр «Все / Товары / Услуги» (FeoTreeToolbar.vue, задача владельца
+// 28.10.2026) — единственная проверка используется и обычным деревом, и
+// SubsidyCategoryPanel.vue. Владелец (21.09, AskUserQuestion): работы
+// считаются услугами; «без типа» видно только при «Все».
+describe('matchesItemTypeFilter', () => {
+  it('"all" пропускает товар/услугу/работу/без типа', () => {
+    expect(matchesItemTypeFilter('товар', 'all')).toBe(true)
+    expect(matchesItemTypeFilter('услуга', 'all')).toBe(true)
+    expect(matchesItemTypeFilter('работа', 'all')).toBe(true)
+    expect(matchesItemTypeFilter(null, 'all')).toBe(true)
+  })
+
+  it('"goods" — только товар', () => {
+    expect(matchesItemTypeFilter('товар', 'goods')).toBe(true)
+    expect(matchesItemTypeFilter('услуга', 'goods')).toBe(false)
+    expect(matchesItemTypeFilter('работа', 'goods')).toBe(false)
+    expect(matchesItemTypeFilter(null, 'goods')).toBe(false)
+  })
+
+  it('"services" — услуга И работа (работы считаются услугами)', () => {
+    expect(matchesItemTypeFilter('услуга', 'services')).toBe(true)
+    expect(matchesItemTypeFilter('работа', 'services')).toBe(true)
+    expect(matchesItemTypeFilter('товар', 'services')).toBe(false)
+    expect(matchesItemTypeFilter(null, 'services')).toBe(false)
   })
 })

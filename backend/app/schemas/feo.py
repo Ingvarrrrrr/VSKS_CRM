@@ -166,6 +166,14 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     # остальные эндпоинты оставляют дефолт None.
     catalog_category: Optional[str] = None
     catalog_product_type: Optional[str] = None
+    # Название статьи ФЭО этой плановой позиции (задача владельца, 28.10.2026,
+    # SubsidyCategoryPanel.vue — «вся субсидия по категориям товара») — нужно,
+    # когда get_comparison?subsidy_id= собирает позиции РАЗНЫХ статей ФЭО в один
+    # список (в режиме одной feo_category_id это не нужно, т.к. статья одна на весь
+    # экран, но поле заполняется в обоих режимах — считается тем же кодом в
+    # get_comparison, ПРАВИЛО №6). None, пока экран не вызывает comparison (остальные
+    # эндпоинты, отдающие FeoPlannedItemOut, не вычисляют его — как и catalog_category).
+    feo_category_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 

@@ -155,12 +155,12 @@ def _build_item_stages(
 
 @router.get("/comparison", response_model=FeoComparisonOut)
 async def get_comparison(
-    feo_category_id: int = Query(...),
+    feo_category_id: Optional[int] = Query(None),
     subsidy_id: Optional[int] = Query(None),
     exclude_purchase_id: Optional[int] = Query(None),
     exclude_wish_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Возвращает плановые позиции и фактические (из закупок) для сравнения.
 
@@ -176,9 +176,40 @@ async def get_comparison(
     (см. app.services.feo_plan.apply_wish_item_exclusion) — редактируемая сейчас закупка
     или заявка, чья закупка уже отражена в actual, не должна выглядеть задвоенной суммой,
     если вызывающий экран сам добавляет её позиции поверх (форма сконвертированной заявки).
+
+    subsidy_wide (владелец, 28.10.2026, SubsidyCategoryPanel.vue — «вся субсидия по
+    категориям товара»): feo_category_id ОПУЩЕН → subsidy_id становится самим
+    селектором, и ответ собирает плановые/фактические позиции ВСЕХ статей ФЭО этой
+    субсидии одним списком (та же выборка/формулы ниже, просто без сужения по одной
+    категории — построитель строк и стадий общий, ПРАВИЛО №6). Режим определяется
+    ТОЛЬКО наличием feo_category_id — если он задан, subsidy_id (если тоже передан)
+    работает как раньше, доп.фильтром по закупкам (см. остальных вызывающих в
+    useFeoLevel5.ts, которые уже шлют оба параметра вместе). Поэтому 400 здесь — только
+    когда НИ ОДИН из двух параметров не передан; «оба вместе» намеренно допустимо и не
+    отклоняется (это существующий режим одной категории, второй раз его не ломаем).
     """
     from app.routers.purchase_budget import PLANNED_STATUSES
     from app.services.feo_plan import purchase_item_fact_amount, FACT_CONFIRMED_STATUSES, apply_wish_item_exclusion
+
+    if feo_category_id is None and subsidy_id is None:
+        raise HTTPException(400, "Нужен subsidy_id или feo_category_id")
+
+    subsidy_wide = feo_category_id is None
+
+    # Права — canonical read-access гейт субсидии (ПРАВИЛО №6, app.auth.visibility.
+    # ensure_subsidy_visible — тот же код, что уже встроен в GET /api/subsidies/{id}
+    # и GET /api/subsidies/{id}/card-drill, см. её докстринг). Гейт добавлен ТОЛЬКО
+    # для НОВОГО subsidy_wide-режима — режим одной feo_category_id (старые вызывающие,
+    # useFeoLevel5.ts) эндпоинт отдавал без этой проверки годами (только get_current_user),
+    # и у «видимости по субсидии» здесь нет полного эквивалента доступа «видит категорию
+    # ФЭО» (вкладка feo_categories/wishes/purchases, см. _check_planned_item_write_access
+    # в feo_planned_items.py) — вводить его сейчас как ОБЯЗАТЕЛЬНЫЙ для всех вызовов
+    # означало бы риск регрессии существующего экрана для ролей, у которых нет вкладки
+    # «Субсидии», но есть доступ к плану через заявки/закупки. Новый режим — новая
+    # поверхность, гейтим её сразу правильно, старую не трогаем.
+    if subsidy_wide:
+        from app.auth.visibility import ensure_subsidy_visible
+        await ensure_subsidy_visible(current_user, db, subsidy_id)
 
     # Плановые позиции — только активные (согласовано с /residuals, is_active=False скрыты).
     # Порядок — sort_order, потом id: владелец просил менять плановые позиции местами
@@ -186,12 +217,23 @@ async def get_comparison(
     # стояло order_by(id), и панель (она читает ИМЕННО этот эндпоинт) порядок игнорировала:
     # перестановка сохранялась в БД, но на экране ничего не менялось. В соседнем
     # GET /feo-planned-items/ сортировка уже была правильной — расхождение и было багом.
-    planned_rows = (await db.execute(
-        select(FeoPlannedItem)
-        .where(FeoPlannedItem.feo_category_id == feo_category_id)
-        .where(FeoPlannedItem.is_active == True)
-        .order_by(FeoPlannedItem.sort_order.nulls_last(), FeoPlannedItem.id)
-    )).scalars().all()
+    # subsidy_wide: тот же запрос, просто фильтр по категории заменён на join к FeoCategory
+    # по subsidy_id (без цикла — одним IN через JOIN).
+    planned_q = select(FeoPlannedItem).where(FeoPlannedItem.is_active == True)
+    if subsidy_wide:
+        planned_q = (
+            planned_q
+            .join(FeoCategory, FeoPlannedItem.feo_category_id == FeoCategory.id)
+            .where(FeoCategory.subsidy_id == subsidy_id)
+            .order_by(FeoPlannedItem.feo_category_id, FeoPlannedItem.sort_order.nulls_last(), FeoPlannedItem.id)
+        )
+    else:
+        planned_q = (
+            planned_q
+            .where(FeoPlannedItem.feo_category_id == feo_category_id)
+            .order_by(FeoPlannedItem.sort_order.nulls_last(), FeoPlannedItem.id)
+        )
+    planned_rows = (await db.execute(planned_q)).scalars().all()
 
     # Фактические: purchase_items через COALESCE(PurchaseItem.feo_category_id, Purchase.feo_category_id) —
     # без coalesce ломается режим «своя категория ФЭО для каждого товара» (Purchase.feo_per_item).
@@ -205,11 +247,11 @@ async def get_comparison(
             Product.photo_size.isnot(None).label("_product_has_photo"),
             Product.photo_url.label("_photo_url"),
             Product.photo_link.label("_photo_link"),
+            effective_cat_id.label("_effective_cat_id"),
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .outerjoin(ContractItem, ContractItem.source_item_id == PurchaseItem.id)
         .outerjoin(Product, PurchaseItem.product_id == Product.id)
-        .where(effective_cat_id == feo_category_id)
         # Желания — ещё не подтверждённые хотелки; cancelled/split — вне жизненного цикла закупки.
         # Явное перечисление вместо `!= "wishes"`, чтобы cancelled/split не попадали в план/факт.
         .where(Purchase.status.in_(PLANNED_STATUSES))
@@ -217,8 +259,15 @@ async def get_comparison(
         # (решение владельца 2026-08-13).
         .where(Purchase.stopped_at.is_(None))
     )
-    if subsidy_id is not None:
+    if subsidy_wide:
+        # Вся субсидия — фильтруем ПО СУБСИДИИ закупки напрямую (не по IN-списку id
+        # категорий): охватывает и feo_per_item-закупки, чья эффективная категория
+        # лежит на позиции, а не на самой закупке.
         stmt = stmt.where(Purchase.subsidy_id == subsidy_id)
+    else:
+        stmt = stmt.where(effective_cat_id == feo_category_id)
+        if subsidy_id is not None:
+            stmt = stmt.where(Purchase.subsidy_id == subsidy_id)
     if exclude_purchase_id is not None:
         stmt = stmt.where(PurchaseItem.purchase_id != exclude_purchase_id)
     stmt = apply_wish_item_exclusion(stmt, exclude_wish_id)
@@ -240,36 +289,54 @@ async def get_comparison(
         _dedup_rows.append(row)
     actual_rows = _dedup_rows
 
-    # stages: категория одна на весь запрос (все строки уже отфильтрованы по
-    # effective_cat_id == feo_category_id), плановые позиции — по id, встреченным
-    # в actual_rows (включая неактивные — planned_rows выше содержит только активные).
-    feo_cat = (await db.execute(
-        select(FeoCategory).where(FeoCategory.id == feo_category_id)
-    )).scalar_one_or_none()
+    # stages: категория(и) — одна на весь запрос в режиме одной статьи (N=1), либо
+    # по одной на каждую встреченную категорию в режиме «вся субсидия» (N>=1). Общий
+    # построитель (ПРАВИЛО №6) — cat_map ниже обслуживает оба режима одинаково, по id
+    # категории каждой строки (feo_category_id плановой позиции / _effective_cat_id
+    # фактической), а не через единственный feo_cat, как было раньше.
+    _cat_ids_all: set[int] = {r.feo_category_id for r in planned_rows if r.feo_category_id is not None}
+    _cat_ids_all |= {row._effective_cat_id for row in actual_rows if row._effective_cat_id is not None}
+    if not subsidy_wide:
+        _cat_ids_all.add(feo_category_id)
+    cat_map: dict[int, FeoCategory] = {}
+    if _cat_ids_all:
+        _cat_rows = (await db.execute(
+            select(FeoCategory).where(FeoCategory.id.in_(_cat_ids_all))
+        )).scalars().all()
+        cat_map = {c.id: c for c in _cat_rows}
+
+    feo_cat = cat_map.get(feo_category_id) if not subsidy_wide else None
 
     # Фолбэк стадии «План» (_build_item_stages): план переехал в записи внутри
     # категории — если planned_quantity/planned_amount категории оба NULL, план
-    # лежит в активных FeoPlannedItem. Считаем ОДНИМ запросом-агрегатом на весь
-    # эндпоинт (категория тут всегда одна — feo_category_id из query), не в цикле
-    # по фактическим позициям ниже.
-    cat_plan_fallback: Optional[dict] = None
-    if feo_cat is not None and feo_cat.planned_quantity is None and feo_cat.planned_amount is None:
-        _fb_row = (await db.execute(
+    # лежит в активных FeoPlannedItem. Считаем ОДНИМ агрегатным запросом с GROUP BY
+    # по категории (а не в цикле по категориям/фактическим позициям) — для режима
+    # одной статьи это ровно тот же единственный агрегат, что и раньше.
+    cat_plan_fallback_map: dict[int, dict] = {}
+    _need_fallback_cat_ids = {
+        c.id for c in cat_map.values()
+        if c.planned_quantity is None and c.planned_amount is None
+    }
+    if _need_fallback_cat_ids:
+        _fb_rows = (await db.execute(
             select(
+                FeoPlannedItem.feo_category_id,
                 sqlfunc.coalesce(sqlfunc.sum(FeoPlannedItem.amount), 0),
                 sqlfunc.coalesce(sqlfunc.sum(FeoPlannedItem.quantity), 0),
             )
-            .where(FeoPlannedItem.feo_category_id == feo_category_id)
+            .where(FeoPlannedItem.feo_category_id.in_(_need_fallback_cat_ids))
             .where(FeoPlannedItem.is_active == True)
-        )).one()
-        _fb_amt = Decimal(str(_fb_row[0] or 0))
-        _fb_qty = Decimal(str(_fb_row[1] or 0))
-        if _fb_amt > 0 or _fb_qty > 0:
-            cat_plan_fallback = {
-                "quantity": _fb_qty if _fb_qty > 0 else None,
-                "amount": _fb_amt if _fb_amt > 0 else None,
-                "unit_price": (_fb_amt / _fb_qty) if _fb_qty > 0 else None,
-            }
+            .group_by(FeoPlannedItem.feo_category_id)
+        )).all()
+        for _cid, _amt, _qty in _fb_rows:
+            _fb_amt = Decimal(str(_amt or 0))
+            _fb_qty = Decimal(str(_qty or 0))
+            if _fb_amt > 0 or _fb_qty > 0:
+                cat_plan_fallback_map[_cid] = {
+                    "quantity": _fb_qty if _fb_qty > 0 else None,
+                    "amount": _fb_amt if _fb_amt > 0 else None,
+                    "unit_price": (_fb_amt / _fb_qty) if _fb_qty > 0 else None,
+                }
 
     _plan_item_ids = {row.PurchaseItem.feo_planned_item_id for row in actual_rows if row.PurchaseItem.feo_planned_item_id}
     plan_items_map: dict = {}
@@ -351,7 +418,9 @@ async def get_comparison(
         # (plan_schedule / work_in_progress / contracted — это ещё ПЛАН, fact_amount=None)
 
         _ci = ci_by_pi_id.get(pi.id)
-        _stages = _build_item_stages(pi, _ci, feo_cat, plan_items_map, cat_plan_fallback)
+        _row_cat = cat_map.get(row._effective_cat_id) if row._effective_cat_id is not None else feo_cat
+        _row_fallback = cat_plan_fallback_map.get(row._effective_cat_id) if row._effective_cat_id is not None else None
+        _stages = _build_item_stages(pi, _ci, _row_cat, plan_items_map, _row_fallback)
 
         actual_out.append(FeoActualItemOut(
             purchase_item_id=pi.id,
@@ -424,6 +493,10 @@ async def get_comparison(
     for r in planned_rows:
         out = FeoPlannedItemOut.model_validate(r)
         out.catalog_category, out.catalog_product_type = catalog_category_for_name(r.name, _catalog_cat_map)
+        # Название статьи ФЭО (задача «вся субсидия по категориям», 28.10.2026) —
+        # нужно, когда позиции из разных статей собраны в один список SubsidyCategoryPanel.vue.
+        _r_cat = cat_map.get(r.feo_category_id) if r.feo_category_id is not None else None
+        out.feo_category_name = _r_cat.name if _r_cat is not None else None
         _own_type = r.item_type
         if _own_type:
             out.item_type_effective = _own_type

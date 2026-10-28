@@ -63,6 +63,18 @@ export function kindOf(itemType?: string | null): ItemTypeKind {
   return KIND_UNSPECIFIED
 }
 
+// Фильтр «Все / Товары / Услуги» (FeoTreeToolbar.vue, задача владельца
+// 28.10.2026) — единственная проверка «подходит ли позиция под фильтр»,
+// используется и обычным деревом ФЭО (FeoLevel5Panel.vue), и
+// SubsidyCategoryPanel.vue (режим «вся субсидия»), второй if/else не
+// заводим (ПРАВИЛО №6). 'all' — пропускает всё, включая «без типа» (задача
+// владельца: «позиции без типа видны только при „Все“»). itemType — читает
+// item_type_effective позиции (свой тип или унаследованный от закупок).
+export function matchesItemTypeFilter(itemType: string | null | undefined, filter: 'all' | 'goods' | 'services'): boolean {
+  if (filter === 'all') return true
+  return kindOf(itemType) === (filter === 'goods' ? KIND_GOODS : KIND_SERVICES)
+}
+
 export interface TypeClassifiableItem {
   item_type?: string | null
   item_name?: string | null

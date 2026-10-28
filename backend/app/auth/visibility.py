@@ -879,3 +879,33 @@ async def is_org_in_owner_account(db: AsyncSession, user: User, org_id: Optional
     root_id = org.root_org_id or org.id
     root = org if root_id == org.id else await db.get(Organization, root_id)
     return bool(root and root.owner_user_id == user.id)
+
+
+async def ensure_subsidy_visible(user: User, db: AsyncSession, subsidy_id: int) -> None:
+    """Canonical read-access гейт для субсидии (задача «вся субсидия по
+    категориям», 28.10.2026) — тот же код, что уже встроен инлайн в
+    GET /api/subsidies/{id} (app.routers.subsidies.get_subsidy) и
+    GET /api/subsidies/{id}/card-drill (app.routers.feo_card_drill): видимые
+    субсидии (get_visible_subsidy_ids) + фолбэк по видимой закупке этой
+    субсидии (исполнитель без вкладки «Субсидии», но с правом видеть хотя бы
+    одну закупку). ПРАВИЛО №6 — третью копию этого блока не заводим; новые
+    вызывающие места (GET /feo-planned-items/comparison?subsidy_id=) зовут эту
+    функцию, существующие два инлайн-места не трогаем (риск регрессии не
+    входит в задачу). 404, не 403 — та же политика «не раскрывать
+    существование чужой субсидии», что у обоих мест-образцов."""
+    from fastapi import HTTPException
+    from sqlalchemy import func
+
+    visible = await get_visible_subsidy_ids(user, db)
+    if visible is not None and subsidy_id not in visible:
+        clause = await build_visibility_clause(user, db, "purchase")
+        allowed = clause is None
+        if clause is not None:
+            cnt = (await db.execute(
+                select(func.count()).select_from(Purchase).where(
+                    Purchase.subsidy_id == subsidy_id, clause
+                )
+            )).scalar() or 0
+            allowed = cnt > 0
+        if not allowed:
+            raise HTTPException(status_code=404, detail="Subsidy not found")

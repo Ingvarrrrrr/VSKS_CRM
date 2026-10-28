@@ -438,6 +438,12 @@ export interface FeoPlannedItem {
   // позиций — см. useFeoPlannedItemGroups.ts.
   catalog_category?: string | null
   catalog_product_type?: string | null
+  // Название статьи ФЭО этой плановой позиции (задача владельца, 28.10.2026,
+  // SubsidyCategoryPanel.vue — «вся субсидия по категориям товара») — нужно
+  // ТОЛЬКО когда GET /feo-planned-items/comparison?subsidy_id= собирает
+  // позиции РАЗНЫХ статей ФЭО в один список (backend считает его в обоих
+  // режимах comparison, см. docstring FeoPlannedItemOut.feo_category_name).
+  feo_category_name?: string | null
 }
 
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
@@ -779,7 +785,17 @@ export type SubsidyTypeExcess = Record<TypeExcessKind, { amount: number; pending
 // ── Дерево ФЭО: настройки отображения (localStorage), персистятся useFeoTreePrefs.ts ──
 export interface FeoDisplayPrefs {
   plannedBase?: PlannedBase
-  feoItemsGroupBy?: 'none' | 'category' | 'category_type'
+  // 'category_subsidy' (задача владельца, 28.10.2026) — «По категориям — вся
+  // субсидия»: дерево ФЭО заменяется SubsidyCategoryPanel.vue, которая группирует
+  // ВСЕ плановые позиции субсидии по категории каталога независимо от статьи ФЭО
+  // (см. docstring SubsidyCategoryPanel.vue). Остальные три значения — прежний
+  // режим (группировка внутри категории ФЭО, дерево остаётся на экране).
+  feoItemsGroupBy?: 'none' | 'category' | 'category_type' | 'category_subsidy'
+  // Фильтр «Все / Товары / Услуги» (задача владельца, 28.10.2026) — работает и в
+  // обычном дереве (FeoLevel5Panel.vue), и в SubsidyCategoryPanel.vue; единственный
+  // источник классификации — kindOf() (@/utils/itemTypeKind.ts, ПРАВИЛО №6,
+  // «работа» считается услугой). 'all' — дефолт, ничего не меняется без этой задачи.
+  feoItemTypeFilter?: 'all' | 'goods' | 'services'
   expandedIds?: number[]
   expandedReqItems?: number[]
   expandedItemPanels?: number[]

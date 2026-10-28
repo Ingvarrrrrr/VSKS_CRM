@@ -82,7 +82,11 @@
           <div v-else>
             <FeoTreeToolbar />
 
-            <FeoTreeTable />
+            <!-- «По категориям — вся субсидия» (владелец, 28.10.2026) заменяет
+                 дерево ФЭО панелью SubsidyCategoryPanel.vue — см. её докстринг
+                 и переключатель «Позиции» в FeoTreeToolbar.vue. -->
+            <SubsidyCategoryPanel v-if="feoTreePrefs.feoItemsGroupBy.value === 'category_subsidy'" :subsidy-id="selectedId" />
+            <FeoTreeTable v-else />
 
             <!-- Волна 3B: плашка корректировки — только когда субсидия сейчас
                  правится через проверку (RevisionDraftBar сама прячется при
@@ -162,6 +166,7 @@ import PaidConfirmationsPanel from '@/components/subsidies/PaidConfirmationsPane
 import SubsidyPaymentControlBanner from '@/components/subsidies/SubsidyPaymentControlBanner.vue'
 import FeoTreeToolbar from '@/components/subsidies/FeoTreeToolbar.vue'
 import FeoTreeTable from '@/components/subsidies/FeoTreeTable.vue'
+import SubsidyCategoryPanel from '@/components/subsidies/SubsidyCategoryPanel.vue'
 import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 import { pickSubsidyMoneyFields } from '@/composables/subsidies/subsidyMoneyFields'
@@ -1225,6 +1230,7 @@ const subsidyDetailCtx = {
   confirmFeoDelete,
   feoTableArea,
   feoItemsGroupBy: feoTreePrefs.feoItemsGroupBy,
+  feoItemTypeFilter: feoTreePrefs.feoItemTypeFilter,
   plannedBase: feoTreePrefs.plannedBase,
   plannedSumBase: feoTreePrefs.plannedSumBase,
   plannedQtyBase: feoTreePrefs.plannedQtyBase,

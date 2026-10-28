@@ -88,7 +88,12 @@ export interface SubsidyDetailContext {
   startFeoEdit: (node: FeoNode) => void
   confirmFeoDelete: (node: FeoCategory) => void
   feoTableArea: Ref<HTMLElement | null>
-  feoItemsGroupBy: Ref<'none' | 'category' | 'category_type'>
+  // 'category_subsidy' (задача владельца, 28.10.2026) — см. докстринг
+  // FeoDisplayPrefs.feoItemsGroupBy (types.ts) и SubsidyCategoryPanel.vue.
+  feoItemsGroupBy: Ref<'none' | 'category' | 'category_type' | 'category_subsidy'>
+  // Фильтр «Все/Товары/Услуги» (задача владельца, 28.10.2026) — см. докстринг
+  // FeoDisplayPrefs.feoItemTypeFilter (types.ts).
+  feoItemTypeFilter: Ref<'all' | 'goods' | 'services'>
   plannedBase: Ref<PlannedBase>
   plannedSumBase: Ref<PlannedBase>
   plannedQtyBase: Ref<PlannedBase>

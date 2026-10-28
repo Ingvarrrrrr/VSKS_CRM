@@ -42,7 +42,10 @@ function buildFeoTreePrefs() {
   // единственный признак с приоритетом над дефолтом.
   const expandedPlannedItems = ref<Set<number>>(new Set(feoDisplayPrefs.expandedPlannedItems || []))
   const collapsedPlannedItems = ref<Set<number>>(new Set(feoDisplayPrefs.collapsedPlannedItems || []))
-  const feoItemsGroupBy = ref<'none' | 'category' | 'category_type'>(feoDisplayPrefs.feoItemsGroupBy || 'none')
+  const feoItemsGroupBy = ref<'none' | 'category' | 'category_type' | 'category_subsidy'>(feoDisplayPrefs.feoItemsGroupBy || 'none')
+  // Фильтр «Все/Товары/Услуги» (задача владельца, 28.10.2026) — см. докстринг
+  // FeoDisplayPrefs.feoItemTypeFilter (types.ts).
+  const feoItemTypeFilter = ref<'all' | 'goods' | 'services'>(feoDisplayPrefs.feoItemTypeFilter || 'all')
   // Режим колонок «Плановая сумма»/«Плановое кол-во» — единый синхронный переключатель.
   const plannedBase = ref<PlannedBase>(feoDisplayPrefs.plannedBase || 'all')
   const plannedSumBase = plannedBase
@@ -91,6 +94,7 @@ function buildFeoTreePrefs() {
       localStorage.setItem(FEO_DISPLAY_PREFS_KEY, JSON.stringify({
         plannedBase: plannedBase.value,
         feoItemsGroupBy: feoItemsGroupBy.value,
+        feoItemTypeFilter: feoItemTypeFilter.value,
         expandedIds: expandedIds.value,
         expandedReqItems: [...expandedReqItems.value],
         expandedItemPanels: [...expandedItemPanels.value],
@@ -102,7 +106,7 @@ function buildFeoTreePrefs() {
     }
   }
   watch(
-    [plannedBase, feoItemsGroupBy, expandedIds, expandedReqItems, expandedItemPanels, expandedPlannedItems, collapsedPlannedItems],
+    [plannedBase, feoItemsGroupBy, feoItemTypeFilter, expandedIds, expandedReqItems, expandedItemPanels, expandedPlannedItems, collapsedPlannedItems],
     saveFeoDisplayPrefs,
     { deep: true },
   )
@@ -110,7 +114,7 @@ function buildFeoTreePrefs() {
   return {
     expandedIds, expandedReqItems, expandedItemPanels, expandedPlannedItems, collapsedPlannedItems,
     expandedPurchases, expandedStageRows,
-    feoItemsGroupBy, plannedBase, plannedSumBase, plannedQtyBase, residualBase,
+    feoItemsGroupBy, feoItemTypeFilter, plannedBase, plannedSumBase, plannedQtyBase, residualBase,
     toggleExpand, togglePurchaseFolder, togglePlannedItemFolder, toggleStageRow,
   }
 }

@@ -32,6 +32,22 @@
         <v-btn size="x-small" value="none">Нет</v-btn>
         <v-btn size="x-small" value="category">По категориям</v-btn>
         <v-btn size="x-small" value="category_type">Категории + виды</v-btn>
+        <!-- «По категориям — вся субсидия» (владелец, 28.10.2026): весь
+             бензоинструмент (и любая другая категория товара) со ВСЕХ статей
+             ФЭО одним списком — заменяет дерево на SubsidyCategoryPanel.vue
+             (см. её докстринг и SubsidiesView.vue). -->
+        <v-btn size="x-small" value="category_subsidy" title="Вся субсидия одним списком по категориям товара, независимо от статьи ФЭО">Вся субсидия</v-btn>
+      </v-btn-toggle>
+    </div>
+    <!-- Фильтр «Все / Товары / Услуги» (владелец, 28.10.2026) — работает и в
+         этом режиме, и в обычном дереве (FeoLevel5Panel.vue читает тот же
+         ctx.feoItemTypeFilter, ПРАВИЛО №6, второй фильтр не заводим). -->
+    <div class="d-flex align-center ml-3" style="gap:6px" title="Показывать все позиции или только товары/услуги">
+      <span class="text-caption text-medium-emphasis">Тип:</span>
+      <v-btn-toggle v-model="ctx.feoItemTypeFilter.value" density="compact" mandatory variant="outlined" color="teal" style="height:26px">
+        <v-btn size="x-small" value="all">Все</v-btn>
+        <v-btn size="x-small" value="goods">Товары</v-btn>
+        <v-btn size="x-small" value="services">Услуги</v-btn>
       </v-btn-toggle>
     </div>
     <!-- Раздел C (план ancient-prancing-music.md, 2026-09-21): «целиком / товары-

@@ -43,7 +43,9 @@
       <tbody>
         <tr v-for="entry in entries" :key="entry.key">
           <template v-if="entry.kind === 'header'">
-            <td :colspan="planToRequest.active.value ? 5 : 4" class="scp-header" :style="{ paddingLeft: `${(entry.level - 1) * 20 + 8}px` }">
+            <td :colspan="planToRequest.active.value ? 5 : 4" class="scp-header"
+              :class="entry.level === 1 ? 'group-hdr--category' : 'group-hdr--type'"
+              :style="{ paddingLeft: `${(entry.level - 1) * 20 + 8}px` }">
               <v-checkbox-btn
                 v-if="planToRequest.active.value"
                 :model-value="headerCheckState(entry).all"
@@ -51,8 +53,8 @@
                 density="compact" class="mr-1"
                 @update:model-value="(v: boolean | null) => toggleHeader(entry, !!v)"
               />
-              <span class="font-weight-medium">{{ entry.label }}</span>
-              <span class="text-caption text-medium-emphasis ml-2">{{ entry.count }} поз. · {{ formatMoney(entry.sum) }}</span>
+              <span>{{ entry.label }}</span>
+              <span class="text-caption group-hdr-meta ml-2">{{ entry.count }} поз. · {{ formatMoney(entry.sum) }}</span>
             </td>
           </template>
           <template v-else>
@@ -123,6 +125,7 @@ watch(() => props.subsidyId, (id) => { void load(id) }, { immediate: true })
 // перезагрузки страницы — тот же сигнал feoPlanChangeBus, что уже перегружает
 // feoResiduals у usePlanToRequest.ts (Правило №6, второй bus не заводим).
 import { onFeoPlanChanged } from '@/composables/subsidies/feoPlanChangeBus'
+import '@/styles/feo-group-header.css'
 onFeoPlanChanged(() => { void load(props.subsidyId) })
 
 // Фильтр «Все/Товары/Услуги» применяется ДО группировки — отфильтрованные
@@ -181,7 +184,9 @@ function toggleHeader(entry: FeoPlannedGroupEntry, on: boolean) {
 .subsidy-category-panel { margin: 8px 0; }
 .scp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .scp-table td { padding: 4px 8px; border-bottom: 1px solid var(--crm-border); vertical-align: middle; }
-.scp-header { background: var(--crm-surface-variant, rgba(0, 150, 136, 0.06)); }
+/* Фон/цвет/жирность — общие .group-hdr--category/--type (styles/feo-group-header.css,
+   импортирован ниже), различают заголовок категории и вида (Правило №6, задача
+   владельца 28.10.2026 — второй копии этих цветов не заводим). */
 .scp-td-check { width: 36px; }
 .scp-td-qty { white-space: nowrap; width: 110px; }
 .scp-td-sum { white-space: nowrap; width: 120px; font-weight: 500; }

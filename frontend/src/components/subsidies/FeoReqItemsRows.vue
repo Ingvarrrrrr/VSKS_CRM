@@ -10,10 +10,14 @@
       <td class="feo-td feo-td-name" :style="{ paddingLeft: ctx.reqRowIndent(owner, row) }">
         <div class="feo-name-inner">
           <template v-if="!row.group">
+            <!-- Цвет/жирность — те же токены темы, что заголовки группировки «категория
+                 → вид» в FeoLevel5Panel.vue/SubsidyCategoryPanel.vue (.group-hdr--category/
+                 --type, styles/feo-group-header.css, Правило №6, задача владельца
+                 28.10.2026: заголовок категории должен явно отличаться от вида). -->
             <v-icon size="14" class="mr-1 flex-shrink-0"
               :icon="row.level === 1 ? 'mdi-shape-outline' : 'mdi-tag-outline'"
-              :color="row.level === 1 ? '#0D9488' : '#64748B'" />
-            <span :style="row.level === 1 ? 'font-weight:600;font-size:12px' : 'font-weight:500;font-size:12px;color:#475569'">{{ row.header }}</span>
+              :color="row.level === 1 ? 'info' : 'success'" />
+            <span class="group-hdr-text" :class="row.level === 1 ? 'group-hdr--category' : 'group-hdr--type'" style="font-size:12px">{{ row.header }}</span>
             <span class="feo-code ml-2">{{ row.count }} поз.</span>
           </template>
           <template v-else>
@@ -195,6 +199,7 @@ import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { purchaseStatusIcon, purchaseStatusColor, purchaseStatusLabel } from '@/constants/purchaseStatus'
 import type { FeoNode } from '@/composables/subsidies/types'
+import '@/styles/feo-group-header.css'
 
 const props = defineProps<{ owner: FeoNode }>()
 const owner = props.owner

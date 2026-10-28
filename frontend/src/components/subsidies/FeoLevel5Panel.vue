@@ -120,9 +120,10 @@
                    совпадение имени с товаром каталога, см. useFeoPlannedItemGroups.ts
                    и backend/app/services/feo_plan_catalog_category.py). -->
               <tr v-if="entry.kind === 'header'" class="feo-planned-group-header">
-                <td colspan="8" :style="{ paddingLeft: `${ctx.plannedItemIndentPx(node) + (entry.level - 1) * 16}px` }"
-                  style="padding:4px 8px;font-weight:600;color:#0f766e;background:#F0FDFA;border-bottom:1px solid #99F6E4;font-size:12px">
-                  {{ entry.label }} <span style="color:#64748b;font-weight:400">· {{ entry.count }} · {{ formatCurrency(entry.sum) }}</span>
+                <td colspan="8" :class="entry.level === 1 ? 'group-hdr--category' : 'group-hdr--type'"
+                  :style="{ paddingLeft: `${ctx.plannedItemIndentPx(node) + (entry.level - 1) * 16}px` }"
+                  style="padding-top:4px;padding-right:8px;padding-bottom:4px;font-size:12px">
+                  {{ entry.label }} <span class="group-hdr-meta">· {{ entry.count }} · {{ formatCurrency(entry.sum) }}</span>
                 </td>
               </tr>
               <!-- index плановой позиции внутри ЭТОГО v-for (entry.index) — исходная
@@ -918,6 +919,7 @@ import RevisionCellBadge from './RevisionCellBadge.vue'
 // FeoPlannedItemPartEditDialog.vue), здесь — только открытие по клику на карандаш.
 import { useFeoPlannedItemPartEditDialog } from '@/composables/subsidies/useFeoPlannedItemPartEditDialog'
 import { excessHitTooltip } from '@/composables/subsidies/useFeoTreeExcess'
+import '@/styles/feo-group-header.css'
 
 const props = defineProps<{ node: FeoNode }>()
 const node = props.node

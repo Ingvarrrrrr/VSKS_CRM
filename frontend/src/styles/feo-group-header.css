@@ -1,0 +1,50 @@
+/* Заголовки группировки «категория товара → вид товара → позиции» (переключатель
+   FeoTreeToolbar.vue, ctx.feoItemsGroupBy) — задача владельца 28.10.2026:
+   заголовок КАТЕГОРИИ плохо отличался от заголовка ВИДА (оба тёмно-teal,
+   отличались только отступом). Общий (НЕ scoped) файл, а не стиль внутри
+   каждого компонента — он нужен в ТРЁХ местах с разной разметкой:
+   FeoLevel5Panel.vue (обычное дерево, entry.level 1/2 из
+   useFeoPlannedItemGroups.ts::buildPlannedGroupEntries), SubsidyCategoryPanel.vue
+   (панель «Вся субсидия», тот же entry.level) и FeoReqItemsRows.vue
+   (непривязанные позиции закупок, useFeoReqItems.ts::reqItemRowsFor,
+   row.level — та же механика buildCategoryGroupedRows, feoCategoryUtils.ts).
+   Scoped-стиль одного компонента не достал бы до разметки другого — тот же
+   приём, что styles/feo-planned-select.css (см. докстринг там). Цвета — токены
+   темы Vuetify (rgb/rgba(var(--v-theme-...))), работают в light и dark без
+   отдельных @media/[data-theme] блоков (сами переменные темы меняются
+   Vuetify). primary в этом проекте — оранжевый акцент (см. plugins/vuetify.ts)
+   и уже занят другими акцентами дерева, поэтому категория — info (синий),
+   вид — success (зелёный/teal тон), а не primary. */
+
+.group-hdr--category {
+  font-weight: 700;
+  color: rgb(var(--v-theme-info));
+  background: rgba(var(--v-theme-info), 0.10);
+  border-bottom: 1px solid rgba(var(--v-theme-info), 0.25);
+}
+
+.group-hdr--type {
+  font-weight: 500;
+  color: rgb(var(--v-theme-success));
+  background: rgba(var(--v-theme-success), 0.06);
+  border-bottom: 1px solid rgba(var(--v-theme-success), 0.18);
+}
+
+/* Суммарная подпись «· N · сумма» рядом с заголовком — приглушённая в обоих
+   случаях, акцент должен держать сам заголовок, не счётчик. */
+.group-hdr--category .group-hdr-meta,
+.group-hdr--type .group-hdr-meta {
+  color: var(--crm-text-muted);
+  font-weight: 400;
+}
+
+/* .group-hdr-text — вариант для инлайн-подписи внутри обычной строки (не
+   отдельная ячейка-заголовок на всю ширину, FeoReqItemsRows.vue): нужны
+   только цвет/жирность из .group-hdr--category/--type, без фоновой подложки
+   и подчёркивающей рамки — строка уже имеет свой фон (виртуальная позиция
+   закупки). */
+.group-hdr-text.group-hdr--category,
+.group-hdr-text.group-hdr--type {
+  background: none;
+  border-bottom: none;
+}

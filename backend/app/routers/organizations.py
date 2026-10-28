@@ -718,6 +718,46 @@ async def get_organization(
     return _merge_org_with_contractor(org, user_count=uc)
 
 
+@router.post("/api/organizations/{org_id}/signatory-to-staff")
+async def materialize_signatory_as_staff(
+    org_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """«Ответственный исполнитель» закупки обязан быть штатом организации
+    субсидии (Правило владельца, 28.10.2026 — см. docstring
+    app.services.service_note_people). Если у организации ещё нет ни одного
+    сотрудника, но в её карточке (из ЕГРЮЛ) указан подписант — делаем его
+    сотрудником без входа в систему (см. docstring
+    app.services.signatory_staff.get_or_create_signatory_staff_user), чтобы
+    его можно было выбрать. Та же видимость орг, что у get_organization выше.
+    """
+    res = await db.execute(
+        select(Organization).options(selectinload(Organization.contractor)).where(Organization.id == org_id)
+    )
+    org = res.scalar_one_or_none()
+    if not org:
+        raise HTTPException(404, "Организация не найдена")
+    if current_user.role != 'superadmin':
+        from app.auth.jwt import get_org_filter
+        visible = get_org_filter(current_user)
+        if visible is not None and org_id not in visible:
+            raise HTTPException(404, "Организация не найдена")
+
+    c = getattr(org, 'contractor', None)
+    req = org_requisites(org, c)
+    last, first, middle = req['signatory_last_name'], req['signatory_first_name'], req['signatory_middle_name']
+    if not (last or first):
+        raise HTTPException(422, "В карточке организации не указан подписант (ФИО руководителя)")
+
+    from app.services.signatory_staff import get_or_create_signatory_staff_user
+    user = await get_or_create_signatory_staff_user(
+        db, org_id, last, first, middle, position=req['signatory_position'],
+    )
+    await db.commit()
+    return {"id": user.id, "full_name": user.full_name, "position": user.position}
+
+
 @router.get("/api/organizations/{org_id}/delete-impact")
 async def organization_delete_impact(
     org_id: int,

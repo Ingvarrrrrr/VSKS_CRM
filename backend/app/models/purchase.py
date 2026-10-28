@@ -233,7 +233,7 @@ class Purchase(Base):
 
     # Копирование закупки в другую субсидию (app/services/purchase_transfer/,
     # миграция v3x4y5z6a7b8_purchase_copied_from.py) — какая закупка-оригинал
-    # породила эту копию. NULL у оригиналов и у закупок, не связанных копией;
+    # породила эту копию. NULL у оригиналов и у закупок, не связанных копией.
     # ondelete=SET NULL — удаление оригинала не должно утягивать копию.
     copied_from_purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="SET NULL"), nullable=True)
 
@@ -300,6 +300,11 @@ class Purchase(Base):
     has_stages = Column(Boolean, nullable=False, server_default='false')            # True=в Приложении №1 есть этапы оказания услуг
     procurement_protocol_number = Column(String(100), nullable=True)                # номер протокола закупочной комиссии
     procurement_order_number = Column(String(100), nullable=True)                   # номер приказа о закупке
+    # Владелец (28.10.2026): дата к номеру приказа выше — обе проставляются
+    # вместе автоматически (см. app/services/purchase_order_numbering.py), если
+    # не заполнены пользователем вручную. Миграция
+    # d4e6f8a0b2c4_purchase_procurement_order_date.py.
+    procurement_order_date = Column(Date, nullable=True)                            # дата приказа о закупке
 
     # Phase 19: template fields for docx context ---------------------------
     submission_deadline = Column(DateTime, nullable=True)          # дата+время завершения приёма заявок

@@ -2238,12 +2238,17 @@ _compute_feo_plan_tree_uncached = compute_feo_plan_tree
 
 
 async def _compute_feo_plan_tree_memoized(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, dict]:
-    from app.services.feo_plan_tree_cache import get_cached_tree, store_cached_tree
+    from app.services.feo_plan_tree_cache import (
+        get_cached_tree, store_cached_tree, get_or_compute_cross_request,
+    )
 
     cached = get_cached_tree(subsidy_ids)
     if cached is not None:
         return cached
-    tree = await _compute_feo_plan_tree_uncached(db, subsidy_ids)
+    # Межзапросный слой (владелец, 28.10.2026, см. докстринг
+    # feo_plan_tree_cache.py) — версионированный LRU ПОД request-scope кэшем
+    # выше; промах там же проваливается в _compute_feo_plan_tree_uncached.
+    tree = await get_or_compute_cross_request(db, subsidy_ids, _compute_feo_plan_tree_uncached)
     store_cached_tree(subsidy_ids, tree)
     return tree
 

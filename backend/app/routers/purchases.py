@@ -80,6 +80,14 @@ from app.services.plan_graph_versions import _create_plan_graph_version
 # + путь эндпоинта в дочернем файле. routes.py не трогается.
 from app.routers.purchase_tz import router as purchase_tz_router
 from app.routers.purchase_return import router as purchase_return_router
+# Перф (прод-жалоба 27.10.2026, «закупки падают с 500 после 12-15с»):
+# request-scoped кэш compute_account_contour_org_ids (ПРАВИЛО №6, см. её
+# докстринг в app/auth/account_contour_cache.py) — apply_purchase_visibility
+# ниже резолвит иерархию видимости несколько раз за один запрос, каждый раз
+# пересчитывая контур ОДНИХ И ТЕХ ЖЕ org_id. Декоратор не меняет формулу
+# видимости ни на символ, только избавляет от повторного счёта в пределах
+# ЭТОГО HTTP-запроса.
+from app.auth.account_contour_cache import with_account_contour_cache
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 router.include_router(purchase_tz_router)
@@ -224,6 +232,7 @@ VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform", "contractor_n
 
 
 @router.get("/", response_model=List[PurchaseOutFull])
+@with_account_contour_cache
 async def list_purchases(
     contract_id: Optional[int] = Query(None),
     feo_category_id: Optional[int] = Query(None),
@@ -553,6 +562,7 @@ async def load_purchase_for_out(db: AsyncSession, pid: int) -> Purchase | None:
 
 
 @router.get("/ceiling-badges")
+@with_account_contour_cache
 async def purchase_ceiling_badges(
     scope: Optional[str] = Query("purchases"),
     org_id: Optional[int] = Query(None),
@@ -1172,16 +1182,19 @@ async def update_purchase(
     elif data.assigned_user_id == 0:
         raise HTTPException(422, "Укажите ответственного исполнителя")
 
-    # Правило владельца (22.10.2026): инициатор и адресат служебной записки —
-    # только штат организации субсидии (PUT использует PurchaseCreate — оба
-    # поля в схеме, оба попадают в generic setattr ниже). Проверяем, только
-    # если значение реально меняется (см. docstring
+    # Правило владельца (22.10.2026, расширено 28.10.2026 на assigned_user_id):
+    # инициатор, адресат служебной записки и ответственный исполнитель —
+    # только штат организации субсидии (PUT использует PurchaseCreate — все
+    # три поля в схеме, все попадают в generic setattr ниже). Проверяем,
+    # только если значение реально меняется (см. docstring
     # assert_service_note_people_in_staff).
     _sn_changes_put = {}
     if data.service_note_by is not None and data.service_note_by != p.service_note_by:
         _sn_changes_put["service_note_by"] = data.service_note_by
     if data.service_note_to_user_id is not None and data.service_note_to_user_id != p.service_note_to_user_id:
         _sn_changes_put["service_note_to_user_id"] = data.service_note_to_user_id
+    if data.assigned_user_id is not None and data.assigned_user_id != 0 and data.assigned_user_id != p.assigned_user_id:
+        _sn_changes_put["assigned_user_id"] = data.assigned_user_id
     if _sn_changes_put:
         from app.services.service_note_people import assert_service_note_people_in_staff
         await assert_service_note_people_in_staff(db, p, _sn_changes_put)
@@ -2114,7 +2127,7 @@ PATCHABLE_FIELDS = {
     "commitment_quarter", "planned_payment_month",
     # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
     "delivery_by_supplier", "has_stages",
-    "procurement_protocol_number", "procurement_order_number",
+    "procurement_protocol_number", "procurement_order_number", "procurement_order_date",
 }
 
 
@@ -2133,6 +2146,8 @@ _DATE_FIELDS = {
     # Fabrikant
     "applications_review_date",
     "planned_payment_month",
+    # Phase 28 T6/T7: дата приказа о закупке
+    "procurement_order_date",
 }
 _DATETIME_FIELDS = {"submission_deadline", "service_note_at"}
 
@@ -2159,6 +2174,7 @@ async def patch_purchase(
         raise HTTPException(403, "Нет прав на редактирование этой закупки. Обратитесь к администратору организации.")
 
     # Phase 28 B4: нельзя снять ответственного через PATCH
+    _assigned_user_id_changed_patch = False
     if "assigned_user_id" in (body or {}):
         val = body["assigned_user_id"]
         if val is None or val == 0:
@@ -2166,15 +2182,20 @@ async def patch_purchase(
         target = await db.get(User, val)
         if target is None:
             raise HTTPException(422, f"Пользователь {val} не найден")
+        _assigned_user_id_changed_patch = val != p.assigned_user_id
 
-    # Правило владельца (22.10.2026): адресат служебной записки — только
-    # штат организации субсидии. Проверяем, только если значение реально
-    # меняется (см. docstring assert_service_note_people_in_staff).
+    # Правило владельца (22.10.2026, расширено 28.10.2026 на assigned_user_id):
+    # адресат служебной записки и ответственный исполнитель — только штат
+    # организации субсидии. Проверяем, только если значение реально меняется
+    # (см. docstring assert_service_note_people_in_staff).
+    _sn_changes_patch = {}
     if "service_note_to_user_id" in (body or {}) and body["service_note_to_user_id"] != p.service_note_to_user_id:
+        _sn_changes_patch["service_note_to_user_id"] = body["service_note_to_user_id"]
+    if _assigned_user_id_changed_patch:
+        _sn_changes_patch["assigned_user_id"] = body["assigned_user_id"]
+    if _sn_changes_patch:
         from app.services.service_note_people import assert_service_note_people_in_staff
-        await assert_service_note_people_in_staff(
-            db, p, {"service_note_to_user_id": body["service_note_to_user_id"]}
-        )
+        await assert_service_note_people_in_staff(db, p, _sn_changes_patch)
 
     # Opportunistic backfill: первый PATCH (autosave) от user'а закрепляет
     # за ним legacy-закупку без assigned_user_id — иначе после save она опять

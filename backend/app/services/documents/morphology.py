@@ -31,6 +31,80 @@ def _get_petro():
             _petro = False
     return _petro or None
 
+
+# ── Патч известного дефекта установленной версии petrovich (2.0.1) ──────────
+#
+# Жалоба владельца (28.10.2026): «Копылова Ольга Владимировна» → «Копыловой
+# Ольгы Владимировны» вместо «Ольги». Причина — НЕ в этом файле и не в
+# petrovich.rules.json (там нужное правило есть, gender='androgynous',
+# окончание «-и» для имён/фамилий на -га/-ка/-ха/-ча/-ща/-жа), а в самом
+# коде библиотеки: `Petrovich.__find_rules` (petrovich/main.py, установлена
+# версия 2.0.1) сравнивает `rule['gender'] != gender` БУКВАЛЬНО, без учёта
+# androgynous — поэтому androgynous-правила никогда не применяются, если
+# вызывающий код передаёт явный gender ('male'/'female'), как делает
+# `_to_case_fio` ниже. Следующая версия библиотеки (3.0.0) чинит это ровно
+# так, как нужно (проверено), но требует Python 3.12+ (PEP 695 `type`
+# statement в main.py) — контейнер backend на 3.11, апгрейд вне объёма этой
+# задачи. Патчить файл самой библиотеки нельзя — site-packages перезатирается
+# при любой переустановке зависимостей (не единственный источник истины).
+# Поэтому: воспроизводим ИМЕННО то правило, что в данных petrovich уже есть,
+# но код библиотеки его не достаёт — здесь, в единственном месте склонения
+# ФИО (_to_case_fio/_to_case_fio_initials ниже), ДО вызова petrovich.
+#
+# Побочный эффект того же бага — мужские имена на безударное -а без
+# отдельного мужского правила в таблице (Никита, Кузьма, Фока, Лука — есть
+# только androgynous-правило «-а», тоже недоступное) не склонялись вовсе.
+# Патч закрывает оба случая.
+_SIBILANT_VELAR_ENDINGS = ('га', 'ка', 'ха', 'жа', 'ша', 'ча', 'ща')
+# Орфографическое правило «жи-ши пиши с буквой и» для родительного/дательного
+# падежа слов 1-го склонения на -а после шипящих/заднеязычных (г,к,х,ж,ш,ч,щ):
+# «Ольга»→«Ольги»/«Ольге», никогда «Ольгы».
+_SIBILANT_VELAR_CASE_SUFFIX = {'GENITIVE': 'и', 'DATIVE': 'е'}
+# Общее правило для -а без шипящих/заднеязычных (андрогинное у petrovich,
+# но недостижимое с явным gender) — то же окончание, что уже верно работает
+# для женских имён через собственное женское правило («Марфа»→«Марфы»):
+# достраиваем его и для мужских имён на -а (Никита→Никиты, Кузьма→Кузьмы).
+_PLAIN_A_CASE_SUFFIX = {'GENITIVE': 'ы', 'DATIVE': 'е'}
+
+
+def _apply_sibilant_velar_a_fix(word: str, case_name: str) -> str | None:
+    """См. блок комментариев выше. None — патч не применим, использовать
+    обычный petrovich."""
+    suffix = _SIBILANT_VELAR_CASE_SUFFIX.get(case_name)
+    if not suffix or not word:
+        return None
+    if not word.lower().endswith(_SIBILANT_VELAR_ENDINGS):
+        return None
+    stem = word[:-1]
+    return stem + (suffix.upper() if word.isupper() else suffix)
+
+
+def _apply_plain_a_male_fix(word: str, case_name: str) -> str | None:
+    """Мужские имена на безударное -а (Никита, Кузьма...) — см. блок
+    комментариев выше. Вызывать только для gender == Gender.MALE."""
+    suffix = _PLAIN_A_CASE_SUFFIX.get(case_name)
+    if not suffix or not word:
+        return None
+    lower = word.lower()
+    if not lower.endswith('а') or lower.endswith(_SIBILANT_VELAR_ENDINGS):
+        return None
+    stem = word[:-1]
+    return stem + (suffix.upper() if word.isupper() else suffix)
+
+
+def _decline_name_part(petro, method: str, word: str, case, case_name: str, gender) -> str:
+    """Склонить один компонент ФИО (фамилия/имя/отчество) — патч выше в
+    приоритете перед обычным petrovich (ПРАВИЛО №6: единственная точка
+    вызова petrovich для ФИО — здесь, в обёртке, а не напрямую в трёх
+    местах _to_case_fio/_to_case_fio_initials)."""
+    patched = _apply_sibilant_velar_a_fix(word, case_name)
+    if patched is None and gender == 'male':
+        patched = _apply_plain_a_male_fix(word, case_name)
+    if patched is not None:
+        return patched
+    return getattr(petro, method)(word, case, gender)
+
+
 def _to_gen_word_heuristic(word: str) -> str:
     """Эвристическое склонение слова в родительный падеж без pymorphy3.
 
@@ -408,9 +482,9 @@ def _to_case_fio(full_name: str, case_name: str) -> str:
     try:
         gender = Gender.FEMALE if fio_parts[2].lower().endswith(('вна', 'чна', 'ична')) else Gender.MALE
         result = [
-            petro.lastname(fio_parts[0], case, gender),
-            petro.firstname(fio_parts[1], case, gender),
-            petro.middlename(fio_parts[2], case, gender),
+            _decline_name_part(petro, 'lastname', fio_parts[0], case, case_name, gender),
+            _decline_name_part(petro, 'firstname', fio_parts[1], case, case_name, gender),
+            _decline_name_part(petro, 'middlename', fio_parts[2], case, case_name, gender),
         ]
         if suffix:
             result.append(suffix)
@@ -474,7 +548,7 @@ def _to_case_fio_initials(full_name: str, case_name: str) -> str:
     case = getattr(Case, case_name)
     try:
         gender = Gender.FEMALE if parts[2].lower().endswith(('вна', 'чна', 'ична')) else Gender.MALE
-        last_declined = petro.lastname(parts[0], case, gender)
+        last_declined = _decline_name_part(petro, 'lastname', parts[0], case, case_name, gender)
     except Exception:
         return nominative_initials
 

@@ -200,7 +200,7 @@ async def get_visible_user_ids(user: User, db: AsyncSession) -> Optional[set[int
     return visible
 
 
-async def compute_account_contour_org_ids(db: AsyncSession, org_id: Optional[int]) -> set[int]:
+async def _compute_account_contour_org_ids_uncached(db: AsyncSession, org_id: Optional[int]) -> set[int]:
     """КАНОНИЧЕСКИЙ расчёт контура аккаунта: root_org_id-дерево ∪ owner_user_id-связь.
 
     Единственная реализация алгоритма — используется и в jwt.get_current_user
@@ -250,6 +250,35 @@ async def compute_account_contour_org_ids(db: AsyncSession, org_id: Optional[int
         contour.update(new_ids)
 
     contour.add(int(org_id))
+    return contour
+
+
+# ПРАВИЛО №6/№5 (2026-10-28, прод-жалоба «закупки падают с 500 после 12-15с»):
+# прозрачный request-scoped кэш ВОКРУГ этой же функции, без изменения формулы
+# выше ни на символ — тот же приём, что app.services.feo_plan_tree_cache
+# (см. её докстринг и docstring app.auth.account_contour_cache). Профиль на
+# стенде: apply_purchase_visibility зовёт compute_account_contour_org_ids 18
+# раз за один запрос (14× org_id=1, 4× org_id=29) — get_visible_subsidy_ids/
+# get_visible_user_ids/exclude_hidden_payroll_purchases независимо резолвят
+# иерархию и не знают, что контур ЭТОГО org_id уже посчитан соседом. Без
+# открытого account_contour_request_scope() (большинство вызывающих мест —
+# jwt.get_current_user на логине и т.п.) кэш не участвует, поведение прежнее.
+_compute_account_contour_org_ids_direct = _compute_account_contour_org_ids_uncached
+
+
+async def compute_account_contour_org_ids(db: AsyncSession, org_id: Optional[int]) -> set[int]:
+    from app.auth.account_contour_cache import (
+        get_cached_contour, store_cached_contour, get_or_compute_cross_request,
+    )
+
+    cached = get_cached_contour(org_id)
+    if cached is not None:
+        return cached
+    # Межзапросный слой (владелец, 28.10.2026, см. докстринг
+    # account_contour_cache.py) — версионированный LRU ПОД request-scope кэшем
+    # выше; промах там же проваливается в _compute_account_contour_org_ids_direct.
+    contour = await get_or_compute_cross_request(db, org_id, _compute_account_contour_org_ids_direct)
+    store_cached_contour(org_id, contour)
     return contour
 
 

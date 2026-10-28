@@ -89,6 +89,7 @@ STAGE_CONTRACT_FIELDS = [
     "order_date", "etp_url", "payment_term_days", "applications_review_date",
     "commitment_quarter", "planned_payment_month", "vehicle_id",
     "repair_request_number", "procurement_protocol_number", "procurement_order_number",
+    "procurement_order_date",
 ]
 
 # Поля Payment, копируемые на каждую части при разбиении платежа (сверх

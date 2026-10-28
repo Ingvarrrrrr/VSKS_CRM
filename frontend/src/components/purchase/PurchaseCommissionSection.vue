@@ -47,7 +47,19 @@
             label="Номер приказа о закупке"
             density="compact"
             variant="outlined"
-            hint="Номер внутреннего приказа, подтверждающего проведение закупки. {{procurement_order_number}}"
+            hint="Пусто — присвоится автоматически (по порядку, в пределах организации и года) при первой генерации документа по закупке. {{procurement_order_number}}"
+            persistent-hint
+            @blur="flushAutosaveOnBlur"
+          />
+        </v-col>
+        <v-col cols="12" md="4">
+          <v-text-field
+            v-model="form.procurement_order_date"
+            type="date"
+            label="Дата приказа о закупке"
+            density="compact"
+            variant="outlined"
+            hint="Пусто — подставится сегодняшней датой вместе с номером. {{procurement_order_date}}"
             persistent-hint
             @blur="flushAutosaveOnBlur"
           />

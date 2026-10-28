@@ -69,11 +69,10 @@ export function useStaffDepartments(options: {
     return ms.map((m: any) => ({ text: m.name || '?', value: m.user_id }))
   })
 
-  function openCreateDept() {
-    editingDept.value = null
-    deptForm.value = { name: '', subsidy_id: filterSubsidyId.value, head_user_id: null, deputy_head_user_id: null, curator_user_id: null, parent_id: null }
-    deptDialog.value = true
-  }
+  // Создание отдела — ТОЛЬКО через composables/departments/useDeptCreate.ts
+  // (Правило владельца, 28.10.2026: одна форма создания отдела везде, см.
+  // докстринг useDeptCreate). Этот composable отвечает за дерево/фильтры и
+  // РЕДАКТИРОВАНИЕ существующего отдела (StaffDeptDialog, editingDept).
 
   async function openEditDept(node: any) {
     selectedDept.value = node
@@ -88,15 +87,15 @@ export function useStaffDepartments(options: {
     if (dept) openEditDept(dept)
   }
 
+  // Создание уходит через useDeptCreate (см. комментарий выше) — saveDept
+  // теперь только PATCH существующего отдела (вызывается из StaffDeptDialog,
+  // editingDept всегда задан).
   async function saveDept() {
+    if (!editingDept.value) return
     try {
-      if (editingDept.value) {
-        await apiFetch(`/departments/${editingDept.value.id}`, { method: 'PATCH', body: JSON.stringify(deptForm.value) })
-      } else {
-        await apiFetch('/departments/', { method: 'POST', body: JSON.stringify(deptForm.value) })
-      }
+      await apiFetch(`/departments/${editingDept.value.id}`, { method: 'PATCH', body: JSON.stringify(deptForm.value) })
       deptDialog.value = false
-      showSnack(editingDept.value ? 'Отдел обновлен' : 'Отдел создан')
+      showSnack('Отдел обновлён')
       dictsCache.value = {}
       knownDepartments.value = []
       await loadDicts()
@@ -136,6 +135,6 @@ export function useStaffDepartments(options: {
     filterSubsidyId, filterDeptOrgId, filterDeptUserId,
     loadDeptTree, loadDeptMembers, loadDelegates,
     deptDialog, editingDept, deptForm, otherDeptItems, deptMemberItems,
-    openCreateDept, openEditDept, openEditDeptById, saveDept, deleteDept, selectDept,
+    openEditDept, openEditDeptById, saveDept, deleteDept, selectDept,
   }
 }

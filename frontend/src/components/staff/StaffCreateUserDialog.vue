@@ -51,6 +51,8 @@
           item-title="label" item-value="value"
           label="Роль"
           variant="outlined" density="compact" class="mb-3"
+          :hint="dialog.role === 'org_admin' ? `Управляет только организацией «${selectedOrgName}»` : undefined"
+          :persistent-hint="dialog.role === 'org_admin'"
         />
         <v-autocomplete v-if="canPickOrg" v-model="dialog.org_id" :items="assignableOrganizations" item-title="name" item-value="id"
           label="Организация *" variant="outlined" density="compact" class="mb-3"
@@ -98,14 +100,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
 import { AVATARS } from '@/composables/staff/staffLabels'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
 
-defineProps<{
+const props = defineProps<{
   dialog: {
     show: boolean; last_name: string; first_name: string; middle_name: string; email: string
     password: string; password_confirm: string; role: string; city: string; department: string
@@ -122,6 +124,18 @@ defineProps<{
   mobile: boolean
 }>()
 defineEmits<{ (e: 'save'): void }>()
+
+// Подсказка у роли «Администратор организации» (задача 2026-10-16, правка
+// координатора): dialog.org_id — реальная цель создания независимо от
+// canPickOrg («+» из Иерархии предзаполняет его оргой отдела, которая может
+// отличаться от текущей орги пользователя даже когда пикер скрыт). Поэтому
+// сначала ищем по dialog.org_id в assignableOrganizations, затем currentOrgName,
+// и только потом нейтральный фолбэк (не «выбранной» — криво звучит с «организацией»).
+const selectedOrgName = computed(() => {
+  return props.assignableOrganizations.find(o => o.id === props.dialog.org_id)?.name
+    || props.currentOrgName
+    || 'этой организации'
+})
 
 // Форма живёт внутри диалога — наружу отдаём только validate(), чтобы
 // useStaffCreateUser::saveUser() мог подсветить невалидные поля перед сохранением

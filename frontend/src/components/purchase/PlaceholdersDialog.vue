@@ -113,18 +113,26 @@ const groups = computed<Group[]>(() => {
   return result.filter(g => g.items.length)
 })
 
+// Владелец (28.10.2026): поиск по названию РАЗДЕЛА тоже — «заказчик»/
+// «подписант» должен находить раздел «Подписант Заказчика» целиком, даже
+// если слово не повторено в описании каждой строки внутри него.
 const filteredGroups = computed<Group[]>(() => {
   if (!search.value) return groups.value
   const q = search.value.toLowerCase()
   return groups.value
-    .map(g => ({
-      title: g.title,
-      items: g.items.filter(v =>
-        v.var.toLowerCase().includes(q) ||
-        v.description.toLowerCase().includes(q) ||
-        v.example_template.toLowerCase().includes(q)
-      ),
-    }))
+    .map(g => {
+      const titleMatches = g.title.toLowerCase().includes(q)
+      return {
+        title: g.title,
+        items: titleMatches
+          ? g.items
+          : g.items.filter(v =>
+              v.var.toLowerCase().includes(q) ||
+              v.description.toLowerCase().includes(q) ||
+              v.example_template.toLowerCase().includes(q)
+            ),
+      }
+    })
     .filter(g => g.items.length)
 })
 </script>

@@ -24,6 +24,9 @@ export const ROLE_LABELS: Record<string, string> = {
 // Глобальная роль: org_admin СЮДА НЕ входит — «Администратор организации» это
 // только per-org роль (UserOrgAccess.role), не глобальная. Глобально доступны
 // Сотрудник / Менеджер / Администратор аккаунта (управляет всем аккаунтом).
+// Этот список — ТОЛЬКО для правки существующей глобальной роли (StaffEditUserDialog)
+// и фильтра по роли (StaffUsersToolbar). Для СОЗДАНИЯ сотрудника — getCreateRoleItems
+// ниже: при создании org_admin выдаётся не глобально, а в организацию формы.
 export function getRoleItems(currentRole: string) {
   const items = [
     { value: 'manager', label: ROLE_LABELS.manager },
@@ -35,6 +38,28 @@ export function getRoleItems(currentRole: string) {
   if (['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentRole)) {
     items.unshift({ value: 'admin', label: ROLE_LABELS.admin })
     items.unshift({ value: 'account_owner', label: ROLE_LABELS.account_owner })
+  }
+  return items
+}
+
+// Список ролей для ФОРМ СОЗДАНИЯ сотрудника (Добавить сотрудника / «+» в
+// Иерархии / Создать и добавить в отдел / импорт из Excel) — задача владельца
+// 2026-10-16: в списке не было «Администратор организации» (UserOrgAccess.role
+// в организацию формы, не глобальная роль — см. backend split_new_user_role в
+// app/auth/permissions.py). Добавляется МЕЖДУ admin и manager, видна только
+// тем же ролям, что видят admin/account_owner (тот же набор — тот, кто вправе
+// назначить org_admin, вправе и увидеть эту опцию; реальную проверку прав
+// делает backend assert_new_user_role_allowed).
+export function getCreateRoleItems(currentRole: string) {
+  const items = getRoleItems(currentRole)
+  if (['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentRole)) {
+    const managerIdx = items.findIndex(i => i.value === 'manager')
+    const orgAdminItem = { value: 'org_admin', label: ROLE_LABELS.org_admin }
+    if (managerIdx === -1) {
+      items.push(orgAdminItem)
+    } else {
+      items.splice(managerIdx, 0, orgAdminItem)
+    }
   }
   return items
 }

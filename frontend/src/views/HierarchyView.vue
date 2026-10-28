@@ -37,7 +37,7 @@
           </v-chip>
         </template>
       </v-text-field>
-      <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="newDeptDialog.show = true" class="ml-2">
+      <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="openDeptCreate(graphSingleOrgId)" class="ml-2">
         Добавить отдел
       </v-btn>
       <v-btn size="small" variant="tonal" color="blue" prepend-icon="mdi-account-plus" @click="emit('create-user')" class="ml-2">
@@ -140,11 +140,14 @@
       @saved="onContractorSaved"
     />
 
-    <HierarchyNewDeptDialog
-      v-model="newDeptDialog.show"
-      :form="newDeptDialog"
-      :orgs="graphOrgs"
-      @create="createNewDept"
+    <DeptCreateDialog
+      v-model:show="deptCreateShow"
+      :form="deptCreateForm"
+      :orgs="deptCreateOrgs"
+      :subsidy-options="deptCreateSubsidyOptions"
+      :saving="deptCreateSaving"
+      :loading-lists="deptCreateLoadingLists"
+      @create="createDept"
     />
 
     <HierarchyAddMemberDialog
@@ -226,7 +229,8 @@ import HierarchyCopyUserDialog from '@/components/hierarchy/HierarchyCopyUserDia
 import HierarchyUserInfoDialog from '@/components/hierarchy/HierarchyUserInfoDialog.vue'
 import HierarchyEditOrgDialog from '@/components/hierarchy/HierarchyEditOrgDialog.vue'
 import OrgCreateDialog from '@/components/org/OrgCreateDialog.vue'
-import HierarchyNewDeptDialog from '@/components/hierarchy/HierarchyNewDeptDialog.vue'
+import { useDeptCreate } from '@/composables/departments/useDeptCreate'
+import DeptCreateDialog from '@/components/departments/DeptCreateDialog.vue'
 import HierarchyAddMemberDialog from '@/components/hierarchy/HierarchyAddMemberDialog.vue'
 import HierarchyDeleteDeptDialog from '@/components/hierarchy/HierarchyDeleteDeptDialog.vue'
 import HierarchyDeleteOrgDialog from '@/components/hierarchy/HierarchyDeleteOrgDialog.vue'
@@ -278,7 +282,6 @@ const {
 })
 
 const {
-  newDeptDialog, setDefaultDeptOrgId, createNewDept,
   addMemberDialog, addMemberSelectedId, addMemberLoading,
   openAddMemberDialog, onCreateFromAddMember, confirmAddMember,
   deleteDeptConfirm, deleteDeptNode, confirmDeleteDept,
@@ -286,6 +289,20 @@ const {
   lastGraphData, showSnack,
   loadGraph: () => loadGraph(),
   onCreateUser: (ctx) => emit('create-user', ctx),
+})
+
+// Создание отдела — ОДНА форма/функция везде (Правило владельца, 28.10.2026,
+// см. докстринг useDeptCreate): та же, что у StaffView.vue. graphSingleOrgId —
+// если в текущем графе ровно одна организация, подставляем её по умолчанию
+// при открытии (тот же случай, что раньше решал setDefaultDeptOrgId).
+const graphSingleOrgId = ref<number | null>(null)
+const {
+  show: deptCreateShow, saving: deptCreateSaving, loadingLists: deptCreateLoadingLists,
+  orgs: deptCreateOrgs, subsidyOptions: deptCreateSubsidyOptions, form: deptCreateForm,
+  open: openDeptCreate, create: createDept,
+} = useDeptCreate({
+  showSnack,
+  onCreated: async () => { await loadGraph() },
 })
 
 const {
@@ -299,7 +316,7 @@ const {
 })
 
 const {
-  nodes, edges, loading, graphOrgs,
+  nodes, edges, loading,
   loadGraph, rebuildGraph, autoLayout,
   getAvailableUsers, getDeptName, fitView, onConnect,
 } = useHierarchyGraph(lastGraphData, {
@@ -312,7 +329,7 @@ const {
   onEditUser: (id) => emit('edit-user', id),
   onEditDept: (id) => emit('edit-dept', id),
   onOpenOrg: (org) => openOrgDetail(org),
-  setDefaultDeptOrgId,
+  setDefaultDeptOrgId: (orgId: number) => { if (graphSingleOrgId.value === null) graphSingleOrgId.value = orgId },
 })
 
 const { searchQuery, searchMatchCount, applySearch } = useHierarchySearch(nodes, fitView)

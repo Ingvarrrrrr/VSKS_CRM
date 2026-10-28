@@ -87,6 +87,15 @@ async def insert_purchase_with_items(
         target = await db.get(User, data.assigned_user_id)
         if target is None:
             raise HTTPException(422, f"Пользователь {data.assigned_user_id} не найден")
+        # Правило владельца (28.10.2026): ответственный исполнитель — только
+        # штат организации субсидии закупки (та же проверка, что у инициатора/
+        # адресата служебной записки — app.services.service_note_people,
+        # ПРАВИЛО №6, не второй механизм).
+        if dump.get("subsidy_id"):
+            from app.services.service_note_people import assert_people_in_subsidy_staff
+            await assert_people_in_subsidy_staff(
+                db, dump["subsidy_id"], {"Ответственный исполнитель": data.assigned_user_id}
+            )
     # Auto-assign current user as owner when frontend did not specify one.
     # Без этого закупка с assigned_user_id=NULL становится невидимой для рядового
     # автора (list_purchases фильтрует по visible_user_ids; NULL IN (...) = false).

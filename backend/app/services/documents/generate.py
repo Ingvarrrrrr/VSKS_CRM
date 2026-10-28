@@ -47,6 +47,7 @@ from app.services.documents.stages_approvers_list import (
 )
 from app.services.documents.stages_amounts import contract_date_parts, compute_amounts_and_vat
 from app.services.purchase_economy import purchase_economy_one
+from app.services.purchase_order_numbering import assign_procurement_order_number_if_missing
 from app.services.documents.contexts_build import build_base_context_part1, build_base_context_part2
 from app.services.documents.contexts_extra import (
     add_phase28_context,
@@ -103,6 +104,12 @@ async def generate_document_bytes(
 
     # Stage 3: framework-head temp contract number + doc-type gates.
     await framework_contract_guard(p, doc_type, db)
+
+    # Владелец (28.10.2026): номер приказа о закупке — та же схема присвоения
+    # «при первом использовании», что и временный номер договора выше, но для
+    # ЛЮБОГО doc_type (не только договорных) — см. docstring
+    # purchase_order_numbering.py. Ручной номер не трогается.
+    await assign_procurement_order_number_if_missing(db, p)
 
     # Re-resolve template now subsidy_id is known.
     template_path, template_file, filename_base = resolve_final_template(doc_type, p.subsidy_id)

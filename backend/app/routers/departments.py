@@ -115,6 +115,27 @@ class DelegateOut(BaseModel):
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+async def _assert_subsidy_org_matches(db: AsyncSession, subsidy_id: int, org_id: Optional[int]) -> None:
+    """Субсидия отдела обязана принадлежать той же организации, что и сам
+    отдел (Правило владельца, 28.10.2026 — форма диалога отдела показывает
+    только субсидии выбранной организации, бэкенд перепроверяет то же самое
+    при сохранении, не доверяя фронту напрямую). ПРАВИЛО №6: единственное
+    место этой проверки — вызывается и из create_department, и из
+    update_department.
+    """
+    from app.models.subsidy import Subsidy
+    subsidy = await db.get(Subsidy, subsidy_id)
+    if subsidy is None:
+        raise HTTPException(422, f"Субсидия (id={subsidy_id}) не найдена")
+    if org_id is not None and subsidy.org_id is not None and subsidy.org_id != org_id:
+        org = await db.get(Organization, subsidy.org_id)
+        org_name = getattr(org, "name", None) or f"id={subsidy.org_id}"
+        raise HTTPException(
+            422,
+            f"Субсидия «{subsidy.name}» относится к другой организации ({org_name})",
+        )
+
+
 async def _enrich_dept(d: Department, db: AsyncSession) -> DepartmentOut:
     head_name = None
     if d.head_user_id:
@@ -249,9 +270,17 @@ async def create_department(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('staff')),
 ):
-    # Superadmin can assign to any org via body.org_id; account_owner only
-    # within own account contour (ИСПРАВЛЕНИЕ К1, QA-итерация 2, 19.10.2026—
-    # раньше принимал ЛЮБОЙ data.org_id, включая орг чужого аккаунта).
+    # Superadmin — любая орг; account_owner — в контуре своего аккаунта
+    # (ИСПРАВЛЕНИЕ К1, QA-итерация 2, 19.10.2026 — раньше принимал ЛЮБОЙ
+    # data.org_id, включая орг чужого аккаунта). admin/org_admin/manager/
+    # employee — ТОТ ЖЕ паттерн разрешённых org_id, что в create_user
+    # (app/routers/users.py): get_org_filter уже учитывает контур аккаунта и
+    # персональный доступ (UOA) для этих ролей (ИСПРАВЛЕНИЕ 28.10.2026 —
+    # раньше для них data.org_id вообще игнорировался, отдел из формы с
+    # выбранной организацией всегда уходил в дефолтную орг пользователя:
+    # заявка владельца «форма отдела — ни хрена не сохранилось»). ПРАВИЛО
+    # №6 — не второй расчёт разрешённых орг, та же get_org_filter.
+    default_org_id = get_single_org_id(current_user) or current_user.org_id
     if data.org_id and current_user.role == 'superadmin':
         org_id = data.org_id
     elif data.org_id and current_user.role == 'account_owner':
@@ -261,8 +290,20 @@ async def create_department(
             org_id = data.org_id
         else:
             raise HTTPException(403, "Организация вне вашего аккаунта")
+    elif data.org_id:
+        allowed = get_org_filter(current_user)
+        if allowed is None or data.org_id in allowed:
+            org_id = data.org_id
+        else:
+            raise HTTPException(403, "Организация вне вашего доступа")
     else:
-        org_id = get_single_org_id(current_user) or current_user.org_id
+        org_id = default_org_id
+    if not org_id:
+        raise HTTPException(400, "Необходимо указать организацию")
+
+    if data.subsidy_id is not None:
+        await _assert_subsidy_org_matches(db, data.subsidy_id, org_id)
+
     # 27.4-02: НЕ применяем .title() — он ломает аббревиатуры («отдел МТО» → «Отдел Мто»).
     # Сохраняем регистр как ввёл пользователь.
     norm_name = data.name.strip() if data.name else data.name
@@ -294,6 +335,8 @@ async def update_department(
     update = data.dict(exclude_unset=True)
     if "name" in update and update["name"]:
         update["name"] = update["name"].strip()
+    if "subsidy_id" in update and update["subsidy_id"] is not None:
+        await _assert_subsidy_org_matches(db, update["subsidy_id"], dept.org_id)
     for k, v in update.items():
         setattr(dept, k, v)
     await db.commit()

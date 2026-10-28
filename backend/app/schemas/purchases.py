@@ -308,6 +308,10 @@ class PurchaseCreate(BaseModel):
     has_stages: Optional[bool] = False
     procurement_protocol_number: Optional[str] = None
     procurement_order_number: Optional[str] = None
+    # Владелец (28.10.2026): дата к номеру приказа выше — обычно проставляется
+    # автоматически вместе с номером (app/services/purchase_order_numbering.py),
+    # но доступна и для ручной правки той же формой.
+    procurement_order_date: Optional[date] = None
     # Phase 29: связь с ТС
     vehicle_id: Optional[int] = None
     # ЭТП: ссылка на конкурсную процедуру
@@ -455,6 +459,10 @@ class PurchaseUpdate(BaseModel):
     has_stages: Optional[bool] = None
     procurement_protocol_number: Optional[str] = None
     procurement_order_number: Optional[str] = None
+    # Владелец (28.10.2026): дата к номеру приказа выше — обычно проставляется
+    # автоматически вместе с номером (app/services/purchase_order_numbering.py),
+    # но доступна и для ручной правки той же формой.
+    procurement_order_date: Optional[date] = None
     # Phase 29: связь с ТС
     vehicle_id: Optional[int] = None
     # ЭТП: ссылка на конкурсную процедуру

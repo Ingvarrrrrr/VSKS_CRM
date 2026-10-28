@@ -46,7 +46,9 @@
             :error="!!newMemberForm.password_confirm && newMemberForm.password !== newMemberForm.password_confirm"
             :error-messages="newMemberForm.password_confirm && newMemberForm.password !== newMemberForm.password_confirm ? 'Пароли не совпадают' : ''" />
           <v-select v-model="newMemberForm.role" :items="roleItems" item-title="label" item-value="value"
-            label="Роль" variant="outlined" density="compact" class="mb-2" />
+            label="Роль" variant="outlined" density="compact" class="mb-2"
+            :hint="newMemberForm.role === 'org_admin' ? `Управляет только организацией «${deptOrgName}»` : undefined"
+            :persistent-hint="newMemberForm.role === 'org_admin'" />
           <v-combobox v-model="newMemberForm.position" :items="getPositionsForOrg(selectedDept?.org_id)" label="Должность" variant="outlined" density="compact" class="mb-2"
             hint="Выберите из списка или введите свою" persistent-hint />
           <v-text-field v-model="newMemberForm.city" label="Город" variant="outlined" density="compact" />
@@ -65,14 +67,16 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { formatPhoneRu } from '@/utils/phoneFormat'
 
-defineProps<{
+const props = defineProps<{
   selectedDept: any
   memberForm: { user_id: number | null; position: string }
   newMemberForm: { email: string; last_name: string; first_name: string; middle_name: string; password: string; password_confirm: string; phone: string; role: string; position: string; city: string }
   userDropdownItems: { text: string; value: number }[]
   roleItems: { value: string; label: string }[]
+  organizations?: any[]
   getPositionsForOrg: (orgId?: number | null) => string[]
   newMemberSaving: boolean
   mobile: boolean
@@ -80,4 +84,12 @@ defineProps<{
 defineEmits<{ (e: 'add'): void; (e: 'create-and-add'): void }>()
 const show = defineModel<boolean>('show', { required: true })
 const addMemberMode = defineModel<'existing' | 'new'>('addMemberMode', { required: true })
+
+// Подсказка у роли «Администратор организации» (задача 2026-10-16): орга
+// отдела, в который сотрудник создаётся — не orgs самого вызывающего.
+const deptOrgName = computed(() => {
+  const orgId = props.selectedDept?.org_id
+  const found = orgId ? props.organizations?.find(o => o.id === orgId)?.name : null
+  return found || 'этого отдела'
+})
 </script>

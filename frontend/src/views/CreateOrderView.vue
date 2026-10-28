@@ -435,11 +435,15 @@
                 :rules="[v => !!(v && String(v).trim()) || 'Обязательное поле']"
               />
             </v-col>
-            <!-- Phase 28 B4: Ответственный исполнитель (user FK, обязательное) -->
+            <!-- Phase 28 B4: Ответственный исполнитель (user FK, обязательное).
+                 Правило владельца (28.10.2026): только штат организации
+                 субсидии (staffUsersList, та же формула что у адресата СЗ) —
+                 не весь orgUsersList (там же люди с персональным доступом из
+                 других организаций). -->
             <v-col cols="12" md="4">
               <v-autocomplete
                 v-model="form.assigned_user_id"
-                :items="orgUsersList"
+                :items="staffUsersList"
                 item-title="full_name"
                 item-value="id"
                 :label="formMode === 'service_note_delivery' || formMode === 'advance_report' ? 'Ответственный исполнитель' : 'Ответственный исполнитель *'"
@@ -447,7 +451,7 @@
                 density="compact"
                 hide-no-data
                 :rules="formMode === 'service_note_delivery' || formMode === 'advance_report' ? [] : [v => !!v || 'Обязательное поле']"
-                :hint="formMode === 'service_note_delivery' ? 'На кого расписана СЗ (автоматически = адресат)' : 'Кто ведёт закупку в системе'"
+                :hint="formMode === 'service_note_delivery' ? 'На кого расписана СЗ (автоматически = адресат)' : 'Кто ведёт закупку в системе — только сотрудники организации субсидии'"
                 persistent-hint
                 autocomplete="off"
               >
@@ -458,6 +462,10 @@
                   </v-list-item>
                 </template>
               </v-autocomplete>
+              <v-alert v-if="signatoryCandidate" type="info" variant="tonal" density="compact" class="mt-1">
+                В организации пока нет сотрудников. Подписант «{{ signatoryCandidate.name }}»{{ signatoryCandidate.position ? ` (${signatoryCandidate.position})` : '' }} из карточки организации.
+                <v-btn size="x-small" variant="tonal" color="primary" class="ml-2" :loading="addingSignatoryAsAssigned" @click="addSignatoryAsAssigned">Сделать ответственным</v-btn>
+              </v-alert>
             </v-col>
             <!-- Fallback: категория ФЭО записана, но не найдена в справочнике (удалена/недоступна) -->
             <v-col v-if="feoCategoryMissing" cols="12" md="4">
@@ -2604,6 +2612,10 @@ const form = reactive({
   // Phase 28 T8: документы закупочной комиссии
   procurement_protocol_number: null as string | null,
   procurement_order_number: null as string | null,
+  // Владелец (28.10.2026): дата приказа — обычно подставляется автоматически
+  // вместе с номером (см. app/services/purchase_order_numbering.py), но
+  // доступна и для ручной правки.
+  procurement_order_date: null as string | null,
   // Phase 29: связь с ТС
   vehicle_id: null as number | null,
   // ЭТП: ссылка на конкурсную процедуру
@@ -2773,6 +2785,7 @@ function serializeFormForAutosave() {
     // Phase 28 T8: документы закупочной комиссии
     procurement_protocol_number: f.procurement_protocol_number || null,
     procurement_order_number: f.procurement_order_number || null,
+    procurement_order_date: f.procurement_order_date || null,
     // ЭТП
     etp_url: f.etp_url || null,
   })
@@ -3155,13 +3168,14 @@ async function loadOrgUsers() {
 // Кому возмещать — список сотрудников из orgUsersList
 const reimbursementUserOptions = computed(() => orgUsersList.value)
 
-// Правило владельца (22.10.2026): «Кому служебная записка» (адресат) —
-// только ШТАТ организации субсидии, УЖЕ (в отличие от orgUsersList выше)
-// без персонального доступа (user_org_access/user_subsidy_access). Отдельный
-// список — orgUsersList используется другими полями формы (возмещение,
-// ответственный исполнитель), их не сужаем (Правило владельца не просил —
-// Purchase.assigned_user_id не попадает ни в один шаблон служебки/приказа,
-// см. backend/app/services/service_note_people.py).
+// Правило владельца (22.10.2026, расширено 28.10.2026 на «Ответственный
+// исполнитель» — заявка: субсидия «ЗРО актуальная» у орг «ЗРО ВСКС», а
+// ответственным стоял Цыганов И.А., не относящийся к этой орг): «Кому
+// служебная записка» (адресат) и «Ответственный исполнитель» — только ШТАТ
+// организации субсидии, УЖЕ (в отличие от orgUsersList выше) без
+// персонального доступа (user_org_access/user_subsidy_access). Отдельный
+// список — orgUsersList используется другими полями формы, которые Правило
+// владельца не сужало (возмещение авансового).
 const staffUsersList = ref<OrgUser[]>([])
 async function loadStaffUsers() {
   if (!form.subsidy_id) { staffUsersList.value = []; return }
@@ -3170,14 +3184,50 @@ async function loadStaffUsers() {
     staffUsersList.value = users
       .filter(u => u.full_name)
       .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
-    // Старое значение адресата может не входить в штат (данные до правила) —
-    // не выбрасываем его из формы, просто добавляем видимым пунктом списка.
-    const current = form.service_note_to_user_id
-    if (current && !staffUsersList.value.some(u => u.id === current)) {
-      const fallback = orgUsersList.value.find(u => u.id === current)
-      if (fallback) staffUsersList.value.push(fallback)
+    // Старое значение адресата/исполнителя может не входить в штат (данные
+    // до правила) — не выбрасываем его из формы, просто добавляем видимым
+    // пунктом списка.
+    for (const current of [form.service_note_to_user_id, form.assigned_user_id]) {
+      if (current && !staffUsersList.value.some(u => u.id === current)) {
+        const fallback = orgUsersList.value.find(u => u.id === current)
+        if (fallback) staffUsersList.value.push(fallback)
+      }
     }
   } catch { staffUsersList.value = [] }
+}
+
+// Правило владельца (28.10.2026): если в организации субсидии ещё нет ни
+// одного сотрудника (staffUsersList пуст), но в её карточке (из ЕГРЮЛ) есть
+// подписант — предлагаем завести его сотрудником без входа в систему (см.
+// backend/app/services/signatory_staff.py), чтобы его можно было выбрать
+// ответственным исполнителем. Источник данных — уже загруженный
+// customerPreview (та же org, без второго запроса, ПРАВИЛО №6).
+const signatoryCandidate = computed(() => {
+  if (staffUsersList.value.length > 0) return null
+  const org = customerPreview.value
+  if (!org || !currentSubsidyOrgId.value) return null
+  const name = [org.signatory_last_name, org.signatory_first_name, org.signatory_middle_name]
+    .filter(Boolean).join(' ')
+  if (!name) return null
+  return { name, position: org.signatory_position || '' }
+})
+const addingSignatoryAsAssigned = ref(false)
+async function addSignatoryAsAssigned() {
+  if (!currentSubsidyOrgId.value || addingSignatoryAsAssigned.value) return
+  addingSignatoryAsAssigned.value = true
+  try {
+    const user = await apiFetch<{ id: number; full_name: string; position?: string | null }>(
+      `/organizations/${currentSubsidyOrgId.value}/signatory-to-staff`,
+      { method: 'POST' },
+    )
+    await loadStaffUsers()
+    form.assigned_user_id = user.id
+    showSnack(`«${user.full_name}» добавлен сотрудником организации`)
+  } catch (e: any) {
+    showSnack(e?.detail || 'Не удалось добавить подписанта сотрудником', 'error')
+  } finally {
+    addingSignatoryAsAssigned.value = false
+  }
 }
 
 // ── Delivery address autocomplete — вынесено в composables/purchase/useDeliveryAddress.ts ──
@@ -4514,6 +4564,7 @@ const loadPurchase = async () => {
     // Phase 28 T8: документы закупочной комиссии
     procurement_protocol_number: data.procurement_protocol_number ?? null,
     procurement_order_number: data.procurement_order_number ?? null,
+    procurement_order_date: data.procurement_order_date ?? null,
     // Phase 29: связь с ТС
     vehicle_id: data.vehicle_id ?? null,
     // ЭТП

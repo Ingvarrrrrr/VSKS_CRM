@@ -94,6 +94,10 @@ def add_phase28_context(context: dict, subsidy, c, p: Purchase, can_view_pii: bo
         context["penalty_rate"]                = str(p.penalty_rate) if p.penalty_rate is not None else "0.1"
         context["procurement_protocol_number"] = (p.procurement_protocol_number or "").strip()
         context["procurement_order_number"]    = (p.procurement_order_number or "").strip()
+        # Владелец (28.10.2026): дата приказа — присваивается автоматически
+        # вместе с номером (app.services.purchase_order_numbering), если не
+        # заполнена вручную. См. TEMPLATE_VARIABLES::{{procurement_order_date}}.
+        context["procurement_order_date"]      = _fmt_date(p.procurement_order_date) if p.procurement_order_date else ""
         context["repair_request_number"]       = (p.repair_request_number or "").strip()
         context["contractor_ogrnip_date"]      = _fmt_date(p.contractor_ogrnip_date) if p.contractor_ogrnip_date else ""
         # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)

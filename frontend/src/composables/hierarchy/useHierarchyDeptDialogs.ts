@@ -13,29 +13,12 @@ export interface HierarchyDeptDialogsOptions {
 }
 
 export function useHierarchyDeptDialogs(opts: HierarchyDeptDialogsOptions) {
-  // ── New dept ─────────────────────────────────────────────────────────────────
-  const newDeptDialog = ref({ show: false, name: '', orgId: null as number | null })
-
-  // Вызывается графом при загрузке, если в контуре ровно одна организация —
-  // выбираем её отделом по умолчанию (идемпотентно: только если ещё не выбрано).
-  function setDefaultDeptOrgId(orgId: number) {
-    if (newDeptDialog.value.orgId === null) newDeptDialog.value.orgId = orgId
-  }
-
-  async function createNewDept() {
-    const name = newDeptDialog.value.name.trim()
-    if (!name) return
-    try {
-      const body: any = { name }
-      if (newDeptDialog.value.orgId) body.org_id = newDeptDialog.value.orgId
-      await apiFetch('/departments/', { method: 'POST', body })
-      opts.showSnack(`Отдел "${name}" создан`)
-      newDeptDialog.value = { show: false, name: '', orgId: newDeptDialog.value.orgId }
-      await opts.loadGraph()
-    } catch (e: any) {
-      opts.showSnack(e?.message || 'Ошибка создания отдела', 'error')
-    }
-  }
+  // Создание отдела вынесено в composables/departments/useDeptCreate.ts —
+  // единая форма/функция для StaffView.vue и этого графа (Правило владельца,
+  // 28.10.2026: раньше у графа была своя кнопка+диалог (HierarchyNewDeptDialog)
+  // без поля субсидии, а у StaffView — своя, не передававшая org_id). Эта
+  // функция (и newDeptDialog/setDefaultDeptOrgId) здесь больше не живёт —
+  // см. HierarchyView.vue, где подключён useDeptCreate напрямую.
 
   // ── Add member ───────────────────────────────────────────────────────────────
   const addMemberDialog = ref<{ show: boolean; deptId: number | null; available: { id: number; label: string }[] }>({
@@ -100,7 +83,6 @@ export function useHierarchyDeptDialogs(opts: HierarchyDeptDialogsOptions) {
   }
 
   return {
-    newDeptDialog, setDefaultDeptOrgId, createNewDept,
     addMemberDialog, addMemberSelectedId, addMemberLoading,
     openAddMemberDialog, onCreateFromAddMember, confirmAddMember,
     deleteDeptConfirm, deleteDeptNode, confirmDeleteDept,

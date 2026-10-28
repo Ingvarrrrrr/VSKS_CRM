@@ -1,5 +1,13 @@
 """generate_temp_contract_number — вынесено из app/routers/purchases.py
 (рефакторинг 02.10.2026, ПРАВИЛО №5, без изменения поведения).
+
+Защита от гонки (28.10.2026, ПРАВИЛО №6, тот же хелпер что в
+app/services/purchase_order_numbering.py): две одновременные генерации
+документа по закупкам с одинаковым `base_num` могут прочитать один и тот же
+набор занятых `contract_number` и выбрать одинаковый `candidate`. Перед
+циклом подбора захватывается `pg_advisory_xact_lock` по закупке через
+app/services/numbering_lock.py — в той же транзакции, что и запись
+результата вызывающим кодом (framework_contract_guard и др.).
 """
 from __future__ import annotations
 
@@ -7,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.purchase import Purchase
+from app.services.numbering_lock import acquire_numbering_lock
 
 
 async def generate_temp_contract_number(p: Purchase, db: AsyncSession) -> str:
@@ -22,6 +31,11 @@ async def generate_temp_contract_number(p: Purchase, db: AsyncSession) -> str:
     """
     base_num = p.purchase_number or p.id
     base = f"ВРЕМ-{base_num}"
+
+    # Блокировка ДО чтения занятых contract_number — в той же транзакции,
+    # что и запись результата вызывающим кодом (см. docstring модуля).
+    await acquire_numbering_lock(db, "temp_contract_number", base)
+
     candidate = base
     suffix = 1
     while True:

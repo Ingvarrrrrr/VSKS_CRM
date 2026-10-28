@@ -47,7 +47,7 @@
           @error="(msg) => showSnack(msg, 'error')"
           @download-template="downloadDeptTemplate"
           @open-import="deptImportDialog = true"
-          @create-dept="openCreateDept"
+          @create-dept="openCreateDeptFromHeader"
         />
 
         <div ref="deptArea">
@@ -174,7 +174,7 @@
     <StaffCreateUserDialog
       ref="createDialogRef"
       :dialog="createDialog"
-      :role-items="roleItems"
+      :role-items="createRoleItems"
       :can-pick-org="canPickOrg"
       :assignable-organizations="assignableOrganizations"
       :current-org-name="currentOrgName"
@@ -219,12 +219,23 @@
       v-model:show="deptDialog"
       :editing-dept="editingDept"
       :dept-form="deptForm"
-      :subsidies="subsidies"
+      :org-name="editingDeptOrgName"
+      :subsidies="editingDeptSubsidyOptions"
       :dept-member-items="deptMemberItems"
       :user-dropdown-items="userDropdownItems"
       :other-dept-items="otherDeptItems"
       :mobile="mobile"
       @save="saveDept"
+    />
+
+    <DeptCreateDialog
+      v-model:show="deptCreateShow"
+      :form="deptCreateForm"
+      :orgs="deptCreateOrgs"
+      :subsidy-options="deptCreateSubsidyOptions"
+      :saving="deptCreateSaving"
+      :loading-lists="deptCreateLoadingLists"
+      @create="createDept"
     />
 
     <StaffAddMemberDialog
@@ -234,7 +245,8 @@
       :member-form="memberForm"
       :new-member-form="newMemberForm"
       :user-dropdown-items="userDropdownItems"
-      :role-items="roleItems"
+      :role-items="createRoleItems"
+      :organizations="organizations"
       :get-positions-for-org="getPositionsForOrg"
       :new-member-saving="newMemberSaving"
       :mobile="mobile"
@@ -279,6 +291,7 @@ import StaffDeptToolbar from '@/components/staff/StaffDeptToolbar.vue'
 import StaffDeptTree from '@/components/staff/StaffDeptTree.vue'
 import StaffDeptDetails from '@/components/staff/StaffDeptDetails.vue'
 import StaffDeptDialog from '@/components/staff/StaffDeptDialog.vue'
+import DeptCreateDialog from '@/components/departments/DeptCreateDialog.vue'
 import StaffAddMemberDialog from '@/components/staff/StaffAddMemberDialog.vue'
 import StaffEditMemberDialog from '@/components/staff/StaffEditMemberDialog.vue'
 import StaffDelegateDialog from '@/components/staff/StaffDelegateDialog.vue'
@@ -296,7 +309,7 @@ import StaffInnDupDialog from '@/components/staff/StaffInnDupDialog.vue'
 import StaffHierarchyDialog from '@/components/staff/StaffHierarchyDialog.vue'
 import { createStaffDeptTreeNode } from '@/components/staff/StaffDeptTreeNode'
 
-import { getRoleItems } from '@/composables/staff/staffLabels'
+import { getRoleItems, getCreateRoleItems } from '@/composables/staff/staffLabels'
 import { useStaffDicts } from '@/composables/staff/useStaffDicts'
 import { useStaffOrganizations } from '@/composables/staff/useStaffOrganizations'
 import { useStaffUsersList } from '@/composables/staff/useStaffUsersList'
@@ -310,6 +323,8 @@ import { useStaffMembers } from '@/composables/staff/useStaffMembers'
 import { useStaffDeptImport } from '@/composables/staff/useStaffDeptImport'
 import { useStaffExport } from '@/composables/staff/useStaffExport'
 import type { UserItem } from '@/composables/staff/staffTypes'
+import { useDeptCreate } from '@/composables/departments/useDeptCreate'
+import { filterSubsidiesByOrg } from '@/composables/departments/subsidiesForOrg'
 
 // ── Route / Tab ──
 const route = useRoute()
@@ -324,6 +339,11 @@ const currentRole = localStorage.getItem('user_role') || ''
 const currentUserId = Number(localStorage.getItem('user_id') || 0)
 const isAdmin = computed(() => ['admin', 'org_admin', 'account_owner', 'superadmin'].includes(currentRole))
 const roleItems = computed(() => getRoleItems(currentRole))
+// Формы СОЗДАНИЯ сотрудника (Добавить сотрудника / Создать и добавить в
+// отдел) — отдельный список с «Администратор организации» (задача 2026-10-16,
+// см. комментарий у getCreateRoleItems). roleItems выше НЕ меняется — он же
+// используется для правки существующей глобальной роли и фильтра.
+const createRoleItems = computed(() => getCreateRoleItems(currentRole))
 
 // ── Snackbar ── единый механизм (useToast + ToastContainer, смонтирован в App.vue).
 const toast = useToast()
@@ -381,13 +401,41 @@ const {
   filterSubsidyId, filterDeptOrgId, filterDeptUserId,
   loadDeptTree, loadDeptMembers, loadDelegates,
   deptDialog, editingDept, deptForm, otherDeptItems, deptMemberItems,
-  openCreateDept, openEditDept, openEditDeptById, saveDept, deleteDept, selectDept,
+  openEditDept, openEditDeptById, saveDept, deleteDept, selectDept,
 } = useStaffDepartments({ showSnack, dictsCache, knownDepartments, loadDicts, refreshHierarchy })
 
+// Создание отдела — ОДНА форма/функция везде (Правило владельца, 28.10.2026,
+// см. докстринг useDeptCreate). Кнопка «Добавить отдел» в шапке раньше
+// переключала на вкладку «Отделы» и не передавала org_id (отдел уходил в
+// дефолтную орг пользователя — «ни хрена не сохранилось»). Теперь открывает
+// тот же диалог, что и кнопка на вкладке «Отделы» и кнопка в Иерархии, БЕЗ
+// переключения вкладки — там, где стоит пользователь.
+// Деструктурируем ПЛОСКО (не "deptCreate.show" в шаблоне) — только так Vue
+// авто-разворачивает ref в template (тот же паттерн, что у deptDialog/
+// editingDept выше из useStaffDepartments).
+const {
+  show: deptCreateShow, saving: deptCreateSaving, loadingLists: deptCreateLoadingLists,
+  orgs: deptCreateOrgs, subsidyOptions: deptCreateSubsidyOptions, form: deptCreateForm,
+  open: openDeptCreate, create: createDept,
+} = useDeptCreate({
+  showSnack,
+  onCreated: async () => {
+    dictsCache.value = {}
+    knownDepartments.value = []
+    await loadDicts()
+    await loadDeptTree()
+    refreshHierarchy()
+  },
+})
 function openCreateDeptFromHeader() {
-  activeTab.value = 'departments'
-  openCreateDept()
+  openDeptCreate(filterDeptOrgId.value ?? currentOrgId)
 }
+
+// Карточка редактирования отдела (StaffDeptDialog) — организация не
+// меняется, только показывается и фильтрует список субсидий (ПРАВИЛО №6:
+// filterSubsidiesByOrg — тот же фильтр, что в useDeptCreate).
+const editingDeptOrgName = computed(() => organizations.value.find((o: any) => o.id === editingDept.value?.org_id)?.name || '')
+const editingDeptSubsidyOptions = computed(() => filterSubsidiesByOrg(subsidies.value, editingDept.value?.org_id))
 
 const StaffDeptTreeNodeComp = createStaffDeptTreeNode(orgColor, orgCssColor)
 

@@ -8,10 +8,10 @@ app.services.service_note_people.assert_service_note_people_in_staff —
 из app.services.service_note_initiators.org_staff_user_ids (та же, что у
 инициатора на генерации документа — не вторая копия).
 
-Purchase.assigned_user_id («исполнитель») СОЗНАТЕЛЬНО не проверяется этой
-функцией — разведка (см. docstring service_note_people.py) показала, что
-ни один плейсхолдер, завязанный на assigned_user, не печатается в
-service_note*.docx/order_purchase.docx.
+Расширено 28.10.2026: Purchase.assigned_user_id («ответственный исполнитель»)
+теперь ТОЖЕ проверяется этой функцией (Правило владельца — заявка про
+субсидию «ЗРО актуальная»/орг «ЗРО ВСКС» и Цыганова И.А. не из этой орг),
+независимо от того, печатается поле в документ или нет.
 """
 import uuid
 
@@ -253,3 +253,39 @@ async def test_users_subsidy_id_without_staff_only_still_includes_access(
     assert resp.status_code == 200, resp.text
     ids = {u["id"] for u in resp.json()}
     assert access_only.id in ids
+
+
+# ---------------------------------------------------------------------------
+# assigned_user_id («Ответственный исполнитель») — расширение 28.10.2026
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_patch_rejects_outsider_as_assigned_user(
+    client, db_session, test_org_b, test_purchase, auth_headers, make_user,
+):
+    outsider = await make_user(role="employee", org_id=test_org_b.id)
+
+    resp = await client.patch(
+        f"/api/purchases/{test_purchase.id}",
+        json={"assigned_user_id": outsider.id},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    detail = body.get("detail")
+    code = body.get("code") or (detail.get("code") if isinstance(detail, dict) else None)
+    assert code == "SERVICE_NOTE_PERSON_NOT_STAFF", resp.text
+
+
+@pytest.mark.asyncio
+async def test_patch_accepts_staff_member_as_assigned_user(
+    client, db_session, test_org, test_purchase, auth_headers, make_user,
+):
+    staffer = await make_user(role="employee", org_id=test_org.id)
+
+    resp = await client.patch(
+        f"/api/purchases/{test_purchase.id}",
+        json={"assigned_user_id": staffer.id},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text

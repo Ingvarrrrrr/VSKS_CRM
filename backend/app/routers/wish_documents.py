@@ -40,7 +40,7 @@ from app.models.wish import Wish
 from app.models.wish_item import WishItem
 # Reuse formatters from documents.py — avoids duplicating money/date formatting logic
 from app.routers.documents import (
-    _fmt_date, _fmt_money, _fmt_quantity,
+    _fmt_date, _fmt_money,
     _format_initials,
     _resolve_user_dept as _resolve_user_dept_for_wish,
     _resolve_user_position as _resolve_user_position_for_wish,
@@ -52,7 +52,6 @@ from app.routers.documents import (
 # только локальный /api/products/photos/<file> и не знавшая про photo_data.
 from app.services.documents.stages_template_engine import make_photo_resolver
 from app.services.documents.docx_post import strip_template_legend
-from app.services.item_tz import effective_item_tz
 # Правило №6 — единственный резолвер пути к шаблону документа (субсидийный
 # override → глобальный → DOC_TYPE_FALLBACK_FILES). До 2026-09-17 здесь жила
 # урезанная копия-дубль (PRIMARY_FILE/FALLBACK_FILE ниже), которая не умела
@@ -141,23 +140,17 @@ async def generate_wish_service_note(
     _photo_map = await load_photos_bulk(db, [it.product_id for it in (w.items or [])])
     resolve_photo = make_photo_resolver(tpl, photo_map=_photo_map)
 
-    # ── Build items list (same shape as documents.py items_list) ────────────
-    items_list = []
-    for idx, it in enumerate(w.items or [], start=1):
-        items_list.append({
-            "num": idx,
-            "name": it.item_name or "",
-            # ПРАВИЛО №6: «действующее ТЗ позиции» — ОДНА функция-источник
-            # (app.services.item_tz.effective_item_tz, владелец 14.10.2026) —
-            # tz_description позиции, если непустое, иначе ТЗ каталога.
-            "description": effective_item_tz(it, it.product) or "",
-            "type": it.item_type or "",
-            "quantity": _fmt_quantity(it.quantity),
-            "unit": it.unit or "",
-            "unit_price": _fmt_money(it.unit_price),
-            "total_price": _fmt_money(it.total_price),
-            "photo": resolve_photo(it.product),
-        })
+    # ── Build items list ────────────────────────────────────────────────────
+    # ПРАВИЛО №6: тот же построитель, что уже печатает ТЗ заявки
+    # (generate_wish_tech_spec ниже) и ТЗ/служебку закупки (documents.py,
+    # fabrikant_package.py) — _build_items_list_from_purchase_items
+    # (services/documents/contexts.py). Раньше здесь жила третья ручная сборка
+    # items_list, не знающая про build_tz_rows (слияние дублей ТЗ),
+    # effective_vat_on_top/document_unit_price (цена «сверху» НДС) и
+    # item_form_summary/menu_lines (спецформы позиций, напр. «Проживание
+    # и питание») — у заявки эти поля печатались мимо общей логики.
+    from app.services.documents.contexts import _build_items_list_from_purchase_items
+    items_list = _build_items_list_from_purchase_items(w, resolve_photo=resolve_photo)
 
     # ── Unique product categories for {{item_categories}} ───────────────────
     item_categories = list(dict.fromkeys(

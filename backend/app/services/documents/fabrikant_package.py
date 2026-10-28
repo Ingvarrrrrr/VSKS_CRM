@@ -25,6 +25,7 @@ from .contract_terms import warranty_period_text as _warranty_period_text
 from .contexts import (
     _build_contract_items_context, _format_service_term,
     _require_tz_duplicates_resolved_for_doc,
+    _build_items_list_from_purchase_items,
 )
 from .formatting import (
     _fmt_date,
@@ -34,10 +35,10 @@ from .formatting import (
     _clean_id,
     _rubles_to_words,
 )
-# build_tz_rows/_require_tz_duplicates_resolved_for_doc — единственный источник
-# группировки дублей строк ТЗ (Правило №6), см. app.services.tz_items.
-from app.services.tz_items import build_tz_rows
-from app.services.item_amounts import vat_included_amount as _vat_included_amount, effective_vat_on_top as _effective_vat_on_top
+# items_list пакета теперь строит _build_items_list_from_purchase_items
+# (contexts.py) — она сама вызывает build_tz_rows внутри (Правило №6,
+# единственный источник группировки дублей строк ТЗ, см. app.services.tz_items).
+from app.services.item_amounts import vat_included_amount as _vat_included_amount
 # Правило №6 — единственный резолвер пути к шаблону (субсидийный override →
 # глобальный → DOC_TYPE_FALLBACK_FILES). Раньше здесь жили две копии-дубли
 # той же логики приоритета (ниже — tech_spec_request и цикл рендера пакета).
@@ -244,42 +245,20 @@ async def render_fabrikant_package_files(
     # (единственный шаблон в пакете с колонкой «Фото», см. make_tech_spec.py) —
     # items_products хранит товар-источник для этой подмены (Правило №6:
     # тот же общий резолвер product_photos.make_photo_resolver, не второй).
-    items_list = []
-    items_products = []
-    _tz = build_tz_rows(p.items or [], getattr(p, "tz_duplicate_decisions", None))
-    _tz_vat_mode = getattr(p, "vat_mode", None) or "uniform"
-    _tz_header_on_top = bool(getattr(p, "tz_vat_on_top", False))
-    for idx, row in enumerate(_tz["rows"], start=1):
-        item = row["item"]
-        total = row["total_price"]
-        qty = row["quantity"]
-        unit_price_display = row["unit_price"]
-        # Задача 5 (НДС сверху, 02.10.2026): когда флаг включён, цена за
-        # единицу В ДОКУМЕНТЕ — сумма/кол-во (с НДС), а не "голая" unit_price
-        # (которая у "НДС сверху" хранится БЕЗ налога). Сумма и "в т.ч. НДС"
-        # не меняются — см. compute_amounts_and_vat/_item_vat_amount.
-        if _effective_vat_on_top(getattr(item, "vat_on_top", None), _tz_header_on_top, _tz_vat_mode) and qty:
-            try:
-                unit_price_display = Decimal(str(total)) / Decimal(str(qty))
-            except Exception:
-                pass
-        items_list.append({
-            "num": idx,
-            "name": item.item_name or "",
-            "description": "",
-            "type": item.item_type or "",
-            "item_kind": (item.product.item_kind if item.product else None) or "товар",
-            "quantity": _fmt_quantity(qty),
-            "unit": item.unit or "",
-            "unit_price": _fmt_money(unit_price_display),
-            "total_price": _fmt_money(total),
-            "total": _fmt_money(total),
-            "photo": "",
-            # Поля для repair_framework (появятся позже, пока заглушки)
-            "code": "",
-            "norm_hours": "",
-        })
-        items_products.append(item.product)
+    # ПРАВИЛО №6: items_list пакета — ТОТ ЖЕ построитель, что и у обычного
+    # документа (_build_items_list_from_purchase_items, contexts.py), а не
+    # второй ручной цикл. Раньше здесь был собственный цикл по build_tz_rows
+    # с захардкоженным "description": "" — ТЗ (единственный столбец «Описание»
+    # в пакете, tech_spec_request/ТЗ.docx) печаталось пустым, хотя
+    # item.tz_description/product.description были заполнены. unit_price
+    # (НДС сверху) здесь считался той же формулой, что теперь в
+    # app.services.item_amounts.document_unit_price — расчёт идентичен.
+    # "photo" остаётся "" (resolve_photo=None) — реальный InlineImage
+    # подставляется точечно для tech_spec_request ниже по функции (см.
+    # комментарий выше); items_products — товар-источник для этой подмены,
+    # берётся из "_product", который кладёт сам построитель.
+    items_list = _build_items_list_from_purchase_items(p)
+    items_products = [it["_product"] for it in items_list]
 
     # Фото — один запрос в product_photos на все позиции закупки (26.10.2026,
     # фото вынесены из products.photo_data в отдельную таблицу); используется

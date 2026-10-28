@@ -646,6 +646,42 @@ def _bare_number(token: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+# ---------------------------------------------------------------------------
+# Категории величин — ФАСОВКА vs ПАРАМЕТР (владелец, 28.10.2026, повторная
+# QA-проверка на 247 тыс. товаров, bda2971b): «масло лукойл 5w40 4л» должно
+# ослаблять ФАСОВКУ (объём "4 л") раньше/отдельно от ПАРАМЕТРА (вязкость
+# "5W-40") — «масло 5W-40» (без «4 л») находит правильное масло любого
+# объёма, а «масло 4 л» без вязкости — нет (объём почти у всех масел один
+# из нескольких стандартных, вязкость — специфичнее, см. задание). Токен
+# числа-с-единицей (формат «NUM ЕДИНИЦА», см. _QUANTITY_NORM_RE выше) —
+# ФАСОВКА, если единица — объём/масса/штуки/длина упаковки
+# (_PACKAGING_UNITS); голые коды ("125") и вязкость ("5W-40", формат
+# ЧИСЛО-БУКВА-ЧИСЛО) — ПАРАМЕТР. Единицы — ПОДМНОЖЕСТВО UNIT_WORDS
+# (product_name_signature_props.py, Правило №6 — тот же словарь единиц, не
+# второй), конкретно те, что владелец назвал фасовкой.
+# ---------------------------------------------------------------------------
+_PACKAGING_UNITS = {"л", "мл", "кг", "г", "шт", "м"}
+
+
+def _is_packaging_token(token: str) -> bool:
+    m = _QUANTITY_NORM_RE.match(token)
+    if not m:
+        return False
+    unit = m.group(2).lower().rstrip(".")
+    return unit in _PACKAGING_UNITS
+
+
+def _split_packaging_and_parameter(numeric_tokens: list) -> tuple[list, list]:
+    """Делит величины-required на ФАСОВКУ (объём/масса/штуки/длина
+    упаковки) и ПАРАМЕТРЫ (вязкость, голые коды) — см. блок выше. Порядок
+    внутри каждой группы — исходный порядок numeric_tokens (детерминизм
+    result_meta["relaxed"])."""
+    packaging, parameter = [], []
+    for tok in numeric_tokens:
+        (packaging if _is_packaging_token(tok) else parameter).append(tok)
+    return packaging, parameter
+
+
 _ACCESSORY_ALTERNATION = "|".join(re.escape(m) for m in ACCESSORY_MARKERS)
 
 
@@ -852,6 +888,59 @@ async def _fetch_fts_page(
     page_q = page_q.limit(limit).offset(offset)
     items = (await db.execute(page_q)).scalars().all()
     return list(items), total
+
+
+async def _fetch_category_step(
+    db: AsyncSession,
+    filters: ProductSearchFilters,
+    *,
+    mk_parsed,
+    type_tokens: list,
+    bq_tokens: list,
+    packaging_tokens: list,
+    parameter_tokens: list,
+    drop_bq: bool,
+    drop_packaging: bool,
+    drop_parameters: bool,
+    limit: int,
+    offset: int,
+    freshness_ctx: Optional[FreshnessContext],
+) -> tuple[list[Product], int, list[str]]:
+    """ОДНА функция для всех шагов «лестницы категорий» в search_products
+    (владелец, 28.10.2026, повторная QA-проверка на 247 тыс. товаров,
+    bda2971b: «не плодить копий» для шагов 2-4) — вызывается с разными
+    флагами drop_bq/drop_packaging/drop_parameters вместо четырёх почти
+    одинаковых блоков кода. type_tokens (вид товара) — ВСЕГДА required,
+    флагов для него нет (вид не отпускается никогда, см. задание).
+    bq_tokens — распознанный бренд И ВСЕ optional-слова ОДНОЙ группой
+    (неизвестное уточняющее слово типа "лукойл" без manufacturer в
+    каталоге ведёт себя как бренд — отпускается/остаётся вместе с ним, не
+    молча выкидывается, как раньше). packaging_tokens/parameter_tokens —
+    см. _split_packaging_and_parameter. Возвращает (items, total,
+    relaxed) — relaxed — буквально то, что ОТПУЩЕНО на этом шаге (пусто,
+    если ничего не отпущено — Шаг «точное»), для result_meta["relaxed"]
+    вызывающей стороны."""
+    req_text = list(type_tokens)
+    relaxed: list = []
+    if drop_bq:
+        relaxed.extend(bq_tokens)
+    else:
+        req_text.extend(bq_tokens)
+    req_numeric: list = []
+    if drop_packaging:
+        relaxed.extend(packaging_tokens)
+    else:
+        req_numeric.extend(packaging_tokens)
+    if drop_parameters:
+        relaxed.extend(parameter_tokens)
+    else:
+        req_numeric.extend(parameter_tokens)
+    step_parsed = mk_parsed(req_text, req_numeric, [])
+    items, total = await _fetch_fts_page(
+        db, filters, step_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+        apply_numeric=True,
+    )
+    return list(items), total, relaxed
 
 
 async def _fetch_fts_page_or(
@@ -1094,115 +1183,161 @@ async def search_products(
     if total > 0:
         return list(items), total, False
 
-    # Шаг 2 — отпустить БРЕНД (владелец, 28.10.2026, доработка «порядок
-    # ослабления» по QA-проверке на проде: «масло лукойл 5w40 4л» без
-    # масла Лукойл 5W-40 4л в каталоге раньше ослаблял СРАЗУ вязкость и
-    # объём (бывший Шаг 2, см. ниже), оставляя бренд, и находил ЕДИНСТВЕННЫЙ
-    # товар «Лукойл» другой вязкости — снабженцу параметры важнее бренда.
-    # Теперь сначала отпускаем бренд (вид товара "масло" + величины 5W-40/
-    # 4 л остаются required) — находит масло 5W-40 4л ЛЮБОГО бренда; только
-    # если и так пусто — переходим к ослаблению величин (Шаг 3). Если
-    # текстового якоря без бренда не осталось (вид товара не распознан) —
-    # поднимаем optional-слова в этой ОДНОЙ попытке (тот же приём, что Шаг
-    # 3 ниже, но НЕ сохраняется в text_tokens — при неудаче бренд
-    # возвращается для Шага 3). result_meta["relaxed"] = [бренд] — что
-    # именно отпущено (задание: "В meta relaxed указать, что отпущено").
-    if parsed.brand and parsed.brand in text_tokens:
-        no_brand_text = [t for t in text_tokens if t != parsed.brand]
-        no_brand_optional = optional
-        if not no_brand_text and no_brand_optional:
-            no_brand_text = list(no_brand_optional)
-            no_brand_optional = []
-        if no_brand_text or numeric_tokens:
-            no_brand_parsed = _mk_parsed(no_brand_text, numeric_tokens, no_brand_optional)
-            items, total = await _fetch_fts_page(
-                db, filters, no_brand_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
-                apply_numeric=True,
-            )
-            if total > 0:
-                if result_meta is not None:
-                    result_meta["relaxed"] = [parsed.brand]
-                return list(items), total, False
-
-    # Шаг 3 — НЕТ required-ТЕКСТА вообще (required был ЧИСТО цифровым:
-    # бренд не распознан, вид товара не распознан — только модель/величина,
-    # "зюзюкремлик 4125") — владелец, 28.10.2026, п.4 задания «поиск как
-    # помнит»: без текста шаг 1 искал ТОЛЬКО по цифрам (без AND по словам),
-    # а если формат чисел в каталоге чуть другой — total=0 и лестница сразу
-    # обрывается, не находя даже соседних слов. ПОДНИМАЕМ optional-слова в
-    # required-текст (AND) — то же "повышение", что и в promoted-ветке
-    # выше, но здесь required НЕ пуст (есть цифры), поэтому promoted=False
-    # и та ветка не сработала.
     numeric_relaxed_here = False
     text_promoted_from_optional = False
-    if not text_tokens and optional:
-        text_promoted_from_optional = True
-        promoted_text_tokens = list(optional)
-        fts_parsed = _mk_parsed(promoted_text_tokens, numeric_tokens, [])
-        items, total = await _fetch_fts_page(
-            db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
-            apply_numeric=True,
-        )
-        if total == 0 and numeric_tokens:
+
+    # Шаги 2-4 (КАТЕГОРИИ) — владелец, 28.10.2026, повторная QA-проверка
+    # на 247 тыс. товаров (bda2971b): «масло лукойл 5w40 4л» на проде
+    # оставалось total=878 даже после прошлой доработки — «Лукойл» в
+    # каталоге ОДИН товар с ПУСТЫМ manufacturer, бренд не распознаётся,
+    # «лукойл» остаётся НЕИЗВЕСТНЫМ уточняющим словом в optional и молча
+    # выкидывалось вместе с величинами на Шаге 4 (ослабление цифр) —
+    # оставался голый вид товара "масло", 878 посторонних масел.
+    #
+    # Переделано на КАТЕГОРИИ, одной функцией с флагами (_fetch_category_
+    # step ниже, не копии): вид товара (type_literal) — НИКОГДА не
+    # отпускается; «бренд/уточняющие слова» (bq_tokens — распознанный
+    # бренд И ВСЕ optional-слова, включая нераспознанные типа "лукойл") —
+    # ОДНА группа; величины делятся на ФАСОВКУ (объём/масса/штуки — л, мл,
+    # кг, г, шт, м для длины упаковки, _PACKAGING_UNITS) и ПАРАМЕТРЫ
+    # (всё остальное — вязкость "5W-40", голые коды). Порядок отпускания:
+    #   2. без bq, все величины — находит фасовку+параметр ЛЮБОГО бренда;
+    #   3. без bq И без фасовки, параметр остаётся — «масло 5W-40» находит
+    #      G-ENERGY/FULL SYNTHETIC любого объёма, relaxed=['лукойл','4 л'];
+    #   4. bq остаётся, без ВСЕХ величин — «масло лукойл» находит сам
+    #      товар "Лукойл" неверного объёма/вязкости, relaxed=величины.
+    # Применяется ТОЛЬКО когда вид товара распознан (иначе нет якоря,
+    # который «никогда не отпускается») И есть хоть одна величина —
+    # иначе ведёт себя как раньше (Шаг 3/4.5 ниже, без категорий).
+    if parsed.type_literal and numeric_tokens:
+        type_tokens = [parsed.type_literal]
+        brand_token = [parsed.brand] if (parsed.brand and parsed.brand in text_tokens) else []
+        bq_tokens = [*brand_token, *optional]
+        packaging_tokens, parameter_tokens = _split_packaging_and_parameter(numeric_tokens)
+        for drop_bq, drop_packaging, drop_parameters in (
+            (False, False, False),  # Шаг 1bis — то же точное, но bq ТРЕБУЕТСЯ (не рангом)
+            (True, False, False),   # Шаг 2 — без bq
+            (True, True, False),    # Шаг 3 — без bq и без фасовки
+            (False, True, True),    # Шаг 4 — bq остаётся, без всех величин
+        ):
+            items, total, relaxed_here = await _fetch_category_step(
+                db, filters, mk_parsed=_mk_parsed,
+                type_tokens=type_tokens, bq_tokens=bq_tokens,
+                packaging_tokens=packaging_tokens, parameter_tokens=parameter_tokens,
+                drop_bq=drop_bq, drop_packaging=drop_packaging, drop_parameters=drop_parameters,
+                limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+            )
+            if total > 0:
+                if result_meta is not None and relaxed_here:
+                    result_meta["relaxed"] = relaxed_here
+                return list(items), total, False
+        # Все 4 категории дали 0 — дальше опечатки (Шаг 5), OR здесь не
+        # применяется (вид распознан, promoted=False) — иначе честный 0.
+    else:
+        # Шаг 2 (старый путь, вид НЕ распознан или величин нет вовсе) —
+        # отпустить БРЕНД (владелец, 28.10.2026, доработка «порядок
+        # ослабления» по QA-проверке на проде): снабженцу параметры важнее
+        # бренда, бренд отпускаем ПЕРВЫМ, не величины. Если текстового
+        # якоря без бренда не осталось — поднимаем optional-слова в этой
+        # ОДНОЙ попытке (тот же приём, что Шаг 3 ниже, но НЕ сохраняется в
+        # text_tokens — при неудаче бренд возвращается для Шага 3).
+        # result_meta["relaxed"] = [бренд].
+        if parsed.brand and parsed.brand in text_tokens:
+            no_brand_text = [t for t in text_tokens if t != parsed.brand]
+            no_brand_optional = optional
+            if not no_brand_text and no_brand_optional:
+                no_brand_text = list(no_brand_optional)
+                no_brand_optional = []
+            if no_brand_text or numeric_tokens:
+                no_brand_parsed = _mk_parsed(no_brand_text, numeric_tokens, no_brand_optional)
+                items, total = await _fetch_fts_page(
+                    db, filters, no_brand_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+                    apply_numeric=True,
+                )
+                if total > 0:
+                    if result_meta is not None:
+                        result_meta["relaxed"] = [parsed.brand]
+                    return list(items), total, False
+
+        # Шаг 3 — НЕТ required-ТЕКСТА вообще (required был ЧИСТО цифровым:
+        # бренд не распознан, вид товара не распознан — только модель/
+        # величина, "зюзюкремлик 4125") — владелец, 28.10.2026, п.4 задания
+        # «поиск как помнит»: без текста шаг 1 искал ТОЛЬКО по цифрам (без
+        # AND по словам), а если формат чисел в каталоге чуть другой —
+        # total=0 и лестница сразу обрывается, не находя даже соседних
+        # слов. ПОДНИМАЕМ optional-слова в required-текст (AND) — то же
+        # "повышение", что и в promoted-ветке выше, но здесь required НЕ
+        # пуст (есть цифры), поэтому promoted=False и та ветка не
+        # сработала.
+        if not text_tokens and optional:
+            text_promoted_from_optional = True
+            promoted_text_tokens = list(optional)
+            fts_parsed = _mk_parsed(promoted_text_tokens, numeric_tokens, [])
+            items, total = await _fetch_fts_page(
+                db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+                apply_numeric=True,
+            )
+            if total == 0 and numeric_tokens:
+                items, total = await _fetch_fts_page(
+                    db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+                    apply_numeric=False,
+                )
+                numeric_relaxed_here = True
+                if total > 0 and result_meta is not None:
+                    result_meta["relaxed"] = list(numeric_tokens)
+            if total > 0:
+                return list(items), total, False
+            # Дальше (шаги 2-4) продолжаем с promoted-токенами — слова из
+            # optional теперь единственный required-текст, на котором
+            # держится и ослабление цифр, и исправление опечаток, и OR
+            # ниже.
+            text_tokens = promoted_text_tokens
+            optional = []
+
+        # Шаг 4 — ослабить величины, оставив бренд, ЕСЛИ он есть (владелец,
+        # 28.10.2026, доработка «порядок ослабления» — бывший Шаг 2,
+        # теперь ПОСЛЕ Шага 2 "без бренда": если и без бренда ничего не
+        # нашлось, отпускаем величины, бренд в required остаётся как есть).
+        # ТОЛЬКО если есть required-ТЕКСТ, на котором держится фильтр —
+        # иначе (required был чисто цифровым) снятие единственного условия
+        # отдало бы всю таблицу (см. защиту внутри _fetch_fts_page, здесь —
+        # чтобы не тратить лишний запрос в БД). Если цифры уже ослаблялись
+        # выше (Шаг 3, numeric_relaxed_here) — повторно тот же запрос не
+        # шлём.
+        fts_parsed = _mk_parsed(text_tokens, numeric_tokens, optional)
+        if numeric_tokens and text_tokens and not numeric_relaxed_here:
             items, total = await _fetch_fts_page(
                 db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
                 apply_numeric=False,
             )
-            numeric_relaxed_here = True
-            if total > 0 and result_meta is not None:
-                result_meta["relaxed"] = list(numeric_tokens)
-        if total > 0:
-            return list(items), total, False
-        # Дальше (шаги 2-4) продолжаем с promoted-токенами — слова из
-        # optional теперь единственный required-текст, на котором держится
-        # и ослабление цифр, и исправление опечаток, и OR ниже.
-        text_tokens = promoted_text_tokens
-        optional = []
-
-    # Шаг 4 — ослабить величины, оставив бренд, ЕСЛИ он есть (владелец,
-    # 28.10.2026, доработка «порядок ослабления» — бывший Шаг 2, теперь
-    # ПОСЛЕ Шага 2 "без бренда": если и без бренда ничего не нашлось,
-    # отпускаем величины, бренд в required остаётся как есть). ТОЛЬКО если
-    # есть required-ТЕКСТ, на котором держится фильтр — иначе (required
-    # был чисто цифровым, "зюзюкремлик 4125"→required=["4125"]) снятие
-    # единственного условия отдало бы всю таблицу (см. защиту внутри
-    # _fetch_fts_page, здесь — чтобы не тратить лишний запрос в БД). Если
-    # цифры уже ослаблялись выше (Шаг 3, numeric_relaxed_here) — повторно
-    # тот же запрос не шлём.
-    if numeric_tokens and text_tokens and not numeric_relaxed_here:
-        items, total = await _fetch_fts_page(
-            db, filters, fts_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
-            apply_numeric=False,
-        )
-        if total > 0:
-            if result_meta is not None:
-                result_meta["relaxed"] = list(numeric_tokens)
-            return list(items), total, False
-
-    # Шаг 4.5 — без БРЕНДА И без величин ОДНОВРЕМЕННО, но ТОЛЬКО если
-    # осталось ЕЩЁ хотя бы одно уточняющее слово (владелец, 28.10.2026,
-    # повторная QA-проверка на 247 тыс. товаров по чужому пушу коммита
-    # 21898339): если и Шаг 2 (без бренда), и Шаг 4 (без величин, бренд
-    # остаётся) не нашли ничего — отпустить СРАЗУ оба, оставив голый вид
-    # товара ("масло"), означало бы то же самое, что искать ЛЮБОЕ масло —
-    # 878 косметических масел на проде вместо честного total=0. Пробуем
-    # этот самый широкий шаг ТОЛЬКО если в запросе есть optional-слово
-    # (кроме бренда/вида/величин) — оно идёт в required ВМЕСТЕ с видом,
-    # замещая и бренд, и точный формат чисел одним менее строгим якорем.
-    # Нет такого слова — пропускаем совсем (следующий шаг — опечатки,
-    # дальше — честный total=0, НЕ голый вид товара).
-    if parsed.brand and parsed.brand in text_tokens and optional:
-        no_brand_text = [t for t in text_tokens if t != parsed.brand]
-        if no_brand_text:
-            fallback_parsed = _mk_parsed([*no_brand_text, *optional], [], [])
-            items, total = await _fetch_fts_page(
-                db, filters, fallback_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
-                apply_numeric=True,
-            )
             if total > 0:
                 if result_meta is not None:
-                    result_meta["relaxed"] = [parsed.brand, *numeric_tokens]
+                    result_meta["relaxed"] = list(numeric_tokens)
                 return list(items), total, False
+
+        # Шаг 4.5 — без БРЕНДА И без величин ОДНОВРЕМЕННО, но ТОЛЬКО если
+        # осталось ЕЩЁ хотя бы одно уточняющее слово (владелец, 28.10.2026,
+        # повторная QA-проверка на 247 тыс. товаров): если и Шаг 2 (без
+        # бренда), и Шаг 4 (без величин, бренд остаётся) не нашли ничего —
+        # отпустить СРАЗУ оба, оставив голый вид товара, означало бы то же
+        # самое, что искать ЛЮБОЙ такой товар. Пробуем этот самый широкий
+        # шаг ТОЛЬКО если в запросе есть optional-слово (кроме бренда/вида/
+        # величин) — оно идёт в required ВМЕСТЕ с видом, замещая и бренд, и
+        # точный формат чисел одним менее строгим якорем. Нет такого слова
+        # — пропускаем совсем (следующий шаг — опечатки, дальше — честный
+        # total=0, НЕ голый вид товара).
+        if parsed.brand and parsed.brand in text_tokens and optional:
+            no_brand_text = [t for t in text_tokens if t != parsed.brand]
+            if no_brand_text:
+                fallback_parsed = _mk_parsed([*no_brand_text, *optional], [], [])
+                items, total = await _fetch_fts_page(
+                    db, filters, fallback_parsed, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+                    apply_numeric=True,
+                )
+                if total > 0:
+                    if result_meta is not None:
+                        result_meta["relaxed"] = [parsed.brand, *numeric_tokens]
+                    return list(items), total, False
 
     # Шаг 5 — исправление опечаток ПО СЛОВАМ (словарь product_words,
     # Правило №6 — единственный механизм опечаток, старый trgm-по-всей-

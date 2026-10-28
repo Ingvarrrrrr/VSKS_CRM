@@ -208,14 +208,18 @@ async def test_specific_query_numeric_boundary_125_not_1250(db_session):
 
 @pytest.mark.asyncio
 async def test_specific_query_relaxes_quantity_when_exact_not_found(db_session):
-    """Шаг 2 лестницы (владелец, 28.10.2026, доработка «этап 0» — QA-находка
-    про огнетушители/кабели: «огнетушитель порошковый 4 кг» должен находить
+    """Лестница КАТЕГОРИЙ (владелец, 28.10.2026, доработка «этап 0» —
+    QA-находка про огнетушители/кабели, затем повторная доработка bda2971b
+    — «уточняющие слова» optional ("металлические") теперь ОДНА группа с
+    бq_tokens, отпускается ВМЕСТЕ с величинами-фасовкой на Шаге 3, не
+    выкидывается молча): «огнетушитель порошковый 4 кг» должен находить
     «Огнетушитель порошковый ОП-2» через ослабление, не через посторонние
-    товары). «носилки» — редкое слово словаря вида товара (PRODUCT_TYPE_
-    WORDS), required-ТЕКСТ остаётся обязательным — именно поэтому товар
-    ДРУГОГО вида, у которого ЕСТЬ точное «4 кг», НЕ находится (required-
-    текст не совпал), а товар «носилки» без точного «4 кг» — находится,
-    через relaxed."""
+    товары. «носилки» — редкое слово словаря вида товара (PRODUCT_TYPE_
+    WORDS) — ВИД остаётся обязательным ВСЕГДА, именно поэтому товар
+    ДРУГОГО вида, у которого ЕСТЬ точное «4 кг», НЕ находится, а товар
+    «носилки» без точного «4 кг» — находится, через relaxed (bq-слово
+    "металлические" + фасовка "4 кг" — обе категории отпущены на Шаге 3,
+    т.к. Шаг 2 "без bq" тоже не нашёл "4 кг" у настоящих носилок)."""
     close = _mk(db_session, name="Носилки металлические складные")  # нет "4 кг"
     other_type = _mk(db_session, name="Тачка строительная 4 кг")  # "4 кг" есть, но не "носилки"
     await db_session.commit()
@@ -228,7 +232,7 @@ async def test_specific_query_relaxes_quantity_when_exact_not_found(db_session):
     ids = {p.id for p in items}
     assert close.id in ids
     assert other_type.id not in ids
-    assert meta["relaxed"] == ["4 кг"]
+    assert meta["relaxed"] == ["металлические", "4 кг"]
     assert meta["fuzzy"] is False
     assert meta["corrected"] == {}
 
@@ -273,9 +277,12 @@ async def test_specific_query_keeps_brand_when_relaxing_quantity_only(db_session
     без-бренда, и без-величин оба пусто кроме этого шага): при наличии
     ТОЛЬКО товара бренда "Лукойл" неверного объёма/вязкости и постороннего
     "масла" без бренда — находит именно Лукойл, посторонний "массажный"
-    товар не попадает в выдачу вовсе (нет ни вида, ни бренда — "масло" у
-    него тоже есть, но без "Лукойл" не должен найтись, когда есть товар
-    самого бренда)."""
+    товар не попадает в выдачу вовсе. Вязкость "9W-77" — ВЫДУМАННАЯ (не
+    встречается в реальном каталоге дев-стенда, см. проверку psql в
+    отчёте сессии) — иначе Шаг 3 (параметр без фасовки, см. ниже) нашёл бы
+    РЕАЛЬНЫЕ масла с реальной вязкостью "5W-40" раньше Шага 4 — это
+    отдельный, уже покрытый сценарий (test_specific_query_unrecognized_
+    brand_word_relaxes_with_packaging)."""
     import app.services.product_query_parse as product_query_parse_module
     product_query_parse_module._brand_dict_cache["dictionary"] = None
     product_query_parse_module._brand_dict_cache["built_at"] = 0.0
@@ -286,7 +293,7 @@ async def test_specific_query_keeps_brand_when_relaxing_quantity_only(db_session
     unrelated_oil = _mk(db_session, name="Масло массажное")
     await db_session.commit()
 
-    filters = ProductSearchFilters(search="масло лукойл 5w40 4л")
+    filters = ProductSearchFilters(search="масло лукойл 9w77 4л")
     meta: dict = {}
     items, total, capped = await search_products(
         db_session, filters, limit=50, offset=0, result_meta=meta,
@@ -294,7 +301,100 @@ async def test_specific_query_keeps_brand_when_relaxing_quantity_only(db_session
     ids = [p.id for p in items]
     assert ids and ids[0] == lukoil_wrong_qty.id
     assert unrelated_oil.id not in ids
-    assert meta["relaxed"] == ["5W-40", "4 л"]
+    assert meta["relaxed"] == ["4 л", "9W-77"]
+
+
+@pytest.mark.asyncio
+async def test_specific_query_unrecognized_brand_word_relaxes_with_packaging(db_session):
+    """ДАННЫЕ КАК НА ПРОДЕ (владелец, повторная QA-проверка 28.10.2026,
+    bda2971b): на проде «Лукойл» в каталоге — ОДИН товар с ПУСТЫМ
+    manufacturer, бренд не распознаётся get_manufacturer_brand_dictionary
+    — «лукойл» остаётся НЕИЗВЕСТНЫМ уточняющим словом (bq_tokens), а не
+    молча выкидывается вместе с величинами. Шаг 3 (без bq И без фасовки,
+    параметр "5W-40" остаётся) находит «масло ... 5W-40» ЛЮБОГО объёма —
+    G-ENERGY (5л) и FULL SYNTHETIC (1л) — но НЕ масло для бровей/массажное
+    (у них нет "5W-40" вовсе). relaxed=['лукойл','4 л'] (bq + фасовка)."""
+    import app.services.product_query_parse as product_query_parse_module
+    product_query_parse_module._brand_dict_cache["dictionary"] = None
+    product_query_parse_module._brand_dict_cache["built_at"] = 0.0
+
+    lukoil_no_manufacturer = _mk(
+        db_session,
+        name="ЛУКОЙЛ (LUKOIL) МОТО 2Т Масло моторное, Минеральное, 1 л",
+        manufacturer=None,
+    )
+    genergy = _mk(db_session, name="Масло G-ENERGY Synthetic Active 5W-40 5л")
+    full_synthetic = _mk(db_session, name="5W-40 FULL SYNTHETIC A3/B4 1л (синт. мотор. масло.)")
+    massage_oil = _mk(db_session, name="Масло массажное расслабляющее")
+    eyebrow_oil = _mk(db_session, name="Масло для бровей и ресниц")
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="масло лукойл 5w40 4л")
+    meta: dict = {}
+    items, total, capped = await search_products(
+        db_session, filters, limit=50, offset=0, result_meta=meta,
+    )
+    ids = {p.id for p in items}
+    assert genergy.id in ids
+    assert full_synthetic.id in ids
+    assert lukoil_no_manufacturer.id not in ids
+    assert massage_oil.id not in ids
+    assert eyebrow_oil.id not in ids
+    assert meta["relaxed"] == ["лукойл", "4 л"]
+
+
+@pytest.mark.asyncio
+async def test_specific_query_unrecognized_brand_word_relaxes_to_bare_product(db_session):
+    """Тот же сценарий «данные как на проде», но БЕЗ масел с совпадающей
+    вязкостью в каталоге (владелец, повторная QA-проверка 28.10.2026,
+    bda2971b): Шаг 3 (параметр) не находит ничего — Шаг 4 (bq "лукойл"
+    остаётся, величины отпущены целиком) находит сам товар «Лукойл» (без
+    manufacturer, но со словом «лукойл» в названии), посторонние
+    массажное/бровей-масло не попадают в выдачу — у них нет слова
+    "лукойл". Вязкость "9W-77" — ВЫДУМАННАЯ (см.
+    test_specific_query_keeps_brand_when_relaxing_quantity_only, почему не
+    "5W-40" — реальный каталог дев-стенда содержит настоящие масла 5W-40,
+    которые нашлись бы раньше на Шаге 3)."""
+    import app.services.product_query_parse as product_query_parse_module
+    product_query_parse_module._brand_dict_cache["dictionary"] = None
+    product_query_parse_module._brand_dict_cache["built_at"] = 0.0
+
+    lukoil_no_manufacturer = _mk(
+        db_session,
+        name="ЛУКОЙЛ (LUKOIL) МОТО 2Т Масло моторное, Минеральное, 1 л",
+        manufacturer=None,
+    )
+    massage_oil = _mk(db_session, name="Масло массажное расслабляющее")
+    eyebrow_oil = _mk(db_session, name="Масло для бровей и ресниц")
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="масло лукойл 9w77 4л")
+    meta: dict = {}
+    items, total, capped = await search_products(
+        db_session, filters, limit=50, offset=0, result_meta=meta,
+    )
+    ids = [p.id for p in items]
+    assert ids and ids[0] == lukoil_no_manufacturer.id
+    assert massage_oil.id not in ids
+    assert eyebrow_oil.id not in ids
+    assert meta["relaxed"] == ["4 л", "9W-77"]
+
+
+@pytest.mark.asyncio
+async def test_toy_marker_carnival_costume_ranked_below_real_product(db_session):
+    """«карнавальн»/«маскарадн» в TOY_MARKERS (владелец, повторная
+    QA-проверка 28.10.2026, bda2971b): «костюм горка зимний» находил
+    первым «Карнавальный костюм «Зимняя красавица»» вместо рабочей зимней
+    формы."""
+    carnival = _mk(db_session, name='Карнавальный костюм "Зимняя красавица"')
+    real = _mk(db_session, name="Костюм зимний МЧС")
+    await db_session.commit()
+
+    filters = ProductSearchFilters(search="костюм горка зимний")
+    items, total, capped = await search_products(db_session, filters, limit=50, offset=0)
+    ids_in_order = [p.id for p in items if p.id in {carnival.id, real.id}]
+    assert ids_in_order[0] == real.id
+    assert ids_in_order.index(carnival.id) > ids_in_order.index(real.id)
 
 
 @pytest.mark.asyncio

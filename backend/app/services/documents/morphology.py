@@ -225,17 +225,29 @@ def _to_dat_word(word: str) -> str:
     return _to_dat_word_heuristic(word)
 
 
-def _to_ablt_word(word: str) -> str:
-    """Склонить одно слово в творительный падеж: pymorphy3 → слово без
-    изменений (без pymorphy3 эвристики для творительного не заводим — см.
-    _to_gen_word/_to_dat_word, тот же паттерн, просто без heuristic-fallback)."""
+def _to_case_word(word: str, pymorphy_case: str) -> str:
+    """Склонить одно слово через pymorphy3 в падеж *pymorphy_case* (код тега
+    pymorphy3: 'ablt'/'accs'/'loct' — творительный/винительный/предложный).
+
+    Задача 29.10.2026 (все 5 падежей у каждой склоняемой переменной):
+    единственная обёртка над pymorphy3 для падежей, у которых НЕТ своей
+    эвристики без pymorphy3 (в отличие от _to_gen_word/_to_dat_word — там
+    есть _to_gen_word_heuristic/_to_dat_word_heuristic, fallback на OOM-кейс,
+    см. их докстринги). Без pymorphy3/при ошибке — слово без изменений.
+
+    Винительный (`accs`) для одушевлённых существительных мужского рода
+    («директор», «председатель») pymorphy3 сам совмещает с родительным —
+    определяет одушевлённость по грамматическому разбору слова, передавать
+    `anim` явно не нужно (проверено: `inflect({'accs'})` на «председатель»
+    → «председателя», на неодушевлённом «отделение» → «отделение», им.=вин.,
+    как и должно быть)."""
     if not word:
         return word
     morph = _get_morph()
     if morph:
         try:
             parsed = morph.parse(word)[0]
-            inflected = parsed.inflect({'ablt'})
+            inflected = parsed.inflect({pymorphy_case})
             if inflected:
                 out = inflected.word
                 if word[0].isupper():
@@ -244,6 +256,25 @@ def _to_ablt_word(word: str) -> str:
         except Exception:
             pass
     return word
+
+
+def _to_ablt_word(word: str) -> str:
+    """Склонить одно слово в творительный падеж — тонкая обёртка над
+    `_to_case_word` (см. её докстринг; поведение не изменилось, имя
+    сохранено — есть вызовы из других модулей)."""
+    return _to_case_word(word, 'ablt')
+
+
+def _to_accs_word(word: str) -> str:
+    """Склонить одно слово в винительный падеж — тонкая обёртка над
+    `_to_case_word` (задача 29.10.2026, см. её докстринг)."""
+    return _to_case_word(word, 'accs')
+
+
+def _to_loct_word(word: str) -> str:
+    """Склонить одно слово в предложный падеж — тонкая обёртка над
+    `_to_case_word` (задача 29.10.2026, см. её докстринг)."""
+    return _to_case_word(word, 'loct')
 
 
 def _to_case_position(phrase: str, case: str) -> str:
@@ -297,7 +328,10 @@ def _to_case_position(phrase: str, case: str) -> str:
     # Переиспользуем уже готовые пословные склонятели (pymorphy3 + эвристика
     # как fallback) — не второй расчёт падежного окончания, только второй
     # разбор ГОЛОВНОЙ ГРУППЫ сверху.
-    decline_word = {'gent': _to_gen_word, 'datv': _to_dat_word, 'ablt': _to_ablt_word}.get(case, _to_dat_word)
+    decline_word = {
+        'gent': _to_gen_word, 'datv': _to_dat_word, 'ablt': _to_ablt_word,
+        'accs': _to_accs_word, 'loct': _to_loct_word,
+    }.get(case, _to_dat_word)
 
     morph = _get_morph()
     out = list(tokens)
@@ -373,6 +407,18 @@ def _to_ablt_position(phrase: str) -> str:
     """Склонить ДОЛЖНОСТЬ/название в творительный падеж — тонкая обёртка над
     `_to_case_position` (см. её докстринг)."""
     return _to_case_position(phrase, 'ablt')
+
+
+def _to_accs_position(phrase: str) -> str:
+    """Склонить ДОЛЖНОСТЬ/название в винительный падеж — тонкая обёртка над
+    `_to_case_position` (задача 29.10.2026, все 5 падежей)."""
+    return _to_case_position(phrase, 'accs')
+
+
+def _to_loct_position(phrase: str) -> str:
+    """Склонить ДОЛЖНОСТЬ/название в предложный падеж — тонкая обёртка над
+    `_to_case_position` (задача 29.10.2026, все 5 падежей)."""
+    return _to_case_position(phrase, 'loct')
 
 
 def _inflect_phrase_genitive(phrase: str) -> str:
@@ -617,6 +663,51 @@ def _decline_bare_surname_initials(surname: str, initials_token: str, case_name:
     if surname[0].isupper():
         declined = declined[0].upper() + declined[1:]
     return f"{declined} {initials_token}"
+
+
+def _decline_surname_initials_prefix(initials_token: str, surname: str, case_name: str) -> str:
+    """Склоняет ТОЛЬКО фамилию в формате «И.О. Фамилия» (инициалы впереди,
+    формат `formatting._fio_to_initials_prefix`) — тот же расчёт склонения
+    фамилии, что в `_decline_bare_surname_initials` выше (тот же
+    `_decline_name_part`/petrovich, то же угадывание пола по окончанию
+    фамилии — ПРАВИЛО №6, второй алгоритм склонения не заводим); отличается
+    только порядок слов на выходе — инициалы остаются перед фамилией.
+    Задача 29.10.2026 (owner): «Р.А. Титов» (им.) → «Р.А. Титова» (род.) /
+    «Р.А. Титову» (дат.) / «Р.А. Титовым» (твор.)."""
+    nominative = f"{initials_token} {surname}"
+    petro_pack = _get_petro()
+    if not petro_pack:
+        return nominative
+    petro, Case, Gender = petro_pack
+    case = getattr(Case, case_name)
+    gender = Gender.FEMALE if surname.lower().endswith(_FEMALE_SURNAME_ENDINGS) else Gender.MALE
+    try:
+        declined = _decline_name_part(petro, 'lastname', surname, case, case_name, gender)
+    except Exception:
+        return nominative
+    if surname[0].isupper():
+        declined = declined[0].upper() + declined[1:]
+    return f"{initials_token} {declined}"
+
+
+def _to_case_initials_prefix(value: str, case_name: str) -> str:
+    """«И.О. Фамилия» (инициалы впереди фамилии) в падеж *case_name* —
+    склоняется только фамилия (второе слово), инициалы не трогаются.
+
+    Вход — ровно 2 слова, первое похоже на «И.»/«И.О.» (см.
+    `_looks_like_initials_token`); иначе (нетиповой формат) — значение
+    возвращается без изменений, тот же принцип, что у `_to_case_fio_initials`
+    (лучше неизменённая строка, чем выдуманное окончание).
+
+    Задача 29.10.2026 (owner): третья форма ФИО («Фамилия Имя Отчество» /
+    «Фамилия И.О.» / «И.О. Фамилия») теперь есть у каждого человека в
+    документах — эта функция обслуживает `*_name_initials`."""
+    if not value or not value.strip():
+        return value
+    parts = value.strip().split()
+    if len(parts) == 2 and _looks_like_initials_token(parts[0]):
+        return _decline_surname_initials_prefix(parts[0], parts[1], case_name)
+    return value
 
 
 def _to_gen_fio_initials(full_name: str) -> str:

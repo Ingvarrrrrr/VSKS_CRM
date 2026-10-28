@@ -34,6 +34,7 @@ from .formatting import (
     _fmt_quantity,
     _clean_id,
     _rubles_to_words,
+    _fio_to_initials_prefix,
 )
 # items_list пакета теперь строит _build_items_list_from_purchase_items
 # (contexts.py) — она сама вызывает build_tz_rows внутри (Правило №6,
@@ -66,6 +67,8 @@ from .contexts_org_people import (
 )
 from .contexts_subsidy_grantor import build_subsidy_grantor_context
 from app.services.contractor_pii import contractor_pii_doc_fields, user_can_view_contractor_pii
+from .case_forms import add_all_case_forms
+from .org_name_case import org_name_exceptions
 
 import logging
 
@@ -397,6 +400,11 @@ async def render_fabrikant_package_files(
         "status": p.status or "",
         "responsible_person": resolved_responsible,
         "responsible_person_full": raw_responsible,
+        # Задача 29.10.2026 (владелец): третья форма «И.О. Фамилия» — тот же
+        # расчёт, что в contexts_build.py (ПРАВИЛО №6, _fio_to_initials_prefix).
+        "responsible_person_name_initials": (
+            _fio_to_initials_prefix(raw_responsible) if raw_responsible else ""
+        ),
         "subsidy_name": subsidy.name if subsidy else "",
         "subsidy_year": subsidy.year if subsidy else "",
         "subsidy_budget": _fmt_money(subsidy.budget) if subsidy else "",
@@ -453,6 +461,11 @@ async def render_fabrikant_package_files(
         "item_names": p.subject or ", ".join(i["name"] for i in items_list if i["name"]),
         "approvers": [],
         "initiator_name": "",
+        # Задача 29.10.2026: initiator_name остаётся ПОЛНЫМ ФИО, инициаторская
+        # часть пакета всегда черновая (""), как и сам initiator_name выше —
+        # этот путь не резолвит инициатора, см. комментарий ниже у ~572.
+        "initiator_initials": "",
+        "initiator_name_initials": "",
         "initiator_role": "",
         "initiator_dept": "",
         "initiator_phone": "",
@@ -607,6 +620,11 @@ async def render_fabrikant_package_files(
     # с тем, что уходит на площадку. Вынесено в отдельную чистую функцию ради
     # юнит-теста без БД (см. test_doc_dates.py / test_nmcd_undetermined.py).
     apply_no_nmcd_override(context, no_nmcd)
+
+    # Все 5 косвенных падежей для каждой склоняемой переменной (задача
+    # 29.10.2026, case_forms.py, ПРАВИЛО №6) — тот же единственный расчёт,
+    # что и в generate.py, последний шаг перед рендером шаблонов.
+    add_all_case_forms(context, org_name_exceptions(customer_org))
 
     # ── Which templates to render ─────────────────────────────────────────────
     # tech_spec_request with fallback to contract_tz — резолюция ЧЕРЕЗ единый

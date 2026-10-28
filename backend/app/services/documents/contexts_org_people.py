@@ -20,7 +20,7 @@ from app.services.service_note_initiators import org_staff_user_ids
 from app.services.documents.morphology import (
     _to_case_position, _to_gen_fio, _to_dat_fio, _to_gen_fio_initials, _to_dat_fio_initials,
 )
-from app.services.documents.formatting import _fio_to_initials
+from app.services.documents.formatting import _fio_to_initials, _fio_to_initials_prefix
 
 CHIEF_ACCOUNTANT_POSITION = "главный бухгалтер"
 
@@ -181,6 +181,10 @@ async def resolve_responsible_position(
 _CHIEF_ACCOUNTANT_KEYS = (
     "chief_accountant_name", "chief_accountant_name_genitive", "chief_accountant_name_dative",
     "chief_accountant_initials", "chief_accountant_initials_genitive", "chief_accountant_initials_dative",
+    # Задача 29.10.2026 (владелец): третья форма ФИО — «И.О. Фамилия»
+    # (инициалы впереди, для строки подписи), тот же расчёт, что у
+    # customer_signatory_name_initials (ПРАВИЛО №6, _fio_to_initials_prefix).
+    "chief_accountant_name_initials",
 )
 
 
@@ -251,3 +255,4 @@ async def add_chief_accountant_context(context: dict, db: AsyncSession, customer
     context["chief_accountant_initials"] = _fio_to_initials(full_name)
     context["chief_accountant_initials_genitive"] = _to_gen_fio_initials(full_name)
     context["chief_accountant_initials_dative"] = _to_dat_fio_initials(full_name)
+    context["chief_accountant_name_initials"] = _fio_to_initials_prefix(full_name)

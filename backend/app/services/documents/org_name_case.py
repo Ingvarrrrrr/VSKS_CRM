@@ -133,31 +133,38 @@ def doc_quotes_only(name: Optional[str]) -> str:
     return _convert_quotes(name)
 
 
-_CASE_FUNC_NAMES = {"gent": "_to_gen_org_name", "datv": "_to_dat_org_name", "ablt": "_to_ablt_org_name"}
+_VALID_CASES = {"gent", "datv", "accs", "ablt", "loct"}
 
 
 def doc_case_org_name_case(
     name: Optional[str], exceptions: Optional[Sequence[str]], case: str
 ) -> str:
-    """`doc_case_org_name` + склонение в падеж *case* ('gent'/'datv'/'ablt')
-    через существующие `_to_gen_org_name`/`_to_dat_org_name`/`_to_ablt_org_name`
+    """`doc_case_org_name` + склонение в падеж *case*
+    ('gent'/'datv'/'accs'/'ablt'/'loct') через `_to_case_org_name`
     (contexts_org_people.py, ПРАВИЛО №6 — второй алгоритм склонения не
     заводим). Порядок: нормализовать регистр → склонить → снова применить
     исключения (склонение головной группы теоретически может задеть
-    исключение, если оно и есть голова фразы) → заглавная первая буква."""
+    исключение, если оно и есть голова фразы) → заглавная первая буква.
+
+    Задача 29.10.2026 (все 5 падежей у каждой склоняемой переменной,
+    case_forms.py): раньше здесь был статический словарь `gent`/`datv`/`ablt`
+    → именованная функция (`_to_gen_org_name`/`_to_dat_org_name`/
+    `_to_ablt_org_name`). Винительный/предложный добавлены БЕЗ новой пары
+    обёрток на каждый падеж — `_to_case_org_name` уже принимает код падежа
+    параметром, вызываем её прямо (её сигнатура не менялась, именованные
+    обёртки `_to_gen_org_name`/`_to_dat_org_name`/`_to_ablt_org_name` в
+    contexts_org_people.py оставлены как есть — используются напрямую в
+    других местах/тестах)."""
     if not name:
         return name or ""
-    if case not in _CASE_FUNC_NAMES:
-        raise ValueError(f"Неизвестный падеж: {case!r} (ожидается 'gent'/'datv'/'ablt')")
+    if case not in _VALID_CASES:
+        raise ValueError(f"Неизвестный падеж: {case!r} (ожидается один из {sorted(_VALID_CASES)!r})")
     # Локальный импорт — contexts_org_people.py не импортирует org_name_case.py,
     # но избегаем цикла на случай будущей правки порядка импортов в пакете documents.
-    from app.services.documents.contexts_org_people import (
-        _to_gen_org_name, _to_dat_org_name, _to_ablt_org_name,
-    )
-    case_fn = {"gent": _to_gen_org_name, "datv": _to_dat_org_name, "ablt": _to_ablt_org_name}[case]
+    from app.services.documents.contexts_org_people import _to_case_org_name
 
     normalized = doc_case_org_name(name, exceptions)
-    declined = case_fn(normalized)
+    declined = _to_case_org_name(normalized, case)
     all_exceptions = list(BUILTIN_EXCEPTIONS) + list(exceptions or [])
     result = _apply_exceptions(declined, all_exceptions)
     chars = list(result)

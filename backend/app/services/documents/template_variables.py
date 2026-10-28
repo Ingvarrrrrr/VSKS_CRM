@@ -24,7 +24,9 @@ TEMPLATE_VARIABLES = [
     ("{{purchase_method_label}}", "Способ закупки — конкретная форма (для order_purchase, п.2): «Запрос цен»/«Аукцион (редукцион)»/«Конкурс» при заполненной форме, иначе = purchase_method", "{{purchase_method_label}}", "Запрос цен"),
     ("{{purchase_basis}}", "Основание", "{{purchase_basis}}", "план закупок"),
     ("{{contract_type}}", "Тип договора", "{{contract_type}}", "Единственный поставщик"),
-    ("{{responsible_person}}", "ФИО ответственного исполнителя", "{{responsible_person}}", "Иванов Иван Иванович"),
+    ("{{responsible_person}}", "ФИО ответственного исполнителя — сокращённая форма «Фамилия И.О.» (для полной см. responsible_person_full)", "{{responsible_person}}", "Иванов И.И."),
+    ("{{responsible_person_full}}", "ФИО ответственного исполнителя — полная форма", "{{responsible_person_full}}", "Иванов Иван Иванович"),
+    ("{{responsible_person_name_initials}}", "ФИО ответственного исполнителя — инициалы впереди фамилии (для строки подписи)", "{{responsible_person_name_initials}}", "И.И. Иванов"),
     ("{{feo_category_name}}", "Категория ФЭО (только выбранный узел)", "{{feo_category_name}}", "Услуги связи"),
     ("{{feo_path}}", "Полный путь ФЭО", "{{feo_path}}", "1. Адм → 1.2 IT → 1.2.3 Услуги связи"),
     ("{{feo_level_1}}", "ФЭО уровень 1 — Направление расходов", "{{feo_level_1}}", "1. Административные расходы"),
@@ -109,6 +111,7 @@ TEMPLATE_VARIABLES = [
     ("{{chief_accountant_initials}}", "Заказчик: фамилия + инициалы главного бухгалтера", "{{chief_accountant_initials}}", "Петрова И.С."),
     ("{{chief_accountant_initials_genitive}}", "Заказчик: фамилия (род.падеж) + инициалы главного бухгалтера", "{{chief_accountant_initials_genitive}}", "Петровой И.С."),
     ("{{chief_accountant_initials_dative}}", "Заказчик: фамилия (дат.падеж) + инициалы главного бухгалтера", "{{chief_accountant_initials_dative}}", "Петровой И.С."),
+    ("{{chief_accountant_name_initials}}", "Заказчик: инициалы впереди фамилии главного бухгалтера (для строки подписи)", "{{chief_accountant_name_initials}}", "И.С. Петрова"),
     # ── Подрядчик (исполнитель) ──────────────────────────────────────────
     ("", "ДАННЫЕ ПОДРЯДЧИКА", "", ""),
     # Владелец (16.10.2026): {{contractor_name}} убран — дублировал
@@ -269,7 +272,9 @@ TEMPLATE_VARIABLES = [
     ("{{contractor_birth_date}}", "Дата рождения исполнителя-физлица", "{{contractor_birth_date}}", "01.01.1990"),
     # ── Инициатор ──
     ("", "ИНИЦИАТОР (для служебных записок)", "", ""),
-    ("{{initiator_name}}", "ФИО инициатора", "{{initiator_name}}", "Иванов И.И."),
+    ("{{initiator_name}}", "ФИО инициатора полностью (сокращённо — initiator_initials, initiator_name_initials)", "{{initiator_name}}", "Иванов Иван Иванович"),
+    ("{{initiator_initials}}", "ФИО инициатора: фамилия + инициалы", "{{initiator_initials}}", "Иванов И.И."),
+    ("{{initiator_name_initials}}", "ФИО инициатора: инициалы впереди фамилии (для строки подписи)", "{{initiator_name_initials}}", "И.И. Иванов"),
     ("{{initiator_role}}", "Должность инициатора", "{{initiator_role}}", "начальник отдела"),
     ("{{initiator_dept}}", "Отдел инициатора (если несколько — первый)", "{{initiator_dept}}", "Отдел спасательных операций"),
     ("{{initiator_phone}}", "Телефон инициатора (мобильный)", "{{initiator_phone}}", "+7 900 123-45-67"),
@@ -336,7 +341,7 @@ TEMPLATE_VARIABLES = [
     ("{{right_receipts}}", "Нечёткие позиции чеков 4.5 см (2-й, 4-й, ...) — правая колонка таблицы 1×2", "{% for r in right_receipts %}{{ r }}{% endfor %}", "(чеки 2,4,6...)"),
     # ── Родительный падеж (Phase 26-V) ──
     ("", "РОДИТЕЛЬНЫЙ ПАДЕЖ (Phase 26-V)", "", ""),
-    ("{{initiator_name_gen}}", "ФИО инициатора в родительном падеже", "{{initiator_name_gen}}", "Иванова И.И."),
+    ("{{initiator_name_gen}}", "ФИО инициатора в родительном падеже — ПОЛНАЯ форма (initiator_name в падеже; для сокращённой «Фамилия И.О.» падежей нет — используйте initiator_initials)", "{{initiator_name_gen}}", "Иванова Ивана Ивановича"),
     ("{{initiator_position_gen}}", "Должность инициатора в родительном падеже", "{{initiator_position_gen}}", "начальника отдела"),
     ("{{initiator_dept_gen}}", "Отдел инициатора в родительном падеже (с авто-удалением дубля «Отдел» если он уже есть в должности)", "{{initiator_dept_gen}}", "мто"),
     ("{{responsible_name_gen}}", "ФИО ответственного в родительном падеже — ПОЛНАЯ форма (для короткой «Фамилия И.О.» см. responsible_initials_gen)", "{{responsible_name_gen}}", "Петрова Петра Петровича"),
@@ -352,3 +357,35 @@ TEMPLATE_VARIABLES = [
     ("{{today}}", "Сегодняшняя дата", "{{today}}", "13.05.2026"),
     ("{{today_iso}}", "Дата ISO", "{{today_iso}}", "2026-05-13"),
 ]
+
+
+def _build_case_form_rows() -> list:
+    """Строки справочника для ВСЕХ 5 падежей каждой переменной реестра
+    `case_forms.CASE_FORM_VARIABLES` (задача 29.10.2026) — генерируются из
+    реестра, а не переписываются вручную (ПРАВИЛО №6: один источник).
+
+    Если имя падежной переменной уже есть выше как своя литеральная строка
+    (например, `customer_full_name_genitive`, `subsidy_grantor_name_
+    instrumental` — тот же расчёт под другим историческим суффиксом или
+    совпавшим новым именем) — строку не дублируем, старая остаётся.
+    """
+    from app.services.documents.case_forms import CASE_FORM_VARIABLES, CASES, decline_value
+
+    existing_names = {v for (v, _d, _et, _er) in TEMPLATE_VARIABLES if v}
+    rows = [("", "ВСЕ ПАДЕЖИ (автогенерация, задача 29.10.2026)", "", "")]
+    for base_var, (kind, example_nominative, description) in CASE_FORM_VARIABLES.items():
+        for _short_case, suffix, case_ru, question, _petro_case in CASES:
+            name = "{{" + f"{base_var}_{suffix}" + "}}"
+            if name in existing_names:
+                continue
+            example_declined = decline_value(kind, example_nominative, _short_case, [])
+            rows.append((
+                name,
+                f"{description} — в {case_ru} падеже ({question})",
+                name,
+                example_declined,
+            ))
+    return rows
+
+
+TEMPLATE_VARIABLES.extend(_build_case_form_rows())

@@ -14,6 +14,7 @@ from app.models.purchase import Purchase
 from app.services.documents.doc_types import _BASIS_LABELS, _PURCHASE_METHOD_LABELS
 from app.services.documents.formatting import (
     _fmt_date, _clean_id, _fmt_money, _fmt_money_plain, _rubles_to_words,
+    _fio_to_initials, _fio_to_initials_prefix,
 )
 from app.services.documents.templates import _purchase_method_label
 from app.services.documents.contexts import (
@@ -66,6 +67,12 @@ def build_base_context_part1(
         "purchase_basis": _BASIS_LABELS.get(p.purchase_basis or "", ""),
         "responsible_person": resolved_responsible,  # инициалы (по умолчанию)
         "responsible_person_full": resolved_responsible_full,  # полное ФИО (для шаблонов где надо)
+        # Третья форма (задача 29.10.2026, владелец): «И.О. Фамилия» —
+        # тот же расчёт, что у customer_signatory_name_initials/
+        # contractor_signatory_name_initials (ПРАВИЛО №6, _fio_to_initials_prefix).
+        "responsible_person_name_initials": (
+            _fio_to_initials_prefix(resolved_responsible_full) if resolved_responsible_full else ""
+        ),
         # Субсидия
         "subsidy_name": subsidy.name if subsidy else "",
         "subsidy_year": subsidy.year if subsidy else "",
@@ -175,6 +182,16 @@ async def build_base_context_part2(
         # — по организации, к которой привязана субсидия закупки. Если у юзера
         # несколько отделов в этой org — первый.
         "initiator_name": initiator.full_name if initiator else "",
+        # Задача 29.10.2026 (владелец): initiator_name остаётся ПОЛНЫМ ФИО
+        # (40+ шаблонов) — две новые короткие формы рядом, тот же расчёт,
+        # что у customer_signatory_initials/_name_initials (ПРАВИЛО №6,
+        # formatting._fio_to_initials/_fio_to_initials_prefix).
+        "initiator_initials": (
+            _fio_to_initials(initiator.full_name) if (initiator and initiator.full_name) else ""
+        ),
+        "initiator_name_initials": (
+            _fio_to_initials_prefix(initiator.full_name) if (initiator and initiator.full_name) else ""
+        ),
         "initiator_role": (
             await _resolve_user_position(
                 initiator.user if (initiator and getattr(initiator, "user", None)) else None,

@@ -61,8 +61,9 @@ from .contexts_extra import (
 )
 from .contexts_org_people import (
     responsible_case_context, resolve_responsible_position,
-    add_chief_accountant_context, _to_ablt_org_name,
+    add_chief_accountant_context,
 )
+from .contexts_subsidy_grantor import build_subsidy_grantor_context
 from app.services.contractor_pii import contractor_pii_doc_fields, user_can_view_contractor_pii
 
 import logging
@@ -514,14 +515,10 @@ async def render_fabrikant_package_files(
         "notice_number": _notice_number,
         "payment_term_days": p.payment_term_days if (p.payment_term_days is not None) else 10,
         "applications_review_date": _app_review_date,
-        # Phase 28 keys (best-effort)
-        "subsidy_grantor_name": (subsidy.grantor_name or "").strip() if subsidy else "",
-        # Творительный падеж — через тот же разбор, что и contexts_extra.py
-        # add_phase28_context (ПРАВИЛО №6, единственный расчёт).
-        "subsidy_grantor_name_instrumental": (
-            _to_ablt_org_name((subsidy.grantor_name or "").strip()) if (subsidy and subsidy.grantor_name) else ""
-        ),
-        "subsidy_ministry_name": (subsidy.ministry_name or "").strip() if subsidy else "",
+        # Phase 28 keys (best-effort) — субсидия-грантодатель: единственный
+        # расчёт в build_subsidy_grantor_context (ПРАВИЛО №6, тот же вызывается
+        # из contexts_extra.py::add_phase28_context).
+        **build_subsidy_grantor_context(subsidy),
         "advance_amount": _fmt_money(p.advance_amount) if p.advance_amount else "",
         "acceptance_term_days": p.acceptance_term_days if p.acceptance_term_days is not None else 5,
         "penalty_rate": str(p.penalty_rate) if p.penalty_rate is not None else "0.1",

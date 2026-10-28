@@ -29,11 +29,12 @@ from app.services.documents.contract_terms import warranty_period_text
 from app.services.contractor_pii import contractor_pii_doc_fields
 from app.services.documents.contexts_org_people import (
     responsible_case_context, resolve_responsible_position,
-    _to_gen_org_name, _to_dat_org_name, _to_ablt_org_name,
+    _to_gen_org_name, _to_dat_org_name,
 )
 from app.services.documents.org_name_case import (
     doc_case_org_name, doc_case_org_name_case, doc_quotes_only, org_name_exceptions,
 )
+from app.services.documents.contexts_subsidy_grantor import build_subsidy_grantor_context
 
 logger = logging.getLogger(__name__)
 
@@ -55,22 +56,10 @@ def add_phase28_context(context: dict, subsidy, c, p: Purchase, can_view_pii: bo
     try:
         # Реквизиты субсидии-грантодателя (для рамочных и региональных договоров)
         # Phase 28: grantor_name / ministry_name берём из новых полей модели Subsidy.
-        # grantor_name заполняется вручную в форме субсидии, но тоже бывает
-        # капсом ("РОССИЙСКАЯ ФЕДЕРАЦИЯ") — тот же хелпер приведения регистра
-        # (владелец, 27.10.2026), что и для Заказчика/Исполнителя. У субсидии
-        # нет своей карточки исключений — только встроенные (РФ/ИНН/ОГРН).
-        context["subsidy_grantor_name"] = (
-            doc_case_org_name((subsidy.grantor_name or "").strip(), [])
-            if subsidy and subsidy.grantor_name else ""
-        )
-        # Творительный падеж грантодателя (владелец, 22.10.2026):
-        # {{subsidy_grantor_name_instrumental}} — через единственный разбор
-        # головной группы _to_case_position (ПРАВИЛО №6).
-        context["subsidy_grantor_name_instrumental"] = (
-            doc_case_org_name_case((subsidy.grantor_name or "").strip(), [], 'ablt')
-            if subsidy and subsidy.grantor_name else ""
-        )
-        context["subsidy_ministry_name"] = (subsidy.ministry_name or "").strip() if subsidy else ""
+        # Именительный/творительный/родительный падеж — единственный расчёт
+        # в build_subsidy_grantor_context (ПРАВИЛО №6, тот же вызывается из
+        # fabrikant_package.py), владелец 27.10/22.10/28.10.2026.
+        context.update(build_subsidy_grantor_context(subsidy))
         # subsidy_agreement_number/date — см. add_subsidy_agreement_context
         # (ПРАВИЛО №6, вызывается из add_misc_purchase_context ниже по generate.py).
 

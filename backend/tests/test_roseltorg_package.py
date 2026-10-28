@@ -21,6 +21,10 @@ from app.services.documents.roseltorg_package import (
     ROSELTORG_ZIP_FILE_NAME,
     ROSELTORG_MAX_ROWS,
 )
+from app.services.documents.fabrikant_package import (
+    build_fabrikant_zip_bytes,
+    FABRIKANT_PKG_FILE_NAMES,
+)
 
 
 def _orig_sheet2_hash():
@@ -134,11 +138,25 @@ def test_over_limit_raises_value_error():
         build_roseltorg_lot_items_xlsx(rows)
 
 
+def _fake_bytes(label: str) -> bytes:
+    return f"fake-docx-bytes:{label}".encode("utf-8")
+
+
+def _fake_fabrikant_rendered():
+    """Фейковый fabrikant_rendered (ascii_name, ru_title, bytes) — ascii-имена
+    из FABRIKANT_PKG_FILE_NAMES (единственный источник соответствия doc_key →
+    имя файла, ПРАВИЛО №6), без БД/HTTP."""
+    return [
+        (ascii_name, ru_title, _fake_bytes(doc_key))
+        for doc_key, ascii_name, ru_title in FABRIKANT_PKG_FILE_NAMES
+    ]
+
+
 def test_zip_contains_lot_items_file_and_no_errors_file_when_no_errors():
     xlsx_bytes = build_roseltorg_lot_items_xlsx(
         [{"name": "Товар", "quantity": 1, "unit": "шт", "unit_price": 10, "description": "", "okpd2": ""}]
     )
-    out = build_roseltorg_zip_bytes([(ROSELTORG_ZIP_FILE_NAME, xlsx_bytes)], [])
+    out = build_roseltorg_zip_bytes(_fake_fabrikant_rendered(), [(ROSELTORG_ZIP_FILE_NAME, xlsx_bytes)], [])
     with zipfile.ZipFile(BytesIO(out)) as zf:
         names = zf.namelist()
         assert ROSELTORG_ZIP_FILE_NAME in names
@@ -149,8 +167,47 @@ def test_zip_contains_errors_file_when_errors_present():
     xlsx_bytes = build_roseltorg_lot_items_xlsx(
         [{"name": "Товар", "quantity": 1, "unit": "шт", "unit_price": 10, "description": "", "okpd2": ""}]
     )
-    out = build_roseltorg_zip_bytes([(ROSELTORG_ZIP_FILE_NAME, xlsx_bytes)], ["Позиция X: ошибка"])
+    out = build_roseltorg_zip_bytes(
+        _fake_fabrikant_rendered(), [(ROSELTORG_ZIP_FILE_NAME, xlsx_bytes)], ["Позиция X: ошибка"]
+    )
     with zipfile.ZipFile(BytesIO(out)) as zf:
         names = zf.namelist()
         assert ROSELTORG_ZIP_FILE_NAME in names
         assert "errors.txt" in names
+
+
+def test_zip_contains_fabrikant_docs_plus_lot_items():
+    """Пакет Росэлторга = 5 документов Фабриканта (русские имена) +
+    «Позиции_по_лоту.xlsx» (владелец, 28.10.2026)."""
+    xlsx_bytes = build_roseltorg_lot_items_xlsx(
+        [{"name": "Товар", "quantity": 1, "unit": "шт", "unit_price": 10, "description": "", "okpd2": ""}]
+    )
+    out = build_roseltorg_zip_bytes(
+        _fake_fabrikant_rendered(), [(ROSELTORG_ZIP_FILE_NAME, xlsx_bytes)], []
+    )
+    with zipfile.ZipFile(BytesIO(out)) as zf:
+        names = set(zf.namelist())
+    assert names == {
+        "Инструкция.docx",
+        "Форма_заявки.docx",
+        "Документация.docx",
+        "Проект_договора.docx",
+        "ТЗ.docx",
+        ROSELTORG_ZIP_FILE_NAME,
+    }
+
+
+def test_build_fabrikant_zip_bytes_without_extra_files_unchanged():
+    """build_fabrikant_zip_bytes без extra_files (вызов из /fabrikant-package)
+    продолжает давать прежний набор файлов, без изменений поведения."""
+    rendered = _fake_fabrikant_rendered()
+    out = build_fabrikant_zip_bytes(rendered, [])
+    with zipfile.ZipFile(BytesIO(out)) as zf:
+        names = set(zf.namelist())
+    assert names == {
+        "Инструкция.docx",
+        "Форма_заявки.docx",
+        "Документация.docx",
+        "Проект_договора.docx",
+        "ТЗ.docx",
+    }

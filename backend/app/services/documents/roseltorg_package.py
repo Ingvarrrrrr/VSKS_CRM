@@ -1,9 +1,13 @@
 """Рендер пакета документов для ЭТП «Росэлторг».
 
-Пока один файл в пакете: xlsx «Позиции по лоту» по шаблону площадки
-(backend/templates/roseltorg/lot_items_template.xlsx). По аналогии с
-fabrikant_package.py — отдельный модуль (ПРАВИЛО №5: не дописывать в
-fabrikant_package.py, у Росэлторга другая площадка и другой формат пакета).
+В пакете 5 документов, как у Фабриканта (Инструкция, Форма_заявки,
+Документация, Проект_договора, ТЗ — см. fabrikant_package.py), плюс xlsx
+«Позиции по лоту» по шаблону площадки
+(backend/templates/roseltorg/lot_items_template.xlsx). Эта xlsx — единственное,
+что рендерится здесь; 5 документов рендерит render_fabrikant_package_files
+(ПРАВИЛО №6: не заводить второй рендер тех же шаблонов) — отдельный модуль
+нужен только для xlsx (ПРАВИЛО №5: не дописывать в fabrikant_package.py,
+у Росэлторга другой формат таблицы позиций).
 
 ПРАВИЛО №6: сырые quantity/unit_price/description/name/unit позиции не
 считаются здесь заново — _purchase_item_doc_values (contexts.py) — тот же
@@ -22,7 +26,6 @@ float), которые нужны xlsx-ячейкам; build_tz_rows (app.servic
 """
 
 import os
-import zipfile
 from io import BytesIO
 
 from sqlalchemy import select
@@ -164,18 +167,19 @@ async def render_roseltorg_package_files(
 
 
 def build_roseltorg_zip_bytes(
-    files: list[tuple[str, bytes]],
+    fabrikant_rendered: list[tuple[str, str, bytes]],
+    roseltorg_files: list[tuple[str, bytes]],
     errors: list[str],
 ) -> bytes:
-    """Собирает ZIP пакета Росэлторг из результата render_roseltorg_package_files.
+    """Собирает ZIP пакета Росэлторг: 5 документов Фабриканта + «Позиции_по_лоту.xlsx».
 
-    По образцу build_fabrikant_zip_bytes (fabrikant_package.py) — errors.txt
-    в архиве только если были ошибки.
+    fabrikant_rendered — результат render_fabrikant_package_files (ascii_name,
+    ru_title, bytes); roseltorg_files — результат render_roseltorg_package_files
+    (сейчас всегда ровно «Позиции_по_лоту.xlsx»). ПРАВИЛО №6: сборка ZIP и
+    именование документов — единственный механизм build_fabrikant_zip_bytes
+    (fabrikant_package.py), своей логики записи архива здесь больше нет —
+    roseltorg_files передаются туда как extra_files.
     """
-    zip_buf = BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_name, data in files:
-            zf.writestr(file_name, data)
-        if errors:
-            zf.writestr("errors.txt", "\n\n".join(errors))
-    return zip_buf.getvalue()
+    from .fabrikant_package import build_fabrikant_zip_bytes as _build_fabrikant_zip
+
+    return _build_fabrikant_zip(fabrikant_rendered, errors, extra_files=roseltorg_files)

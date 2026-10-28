@@ -713,6 +713,7 @@ async def render_fabrikant_package_files(
 def build_fabrikant_zip_bytes(
     rendered: list[tuple[str, str, bytes]],
     errors: list[str],
+    extra_files: list[tuple[str, bytes]] | None = None,
 ) -> bytes:
     """Собирает ZIP пакета Фабрикант из результата render_fabrikant_package_files.
 
@@ -723,6 +724,13 @@ def build_fabrikant_zip_bytes(
     пропускала не отрендерившийся документ: ТЗ попадало в архив под именем
     «Проект_договора.docx». Вынесено в отдельную чистую функцию, чтобы
     покрыть этот случай юнит-тестом без HTTP/БД, см. tests/test_fabrikant_zip_names.py.
+
+    extra_files (28.10.2026, ПРАВИЛО №6): дополнительные файлы (имя, байты),
+    которые дописываются в архив как есть, ПОСЛЕ документов и ДО errors.txt —
+    единственный механизм сборки ZIP пакета переиспользует пакет Росэлторга
+    (build_roseltorg_zip_bytes, roseltorg_package.py), чтобы к 5 документам
+    Фабриканта можно было дописать «Позиции_по_лоту.xlsx», не заводя вторую
+    копию этой функции. Старые вызовы без extra_files не меняют поведение.
     """
     import zipfile as _zipfile
 
@@ -733,6 +741,8 @@ def build_fabrikant_zip_bytes(
             _ru_base = FABRIKANT_PKG_ZIP_BASENAMES.get(_ascii_base, _ascii_base)
             _ext = os.path.splitext(ascii_name)[1] or ".docx"
             zf.writestr(_ru_base + _ext, data)
+        for extra_name, extra_data in (extra_files or []):
+            zf.writestr(extra_name, extra_data)
         if errors:
             zf.writestr("errors.txt", "\n\n".join(errors))
     return zip_buf.getvalue()

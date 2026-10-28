@@ -129,6 +129,18 @@ async def generate_document(
 
 
 
+async def _read_fabrikant_no_nmcd(db: AsyncSession, pid: int) -> bool:
+    """Читает «Без НМЦД» с самой закупки (ПРАВИЛО №6: единственное хранимое
+    состояние, Purchase.fabrikant_no_nmcd) — общий хелпер для /fabrikant-package
+    и /roseltorg-package (28.10.2026, пакет Росэлторга теперь содержит те же
+    5 документов Фабриканта и должен читать тот же флаг, не копией кода)."""
+    from app.models.purchase import Purchase as _Purchase
+    purchase = await db.get(_Purchase, pid)
+    # getattr: колонка fabrikant_no_nmcd приходит отдельной миграцией —
+    # без неё (прод 28.10.2026) пакет Фабриканта падал 500 AttributeError.
+    return bool(getattr(purchase, "fabrikant_no_nmcd", False)) if purchase else False
+
+
 @router.get("/{pid}/fabrikant-package")
 async def download_fabrikant_package(
     pid: int,
@@ -147,9 +159,7 @@ async def download_fabrikant_package(
     # «Без НМЦД» при скачивании без отправки (владелец, 28.10.2026): читаем
     # ЕДИНСТВЕННОЕ хранимое состояние с самой закупки (ПРАВИЛО №6) — то же
     # поле, которое читает/пишет диалог отправки (publish_purchase ниже).
-    from app.models.purchase import Purchase as _Purchase
-    purchase_for_nmcd = await db.get(_Purchase, pid)
-    no_nmcd = bool(purchase_for_nmcd.fabrikant_no_nmcd) if purchase_for_nmcd else False
+    no_nmcd = await _read_fabrikant_no_nmcd(db, pid)
 
     rendered, errors = await render_fabrikant_package_files(db, pid, current_user, no_nmcd=no_nmcd)
 
@@ -183,21 +193,32 @@ async def download_roseltorg_package(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Render and ZIP the lot-items xlsx for ЭТП Roseltorg.
+    """Render and ZIP the package for ЭТП Roseltorg.
 
-    По аналогии с /fabrikant-package: сейчас в пакете один файл
-    («Позиции_по_лоту.xlsx» по шаблону площадки).
+    В пакете те же 5 документов, что у Фабриканта (render_fabrikant_package_files,
+    ПРАВИЛО №6 — не второй рендер) плюс «Позиции_по_лоту.xlsx» по шаблону
+    площадки (28.10.2026, владелец: «должны быть все те же документы, что и
+    для Фабриканта, плюс таблица»). Сначала собирается таблица — её лимит
+    (ROSELTORG_LIMIT_EXCEEDED) и гейт нерешённых дублей ТЗ (HTTPException из
+    _require_tz_duplicates_resolved_for_doc) пробрасываются как раньше, до
+    рендера документов. Если не собралось что-то одно — отдаём то, что есть,
+    + errors.txt (как у Фабриканта); если не собралось ничего — 500.
     """
     # ИСПРАВЛЕНИЕ К2 (19.10.2026): см. object_visibility.py.
     from app.auth.object_visibility import ensure_purchase_visible
     await ensure_purchase_visible(current_user, pid, db)
 
     try:
-        files, errors = await render_roseltorg_package_files(db, pid, current_user)
+        roseltorg_files, table_errors = await render_roseltorg_package_files(db, pid, current_user)
     except ValueError as e:
         raise HTTPException(422, detail={"code": "ROSELTORG_LIMIT_EXCEEDED", "message": str(e)})
 
-    if not files:
+    no_nmcd = await _read_fabrikant_no_nmcd(db, pid)
+    rendered, doc_errors = await render_fabrikant_package_files(db, pid, current_user, no_nmcd=no_nmcd)
+
+    errors = table_errors + doc_errors
+
+    if not roseltorg_files and not rendered:
         raise HTTPException(
             500,
             detail={
@@ -207,7 +228,7 @@ async def download_roseltorg_package(
             },
         )
 
-    zip_buf = BytesIO(build_roseltorg_zip_bytes(files, errors))
+    zip_buf = BytesIO(build_roseltorg_zip_bytes(rendered, roseltorg_files, errors))
 
     safe_zip_name = f"Росэлторг_закупка_{pid}.zip"
     encoded_zip_name = quote(safe_zip_name, safe="-_.~")

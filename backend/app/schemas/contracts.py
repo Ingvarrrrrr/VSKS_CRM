@@ -63,6 +63,19 @@ class ContractorCreate(BaseModel):
     signatory_first_name: Optional[str] = None
     signatory_middle_name: Optional[str] = None
     personal_account: Optional[str] = None  # лицевой счёт в казначействе
+    # Юр. адрес по частям (app/services/address_compose.py — сборка/разбор,
+    # ПРАВИЛО №6). `address` (выше) остаётся единственным полем, которое
+    # читают переменные документов — эти part-поля только для редактирования
+    # в карточке организации, финальная строка пишется в `address`.
+    address_postal_code: Optional[str] = None
+    address_region: Optional[str] = None
+    address_district: Optional[str] = None
+    address_settlement_type: Optional[str] = None
+    address_settlement: Optional[str] = None
+    address_street: Optional[str] = None
+    address_house: Optional[str] = None
+    address_building: Optional[str] = None
+    address_office: Optional[str] = None
 
 class ContractorOut(ContractorCreate):
     id: int

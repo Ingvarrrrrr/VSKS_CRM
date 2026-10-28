@@ -10,6 +10,7 @@ from app.models.contractor import Contractor
 from app.models.subsidy import Subsidy
 from app.models.organization import Organization
 from app.services.ru_regions import get_region_info
+from app.services.address_compose import compose_address
 
 
 async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
@@ -76,23 +77,25 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
     delivery_region_value = (p.delivery_region or "").strip() or (org_region or "")
     region_info = get_region_info(delivery_region_value) if delivery_region_value else None
 
-    # Полный адрес доставки: собираем из структурных частей, фолбэк — свободные поля.
+    # Полный адрес доставки: собираем из структурных частей через общий
+    # compose_address (ПРАВИЛО №6 — тот же источник истины, что у юр. адреса
+    # контрагента, см. address_compose.py), фолбэк — свободные поля.
+    # building_prefix="к." — короткая подпись корпуса, исторический формат
+    # для внешнего API Фабриканта (менять нельзя, см. docstring compose_address).
     def _build_delivery_address() -> str | None:
-        parts = []
-        if (p.delivery_postcode or "").strip():
-            parts.append(p.delivery_postcode.strip())
-        if delivery_region_value:
-            parts.append(delivery_region_value)
-        if (p.delivery_city or "").strip():
-            parts.append(p.delivery_city.strip())
-        if (p.delivery_street or "").strip():
-            parts.append(p.delivery_street.strip())
-        if (p.delivery_house or "").strip():
-            parts.append("д. " + p.delivery_house.strip())
-        if (p.delivery_building or "").strip():
-            parts.append("к. " + p.delivery_building.strip())
-        if parts:
-            return ", ".join(parts)
+        composed = compose_address(
+            {
+                "postal_code": p.delivery_postcode,
+                "region": delivery_region_value,
+                "settlement": p.delivery_city,
+                "street": p.delivery_street,
+                "house": p.delivery_house,
+                "building": p.delivery_building,
+            },
+            building_prefix="к.",
+        )
+        if composed:
+            return composed
         # Фолбэк: свободная строка → место доставки/услуг → адрес организации субсидии
         return (
             (p.delivery_address or "").strip()

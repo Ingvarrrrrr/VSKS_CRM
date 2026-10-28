@@ -2123,6 +2123,9 @@ PATCHABLE_FIELDS = {
     'etp_url',
     # Fabrikant: срок оплаты и дата рассмотрения заявок
     'payment_term_days', 'applications_review_date',
+    # Fabrikant: «Без НМЦД» — единственное хранимое состояние (ПРАВИЛО №6),
+    # читают/пишут и скачивание ZIP-пакета, и диалог отправки.
+    'fabrikant_no_nmcd',
     # Импорт/экспорт: квартал обязательств и планируемый месяц платежа
     "commitment_quarter", "planned_payment_month",
     # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки

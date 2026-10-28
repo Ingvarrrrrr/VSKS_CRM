@@ -126,7 +126,16 @@ export function usePurchasePublications(
   }
 
   const fabrikantAttachDocs = ref(true)
-  const fabrikantNoNmcd = ref(false)
+  // «Без НМЦД» (владелец, 28.10.2026): ЕДИНСТВЕННОЕ хранимое состояние —
+  // purchase.fabrikant_no_nmcd (ПРАВИЛО №6). Раньше был отдельный ref,
+  // сбрасываемый эвристикой при каждом открытии диалога — теперь читает и
+  // пишет напрямую то же поле `form`, что и скачивание ZIP-пакета без
+  // отправки; запись уходит через общий автосейв карточки (watch(form,...)
+  // в CreateOrderView.vue), читается он же при следующем открытии диалога.
+  const fabrikantNoNmcd = computed<boolean>({
+    get: () => !!form.fabrikant_no_nmcd,
+    set: (v: boolean) => { form.fabrikant_no_nmcd = v },
+  })
   const fabrikantProcedureType = ref<'zp' | 'reduction' | 'price_monitoring'>('zp')
   const fabrikantAuctionDateStart = ref('')
   const fabrikantAuctionBetFrom = ref<number | null>(null)

@@ -27,7 +27,11 @@ class PublishRequest(BaseModel):
     summing_up_date: Optional[str] = None      # ISO datetime, Фабрикант: подведение итогов
     okpd2_code: Optional[str] = None           # ОКПД2 для всех позиций закупки (Фабрикант)
     attach_documents: bool = False             # Фабрикант: прикрепить пакет из 5 документов после публикации
-    no_nmcd: bool = False                      # Фабрикант: опубликовать без НМЦД (nmck=0)
+    # Фабрикант: опубликовать без НМЦД (nmck=0). Optional/None (а не bool=False) —
+    # чтобы роутер мог отличить «явно не пришло» от «явно снят флажок» и не
+    # затирать сохранённое purchase.fabrikant_no_nmcd (ЕДИНСТВЕННОЕ хранимое
+    # состояние, ПРАВИЛО №6, владелец 28.10.2026) значением по умолчанию.
+    no_nmcd: Optional[bool] = None
     # Фабрикант Редукцион — дополнительные поля
     auction_date_start: Optional[str] = None   # ISO datetime, дата начала редукциона
     auction_bet_limit_from: Optional[float] = None  # граница ставки от

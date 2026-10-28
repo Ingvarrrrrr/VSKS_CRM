@@ -120,7 +120,16 @@
             class="mb-3"
             hide-details
           />
-          <v-textarea v-model="form.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+          <div class="section-label mt-4">Юридический адрес (адрес местонахождения)</div>
+          <AddressPartsFields v-model="addressPartsModel" class="mb-2" />
+          <v-textarea
+            :model-value="form.address"
+            label="Адрес целиком (собирается из частей выше)"
+            variant="outlined" density="compact" rows="2" class="mt-2" hide-details
+            readonly
+            hint="Собирается автоматически из полей выше. Чтобы изменить — правьте поля выше."
+            persistent-hint
+          />
           <v-textarea v-model="form.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
           <div class="section-label mt-4">Подписант</div>
@@ -356,7 +365,9 @@ import { ref, computed, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
+import AddressPartsFields from '@/components/address/AddressPartsFields.vue'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
+import { composeAddress, parseAddress, hasAnyAddressPart, type AddressParts } from '@/utils/addressCompose'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 
@@ -376,6 +387,15 @@ interface ContractorFull {
   inn?: string
   kpp?: string
   address?: string
+  address_postal_code?: string
+  address_region?: string
+  address_district?: string
+  address_settlement_type?: string
+  address_settlement?: string
+  address_street?: string
+  address_house?: string
+  address_building?: string
+  address_office?: string
   contact_person?: string
   phone?: string
   org_phone?: string
@@ -501,6 +521,9 @@ const contractorCardImporting = ref(false)
 // ── Form ──────────────────────────────────────────
 const emptyForm = () => ({
   name: '', full_name: '', inn: '', kpp: '', address: '',
+  address_postal_code: '', address_region: '', address_district: '',
+  address_settlement_type: '', address_settlement: '', address_street: '',
+  address_house: '', address_building: '', address_office: '',
   contact_person: '', phone: '', email: '', org_phone: '', org_email: '', bank_details: '',
   signatory_basis: '', postal_address: '',
   ogrn: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
@@ -513,6 +536,52 @@ const emptyForm = () => ({
   signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '',
 })
 const form = ref(emptyForm())
+
+// Мост между "плоскими" address_* полями формы (как в payload /contractors)
+// и объектом AddressParts, который принимает AddressPartsFields.vue. Запись
+// сразу пересобирает form.address (единственное поле, которое читают
+// переменные документов, не трогается структурой формы).
+const addressPartsModel = computed<AddressParts>({
+  get: () => ({
+    postal_code: form.value.address_postal_code,
+    region: form.value.address_region,
+    district: form.value.address_district,
+    settlement_type: form.value.address_settlement_type,
+    settlement: form.value.address_settlement,
+    street: form.value.address_street,
+    house: form.value.address_house,
+    building: form.value.address_building,
+    office: form.value.address_office,
+  }),
+  set: (val: AddressParts) => {
+    form.value.address_postal_code = val.postal_code
+    form.value.address_region = val.region
+    form.value.address_district = val.district
+    form.value.address_settlement_type = val.settlement_type
+    form.value.address_settlement = val.settlement
+    form.value.address_street = val.street
+    form.value.address_house = val.house
+    form.value.address_building = val.building
+    form.value.address_office = val.office
+    form.value.address = composeAddress(val)
+  },
+})
+
+/** Разобрать строку адреса в части и залить их в форму (EGRUL/импорт файла
+ * дают только одну строку) — без этого «Адрес целиком» остался бы со старым
+ * собранным значением, пока пользователь не тронет поля руками. */
+function resyncAddressPartsFromString(address: string) {
+  const parsed = parseAddress(address)
+  form.value.address_postal_code = parsed.postal_code
+  form.value.address_region = parsed.region
+  form.value.address_district = parsed.district
+  form.value.address_settlement_type = parsed.settlement_type
+  form.value.address_settlement = parsed.settlement
+  form.value.address_street = parsed.street
+  form.value.address_house = parsed.house
+  form.value.address_building = parsed.building
+  form.value.address_office = parsed.office
+}
 
 // ── Categories ────────────────────────────────────
 const allKnownCategories = ref<string[]>([])
@@ -629,6 +698,11 @@ function applyEgrulDiff() {
   for (const [key, val] of Object.entries(egrulDiffPending.value)) {
     ;(form.value as any)[key] = val
   }
+  // ЕГРЮЛ отдаёт адрес одной строкой — пересобрать части адреса из неё,
+  // иначе поля-части (и «Адрес целиком») останутся со старым значением.
+  if ('address' in egrulDiffPending.value) {
+    resyncAddressPartsFromString(egrulDiffPending.value.address)
+  }
   fnsMessage.value = `Обновлено: ${egrulDiffItems.value.map(d => d.label).join(', ')}`
   fnsMessageType.value = 'success'
   egrulDiffDialog.value = false
@@ -670,6 +744,11 @@ async function importFromCardFile() {
         filled.push(label)
       }
     }
+    // Файл карточки реквизитов отдаёт адрес одной строкой — пересобрать
+    // части адреса из него (как в applyEgrulDiff выше).
+    if (data.address) {
+      resyncAddressPartsFromString(form.value.address)
+    }
     fnsMessage.value = filled.length ? `Заполнено из файла: ${filled.join(', ')}` : 'Файл прочитан, но данные не распознаны'
     fnsMessageType.value = filled.length ? 'success' : 'warning'
     contractorCardFile.value = null
@@ -698,6 +777,15 @@ function fillForm(c: ContractorFull) {
     inn:                  c.inn                  || '',
     kpp:                  c.kpp                  || '',
     address:              c.address              || '',
+    address_postal_code:  c.address_postal_code  || '',
+    address_region:       c.address_region       || '',
+    address_district:     c.address_district     || '',
+    address_settlement_type: c.address_settlement_type || '',
+    address_settlement:   c.address_settlement   || '',
+    address_street:       c.address_street       || '',
+    address_house:        c.address_house        || '',
+    address_building:     c.address_building     || '',
+    address_office:       c.address_office       || '',
     contact_person:       c.contact_person       || '',
     phone:                c.phone                || '',
     org_phone:            c.org_phone            || '',
@@ -731,6 +819,24 @@ function fillForm(c: ContractorFull) {
     single_treasury_account: c.single_treasury_account || '',
     personal_account:     c.personal_account     || '',
     signatory_position:   c.signatory_position   || '',
+  }
+  // Предзаполнение полей-частей адреса из уже сохранённой строки (владелец,
+  // 28.10.2026): у существующих организаций части пустые, а `address`
+  // заполнен. Разбираем ТОЛЬКО для показа в полях — ничего не сохраняем,
+  // пока пользователь сам не нажмёт «Сохранить» (parseAddress ниже может
+  // ошибиться на нетипичном адресе, автосохранение такой ошибки было бы
+  // необратимым).
+  if (!hasAnyAddressPart(form.value) && (form.value.address || '').trim()) {
+    const parsed = parseAddress(form.value.address)
+    form.value.address_postal_code = parsed.postal_code
+    form.value.address_region = parsed.region
+    form.value.address_district = parsed.district
+    form.value.address_settlement_type = parsed.settlement_type
+    form.value.address_settlement = parsed.settlement
+    form.value.address_street = parsed.street
+    form.value.address_house = parsed.house
+    form.value.address_building = parsed.building
+    form.value.address_office = parsed.office
   }
 }
 

@@ -80,7 +80,22 @@ async def publish_purchase(
 
     payload = await _build_publish_payload(purchase_id, db)
 
-    if body.no_nmcd:
+    # «Без НМЦД» — ЕДИНСТВЕННОЕ хранимое состояние purchase.fabrikant_no_nmcd
+    # (ПРАВИЛО №6, владелец 28.10.2026): то же поле читает скачивание ZIP-пакета
+    # без отправки (app/routers/documents.py::download_fabrikant_package).
+    # body.no_nmcd пришло явно (не None) → это новый выбор пользователя в
+    # диалоге отправки — сохраняем его на закупку. Не пришло → берём текущее
+    # значение закупки (диалог отправки должен помнить прошлый выбор, а не
+    # сбрасывать его на эвристику при каждом открытии).
+    purchase_for_nmcd = await db.get(Purchase, purchase_id)
+    if purchase_for_nmcd is None:
+        raise HTTPException(404, "Закупка не найдена")
+    if body.no_nmcd is not None and bool(body.no_nmcd) != bool(purchase_for_nmcd.fabrikant_no_nmcd):
+        purchase_for_nmcd.fabrikant_no_nmcd = bool(body.no_nmcd)
+        await db.commit()
+    effective_no_nmcd = bool(purchase_for_nmcd.fabrikant_no_nmcd)
+
+    if effective_no_nmcd:
         payload["nmck"] = 0
         payload["no_nmcd"] = True
 

@@ -273,6 +273,17 @@ class Purchase(Base):
     # Fabrikant: дата рассмотрения заявок (asyncpg требует date-объект, не строку — в _DATE_FIELDS)
     applications_review_date = Column(Date, nullable=True)
 
+    # Fabrikant: «Без НМЦД» (владелец, 28.10.2026) — ЕДИНСТВЕННЫЙ источник этого
+    # выбора (ПРАВИЛО №6). Раньше жил только как эфемерный флаг диалога
+    # ОТПРАВКИ пакета (PublishRequest.no_nmcd, app/schemas/marketplace.py), не
+    # сохранялся — скачивание пакета БЕЗ отправки не могло его использовать, а
+    # повторное открытие диалога отправки не помнило прошлый выбор. Теперь
+    # диалог отправки и скачивание ZIP читают/пишут ровно это поле; см.
+    # app/routers/publications.py (сохраняет при отправке, если явно пришло) и
+    # app/routers/documents.py::download_fabrikant_package (передаёт при
+    # скачивании). Миграция f5a7c9e1b3d5_purchase_fabrikant_no_nmcd... см. versions/.
+    fabrikant_no_nmcd = Column(Boolean, nullable=False, default=False, server_default='false')
+
     # Phase 28: гарантия договора + ретроактивный флаг (комментарии пользователя 2026-05-19)
     warranty_period_days = Column(Integer, nullable=True)   # срок гарантии товара/услуги: ЧИСЛО, введённое пользователем, В ЕДИНИЦЕ warranty_period_unit ниже (имя колонки — legacy, у старых записей (unit IS NULL) это дни)
     # Владелец (жалоба п.10, 2026-09-17): «Срок гарантии может быть в днях, в

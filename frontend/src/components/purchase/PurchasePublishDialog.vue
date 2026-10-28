@@ -39,7 +39,7 @@
                   color="deep-purple" variant="tonal" size="small"
                   :loading="publishingPlatform === pl.value"
                   :disabled="isPlatformPublished(pl.value)"
-                  @click="pendingPlatform = pl.value; if (pl.value === 'fabrikant') { initFabrikantDates(); fabrikantNoNmcd = !(publishNmck > 0) }"
+                  @click="pendingPlatform = pl.value; if (pl.value === 'fabrikant') { initFabrikantDates() }"
                 >
                   {{ publications.some(p => p.platform === pl.value && p.status === 'draft') ? 'Черновик на ЭТП' : isPlatformPublished(pl.value) ? 'Опубликовано' : 'Опубликовать' }}
                 </v-btn>

@@ -50,6 +50,20 @@ class Contractor(Base):
     signatory_middle_name = Column(String(100), nullable=True)
     personal_account = Column(String(50), nullable=True)  # лицевой счёт Заказчика
 
+    # Юр. адрес по частям (владелец, 28.10.2026) — редактируются в карточке
+    # организации через AddressPartsFields.vue, собираются в `address` (выше)
+    # app.services.address_compose.compose_address — ПРАВИЛО №6, `address`
+    # остаётся единственным полем, которое читают переменные документов.
+    address_postal_code = Column(String(10), nullable=True)
+    address_region = Column(String(200), nullable=True)
+    address_district = Column(String(300), nullable=True)
+    address_settlement_type = Column(String(20), nullable=True)
+    address_settlement = Column(String(300), nullable=True)
+    address_street = Column(String(300), nullable=True)
+    address_house = Column(String(50), nullable=True)
+    address_building = Column(String(50), nullable=True)
+    address_office = Column(String(50), nullable=True)
+
     # ПРАВИЛО №6: один источник нормализации — любой путь записи (API, импорт,
     # чеки, обогащение из ЕГРЮЛ) проходит через validates(), а не через
     # отдельный .strip() в каждом роутере/сервисе. Баг на проде (2026-10-02):

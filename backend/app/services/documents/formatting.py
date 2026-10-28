@@ -1,11 +1,17 @@
 """Форматирование дат/денег/ФИО и числа прописью для шаблонов документов.
 
-Без зависимостей от остальных services/documents/* — только stdlib."""
+Без зависимостей от остальных services/documents/* — только stdlib, ЗА
+ИСКЛЮЧЕНИЕМ app.services.address_compose (вне documents/*, не создаёт цикл):
+_extract_city_from_address делегирует туда разбор «г./г.о.» (ПРАВИЛО №6,
+единственное место, отличающее город от городского округа — см. докстринг
+address_compose.py и баг «о.Бердянск», 28.10.2026)."""
 
 
 import re
 from datetime import date
 from typing import Optional
+
+from app.services.address_compose import extract_settlement_name
 
 
 def _fmt_date(d) -> str:
@@ -218,19 +224,14 @@ def _resolve_responsible_person_update(current_value: Optional[str], responsible
     return new_value
 
 
-_CITY_PREFIX_RE = re.compile(r'(?:^|,)\s*г(?:\.\s*|\s+)([^,]+?)\s*(?:,|$)', re.IGNORECASE)
-_CITY_WORD_RE = re.compile(r'(?:^|,)\s*город\s+([^,]+?)\s*(?:,|$)', re.IGNORECASE)
-_FEDERAL_CITIES = ("Москва", "Санкт-Петербург", "Севастополь")
-
-
 def _extract_city_from_address(address: str) -> str:
     """Город из адреса для шаблона {{customer_city}} (владелец, 20.10.2026).
 
-    Разбирает ЮРИДИЧЕСКИЙ адрес заказчика: ищет «г. X», «г.X» или «город X»
-    (X — до следующей запятой или конца строки), возвращает X БЕЗ префикса
-    «г.»/«город». Если такого фрагмента нет, но в адресе целиком встречается
-    город федерального значения (Москва/Санкт-Петербург/Севастополь) без
-    префикса — возвращается он. Ничего не нашли — "".
+    Тонкая обёртка над app.services.address_compose.extract_settlement_name —
+    ПРАВИЛО №6, единственный разбор населённого пункта из строки адреса
+    (раньше здесь жил свой регэксп на «г.», который путал «г.о.» (городской
+    округ) с префиксом города и для «г.о. Бердянск» отдавал «о.Бердянск» —
+    баг владельца 28.10.2026, исправлен один раз в address_compose.py).
 
     НЕ путать с `contract_city` (Organization.contract_city — отдельное
     поле «место заключения договора», этот разбор его не трогает и не
@@ -242,21 +243,11 @@ def _extract_city_from_address(address: str) -> str:
         "город Москва, Тверская ул., д. 1"                       → "Москва"
         "140100, Московская обл., г. Раменское, ул. Чугунова"    → "Раменское"
         "Санкт-Петербург, Невский пр-т, д. 1"                    → "Санкт-Петербург"
+        "обл. Запорожская, г.о. Бердянск, пер. Металлистов, д. 5" → "Бердянск"
         "ул. Ленина, д. 5" (город не определить)                 → ""
         "" / None                                                → ""
     """
-    if not address or not address.strip():
-        return ""
-    m = _CITY_PREFIX_RE.search(address)
-    if m:
-        return m.group(1).strip()
-    m = _CITY_WORD_RE.search(address)
-    if m:
-        return m.group(1).strip()
-    for fed in _FEDERAL_CITIES:
-        if re.search(r'(?:^|[,\s])' + re.escape(fed) + r'(?:[,\s]|$)', address):
-            return fed
-    return ""
+    return extract_settlement_name(address)
 
 
 def _fio_to_initials(name_full: str) -> str:

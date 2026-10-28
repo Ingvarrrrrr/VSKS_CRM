@@ -320,6 +320,10 @@ class PurchaseCreate(BaseModel):
     # Fabrikant: срок оплаты и дата рассмотрения заявок
     payment_term_days: Optional[int] = None
     applications_review_date: Optional[date] = None
+    # Fabrikant: «Без НМЦД» — единственное хранимое состояние (ПРАВИЛО №6),
+    # читают и пишут диалог отправки (publications.py) и скачивание ZIP-пакета
+    # (routers/documents.py::download_fabrikant_package).
+    fabrikant_no_nmcd: Optional[bool] = False
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -470,6 +474,8 @@ class PurchaseUpdate(BaseModel):
     # Fabrikant: срок оплаты и дата рассмотрения заявок
     payment_term_days: Optional[int] = None
     applications_review_date: Optional[date] = None
+    # Fabrikant: «Без НМЦД» — см. PurchaseCreate выше.
+    fabrikant_no_nmcd: Optional[bool] = None
 
 
 # Владелец (2026-09-02): «уведомление глобально, если позиция категории ФЭО

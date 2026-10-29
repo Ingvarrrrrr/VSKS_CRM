@@ -80,6 +80,7 @@
          ни внутри приложения. См. CookieBanner.vue про z-index относительно
          install-баннера выше. -->
     <cookie-banner />
+    <play-while-waiting />
   </v-app>
 </template>
 
@@ -100,6 +101,7 @@ import InstallPwaBanner from './components/InstallPwaBanner.vue'
 // useFundingSources.ts (Правило №6).
 import FundingSourcesDialog from './components/subsidies/FundingSourcesDialog.vue'
 import CookieBanner from './components/legal/CookieBanner.vue'
+import PlayWhileWaiting from './components/games/PlayWhileWaiting.vue'
 import { useAuthStore } from './stores/auth'
 import { CACHED_PAGE_NAMES, CACHED_PAGE_MAX } from './composables/pageCache'
 import { isLoggedIn, setLoggedIn, clearLoggedIn } from './composables/useAuthFlag'

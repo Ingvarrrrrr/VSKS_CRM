@@ -8,8 +8,12 @@
         :loading="loading"
         density="compact"
         hover
+        show-select
+        item-value="id"
+        :model-value="selected"
         items-per-page="25"
         :items-per-page-options="[25, 50, 100, -1]"
+        @update:model-value="v => $emit('update:selected', v)"
         @click:row="(_: any, { item }: any) => $emit('open-edit', item)"
       >
         <!-- B7: column header menus -->
@@ -257,6 +261,21 @@
             >
               {{ wishPurchasesLabel(item) }}
             </v-btn>
+            <!-- Корзина у владельца аккаунта (29.10.2026): account_owner/superadmin
+                 может удалить заявку при ЛЮБОМ статусе, не только черновик (сервер
+                 уже так разрешал — DELETE /api/wishes/{id}, OWNER_ROLES). Для
+                 draft+автора кнопка уже есть выше в своём блоке — здесь только
+                 остальные статусы, чтобы не дублировать. canDeleteWish — единый
+                 предикат (ПРАВИЛО №6), см. useWishActions.ts. -->
+            <v-btn
+              v-if="item.status !== 'draft' && canDeleteWish(item, ctx)"
+              icon="mdi-delete-outline"
+              size="x-small"
+              variant="text"
+              color="error"
+              :loading="deletingId === item.id"
+              @click="$emit('delete', item)"
+            />
           </div>
         </template>
         <template #no-data>
@@ -363,6 +382,17 @@
                 >
                   {{ wishPurchasesLabel(w) }}
                 </v-btn>
+                <!-- Корзина у владельца аккаунта (29.10.2026) — см. комментарий в
+                     табличном виде выше, тот же предикат canDeleteWish. -->
+                <v-btn
+                  v-if="w.status !== 'draft' && canDeleteWish(w, ctx)"
+                  icon="mdi-delete-outline"
+                  size="x-small"
+                  variant="text"
+                  color="error"
+                  :loading="deletingId === w.id"
+                  @click.stop="$emit('delete', w)"
+                />
               </template>
             </WishCard>
           </v-col>
@@ -402,7 +432,7 @@ import {
   shortName, wishCoAuthors, wishRecipients, wishItemsTotal, formatDate, formatPrice,
   stoppedByLine, rejectedByLine, purchaseMenuLabel, wishPurchasesLabel,
 } from '@/composables/wishes/useWishesContext'
-import { canDistributeWish } from '@/composables/wishes/useWishActions'
+import { canDistributeWish, canDeleteWish } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
 defineProps<{
@@ -419,6 +449,9 @@ defineProps<{
   downloadingExcelId: number | null
   submittingId: number | null
   deletingId: number | null
+  // Массовый выбор (29.10.2026) — id выбранных заявок, панель действий живёт в
+  // WishesView.vue (WishBulkBar.vue), таблица только хранит/эмитит выбор.
+  selected: number[]
 }>()
 
 defineEmits<{
@@ -430,6 +463,7 @@ defineEmits<{
   (e: 'kanban', item: Wish): void
   (e: 'download-excel', item: Wish, withPhotos: boolean): void
   (e: 'update:cards-page', page: number): void
+  (e: 'update:selected', ids: number[]): void
 }>()
 
 const ctx = useWishesContext()

@@ -1609,6 +1609,40 @@
     </v-card>
   </v-dialog>
 
+  <!-- Окно подтверждения удаления заявки (владелец, 29.10.2026): удаление теперь
+       удаляет и связанные закупки, если ни одна не ушла дальше «Плана закупок»
+       (см. backend/app/routers/wishes.py::delete_wish) — предупреждаем явно, число
+       закупок берём из уже загруженного purchase_ids (ПРАВИЛО №6, второй запрос
+       не заводим). 409-блокировку (закупка на стадии договора и дальше) сервер
+       вернёт текстом в catch deleteWish — тот же snackbar, что и раньше. -->
+  <v-dialog v-model="actions.deleteConfirmDialog.value" max-width="480">
+    <v-card>
+      <v-card-title class="d-flex align-center ga-2">
+        <v-icon color="error">mdi-delete-outline</v-icon>
+        Удалить заявку?
+      </v-card-title>
+      <v-card-text>
+        <template v-if="(actions.deletingWishItem.value?.purchase_ids?.length || 0) > 0">
+          Вместе с заявкой будет удалено закупок: {{ actions.deletingWishItem.value?.purchase_ids?.length }}.
+          Действие необратимо.
+        </template>
+        <template v-else>
+          Заявка будет удалена без возможности восстановления. Если по заявке уже есть закупка
+          на стадии договора и дальше — сервер откажет и укажет, какую закупку нужно сначала отменить.
+        </template>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="tonal" color="default" :disabled="actions.deletingId.value === actions.deletingWishItem.value?.id" @click="actions.deleteConfirmDialog.value = false">
+          Отмена
+        </v-btn>
+        <v-btn variant="flat" color="error" :loading="actions.deletingId.value === actions.deletingWishItem.value?.id" @click="actions.confirmDeleteWish">
+          Удалить
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
   <!-- Владелец (лист 2 №4): гейт правки состава согласованной заявки. -->
   <WishConvertedEditGate
     v-model="convertedEditGateDialog"
@@ -2050,7 +2084,12 @@ defineExpose({
   openCreate,
   openEdit,
   submitWish: actions.submitWish,
-  deleteWish: actions.deleteWish,
+  // Клик по кнопке «Удалить» в строке/карточке теперь открывает окно
+  // подтверждения (29.10.2026) вместо немедленного DELETE — внешнее имя
+  // `deleteWish` оставляем (единственный вызывающий, WishesView.vue::
+  // onDeleteWish, не трогаем), реальное удаление — actions.confirmDeleteWish
+  // по кнопке диалога ниже.
+  deleteWish: actions.openDeleteDialog,
   approveWish: actions.approveWish,
   openRejectDialog: actions.openRejectDialog,
   openKanbanDialog: actions.openKanbanDialog,

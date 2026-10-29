@@ -1088,20 +1088,14 @@ async def _withdraw_wish_from_plan(wish_id: int, db: AsyncSession, *, action_tex
     чтобы сообщение звучало по-русски для конкретного действия.
     Commit НЕ делает — это на вызывающем.
     """
-    from app.routers.purchase_budget import PLANNED_STATUSES
-    from app.routers.purchase_export import _STATUS_LABELS
-    from app.services.purchase_label import purchase_label
     # Ленивый импорт (во избежание цикла роутер↔сервис, см. докстринг модуля).
     from app.routers.wishes import _wish_linked_purchases
+    from app.services.wish_access import wish_purchase_delete_blockers
 
     purchases = await _wish_linked_purchases(wish_id, db)
-    blockers: list[str] = []
-    for p in purchases:
-        if p.status != "plan_schedule" and p.status in PLANNED_STATUSES:
-            # work_in_progress/contracted/ordered/delivered/paid — стадия ушла дальше
-            # «Плана закупок», откат запрещён.
-            label = _STATUS_LABELS.get(p.status, p.status)
-            blockers.append(f"{purchase_label(p)} «{p.item_name or ''}» на стадии «{label}»")
+    # Общая проверка с delete_wish (ПРАВИЛО №6, 29.10.2026) — см.
+    # wish_purchase_delete_blockers в app/services/wish_access.py.
+    blockers = wish_purchase_delete_blockers(purchases)
     if blockers:
         raise HTTPException(
             status_code=409,

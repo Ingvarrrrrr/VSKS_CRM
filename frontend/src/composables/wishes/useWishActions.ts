@@ -43,6 +43,38 @@ export function canDistributeWish(
 // Участник цепочки согласования без этого права видит вместо кнопок решения
 // «Открыть и согласовать»/«Согласовать» — согласование происходит внутри карточки
 // заявки (см. WishFormDialog.vue, панель «Согласующие»).
+// canDeleteWish — ЕДИНЫЙ предикат «может удалить заявку» (ПРАВИЛО №6,
+// 29.10.2026). Сервер (DELETE /api/wishes/{id}, app/routers/wishes.py) уже
+// разрешает account_owner/superadmin удалить ЛЮБУЮ заявку своего аккаунта при
+// любом статусе (OWNER_ROLES/_is_saas) — фронт раньше показывал корзину
+// только на вкладке «Мои заявки» и только у черновиков, даже владельцу
+// аккаунта. Теперь фронт зеркалит серверное правило один в один: владелец —
+// везде и всегда (сервер всё равно проверит блокировку по закупкам и 409
+// покажет причину), остальные — как раньше (автор + черновик).
+export function canDeleteWish(
+  wish: Pick<Wish, 'status' | 'created_by'>,
+  ctx: Pick<WishesContext, 'isSaas' | 'currentUserId'>,
+): boolean {
+  if (ctx.isSaas.value) return true
+  return wish.created_by === ctx.currentUserId && wish.status === 'draft'
+}
+
+// canSubmitWish/canConvertWish — те же предикаты, что у одиночных кнопок
+// «отправить» (WishMyTab.vue, только черновик) и «Передать в план закупок»
+// (WishMyTab.vue «В план закупок» / WishAllTab.vue «Закупку», approved +
+// менеджер/админ) — вынесены сюда для массового выбора заявок (29.10.2026,
+// useWishBulkActions.ts), чтобы и одиночная кнопка, и массовое действие
+// проверяли применимость ОДНИМ способом (ПРАВИЛО №6).
+export function canSubmitWish(wish: Pick<Wish, 'status'>): boolean {
+  return wish.status === 'draft'
+}
+export function canConvertWish(
+  wish: Pick<Wish, 'status'>,
+  ctx: Pick<WishesContext, 'isManagerOrAdmin'>,
+): boolean {
+  return wish.status === 'approved' && ctx.isManagerOrAdmin.value
+}
+
 export function canDecideFromList(
   wish: Pick<Wish, 'status' | 'assigned_to'>,
   ctx: Pick<WishesContext, 'isManagerOrAdmin' | 'currentUserId'>,
@@ -91,17 +123,36 @@ export function useWishActions(deps: {
 
   // Delete
   const deletingId = ref<number | null>(null)
+  // Окно подтверждения удаления (владелец, 29.10.2026): удаление заявки теперь
+  // удаляет и её закупки (если блокировки нет — см. backend/app/routers/wishes.py::
+  // delete_wish) — предупреждаем явно. Число закупок — из wish.purchase_ids,
+  // уже приходит в списке заявок (ПРАВИЛО №6: второй запрос не заводим); если
+  // по какой-то причине поля нет (псевдо-строка авансового/старый кэш) —
+  // общая фраза без числа.
+  const deleteConfirmDialog = ref(false)
+  const deletingWishItem = ref<Wish | null>(null)
+  function openDeleteDialog(wish: Wish) {
+    deletingWishItem.value = wish
+    deleteConfirmDialog.value = true
+  }
   async function deleteWish(wish: Wish) {
     deletingId.value = wish.id
     try {
       await apiFetch(`/wishes/${wish.id}`, { method: 'DELETE' })
       showSnack('Заявка удалена')
+      deleteConfirmDialog.value = false
+      deletingWishItem.value = null
       await reloadActiveTab()
     } catch (e: any) {
-      showSnack(`Ошибка при удалении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
+      // 409 — текст с сервера содержит перечень закупок-блокеров, не глушим общим «ошибка».
+      showSnack(`${e?.payload?.message || e?.message || 'Не удалось удалить заявку'}`, 'error')
     } finally {
       deletingId.value = null
     }
+  }
+  async function confirmDeleteWish() {
+    if (!deletingWishItem.value) return
+    await deleteWish(deletingWishItem.value)
   }
 
   // Approve
@@ -477,6 +528,7 @@ export function useWishActions(deps: {
   return {
     submittingId, submitWish,
     deletingId, deleteWish,
+    deleteConfirmDialog, deletingWishItem, openDeleteDialog, confirmDeleteWish,
     approvingId, approveWish, quickApproveTzNotRequired,
     rejectDialog, rejectingWish, rejectionReason, rejectingWishItem, openRejectDialog, rejectWish,
     kanbanDialog, kanbanWish, kanbanItems, openKanbanDialog, onKanbanApproved,

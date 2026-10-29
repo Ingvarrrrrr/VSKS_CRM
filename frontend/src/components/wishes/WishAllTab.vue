@@ -51,6 +51,15 @@
                     title="Передать в план закупок"
                     @click="$emit('convert', item)"
                   />
+                  <!-- Корзина у владельца аккаунта (29.10.2026): account_owner/
+                       superadmin может удалить заявку сотрудника при любом статусе
+                       — см. useWishActions.ts::canDeleteWish (ПРАВИЛО №6). -->
+                  <v-list-item
+                    v-if="canDeleteWish(item, ctx)"
+                    prepend-icon="mdi-delete-outline"
+                    title="Удалить"
+                    @click="$emit('delete', item)"
+                  />
                 </v-list>
               </v-menu>
               <template v-if="item.status === 'submitted'">
@@ -85,8 +94,12 @@
       :loading="loading"
       density="compact"
       hover
+      show-select
+      item-value="id"
+      :model-value="selected"
       items-per-page="25"
       :items-per-page-options="[25, 50, 100, -1]"
+      @update:model-value="v => $emit('update:selected', v)"
       @click:row="(_: any, { item }: any) => $emit('open-edit', item)"
     >
       <!-- B7: column header menus -->
@@ -309,6 +322,17 @@
           >
             {{ wishPurchasesLabel(item) }}
           </v-btn>
+          <!-- Корзина у владельца аккаунта (29.10.2026) — см. комментарий в
+               мобильном меню выше, тот же предикат canDeleteWish. -->
+          <v-btn
+            v-if="canDeleteWish(item, ctx)"
+            icon="mdi-delete-outline"
+            size="x-small"
+            variant="text"
+            color="error"
+            :loading="deletingId === item.id"
+            @click="$emit('delete', item)"
+          />
         </div>
       </template>
       <template #no-data>
@@ -331,7 +355,7 @@ import {
   shortName, wishCoAuthors, wishRecipients, wishItemsTotal, formatDate, formatPrice,
   stoppedByLine, rejectedByLine, purchaseMenuLabel, wishPurchasesLabel,
 } from '@/composables/wishes/useWishesContext'
-import { canDistributeWish, canDecideFromList } from '@/composables/wishes/useWishActions'
+import { canDistributeWish, canDecideFromList, canDeleteWish } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
 defineProps<{
@@ -343,11 +367,13 @@ defineProps<{
   subsidyNameOptions: (string | number | null)[]
   downloadingExcelId: number | null
   approvingId: number | null
+  deletingId: number | null
   allFilter: string
   allFilters: { value: string; label: string }[]
   wishCounts: Record<string, number>
   allWishesTruncated: number | null
   mobile: boolean
+  selected: number[]
 }>()
 
 defineEmits<{
@@ -357,8 +383,10 @@ defineEmits<{
   (e: 'approve', item: Wish): void
   (e: 'reject', item: Wish): void
   (e: 'convert', item: Wish): void
+  (e: 'delete', item: Wish): void
   (e: 'download-excel', item: Wish, withPhotos: boolean): void
   (e: 'open-approve-sheet', item: Wish): void
+  (e: 'update:selected', ids: number[]): void
 }>()
 
 const ctx = useWishesContext()

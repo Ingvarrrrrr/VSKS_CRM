@@ -18,6 +18,7 @@ import { formatMoney } from '@/utils/formatMoney'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import { ADMIN_ROLES, MANAGER_ROLES } from '@/constants/roles'
+import { formatExcessWarningsText } from './excessWarningsText'
 import type {
   Subsidy, FeoCategory, EventItem, User, Wish, WishPurchaseSummary,
   ExcessWarning, PurchaseSync,
@@ -287,15 +288,11 @@ export function provideWishesContext(): WishesContext {
   // пока превышения нет.
   function showExcessWarnings(warnings: ExcessWarning[] | null | undefined, actionPrefix: string) {
     if (!warnings || !warnings.length) return
-    // Владелец (2026-09-29): «дубль занял план молча» — отдельная форма записи
-    // в том же канале (type==='duplicate', см. wishTypes.ts) — готовый текст
-    // message, без category_name/excess_amount (их там нет).
+    // Построение текста — formatExcessWarningsText (excessWarningsText.ts),
+    // ПРАВИЛО №6: тот же источник у одиночной кнопки и у массового «Передать
+    // в план» (useWishBulkActions.ts), текст не менялся при выделении.
+    const { duplicateText, categoryParts: parts } = formatExcessWarningsText(warnings)
     const duplicateWarnings = warnings.filter(w => w.type === 'duplicate')
-    const categoryWarnings = warnings.filter(w => w.type !== 'duplicate')
-    const parts = categoryWarnings.map(w => {
-      const itemsText = (w.items || []).map(i => `${i.name} — ${formatPrice(i.amount)}`).join(', ')
-      return `Категория «${w.category_name}»: план превышает ФЭО на ${formatPrice(w.excess_amount ?? 0)}${itemsText ? ` (позиции: ${itemsText})` : ''}`
-    })
     if (duplicateWarnings.length) {
       // Владелец (пакет 2, 22.10.2026): номер закупки в предупреждении о
       // дубле — ссылка на карточку закупки (та же навигация, что
@@ -309,7 +306,7 @@ export function provideWishesContext(): WishesContext {
           to: `/orders/${p.id}/edit`,
         }))
       showSnack(
-        duplicateWarnings.map(w => w.message).filter(Boolean).join(' '),
+        duplicateText,
         'warning',
         { duration: 0, links: links.length ? links : undefined },
       )

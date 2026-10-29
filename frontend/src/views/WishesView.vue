@@ -132,6 +132,17 @@
 
     <!-- ── MY WISHES TAB ── -->
     <div v-if="activeTab === 'my'">
+      <!-- Массовый выбор (29.10.2026) — панель действий над выбранными заявками,
+           см. useWishBulkActions.ts/WishBulkBar.vue. Один компонент на все три
+           вкладки, items для выполнения действия — items текущей вкладки. -->
+      <WishBulkBar
+        :selected-count="bulk.selected.value.length"
+        :dialog="bulk.bulkDialog"
+        @action="a => bulk.openBulkConfirm(a, myWishesFiltered)"
+        @confirm="bulk.runBulkAction"
+        @close="bulk.closeBulkDialog"
+        @clear="bulk.clearSelection"
+      />
       <WishMyTab
         v-if="!searchEmptyState"
         ref="wishMyTabRef"
@@ -148,6 +159,7 @@
         :downloading-excel-id="downloadingExcelId"
         :submitting-id="submittingId"
         :deleting-id="deletingId"
+        :selected="bulk.selected.value"
         @open-edit="onOpenEdit"
         @submit="onSubmitWish"
         @delete="onDeleteWish"
@@ -156,6 +168,7 @@
         @kanban="onKanban"
         @download-excel="onDownloadExcel"
         @update:cards-page="v => cardsPage = v"
+        @update:selected="v => bulk.selected.value = v"
       />
       <!-- FAB to create new wish — владелец (чек-лист С16): тот же размер/форма,
            что у кнопки мессенджера (App.vue), и в одну колонку с ней (общие
@@ -173,6 +186,14 @@
 
     <!-- ── INCOMING FOR APPROVAL TAB ── -->
     <div v-if="activeTab === 'incoming' && !searchEmptyState">
+      <WishBulkBar
+        :selected-count="bulk.selected.value.length"
+        :dialog="bulk.bulkDialog"
+        @action="a => bulk.openBulkConfirm(a, incomingWishesFiltered)"
+        @confirm="bulk.runBulkAction"
+        @close="bulk.closeBulkDialog"
+        @clear="bulk.clearSelection"
+      />
       <WishIncomingTab
         :items="incomingWishesFiltered"
         :headers="wishHeaders"
@@ -182,18 +203,30 @@
         :subsidy-name-options="wishSubsidyNameOptions"
         :downloading-excel-id="downloadingExcelId"
         :approving-id="approvingId"
+        :deleting-id="deletingId"
         :mobile="mobile"
+        :selected="bulk.selected.value"
         @open-edit="onOpenEdit"
         @kanban="onKanban"
         @approve="onApprove"
         @reject="onReject"
+        @delete="onDeleteWish"
         @download-excel="onDownloadExcel"
         @open-approve-sheet="onOpenApproveSheet"
+        @update:selected="v => bulk.selected.value = v"
       />
     </div>
 
     <!-- ── ALL WISHES TAB (manager/admin) ── -->
     <div v-if="ctx.isManagerOrAdmin.value && activeTab === 'all' && !searchEmptyState">
+      <WishBulkBar
+        :selected-count="bulk.selected.value.length"
+        :dialog="bulk.bulkDialog"
+        @action="a => bulk.openBulkConfirm(a, allWishesFiltered)"
+        @confirm="bulk.runBulkAction"
+        @close="bulk.closeBulkDialog"
+        @clear="bulk.clearSelection"
+      />
       <WishAllTab
         :items="allWishesFiltered"
         :headers="wishHeadersAll"
@@ -203,6 +236,8 @@
         :subsidy-name-options="wishSubsidyNameOptions"
         :downloading-excel-id="downloadingExcelId"
         :approving-id="approvingId"
+        :deleting-id="deletingId"
+        :selected="bulk.selected.value"
         :all-filter="allFilter"
         :all-filters="allFilters"
         :wish-counts="wishCounts"
@@ -214,8 +249,10 @@
         @approve="onApprove"
         @reject="onReject"
         @convert="onConvert"
+        @delete="onDeleteWish"
         @download-excel="onDownloadExcel"
         @open-approve-sheet="onOpenApproveSheet"
+        @update:selected="v => bulk.selected.value = v"
       />
     </div>
 
@@ -284,11 +321,13 @@ import { provideWishesContext } from '@/composables/wishes/useWishesContext'
 import { useWishFilters } from '@/composables/wishes/useWishFilters'
 import { useWishColumnMenu } from '@/composables/wishes/useWishColumnMenu'
 import { canDecideFromList } from '@/composables/wishes/useWishActions'
+import { useWishBulkActions } from '@/composables/wishes/useWishBulkActions'
 import { ACTIONS } from '@/constants/permissionActions'
 import WishFilterPanel from '@/components/wishes/WishFilterPanel.vue'
 import WishMyTab from '@/components/wishes/WishMyTab.vue'
 import WishIncomingTab from '@/components/wishes/WishIncomingTab.vue'
 import WishAllTab from '@/components/wishes/WishAllTab.vue'
+import WishBulkBar from '@/components/wishes/WishBulkBar.vue'
 import WishFormDialog from '@/components/wishes/WishFormDialog.vue'
 import WishApproveSheet from '@/components/wishes/WishApproveSheet.vue'
 import type { Wish, Subsidy, FeoCategory, EventItem, User, PendingWishConsent } from '@/composables/wishes/wishTypes'
@@ -487,6 +526,11 @@ function onAllFilterChange(v: string) {
   loadAllWishes()
 }
 
+// ── Массовый выбор заявок (29.10.2026) — панель действий (WishBulkBar.vue),
+// общая на все три вкладки; items для выполнения действия передаются на месте
+// вызова (см. @action в шаблоне выше), composable сам не знает активную вкладку.
+const bulk = useWishBulkActions({ ctx, showSnack: ctx.showSnack, reloadActiveTab })
+
 // ── Форма/действия над одной заявкой живут в WishFormDialog.vue (defineExpose) ──
 const formDialogRef = ref<InstanceType<typeof WishFormDialog> | null>(null)
 function onCreate() { formDialogRef.value?.openCreate() }
@@ -582,6 +626,8 @@ const {
 })
 
 watch(activeTab, (v) => {
+  // Выбор заявок не переносится между вкладками — список и статусы другие.
+  bulk.clearSelection()
   if (v === 'my') loadWishes()
   else if (v === 'incoming') loadIncoming()
   else if (v === 'all') loadAllWishes()

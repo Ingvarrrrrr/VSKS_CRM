@@ -1058,10 +1058,34 @@ async def delete_wish(
     if not _is_saas(current_user) and wish.status != "draft":
         raise HTTPException(status_code=400, detail="Можно удалить только черновик")
 
-    # Заявку удаляют — purchases.wish_id обнулится каскадом (ON DELETE SET NULL),
-    # закупка осиротеет в плане. Плановые (plan_schedule) убираем из плана заранее;
-    # если что-то уже в работе/договоре — удаление блокируем явно (владелец, 2026-08-07).
-    await _withdraw_wish_from_plan(wish.id, db, action_text="удалить")
+    # ИСПРАВЛЕНИЕ (29.10.2026): раньше удаление заявки шло через
+    # _withdraw_wish_from_plan — тот прятал закупки 'plan_schedule' в скрытый
+    # статус 'wishes', но саму заявку всё равно удалял: purchases.wish_id
+    # обнулялся каскадом (ON DELETE SET NULL) и закупки 'wishes'/'cancelled'
+    # оставались в базе осиротевшими и невидимыми (ни в плане, ни в реестре).
+    # Теперь: блокировку «что-то дальше Плана закупок» СОХРАНЯЕМ (владелец,
+    # 2026-08-07) — проверяем ДО любых мутаций тем же источником, что
+    # _withdraw_wish_from_plan (wish_purchase_delete_blockers, ПРАВИЛО №6).
+    # Если блокировки нет — удаляем ВСЕ связанные закупки целиком (не только
+    # plan_schedule) той же delete_purchase_core, что DELETE /api/purchases/{id}
+    # и сброс разбивки (wish_distribution_reset.py) — вторую реализацию
+    # удаления закупки не заводим.
+    from app.services.wish_access import wish_purchase_delete_blockers
+    from app.routers.purchases import delete_purchase_core
+
+    _purchases = await _wish_linked_purchases(wish.id, db)
+    _blockers = wish_purchase_delete_blockers(_purchases)
+    if _blockers:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Заявку нельзя удалить: закупка " + "; ".join(_blockers)
+                + ". Сначала отмените её в реестре закупок."
+            ),
+        )
+
+    for _p in _purchases:
+        await delete_purchase_core(_p, db)
 
     await db.delete(wish)
     await db.commit()

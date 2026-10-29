@@ -34,6 +34,25 @@ async def _wish_linked_purchases(wish_id: int, db: AsyncSession) -> list:
     return res.scalars().all()
 
 
+def wish_purchase_delete_blockers(purchases: list) -> list[str]:
+    """Закупки заявки, ушедшие дальше «Плана закупок» (work_in_progress/
+    contracted/ordered/delivered/paid) — блокируют и откат заявки в план
+    (_withdraw_wish_from_plan), и полное удаление заявки (delete_wish,
+    29.10.2026). Одна причина блокировки — один источник (ПРАВИЛО №6), раньше
+    список строился инлайн только в _withdraw_wish_from_plan; текст 409
+    собирает вызывающая точка (разный `action_text`)."""
+    from app.routers.purchase_budget import PLANNED_STATUSES
+    from app.routers.purchase_export import _STATUS_LABELS
+    from app.services.purchase_label import purchase_label
+
+    blockers: list[str] = []
+    for p in purchases:
+        if p.status != "plan_schedule" and p.status in PLANNED_STATUSES:
+            label = _STATUS_LABELS.get(p.status, p.status)
+            blockers.append(f"{purchase_label(p)} «{p.item_name or ''}» на стадии «{label}»")
+    return blockers
+
+
 async def _is_wish_member(wish_id: int, user_id: int, db: AsyncSession) -> bool:
     res = await db.execute(
         select(WishMember.id).where(

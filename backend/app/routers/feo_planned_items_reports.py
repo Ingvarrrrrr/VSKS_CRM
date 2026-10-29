@@ -212,26 +212,30 @@ async def get_comparison(
         await ensure_subsidy_visible(current_user, db, subsidy_id)
 
     # Плановые позиции — только активные (согласовано с /residuals, is_active=False скрыты).
-    # Порядок — sort_order, потом id: владелец просил менять плановые позиции местами
-    # внутри категории, и стрелки в панели субсидии пишут именно sort_order. Раньше здесь
-    # стояло order_by(id), и панель (она читает ИМЕННО этот эндпоинт) порядок игнорировала:
-    # перестановка сохранялась в БД, но на экране ничего не менялось. В соседнем
-    # GET /feo-planned-items/ сортировка уже была правильной — расхождение и было багом.
+    # Порядок — ЕДИНЫЙ ключ planned_item_order_by (sort_order, затем строка файла
+    # загрузки source_row, затем id, ПРАВИЛО №6): владелец просил менять плановые
+    # позиции местами внутри категории, и стрелки в панели субсидии пишут именно
+    # sort_order. Раньше здесь стояло order_by(id), и панель (она читает ИМЕННО этот
+    # эндпоинт) порядок игнорировала: перестановка сохранялась в БД, но на экране
+    # ничего не менялось. В соседнем GET /feo-planned-items/ сортировка уже была
+    # правильной — расхождение и было багом.
     # subsidy_wide: тот же запрос, просто фильтр по категории заменён на join к FeoCategory
     # по subsidy_id (без цикла — одним IN через JOIN).
+    from app.services.feo_planned_item_order import planned_item_order_by
+
     planned_q = select(FeoPlannedItem).where(FeoPlannedItem.is_active == True)
     if subsidy_wide:
         planned_q = (
             planned_q
             .join(FeoCategory, FeoPlannedItem.feo_category_id == FeoCategory.id)
             .where(FeoCategory.subsidy_id == subsidy_id)
-            .order_by(FeoPlannedItem.feo_category_id, FeoPlannedItem.sort_order.nulls_last(), FeoPlannedItem.id)
+            .order_by(FeoPlannedItem.feo_category_id, *planned_item_order_by())
         )
     else:
         planned_q = (
             planned_q
             .where(FeoPlannedItem.feo_category_id == feo_category_id)
-            .order_by(FeoPlannedItem.sort_order.nulls_last(), FeoPlannedItem.id)
+            .order_by(*planned_item_order_by())
         )
     planned_rows = (await db.execute(planned_q)).scalars().all()
 

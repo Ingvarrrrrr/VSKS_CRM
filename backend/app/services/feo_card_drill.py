@@ -435,15 +435,18 @@ async def _own_feo_breakdown_items(db: AsyncSession, subsidy_id: int, cat_ids) -
     from app.services.feo_payroll import payroll_category_ids
     from app.services.item_type_split import kind_of_by_category_id
 
+    from app.services.feo_planned_item_order import planned_item_order_by
+
     rows = (await db.execute(
         select(
             FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.name,
             FeoPlannedItem.item_type, FeoPlannedItem.feo_amount, FeoPlannedItem.is_feo_breakdown,
-            FeoPlannedItem.source_row,
+            FeoPlannedItem.source_row, FeoPlannedItem.sort_order,
         )
         .where(FeoPlannedItem.feo_category_id.in_(list(cat_ids)))
         .where(FeoPlannedItem.is_active.is_(True))
         .where(FeoPlannedItem.feo_amount.isnot(None))
+        .order_by(*planned_item_order_by())
     )).all()
     eff_types = await resolve_effective_item_types(db, rows)
     payroll_ids = await payroll_category_ids(db, [subsidy_id])
@@ -483,14 +486,18 @@ async def _classify_items(db: AsyncSession, subsidy_id: int, cat_ids) -> tuple[l
     from app.services.feo_payroll import payroll_category_ids
     from app.services.item_type_split import kind_of_by_category_id
 
+    from app.services.feo_planned_item_order import planned_item_order_by
+
     item_rows = (await db.execute(
         select(
             FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.name,
             FeoPlannedItem.item_type, FeoPlannedItem.quantity, FeoPlannedItem.amount,
             FeoPlannedItem.created_at, FeoPlannedItem.plan_changed_at, FeoPlannedItem.source_row,
+            FeoPlannedItem.sort_order,
         )
         .where(FeoPlannedItem.feo_category_id.in_(list(cat_ids)))
         .where(FeoPlannedItem.is_active.is_(True))
+        .order_by(*planned_item_order_by())
     )).all()
     eff_types = await resolve_effective_item_types(db, item_rows)
     payroll_ids = await payroll_category_ids(db, [subsidy_id])
@@ -776,10 +783,20 @@ async def card_drill_rows(
         return {"card": card, "kind": kind, "total": total, "rows": rows, "reason": reason}
 
     # card == "planned" — построчно по ПЛАНОВЫМ ПОЗИЦИЯМ.
+    from app.services.feo_planned_item_order import planned_item_sort_key
+
     _, items_by_cat_kind = await _classify_items(db, subsidy_id, list(nodes.keys()))
 
     rows: list = []
     for cid in nodes:
+        # Владелец (29.10.2026): строки окна внутри ОДНОЙ категории должны идти
+        # в порядке загрузки файла (строка Excel), а не разбиваться блоками по
+        # kind (товар/услуга/...). Собираем строки ВСЕХ kinds этой категории в
+        # один список, потом сортируем его ЕДИНЫМ ключом planned_item_order_by/
+        # planned_item_sort_key (ПРАВИЛО №6 — тот же ключ, что и в списках/
+        # отчётах позиций, не вторая сортировка).
+        cat_rows: list = []
+        order_key_by_item_id: dict = {}
         for k in kinds:
             own_amt = _own(cid, k)
             cat_items = items_by_cat_kind.get((cid, k), [])
@@ -795,8 +812,9 @@ async def card_drill_rows(
                 # own-доля статьи этого типа есть, но СВОИХ позиций этого типа
                 # нет (замещение заказом/договором без собственной плановой
                 # позиции, шаг 3 плана «Деньги субсидии») — одна строка на
-                # статью, без planned_item_id, чтобы сумма не потерялась.
-                rows.append({
+                # статью, без planned_item_id (остаток, уходит в конец
+                # категории через planned_item_sort_key(None, None, id)).
+                cat_rows.append({
                     "planned_item_id": None,
                     "name": None,
                     "feo_category_id": cid,
@@ -822,7 +840,21 @@ async def card_drill_rows(
                 }
                 for it in cat_items
             ]
-            rows.extend(_split_rows_proportionally(own_amt, weighted))
+            for it in cat_items:
+                order_key_by_item_id[it.id] = (it.sort_order, it.source_row, it.id)
+            cat_rows.extend(_split_rows_proportionally(own_amt, weighted))
+
+        def _row_sort_key(row, _order_key_by_item_id=order_key_by_item_id):
+            pid = row.get("planned_item_id")
+            if pid is not None and pid in _order_key_by_item_id:
+                sort_order, source_row, rid = _order_key_by_item_id[pid]
+                return planned_item_sort_key(sort_order, source_row, rid)
+            # Остаток без planned_item_id — в конец категории, стабильно по
+            # исходному порядку kinds среди других remainder-строк.
+            return (True, 0, True, 0, float("inf"))
+
+        cat_rows.sort(key=_row_sort_key)
+        rows.extend(cat_rows)
 
     reason = None
     if not rows:

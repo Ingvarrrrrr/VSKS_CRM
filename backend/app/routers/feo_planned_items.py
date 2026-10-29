@@ -212,13 +212,15 @@ async def list_planned_items(
     )).scalar_one_or_none()
     if _cat_sid is not None and feo_category_id in await hidden_payroll_category_ids(current_user, db, [_cat_sid]):
         return []
+    from app.services.feo_planned_item_order import planned_item_order_by
+
     rows = (await db.execute(
         select(FeoPlannedItem)
         .where(FeoPlannedItem.feo_category_id == feo_category_id)
         # Владелец (2026-08-12): позиции можно переставлять местами вручную —
-        # sort_order, если задан, а незаполненные (легаси/автозаведённые) —
-        # следом в порядке создания.
-        .order_by(FeoPlannedItem.sort_order.nulls_last(), FeoPlannedItem.id)
+        # sort_order, если задан, иначе строка файла загрузки, иначе порядок
+        # создания — ЕДИНЫЙ ключ planned_item_order_by (ПРАВИЛО №6).
+        .order_by(*planned_item_order_by())
     )).scalars().all()
     return rows
 

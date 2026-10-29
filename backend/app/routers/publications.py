@@ -5,14 +5,17 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db, async_session
 from app.models.platform_publication import PlatformPublication
 from app.models.purchase import Purchase
+from app.models.purchase_item import PurchaseItem
 from app.schemas.schemas import PublishRequest, PublicationOut, PublicationStatusUpdate
 from app.auth.jwt import get_current_user
 from app.auth.permissions import require_action
 from app.services.publications_payload import _build_publish_payload
+from app.services.tz_items import tz_required, items_without_tz
 from app.services.publications_fabrikant_client import (
     FABRIKANT_LOGIN,
     FABRIKANT_PASSWORD,
@@ -80,6 +83,34 @@ async def publish_purchase(
             )
         raise HTTPException(409, f"Закупка уже опубликована или публикуется на {platform_label}")
 
+    # ПРАВИЛО №8 п.1 (задача владельца 30.10.2026): «без ТЗ не давать
+    # выставлять закупку на площадки» — без действующего ТЗ хотя бы одной
+    # позиции отправка на ЛЮБУЮ площадку (Фабрикант, Росэлторг.Бизнес)
+    # запрещена. Единый источник — tz_required/items_without_tz
+    # (app/services/tz_items.py, ПРАВИЛО №6 — тот же гейт, что у склейки
+    # дублей ТЗ в документах, вторая формула здесь не пишется). Проверяем ДО
+    # создания PlatformPublication, чтобы вернуть русский 422 сразу, а не
+    # дожидаться ошибки площадки (ПРАВИЛО №8 п.6 — валидный HTTP, не 500).
+    purchase_for_tz = (await db.execute(
+        select(Purchase)
+        .options(selectinload(Purchase.items).selectinload(PurchaseItem.product))
+        .where(Purchase.id == purchase_id)
+    )).scalar_one_or_none()
+    if not purchase_for_tz:
+        raise HTTPException(404, "Закупка не найдена")
+    if tz_required(purchase_for_tz):
+        missing_tz_items = items_without_tz(purchase_for_tz.items)
+        if missing_tz_items:
+            names = ", ".join(f"«{it.item_name}»" for it in missing_tz_items)
+            raise HTTPException(422, detail={
+                "code": "TZ_MISSING",
+                "message": (
+                    f"Нет ТЗ у позиций: {names} — заполните характеристики "
+                    "или отметьте «ТЗ не требуется»"
+                ),
+                "item_ids": [it.id for it in missing_tz_items],
+            })
+
     payload = await _build_publish_payload(purchase_id, db)
 
     # «Без НМЦД» — ЕДИНСТВЕННОЕ хранимое состояние purchase.fabrikant_no_nmcd
@@ -141,7 +172,44 @@ async def publish_purchase(
 
     # Росэлторг.Бизнес: ОКПД2 НЕ обязателен (владелец, уточнение 28.10.2026,
     # живая проверка на черновике 303879) — позиция с okpd2Code="" создаётся
-    # успешно, площадка не требует код. Preflight здесь не нужен.
+    # успешно, площадка не требует код.
+    #
+    # Но регион доставки / условия оплаты / единицы измерения позиций —
+    # ОБЯЗАТЕЛЬНЫ (разработчик проверил живьём на площадке 29.10.2026, 13
+    # размещённых процедур ДНР): PUT принимает что угодно, ошибка всплывает
+    # только на publish. Решение владельца по итогам проверки: «Условия
+    # оплаты» — поле обязательное именно при отправке на площадку (сохранить
+    # закупку без него можно), единица измерения позиции — только из списка.
+    # Проверяем здесь (ПРАВИЛО №8: preflight ДО создания черновика, русский
+    # 422 сразу), используя ТЕ ЖЕ расчёты, что и сам client.py (ПРАВИЛО №6 —
+    # resolve_roseltorg_region/build_lot_payment/find_items_with_unknown_unit,
+    # не второй расчёт).
+    if body.platform == "roseltorg_rb":
+        from app.services.roseltorg.lot_requirements import resolve_roseltorg_region
+        from app.services.roseltorg.items import load_purchase_item_rows, find_items_with_unknown_unit
+
+        rb_errors: list[str] = []
+        if not resolve_roseltorg_region(payload):
+            city = payload.get("delivery_city_raw") or "—"
+            rb_errors.append(
+                f"Не найден населённый пункт доставки в справочнике Росэлторга: «{city}»"
+                + (f", {payload['delivery_region_raw']}" if payload.get("delivery_region_raw") else "")
+            )
+
+        terms_type = payload.get("payment_terms_type") or "postpayment"
+        if terms_type == "postponement" and not payload.get("payment_postpone_days"):
+            rb_errors.append("Укажите количество дней отсрочки платежа (Условия оплаты)")
+        if terms_type == "other" and not (payload.get("payment_other_terms") or "").strip():
+            rb_errors.append("Укажите текст условий оплаты «Иное» (Условия оплаты)")
+
+        _rb_purchase, _rb_rows = await load_purchase_item_rows(db, purchase_id)
+        bad_units = find_items_with_unknown_unit(_rb_rows)
+        if bad_units:
+            rb_errors.append(
+                "Единица измерения не из справочника ОКЕИ у позиций: " + "; ".join(bad_units)
+            )
+        if rb_errors:
+            raise HTTPException(422, "; ".join(rb_errors))
 
     pub = PlatformPublication(
         purchase_id=purchase_id,

@@ -32,6 +32,7 @@ from app.services.item_amounts import line_total
 from app.models.subsidy import Subsidy
 from app.routers.events import normalize_event_name
 from app.services.purchase_payments import recompute_purchase_payments
+from app.services.units_okei import normalize_unit as _normalize_import_unit
 from app.services import acceptance_docs as _acc_docs
 from app.services.purchase_import_parser_helpers import (
     _build_feo_index,
@@ -420,7 +421,11 @@ async def _parse_and_group(
             "payment_federal":          _to_dec(cell(row, "payment_federal")),
             "payment_purpose":          cell(row, "payment_purpose"),
             "plan_qty":                 _to_dec(cell(row, "plan_qty")),
-            "unit":                     cell(row, "unit"),
+            # Владелец (29.10.2026): приведение к каноничному названию ОКЕИ
+            # (units_okei.normalize_unit, ПРАВИЛО №6 — тот же справочник, что у
+            # ручного ввода и сборки лота Росэлторга). Неизвестное написание
+            # из файла импорта оставляем как есть (не выдумываем).
+            "unit":                     (lambda _u: _normalize_import_unit(_u) or _u)(cell(row, "unit")),
             "plan_unit_price":          _to_dec(cell(row, "plan_unit_price")),
             "plan_total":               _to_dec(cell(row, "plan_total")),
             "fact_qty":                 _to_dec(cell(row, "fact_qty")),

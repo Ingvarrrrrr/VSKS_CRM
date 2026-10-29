@@ -350,7 +350,18 @@ async def test_call_roseltorg_sequence_new_put_lot_items(monkeypatch, patched_se
     assert lot_data["initialSum"] == "50000"
     assert lot_data["currency"] == "643"
     assert lot_data["DeliveryDetails"] == "г. Москва, ул. Ленина, 1"
-    assert lot_data["region"] == "Москва"
+    # 29.10.2026: lot.region теперь массив [{"id","name"}] из справочника
+    # площадки (разработчик проверил живьём — строка region отвергалась:
+    # «Место поставки должно быть заполнено»), не исходная строка субъекта.
+    # Город извлечён из delivery_address («г. Москва» — тест не задаёт
+    # delivery_city_raw отдельно), см. roseltorg/lot_requirements.py.
+    assert isinstance(lot_data["region"], list)
+    assert len(lot_data["region"]) == 1
+    assert "Москва" in lot_data["region"][0]["name"]
+    assert lot_data["region"][0]["id"]
+    # lot.payment — тип по умолчанию «по факту поставки» (payload без
+    # payment_terms_type — старые закупки).
+    assert lot_data["payment"]["type"] == "fact"
 
     # Позиция содержит ОКПД2 (обязателен у площадки)
     item_call = next(c for c in calls if "/notice/lot/55/items" in c[1])

@@ -368,6 +368,65 @@
           />
         </v-col>
       </v-row>
+      <!-- Условия оплаты закупки (владелец, 29.10.2026) — обязательно при
+           отправке на площадку (Росэлторг.Бизнес, lot.payment), сохранить без
+           заполнения можно; ошибка со стрелкой к полю — в checkPublishReady
+           (usePurchasePublications.ts), как и остальные preflight-проверки.
+           НЕ путать с переключателем «Предоплата/Оплата по факту» в блоке
+           «Условия договора» выше — тот определяет текст договора, это поле —
+           структурированные условия для площадки (ПРАВИЛО №6: разные задачи,
+           разные поля, не объединяем). -->
+      <v-row id="pub-target-payment-terms" class="mt-1">
+        <v-col cols="12">
+          <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-1">
+            Условия оплаты (для площадки)
+          </div>
+        </v-col>
+        <v-col cols="12" md="4">
+          <v-select
+            v-model="form.payment_terms_type"
+            :items="PAYMENT_TERMS_TYPE_OPTIONS"
+            item-title="title"
+            item-value="value"
+            label="Условия оплаты"
+            variant="outlined"
+            density="compact"
+            hide-details
+            @update:model-value="flushAutosaveOnBlur"
+          />
+        </v-col>
+        <v-col v-if="form.payment_terms_type === 'postponement'" cols="12" md="4">
+          <div class="d-flex ga-2">
+            <v-text-field
+              v-model.number="form.payment_postpone_days"
+              type="number"
+              label="Дней отсрочки"
+              density="compact"
+              variant="outlined"
+              hide-details
+              style="max-width:140px"
+              @blur="flushAutosaveOnBlur"
+            />
+            <v-select
+              v-model="form.payment_postpone_day_type"
+              :items="[{title: 'Календарных', value: 'calendar'}, {title: 'Рабочих', value: 'work'}]"
+              item-title="title" item-value="value"
+              density="compact" variant="outlined" hide-details
+              @update:model-value="flushAutosaveOnBlur"
+            />
+          </div>
+        </v-col>
+        <v-col v-if="form.payment_terms_type === 'other'" cols="12" md="4">
+          <v-text-field
+            v-model="form.payment_other_terms"
+            label="Условия оплаты (текст)"
+            density="compact"
+            variant="outlined"
+            hide-details
+            @blur="flushAutosaveOnBlur"
+          />
+        </v-col>
+      </v-row>
       <!-- Владелец (жалоба п.10, 2026-09-17): «Предоплата» и срок оплаты (постоплата)
            перенесены в блок «Условия договора» выше (см. переключатель «Предоплата /
            Оплата по факту») — раньше чекбокс стоял здесь отдельно, оторванный от
@@ -443,6 +502,16 @@ const pointerTarget = defineModel<string | null>('pointerTarget', { required: tr
 // подрядчика» — реально встречается в боевых данных, это НЕ адрес, а юридическая фраза),
 // она замораживается и watch её не перезаписывает.
 const DELIVERY_LOCATION_SPECIAL = 'По месту нахождения подрядчика'
+
+// Условия оплаты закупки (владелец, 29.10.2026) — значения зеркалят
+// purchase.payment_terms_type (ПРАВИЛО №6, см. backend/app/models/purchase.py
+// и roseltorg/lot_requirements.py::build_lot_payment).
+const PAYMENT_TERMS_TYPE_OPTIONS = [
+  { title: 'Постоплата (по факту поставки)', value: 'postpayment' },
+  { title: 'Отсрочка', value: 'postponement' },
+  { title: 'Предоплата', value: 'prepayment' },
+  { title: 'Иное', value: 'other' },
+]
 
 // Превью «В договор уйдёт "1 год"» — то же склонение, что использует backend
 // при генерации документа (app/services/documents/contract_terms.py), см.

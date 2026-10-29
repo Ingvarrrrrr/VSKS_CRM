@@ -7,6 +7,11 @@ import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import { numOrNull } from '@/utils/numberFormat'
 import type { ToastType } from '@/composables/useToast'
+// ТЗ позиций (владелец, 30.10.2026) — ЕДИНСТВЕННАЯ формула «действующее ТЗ
+// позиции» (ПРАВИЛО №6): effectiveTz из utils/itemTz.ts, тот же расчёт, что и
+// у backend/app/services/item_tz.py::effective_item_tz. Второй расчёт здесь
+// не пишется.
+import { effectiveTz, type ItemWithTz } from '@/utils/itemTz'
 
 export interface Publication {
   id: number; purchase_id: number; platform: string; status: string
@@ -56,13 +61,17 @@ export const FABRIKANT_PROCEDURE_TYPES = [
   { value: 'price_monitoring', title: 'Мониторинг цен' },
 ]
 
-export type PublishTarget = 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet' | 'region' | 'address'
+// `item:${uid}` — стрелка к КОНКРЕТНОЙ строке позиции (id="item-row-<uid>",
+// см. ItemsTableFlat.vue + useGuideArrow.ts) — тот же приём, что уже
+// применяется в CreateOrderView.vue для «не указан тип»/«не указана ФЭО»
+// (ПРАВИЛО №6, не второй механизм адресации строки).
+export type PublishTarget = 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet' | 'region' | 'address' | 'payment-terms' | `item:${string}`
 
 export function usePurchasePublications(
   purchaseId: ComputedRef<number | null>,
   showSnack: (text: string, color?: ToastType, opts?: { actionText?: string; onAction?: () => void; duration?: number }) => void,
   form: Record<string, any>,
-  items: Ref<{ item_name?: string }[]>,
+  items: Ref<(ItemWithTz & { id?: number; item_name?: string; _uid?: string | number })[]>,
   subsidies: Ref<{ id: number; org_inn?: string | null }[]>,
   isEdit: ComputedRef<boolean>,
   performAutosave: () => Promise<void>,
@@ -178,6 +187,34 @@ export function usePurchasePublications(
         || !!String(customerPreview.value?.address || '').trim()
       if (!hasAddress) errors.push({ text: 'Укажите адрес доставки', target: 'address' })
     }
+    // Условия оплаты (владелец, 29.10.2026) — обязательны при отправке на
+    // площадку (Росэлторг.Бизнес, lot.payment); сохранить без них можно.
+    if (form.payment_terms_type === 'postponement' && !form.payment_postpone_days) {
+      errors.push({ text: 'Укажите количество дней отсрочки (Условия оплаты)', target: 'payment-terms' })
+    }
+    if (form.payment_terms_type === 'other' && !String(form.payment_other_terms || '').trim()) {
+      errors.push({ text: 'Укажите текст условий оплаты «Иное» (Условия оплаты)', target: 'payment-terms' })
+    }
+    // ТЗ позиций (владелец, 30.10.2026): «без ТЗ не давать выставлять закупку
+    // на площадки». tz_required — та же формула, что backend/app/services/
+    // tz_items.py::tz_required (ПРАВИЛО №6): авансовые и закупки с
+    // tz_not_required=True освобождены; остальным нужно действующее ТЗ у
+    // КАЖДОЙ заполненной позиции (эффективное — своё/каталожное, см.
+    // effectiveTz выше). Бэк проверяет то же самое ещё раз перед отправкой
+    // (publications.py::publish_purchase, TZ_MISSING) — это только заслон на
+    // фронте, чтобы стрелка довела до строки раньше похода на сервер.
+    const tzIsRequired = form.purchase_method !== 'advance' && !form.tz_not_required
+    if (tzIsRequired) {
+      const missingTz = items.value.filter(i => i.item_name?.trim() && !effectiveTz(i).trim())
+      if (missingTz.length) {
+        const firstUid = missingTz[0]._uid
+        const names = missingTz.map(i => `«${i.item_name}»`).join(', ')
+        errors.push({
+          text: `Нет ТЗ у позиций: ${names} — заполните характеристики или отметьте «ТЗ не требуется»`,
+          target: firstUid != null ? (`item:${firstUid}` as PublishTarget) : 'items',
+        })
+      }
+    }
     // Поля редукциона
     if (fabrikantProcedureType.value === 'reduction') {
       if (!fabrikantAuctionDateStart.value) errors.push({ text: 'Укажите дату и время начала редукциона', target: 'auction-date' })
@@ -279,7 +316,25 @@ export function usePurchasePublications(
       pollPublication(pub.id)
     } catch (e: any) {
       const errText = e?.detail || e?.payload?.message || e?.message || 'Ошибка при отправке на публикацию'
-      if (platform === 'fabrikant') {
+      // TZ_MISSING (publications.py::publish_purchase, ПРАВИЛО №8 п.1) — фронт
+      // обычно ловит это раньше в checkPublishReady, но 422 с бэка та же
+      // стрелка к позиции на случай, если фронт что-то пропустил (например,
+      // позиция появилась/изменилась между открытием диалога и отправкой).
+      // item_ids — backend id строки, сверяем с items.value (которые несут
+      // и id, и _uid — см. loadPurchase в CreateOrderView.vue).
+      if (e?.payload?.code === 'TZ_MISSING') {
+        let missingIds: number[] = []
+        try {
+          const parsedDetail = JSON.parse(e.payload.details || '{}')
+          if (Array.isArray(parsedDetail.item_ids)) missingIds = parsedDetail.item_ids
+        } catch {}
+        const firstMatch = missingIds.length
+          ? items.value.find(i => missingIds.includes(i.id as number))
+          : null
+        const target: PublishTarget = firstMatch?._uid != null ? (`item:${firstMatch._uid}` as PublishTarget) : 'items'
+        showSnack(errText, 'error', { actionText: 'Показать позицию', onAction: () => guideArrowTo(target) })
+        guideArrowTo(target)
+      } else if (platform === 'fabrikant') {
         const errTarget = fabrikantErrorTarget(errText)
         if (errTarget === 'okpd2') {
           showSnack(errText, 'error', {
@@ -288,6 +343,17 @@ export function usePurchasePublications(
           })
           guideArrowTo(errTarget)
         } else if (errTarget === 'region' || errTarget === 'address') {
+          showSnack(errText, 'error', {
+            actionText: 'Показать поле',
+            onAction: () => guideArrowTo(errTarget),
+          })
+          guideArrowTo(errTarget)
+        } else {
+          showSnack(errText, 'error')
+        }
+      } else if (platform === 'roseltorg_rb') {
+        const errTarget = roseltorgErrorTarget(errText)
+        if (errTarget) {
           showSnack(errText, 'error', {
             actionText: 'Показать поле',
             onAction: () => guideArrowTo(errTarget),
@@ -347,6 +413,17 @@ export function usePurchasePublications(
     // адрес внутри места поставки → поле адреса
     if (isDeliveryPlace && /adress|address|адрес/.test(t)) return 'address'
     if (isDeliveryPlace) return 'region'
+    return null
+  }
+
+  // Маппинг preflight-ошибок Росэлторг.Бизнес → поле карточки (владелец,
+  // 29.10.2026, ПРАВИЛО №6 — тот же текст, что собирает публикации.py).
+  function roseltorgErrorTarget(errorText?: string | null): PublishTarget | null {
+    const t = (errorText || '').toLowerCase()
+    if (!t) return null
+    if (t.includes('условия оплаты') || t.includes('отсрочки')) return 'payment-terms'
+    if (t.includes('населённый пункт') || t.includes('место поставки') || t.includes('регион')) return 'region'
+    if (t.includes('единица измерения')) return 'items'
     return null
   }
 

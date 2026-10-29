@@ -274,8 +274,12 @@
                       </div>
                     </td>
                     <td>
-                      <v-combobox v-model="item.unit" :items="unitOptions" density="compact" variant="outlined"
-                        hide-details class="my-1" :disabled="readonly" />
+                      <v-select
+                        v-model="item.unit" :items="unitSelectOptions(item.unit)" density="compact" variant="outlined"
+                        hide-details class="my-1" :disabled="readonly"
+                        :error="!isOkeiUnit(item.unit)"
+                        :title="!isOkeiUnit(item.unit) ? 'Выберите единицу измерения из списка' : undefined"
+                      />
                     </td>
                     <td>
                       <v-tooltip
@@ -757,6 +761,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useOkeiUnits } from '@/composables/useOkeiUnits'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
@@ -785,6 +790,8 @@ import { itemFormDescriptor } from '@/composables/items/useItemForm'
 // (ПРАВИЛО №6), см. docstring utils/itemTz.ts.
 import { isTzFromCatalog, resetTzToCatalog, tzTextsDiffer } from '@/utils/itemTz'
 import ProposeToCatalogDialog from '@/components/products/ProposeToCatalogDialog.vue'
+
+const { isOkeiUnit, unitSelectOptions } = useOkeiUnits()
 
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }

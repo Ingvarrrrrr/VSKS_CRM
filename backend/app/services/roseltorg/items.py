@@ -14,8 +14,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.documents.contexts import _require_tz_duplicates_resolved_for_doc, _purchase_item_doc_values
 from app.services.tz_items import build_tz_rows
-
-from .okei import okei_for_unit
+from app.services.units_okei import okei_for_unit
 
 NAME_MAX_LEN = 250
 DESCRIPTION_MAX_LEN = 1000
@@ -76,7 +75,7 @@ def build_roseltorg_item_payloads(
             continue
         description = str(raw.get("description") or "").strip()[:DESCRIPTION_MAX_LEN]
         unit_name = str(raw.get("unit") or "").strip()
-        okei_id = okei_for_unit(unit_name)
+        canonical_unit, okei_id = okei_for_unit(unit_name)
 
         quantity = raw.get("quantity") or 0
         unit_price = raw.get("unit_price") or 0
@@ -90,10 +89,16 @@ def build_roseltorg_item_payloads(
         if not no_nmcd:
             data["commodityItemPrice"] = str(unit_price)
         if okei_id:
+            # Название ОБЯЗАНО быть ровно канонiчным — не исходным
+            # unit_name (разработчик проверил живьём 29.10.2026: «шт.»
+            # площадка отвергает, «Штука» — принимает, см. units_okei.py).
             data["okeiId"] = okei_id
-            data["unit"] = unit_name or "шт"
+            data["unit"] = canonical_unit
             data["isArbitraryUnit"] = False
         else:
+            # Не из проверенного списка ОКЕИ — не должно случиться здесь,
+            # если preflight (publications.py, find_items_with_unknown_unit)
+            # уже отработал; фолбэк оставлен на случай вызова без preflight.
             data["isArbitraryUnit"] = True
             data["arbitraryUnit"] = unit_name or "усл. ед."
             data["unit"] = unit_name or "усл. ед."
@@ -105,3 +110,21 @@ def build_roseltorg_item_payloads(
 
         items_payload.append(data)
     return items_payload
+
+
+def find_items_with_unknown_unit(rows: list[dict]) -> list[str]:
+    """Позиции (см. load_purchase_item_rows), у которых единица измерения не
+    из проверенного списка ОКЕИ (units_okei.OKEI_UNITS) — для preflight-блока
+    публикации на Росэлторг.Бизнес (publications.py), ДО создания черновика.
+    Пустая единица тоже считается «не из списка» — площадка без okeiId не
+    примет позицию."""
+    bad: list[str] = []
+    for raw in rows:
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            continue
+        unit_name = str(raw.get("unit") or "").strip()
+        _canonical, okei_id = okei_for_unit(unit_name)
+        if not okei_id:
+            bad.append(name)
+    return bad

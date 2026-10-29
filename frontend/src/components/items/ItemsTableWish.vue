@@ -128,8 +128,12 @@
               @update:model-value="emit('calc-item-total', idx)" />
           </td>
           <td>
-            <v-combobox v-model="item.unit" :items="unitOptions" density="compact" variant="outlined"
-              hide-details class="my-1" :disabled="readonly" />
+            <v-select
+              v-model="item.unit" :items="unitSelectOptions(item.unit)" density="compact" variant="outlined"
+              hide-details class="my-1" :disabled="readonly"
+              :error="!isOkeiUnit(item.unit)"
+              :title="!isOkeiUnit(item.unit) ? 'Выберите единицу измерения из списка' : undefined"
+            />
           </td>
           <td>
             <!-- Владелец (14.10.2026), решение (в): позиция заявки, ЗАГРУЖЕННАЯ
@@ -202,6 +206,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useOkeiUnits } from '@/composables/useOkeiUnits'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
 import AvgPriceHint from '@/components/items/AvgPriceHint.vue'
@@ -220,6 +225,8 @@ import { isItemFeoCategoryLocked } from '@/utils/feoItemLock'
 import { PLAN_PRICE_LOCKED_HINT } from '@/constants/planPriceLabels'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import { formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur } from '@/utils/numberFormat'
+
+const { isOkeiUnit, unitSelectOptions } = useOkeiUnits()
 
 type EditorItem = any
 

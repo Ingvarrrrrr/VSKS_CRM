@@ -199,6 +199,22 @@ class Purchase(Base):
     # Основание для оплаты: 'contract' | 'invoice' | 'invoice_contract'
     payment_basis_type = Column(String(30), nullable=True, default="contract")
 
+    # Условия оплаты закупки: postpayment (по факту поставки) / postponement
+    # (отсрочка) / prepayment (предоплата) / other (иное, текстом). Решение
+    # владельца: поле обязательно именно при отправке на площадку (сохранить
+    # закупку без него можно), у существующих закупок дефолт — «по факту
+    # поставки». Единственный источник этого выбора (ПРАВИЛО №6) — читают и
+    # карточка (PurchaseContractParamsSection.vue), и lot.payment при
+    # отправке на Росэлторг (roseltorg/lot_requirements.py::build_lot_payment,
+    # формат объекта проверен разработчиком живьём 29.10.2026). НЕ путать с
+    # is_prepayment/payment_term_days выше (Phase 1) — те читает только
+    # генератор ТЕКСТА договора, это поле — то, что уходит на площадку как
+    # структурированные условия лота.
+    payment_terms_type = Column(String(20), nullable=False, default="postpayment", server_default="postpayment")
+    payment_postpone_days = Column(Integer, nullable=True)           # для 'postponement'
+    payment_postpone_day_type = Column(String(10), nullable=True)    # 'calendar' | 'work', для 'postponement'
+    payment_other_terms = Column(Text, nullable=True)                # для 'other'
+
     # Ссылка на родительскую закупку — если эту создали разбиением другой
     parent_purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="SET NULL"), nullable=True)
 

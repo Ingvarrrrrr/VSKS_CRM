@@ -34,6 +34,7 @@ from .auth import (
     RoseltorgAuthError,
 )
 from .items import load_purchase_item_rows, build_roseltorg_item_payloads
+from .lot_requirements import resolve_roseltorg_region, build_lot_payment
 
 logger = logging.getLogger(__name__)
 
@@ -231,10 +232,29 @@ async def _call_roseltorg(
             lot_data_body["initialSum"] = str(nmck)
         if payload.get("delivery_address"):
             lot_data_body["DeliveryDetails"] = payload["delivery_address"]
-        if payload.get("delivery_region"):
-            lot_data_body["region"] = payload["delivery_region"]
         if payload.get("execution_term"):
             lot_data_body["DeliveryTerm"] = payload["execution_term"]
+
+        # lot.region — населённый пункт доставки из справочника площадки
+        # (разработчик проверил живьём 29.10.2026): без него — «Регионы доставки:
+        # Место поставки должно быть заполнено». Preflight в publications.py
+        # уже отверг отправку без совпадения — сюда доходит только найденный
+        # (но сбой здесь не должен ронять уже созданный черновик, см. except ниже).
+        region_match = resolve_roseltorg_region(payload)
+        if region_match:
+            lot_data_body["region"] = [region_match]
+
+        # lot.payment — условия оплаты (формат проверен разработчиком живьём
+        # 29.10.2026): PUT принимает
+        # любое значение, ошибка всплывает только на publish — поэтому
+        # preflight в publications.py проверяет согласованность ДО черновика,
+        # здесь просто собираем тело из того же источника (ПРАВИЛО №6).
+        lot_data_body["payment"] = build_lot_payment(
+            payload.get("payment_terms_type"),
+            payload.get("payment_postpone_days"),
+            payload.get("payment_postpone_day_type"),
+            payload.get("payment_other_terms"),
+        )
 
         lot_result, lot_status = await rb_call(
             jwt, f"{base}/notices/{notice_id}/notice-lot", {"data": lot_data_body},

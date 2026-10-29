@@ -852,6 +852,7 @@
 import { ref, computed, watch, reactive, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { useOkeiUnits } from '@/composables/useOkeiUnits'
 import FileDropZone from '@/components/FileDropZone.vue'
 import ProductMatchReviewDialog from '@/components/ProductMatchReviewDialog.vue'
 import DuplicateMergeDialog from '@/components/DuplicateMergeDialog.vue'
@@ -1015,7 +1016,16 @@ interface Product {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const UNIT_OPTIONS = ['шт.', 'усл.', 'компл.', 'уп.', 'м.', 'кг.', 'л.', 'п.м.', 'кв.м.', 'час.', 'мес.', 'год']
+// Единица измерения позиции закупки — ТОЛЬКО выбор из списка, который
+// принимает Росэлторг.Бизнес (решение владельца: единицы — только из
+// списка, старые написания приводит бэкенд при сохранении). Список —
+// ЕДИНСТВЕННЫЙ источник backend/app/services/units_okei.py, читается через
+// GET /api/dictionaries/okei-units (composables/useOkeiUnits.ts, ПРАВИЛО
+// №6 — без собственной копии на фронте). Дочерние таблицы
+// (ItemsTableFlat/Stages/Wish, ItemsCardsView) переключили v-combobox на
+// v-select с подсветкой значения не из списка.
+const { okeiUnitNames } = useOkeiUnits()
+const UNIT_OPTIONS = okeiUnitNames
 const COUNTRIES = ['РФ', 'Беларусь', 'Казахстан', 'Китай', 'Германия', 'США', 'Япония', 'Турция', 'Индия']
 
 // Fix 3 + Fix 4/5: VAT options/helpers now from @/composables/useVatCalc
@@ -2298,12 +2308,13 @@ function onContractVatOnTopToggle(v: boolean) {
 // «Страна происхождения» ужата до 110 (текст в 2 строки заголовка), чтобы на
 // типичной ширине (~1280px) «Ед. изм.» не уезжала за край без скролла.
 // unit: жалоба владельца — 90px было мало для v-combobox с выпадающей стрелкой,
-// самое длинное значение UNIT_OPTIONS («компл.») обрезалось в «ш..». Поднято
-// до 120 — замерено в браузере (Playwright): input.scrollWidth === input.clientWidth
-// (без обрезки) у «компл.» начинается с 116px ширины колонки, 120 даёт ~4px
-// запас. «кв.м.» умещается с ещё большим запасом.
+// самое длинное старое значение UNIT_OPTIONS («компл.») обрезалось в «ш..».
+// 29.10.2026: единица стала v-select с полными названиями ОКЕИ («Квадратный
+// метр», «Тонна; метрическая тонна (1000 кг)») — заметно длиннее старых
+// сокращений, ширина поднята до 170 (текст в выбранном значении переносится/
+// обрезается многоточием самим v-select при наведении видно полностью через title).
 const { onResizeStart, resizeStyle } = useResizableColumns('purchase-items-editor', {
-  name: 320, type: 128, qty: 90, unit: 120, price: 130, sum: 130,
+  name: 320, type: 128, qty: 90, unit: 170, price: 130, sum: 130,
   country: 110, contractor: 200, actions: 80,
 })
 

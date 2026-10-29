@@ -602,7 +602,13 @@ async def patch_purchase_item(
     if _qty_set:
         it.quantity = body.quantity
     if _unit_set:
-        it.unit = (body.unit.strip() or None) if body.unit is not None else None
+        # Владелец (29.10.2026): приведение к каноничному названию ОКЕИ
+        # (units_okei.normalize_unit, ПРАВИЛО №6) — ручной ввод теперь всё
+        # равно выбор из списка на фронте, но приводим и здесь на случай
+        # прямого вызова API/старых написаний. Неизвестное — как есть.
+        from app.services.units_okei import normalize_unit as _normalize_item_unit
+        _new_unit = (body.unit.strip() or None) if body.unit is not None else None
+        it.unit = (_normalize_item_unit(_new_unit) or _new_unit) if _new_unit else None
     if _price_set:
         it.unit_price = body.unit_price
     if _vat_on_top_set:

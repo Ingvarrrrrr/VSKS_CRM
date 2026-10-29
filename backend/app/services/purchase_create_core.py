@@ -137,6 +137,14 @@ async def insert_purchase_with_items(
     # рядом с FK при обычном сохранении из UI. Карта контрагентов — один SELECT
     # на ВСЕ позиции запроса (без N+1), как в wish_distribution.py.
     _item_dumps = [item_d.model_dump() for item_d in items_data]
+    # Владелец (29.10.2026): единица измерения позиции — приведение к
+    # каноничному названию ОКЕИ (units_okei.normalize_unit, ПРАВИЛО №6 —
+    # тот же справочник, что у фронта и сборки лота Росэлторга). Неизвестное
+    # написание оставляем как есть — не выдумываем, фронт подсветит сам.
+    from app.services.units_okei import normalize_unit as _normalize_unit_create
+    for _d_unit in _item_dumps:
+        if _d_unit.get("unit"):
+            _d_unit["unit"] = _normalize_unit_create(_d_unit["unit"]) or _d_unit["unit"]
     _item_contractor_ids = {d.get("contractor_id") for d in _item_dumps if d.get("contractor_id")}
     _item_contractors_map: dict = {}
     if _item_contractor_ids:

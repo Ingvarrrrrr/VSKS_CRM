@@ -264,6 +264,12 @@ class PurchaseCreate(BaseModel):
     treasury_code: Optional[str] = None
     has_pretension: Optional[bool] = False
     payment_basis_type: Optional[str] = "contract"
+    # Условия оплаты закупки — lot.payment Росэлторг.Бизнес (решение владельца:
+    # поле обязательно при отправке на площадку, дефолт — «по факту поставки»).
+    payment_terms_type: Optional[str] = "postpayment"
+    payment_postpone_days: Optional[int] = None
+    payment_postpone_day_type: Optional[str] = None
+    payment_other_terms: Optional[str] = None
     service_note_text: Optional[str] = None
     service_note_by: Optional[int] = None
     service_note_at: Optional[datetime] = None
@@ -420,6 +426,10 @@ class PurchaseUpdate(BaseModel):
     treasury_code: Optional[str] = None
     has_pretension: Optional[bool] = None
     payment_basis_type: Optional[str] = None
+    payment_terms_type: Optional[str] = None
+    payment_postpone_days: Optional[int] = None
+    payment_postpone_day_type: Optional[str] = None
+    payment_other_terms: Optional[str] = None
     service_note_text: Optional[str] = None
     service_note_by: Optional[int] = None
     service_note_at: Optional[datetime] = None

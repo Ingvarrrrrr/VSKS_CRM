@@ -242,8 +242,12 @@
 
             <!-- Ед. изм. -->
             <v-col cols="6" sm="3">
-              <v-combobox v-model="item.unit" :items="unitOptions" density="compact" variant="outlined"
-                label="Ед. изм." hide-details :disabled="readonly" />
+              <v-select
+                v-model="item.unit" :items="unitSelectOptions(item.unit)" density="compact" variant="outlined"
+                label="Ед. изм." hide-details :disabled="readonly"
+                :error="!isOkeiUnit(item.unit)"
+                :title="!isOkeiUnit(item.unit) ? 'Выберите единицу измерения из списка' : undefined"
+              />
             </v-col>
 
             <!-- Цена ед. -->
@@ -415,6 +419,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useOkeiUnits } from '@/composables/useOkeiUnits'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
@@ -433,6 +438,8 @@ import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 import { vatOnTopToTriState, triStateToVatOnTop } from '@/composables/useVatCalc'
+
+const { isOkeiUnit, unitSelectOptions } = useOkeiUnits()
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.

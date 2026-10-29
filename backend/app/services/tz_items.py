@@ -22,6 +22,7 @@ from decimal import Decimal
 from typing import Any, Iterable, Literal, Optional
 
 from app.services.text_match import normalize as _normalize_name
+from app.services.item_tz import effective_item_tz
 
 Decision = Literal["merge", "keep"]
 
@@ -48,6 +49,38 @@ def tz_required(purchase: Any) -> bool:
     if getattr(purchase, "tz_not_required", False):
         return False
     return True
+
+
+def items_without_tz(items: Iterable[Any]) -> list[Any]:
+    """Позиции без действующего ТЗ (effective_item_tz пусто) — единственный
+    гейт для «без ТЗ не давать выставлять закупку на площадки» (владелец,
+    30.10.2026, задача TZ_MISSING). Используется ТОЛЬКО preflight-проверкой
+    отправки на площадку (app/routers/publications.py::publish_purchase) —
+    вызывающий код сам решает tz_required(purchase) ДО вызова этой функции
+    (авансовые/tz_not_required=True сюда вообще не доходят, см. docstring
+    tz_required выше).
+
+    Проверяются ВСЕ позиции с непустым item_name независимо от item_type —
+    docstring tz_required прямо говорит «ТЗ нужно для всех товаров» (товар/
+    услуга/работа не разделяются; освобождение только по purchase_method/
+    tz_not_required на уровне всей закупки). Формула пустоты ТЗ — ЕДИНСТВЕННО
+    effective_item_tz (ПРАВИЛО №6, item_tz.py) — own tz_description, иначе
+    каталожное описание товара (с фолбэком на характеристики); второй расчёт
+    здесь не пишется.
+
+    `items` — Purchase.items (PurchaseItem ORM, с ЗАГРУЖЕННЫМ .product —
+    вызывающий код грузит selectinload(Purchase.items).selectinload(
+    PurchaseItem.product), без него effective_item_tz упадёт MissingGreenlet
+    на ленивой подгрузке в async-сессии)."""
+    result: list[Any] = []
+    for item in items or []:
+        name = (getattr(item, "item_name", "") or "").strip()
+        if not name:
+            continue
+        tz = effective_item_tz(item)
+        if not (tz and tz.strip()):
+            result.append(item)
+    return result
 
 
 def group_key(item: Any) -> str:

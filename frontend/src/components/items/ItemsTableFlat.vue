@@ -141,8 +141,12 @@
             </div>
           </td>
           <td>
-            <v-combobox v-model="item.unit" :items="unitOptions" density="compact" variant="outlined"
-              hide-details class="my-1" :disabled="readonly" />
+            <v-select
+              v-model="item.unit" :items="unitSelectOptions(item.unit)" density="compact" variant="outlined"
+              hide-details class="my-1" :disabled="readonly"
+              :error="!isOkeiUnit(item.unit)"
+              :title="!isOkeiUnit(item.unit) ? 'Выберите единицу измерения из списка' : undefined"
+            />
           </td>
           <td>
             <v-tooltip
@@ -455,6 +459,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useOkeiUnits } from '@/composables/useOkeiUnits'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
@@ -463,6 +468,7 @@ import AvgPriceHint from '@/components/items/AvgPriceHint.vue'
 import type { AvgPriceStats } from '@/utils/avgPrice'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
+
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
@@ -477,6 +483,8 @@ import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 import { vatOnTopToTriState, triStateToVatOnTop } from '@/composables/useVatCalc'
+
+const { isOkeiUnit, unitSelectOptions } = useOkeiUnits()
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.

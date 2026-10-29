@@ -1526,6 +1526,14 @@ async def update_purchase(
     # тот же обход set_item_contractor через PurchaseItem(**d) есть и на PUT.
     # Карта контрагентов — один SELECT на ВСЕ позиции запроса (без N+1).
     _item_dumps_put = [item_d.model_dump() for item_d in items_data]
+    # Владелец (29.10.2026): единица измерения позиции — приведение к
+    # каноничному названию ОКЕИ (units_okei.normalize_unit, ПРАВИЛО №6 — тот
+    # же справочник, что у фронта и create_purchase_core.py). Неизвестное
+    # написание оставляем как есть.
+    from app.services.units_okei import normalize_unit as _normalize_unit_put
+    for _d_unit_put in _item_dumps_put:
+        if _d_unit_put.get("unit"):
+            _d_unit_put["unit"] = _normalize_unit_put(_d_unit_put["unit"]) or _d_unit_put["unit"]
     _item_contractor_ids_put = {d.get("contractor_id") for d in _item_dumps_put if d.get("contractor_id")}
     _item_contractors_map_put: dict = {}
     if _item_contractor_ids_put:
@@ -2131,6 +2139,10 @@ PATCHABLE_FIELDS = {
     # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
     "delivery_by_supplier", "has_stages",
     "procurement_protocol_number", "procurement_order_number", "procurement_order_date",
+    # Условия оплаты закупки — единственное хранимое состояние, читает
+    # lot.payment Росэлторг.Бизнес (ПРАВИЛО №6, см.
+    # app/models/purchase.py::payment_terms_type).
+    "payment_terms_type", "payment_postpone_days", "payment_postpone_day_type", "payment_other_terms",
 }
 
 
@@ -2224,6 +2236,23 @@ async def patch_purchase(
     _contract_fields_ignored_patch: list[str] = []
 
     changed: list[str] = []
+
+    # Условия оплаты закупки — валидация значения: тип из допустимых 4,
+    # дни отсрочки > 0, текст для «Иное» непустой. Как
+    # и у остальных полей с собственными проверками выше — отдельным блоком
+    # до generic-цикла (PATCHABLE_FIELDS его потом просто сохранит).
+    if "payment_terms_type" in (body or {}):
+        _new_terms_type = body["payment_terms_type"]
+        _allowed_terms_types = {"postpayment", "postponement", "prepayment", "other"}
+        if _new_terms_type not in _allowed_terms_types:
+            raise HTTPException(422, f"Недопустимый тип условий оплаты: {_new_terms_type}")
+    if body.get("payment_postpone_days") is not None:
+        _days = body["payment_postpone_days"]
+        if not isinstance(_days, (int, float)) or _days <= 0:
+            raise HTTPException(422, "Количество дней отсрочки должно быть положительным числом")
+    if "payment_postpone_day_type" in (body or {}) and body["payment_postpone_day_type"] is not None:
+        if body["payment_postpone_day_type"] not in {"calendar", "work"}:
+            raise HTTPException(422, f"Недопустимый тип дней отсрочки: {body['payment_postpone_day_type']}")
 
     # Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): субсидия —
     # см. докстринг у SUBSIDY_PATCHABLE_STATUSES выше. Обрабатывается здесь

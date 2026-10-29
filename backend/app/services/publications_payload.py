@@ -120,6 +120,19 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         "delivery_state":    region_info["district"] if region_info else None,
         "delivery_region":   delivery_region_value if region_info else None,
         "delivery_okato":    region_info["okato"] if region_info else None,
+        # Сырой текст (не только совпавший со справочником 89 субъектов) и
+        # город доставки — для поиска населённого пункта в справочнике
+        # Росэлторг.Бизнес (roseltorg/lot_requirements.py::resolve_roseltorg_region,
+        # ПРАВИЛО №6 — тот же payload, второй не заводим).
+        "delivery_region_raw": delivery_region_value or None,
+        "delivery_city_raw":   (p.delivery_city or "").strip() or None,
+        # Условия оплаты закупки — единственное хранилище
+        # purchase.payment_terms_type и связанные поля (ПРАВИЛО №6),
+        # читает roseltorg/lot_requirements.py::build_lot_payment.
+        "payment_terms_type":        p.payment_terms_type,
+        "payment_postpone_days":     p.payment_postpone_days,
+        "payment_postpone_day_type": p.payment_postpone_day_type,
+        "payment_other_terms":       p.payment_other_terms,
         "org_inn":           org_inn,
         "contractor": {
             "name": contractor.name if contractor else None,

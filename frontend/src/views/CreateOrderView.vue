@@ -2498,6 +2498,12 @@ const FABRIKANT_PKG_DOCS = [
 
 const form = reactive({
   purchase_method: '',
+  // ТЗ для этой закупки не требуется (Wish.tz_not_required → Purchase.tz_not_required
+  // при согласовании заявки, см. backend/app/services/tz_items.py::tz_required) —
+  // только ЧИТАЕТСЯ здесь (usePurchasePublications.ts::checkPublishReady, та же
+  // формула, что у бэка, ПРАВИЛО №6); ставится не в этой карточке, а при решении
+  // по заявке, см. useWishApprovers.ts.
+  tz_not_required: false,
   competitive_form: '',
   purchase_basis: 'service_note' as string,
   item_type: 'товар' as string,
@@ -2580,6 +2586,14 @@ const form = reactive({
   // Владелец (жалоба п.10, 2026-09-17): срок оплаты после поставки/приёмки
   // (постоплата) — было в модели/PATCHABLE_FIELDS, но нигде на форме
   payment_term_days: null as number | null,
+  // Условия оплаты закупки (владелец, 29.10.2026) — lot.payment Росэлторг.Бизнес
+  // (ПРАВИЛО №6, см. backend/app/models/purchase.py::payment_terms_type).
+  // НЕ путать с is_prepayment/payment_term_days выше — те читает только
+  // генератор текста договора.
+  payment_terms_type: 'postpayment' as string,
+  payment_postpone_days: null as number | null,
+  payment_postpone_day_type: 'calendar' as string,
+  payment_other_terms: '' as string,
   // Fabrikant: «Без НМЦД» (владелец, 28.10.2026) — ЕДИНСТВЕННОЕ хранимое
   // состояние (ПРАВИЛО №6), читают/пишут и чекбокс в PurchasePlatformCard.vue
   // (скачивание ZIP без отправки), и диалог «Опубликовать» (usePurchasePublications.ts).
@@ -2769,6 +2783,11 @@ function serializeFormForAutosave() {
     is_prepayment: f.is_prepayment,
     prepayment_date: f.prepayment_date || null,
     payment_term_days: numOrNull(f.payment_term_days),
+    // Условия оплаты закупки (владелец, 29.10.2026) — lot.payment Росэлторг.Бизнес
+    payment_terms_type: f.payment_terms_type || 'postpayment',
+    payment_postpone_days: numOrNull(f.payment_postpone_days),
+    payment_postpone_day_type: f.payment_postpone_day_type || null,
+    payment_other_terms: f.payment_other_terms || null,
     fabrikant_no_nmcd: f.fabrikant_no_nmcd ?? false,
     stage_label: f.stage_label || null,
     // Phase 28 B4: ответственный исполнитель — не шлём null, только валидное id
@@ -4469,6 +4488,7 @@ const loadPurchase = async () => {
 
   Object.assign(form, {
     purchase_method: data.purchase_method || '',
+    tz_not_required: !!data.tz_not_required,
     competitive_form: data.competitive_form || '',
     purchase_basis: data.purchase_basis || '',
     item_type: data.item_type || 'товар',
@@ -4544,6 +4564,11 @@ const loadPurchase = async () => {
     is_prepayment: !!data.is_prepayment,
     prepayment_date: data.prepayment_date || '',
     payment_term_days: data.payment_term_days ?? null,
+    // Условия оплаты закупки (владелец, 29.10.2026)
+    payment_terms_type: data.payment_terms_type || 'postpayment',
+    payment_postpone_days: data.payment_postpone_days ?? null,
+    payment_postpone_day_type: data.payment_postpone_day_type || 'calendar',
+    payment_other_terms: data.payment_other_terms || '',
     fabrikant_no_nmcd: !!data.fabrikant_no_nmcd,
     stage_label: data.stage_label || '',
     event_id: data.event_id ?? null,
@@ -5314,6 +5339,11 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
       is_prepayment: form.is_prepayment,
       prepayment_date: form.prepayment_date || null,
       payment_term_days: numOrNull(form.payment_term_days),
+      // Условия оплаты закупки (владелец, 29.10.2026)
+      payment_terms_type: form.payment_terms_type || 'postpayment',
+      payment_postpone_days: numOrNull(form.payment_postpone_days),
+      payment_postpone_day_type: form.payment_postpone_day_type || null,
+      payment_other_terms: form.payment_other_terms || null,
       stage_label: form.stage_label || null,
       acceptance_doc_date: form.acceptance_doc_date || null,
       // doc.amount — v-model.number (2181): при очистке даёт '', уходит в JSONB-колонку

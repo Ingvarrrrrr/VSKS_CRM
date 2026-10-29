@@ -23,6 +23,7 @@ from app.services.dictionaries import (
     CONTRACT_FORM_LABELS,
 )
 from app.services.item_forms import ITEM_FORMS, CONTRACT_FORM_TO_ITEM_FORM
+from app.services.units_okei import OKEI_UNITS
 
 router = APIRouter(prefix="/api/dictionaries", tags=["dictionaries"])
 
@@ -61,3 +62,11 @@ async def get_item_forms(_=Depends(get_current_user)):
         "contract_forms": _entries(CONTRACT_FORM_LABELS),
         "contract_form_to_item_form": CONTRACT_FORM_TO_ITEM_FORM,
     }
+
+
+@router.get("/okei-units")
+async def get_okei_units(_=Depends(get_current_user)):
+    """Единицы измерения позиции закупки, принимаемые Росэлторг.Бизнес
+    (ПРАВИЛО №6 — единственный источник app/services/units_okei.py, фронт
+    загружает этот список один раз вместо собственной копии)."""
+    return [{"code": u.code, "name": u.name} for u in OKEI_UNITS]

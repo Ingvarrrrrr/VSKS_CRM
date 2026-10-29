@@ -34,15 +34,38 @@
 // в репозитории просто нет (TankOnRails/TankReallistic — только ручное
 // управление человеком на свободной физике, Rigidbody/AddForce, не сеточное).
 // Эти части (сеточное 4-направленное движение, ИИ врагов, база, жизни, волны)
-// спроектированы заново под наш чёрно-белый "документный" канвас-стиль —
-// общий с BrickGame/DuckShootGame (см. docBackground.ts).
+// спроектированы заново под цветной спрайтовый стиль игры — фон под доской
+// тёмно-зелёный (трава), свой для этой игры (см. _buildBackground), без
+// общего "документного" фона, который остался у игр без цветных спрайтов.
 //
 // Карты уровней, текстуры, звук и названия — свои; оригинальные стадии/ассеты
 // Namco (которых в этом Unity-репо и не было) не используются. Торговая марка
 // держателя классической игры жанра в UI не используется — см. ПРАВИЛО ниже.
 // UI-имя игры — «Танчики».
 
-import { buildDocumentBackground, DOC_BG_FONT_FAMILY } from './docBackground'
+import { loadSprite, isSpriteReady } from './spriteLoader'
+
+import tileGrassUrl from './sprites/tank/tileGrass.png'
+import brickWallUrl from './sprites/tank/brickWall.png'
+import steelWallUrl from './sprites/tank/steelWall.png'
+import treeUrl from './sprites/tank/tree.png'
+import tankBodyPlayerUrl from './sprites/tank/tankBodyPlayer.png'
+import tankBarrelPlayerUrl from './sprites/tank/tankBarrelPlayer.png'
+import tankBodyEnemyUrl from './sprites/tank/tankBodyEnemy.png'
+import tankBarrelEnemyUrl from './sprites/tank/tankBarrelEnemy.png'
+import tankBodyToughUrl from './sprites/tank/tankBodyTough.png'
+import tankBarrelToughUrl from './sprites/tank/tankBarrelTough.png'
+import bulletPlayerUrl from './sprites/tank/bulletPlayer.png'
+import bulletEnemyUrl from './sprites/tank/bulletEnemy.png'
+import explosion1Url from './sprites/tank/explosion1.png'
+import explosion2Url from './sprites/tank/explosion2.png'
+import explosion3Url from './sprites/tank/explosion3.png'
+import baseUrl from './sprites/tank/base.png'
+
+// Спрайты — набор Kenney "Top-down Tanks Redux" (kenney.nl), лицензия CC0,
+// см. sprites/tank/License.txt и THIRD_PARTY_LICENSES.md. Загрузка —
+// общий spriteLoader.ts (как в DuckShootGame), пока не готово — fallback
+// прямоугольниками/глифами, игра не блокируется ожиданием картинок.
 
 type GameState = 'level-intro' | 'playing' | 'level-complete' | 'game-over'
 type Dir = 'up' | 'down' | 'left' | 'right'
@@ -185,6 +208,21 @@ const LEVEL_MAPS: string[][] = [
   ].map((r) => r.padEnd(COLS, '.')),
 ]
 
+// Сансериф для HUD — цифры/счёт читаются лучше глиф-шрифта, который остаётся
+// только на титульных экранах/fallback-рисовании танков (общий стиль с
+// другими играми).
+const HUD_FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+// Моноширинный шрифт для глиф-рамок танков/базы (fallback, пока спрайты не
+// загрузились) и титульных экранов — свой для этой игры, не общий импорт.
+const GLYPH_FONT_FAMILY = 'Consolas, "JetBrains Mono", "Courier New", monospace'
+const EXPLOSION_DURATION = 0.3 // сек, 3 кадра спрайт-анимации на попадание
+
+interface Explosion {
+  x: number
+  y: number
+  t: number
+}
+
 export class TankGame {
   private canvas: HTMLCanvasElement
   private ctx: CanvasRenderingContext2D
@@ -218,9 +256,30 @@ export class TankGame {
   private basePos: { x: number; y: number } = { x: 0, y: 0 }
   private baseAlive = true
   private enemySpawnTimer = 0
+  private explosions: Explosion[] = []
 
-  private _docBg: HTMLCanvasElement | null = null
-  private glyphFontFamily = DOC_BG_FONT_FAMILY
+  private _bg: HTMLCanvasElement | null = null
+  private glyphFontFamily = GLYPH_FONT_FAMILY
+
+  // Спрайты Kenney "Top-down Tanks Redux" (CC0) — загружаются асинхронно
+  // через общий spriteLoader; пока isSpriteReady() = false, рисуем fallback
+  // прямоугольник/глиф тем же методом, что до этой правки.
+  private _sprites = {
+    grass: loadSprite(tileGrassUrl),
+    brickWall: loadSprite(brickWallUrl),
+    steelWall: loadSprite(steelWallUrl),
+    tree: loadSprite(treeUrl),
+    bodyPlayer: loadSprite(tankBodyPlayerUrl),
+    barrelPlayer: loadSprite(tankBarrelPlayerUrl),
+    bodyEnemy: loadSprite(tankBodyEnemyUrl),
+    barrelEnemy: loadSprite(tankBarrelEnemyUrl),
+    bodyTough: loadSprite(tankBodyToughUrl),
+    barrelTough: loadSprite(tankBarrelToughUrl),
+    bulletPlayer: loadSprite(bulletPlayerUrl),
+    bulletEnemy: loadSprite(bulletEnemyUrl),
+    explosion: [loadSprite(explosion1Url), loadSprite(explosion2Url), loadSprite(explosion3Url)],
+    base: loadSprite(baseUrl),
+  }
 
   private keys = new Set<string>()
   private touchDir: Dir | null = null
@@ -353,7 +412,7 @@ export class TankGame {
     this.canvas.style.width = `${this.width}px`
     this.canvas.style.height = `${this.height}px`
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
-    this._docBg = buildDocumentBackground(this.width, this.height, this.dpr)
+    this._bg = this._buildBackground(this.width, this.height, this.dpr)
 
     const hudH = 46
     const padH = this._isTouch() ? 96 : 0
@@ -364,6 +423,37 @@ export class TankGame {
     this.boardOffsetY = hudH
 
     this._layoutTouchPad()
+  }
+
+  // Фон под всей канвой (не только доской) — тот же травяной тайл Kenney,
+  // что и доска, но затемнённый полупрозрачной тёмной заливкой, чтобы доска
+  // (светлее) читалась на нём отдельным слоем. Раньше здесь был общий
+  // чёрно-белый "документный" фон (docBackground.ts) — не подходит цветным
+  // спрайтам. Строится один раз на resize, как и доска, и просто копируется
+  // в каждом кадре (ctx.drawImage), без пересчёта.
+  private _buildBackground(width: number, height: number, dpr: number): HTMLCanvasElement {
+    const off = document.createElement('canvas')
+    const w = Math.max(1, width)
+    const h = Math.max(1, height)
+    off.width = Math.max(1, Math.round(w * dpr))
+    off.height = Math.max(1, Math.round(h * dpr))
+    const c = off.getContext('2d')
+    if (!c) return off
+    c.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    const grass = this._sprites.grass
+    if (isSpriteReady(grass)) {
+      const size = 48
+      for (let y = 0; y < h; y += size) {
+        for (let x = 0; x < w; x += size) c.drawImage(grass, x, y, size, size)
+      }
+      c.fillStyle = 'rgba(0,0,0,0.45)'
+      c.fillRect(0, 0, w, h)
+    } else {
+      c.fillStyle = '#2f7d4a'
+      c.fillRect(0, 0, w, h)
+    }
+    return off
   }
 
   private _isTouch(): boolean {
@@ -441,6 +531,7 @@ export class TankGame {
     this.spawnPoints = []
     this.enemies = []
     this.bullets = []
+    this.explosions = []
     this.baseAlive = true
 
     for (let y = 0; y < ROWS; y++) {
@@ -586,6 +677,7 @@ export class TankGame {
     this._updatePlayer(dt)
     this._updateEnemies(dt)
     this._updateBullets(dt)
+    this._updateExplosions(dt)
     this._spawnEnemiesIfNeeded(dt)
 
     if (!this.baseAlive && this.player.alive) {
@@ -744,6 +836,15 @@ export class TankGame {
     return scored[Math.floor(Math.random() * scored.length)]!.dir
   }
 
+  private _spawnExplosion(gx: number, gy: number): void {
+    this.explosions.push({ x: (gx + 0.5) * this.tile, y: (gy + 0.5) * this.tile, t: 0 })
+  }
+
+  private _updateExplosions(dt: number): void {
+    for (const ex of this.explosions) ex.t += dt
+    this.explosions = this.explosions.filter((ex) => ex.t < EXPLOSION_DURATION)
+  }
+
   private _updateBullets(dt: number): void {
     for (const b of this.bullets) {
       if (!b.alive) continue
@@ -764,6 +865,7 @@ export class TankGame {
           if (tile.damage >= 4) tile.type = 'brick' // остаётся пустое место, damage=4 трактуется как "нет тайла"
         } else if (tile.type === 'base') {
           this.baseAlive = false
+          this._spawnExplosion(gx, gy)
         }
         b.alive = false
         continue
@@ -791,6 +893,7 @@ export class TankGame {
               e.alive = false
               this.enemiesAlive = Math.max(0, this.enemiesAlive - 1)
               this.score += e.tough ? 300 : 100
+              this._spawnExplosion(e.x, e.y)
             }
             break
           }
@@ -802,6 +905,7 @@ export class TankGame {
   }
 
   private _onPlayerHit(): void {
+    this._spawnExplosion(this.player.x, this.player.y)
     this.player.alive = false
     this.lives = Math.max(0, this.lives - 1)
     if (this.lives <= 0) {
@@ -837,18 +941,20 @@ export class TankGame {
     const h = this.height
 
     ctx.clearRect(0, 0, w, h)
-    if (this._docBg && this._docBg.width > 0) {
-      ctx.drawImage(this._docBg, 0, 0, w, h)
+    if (this._bg && this._bg.width > 0) {
+      ctx.drawImage(this._bg, 0, 0, w, h)
     } else {
-      ctx.fillStyle = '#ffffff'
+      ctx.fillStyle = '#2f7d4a'
       ctx.fillRect(0, 0, w, h)
     }
 
     ctx.save()
     ctx.translate(this.boardOffsetX, this.boardOffsetY)
+    this._drawGround(ctx)
     this._drawBoard(ctx)
     this._drawTanks(ctx)
     this._drawBullets(ctx)
+    this._drawExplosions(ctx)
     ctx.restore()
 
     this._drawHud(ctx, w)
@@ -859,11 +965,37 @@ export class TankGame {
     if (this.state === 'game-over') this._drawGameOver(ctx, w, h)
   }
 
+  // Направление танка/пули → угол поворота canvas (по часовой от "вверх" —
+  // спрайты Kenney по умолчанию смотрят вверх, см. sprites/tank/).
+  private _dirAngle(dir: Dir): number {
+    if (dir === 'up') return 0
+    if (dir === 'right') return Math.PI / 2
+    if (dir === 'down') return Math.PI
+    return -Math.PI / 2 // left
+  }
+
+  // Земля — травяной тайл Kenney под всей доской, рисуется первым слоем.
+  private _drawGround(ctx: CanvasRenderingContext2D): void {
+    const img = this._sprites.grass
+    const t = this.tile
+    if (isSpriteReady(img)) {
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) ctx.drawImage(img, x * t, y * t, t, t)
+      }
+    } else {
+      ctx.fillStyle = '#eef3e8'
+      ctx.fillRect(0, 0, COLS * t, ROWS * t)
+    }
+  }
+
   private _drawBoard(ctx: CanvasRenderingContext2D): void {
     ctx.save()
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     const t = this.tile
+    const brick = this._sprites.brickWall
+    const steel = this._sprites.steelWall
+    const base = this._sprites.base
     for (let y = 0; y < ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
         const tile = this.grid[y]?.[x]
@@ -871,29 +1003,58 @@ export class TankGame {
         const cx = x * t + t / 2
         const cy = y * t + t / 2
         if (tile.type === 'brick' && tile.damage < 4) {
-          ctx.fillStyle = '#111111'
-          // четверти кирпича "выбиваются" по мере damage (0..3)
+          // четверти кирпича "выбиваются" по мере damage (0..3) — клипуем
+          // по уцелевшим четвертям и рисуем в них полный тайл текстуры,
+          // чтобы рисунок не "сжимался", а честно обрезался.
           const half = t / 2
           const quads: Array<[number, number]> = [[0, 0], [half, 0], [0, half], [half, half]]
+          ctx.save()
+          ctx.beginPath()
+          let any = false
           for (let i = 0; i < 4; i++) {
             if (i < tile.damage) continue
-            ctx.fillRect(x * t + (quads[i]?.[0] ?? 0), y * t + (quads[i]?.[1] ?? 0), half, half)
+            any = true
+            ctx.rect(x * t + (quads[i]?.[0] ?? 0), y * t + (quads[i]?.[1] ?? 0), half, half)
           }
-          ctx.strokeStyle = '#ffffff'
-          ctx.lineWidth = 1
-          ctx.strokeRect(x * t + 1, y * t + 1, t - 2, t - 2)
+          if (any) {
+            ctx.clip()
+            if (isSpriteReady(brick)) {
+              ctx.drawImage(brick, x * t, y * t, t, t)
+            } else {
+              ctx.fillStyle = '#8b5a2b'
+              ctx.fillRect(x * t, y * t, t, t)
+            }
+          }
+          ctx.restore()
         } else if (tile.type === 'steel') {
-          ctx.font = `700 ${Math.max(8, t * 0.9)}px ${this.glyphFontFamily}`
-          ctx.fillStyle = '#444444'
-          ctx.fillText('█', cx, cy + 1)
+          if (isSpriteReady(steel)) {
+            ctx.drawImage(steel, x * t, y * t, t, t)
+          } else {
+            ctx.fillStyle = '#777777'
+            ctx.fillRect(x * t, y * t, t, t)
+          }
         } else if (tile.type === 'water') {
-          ctx.font = `700 ${Math.max(8, t * 0.8)}px ${this.glyphFontFamily}`
-          ctx.fillStyle = '#777777'
-          ctx.fillText('≈', cx, cy + 1)
+          // в наборе Kenney нет отдельного тайла воды — заливка + светлая
+          // волна поверх (разрешено заданием как альтернатива спрайту).
+          ctx.fillStyle = '#3f7fc4'
+          ctx.fillRect(x * t, y * t, t, t)
+          ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+          ctx.lineWidth = Math.max(1, t * 0.07)
+          ctx.beginPath()
+          ctx.moveTo(x * t + t * 0.1, cy - t * 0.08)
+          ctx.quadraticCurveTo(cx, cy + t * 0.12, x * t + t * 0.9, cy - t * 0.08)
+          ctx.stroke()
         } else if (tile.type === 'base') {
-          ctx.font = `700 ${Math.max(8, t * 0.85)}px ${this.glyphFontFamily}`
-          ctx.fillStyle = this.baseAlive ? '#111111' : '#bbbbbb'
-          ctx.fillText('★', cx, cy + 1)
+          if (isSpriteReady(base)) {
+            ctx.save()
+            if (!this.baseAlive) ctx.globalAlpha = 0.35
+            ctx.drawImage(base, x * t + t * 0.08, y * t + t * 0.08, t * 0.84, t * 0.84)
+            ctx.restore()
+          } else {
+            ctx.font = `700 ${Math.max(8, t * 0.85)}px ${this.glyphFontFamily}`
+            ctx.fillStyle = this.baseAlive ? '#111111' : '#bbbbbb'
+            ctx.fillText('★', cx, cy + 1)
+          }
         }
       }
     }
@@ -901,31 +1062,37 @@ export class TankGame {
   }
 
   private _drawTrees(ctx: CanvasRenderingContext2D): void {
+    const img = this._sprites.tree
+    const t = this.tile
     ctx.save()
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    const t = this.tile
     for (let y = 0; y < ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
         const tile = this.grid[y]?.[x]
         if (!tile || tile.type !== 'tree') continue
-        ctx.font = `700 ${Math.max(8, t * 0.95)}px ${this.glyphFontFamily}`
-        ctx.fillStyle = '#999999'
-        ctx.fillText('♣', x * t + t / 2, y * t + t / 2 + 1)
+        if (isSpriteReady(img)) {
+          const size = t * 1.18
+          ctx.drawImage(img, x * t + t / 2 - size / 2, y * t + t / 2 - size / 2, size, size)
+        } else {
+          ctx.font = `700 ${Math.max(8, t * 0.95)}px ${this.glyphFontFamily}`
+          ctx.fillStyle = '#999999'
+          ctx.fillText('♣', x * t + t / 2, y * t + t / 2 + 1)
+        }
       }
     }
     ctx.restore()
   }
 
   private _tankGlyphBlock(dir: Dir): string[] {
-    // 3×3 глиф-блок, "дуло" смотрит по направлению
+    // 3×3 глиф-блок — fallback, пока PNG-спрайты ещё не загрузились
     if (dir === 'up') return ['╔▲╗', '╠█╣', '╚╩╝']
     if (dir === 'down') return ['╔╦╗', '╠█╣', '╚▼╝']
     if (dir === 'left') return ['╔╦╗', '◄█╣', '╚╩╝']
     return ['╔╦╗', '╠█►', '╚╩╝']
   }
 
-  private _drawTank(ctx: CanvasRenderingContext2D, t: Tank, color: string): void {
+  private _drawTankFallback(ctx: CanvasRenderingContext2D, t: Tank, color: string): void {
     const r = this._tankRect(t)
     const lines = this._tankGlyphBlock(t.dir)
     const fontPx = Math.max(6, r.w / 3.1)
@@ -942,32 +1109,89 @@ export class TankGame {
     ctx.restore()
   }
 
+  // Цветной танк Kenney: корпус + ствол, повёрнуты на направление движения.
+  // Пока картинки не готовы — старый чёрно-белый глиф-блок, игра не ждёт.
+  private _drawTankSprite(ctx: CanvasRenderingContext2D, t: Tank, bodyImg: HTMLImageElement, barrelImg: HTMLImageElement, fallbackColor: string): void {
+    if (!isSpriteReady(bodyImg) || !isSpriteReady(barrelImg)) {
+      this._drawTankFallback(ctx, t, fallbackColor)
+      return
+    }
+    const r = this._tankRect(t)
+    const cx = r.x + r.w / 2
+    const cy = r.y + r.h / 2
+    const size = r.w
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(this._dirAngle(t.dir))
+    ctx.drawImage(bodyImg, -size / 2, -size / 2, size, size)
+    const barrelW = size * 0.22
+    const barrelH = size * 0.68
+    ctx.drawImage(barrelImg, -barrelW / 2, -size * 0.58, barrelW, barrelH)
+    ctx.restore()
+  }
+
   private _drawTanks(ctx: CanvasRenderingContext2D): void {
     for (const e of this.enemies) {
       if (!e.alive) continue
-      this._drawTank(ctx, e, e.tough ? '#000000' : '#555555')
+      if (e.tough) this._drawTankSprite(ctx, e, this._sprites.bodyTough, this._sprites.barrelTough, '#000000')
+      else this._drawTankSprite(ctx, e, this._sprites.bodyEnemy, this._sprites.barrelEnemy, '#555555')
     }
-    if (this.player.alive) this._drawTank(ctx, this.player, '#111111')
+    if (this.player.alive) this._drawTankSprite(ctx, this.player, this._sprites.bodyPlayer, this._sprites.barrelPlayer, '#111111')
     this._drawTrees(ctx) // кусты рисуются над танками — перекрывают силуэт
   }
 
   private _drawBullets(ctx: CanvasRenderingContext2D): void {
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.font = `700 ${Math.max(8, this.tile * 0.5)}px ${this.glyphFontFamily}`
-    ctx.fillStyle = '#111111'
+    const playerImg = this._sprites.bulletPlayer
+    const enemyImg = this._sprites.bulletEnemy
     for (const b of this.bullets) {
       if (!b.alive) continue
-      ctx.fillText('•', b.x, b.y + 1)
+      const img = b.owner === 'player' ? playerImg : enemyImg
+      if (isSpriteReady(img)) {
+        const w = this.tile * 0.22
+        const h = this.tile * 0.5
+        ctx.save()
+        ctx.translate(b.x, b.y)
+        ctx.rotate(this._dirAngle(b.dir))
+        ctx.drawImage(img, -w / 2, -h / 2, w, h)
+        ctx.restore()
+      } else {
+        ctx.save()
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.font = `700 ${Math.max(8, this.tile * 0.5)}px ${this.glyphFontFamily}`
+        ctx.fillStyle = '#111111'
+        ctx.fillText('•', b.x, b.y + 1)
+        ctx.restore()
+      }
     }
-    ctx.restore()
+  }
+
+  // Короткая анимация взрыва (3 кадра Kenney) на попадании по танку/базе.
+  private _drawExplosions(ctx: CanvasRenderingContext2D): void {
+    const frames = this._sprites.explosion
+    if (frames.length === 0) return
+    for (const ex of this.explosions) {
+      const progress = Math.min(0.999, ex.t / EXPLOSION_DURATION)
+      const img = frames[Math.floor(progress * frames.length)] ?? frames[0]
+      if (!img || !isSpriteReady(img)) continue
+      const size = this.tile * 1.3
+      ctx.save()
+      ctx.globalAlpha = Math.max(0.15, 1 - progress)
+      ctx.drawImage(img, ex.x - size / 2, ex.y - size / 2, size, size)
+      ctx.restore()
+    }
   }
 
   private _drawHud(ctx: CanvasRenderingContext2D, w: number): void {
+    // Читаемый сансериф для HUD (счёт/жизни/враги) — белый текст с тёмной
+    // тенью, как в DuckShootGame, т.к. фон под HUD теперь тёмно-зелёная
+    // трава, а не светлый "документный" фон.
     ctx.save()
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 13px ${this.glyphFontFamily}`
+    ctx.font = `700 13px ${HUD_FONT_FAMILY}`
+    ctx.shadowColor = 'rgba(0,0,0,0.75)'
+    ctx.shadowBlur = 3
+    ctx.shadowOffsetY = 1
+    ctx.fillStyle = '#ffffff'
     ctx.textAlign = 'left'
     ctx.fillText(`УРОВЕНЬ ${this.level}   ОЧКИ ${this.score}`, 14, 22)
     ctx.textAlign = 'right'
@@ -975,13 +1199,38 @@ export class TankGame {
     ctx.restore()
 
     ctx.save()
-    ctx.font = `700 13px ${this.glyphFontFamily}`
+    ctx.font = `700 13px ${HUD_FONT_FAMILY}`
+    ctx.shadowColor = 'rgba(0,0,0,0.75)'
+    ctx.shadowBlur = 3
+    ctx.shadowOffsetY = 1
     ctx.textAlign = 'left'
-    ctx.fillStyle = '#111111'
+    ctx.fillStyle = '#ffffff'
     let hearts = ''
     for (let i = 0; i < 3; i++) hearts += (i < this.lives ? '♥' : '♡') + ' '
-    const enemyBlocks = '▮'.repeat(Math.min(20, this.enemiesLeftToSpawn + this.enemiesAlive))
-    ctx.fillText(`ЖИЗНИ ${hearts.trim()}   ВРАГИ ${enemyBlocks}`, 14, 42)
+    ctx.fillText(`ЖИЗНИ ${hearts.trim()}`, 14, 42)
+
+    ctx.fillText('ВРАГИ', 150, 42)
+    const labelW = ctx.measureText('ВРАГИ').width
+    const iconSize = 13
+    const iconGap = 3
+    const iconStartX = 150 + labelW + 8
+    const remaining = this.enemiesLeftToSpawn + this.enemiesAlive
+    const maxIcons = Math.max(1, Math.min(6, Math.floor((w - iconStartX - 40) / (iconSize + iconGap))))
+    const shown = Math.min(maxIcons, remaining)
+    const bodyImg = this._sprites.bodyEnemy
+    for (let i = 0; i < shown; i++) {
+      const ix = iconStartX + i * (iconSize + iconGap)
+      if (isSpriteReady(bodyImg)) {
+        ctx.drawImage(bodyImg, ix, 42 - iconSize / 2 - 1, iconSize, iconSize)
+      } else {
+        ctx.fillStyle = '#eeeeee'
+        ctx.fillRect(ix, 42 - iconSize / 2 - 1, iconSize, iconSize)
+        ctx.fillStyle = '#ffffff'
+      }
+    }
+    if (remaining > shown) {
+      ctx.fillText(`+${remaining - shown}`, iconStartX + shown * (iconSize + iconGap) + 2, 42)
+    }
     ctx.restore()
   }
 
@@ -993,13 +1242,16 @@ export class TankGame {
     ctx.textBaseline = 'middle'
     ctx.font = `700 16px ${this.glyphFontFamily}`
     const draw = (r: Rect, label: string, active: boolean) => {
-      ctx.fillStyle = active ? 'rgba(17,17,17,0.18)' : 'rgba(17,17,17,0.06)'
+      ctx.fillStyle = active ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.12)'
       ctx.fillRect(r.x, r.y, r.w, r.h)
-      ctx.strokeStyle = '#111111'
+      ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 1
       ctx.strokeRect(r.x, r.y, r.w, r.h)
-      ctx.fillStyle = '#111111'
+      ctx.shadowColor = 'rgba(0,0,0,0.75)'
+      ctx.shadowBlur = 3
+      ctx.fillStyle = '#ffffff'
       ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 1)
+      ctx.shadowBlur = 0
     }
     draw(pad.up, '▲', this.touchDir === 'up')
     draw(pad.down, '▼', this.touchDir === 'down')
@@ -1012,14 +1264,17 @@ export class TankGame {
   private _drawCenterText(ctx: CanvasRenderingContext2D, w: number, h: number, title: string, subtitle: string): void {
     ctx.save()
     ctx.textAlign = 'center'
+    ctx.shadowColor = 'rgba(0,0,0,0.75)'
+    ctx.shadowBlur = 4
+    ctx.shadowOffsetY = 1
     if (title) {
-      ctx.fillStyle = '#111111'
+      ctx.fillStyle = '#ffffff'
       ctx.font = `700 26px ${this.glyphFontFamily}`
       ctx.fillText(title.toUpperCase(), w / 2, h / 2 - 8)
     }
     if (subtitle) {
       ctx.font = `13px ${this.glyphFontFamily}`
-      ctx.fillStyle = '#444444'
+      ctx.fillStyle = '#eeeeee'
       ctx.fillText(subtitle, w / 2, h / 2 + (title ? 18 : 0))
     }
     ctx.restore()
@@ -1028,7 +1283,10 @@ export class TankGame {
   private _drawGameOver(ctx: CanvasRenderingContext2D, w: number, h: number): void {
     ctx.save()
     ctx.textAlign = 'center'
-    ctx.fillStyle = '#111111'
+    ctx.shadowColor = 'rgba(0,0,0,0.75)'
+    ctx.shadowBlur = 4
+    ctx.shadowOffsetY = 1
+    ctx.fillStyle = '#ffffff'
     ctx.font = `700 24px ${this.glyphFontFamily}`
     ctx.fillText('ИГРА ОКОНЧЕНА', w / 2, h / 2 - 30)
     ctx.font = `14px ${this.glyphFontFamily}`
@@ -1036,10 +1294,10 @@ export class TankGame {
 
     const btnW = 160, btnH = 36
     const bx = w / 2 - btnW / 2, by = h / 2 + 16
-    ctx.strokeStyle = '#111111'
+    ctx.strokeStyle = '#ffffff'
     ctx.lineWidth = 1
     ctx.strokeRect(bx, by, btnW, btnH)
-    ctx.fillStyle = '#111111'
+    ctx.fillStyle = '#ffffff'
     ctx.font = `700 14px ${this.glyphFontFamily}`
     ctx.fillText('[ ЕЩЁ РАЗ ]', w / 2, by + btnH / 2 + 5)
     ctx.restore()

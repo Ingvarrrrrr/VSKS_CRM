@@ -1,13 +1,27 @@
 // Порт класса DuckShootGame из прототипа
-// (scratchpad/duck.html, <script> часть) — логика и отрисовка оставлены
-// идентичными оригиналу, только добавлена типизация и убран demo-бутстрап
-// страницы (overlay/closeBtn/replayBtn/?debug=1 — служебный флаг прототипа
-// для визуальной проверки стиля, в CRM-версии не читаем location вообще).
+// (scratchpad/duck.html, <script> часть) — логика игры (жизни/волны/патроны/скорость
+// от уровня/хиттест/DPR) сохранена без изменений. Отрисовка переведена с глифов на
+// цветные PNG-спрайты Kenney (CC0, см. sprites/duck/License.txt и License-animal-pack.txt).
 //
 // DuckShootWindow.vue создаёт контейнер и управляет жизненным циклом:
 // constructor(container) → start() на открытии окна, destroy() на закрытии/unmount.
 
-import { buildDocumentBackground, DOC_BG_FONT_FAMILY } from './docBackground'
+import { loadSprite, isSpriteReady } from './spriteLoader'
+import duckUrl from './sprites/duck/duck.png'
+import duckHitUrl from './sprites/duck/duck_hit.png'
+import duckBackUrl from './sprites/duck/duck_back.png'
+import bgSkyUrl from './sprites/duck/bg_sky.png'
+import grass1Url from './sprites/duck/grass1.png'
+import grass2Url from './sprites/duck/grass2.png'
+import cloud1Url from './sprites/duck/cloud1.png'
+import cloud2Url from './sprites/duck/cloud2.png'
+import treePineUrl from './sprites/duck/tree_pine.png'
+import crosshairUrl from './sprites/duck/crosshair.png'
+import bearUrl from './sprites/duck/bear.png'
+
+// Читаемый sans-шрифт HUD/текстов — единственное место, где задан (Правило №6);
+// весь текстовый рендер ниже читает отсюда, а не задаёт шрифт заново по месту.
+const GAME_FONT = "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
 
 type DuckState = 'flying' | 'hit' | 'escaping' | 'done'
 type GameState = 'round-intro' | 'playing' | 'round-result' | 'game-over'
@@ -30,7 +44,6 @@ export interface Duck {
   vrot: number
   vrotFall?: number
   size: number
-  glyphSeed: number
 }
 
 export interface Bear {
@@ -38,7 +51,6 @@ export interface Bear {
   y: number
   t: number
   duration: number
-  glyphSeed: number
 }
 
 export interface Effect {
@@ -55,7 +67,7 @@ interface Cloud {
   y: number
   scale: number
   speed: number
-  glyphSeed: number
+  variant: 0 | 1
 }
 
 interface LaunchPoint {
@@ -112,15 +124,6 @@ export class DuckShootGame {
   private stateTimer = 0
 
   private _launchPoints: LaunchPoint[] = []
-  private _docBg: HTMLCanvasElement | null = null
-
-  // Окно игры строго чёрно-белое "документное" — только эти два поля из набора
-  // цветов оригинала фактически читаются где-либо в отрисовке (colorInk/colorSoft/
-  // colorAccent/colorDoc в прототипе задавались, но нигде не читались — не портируем
-  // мёртвый код, Правило №6: раз значение не используется, второго места для него нет).
-  private colorBg = '#ffffff'
-  private colorLine = '#bbbbbb'
-  private glyphFontFamily = DOC_BG_FONT_FAMILY
 
   // Высота травяной полосы (экранные px) — единственное место, где задаётся константа;
   // _grassBandTop()/_drawGrassBand()/_duckBottomBound() читают отсюда (Правило №6).
@@ -233,9 +236,7 @@ export class DuckShootGame {
     this.canvas.style.width = `${this.width}px`
     this.canvas.style.height = `${this.height}px`
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
-    this._readColors()
     this._launchPoints = this._computeLaunchPoints()
-    this._buildDocumentBackground()
   }
 
   // Базовая линия земли — единственное место, где считается (Правило №6);
@@ -257,87 +258,11 @@ export class DuckShootGame {
   }
 
   private _computeLaunchPoints(): LaunchPoint[] {
-    // точки вылета уток вдоль травы: разные x, плюс точка из-за куста справа
+    // точки вылета уток вдоль травы: разные x, плюс точка из-за дерева справа
     const fracs = [0.10, 0.25, 0.40, 0.60, 0.75, 0.90]
     const points: LaunchPoint[] = fracs.map((f) => ({ x: f * this.width, fromBush: false }))
     points.push({ x: this.width - 60, fromBush: true })
     return points
-  }
-
-  // Окно игры — строго чёрно-белое "документное" оформление, цвета зашиты явно
-  // (не берутся из CSS-переменных CRM), поэтому тема CRM на вид игры не влияет.
-  private _readColors(): void {
-    this.colorBg = '#ffffff'
-    this.colorLine = '#bbbbbb'
-    this.glyphFontFamily = DOC_BG_FONT_FAMILY
-  }
-
-  // ---------- "документный" фон (рисуется один раз на resize в offscreen canvas) ----------
-  // Общий строитель — docBackground.ts (Правило №6: BrickGame использует тот же вид фона,
-  // второго источника для этого визуального эффекта не заводим).
-
-  private _buildDocumentBackground(): void {
-    if (this.width <= 0 || this.height <= 0) return
-    this._docBg = buildDocumentBackground(this.width, this.height, this.dpr)
-  }
-
-  // ---------- глифовый рендер персонажей ----------
-
-  // maskFn(localX, localY) -> 0 (нет), 1 (край, плотный глиф), 2 (внутри, буква документа)
-  // bbox в локальных координатах (до текущего ctx.scale/rotate — координаты
-  // те же, что использует maskFn, поэтому сетка жёстко привязана к фигуре и едет с ней).
-  private _drawGlyphShape(
-    ctx: CanvasRenderingContext2D,
-    maskFn: (x: number, y: number) => number,
-    bbox: Rect,
-    cell: number,
-    seed: number,
-  ): void {
-    const edgeChars = ['#', '@', '8', '0', 'Ж', 'Ш', 'М']
-    const interiorChars = 'ДОГОВОРСЧЁТАКТ2026НДС№'
-    const cols = Math.max(1, Math.ceil(bbox.w / cell))
-    const rows = Math.max(1, Math.ceil(bbox.h / cell))
-    // Плотная заливка: шрифт НЕМНОГО крупнее шага сетки (6.5px сетка / 7px шрифт),
-    // силуэт должен складываться из плотности глифов, а не из редких отдельных точек.
-    const fontPx = cell * (7 / 6.5)
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.font = `700 ${fontPx}px ${this.glyphFontFamily}`
-    for (let r = 0; r < rows; r++) {
-      for (let col = 0; col < cols; col++) {
-        const x = bbox.x + col * cell + cell / 2
-        const y = bbox.y + r * cell + cell / 2
-        const m = maskFn(x, y)
-        if (!m) continue
-        const idx = Math.abs((col * 31 + r * 17 + seed) % 997)
-        if (m === 1) {
-          ctx.fillStyle = '#111111'
-          ctx.fillText(edgeChars[idx % edgeChars.length] ?? '#', x, y)
-        } else {
-          ctx.fillStyle = '#666666'
-          ctx.fillText(interiorChars[idx % interiorChars.length] ?? '', x, y)
-        }
-      }
-    }
-    ctx.restore()
-  }
-
-  private _loadBest(): number {
-    try {
-      const v = localStorage.getItem('gala_duck_best')
-      return v ? parseInt(v, 10) || 0 : 0
-    } catch {
-      return 0
-    }
-  }
-
-  private _saveBest(): void {
-    try {
-      localStorage.setItem('gala_duck_best', String(this.best))
-    } catch {
-      /* ignore */
-    }
   }
 
   private _initClouds(): void {
@@ -348,7 +273,7 @@ export class DuckShootGame {
         y: 0.1 + Math.random() * 0.12,
         scale: 0.8 + Math.random() * 0.5,
         speed: 0.008 + Math.random() * 0.01,
-        glyphSeed: Math.floor(Math.random() * 997),
+        variant: Math.random() < 0.5 ? 0 : 1,
       })
     }
   }
@@ -431,7 +356,6 @@ export class DuckShootGame {
       rotation: 0,
       vrot: 0,
       size: 26,
-      glyphSeed: Math.floor(Math.random() * 997), // только для рендера — какие буквы попадут в сетку
     }
     this.ducks.push(duck)
     this._waveSpawnedCount++
@@ -453,11 +377,9 @@ export class DuckShootGame {
     // каждый клик — 1 потраченный патрон из общего пула волны, попал или не попал
     this.ammoPool--
 
-    // Хиттест ОБЯЗАН совпадать с тем, что видит игрок: сначала проверяем реальную
-    // маску силуэта (_duckMask) в координатах утки, с небольшим допуском по краю.
-    // d.size (радиус клика независимо от визуального размера) — только запасной
-    // вариант, если под кликом не нашлось маски ни у одной утки (единственное
-    // место, где считается хит — остальной код просто читает результат).
+    // Хиттест ОБЯЗАН совпадать с тем, что видит игрок: прямоугольник видимого спрайта
+    // утки (_duckHitTest) с небольшим допуском по краю — единственное место, где
+    // считается хит (остальной код просто читает результат).
     let target: Duck | null = null
     let bestDist = Infinity
     for (const d of this.ducks) {
@@ -467,17 +389,6 @@ export class DuckShootGame {
       if (dist < bestDist) {
         bestDist = dist
         target = d
-      }
-    }
-    if (!target) {
-      for (const d of this.ducks) {
-        if (d.state !== 'flying') continue
-        const dist = Math.hypot(d.x - x, d.y - y)
-        const radius = d.size * 1.6
-        if (dist < radius && dist < bestDist) {
-          bestDist = dist
-          target = d
-        }
       }
     }
 
@@ -511,13 +422,12 @@ export class DuckShootGame {
   // Единственное место, где утка улетевшая стоит жизнь — и таймаут полёта, и исчерпание патронов
   // приводят сюда через state='escaping'.
   private _resolveDuckEscaped(duck: Duck): void {
-    // медведь поднимается из-за куста/травы и хохочет над промахом — только при промахе
+    // медведь поднимается из-за травы и хохочет над промахом — только при промахе
     this.bears.push({
       x: Math.max(30, Math.min(this.width - 30, duck.x)),
       y: this.height - 26,
       t: 0,
       duration: 1.4,
-      glyphSeed: Math.floor(Math.random() * 997), // только для рендера
     })
     this.lives = Math.max(0, this.lives - 1)
     if (this.lives <= 0 && this.state === 'playing') {
@@ -546,6 +456,23 @@ export class DuckShootGame {
     this.stateTimer = 0
   }
 
+  private _loadBest(): number {
+    try {
+      const v = localStorage.getItem('gala_duck_best')
+      return v ? parseInt(v, 10) || 0 : 0
+    } catch {
+      return 0
+    }
+  }
+
+  private _saveBest(): void {
+    try {
+      localStorage.setItem('gala_duck_best', String(this.best))
+    } catch {
+      /* ignore */
+    }
+  }
+
   // ---------- update ----------
 
   private _loop = (now: number): void => {
@@ -566,7 +493,7 @@ export class DuckShootGame {
       c.x += c.speed * dt
       if (c.x > 1.2) c.x = -0.2
     }
-    this._grassPhase += dt // лёгкое покачивание травы
+    this._grassPhase += dt // лёгкое покачивание верхнего края травы
 
     if (this.state === 'round-intro') {
       this.stateTimer += dt
@@ -584,11 +511,10 @@ export class DuckShootGame {
     if (this.state !== 'playing') return
 
     // Границы отскока — по реальной видимой утке (половина визуальной ширины/высоты
-    // того же _duckVisualScale, что рисует _drawDuck), а не по фиксированным 20px:
-    // при baseBoxW=72/baseBoxH=49 утка больше не "высовывается" за край холста.
+    // того же _duckVisualScale, что рисует _drawDuck), а не по фиксированным 20px.
     const duckVisualScale = this._duckVisualScale()
-    const duckHalfW = (72 * duckVisualScale) / 2
-    const duckHalfH = (49 * duckVisualScale) / 2
+    const duckHalfW = (DUCK_NATURAL_W * duckVisualScale) / 2
+    const duckHalfH = (DUCK_NATURAL_H * duckVisualScale) / 2
     const duckTopBound = 60 + duckHalfH // не выше 60px под HUD (целиком видна)
 
     // update ducks
@@ -666,12 +592,7 @@ export class DuckShootGame {
     const h = this.height
 
     ctx.clearRect(0, 0, w, h)
-    if (this._docBg && this._docBg.width > 0) {
-      ctx.drawImage(this._docBg, 0, 0, w, h)
-    } else {
-      ctx.fillStyle = this.colorBg
-      ctx.fillRect(0, 0, w, h)
-    }
+    this._drawSky(ctx, w, h)
 
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
@@ -696,269 +617,148 @@ export class DuckShootGame {
     if (this.pointer.active) this._drawCrosshair(ctx, this.pointer.x, this.pointer.y)
   }
 
-  private _drawClouds(ctx: CanvasRenderingContext2D, _w: number, _h: number): void {
-    // одно-два ясных облака, контур из "~" в светло-сером — не "пыль"
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#bbbbbb'
+  // Небо — тайловый фон из пака Kenney (sprites/duck/bg_sky.png), пока не загрузился —
+  // сплошная заливка близкого по тону голубого (единственный fallback-цвет, Правило №6).
+  private _drawSky(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+    const img = loadSprite(bgSkyUrl)
+    if (isSpriteReady(img)) {
+      const tile = 180
+      for (let y = 0; y < h; y += tile) {
+        for (let x = 0; x < w; x += tile) {
+          ctx.drawImage(img, x, y, tile, tile)
+        }
+      }
+    } else {
+      ctx.fillStyle = '#5bb4e8'
+      ctx.fillRect(0, 0, w, h)
+    }
+  }
+
+  private _drawClouds(ctx: CanvasRenderingContext2D, w: number, h: number): void {
     for (const c of this.clouds) {
-      const cx = c.x * this.width
-      const cy = c.y * this.height
-      const s = c.scale * 16
-      ctx.font = `700 ${s * 0.8}px ${this.glyphFontFamily}`
-      ctx.fillText('~~~~', cx, cy)
-      ctx.font = `700 ${s * 0.7}px ${this.glyphFontFamily}`
-      ctx.fillText('~~~~~~', cx + s * 0.55, cy + s * 0.32)
-      ctx.fillText('~~~', cx - s * 0.7, cy + s * 0.3)
+      const img = loadSprite(c.variant === 0 ? cloud1Url : cloud2Url)
+      if (!isSpriteReady(img)) continue
+      const cx = c.x * w
+      const cy = c.y * h
+      const drawW = 70 * c.scale
+      const drawH = drawW * (img.naturalHeight / img.naturalWidth)
+      ctx.drawImage(img, cx - drawW / 2, cy - drawH / 2, drawW, drawH)
     }
-    ctx.restore()
   }
 
-  // Декор земли БЕЗ травы — рисуется до уток/медведя (трава рисуется позже, см.
-  // _drawGrassBand, чтобы она ложилась НАД медведем и пряталa его нижнюю часть).
+  // Декор земли БЕЗ травы — ёлки Kenney по краям, рисуется до уток/медведя (трава
+  // рисуется позже, см. _drawGrassBand, чтобы лечь НАД медведем и спрятать его низ).
   private _drawGroundScenery(ctx: CanvasRenderingContext2D, w: number, _h: number): void {
-    const groundY = this._groundY()
-
-    // лёгкий контур куста справа (не глиф — просто ориентир на карте)
-    ctx.strokeStyle = this.colorLine
-    ctx.lineWidth = 1.5
-    const tx = w - 60
-    const ty = groundY
-    ctx.beginPath()
-    ctx.arc(tx - 8, ty - 22, 16, 0, Math.PI * 2)
-    ctx.arc(tx + 6, ty - 28, 14, 0, Math.PI * 2)
-    ctx.arc(tx + 18, ty - 18, 15, 0, Math.PI * 2)
-    ctx.stroke()
+    const img = loadSprite(treePineUrl)
+    if (!isSpriteReady(img)) return
+    const grassTop = this._grassBandTop()
+    // Дерево наполовину в траве (ствол прячется под заливкой _drawGrassBand,
+    // рисуемой позже), крона — хорошо видна над травой, не крошечным кончиком.
+    const drawH = 170 * (this.width / 1000)
+    const drawW = drawH * (img.naturalWidth / img.naturalHeight)
+    ctx.drawImage(img, w - 40 - drawW, grassTop - drawH + 55, drawW, drawH)
+    const drawH2 = drawH * 0.7
+    const drawW2 = drawH2 * (img.naturalWidth / img.naturalHeight)
+    ctx.drawImage(img, 14, grassTop - drawH2 + 45, drawW2, drawH2)
   }
 
-  // Травяная полоса ~45-55px высотой (3 плотные "стопки" строк глифов с лёгким
-  // покачиванием) + камышовые кустики у точек вылета. Рисуется ПОСЛЕ уток и медведя
-  // (см. порядок в _render) — утки стартуют из травы, медведь прячет в ней нижнюю часть,
-  // когда поднимается "из-за" неё. Единственное место, где рисуется трава (Правило №6).
+  // Травяная полоса ~50px высотой: сплошная заливка + тайловый волнистый верхний
+  // край из grass1/grass2 (Kenney), тайлы чередуются и слегка покачиваются.
+  // Рисуется ПОСЛЕ уток и медведя (см. порядок в _render) — утки стартуют из травы,
+  // медведь прячет в ней нижнюю часть. Единственное место, где рисуется трава (Правило №6).
   private _drawGrassBand(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-    void h
-    const groundY = this._groundY()
-    const grassChars = ['|', '/', '\\', 'ı', 'і']
-    const bandRows = 3
-    const rowStep = this.GRASS_BAND_H / bandRows
-
+    const topY = this._grassBandTop()
     ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'alphabetic'
-    ctx.fillStyle = '#111111'
-    for (let row = 0; row < bandRows; row++) {
-      const rowY = groundY - row * rowStep
-      const glyphSize = 16 + row * 2 // блики выше — чуть крупнее, полоса читается объёмной
-      const xOffset = (row % 2) * 5
-      for (let x = 6 + xOffset, i = 0; x < w; x += 11, i++) {
-        const seed = (x * 13 + i * 7 + row * 101) % 997
-        const ch = grassChars[seed % grassChars.length] ?? '|'
-        const sway = Math.sin(this._grassPhase * 1.3 + x * 0.04 + row) * 2.2
-        ctx.font = `${glyphSize}px ${this.glyphFontFamily}`
-        ctx.fillText(ch, x + sway, rowY)
-      }
-    }
-    ctx.restore()
+    ctx.fillStyle = '#3fa24a'
+    ctx.fillRect(0, topY, w, h - topY)
 
-    // камышовые кустики у части точек вылета — выше травы
-    if (this._launchPoints && this._launchPoints.length) {
-      const reedSlots = [0, 1, 3, 5]
-      for (const idx of reedSlots) {
-        const lp = this._launchPoints[idx]
-        if (lp && !lp.fromBush) this._drawReedClump(ctx, lp.x, groundY)
-      }
-    }
-  }
-
-  // Камышовый кустик — веер из 3-5 стеблей, каждый стебель — столбик из нескольких
-  // мелких глифов "|"/"ı", расставленных вдоль стебля с шагом больше их высоты,
-  // поэтому глифы никогда не перекрывают друг друга (ни внутри стебля, ни между ними).
-  // Клумп ~80-100px высотой (3-4× выше прежних 20-28px) — используется и у точек
-  // вылета, и рядом с медведем (_drawBear) — единственное место, где считается форма.
-  private _drawReedClump(ctx: CanvasRenderingContext2D, x: number, groundY: number): void {
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#111111'
-    const stems = 4
-    const glyphPx = 14
-    for (let s = 0; s < stems; s++) {
-      const fanAngle = (s - (stems - 1) / 2) * 0.22 // раскрыв веера, рад
-      const stemLen = 85 + (s % 2) * 15 // 85-100px
-      const steps = Math.max(3, Math.round(stemLen / (glyphPx * 0.95)))
-      for (let k = 0; k < steps; k++) {
-        const t = k / Math.max(1, steps - 1)
-        const dx = Math.sin(fanAngle) * t * stemLen
-        const dy = -t * stemLen
-        ctx.font = `700 ${glyphPx}px ${this.glyphFontFamily}`
-        ctx.fillText(k === steps - 1 ? 'ı' : '|', x + dx, groundY + dy)
+    const img1 = loadSprite(grass1Url)
+    const img2 = loadSprite(grass2Url)
+    if (isSpriteReady(img1) && isSpriteReady(img2)) {
+      const sway = Math.sin(this._grassPhase * 1.1) * 2
+      const tileDrawH = h - topY + 14
+      const tileDrawW = tileDrawH * (img1.naturalWidth / img1.naturalHeight)
+      const step = tileDrawW * 0.82 // лёгкое перекрытие тайлов — чтобы не было щелей на стыках
+      let x = -tileDrawW * 0.3
+      let i = 0
+      while (x < w) {
+        const img = i % 2 === 0 ? img1 : img2
+        ctx.drawImage(img, x, topY - 10 + sway, tileDrawW, tileDrawH)
+        x += step
+        i++
       }
     }
     ctx.restore()
   }
 
   private _drawCrosshair(ctx: CanvasRenderingContext2D, x: number, y: number): void {
-    // перекрестие из символов: "─ ┼ ─" с короткими штрихами сверху/снизу
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 16px ${this.glyphFontFamily}`
-    ctx.fillText('─', x - 13, y)
-    ctx.fillText('┼', x, y)
-    ctx.fillText('─', x + 13, y)
-    ctx.font = `700 13px ${this.glyphFontFamily}`
-    ctx.fillText('│', x, y - 13)
-    ctx.fillText('│', x, y + 13)
-    ctx.restore()
-  }
-
-  // Маска силуэта утки — классический профиль: пухлое тело, голова-круг впереди-сверху,
-  // плоский клюв, вздёрнутый хвостик, крыло на спине. dir зеркалит всё по направлению
-  // полёта через "вперёд-пространство" bx = dir*x. Глифы НИКОГДА не поворачиваются сами:
-  // крыло анимируется тем, что для его эллипса поворачивается только тестовая точка —
-  // сама сетка (и символы в её ячейках) остаётся на месте, прямой и невращающейся.
-  private _duckMask(x: number, y: number, dir: number, wingAngle: number): number {
-    const bx = dir * x // "вперёд" всегда положительное bx, не зависит от направления полёта
-
-    // голова — круг над и чуть впереди тела
-    const headCx = 25, headCy = -15, headR = 10
-    const headD = ((bx - headCx) * (bx - headCx) + (y - headCy) * (y - headCy)) / (headR * headR)
-    if (headD <= 1) return headD > 0.72 ? 1 : 2
-
-    // клюв — плоский прямоугольник, ширина = 0.35 × ширины головы
-    const beakW = headR * 2 * 0.35
-    const beakX0 = headCx + headR * 0.25
-    if (bx >= beakX0 && bx <= beakX0 + 7 && Math.abs(y - headCy) <= beakW / 2) return 1
-
-    // хвост — маленький вздёрнутый кончик сзади
-    const tailBaseX = -20, tailTipX = -33
-    if (bx <= tailBaseX && bx >= tailTipX) {
-      const t = (tailBaseX - bx) / (tailBaseX - tailTipX)
-      const halfW = 4 * (1 - t)
-      const tailY = -2 - t * 5 // кончик приподнят вверх
-      if (Math.abs(y - tailY) <= halfW) return 1
+    const img = loadSprite(crosshairUrl)
+    const size = 34
+    if (isSpriteReady(img)) {
+      ctx.drawImage(img, x - size / 2, y - size / 2, size, size)
+      return
     }
-
-    // крыло — эллипс на спине, хлопает ±35°: вращается ТОЛЬКО точка (x,y) вокруг центра
-    // крыла перед проверкой, глиф в этой ячейке сетки как рисовался прямо, так и остаётся
-    const pivotX = -6, pivotY = -2
-    const ca = Math.cos(-wingAngle), sa = Math.sin(-wingAngle)
-    const rx0 = bx - pivotX, ry0 = y - pivotY
-    const wx = rx0 * ca - ry0 * sa, wy = rx0 * sa + ry0 * ca
-    const wingD = (wx * wx) / (16 * 16) + (wy * wy) / (9 * 9)
-    if (wingD <= 1) return wingD > 0.72 ? 1 : 2
-
-    // тело — пухлый эллипс
-    const bodyCx = -2, bodyCy = 6, bodyRx = 25, bodyRy = 16
-    const bodyD = ((bx - bodyCx) * (bx - bodyCx)) / (bodyRx * bodyRx) + ((y - bodyCy) * (y - bodyCy)) / (bodyRy * bodyRy)
-    if (bodyD <= 1) return bodyD > 0.8 ? 1 : 2
-
-    return 0
+    ctx.save()
+    ctx.strokeStyle = '#ff3b30'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(x - 10, y); ctx.lineTo(x + 10, y)
+    ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10)
+    ctx.stroke()
+    ctx.restore()
   }
 
   // Визуальный масштаб утки — ЕДИНСТВЕННОЕ место, где он считается (Правило №6):
   // _drawDuck (отрисовка), _duckHitTest (хиттест клика) и _update (границы отскока
   // от краёв экрана) читают это значение, а не пересчитывают каждый сам.
-  // ~85×58 px на холсте шириной 1000px (≈ два прежних размера утиной головы,
-  // было 150px — уменьшено по просьбе владельца), пропорционально на любой ширине.
+  // ~85px по ширине на холсте шириной 1000px, пропорционально на любой ширине.
   private _duckVisualScale(): number {
-    const baseBoxW = 72 // ширина маски в локальных координатах при scale=1
     const targetW = 85 * (this.width / 1000)
-    return Math.max(0.35, targetW / baseBoxW)
+    return Math.max(0.35, targetW / DUCK_NATURAL_W)
   }
 
-  // Хиттест клика по утке — в тех же локальных координатах, что рисует _drawDuck:
-  // снимаем translate(d.x,d.y) и scale(visualScale), зеркалим по dir внутри _duckMask.
-  // Плюс небольшой допуск (~8 экранных px) по краю силуэта — попадание "почти впритык"
-  // засчитывается, игроку не нужно попадать пиксель-в-пиксель в самый край.
+  // Хиттест клика по утке — прямоугольник видимого спрайта (DUCK_NATURAL_W/H из
+  // реальных пикселей PNG, без прозрачных полей по краям — см. отчёт проверки bbox)
+  // с небольшим допуском (инсет 0.84 вместо строгого края), чтобы не требовать
+  // попадания пиксель-в-пиксель в самый угол силуэта.
   private _duckHitTest(d: Duck, clickX: number, clickY: number): boolean {
     const visualScale = this._duckVisualScale()
-    const dir = d.vx < 0 ? -1 : 1
-    const wingAngle = Math.sin(d.wingPhase) * 0.61
-    const localX = (clickX - d.x) / visualScale
-    const localY = (clickY - d.y) / visualScale
-    if (this._duckMask(localX, localY, dir, wingAngle) > 0) return true
-
-    // допуск по краю тела (основной, самой крупной части силуэта)
-    const bx = dir * localX
-    const bodyCx = -2, bodyCy = 6, bodyRx = 25, bodyRy = 16
-    const bodyD = ((bx - bodyCx) * (bx - bodyCx)) / (bodyRx * bodyRx) + ((localY - bodyCy) * (localY - bodyCy)) / (bodyRy * bodyRy)
-    const toleranceLocal = 8 / visualScale // 8 экранных px → локальные единицы
-    const avgR = (bodyRx + bodyRy) / 2
-    const normTolerance = toleranceLocal / avgR
-    return bodyD <= (1 + normTolerance) * (1 + normTolerance)
+    const halfW = (DUCK_NATURAL_W * visualScale) / 2 * 0.84
+    const halfH = (DUCK_NATURAL_H * visualScale) / 2 * 0.84
+    return Math.abs(clickX - d.x) <= halfW && Math.abs(clickY - d.y) <= halfH
   }
 
   private _drawDuck(ctx: CanvasRenderingContext2D, d: Duck): void {
     ctx.save()
     ctx.translate(d.x, d.y)
-    // Утка вращается ТОЛЬКО целиком, одним блоком, и только при падении после попадания —
-    // отдельные глифы или части силуэта (крыло) сами по себе никогда не поворачиваются.
-    if (d.state === 'hit') ctx.rotate(d.rotation)
+    if (d.state === 'hit') {
+      // Утка вращается ТОЛЬКО целиком, одним блоком, и только при падении после попадания.
+      ctx.rotate(d.rotation)
+    } else if (d.state === 'flying') {
+      // Нет кадров взмаха крыльев в паке — лёгкое покачивание корпуса вместо анимации крыла.
+      ctx.rotate(Math.sin(d.wingPhase) * 0.10)
+    }
 
     const visualScale = this._duckVisualScale()
-    ctx.scale(visualScale, visualScale)
     const dir = d.vx < 0 ? -1 : 1
-    const seed = d.glyphSeed || 0
-    // Сетка глифов в экранных px: cell*visualScale — сторона ячейки на экране, НЕ зависит
-    // от visualScale (делится и умножается). Утка уменьшена (см. _duckVisualScale), поэтому
-    // ячейка пропорционально мельче (было 6.5px), но не ниже ~4.5px — иначе силуэт не читается.
-    const cellPx = 4.5
-    const cell = cellPx / visualScale
-    const wingAngle = d.state === 'hit' ? -0.5 : Math.sin(d.wingPhase) * 0.61 // ±35° ≈ 0.61 рад
+    ctx.scale(visualScale * dir, visualScale)
 
-    // тело + голова + клюв + хвост + крыло — одна сетка, один проход, никаких вращений сетки
-    this._drawGlyphShape(ctx, (x, y) => this._duckMask(x, y, dir, wingAngle), { x: -36, y: -27, w: 72, h: 49 }, cell, seed)
-
-    // глаз — один фиксированный символ поверх сетки, всегда прямой: "•" в полёте, "x" при попадании
-    ctx.save()
-    ctx.font = `700 11px ${this.glyphFontFamily}`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#111111'
-    ctx.fillText(d.state === 'hit' ? 'x' : '•', dir * 25, -15)
+    const url = d.state === 'escaping' ? duckBackUrl : d.state === 'hit' ? duckHitUrl : duckUrl
+    const img = loadSprite(url)
+    if (isSpriteReady(img)) {
+      ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2)
+    } else {
+      ctx.fillStyle = 'rgba(214, 184, 96, 0.55)'
+      ctx.beginPath()
+      ctx.ellipse(0, 0, DUCK_NATURAL_W / 2.6, DUCK_NATURAL_H / 2.6, 0, 0, Math.PI * 2)
+      ctx.fill()
+    }
     ctx.restore()
-
-    ctx.restore()
-  }
-
-  // Расстояние до скруглённого прямоугольника (0 на границе, <0 внутри, >0 снаружи) —
-  // стандартная SDF-формула для прямоугольника hw×hh с радиусом скругления углов r.
-  private _roundedRectDist(x: number, y: number, hw: number, hh: number, r: number): number {
-    const qx = Math.abs(x) - (hw - r)
-    const qy = Math.abs(y) - (hh - r)
-    return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) - r
-  }
-
-  // Маска силуэта медведя: голова-круг + 2 уха-круга НАД телом, тело — скруглённый
-  // прямоугольник. Между головой и телом — нарочно узкая "шея", чтобы круглая голова
-  // читалась явно шире шеи, а не сливалась в единый прямоугольник.
-  private _bearMask(x: number, y: number): number {
-    // уши — два круга над головой
-    const earL = ((x + 13) * (x + 13) + (y + 34) * (y + 34)) / (6 * 6)
-    if (earL <= 1) return earL > 0.55 ? 1 : 2
-    const earR = ((x - 13) * (x - 13) + (y + 34) * (y + 34)) / (6 * 6)
-    if (earR <= 1) return earR > 0.55 ? 1 : 2
-
-    // узкая шея — соединяет круглую голову со скруглённым телом, специально уже обоих
-    if (y > -14 && y < -7 && Math.abs(x) <= 6) return 2
-
-    // голова — круг
-    const headD = (x * x + (y + 22) * (y + 22)) / (13 * 13)
-    if (headD <= 1) return headD > 0.72 ? 1 : 2
-
-    // тело — скруглённый прямоугольник
-    const bodyDist = this._roundedRectDist(x, y - 10, 16, 18, 8)
-    if (bodyDist <= 0) return bodyDist > -2.4 ? 1 : 2
-
-    return 0
   }
 
   private _drawBear(ctx: CanvasRenderingContext2D, bear: Bear): void {
-    // Поднимается из-за камышей только при промахе, хохочет "ХО-ХО-ХО!", трясясь
-    // от смеха, и опускается обратно. Тело целиком собрано из букв/цифр документа.
+    // Поднимается из травы только при промахе, хохочет "ХО-ХО-ХО!", трясясь
+    // от смеха, и опускается обратно.
     const prog = Math.min(1, bear.t / bear.duration)
     const popUp = Math.min(1, bear.t / 0.25) // поднимается из травы
     const sinkFrom = 0.7
@@ -966,85 +766,65 @@ export class DuckShootGame {
     const riseOffset = (1 - popUp) * 30 + sinkProg * 34
     const shakeAmount = Math.min(1, bear.t / 0.3) * (1 - sinkProg)
     const shake = Math.sin(bear.t * 24) * 2.4 * shakeAmount
-    const seed = bear.glyphSeed || 0
 
     ctx.save()
     ctx.translate(bear.x + shake, bear.y + riseOffset)
 
-    // камыши, из-за которых поднимается медведь — в мировом масштабе, до увеличения медведя
-    this._drawReedClump(ctx, -22, 16)
-    this._drawReedClump(ctx, 22, 16)
+    const img = loadSprite(bearUrl)
+    const targetH = 130 * (this.width / 1000)
+    if (isSpriteReady(img)) {
+      const scale = targetH / img.naturalHeight
+      const dw = img.naturalWidth * scale
+      const dh = img.naturalHeight * scale
+      // низ картинки у bear.y (после translate) — медведь "стоит" в траве, трава рисуется поверх
+      ctx.drawImage(img, -dw / 2, -dh, dw, dh)
+    } else {
+      ctx.fillStyle = 'rgba(150, 110, 70, 0.5)'
+      ctx.beginPath()
+      ctx.ellipse(0, -targetH / 2, targetH * 0.42, targetH * 0.5, 0, 0, Math.PI * 2)
+      ctx.fill()
+    }
 
-    // Медведь ~260px высотой на холсте шириной 1000px, пропорционально на любой ширине
-    // (та же логика масштаба, что у утки — хитбоксов/таймингов это не касается).
-    const baseBoxH = 72 // высота маски ниже в локальных координатах при scale=1 (ушки..низ тела)
-    const targetH = 260 * (this.width / 1000)
-    const visualScale = Math.max(0.6, targetH / baseBoxH)
-    ctx.scale(visualScale, visualScale)
-    const cellPx = 6.5 // та же плотная сетка, что у утки
-    const cell = cellPx / visualScale
-
-    // уши/голова/шея/тело — одна глифовая сетка, глифы не вращаются
-    this._drawGlyphShape(ctx, (x, y) => this._bearMask(x, y), { x: -20, y: -42, w: 40, h: 72 }, cell, seed)
-
-    // нос — точка, крупнее
+    // речевое облако со смехом — фиксированный экранный размер над головой медведя
     ctx.save()
-    ctx.font = `700 11px ${this.glyphFontFamily}`
+    ctx.font = `800 15px ${GAME_FONT}`
     ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#111111'
-    ctx.fillText('•', 0, -20)
-
-    // глаза, прищуренные от смеха — крупные "^ ^"
-    ctx.font = `700 14px ${this.glyphFontFamily}`
-    ctx.fillText('^', -6, -26)
-    ctx.fillText('^', 6, -26)
-
-    // широко открытый смеющийся рот — крупное "О"
-    ctx.font = `700 14px ${this.glyphFontFamily}`
-    ctx.fillText('О', 0, -15)
-    ctx.restore()
-
-    // речевое облако со смехом — рисуется ВНУТРИ того же масштаба/переноса, что и сам
-    // медведь (не отдельным save с фиксированным офсетом), иначе на крупном медведе
-    // текст оказывается поверх мордочки вместо места над головой.
-    ctx.save()
-    // фиксированный экранный размер текста: делим на visualScale, чтобы при любом
-    // масштабе медведя облако читалось как обычная 13px-подпись, а не разрасталось вместе с ним
-    ctx.font = `700 ${13 / visualScale}px ${this.glyphFontFamily}`
-    ctx.fillStyle = '#111111'
-    ctx.textAlign = 'center'
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = 4
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+    ctx.fillStyle = '#ffffff'
     ctx.globalAlpha = Math.min(1, (bear.duration - bear.t) / 0.4 + 0.2)
-    ctx.fillText('ХО-ХО-ХО!', 0, -50) // чуть выше макушки головы (bbox начинается с y=-42)
+    ctx.strokeText('ХО-ХО-ХО!', 0, -targetH - 8)
+    ctx.fillText('ХО-ХО-ХО!', 0, -targetH - 8)
     ctx.restore()
 
-    ctx.restore() // снимаем translate(bear.x+shake, bear.y+riseOffset) + scale(visualScale)
+    ctx.restore()
   }
 
   private _drawEffect(ctx: CanvasRenderingContext2D, fx: Effect): void {
     const prog = fx.t / fx.duration
     if (fx.type === 'ring') {
-      // расширяющееся кольцо выстрела — из точек "·"
       ctx.save()
       ctx.globalAlpha = 1 - prog
-      ctx.fillStyle = '#111111'
-      ctx.font = `700 11px ${this.glyphFontFamily}`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      const r = 4 + prog * 22
-      const n = 10
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2
-        ctx.fillText('·', fx.x + Math.cos(a) * r, fx.y + Math.sin(a) * r)
-      }
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(fx.x, fx.y, 6 + prog * 22, 0, Math.PI * 2)
+      ctx.stroke()
       ctx.restore()
     } else if (fx.type === 'float') {
       ctx.save()
       ctx.globalAlpha = 1 - prog
-      ctx.fillStyle = '#111111'
-      ctx.font = `700 14px ${this.glyphFontFamily}`
+      ctx.font = `800 16px ${GAME_FONT}`
       ctx.textAlign = 'center'
-      ctx.fillText(fx.text || '', fx.x, fx.y - prog * 30)
+      ctx.lineJoin = 'round'
+      ctx.lineWidth = 4
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)'
+      ctx.fillStyle = '#ffffff'
+      const text = fx.text || ''
+      const y = fx.y - prog * 30
+      ctx.strokeText(text, fx.x, y)
+      ctx.fillText(text, fx.x, y)
       ctx.restore()
     }
   }
@@ -1052,64 +832,111 @@ export class DuckShootGame {
   private _drawHud(ctx: CanvasRenderingContext2D, w: number, h: number): void {
     void h
     ctx.save()
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 13px ${this.glyphFontFamily}`
-    ctx.textAlign = 'left'
-    ctx.fillText(`УРОВЕНЬ ${this.level}   ОЧКИ ${this.score}`, 14, 22)
-    ctx.textAlign = 'right'
-    ctx.fillText(`РЕКОРД ${this.best}`, w - 14, 22)
-    ctx.restore()
+    ctx.font = `800 14px ${GAME_FONT}`
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = 3.5
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)'
+    ctx.fillStyle = '#ffffff'
 
-    // жизни — подписаны явно: "ЖИЗНИ ♥ ♥ ♡"
-    ctx.save()
-    ctx.font = `700 13px ${this.glyphFontFamily}`
     ctx.textAlign = 'left'
-    ctx.fillStyle = '#111111'
+    const line1 = `УРОВЕНЬ ${this.level}   ОЧКИ ${this.score}`
+    ctx.strokeText(line1, 14, 22)
+    ctx.fillText(line1, 14, 22)
+
+    ctx.textAlign = 'right'
+    const line2 = `РЕКОРД ${this.best}`
+    ctx.strokeText(line2, w - 14, 22)
+    ctx.fillText(line2, w - 14, 22)
+
+    // жизни — подпись белая, сами сердечки красные ("ЖИЗНИ ♥ ♥ ♡")
+    ctx.textAlign = 'left'
+    const label = 'ЖИЗНИ '
+    ctx.strokeText(label, 14, 42)
+    ctx.fillText(label, 14, 42)
     let hearts = ''
     for (let i = 0; i < 3; i++) hearts += (i < this.lives ? '♥' : '♡') + ' '
-    ctx.fillText(`ЖИЗНИ ${hearts.trim()}`, 14, 42)
-    ctx.restore()
+    const labelW = ctx.measureText(label).width
+    ctx.fillStyle = '#ff4d4d'
+    ctx.strokeText(hearts.trim(), 14 + labelW, 42)
+    ctx.fillText(hearts.trim(), 14 + labelW, 42)
 
-    // патроны — подписаны явно: "ПАТРОНЫ ▮▮▮" (общий пул волны, до 15 значков)
-    ctx.save()
-    ctx.font = `700 13px ${this.glyphFontFamily}`
-    ctx.textAlign = 'right'
-    ctx.fillStyle = '#111111'
+    // патроны — общий пул волны, до 15 значков "▮". Квадратные глифы обводкой
+    // (strokeText) выглядят пустыми изнутри — вместо обводки тень для контраста,
+    // строка собрана справа налево: сперва считаем общую ширину, затем рисуем
+    // подпись и квадраты раздельно слева направо от общего правого края.
     const show = Math.min(15, Math.max(0, this.ammoPool))
-    ctx.fillText(`ПАТРОНЫ ${'▮'.repeat(show)}`, w - 14, 42)
+    const squares = '▮'.repeat(show)
+    const ammoLabel = 'ПАТРОНЫ '
+    ctx.textAlign = 'left'
+    const totalW = ctx.measureText(ammoLabel + squares).width
+    const startX = w - 14 - totalW
+    ctx.fillStyle = '#ffffff'
+    ctx.strokeText(ammoLabel, startX, 42)
+    ctx.fillText(ammoLabel, startX, 42)
+    const labelW2 = ctx.measureText(ammoLabel).width
+    ctx.shadowColor = 'rgba(0,0,0,0.55)'
+    ctx.shadowBlur = 3
+    ctx.fillText(squares, startX + labelW2, 42)
+    ctx.shadowBlur = 0
     ctx.restore()
   }
 
   private _drawCenterText(ctx: CanvasRenderingContext2D, w: number, h: number, title: string, subtitle: string): void {
     ctx.save()
     ctx.textAlign = 'center'
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 30px ${this.glyphFontFamily}`
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)'
+    ctx.fillStyle = '#ffffff'
+    ctx.lineWidth = 6
+    ctx.font = `800 32px ${GAME_FONT}`
+    ctx.strokeText(title.toUpperCase(), w / 2, h / 2 - 8)
     ctx.fillText(title.toUpperCase(), w / 2, h / 2 - 8)
-    ctx.font = `13px ${this.glyphFontFamily}`
-    ctx.fillStyle = '#444444'
+    ctx.lineWidth = 4
+    ctx.font = `600 14px ${GAME_FONT}`
+    ctx.strokeText(subtitle, w / 2, h / 2 + 18)
+    ctx.fillStyle = '#f2f2f2'
     ctx.fillText(subtitle, w / 2, h / 2 + 18)
     ctx.restore()
   }
 
   private _drawGameOver(ctx: CanvasRenderingContext2D, w: number, h: number): void {
     ctx.save()
-    ctx.textAlign = 'center'
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 24px ${this.glyphFontFamily}`
-    ctx.fillText('ИГРА ОКОНЧЕНА', w / 2, h / 2 - 30)
-    ctx.font = `14px ${this.glyphFontFamily}`
-    ctx.fillText(`ОЧКИ ${this.score}   РЕКОРД ${this.best}`, w / 2, h / 2 - 4)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)'
+    ctx.fillRect(0, 0, w, h)
 
-    // "[ ЕЩЁ РАЗ ]" — тонкая чёрная рамка-кнопка
-    const btnW = 160, btnH = 36
+    ctx.textAlign = 'center'
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+    ctx.fillStyle = '#ffffff'
+    ctx.lineWidth = 5
+    ctx.font = `800 26px ${GAME_FONT}`
+    ctx.strokeText('ИГРА ОКОНЧЕНА', w / 2, h / 2 - 30)
+    ctx.fillText('ИГРА ОКОНЧЕНА', w / 2, h / 2 - 30)
+    ctx.lineWidth = 3.5
+    ctx.font = `600 15px ${GAME_FONT}`
+    const scoreLine = `ОЧКИ ${this.score}   РЕКОРД ${this.best}`
+    ctx.strokeText(scoreLine, w / 2, h / 2 - 4)
+    ctx.fillText(scoreLine, w / 2, h / 2 - 4)
+
+    // "ЕЩЁ РАЗ" — закруглённая кнопка со светлой заливкой
+    const btnW = 170, btnH = 40
     const bx = w / 2 - btnW / 2, by = h / 2 + 16
-    ctx.strokeStyle = '#111111'
-    ctx.lineWidth = 1
-    ctx.strokeRect(bx, by, btnW, btnH)
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 14px ${this.glyphFontFamily}`
-    ctx.fillText('[ ЕЩЁ РАЗ ]', w / 2, by + btnH / 2 + 5)
+    const r = 10
+    ctx.beginPath()
+    ctx.moveTo(bx + r, by)
+    ctx.arcTo(bx + btnW, by, bx + btnW, by + btnH, r)
+    ctx.arcTo(bx + btnW, by + btnH, bx, by + btnH, r)
+    ctx.arcTo(bx, by + btnH, bx, by, r)
+    ctx.arcTo(bx, by, bx + btnW, by, r)
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(255,255,255,0.92)'
+    ctx.fill()
+    ctx.lineWidth = 2
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)'
+    ctx.stroke()
+    ctx.fillStyle = '#1a1a1a'
+    ctx.font = `800 15px ${GAME_FONT}`
+    ctx.fillText('ЕЩЁ РАЗ', w / 2, by + btnH / 2 + 5)
     ctx.restore()
 
     this._gameOverBtnRect = { x: bx, y: by, w: btnW, h: btnH }
@@ -1119,3 +946,9 @@ export class DuckShootGame {
   // "идёт ли загрузка" из useLongWait.ts, а не из игры — этот геттер здесь
   // не нужен и не добавлен, чтобы не плодить второй источник того же флага).
 }
+
+// Натуральные размеры спрайта утки (duck.png/duck_hit.png/duck_back.png — все 99×95,
+// один набор пикселей без прозрачных полей по краям) — единственное место, где заданы
+// (Правило №6); _duckVisualScale/_duckHitTest/_update(границы отскока) читают отсюда.
+const DUCK_NATURAL_W = 99
+const DUCK_NATURAL_H = 95

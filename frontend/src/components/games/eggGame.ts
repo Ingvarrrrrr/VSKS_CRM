@@ -1,27 +1,31 @@
-// Своя игра "Лови яйца" — чёрно-белая "документная" механика в духе классических
-// карманных электронных игр (4 положения ловца, яйца едут по жёлобам ступенями),
-// без заимствования персонажей/названий у каких-либо конкретных игр.
-// Ссылка-референс для понимания механики (НЕ код, НЕ текст — только идея):
-// https://github.com/lil-zon/egg-catcher-rl (All rights reserved у автора, идеи
-// не защищены копирайтом) — реализация здесь написана с нуля, своя разметка,
-// свой рендер, свой персонаж (медведь в галстуке с корзиной, не волк).
+// Своя игра "Лови яйца" — ферма с медведем-ловцом в центре и 4 жёлобами
+// (2 слева, 2 справа), по которым катятся яйца от куриц (идея — своя, без
+// заимствования персонажей/названий у каких-либо конкретных игр).
 //
 // Персонаж стоит в центре и переключается между 4 позициями: TL (верх-лево),
 // BL (низ-лево), TR (верх-право), BR (низ-право). Слева одна курица наверху
-// кладёт яйца, которые едут по двум жёлобам ("╲"): короткому — в TL, и
-// длинному — дальше вниз, в BL. Справа симметрично курица и жёлоба "╱" в TR/BR.
-// Общий стиль/фон/шрифт — тот же модуль docBackground.ts, что у DuckShootGame
-// и BrickGame (Правило №6: один источник для "документного" фона).
+// кладёт яйца, которые едут по двум жёлобам: короткому — в TL, и длинному —
+// дальше вниз, в BL. Справа симметрично курица и жёлоба в TR/BR.
+//
+// Графика — цветные спрайты Kenney (CC0, лицензия в sprites/egg/License-*.txt,
+// см. также THIRD_PARTY_LICENSES.md): медведь и курица из "Animal Pack
+// Remastered", яйцо — рендер из "Food Kit". Жёлоба, корзина, фон фермы и
+// брызги от разбитого яйца — свой рисунок на canvas.
 //
 // EggGameWindow.vue (если будет) создаёт контейнер и управляет жизненным
 // циклом: constructor(container) → start() на открытии окна, destroy() на
 // закрытии/unmount — та же схема, что у DuckShootGame/BrickGame.
 
-import { buildDocumentBackground, DOC_BG_FONT_FAMILY } from './docBackground'
+import { loadSprite, isSpriteReady } from './spriteLoader'
+import bearUrl from './sprites/egg/bear.png'
+import chickenUrl from './sprites/egg/chicken.png'
+import eggUrl from './sprites/egg/egg.png'
 
 type ChuteId = 'TL' | 'BL' | 'TR' | 'BR'
 type GameState = 'intro' | 'playing' | 'game-over'
 type EggState = 'rolling' | 'broken'
+
+const HUD_FONT_FAMILY = '"Segoe UI", system-ui, -apple-system, Roboto, sans-serif'
 
 interface Point {
   x: number
@@ -42,7 +46,7 @@ interface Egg {
   tAccum: number
   state: EggState
   breakT: number
-  glyphSeed: number
+  spinSeed: number
 }
 
 interface FloatEffect {
@@ -102,11 +106,17 @@ export class EggGame {
   private effects: FloatEffect[] = []
 
   private chutes: Record<ChuteId, ChuteDef>
+  private center: Point = { x: 0, y: 0 }
 
   private pointer: Pointer = { x: -9999, y: -9999, active: false }
 
-  private glyphFontFamily = DOC_BG_FONT_FAMILY
-  private _docBg: HTMLCanvasElement | null = null
+  // Спрайты — общий загрузчик (Правило №6: один механизм на все игры), сам
+  // EggGame только читает isSpriteReady и рисует запасные фигуры, пока не готово.
+  private _bearImg = loadSprite(bearUrl)
+  private _chickenImg = loadSprite(chickenUrl)
+  private _eggImg = loadSprite(eggUrl)
+
+  private _bgCanvas: HTMLCanvasElement | null = null
 
   private _gameOverBtnRect: Rect | null = null
   private _wasRunning = false
@@ -264,8 +274,8 @@ export class EggGame {
     this.canvas.style.width = `${this.width}px`
     this.canvas.style.height = `${this.height}px`
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
-    this._docBg = buildDocumentBackground(this.width, this.height, this.dpr)
     this.chutes = this._computeChutes()
+    this._bgCanvas = this._buildFarmBackground(this.width, this.height, this.dpr)
   }
 
   // Геометрия 4 жёлобов — единственное место, где считается (Правило №6);
@@ -276,12 +286,19 @@ export class EggGame {
     const henL: Point = { x: w * 0.08, y: h * 0.16 }
     const henR: Point = { x: w * 0.92, y: h * 0.16 }
     const totalSteps = 9
-    return {
+    const chutes: Record<ChuteId, ChuteDef> = {
       TL: { hen: henL, catchPoint: { x: w * 0.40, y: h * 0.40 }, side: 'left', totalSteps },
       BL: { hen: henL, catchPoint: { x: w * 0.40, y: h * 0.64 }, side: 'left', totalSteps },
       TR: { hen: henR, catchPoint: { x: w * 0.60, y: h * 0.40 }, side: 'right', totalSteps },
       BR: { hen: henR, catchPoint: { x: w * 0.60, y: h * 0.64 }, side: 'right', totalSteps },
     }
+    // Ловец стоит ровно в центре между концами всех 4 жёлобов — симметрично
+    // по 2 слева/справа (требование владельца), единственное место расчёта.
+    this.center = {
+      x: (chutes.TL.catchPoint.x + chutes.TR.catchPoint.x) / 2,
+      y: (chutes.TL.catchPoint.y + chutes.BL.catchPoint.y) / 2,
+    }
+    return chutes
   }
 
   private _loadBest(): number {
@@ -347,7 +364,7 @@ export class EggGame {
       tAccum: 0,
       state: 'rolling',
       breakT: 0,
-      glyphSeed: Math.floor(Math.random() * 997),
+      spinSeed: Math.random() < 0.5 ? -1 : 1,
     })
   }
 
@@ -449,20 +466,75 @@ export class EggGame {
     }
   }
 
+  // Офскрин-фон фермы (небо + трава) — считается один раз на resize, как и
+  // у остальных игр окна ожидания, но свой (без заимствования docBackground,
+  // который для "документной" чёрно-белой механики, а здесь цветная ферма).
+  private _buildFarmBackground(width: number, height: number, dpr: number): HTMLCanvasElement {
+    const off = document.createElement('canvas')
+    const w = Math.max(1, width)
+    const h = Math.max(1, height)
+    off.width = Math.max(1, Math.round(w * dpr))
+    off.height = Math.max(1, Math.round(h * dpr))
+    const c = off.getContext('2d')
+    if (!c) return off
+    c.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    const horizon = h * 0.78
+    const sky = c.createLinearGradient(0, 0, 0, horizon)
+    sky.addColorStop(0, '#8fd3f4')
+    sky.addColorStop(1, '#d7f0ff')
+    c.fillStyle = sky
+    c.fillRect(0, 0, w, horizon)
+
+    // облака — мягкие овалы
+    c.fillStyle = 'rgba(255,255,255,0.85)'
+    const clouds: Array<[number, number, number]> = [
+      [w * 0.18, h * 0.12, 22], [w * 0.24, h * 0.12, 16],
+      [w * 0.78, h * 0.09, 18], [w * 0.84, h * 0.1, 13],
+    ]
+    for (const [cx, cy, r] of clouds) {
+      c.beginPath()
+      c.ellipse(cx, cy, r, r * 0.62, 0, 0, Math.PI * 2)
+      c.fill()
+    }
+
+    const grass = c.createLinearGradient(0, horizon, 0, h)
+    grass.addColorStop(0, '#8fd14f')
+    grass.addColorStop(1, '#6cb23a')
+    c.fillStyle = grass
+    c.fillRect(0, horizon, w, h - horizon)
+
+    // линия забора вдоль горизонта — простые деревянные столбики и жердь
+    c.strokeStyle = '#a9733f'
+    c.lineWidth = Math.max(2, h * 0.006)
+    c.beginPath()
+    c.moveTo(0, horizon + 6)
+    c.lineTo(w, horizon + 6)
+    c.stroke()
+    const postW = Math.max(3, w * 0.01)
+    const postH = h * 0.05
+    for (let x = w * 0.04; x < w; x += w * 0.11) {
+      c.fillStyle = '#8a5a30'
+      c.fillRect(x - postW / 2, horizon - postH * 0.3, postW, postH)
+    }
+
+    return off
+  }
+
   private _render(): void {
     const ctx = this.ctx
     const w = this.width
     const h = this.height
 
     ctx.clearRect(0, 0, w, h)
-    if (this._docBg && this._docBg.width > 0) {
-      ctx.drawImage(this._docBg, 0, 0, w, h)
+    if (this._bgCanvas && this._bgCanvas.width > 0) {
+      ctx.drawImage(this._bgCanvas, 0, 0, w, h)
     } else {
-      ctx.fillStyle = '#ffffff'
+      ctx.fillStyle = '#d7f0ff'
       ctx.fillRect(0, 0, w, h)
     }
 
-    this._drawChuteLines(ctx)
+    this._drawChutes(ctx)
     this._drawHens(ctx)
     this._drawEggs(ctx)
     this._drawCharacter(ctx)
@@ -473,139 +545,319 @@ export class EggGame {
     if (this.state === 'game-over') this._drawGameOver(ctx, w, h)
   }
 
-  private _drawChuteLines(ctx: CanvasRenderingContext2D): void {
+  // Деревянные жёлоба — скруглённые доски от курицы к точке ловли, с
+  // бортиками и светлой канавкой посередине, куда "вложено" катящееся яйцо.
+  private _drawChutes(ctx: CanvasRenderingContext2D): void {
     ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 14px ${this.glyphFontFamily}`
     for (const id of ALL_CHUTES) {
       const def = this.chutes[id]
-      const glyph = def.side === 'left' ? '╲' : '╱'
       const dx = def.catchPoint.x - def.hen.x
       const dy = def.catchPoint.y - def.hen.y
-      const dist = Math.hypot(dx, dy)
-      const n = Math.max(2, Math.round(dist / 16))
-      for (let i = 1; i < n; i++) {
-        const t = i / n
-        ctx.fillText(glyph, def.hen.x + dx * t, def.hen.y + dy * t)
-      }
+      const len = Math.hypot(dx, dy)
+      const angle = Math.atan2(dy, dx)
+      const plankW = Math.max(14, this.width * 0.045)
+
+      ctx.save()
+      ctx.translate(def.hen.x, def.hen.y)
+      ctx.rotate(angle)
+
+      // доска
+      ctx.fillStyle = '#b5793f'
+      this._roundRectPath(ctx, 0, -plankW / 2, len, plankW, plankW * 0.3)
+      ctx.fill()
+      ctx.strokeStyle = '#8a5a30'
+      ctx.lineWidth = 2
+      ctx.stroke()
+
+      // канавка посередине
+      ctx.fillStyle = '#d9a86a'
+      this._roundRectPath(ctx, len * 0.03, -plankW * 0.16, len * 0.94, plankW * 0.32, plankW * 0.14)
+      ctx.fill()
+
+      ctx.restore()
     }
     ctx.restore()
   }
 
-  // Курицы на верхних концах жёлобов — маленькие птичьи силуэты из глифов.
+  private _roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+    const rr = Math.min(r, w / 2, h / 2)
+    ctx.beginPath()
+    ctx.moveTo(x + rr, y)
+    ctx.arcTo(x + w, y, x + w, y + h, rr)
+    ctx.arcTo(x + w, y + h, x, y + h, rr)
+    ctx.arcTo(x, y + h, x, y, rr)
+    ctx.arcTo(x, y, x + w, y, rr)
+    ctx.closePath()
+  }
+
+  // Курицы на верхних концах жёлобов — круглый вариант спрайта (Round) сам по
+  // себе без фоновой "карточки" (кадрирован в круг, не квадрат), подложка не нужна.
   private _drawHens(ctx: CanvasRenderingContext2D): void {
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#111111'
+    const size = Math.max(34, this.width * 0.07)
     const hens = [this.chutes.TL.hen, this.chutes.TR.hen]
     for (const p of hens) {
-      ctx.font = `700 11px ${this.glyphFontFamily}`
-      ctx.fillText('v', p.x, p.y - 10) // гребень
-      ctx.font = `700 16px ${this.glyphFontFamily}`
-      ctx.fillText('(0)', p.x, p.y)
+      this._drawSprite(ctx, this._chickenImg, p.x, p.y, size, () => {
+        ctx.save()
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        ctx.ellipse(p.x, p.y, size * 0.4, size * 0.4, 0, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillStyle = '#e03a2f'
+        ctx.beginPath()
+        ctx.ellipse(p.x, p.y - size * 0.3, size * 0.16, size * 0.2, 0, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+      })
     }
-    ctx.restore()
   }
 
   private _drawEggs(ctx: CanvasRenderingContext2D): void {
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
+    const size = Math.max(34, this.width * 0.045)
     for (const egg of this.eggs) {
       if (egg.state === 'rolling') {
         const p = this._eggPos(egg)
-        ctx.fillStyle = '#111111'
-        ctx.font = `700 15px ${this.glyphFontFamily}`
-        ctx.fillText(egg.glyphSeed % 2 === 0 ? '0' : 'О', p.x, p.y)
-      } else {
-        const p = this.chutes[egg.chute].catchPoint
-        const prog = egg.breakT / EGG_BREAK_DURATION
+        const rot = egg.spinSeed * egg.step * 0.9
         ctx.save()
-        ctx.globalAlpha = Math.max(0, 1 - prog)
-        ctx.fillStyle = '#111111'
-        ctx.font = `700 18px ${this.glyphFontFamily}`
-        ctx.fillText('※', p.x, p.y)
+        ctx.translate(p.x, p.y)
+        ctx.rotate(rot)
+        if (isSpriteReady(this._eggImg)) {
+          ctx.drawImage(this._eggImg, -size / 2, -size / 2, size, size)
+        } else {
+          ctx.fillStyle = '#fdf6e3'
+          ctx.strokeStyle = '#d8c48a'
+          ctx.lineWidth = 1.5
+          ctx.beginPath()
+          ctx.ellipse(0, 0, size * 0.38, size * 0.48, 0, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.stroke()
+        }
         ctx.restore()
+      } else {
+        this._drawSplat(ctx, egg)
       }
     }
+  }
+
+  // Брызги разбитого яйца — растекающееся жёлто-белое пятно, затухает.
+  private _drawSplat(ctx: CanvasRenderingContext2D, egg: Egg): void {
+    const p = this.chutes[egg.chute].catchPoint
+    const prog = egg.breakT / EGG_BREAK_DURATION
+    const spread = 14 + prog * 20
+    ctx.save()
+    ctx.globalAlpha = Math.max(0, 1 - prog)
+    ctx.fillStyle = '#fffaf0'
+    ctx.beginPath()
+    ctx.ellipse(p.x, p.y + 6, spread, spread * 0.42, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#f2c94c'
+    ctx.beginPath()
+    ctx.ellipse(p.x, p.y + 6, spread * 0.4, spread * 0.22, 0, 0, Math.PI * 2)
+    ctx.fill()
     ctx.restore()
   }
 
-  // Медведь в офисном галстуке с корзиной — собран из моноширинных глифов,
-  // стоит в центре на текущей позиции (this.slot) и "перепрыгивает" между
-  // 4 точками без промежуточной анимации — как в классических карманных играх.
+  // Медведь стоит в центре (симметрично между всеми 4 жёлобами) на круглой
+  // голове-спрайте (Round, без "карточки") и нарисованном на canvas теле,
+  // слегка наклоняется в сторону текущей позиции; рука тянется к корзине,
+  // которая едет точно к концу активного жёлоба — туда, где должно поймать яйцо.
   private _drawCharacter(ctx: CanvasRenderingContext2D): void {
-    const p = this.chutes[this.slot].catchPoint
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#111111'
+    const target = this.chutes[this.slot].catchPoint
+    const lean = 0.22
+    const bx = this.center.x + (target.x - this.center.x) * lean
+    const by = this.center.y + (target.y - this.center.y) * lean
+    const bearSize = Math.max(46, this.width * 0.1)
+    const tiltX = target.x < this.center.x ? -1 : 1
+    const headY = by - bearSize * 0.18
+    const bodyY = by + bearSize * 0.42
 
-    ctx.font = `700 13px ${this.glyphFontFamily}`
-    ctx.fillText('◠   ◠', p.x, p.y - 22) // уши
-    ctx.font = `700 15px ${this.glyphFontFamily}`
-    ctx.fillText('( • • )', p.x, p.y - 10) // голова/глаза
-    ctx.font = `700 11px ${this.glyphFontFamily}`
-    ctx.fillText('▼', p.x, p.y - 1) // узел галстука
-    ctx.font = `700 14px ${this.glyphFontFamily}`
-    ctx.fillText('[ § § ]', p.x, p.y + 11) // туловище/лапы держат корзину
-    ctx.font = `700 17px ${this.glyphFontFamily}`
-    ctx.fillText('\\_/', p.x, p.y + 25) // корзина
+    ctx.save()
+    ctx.translate(bx, by)
+    ctx.rotate(tiltX * 0.05)
+    ctx.translate(-bx, -by)
+
+    // рука — от тела к корзине у конца жёлоба
+    ctx.strokeStyle = '#9a6a3a'
+    ctx.lineWidth = Math.max(8, bearSize * 0.16)
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(bx + tiltX * bearSize * 0.3, bodyY - bearSize * 0.1)
+    ctx.lineTo(target.x, target.y)
+    ctx.stroke()
+
+    // тело — скруглённый силуэт под головой
+    ctx.fillStyle = '#a9733f'
+    this._roundRectPath(ctx, bx - bearSize * 0.38, bodyY - bearSize * 0.3, bearSize * 0.76, bearSize * 0.68, bearSize * 0.3)
+    ctx.fill()
+    ctx.strokeStyle = '#8a5a30'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    // светлое пузико
+    ctx.fillStyle = '#d9b27a'
+    ctx.beginPath()
+    ctx.ellipse(bx, bodyY + bearSize * 0.06, bearSize * 0.2, bearSize * 0.24, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    // голова — спрайт Kenney поверх тела
+    this._drawSprite(ctx, this._bearImg, bx, headY, bearSize, () => {
+      ctx.save()
+      ctx.fillStyle = '#9a6a3a'
+      ctx.beginPath()
+      ctx.ellipse(bx, headY, bearSize * 0.4, bearSize * 0.42, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#efe3d3'
+      ctx.beginPath()
+      ctx.ellipse(bx - bearSize * 0.14, headY - bearSize * 0.02, bearSize * 0.08, bearSize * 0.1, 0, 0, Math.PI * 2)
+      ctx.ellipse(bx + bearSize * 0.14, headY - bearSize * 0.02, bearSize * 0.08, bearSize * 0.1, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    })
+    ctx.restore()
+
+    // корзина — прямо в точке ловли, на конце активного жёлоба
+    this._drawBasket(ctx, target.x, target.y)
+  }
+
+  private _drawBasket(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    const w = Math.max(28, this.width * 0.062)
+    const h = w * 0.62
+    ctx.save()
+    ctx.translate(x, y)
+
+    ctx.fillStyle = '#c98a44'
+    this._roundRectPath(ctx, -w / 2, -h / 2, w, h, h * 0.22)
+    ctx.fill()
+    ctx.strokeStyle = '#8a5a30'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+
+    // плетение
+    ctx.strokeStyle = '#a9733f'
+    ctx.lineWidth = 1
+    for (let i = 1; i < 4; i++) {
+      const lx = -w / 2 + (w / 4) * i
+      ctx.beginPath()
+      ctx.moveTo(lx, -h / 2 + 2)
+      ctx.lineTo(lx, h / 2 - 2)
+      ctx.stroke()
+    }
+
+    // ручка
+    ctx.strokeStyle = '#8a5a30'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(0, -h / 2, w * 0.32, Math.PI, 0)
+    ctx.stroke()
 
     ctx.restore()
+  }
+
+  // Рисует спрайт по центру в квадрат side×side (вписывая с сохранением
+  // пропорций); пока спрайт не загрузился — вызывает fallback-рисование фигур.
+  private _drawSprite(
+    ctx: CanvasRenderingContext2D,
+    img: HTMLImageElement,
+    cx: number,
+    cy: number,
+    side: number,
+    fallback: () => void,
+  ): void {
+    if (!isSpriteReady(img)) {
+      fallback()
+      return
+    }
+    const scale = side / Math.max(img.naturalWidth, img.naturalHeight)
+    const dw = img.naturalWidth * scale
+    const dh = img.naturalHeight * scale
+    ctx.drawImage(img, cx - dw / 2, cy - dh / 2, dw, dh)
   }
 
   private _drawEffect(ctx: CanvasRenderingContext2D, fx: FloatEffect): void {
     const prog = fx.t / fx.duration
     ctx.save()
     ctx.globalAlpha = 1 - prog
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 14px ${this.glyphFontFamily}`
+    ctx.fillStyle = '#2e7d32'
+    ctx.font = `700 15px ${HUD_FONT_FAMILY}`
     ctx.textAlign = 'center'
     ctx.fillText(fx.text, fx.x, fx.y - prog * 28)
     ctx.restore()
   }
 
-  private _drawHud(ctx: CanvasRenderingContext2D, _w: number): void {
-    let marks = ''
-    for (let i = 0; i < MISS_LIMIT; i++) marks += (i < this.misses ? '✕' : '·') + ' '
+  private _drawHud(ctx: CanvasRenderingContext2D, w: number): void {
     ctx.save()
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 13px ${this.glyphFontFamily}`
+    ctx.fillStyle = 'rgba(255,255,255,0.78)'
+    this._roundRectPath(ctx, 8, 6, Math.min(w - 16, 330), 30, 8)
+    ctx.fill()
+
+    ctx.fillStyle = '#2b2b2b'
+    ctx.font = `700 13px ${HUD_FONT_FAMILY}`
     ctx.textAlign = 'left'
-    ctx.fillText(`ОЧКИ ${this.score}   РЕКОРД ${this.best}   ПРОМАХИ ${marks.trim()}`, 14, 22)
+    ctx.textBaseline = 'middle'
+    ctx.fillText(`Очки ${this.score}   Рекорд ${this.best}`, 18, 21)
+
+    // промахи — мелкие иконки яйца, разбитый промах темнее/перечёркнут
+    const eggIconSize = 14
+    let ex = w - 18 - MISS_LIMIT * (eggIconSize + 6)
+    ex = Math.max(ex, 180)
+    for (let i = 0; i < MISS_LIMIT; i++) {
+      const x = ex + i * (eggIconSize + 6)
+      const y = 21
+      const used = i < this.misses
+      ctx.save()
+      ctx.globalAlpha = used ? 0.35 : 1
+      if (isSpriteReady(this._eggImg)) {
+        ctx.drawImage(this._eggImg, x, y - eggIconSize / 2, eggIconSize, eggIconSize)
+      } else {
+        ctx.fillStyle = '#fdf6e3'
+        ctx.beginPath()
+        ctx.ellipse(x + eggIconSize / 2, y, eggIconSize * 0.4, eggIconSize * 0.5, 0, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      if (used) {
+        ctx.strokeStyle = '#c0392b'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(x, y - eggIconSize / 2)
+        ctx.lineTo(x + eggIconSize, y + eggIconSize / 2)
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
     ctx.restore()
   }
 
   private _drawCenterText(ctx: CanvasRenderingContext2D, w: number, h: number, title: string): void {
     ctx.save()
     ctx.textAlign = 'center'
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 26px ${this.glyphFontFamily}`
+    ctx.fillStyle = '#ffffff'
+    ctx.strokeStyle = '#2b2b2b'
+    ctx.lineWidth = 4
+    ctx.font = `800 28px ${HUD_FONT_FAMILY}`
+    ctx.strokeText(title, w / 2, h / 2 - 8)
     ctx.fillText(title, w / 2, h / 2 - 8)
     ctx.restore()
   }
 
   private _drawGameOver(ctx: CanvasRenderingContext2D, w: number, h: number): void {
     ctx.save()
+    ctx.fillStyle = 'rgba(255,255,255,0.88)'
+    this._roundRectPath(ctx, w / 2 - 150, h / 2 - 70, 300, 150, 14)
+    ctx.fill()
+
     ctx.textAlign = 'center'
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 24px ${this.glyphFontFamily}`
-    ctx.fillText('ИГРА ОКОНЧЕНА', w / 2, h / 2 - 30)
-    ctx.font = `14px ${this.glyphFontFamily}`
-    ctx.fillText(`ОЧКИ ${this.score}   РЕКОРД ${this.best}`, w / 2, h / 2 - 4)
+    ctx.fillStyle = '#2b2b2b'
+    ctx.font = `800 22px ${HUD_FONT_FAMILY}`
+    ctx.fillText('Игра окончена', w / 2, h / 2 - 32)
+    ctx.font = `14px ${HUD_FONT_FAMILY}`
+    ctx.fillText(`Очки ${this.score}   Рекорд ${this.best}`, w / 2, h / 2 - 4)
 
     const btnW = 160, btnH = 36
     const bx = w / 2 - btnW / 2, by = h / 2 + 16
-    ctx.strokeStyle = '#111111'
-    ctx.lineWidth = 1
-    ctx.strokeRect(bx, by, btnW, btnH)
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 14px ${this.glyphFontFamily}`
-    ctx.fillText('[ ЕЩЁ РАЗ ]', w / 2, by + btnH / 2 + 5)
+    ctx.fillStyle = '#6cb23a'
+    this._roundRectPath(ctx, bx, by, btnW, btnH, 8)
+    ctx.fill()
+    ctx.fillStyle = '#ffffff'
+    ctx.font = `700 14px ${HUD_FONT_FAMILY}`
+    ctx.fillText('Ещё раз', w / 2, by + btnH / 2 + 5)
     ctx.restore()
 
     this._gameOverBtnRect = { x: bx, y: by, w: btnW, h: btnH }

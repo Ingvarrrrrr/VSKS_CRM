@@ -78,3 +78,19 @@ sounds, or models from any holder of that trademark are used — the 5 stage map
 are original brick-wall patterns (e.g. letter/word shapes «АКТ», «НДС», «ИТОГО»). The in-app UI
 name for this game is «Танчики» — no upstream project/trademark name is shown in the product UI,
 only in this attribution file and the source code comment.
+
+## Графика игр — Kenney (kenney.nl), CC0
+
+Все картинки в `sprites/` — из бесплатных наборов Kenney, лицензия Creative Commons Zero (CC0, public domain).
+Использование в коммерческом (продаваемом) продукте разрешено, указание автора не обязательно
+(kenney.nl/support: «all game assets on the asset pages are public domain licensed (CC0). You're free to use them,
+even in commercial projects»). Копия лицензии каждого набора лежит рядом с картинками.
+
+| Папка | Набор | Страница |
+|---|---|---|
+| `sprites/duck/` | Shooting Gallery; медведь — Animal Pack Redux | kenney.nl/assets/shooting-gallery, kenney.nl/assets/animal-pack-redux |
+| `sprites/brick/` | Puzzle Pack 2 | kenney.nl/assets/puzzle-pack-2 |
+| `sprites/tank/` | Top-down Tanks Redux | kenney.nl/assets/top-down-tanks-redux |
+| `sprites/egg/` | Animal Pack Remastered; яйцо — Food Kit | kenney.nl/assets/animal-pack-remastered, kenney.nl/assets/food-kit |
+
+Проверено 2026-10-29.

@@ -21,14 +21,33 @@
 // SOFTWARE.
 //
 // Порт убирает: debug-консоль, выбор темы, звук (Tone.js), степ-пауэрапы,
-// внешние ассеты и любые сетевые вызовы оригинала. Стиль отрисовки — свой,
-// "документный" чёрно-белый, общий с DuckShootGame (см. docBackground.ts).
+// внешние ассеты (кроме спрайтов ниже) и любые сетевые вызовы оригинала.
+// Отрисовка — цветные спрайты Kenney "Puzzle Pack 2" (CC0, см.
+// sprites/brick/License.txt) поверх мягкого градиентного фона.
 //
 // BrickGameWindow.vue (внутри DuckShootWindow.vue) создаёт контейнер и
 // управляет жизненным циклом: constructor(container) → start() на открытии
 // окна, destroy() на закрытии/unmount — та же схема, что у DuckShootGame.
 
-import { buildDocumentBackground, DOC_BG_FONT_FAMILY } from './docBackground'
+import { loadSprite, isSpriteReady } from './spriteLoader'
+
+const HUD_FONT_FAMILY = '"Segoe UI", Roboto, system-ui, sans-serif'
+
+import paddleUrl from './sprites/brick/paddle.png'
+import ballUrl from './sprites/brick/ball.png'
+import brickRedUrl from './sprites/brick/brick_red.png'
+import brickYellowUrl from './sprites/brick/brick_yellow.png'
+import brickGreenUrl from './sprites/brick/brick_green.png'
+import brickBlueUrl from './sprites/brick/brick_blue.png'
+import brickPinkUrl from './sprites/brick/brick_pink.png'
+import brickGreyUrl from './sprites/brick/brick_grey.png'
+
+// Цветные спрайты кирпичей/паддла/мяча — Kenney "Puzzle Pack 2" (kenney.nl,
+// CC0), см. sprites/brick/License.txt. Ряды кирпичей раскрашены по кругу
+// через BRICK_ROW_SPRITES; подпись слова больше не нужна — цвет несёт роль.
+const BRICK_ROW_SPRITES = [brickRedUrl, brickYellowUrl, brickGreenUrl, brickBlueUrl, brickPinkUrl, brickGreyUrl]
+// Цвета для частиц разлёта при разрушении — приблизительно совпадают с цветом ряда.
+const BRICK_ROW_COLORS = ['#e2504f', '#f6c445', '#8bc63f', '#3fa9d6', '#f48fb1', '#b9bcbe']
 
 type GameState = 'level-intro' | 'playing' | 'game-over'
 
@@ -37,10 +56,20 @@ interface Brick {
   y: number
   w: number
   h: number
-  word: string
+  colorIdx: number
   hits: number
   maxHits: number
   alive: boolean
+}
+
+interface Particle {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  life: number
+  maxLife: number
+  color: string
 }
 
 interface Ball {
@@ -71,11 +100,6 @@ interface Rect {
   w: number
   h: number
 }
-
-// Слова, из которых набираются кирпичи — только документная лексика,
-// без упоминания первоисточника игры (торговая марка держателя оригинала
-// в UI не используется — см. ПРАВИЛО в задании).
-const BRICK_WORDS = ['ДОГОВОР', 'СЧЁТ', 'АКТ', 'НДС', '2026', '№17', 'ИТОГО', 'ПЕНЯ']
 
 const MAX_LEVELS = 15
 const BASE_BALL_SPEED = 230
@@ -109,9 +133,11 @@ export class BrickGame {
   private paddle: Paddle = { x: 0, y: 0, w: 0, h: 0 }
   private ball: Ball = { x: 0, y: 0, dx: 0, dy: 0, radius: 6, onPaddle: true }
   private bricks: Brick[] = []
+  private particles: Particle[] = []
 
-  private _docBg: HTMLCanvasElement | null = null
-  private glyphFontFamily = DOC_BG_FONT_FAMILY
+  private _paddleImg = loadSprite(paddleUrl)
+  private _ballImg = loadSprite(ballUrl)
+  private _brickImgs = BRICK_ROW_SPRITES.map((u) => loadSprite(u))
 
   private _gameOverBtnRect: Rect | null = null
   private _wasRunning = false
@@ -231,7 +257,6 @@ export class BrickGame {
     this.canvas.style.width = `${this.width}px`
     this.canvas.style.height = `${this.height}px`
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
-    this._docBg = buildDocumentBackground(this.width, this.height, this.dpr)
 
     this.paddle.w = Math.max(70, this.width / 7)
     this.paddle.h = Math.max(10, this.height / 38)
@@ -294,20 +319,17 @@ export class BrickGame {
     const brickH = Math.max(22, Math.min(this.height / 16, 34))
 
     this.bricks = []
-    let wordIdx = 0
     for (let r = 0; r < rows; r++) {
       // каждая третья строка — "крепкие" кирпичи (2 попадания), остальные — обычные
       const strongRow = r % 3 === 2
+      const maxHits = strongRow ? 2 : 1
       for (let c = 0; c < cols; c++) {
-        const word = BRICK_WORDS[wordIdx % BRICK_WORDS.length] ?? 'АКТ'
-        wordIdx++
-        const maxHits = strongRow ? 2 : 1
         this.bricks.push({
           x: offsetSide + c * (brickW + padding),
           y: offsetTop + r * (brickH + padding),
           w: brickW,
           h: brickH,
-          word,
+          colorIdx: r % BRICK_ROW_SPRITES.length,
           hits: 0,
           maxHits,
           alive: true,
@@ -454,6 +476,8 @@ export class BrickGame {
       this._brickCollisions()
     }
 
+    this._updateParticles(dt)
+
     if (this.state === 'playing' && this._remainingBricks() === 0) {
       if (this.level >= MAX_LEVELS) {
         this.best = Math.max(this.best, this.score)
@@ -463,6 +487,36 @@ export class BrickGame {
         this._nextLevel()
       }
     }
+  }
+
+  // Маленький разлёт частиц при разрушении кирпича — своя процедурная анимация
+  // (не спрайт), цвет берётся из BRICK_ROW_COLORS по цвету ряда.
+  private _spawnParticles(x: number, y: number, color: string): void {
+    const count = 6
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.4
+      const speed = 60 + Math.random() * 90
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 0.4,
+        maxLife: 0.4,
+        color,
+      })
+    }
+  }
+
+  private _updateParticles(dt: number): void {
+    if (this.particles.length === 0) return
+    for (const p of this.particles) {
+      p.x += p.vx * dt
+      p.y += p.vy * dt
+      p.vy += 220 * dt
+      p.life -= dt
+    }
+    this.particles = this.particles.filter((p) => p.life > 0)
   }
 
   private _remainingBricks(): number {
@@ -534,7 +588,10 @@ export class BrickGame {
       ) {
         brick.hits++
         this.score += 10 * this.level
-        if (brick.hits >= brick.maxHits) brick.alive = false
+        if (brick.hits >= brick.maxHits) {
+          brick.alive = false
+          this._spawnParticles(brick.x + brick.w / 2, brick.y + brick.h / 2, BRICK_ROW_COLORS[brick.colorIdx % BRICK_ROW_COLORS.length] ?? '#999999')
+        }
 
         const overlapX = b.x < brick.x + brick.w / 2
           ? b.x + b.radius - brick.x
@@ -563,14 +620,10 @@ export class BrickGame {
     const h = this.height
 
     ctx.clearRect(0, 0, w, h)
-    if (this._docBg && this._docBg.width > 0) {
-      ctx.drawImage(this._docBg, 0, 0, w, h)
-    } else {
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, w, h)
-    }
+    this._drawBackground(ctx, w, h)
 
     this._drawBricks(ctx)
+    this._drawParticles(ctx)
     this._drawPaddle(ctx)
     this._drawBall(ctx)
     this._drawHud(ctx, w)
@@ -580,74 +633,108 @@ export class BrickGame {
     if (this.state === 'game-over') this._drawGameOver(ctx, w, h)
   }
 
+  // Мягкий градиентный фон вместо "документной" страницы — нейтральный холст
+  // под цветные спрайты Kenney, не спорит с цветами кирпичей.
+  private _drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+    const g = ctx.createLinearGradient(0, 0, 0, h)
+    g.addColorStop(0, '#eaf4fb')
+    g.addColorStop(1, '#d7e8f5')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, w, h)
+  }
+
   private _drawBricks(ctx: CanvasRenderingContext2D): void {
     ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
     for (const brick of this.bricks) {
       if (!brick.alive) continue
-      const hitLeft = brick.maxHits - brick.hits
-      ctx.fillStyle = '#111111'
-      ctx.fillRect(brick.x, brick.y, brick.w, brick.h)
-      // крепкий кирпич, ещё не тронутый — двойная белая рамка внутри (виден запас прочности)
-      if (brick.maxHits > 1 && hitLeft > 1) {
-        ctx.strokeStyle = '#ffffff'
-        ctx.lineWidth = 1
-        ctx.strokeRect(brick.x + 3, brick.y + 3, brick.w - 6, brick.h - 6)
+      const img = this._brickImgs[brick.colorIdx % this._brickImgs.length]
+      if (img && isSpriteReady(img)) {
+        ctx.drawImage(img, brick.x, brick.y, brick.w, brick.h)
+      } else {
+        ctx.fillStyle = '#9aa7b0'
+        ctx.fillRect(brick.x, brick.y, brick.w, brick.h)
       }
-      const fontPx = Math.max(9, Math.min(13, brick.w / 7))
-      ctx.font = `700 ${fontPx}px ${this.glyphFontFamily}`
-      ctx.fillStyle = '#ffffff'
-      ctx.fillText(brick.word, brick.x + brick.w / 2, brick.y + brick.h / 2 + 1)
+      // крепкий кирпич после первого попадания — трещина поверх спрайта,
+      // показывает, что кирпич ещё держится (maxHits > 1, hits уже есть)
+      if (brick.maxHits > 1 && brick.hits > 0 && brick.hits < brick.maxHits) {
+        ctx.save()
+        ctx.globalAlpha = 0.55
+        ctx.strokeStyle = '#2b2b2b'
+        ctx.lineWidth = Math.max(1, brick.h / 14)
+        ctx.beginPath()
+        ctx.moveTo(brick.x + brick.w * 0.2, brick.y + brick.h * 0.15)
+        ctx.lineTo(brick.x + brick.w * 0.45, brick.y + brick.h * 0.55)
+        ctx.lineTo(brick.x + brick.w * 0.3, brick.y + brick.h * 0.85)
+        ctx.moveTo(brick.x + brick.w * 0.45, brick.y + brick.h * 0.55)
+        ctx.lineTo(brick.x + brick.w * 0.75, brick.y + brick.h * 0.35)
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+    ctx.restore()
+  }
+
+  private _drawParticles(ctx: CanvasRenderingContext2D): void {
+    if (this.particles.length === 0) return
+    ctx.save()
+    for (const p of this.particles) {
+      const t = Math.max(0, p.life / p.maxLife)
+      ctx.globalAlpha = t
+      ctx.fillStyle = p.color
+      const s = 3 + 3 * t
+      ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s)
     }
     ctx.restore()
   }
 
   private _drawPaddle(ctx: CanvasRenderingContext2D): void {
-    ctx.save()
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#111111'
-    const fontPx = Math.max(10, this.paddle.h)
-    ctx.font = `700 ${fontPx}px ${this.glyphFontFamily}`
-    // "[══════]" растянутый по ширине паддла глифами "═"
-    const innerW = Math.max(1, this.paddle.w - fontPx)
-    const barChar = '═'
-    const barCharW = ctx.measureText(barChar).width || fontPx * 0.6
-    const barCount = Math.max(1, Math.round(innerW / barCharW))
-    const bar = barChar.repeat(barCount)
-    ctx.fillText(`[${bar}]`, this.paddle.x, this.paddle.y + this.paddle.h / 2 + 1)
-    ctx.restore()
+    const img = this._paddleImg
+    if (isSpriteReady(img)) {
+      ctx.drawImage(img, this.paddle.x, this.paddle.y, this.paddle.w, this.paddle.h)
+    } else {
+      ctx.save()
+      ctx.fillStyle = '#3fa9d6'
+      ctx.beginPath()
+      const r = this.paddle.h / 2
+      ctx.roundRect(this.paddle.x, this.paddle.y, this.paddle.w, this.paddle.h, r)
+      ctx.fill()
+      ctx.restore()
+    }
   }
 
   private _drawBall(ctx: CanvasRenderingContext2D): void {
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#111111'
-    const fontPx = Math.max(10, this.ball.radius * 2.4)
-    ctx.font = `700 ${fontPx}px ${this.glyphFontFamily}`
-    ctx.fillText('●', this.ball.x, this.ball.y + 1)
-    ctx.restore()
+    const img = this._ballImg
+    const d = this.ball.radius * 2
+    if (isSpriteReady(img)) {
+      ctx.drawImage(img, this.ball.x - this.ball.radius, this.ball.y - this.ball.radius, d, d)
+    } else {
+      ctx.save()
+      ctx.fillStyle = '#e8e8e8'
+      ctx.beginPath()
+      ctx.arc(this.ball.x, this.ball.y, this.ball.radius, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
   }
 
   private _drawHud(ctx: CanvasRenderingContext2D, w: number): void {
     ctx.save()
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 13px ${this.glyphFontFamily}`
+    ctx.fillStyle = '#20343f'
+    ctx.font = `700 14px ${HUD_FONT_FAMILY}`
     ctx.textAlign = 'left'
-    ctx.fillText(`УРОВЕНЬ ${this.level}   ОЧКИ ${this.score}`, 14, 22)
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillText(`Уровень ${this.level}   Очки ${this.score}`, 14, 22)
     ctx.textAlign = 'right'
-    ctx.fillText(`РЕКОРД ${this.best}`, w - 14, 22)
+    ctx.fillText(`Рекорд ${this.best}`, w - 14, 22)
     ctx.restore()
 
     ctx.save()
-    ctx.font = `700 13px ${this.glyphFontFamily}`
+    ctx.font = `700 14px ${HUD_FONT_FAMILY}`
     ctx.textAlign = 'left'
-    ctx.fillStyle = '#111111'
+    ctx.fillStyle = '#20343f'
     let hearts = ''
     for (let i = 0; i < 3; i++) hearts += (i < this.lives ? '♥' : '♡') + ' '
-    ctx.fillText(`ЖИЗНИ ${hearts.trim()}`, 14, 42)
+    ctx.fillText(hearts.trim(), 14, 42)
     ctx.restore()
   }
 
@@ -655,12 +742,12 @@ export class BrickGame {
     ctx.save()
     ctx.textAlign = 'center'
     if (title) {
-      ctx.fillStyle = '#111111'
-      ctx.font = `700 30px ${this.glyphFontFamily}`
-      ctx.fillText(title.toUpperCase(), w / 2, h / 2 - 8)
+      ctx.fillStyle = '#20343f'
+      ctx.font = `800 30px ${HUD_FONT_FAMILY}`
+      ctx.fillText(title, w / 2, h / 2 - 8)
     }
-    ctx.font = `13px ${this.glyphFontFamily}`
-    ctx.fillStyle = '#444444'
+    ctx.font = `500 13px ${HUD_FONT_FAMILY}`
+    ctx.fillStyle = '#4c636f'
     ctx.fillText(subtitle, w / 2, h / 2 + (title ? 18 : 0))
     ctx.restore()
   }
@@ -668,20 +755,21 @@ export class BrickGame {
   private _drawGameOver(ctx: CanvasRenderingContext2D, w: number, h: number): void {
     ctx.save()
     ctx.textAlign = 'center'
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 24px ${this.glyphFontFamily}`
-    ctx.fillText('ИГРА ОКОНЧЕНА', w / 2, h / 2 - 30)
-    ctx.font = `14px ${this.glyphFontFamily}`
-    ctx.fillText(`ОЧКИ ${this.score}   РЕКОРД ${this.best}`, w / 2, h / 2 - 4)
+    ctx.fillStyle = '#20343f'
+    ctx.font = `800 24px ${HUD_FONT_FAMILY}`
+    ctx.fillText('Игра окончена', w / 2, h / 2 - 30)
+    ctx.font = `500 14px ${HUD_FONT_FAMILY}`
+    ctx.fillText(`Очки ${this.score}   Рекорд ${this.best}`, w / 2, h / 2 - 4)
 
-    const btnW = 160, btnH = 36
+    const btnW = 170, btnH = 38
     const bx = w / 2 - btnW / 2, by = h / 2 + 16
-    ctx.strokeStyle = '#111111'
-    ctx.lineWidth = 1
-    ctx.strokeRect(bx, by, btnW, btnH)
-    ctx.fillStyle = '#111111'
-    ctx.font = `700 14px ${this.glyphFontFamily}`
-    ctx.fillText('[ ЕЩЁ РАЗ ]', w / 2, by + btnH / 2 + 5)
+    ctx.fillStyle = '#3fa9d6'
+    ctx.beginPath()
+    ctx.roundRect(bx, by, btnW, btnH, 8)
+    ctx.fill()
+    ctx.fillStyle = '#ffffff'
+    ctx.font = `700 14px ${HUD_FONT_FAMILY}`
+    ctx.fillText('Ещё раз', w / 2, by + btnH / 2 + 5)
     ctx.restore()
 
     this._gameOverBtnRect = { x: bx, y: by, w: btnW, h: btnH }

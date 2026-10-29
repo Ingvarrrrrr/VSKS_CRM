@@ -7,6 +7,8 @@
 // DuckShootWindow.vue создаёт контейнер и управляет жизненным циклом:
 // constructor(container) → start() на открытии окна, destroy() на закрытии/unmount.
 
+import { buildDocumentBackground, DOC_BG_FONT_FAMILY } from './docBackground'
+
 type DuckState = 'flying' | 'hit' | 'escaping' | 'done'
 type GameState = 'round-intro' | 'playing' | 'round-result' | 'game-over'
 
@@ -118,7 +120,12 @@ export class DuckShootGame {
   // мёртвый код, Правило №6: раз значение не используется, второго места для него нет).
   private colorBg = '#ffffff'
   private colorLine = '#bbbbbb'
-  private glyphFontFamily = 'Consolas, "JetBrains Mono", "Courier New", monospace'
+  private glyphFontFamily = DOC_BG_FONT_FAMILY
+
+  // Высота травяной полосы (экранные px) — единственное место, где задаётся константа;
+  // _grassBandTop()/_drawGrassBand()/_duckBottomBound() читают отсюда (Правило №6).
+  private readonly GRASS_BAND_H = 50
+  private _grassPhase = 0
 
   private _gameOverBtnRect: Rect | null = null
   private _wasRunning = false
@@ -220,10 +227,33 @@ export class DuckShootGame {
     this.height = Math.max(1, Math.round(rect.height))
     this.canvas.width = Math.round(this.width * this.dpr)
     this.canvas.height = Math.round(this.height * this.dpr)
+    // Без этого на экранах с devicePixelRatio > 1 (почти все ноутбуки/телефоны)
+    // canvas без CSS-размера раздувается до своих пиксельных width/height
+    // атрибутов и вылезает за рамки контейнера — обязательная пара к dpr-апскейлу выше.
+    this.canvas.style.width = `${this.width}px`
+    this.canvas.style.height = `${this.height}px`
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
     this._readColors()
     this._launchPoints = this._computeLaunchPoints()
     this._buildDocumentBackground()
+  }
+
+  // Базовая линия земли — единственное место, где считается (Правило №6);
+  // _drawGrassBand/_drawGroundScenery и _grassBandTop читают отсюда.
+  private _groundY(): number {
+    return this.height - 22
+  }
+
+  // Верх травяной полосы — единственное место, где считается; _drawGrassBand (отрисовка),
+  // _duckBottomBound (граница отскока/вылета утки из травы) читают отсюда.
+  private _grassBandTop(): number {
+    return this._groundY() - this.GRASS_BAND_H
+  }
+
+  // Нижняя граница полёта утки / точка вылета из травы — единственное место, где считается
+  // (Правило №6): _spawnDuck (старт внутри травы) и _update (отскок снизу) читают отсюда.
+  private _duckBottomBound(): number {
+    return this._grassBandTop() + this.GRASS_BAND_H * 0.5
   }
 
   private _computeLaunchPoints(): LaunchPoint[] {
@@ -239,118 +269,16 @@ export class DuckShootGame {
   private _readColors(): void {
     this.colorBg = '#ffffff'
     this.colorLine = '#bbbbbb'
-    this.glyphFontFamily = 'Consolas, "JetBrains Mono", "Courier New", monospace'
+    this.glyphFontFamily = DOC_BG_FONT_FAMILY
   }
 
   // ---------- "документный" фон (рисуется один раз на resize в offscreen canvas) ----------
+  // Общий строитель — docBackground.ts (Правило №6: BrickGame использует тот же вид фона,
+  // второго источника для этого визуального эффекта не заводим).
 
   private _buildDocumentBackground(): void {
-    const w = this.width
-    const h = this.height
-    if (w <= 0 || h <= 0) return
-    let off = this._docBg
-    if (!off) {
-      off = document.createElement('canvas')
-      this._docBg = off
-    }
-    off.width = Math.max(1, Math.round(w * this.dpr))
-    off.height = Math.max(1, Math.round(h * this.dpr))
-    const c = off.getContext('2d')
-    if (!c) return
-    c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
-    c.clearRect(0, 0, w, h)
-    c.fillStyle = '#ffffff'
-    c.fillRect(0, 0, w, h)
-
-    const mono = this.glyphFontFamily
-    const marginX = Math.max(26, w * 0.07)
-    let y = 34
-
-    c.textAlign = 'center'
-    c.fillStyle = '#cfcfcf'
-    c.font = `700 15px ${mono}`
-    c.fillText('ДОГОВОР ПОСТАВКИ № 17/2026', w / 2, y); y += 18
-    c.font = `12px ${mono}`
-    c.fillText('г. Москва', w / 2, y); y += 26
-
-    const paragraphs = [
-      '1.1. Поставщик обязуется передать в собственность Покупателя товар',
-      'в количестве и ассортименте согласно Спецификации, а Покупатель',
-      'обязуется принять и оплатить товар на условиях настоящего Договора.',
-      '1.2. Качество товара должно соответствовать требованиям, обычно',
-      'предъявляемым к товарам такого рода, и подтверждается сертификатом.',
-      '2.1. Цена товара устанавливается в рублях и включает НДС, расходы',
-      'на упаковку, маркировку и доставку до склада Покупателя.',
-      '2.2. Оплата производится в безналичном порядке в течение 10',
-      'рабочих дней с момента подписания товарной накладной.',
-      '3.1. Срок поставки — не позднее 30 календарных дней с даты',
-      'подписания настоящего Договора обеими Сторонами.',
-      '3.2. Приёмка товара по количеству и качеству производится',
-      'представителем Покупателя в месте поставки с составлением акта.',
-      '4.1. За нарушение сроков поставки Поставщик уплачивает пеню',
-      'в размере 0,1% от стоимости недопоставленного товара за день.',
-    ]
-    c.textAlign = 'left'
-    c.font = `11px ${mono}`
-    c.fillStyle = '#dddddd'
-    const lineH = 15.5
-    const colW = w - marginX * 2
-    const approxCharsPerLine = Math.max(10, Math.floor(colW / 6.6))
-    outer:
-    for (const para of paragraphs) {
-      const words = para.split(' ')
-      let line = ''
-      for (const word of words) {
-        const test = line ? line + ' ' + word : word
-        if (test.length > approxCharsPerLine && line) {
-          c.fillText(line, marginX, y); y += lineH
-          if (y > h - 90) break outer
-          line = word
-        } else {
-          line = test
-        }
-      }
-      if (line) { c.fillText(line, marginX, y); y += lineH }
-      y += lineH * 0.35
-      if (y > h - 90) break
-    }
-
-    // маленькая таблица с цифрами
-    if (y < h - 70) {
-      const tableY = y + 6
-      const tableW = colW
-      const tableH = 46
-      const cols = 4
-      c.strokeStyle = '#d9d9d9'
-      c.lineWidth = 1
-      c.beginPath()
-      c.rect(marginX, tableY, tableW, tableH)
-      for (let i = 1; i < cols; i++) {
-        const lx = marginX + (tableW / cols) * i
-        c.moveTo(lx, tableY); c.lineTo(lx, tableY + tableH)
-      }
-      c.moveTo(marginX, tableY + tableH / 2); c.lineTo(marginX + tableW, tableY + tableH / 2)
-      c.stroke()
-      c.font = `10px ${mono}`
-      c.textAlign = 'center'
-      const heads = ['№ п/п', 'Кол-во', 'Цена, руб.', 'Сумма, руб.']
-      const rows2 = ['1', '120', '540,00', '64 800,00']
-      for (let i = 0; i < cols; i++) {
-        const cx = marginX + (tableW / cols) * (i + 0.5)
-        c.fillText(heads[i] ?? '', cx, tableY + tableH / 4 + 3)
-        c.fillText(rows2[i] ?? '', cx, tableY + tableH * 0.75 + 3)
-      }
-    }
-
-    // подпись — заметно выше нижнего края страницы, чтобы не тонуть в траве по низу холста
-    c.textAlign = 'left'
-    c.font = `11px ${mono}`
-    c.fillStyle = '#d4d4d4'
-    c.fillText('______________________ / Иванов И.И.', marginX, h - 64)
-    c.font = `10px ${mono}`
-    c.fillText('Поставщик', marginX, h - 50)
-    c.textAlign = 'right'
-    c.fillText('Покупатель', w - marginX, h - 50)
+    if (this.width <= 0 || this.height <= 0) return
+    this._docBg = buildDocumentBackground(this.width, this.height, this.dpr)
   }
 
   // ---------- глифовый рендер персонажей ----------
@@ -431,16 +359,21 @@ export class DuckShootGame {
   // Единственное место, где это считается — остальной код читает this.waveSize.
   private _computeWaveSize(level?: number): number {
     const lvl = level != null ? level : this.level
-    if (lvl <= 2) return 1
-    if (lvl <= 4) return 2
-    if (lvl <= 6) return 3
-    if (lvl <= 8) return 4
-    return 5
+    if (lvl <= 3) return 1
+    if (lvl <= 6) return 2
+    if (lvl <= 9) return 3
+    return 4
+  }
+
+  // Патроны волны — правило владельца буквально: волна до 3 уток — 3 патрона всего;
+  // каждая утка сверх 3 добавляет 1 патрон. Единственное место, где это считается.
+  private _computeWaveAmmo(waveSize: number): number {
+    return 3 + Math.max(0, waveSize - 3)
   }
 
   private _resetWaveState(): void {
     this.waveSize = this._computeWaveSize()
-    this.ammoPool = this.waveSize * 3 // общий пул патронов волны
+    this.ammoPool = this._computeWaveAmmo(this.waveSize)
     this.waveHits = 0
     this._waveSpawnedCount = 0
     this.ducks = []
@@ -467,8 +400,14 @@ export class DuckShootGame {
     }
   }
 
+  // Множитель скорости от уровня — единственное место, где считается (Правило №6);
+  // _spawnDuck читает его, а не пересчитывает заново.
+  private _speedMultiplier(): number {
+    return 1 + 0.18 * (this.level - 1)
+  }
+
   private _spawnDuck(launchPoint?: LaunchPoint): void {
-    const baseSpeed = 70 + this.level * 12
+    const baseSpeed = 70 * this._speedMultiplier()
     const fallbackPoint: LaunchPoint = { x: this.width / 2, fromBush: false }
     const lp = launchPoint || (this._launchPoints && this._launchPoints.length
       ? this._launchPoints[Math.floor(Math.random() * this._launchPoints.length)]
@@ -477,7 +416,8 @@ export class DuckShootGame {
     const duck: Duck = {
       id: Math.random().toString(36).slice(2),
       x: lp.x,
-      y: this.height - 40,
+      // утка стартует внутри травяной полосы (см. _grassBandTop) — вылетает из травы, не с чистой земли
+      y: this._duckBottomBound(),
       vx: dir * (baseSpeed * (0.8 + Math.random() * 0.5)),
       vy: -(baseSpeed * (0.9 + Math.random() * 0.4)),
       ampl: 30 + Math.random() * 40,
@@ -597,7 +537,7 @@ export class DuckShootGame {
     }
 
     this.wavesCompletedInLevel++
-    if (this.wavesCompletedInLevel >= 3) {
+    if (this.wavesCompletedInLevel >= 2) { // уровень = 2 волны (было 3)
       this.wavesCompletedInLevel = 0
       this.level++
     }
@@ -626,6 +566,7 @@ export class DuckShootGame {
       c.x += c.speed * dt
       if (c.x > 1.2) c.x = -0.2
     }
+    this._grassPhase += dt // лёгкое покачивание травы
 
     if (this.state === 'round-intro') {
       this.stateTimer += dt
@@ -660,7 +601,7 @@ export class DuckShootGame {
         d.y += d.vy * dt + Math.sin(d.t * d.freq + d.phase) * d.ampl * dt * 0.6
         d.vy += 10 * dt // slight gravity pull to keep arcs natural
         if (d.y < duckTopBound) d.vy = Math.abs(d.vy) * 0.3
-        if (d.y > this.height - 50) d.vy = -Math.abs(d.vy)
+        if (d.y > this._duckBottomBound()) d.vy = -Math.abs(d.vy)
 
         if (d.x < duckHalfW || d.x > this.width - duckHalfW) {
           d.vx *= -1
@@ -740,6 +681,11 @@ export class DuckShootGame {
 
     for (const d of this.ducks) this._drawDuck(ctx, d)
     for (const bear of this.bears) this._drawBear(ctx, bear)
+
+    // Трава рисуется ПОСЛЕ уток/медведя: утки стартуют из травы, медведь прячет
+    // в ней нижнюю часть тела, пока поднимается "из-за" неё (см. _drawGrassBand).
+    this._drawGrassBand(ctx, w, h)
+
     for (const fx of this.effects) this._drawEffect(ctx, fx)
 
     this._drawHud(ctx, w, h)
@@ -769,23 +715,10 @@ export class DuckShootGame {
     ctx.restore()
   }
 
-  private _drawGroundScenery(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-    const groundY = h - 22
-
-    // трава — ряд глифов "|", "/", "\", "ı", "і" по всей ширине
-    ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'alphabetic'
-    const grassChars = ['|', '/', '\\', 'ı', 'і']
-    for (let x = 6, i = 0; x < w; x += 11, i++) {
-      const seed = (x * 13 + i * 7) % 997
-      const ch = grassChars[seed % grassChars.length] ?? '|'
-      const size = 9 + (seed % 5)
-      ctx.font = `${size}px ${this.glyphFontFamily}`
-      ctx.fillStyle = '#111111'
-      ctx.fillText(ch, x, groundY + size * 0.3)
-    }
-    ctx.restore()
+  // Декор земли БЕЗ травы — рисуется до уток/медведя (трава рисуется позже, см.
+  // _drawGrassBand, чтобы она ложилась НАД медведем и пряталa его нижнюю часть).
+  private _drawGroundScenery(ctx: CanvasRenderingContext2D, w: number, _h: number): void {
+    const groundY = this._groundY()
 
     // лёгкий контур куста справа (не глиф — просто ориентир на карте)
     ctx.strokeStyle = this.colorLine
@@ -797,8 +730,38 @@ export class DuckShootGame {
     ctx.arc(tx + 6, ty - 28, 14, 0, Math.PI * 2)
     ctx.arc(tx + 18, ty - 18, 15, 0, Math.PI * 2)
     ctx.stroke()
+  }
 
-    // камышовые кустики у части точек вылета — выше обычной травы
+  // Травяная полоса ~45-55px высотой (3 плотные "стопки" строк глифов с лёгким
+  // покачиванием) + камышовые кустики у точек вылета. Рисуется ПОСЛЕ уток и медведя
+  // (см. порядок в _render) — утки стартуют из травы, медведь прячет в ней нижнюю часть,
+  // когда поднимается "из-за" неё. Единственное место, где рисуется трава (Правило №6).
+  private _drawGrassBand(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+    void h
+    const groundY = this._groundY()
+    const grassChars = ['|', '/', '\\', 'ı', 'і']
+    const bandRows = 3
+    const rowStep = this.GRASS_BAND_H / bandRows
+
+    ctx.save()
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillStyle = '#111111'
+    for (let row = 0; row < bandRows; row++) {
+      const rowY = groundY - row * rowStep
+      const glyphSize = 16 + row * 2 // блики выше — чуть крупнее, полоса читается объёмной
+      const xOffset = (row % 2) * 5
+      for (let x = 6 + xOffset, i = 0; x < w; x += 11, i++) {
+        const seed = (x * 13 + i * 7 + row * 101) % 997
+        const ch = grassChars[seed % grassChars.length] ?? '|'
+        const sway = Math.sin(this._grassPhase * 1.3 + x * 0.04 + row) * 2.2
+        ctx.font = `${glyphSize}px ${this.glyphFontFamily}`
+        ctx.fillText(ch, x + sway, rowY)
+      }
+    }
+    ctx.restore()
+
+    // камышовые кустики у части точек вылета — выше травы
     if (this._launchPoints && this._launchPoints.length) {
       const reedSlots = [0, 1, 3, 5]
       for (const idx of reedSlots) {
@@ -811,16 +774,18 @@ export class DuckShootGame {
   // Камышовый кустик — веер из 3-5 стеблей, каждый стебель — столбик из нескольких
   // мелких глифов "|"/"ı", расставленных вдоль стебля с шагом больше их высоты,
   // поэтому глифы никогда не перекрывают друг друга (ни внутри стебля, ни между ними).
+  // Клумп ~80-100px высотой (3-4× выше прежних 20-28px) — используется и у точек
+  // вылета, и рядом с медведем (_drawBear) — единственное место, где считается форма.
   private _drawReedClump(ctx: CanvasRenderingContext2D, x: number, groundY: number): void {
     ctx.save()
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillStyle = '#111111'
     const stems = 4
-    const glyphPx = 10
+    const glyphPx = 14
     for (let s = 0; s < stems; s++) {
       const fanAngle = (s - (stems - 1) / 2) * 0.22 // раскрыв веера, рад
-      const stemLen = 20 + (s % 2) * 8
+      const stemLen = 85 + (s % 2) * 15 // 85-100px
       const steps = Math.max(3, Math.round(stemLen / (glyphPx * 0.95)))
       for (let k = 0; k < steps; k++) {
         const t = k / Math.max(1, steps - 1)
@@ -896,11 +861,12 @@ export class DuckShootGame {
   // Визуальный масштаб утки — ЕДИНСТВЕННОЕ место, где он считается (Правило №6):
   // _drawDuck (отрисовка), _duckHitTest (хиттест клика) и _update (границы отскока
   // от краёв экрана) читают это значение, а не пересчитывают каждый сам.
-  // ~150×102 px на холсте шириной 1000px, пропорционально на любой ширине.
+  // ~85×58 px на холсте шириной 1000px (≈ два прежних размера утиной головы,
+  // было 150px — уменьшено по просьбе владельца), пропорционально на любой ширине.
   private _duckVisualScale(): number {
     const baseBoxW = 72 // ширина маски в локальных координатах при scale=1
-    const targetW = 150 * (this.width / 1000)
-    return Math.max(0.6, targetW / baseBoxW)
+    const targetW = 85 * (this.width / 1000)
+    return Math.max(0.35, targetW / baseBoxW)
   }
 
   // Хиттест клика по утке — в тех же локальных координатах, что рисует _drawDuck:
@@ -936,7 +902,10 @@ export class DuckShootGame {
     ctx.scale(visualScale, visualScale)
     const dir = d.vx < 0 ? -1 : 1
     const seed = d.glyphSeed || 0
-    const cellPx = 6.5 // плотная сетка — силуэт складывается из плотности, не из редких точек
+    // Сетка глифов в экранных px: cell*visualScale — сторона ячейки на экране, НЕ зависит
+    // от visualScale (делится и умножается). Утка уменьшена (см. _duckVisualScale), поэтому
+    // ячейка пропорционально мельче (было 6.5px), но не ниже ~4.5px — иначе силуэт не читается.
+    const cellPx = 4.5
     const cell = cellPx / visualScale
     const wingAngle = d.state === 'hit' ? -0.5 : Math.sin(d.wingPhase) * 0.61 // ±35° ≈ 0.61 рад
 

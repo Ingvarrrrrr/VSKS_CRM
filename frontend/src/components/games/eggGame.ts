@@ -17,13 +17,17 @@
 // закрытии/unmount — та же схема, что у DuckShootGame/BrickGame.
 
 import { loadSprite, isSpriteReady } from './spriteLoader'
+import { isLastStep, resolveEggArrival } from './eggRules'
 import bearUrl from './sprites/egg/bear.png'
 import chickenUrl from './sprites/egg/chicken.png'
 import eggUrl from './sprites/egg/egg.png'
 
 type ChuteId = 'TL' | 'BL' | 'TR' | 'BR'
 type GameState = 'intro' | 'playing' | 'game-over'
-type EggState = 'rolling' | 'broken'
+// 'caught' — терминальный статус после поимки (Правило №6 — решение
+// resolveEggArrival из eggRules.ts окончательное): яйцо больше никогда не
+// пересчитывается как промах, только короткая анимация и удаление.
+type EggState = 'rolling' | 'broken' | 'caught'
 
 const HUD_FONT_FAMILY = '"Segoe UI", system-ui, -apple-system, Roboto, sans-serif'
 
@@ -47,6 +51,10 @@ interface Egg {
   state: EggState
   breakT: number
   spinSeed: number
+  // grace-окно (eggRules.isLastStep): корзина стояла в нужном жёлобе хоть
+  // раз во время последнего шага — проверяется каждый кадр, не только на
+  // тике шага, иначе окно поймает лишь случайный один момент.
+  sawCorrectSlotInLastStep: boolean
 }
 
 interface FloatEffect {
@@ -73,6 +81,10 @@ interface Rect {
 const ALL_CHUTES: ChuteId[] = ['TL', 'BL', 'TR', 'BR']
 const MISS_LIMIT = 3
 const EGG_BREAK_DURATION = 0.45
+// Пойманное яйцо ещё на мгновение видно сидящим в корзине (на catchPoint),
+// прежде чем исчезнуть — чтобы попадание было заметно глазу (а не мгновенное
+// исчезновение в тот же кадр).
+const EGG_CATCH_POP_DURATION = 0.18
 
 export class EggGame {
   private canvas: HTMLCanvasElement
@@ -121,6 +133,7 @@ export class EggGame {
   private _gameOverBtnRect: Rect | null = null
   private _wasRunning = false
   private _onEscape: (() => void) | null = null
+  private _onGameOver: ((score: number) => void) | null = null
 
   private _onResize: () => void
   private _onVisibility: () => void
@@ -137,7 +150,10 @@ export class EggGame {
     if (!ctx) throw new Error('EggGame: canvas 2d context unavailable')
     this.ctx = ctx
 
-    this.best = this._loadBest()
+    // Рекорд приходит с сервера (DuckShootWindow.vue зовёт setBest() после
+    // создания игры) — локально не хранится и не читается из localStorage
+    // (Правило №6, единственный источник истины — сервер).
+    this.best = 0
     this.chutes = this._computeChutes()
 
     this._onResize = () => this._resize()
@@ -192,6 +208,14 @@ export class EggGame {
 
   onEscape(fn: () => void): void {
     this._onEscape = fn
+  }
+
+  onGameOver(fn: (score: number) => void): void {
+    this._onGameOver = fn
+  }
+
+  setBest(best: number): void {
+    this.best = Math.max(this.best, best)
   }
 
   // ---------- setup ----------
@@ -301,23 +325,6 @@ export class EggGame {
     return chutes
   }
 
-  private _loadBest(): number {
-    try {
-      const v = localStorage.getItem('gala_egg_best')
-      return v ? parseInt(v, 10) || 0 : 0
-    } catch {
-      return 0
-    }
-  }
-
-  private _saveBest(): void {
-    try {
-      localStorage.setItem('gala_egg_best', String(this.best))
-    } catch {
-      /* ignore */
-    }
-  }
-
   // ---------- game flow ----------
 
   private _handleTap(x: number, y: number): void {
@@ -365,6 +372,7 @@ export class EggGame {
       state: 'rolling',
       breakT: 0,
       spinSeed: Math.random() < 0.5 ? -1 : 1,
+      sawCorrectSlotInLastStep: false,
     })
   }
 
@@ -378,9 +386,14 @@ export class EggGame {
   }
 
   private _registerCatch(egg: Egg): void {
+    // Терминальный статус — яйцо больше не участвует в тиках шага, поэтому
+    // не может быть пересчитано в промах, даже если корзина сразу уедет
+    // (это и было баг-репортом владельца: без этого egg.state оставался
+    // 'rolling' и следующий тик шага проверял this.slot заново).
+    egg.state = 'caught'
+    egg.breakT = 0
     this.score += 1
     this.best = Math.max(this.best, this.score)
-    this._saveBest()
     this._applyForgiveness()
     const p = this.chutes[egg.chute].catchPoint
     this.effects.push({ x: p.x, y: p.y, t: 0, duration: 0.8, text: '+1' })
@@ -392,8 +405,8 @@ export class EggGame {
     this.misses++
     if (this.misses >= MISS_LIMIT && this.state === 'playing') {
       this.best = Math.max(this.best, this.score)
-      this._saveBest()
       this.state = 'game-over'
+      if (this._onGameOver) this._onGameOver(this.score)
     }
   }
 
@@ -429,24 +442,37 @@ export class EggGame {
     const stepInterval = this._stepInterval()
     for (const egg of this.eggs) {
       if (egg.state !== 'rolling') continue
+      const def = this.chutes[egg.chute]
+      // grace-окно проверяется каждый кадр (не только на тике шага) —
+      // иначе ловим лишь случайный один момент внутри последнего шага.
+      if (isLastStep(egg.step, def.totalSteps) && this.slot === egg.chute) {
+        egg.sawCorrectSlotInLastStep = true
+      }
       egg.tAccum += dt
       while (egg.tAccum >= stepInterval && egg.state === 'rolling') {
         egg.tAccum -= stepInterval
         egg.step++
-        const def = this.chutes[egg.chute]
         if (egg.step >= def.totalSteps) {
-          if (this.slot === egg.chute) this._registerCatch(egg)
+          const outcome = resolveEggArrival(this.slot === egg.chute, egg.sawCorrectSlotInLastStep)
+          if (outcome === 'caught') this._registerCatch(egg)
           else this._registerMiss(egg)
           break
+        }
+        if (isLastStep(egg.step, def.totalSteps) && this.slot === egg.chute) {
+          egg.sawCorrectSlotInLastStep = true
         }
       }
     }
 
-    // разбитые яйца — короткая анимация, потом исчезают
+    // пойманные/разбитые яйца — короткая анимация, потом исчезают
     for (const egg of this.eggs) {
-      if (egg.state === 'broken') egg.breakT += dt
+      if (egg.state === 'broken' || egg.state === 'caught') egg.breakT += dt
     }
-    this.eggs = this.eggs.filter(e => e.state === 'rolling' || e.breakT < EGG_BREAK_DURATION)
+    this.eggs = this.eggs.filter(e =>
+      e.state === 'rolling' ||
+      (e.state === 'broken' && e.breakT < EGG_BREAK_DURATION) ||
+      (e.state === 'caught' && e.breakT < EGG_CATCH_POP_DURATION),
+    )
 
     this.spawnTimer -= dt
     if (this.spawnTimer <= 0) {
@@ -614,9 +640,12 @@ export class EggGame {
   private _drawEggs(ctx: CanvasRenderingContext2D): void {
     const size = Math.max(34, this.width * 0.045)
     for (const egg of this.eggs) {
-      if (egg.state === 'rolling') {
-        const p = this._eggPos(egg)
-        const rot = egg.spinSeed * egg.step * 0.9
+      if (egg.state === 'rolling' || egg.state === 'caught') {
+        // Пойманное яйцо рисуется точно на catchPoint (жёлоб уже пройден
+        // целиком — step зафиксирован на totalSteps) без вращения, чтобы
+        // было заметно, что оно легло в корзину, а не улетело мимо.
+        const p = egg.state === 'caught' ? this.chutes[egg.chute].catchPoint : this._eggPos(egg)
+        const rot = egg.state === 'caught' ? 0 : egg.spinSeed * egg.step * 0.9
         ctx.save()
         ctx.translate(p.x, p.y)
         ctx.rotate(rot)

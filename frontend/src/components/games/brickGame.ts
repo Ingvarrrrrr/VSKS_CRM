@@ -102,9 +102,17 @@ interface Rect {
 }
 
 const MAX_LEVELS = 15
-const BASE_BALL_SPEED = 230
+// Базовая скорость — владелец: "слишком медленно", поднята ~1.7× (230→390);
+// прирост за уровень (LEVEL_SPEED_STEP) не трогаем, но добавлен потолок
+// MAX_BALL_SPEED, чтобы на старших уровнях не стало неиграбельно.
+const BASE_BALL_SPEED = 390
 const LEVEL_SPEED_STEP = 18
+const MAX_BALL_SPEED = 560
 const PADDLE_SPEED = 620 // px/sec, клавиатура
+// Запуск мяча: при неподвижном паддле — строго вертикально (0°); движение
+// паддла в момент запуска добавляет угол, до ±LAUNCH_MAX_ANGLE_DEG
+// (классика — угол от положения/движения паддла, а не случайность).
+const LAUNCH_MAX_ANGLE_DEG = 50
 
 export class BrickGame {
   private canvas: HTMLCanvasElement
@@ -131,6 +139,10 @@ export class BrickGame {
   private lives = 3
 
   private paddle: Paddle = { x: 0, y: 0, w: 0, h: 0 }
+  // Скорость паддла (px/sec), посчитанная в _movePaddle — единственное
+  // место (Правило №6); _launchOrRestart читает отсюда, чтобы угол запуска
+  // зависел от движения паддла, а не от случайности.
+  private _paddleVx = 0
   private ball: Ball = { x: 0, y: 0, dx: 0, dy: 0, radius: 6, onPaddle: true }
   private bricks: Brick[] = []
   private particles: Particle[] = []
@@ -142,6 +154,7 @@ export class BrickGame {
   private _gameOverBtnRect: Rect | null = null
   private _wasRunning = false
   private _onEscape: (() => void) | null = null
+  private _onGameOver: ((score: number) => void) | null = null
 
   private _onResize: () => void
   private _onVisibility: () => void
@@ -159,7 +172,10 @@ export class BrickGame {
     if (!ctx) throw new Error('BrickGame: canvas 2d context unavailable')
     this.ctx = ctx
 
-    this.best = this._loadBest()
+    // Рекорд приходит с сервера (DuckShootWindow.vue зовёт setBest() после
+    // создания игры) — локально не хранится и не читается из localStorage
+    // (Правило №6, единственный источник истины — сервер).
+    this.best = 0
 
     this._onResize = () => this._resize()
     this._onVisibility = () => {
@@ -221,6 +237,14 @@ export class BrickGame {
     this._onEscape = fn
   }
 
+  onGameOver(fn: (score: number) => void): void {
+    this._onGameOver = fn
+  }
+
+  setBest(best: number): void {
+    this.best = Math.max(this.best, best)
+  }
+
   // ---------- setup ----------
 
   private _bindHandlers(): void {
@@ -279,23 +303,6 @@ export class BrickGame {
     }
 
     if (this.bricks.length > 0) this._relayoutBricks()
-  }
-
-  private _loadBest(): number {
-    try {
-      const v = localStorage.getItem('gala_brick_best')
-      return v ? parseInt(v, 10) || 0 : 0
-    } catch {
-      return 0
-    }
-  }
-
-  private _saveBest(): void {
-    try {
-      localStorage.setItem('gala_brick_best', String(this.best))
-    } catch {
-      /* ignore */
-    }
   }
 
   // ---------- level layout ----------
@@ -365,7 +372,7 @@ export class BrickGame {
   }
 
   private _ballSpeedForLevel(level: number): number {
-    return BASE_BALL_SPEED + (level - 1) * LEVEL_SPEED_STEP
+    return Math.min(MAX_BALL_SPEED, BASE_BALL_SPEED + (level - 1) * LEVEL_SPEED_STEP)
   }
 
   private _placeBallOnPaddle(): void {
@@ -384,9 +391,11 @@ export class BrickGame {
     if (this.state !== 'playing' && this.state !== 'level-intro') return
     if (!this.ball.onPaddle) return
     const speed = this._ballSpeedForLevel(this.level)
-    let angleDeg = 60 + Math.random() * 30 // 60..90° от горизонтали
-    if (Math.random() < 0.5) angleDeg = -angleDeg
-    const angleRad = (angleDeg * Math.PI) / 180
+    // Паддл неподвижен → строго вверх (0°). Угол добавляет только движение
+    // паддла в момент запуска (классика: не случайность) — доля скорости
+    // паддла от его максимума, до ±LAUNCH_MAX_ANGLE_DEG.
+    const vxNorm = Math.max(-1, Math.min(1, this._paddleVx / PADDLE_SPEED))
+    const angleRad = (vxNorm * LAUNCH_MAX_ANGLE_DEG * Math.PI) / 180
     this.ball.dx = speed * Math.sin(angleRad)
     this.ball.dy = -Math.abs(speed * Math.cos(angleRad))
     this.ball.onPaddle = false
@@ -428,8 +437,8 @@ export class BrickGame {
     this.lives = Math.max(0, this.lives - 1)
     if (this.lives <= 0) {
       this.best = Math.max(this.best, this.score)
-      this._saveBest()
       this.state = 'game-over'
+      if (this._onGameOver) this._onGameOver(this.score)
       return
     }
     this.paddle.x = (this.width - this.paddle.w) / 2
@@ -481,8 +490,8 @@ export class BrickGame {
     if (this.state === 'playing' && this._remainingBricks() === 0) {
       if (this.level >= MAX_LEVELS) {
         this.best = Math.max(this.best, this.score)
-        this._saveBest()
         this.state = 'game-over'
+        if (this._onGameOver) this._onGameOver(this.score)
       } else {
         this._nextLevel()
       }
@@ -526,6 +535,7 @@ export class BrickGame {
   }
 
   private _movePaddle(dt: number): void {
+    const prevX = this.paddle.x
     const targetX = this.pointer.active ? this.pointer.x - this.paddle.w / 2 : null
     if (targetX != null) {
       this.paddle.x = targetX
@@ -535,6 +545,7 @@ export class BrickGame {
       this.paddle.x -= PADDLE_SPEED * dt
     }
     this.paddle.x = Math.max(0, Math.min(this.width - this.paddle.w, this.paddle.x))
+    this._paddleVx = dt > 0 ? (this.paddle.x - prevX) / dt : 0
   }
 
   private _moveBall(dt: number): void {

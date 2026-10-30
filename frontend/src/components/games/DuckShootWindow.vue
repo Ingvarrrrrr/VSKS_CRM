@@ -27,6 +27,15 @@
         <span class="duck-title">{{ titleText }}</span>
         <button
           type="button"
+          class="duck-score-toggle"
+          :class="{ 'duck-score-toggle--active': showLeaderboard }"
+          aria-label="Показать/скрыть рекорды"
+          @click="showLeaderboard = !showLeaderboard"
+        >
+          🏆 Рекорды
+        </button>
+        <button
+          type="button"
           class="duck-close"
           aria-label="Закрыть игру"
           @click="handleClose"
@@ -34,7 +43,10 @@
           ✕
         </button>
       </div>
-      <div ref="canvasWrapperRef" class="duck-canvas-wrapper" />
+      <div class="duck-body">
+        <div ref="canvasWrapperRef" class="duck-canvas-wrapper" />
+        <GameLeaderboard v-if="showLeaderboard" :game="activeGame" class="duck-leaderboard" />
+      </div>
     </div>
   </div>
 </template>
@@ -53,8 +65,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isBusy } from '../../composables/useLongWait'
 import { GAME_REGISTRY, isGameId, type GameId, type GameInstance } from './gameRegistry'
+import { getLeaderboard, reportGameOver } from './gameScores'
+import GameLeaderboard from './GameLeaderboard.vue'
 
 const GAME_STORAGE_KEY = 'gala_last_game'
+// Видимость панели рекордов — только в памяти (не сохраняется между
+// открытиями окна), кнопка-переключатель в заголовке.
+const showLeaderboard = ref(false)
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [boolean]; close: [] }>()
@@ -103,10 +120,27 @@ function createGame(kind: GameId, container: HTMLElement): GameInstance {
   return def.create(container)
 }
 
+// Рекорд ("Рекорд" в HUD игры) — единственный источник истины сервер
+// (Правило №6): засеваем его из лидерборда сразу после создания игры и
+// обновляем ответом submitScore после каждого game over. Игра должна
+// работать офлайн/без входа — любая ошибка здесь только логируется.
+function wireGameScore(g: GameInstance, kind: GameId) {
+  getLeaderboard(kind)
+    .then((board) => g.setBest(board.me.best))
+    .catch((e) => console.warn('[games] getLeaderboard failed', e))
+
+  g.onGameOver((score) => {
+    reportGameOver(kind, score).then((result) => {
+      if (result) g.setBest(result.best)
+    })
+  })
+}
+
 function mountGame() {
   if (!canvasWrapperRef.value) return
   game = createGame(activeGame.value, canvasWrapperRef.value)
   game.onEscape(handleClose)
+  wireGameScore(game, activeGame.value)
   game.start()
 }
 
@@ -237,6 +271,30 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
+.duck-score-toggle {
+  background: #fff;
+  border: 1px solid #111;
+  color: #111;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+  order: 2;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.duck-score-toggle--active {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.duck-score-toggle:hover {
+  background: #111;
+  color: #fff;
+}
+
 .duck-close {
   background: #fff;
   border: 1px solid #111;
@@ -255,9 +313,42 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
+/* Игра + панель рекордов: рядом на широком экране, друг под другом на узком
+   (телефон) — Правило №8 п.7, ничего не должно упираться за экран. */
+.duck-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+@media (max-width: 560px) {
+  .duck-body {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+}
+
 .duck-canvas-wrapper {
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   position: relative;
+}
+
+.duck-leaderboard {
+  flex: 0 0 auto;
+  border-left: 1px solid #111;
+  max-width: 260px;
+}
+
+@media (max-width: 560px) {
+  .duck-leaderboard {
+    border-left: none;
+    border-top: 1px solid #111;
+    max-width: none;
+    max-height: 45%;
+  }
 }
 </style>

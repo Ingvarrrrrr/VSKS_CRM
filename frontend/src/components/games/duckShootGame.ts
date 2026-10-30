@@ -133,6 +133,7 @@ export class DuckShootGame {
   private _gameOverBtnRect: Rect | null = null
   private _wasRunning = false
   private _onEscape: (() => void) | null = null
+  private _onGameOver: ((score: number) => void) | null = null
 
   private _onResize: () => void
   private _onVisibility: () => void
@@ -149,7 +150,10 @@ export class DuckShootGame {
     if (!ctx) throw new Error('DuckShootGame: canvas 2d context unavailable')
     this.ctx = ctx
 
-    this.best = this._loadBest()
+    // Рекорд приходит с сервера (DuckShootWindow.vue зовёт setBest() после
+    // создания игры) — локально не хранится и не читается из localStorage
+    // (Правило №6, единственный источник истины — сервер).
+    this.best = 0
 
     this._onResize = () => this._resize()
     this._onVisibility = () => {
@@ -201,6 +205,14 @@ export class DuckShootGame {
 
   onEscape(fn: () => void): void {
     this._onEscape = fn
+  }
+
+  onGameOver(fn: (score: number) => void): void {
+    this._onGameOver = fn
+  }
+
+  setBest(best: number): void {
+    this.best = Math.max(this.best, best)
   }
 
   // ---------- setup ----------
@@ -432,14 +444,13 @@ export class DuckShootGame {
     this.lives = Math.max(0, this.lives - 1)
     if (this.lives <= 0 && this.state === 'playing') {
       this.best = Math.max(this.best, this.score)
-      this._saveBest()
       this.state = 'game-over'
+      if (this._onGameOver) this._onGameOver(this.score)
     }
   }
 
   private _concludeWave(): void {
     this.best = Math.max(this.best, this.score)
-    this._saveBest()
 
     if (this.waveHits === this.waveSize) {
       this.score += 500
@@ -454,23 +465,6 @@ export class DuckShootGame {
 
     this.state = 'round-intro'
     this.stateTimer = 0
-  }
-
-  private _loadBest(): number {
-    try {
-      const v = localStorage.getItem('gala_duck_best')
-      return v ? parseInt(v, 10) || 0 : 0
-    } catch {
-      return 0
-    }
-  }
-
-  private _saveBest(): void {
-    try {
-      localStorage.setItem('gala_duck_best', String(this.best))
-    } catch {
-      /* ignore */
-    }
   }
 
   // ---------- update ----------

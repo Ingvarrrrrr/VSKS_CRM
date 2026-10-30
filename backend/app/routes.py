@@ -311,6 +311,7 @@ from app.routers import exports as exports_router
 from app.routers import okpd2 as okpd2_router
 from app.routers import expense_codes as expense_codes_router
 from app.routers import diag as diag_router
+from app.routers import games as games_router
 from app.routers import dictionaries as dictionaries_router
 # 152-ФЗ: согласие на обработку ПДн + обращения субъектов ПДн (2026-09-16).
 # Собственный префикс /api/legal, конфликтов по форме пути с catch-all
@@ -604,6 +605,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(expense_codes_router.router)         # /api/expense-codes
 
     app.include_router(diag_router.router)                 # /api/diag/*
+    app.include_router(games_router.router)                # /api/games (лидерборды мини-игр, 30.10.2026)
     app.include_router(dictionaries_router.router)         # /api/dictionaries/purchase (Правило №6)
     app.include_router(legal_router.router)                # /api/legal (152-ФЗ, 2026-09-16)
     app.include_router(admin_legal_docs_router.router)      # /api/admin/legal-docs (152-ФЗ, закрытый раздел, 2026-10-08)

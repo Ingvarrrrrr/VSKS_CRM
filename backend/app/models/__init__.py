@@ -98,3 +98,5 @@ from app.models.subsidy_payment_control_code import SubsidyPaymentControlCode  #
 # Защита общего каталога товаров, Этап В (план item-tz-description.md, 14.10.2026)
 from app.models.product_description_history import ProductDescriptionHistory  # noqa: F401
 from app.models.product_description_proposal import ProductDescriptionProposal  # noqa: F401
+# Лидерборды мини-игр окна ожидания (владелец, 30.10.2026)
+from app.models.game_score import GameScore, GameProfile  # noqa: F401

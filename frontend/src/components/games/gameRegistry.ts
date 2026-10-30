@@ -14,6 +14,12 @@ export interface GameInstance {
   start(): void
   destroy(): void
   onEscape(fn: () => void): void
+  // Рекорд ("best") больше не хранится в localStorage самой игрой — единственный
+  // источник истины — сервер (Правило №6). DuckShootWindow.vue засевает рекорд
+  // через setBest() сразу после создания игры (из getLeaderboard) и обновляет
+  // его повторно после отправки счёта через onGameOver (из ответа submitScore).
+  onGameOver(fn: (score: number) => void): void
+  setBest(best: number): void
 }
 
 export interface GameDefinition {

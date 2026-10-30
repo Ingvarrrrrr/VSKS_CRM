@@ -633,7 +633,47 @@ watch(activeTab, (v) => {
   else if (v === 'all') loadAllWishes()
 })
 
+// Deep-link: ?open={wish_id} — открыть заявку напрямую, не дожидаясь загрузки
+// списков (переход из субсидии, usePlanToRequest.ts «Добавить забытое из
+// субсидии»). Вызывается из трёх мест:
+//  (а) onMounted — сразу, параллельно с загрузкой списков;
+//  (б) watch(route.query.open) — страница уже открыта (keep-alive её не
+//      деактивировал), переход сменил только query;
+//  (в) usePageCache.refresh — реактивация из keep-alive с ?open= в query.
+// openInFlight — защита от повторного/параллельного открытия той же заявки
+// (watch и refresh могут сработать одновременно при реактивации с открытым
+// query). После открытия (или неудачи) ?open= убирается из query через
+// router.replace, чтобы повторная активация keep-alive не открыла карточку
+// снова — остальные query-параметры сохраняются.
+let openInFlight: number | null = null
+async function openFromQuery() {
+  const raw = route.query.open
+  const openId = raw ? Number(raw) : null
+  if (!openId || isNaN(openId)) return
+  if (openInFlight === openId) return
+  openInFlight = openId
+  // catch оборачивает ТОЛЬКО fetch (невалидный/недоступный id — игнорируем
+  // молча); ошибку самого onOpenEdit(wish) не глушим — так же, как обычный
+  // клик по строке (onOpenEdit вызывается там без try/catch).
+  let wish: Wish | null = null
+  try {
+    wish = await apiFetch<Wish>(`/wishes/${openId}`)
+  } catch { /* невалидный id — игнорируем */ }
+  try {
+    if (wish?.id) onOpenEdit(wish)
+  } finally {
+    openInFlight = null
+    const { open, ...rest } = route.query
+    router.replace({ query: rest }).catch(() => {})
+  }
+}
+
+watch(() => route.query.open, (v) => {
+  if (v) openFromQuery()
+})
+
 onMounted(async () => {
+  void openFromQuery()
   await Promise.all([
     apiFetch<Subsidy[]>('/subsidies/?scope=wishes').then(r => { ctx.subsidies.value = r }).catch(() => {}),
     apiFetch<FeoCategory[]>('/feo-categories/').then(r => { ctx.allFeoCategories.value = r }).catch(() => {}),
@@ -656,20 +696,13 @@ onMounted(async () => {
   if (route.query.create === '1') {
     onCreate()
   }
-  // Deep-link: ?open={wish_id} — открыть заявку напрямую (например, переход из субсидии)
-  const openId = route.query.open ? Number(route.query.open) : null
-  if (openId && !isNaN(openId)) {
-    try {
-      const wish = await apiFetch<Wish>(`/wishes/${openId}`)
-      if (wish?.id) onOpenEdit(wish)
-    } catch { /* невалидный id — игнорируем */ }
-  }
 })
 
 // keep-alive (App.vue, 2026-10-13): возврат на уже открытые Заявки — тихо
 // перегружаем ту же вкладку, что уже активна (loadWishes/loadIncoming/
 // loadAllWishes не выставляют блокирующий v-if — то же, что и watch(activeTab)
-// чуть выше), плюс бейджи согласий.
+// чуть выше), плюс бейджи согласий, плюс deep-link ?open= (openFromQuery
+// выше), если он пришёл в query к моменту реактивации.
 //
 // ОГРАНИЧЕНИЕ (знать при приёмке): открытый диалог заявки (WishFormDialog.vue)
 // не закрывается автоматически при уходе со страницы — useWishLive внутри
@@ -686,6 +719,7 @@ usePageCache({
     else if (activeTab.value === 'incoming') loadIncoming()
     else if (activeTab.value === 'all') loadAllWishes()
     loadPendingWishConsents()
+    if (route.query.open) void openFromQuery()
   },
 })
 </script>

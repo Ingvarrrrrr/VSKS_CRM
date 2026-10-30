@@ -137,10 +137,23 @@ async def move_purchase_item(
         select(PurchaseItem.id).where(PurchaseItem.purchase_id == target.id)
     )).scalars().all()
 
+    # «Добавляем забытое» (app/services/wish_append_from_plan.py) опустевает
+    # сама: перенос последней позиции из этой временной колонки удаляет её —
+    # владелец не должен чистить её руками. ПРАВИЛО №6: удаление — тем же
+    # delete_purchase_core, что у DELETE /api/purchases/{pid}, не вторая копия.
+    source_deleted = False
+    if not source_items_count and source.wish_id is not None:
+        from app.services.wish_append_from_plan import _is_append_forgotten_purchase
+        if _is_append_forgotten_purchase(source):
+            from app.routers.purchases import delete_purchase_core
+            await delete_purchase_core(source, db)
+            source_deleted = True
+
     await db.commit()
 
     return {
         "item_id": item.id,
-        "source": _purchase_brief(source, len(source_items_count)),
+        "source": None if source_deleted else _purchase_brief(source, len(source_items_count)),
+        "source_deleted": source_deleted,
         "target": _purchase_brief(target, len(target_items_count)),
     }

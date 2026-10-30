@@ -99,6 +99,26 @@ async def ensure_wish_read_access(wish, current_user, db: AsyncSession) -> None:
                 raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
 
 
+async def ensure_wish_write_access(wish, current_user, db: AsyncSession) -> None:
+    """403, если пользователь не может РЕДАКТИРОВАТЬ заявку (не только читать).
+
+    Извлечено из app/routers/wishes.py::update_wish (ядро гейта «кто правит
+    заявку» — SaaS/автор/участник, без embellishment-текста про согласующего
+    из цепочки, который относится только к форме PUT и остаётся инлайн там) —
+    ПРАВИЛО №6: второй источник этой проверки не заводим, update_wish
+    оставлен как есть (его инлайн-версия добавляет точечную подсказку для
+    согласующего — трогать wishes.py вне объёма задачи рискованно, см. отчёт
+    задачи «Добавить забытое из субсидии», 29.10.2026). Новые вызывающие
+    (app/services/wish_append_from_plan.py) зовут эту функцию, не копию."""
+    await ensure_wish_read_access(wish, current_user, db)
+    from app.routers.wishes import _is_saas
+    if _is_saas(current_user) or wish.created_by == current_user.id:
+        return
+    if await _is_wish_member(wish.id, current_user.id, db):
+        return
+    raise HTTPException(status_code=403, detail="Редактировать заявку может автор или участник заявки")
+
+
 async def _ensure_no_pending_approvals(
     wish, db: AsyncSession, current_user=None, allow_override: bool = False
 ) -> None:

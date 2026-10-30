@@ -2062,8 +2062,14 @@ async def _guard_feo_category_change_after_approval(
 # проверки (assert_subsidy_approved_for_binding + согласованность с
 # feo_category_id) и свой статус-гейт, которых нет у остальных полей набора.
 # Разрешена ТОЛЬКО на стадиях до договора — после него смена финансирования
-# задним числом ломает уже подписанный договор.
-SUBSIDY_PATCHABLE_STATUSES = {"draft", "wishes", "plan_schedule"}
+# задним числом ломает уже подписанный договор. work_in_progress добавлен
+# 29.10.2026 (разбиение заявки 226 на части): это стадия ДО 'contracted' в
+# STATUS_ORDER (app/routers/purchases.py::STATUS_ORDER — work_in_progress
+# идёт между plan_schedule и contracted) и НЕ входит в STAGE_STATUSES
+# (app/services/purchase_split.py — набор стадий "уже в договоре"), т.е.
+# никакого договора ещё нет и финансирование так же безопасно менять, как на
+# plan_schedule.
+SUBSIDY_PATCHABLE_STATUSES = {"draft", "wishes", "plan_schedule", "work_in_progress"}
 
 # Владелец (2026-09-30): поля, которые PATCH тихо отбрасывает по замыслу
 # (не баг, а задокументированное решение — см. комментарий у "acceptance_docs"
@@ -2265,12 +2271,21 @@ async def patch_purchase(
     _subsidy_id_ignored_patch = False
     if "subsidy_id" in (body or {}):
         _new_subsidy_id_patch = _coerce_patch_value("subsidy_id", body["subsidy_id"])
-        if p.status not in SUBSIDY_PATCHABLE_STATUSES:
+        if _new_subsidy_id_patch == p.subsidy_id:
+            # Автосейв прислал ТО ЖЕ значение, что уже стоит в карточке (поле
+            # не менялось, просто ушло в общем payload формы) — отбрасывать
+            # его как "ignored" незачем даже на статусе после договора: это
+            # не попытка смены субсидии, баг (задача 29.10.2026, разбиение
+            # заявки 226: часть унаследовала status='plan_schedule', но тост
+            # «Субсидия (закупка уже на стадии договора)» всплывал и на НЕМ,
+            # а исходная цель этого гейта — реальная ПРАВКА subsidy_id).
+            pass
+        elif p.status not in SUBSIDY_PATCHABLE_STATUSES:
             # После договора смена финансирования задним числом ломает уже
             # подписанный договор — как и раньше, значение отбрасывается, но
             # теперь ЯВНО (см. ignored_fields в ответе), не молча.
             _subsidy_id_ignored_patch = True
-        elif _new_subsidy_id_patch != p.subsidy_id:
+        else:
             from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
             await assert_subsidy_approved_for_binding(db, _new_subsidy_id_patch)
             _effective_feo_cat_for_subsidy_check = (

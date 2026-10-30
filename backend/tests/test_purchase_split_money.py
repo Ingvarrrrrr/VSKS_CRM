@@ -6,7 +6,9 @@
     группы: каждая часть status='paid', свой договор, платёж = сумме своих
     позиций, Σ платежей частей == сумме исходного платежа, feo_category_id
     позиций сохранена, у исходной платежей не остаётся.
-(b) planned-закупка — поведение НЕ изменилось (без договора, status='planned').
+(b) plan_schedule-закупка — поведение НЕ изменилось (без договора); статус
+    части изменён отдельной задачей 29.10.2026 с легаси 'planned' на
+    'plan_schedule', см. purchase_split.py.
 """
 import pytest
 from decimal import Decimal
@@ -202,8 +204,11 @@ async def test_split_refuses_payment_confirmed_by_statement(client, db_session, 
 
 @pytest.mark.asyncio
 async def test_split_planned_purchase_unchanged(client, db_session, admin_headers):
-    """Регресс: закупка ДО договора (planned) разбивается как раньше — без
-    договора/платежей, status='planned'."""
+    """Регресс: закупка ДО договора (plan_schedule) разбивается как раньше —
+    без договора/платежей. status='plan_schedule' (не легаси 'planned' — см.
+    задача 29.10.2026/purchase_split.py::split_purchase_core, часть без
+    стадии договора теперь получает единственный актуальный пред-договорный
+    статус из STATUS_ORDER, не заводя новый)."""
     p = Purchase(item_name="Тестовая закупка split-money planned", status="plan_schedule")
     db_session.add(p)
     await db_session.flush()
@@ -234,5 +239,5 @@ async def test_split_planned_purchase_unchanged(client, db_session, admin_header
     )).scalars().all()
     assert len(children) == 2
     for c in children:
-        assert c.status == "planned"
+        assert c.status == "plan_schedule"
         assert c.contract_id is None

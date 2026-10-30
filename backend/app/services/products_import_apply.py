@@ -43,6 +43,7 @@ from app.services.barcodes import normalize_barcode
 from app.services.catalog_gala.stores import store_for_inn
 from app.services.contractor_resolve import find_or_create_contractor
 from app.services.price_actualization import actualize_product_price, record_price_point
+from app.services.product_photo_autofetch import schedule_photo_fetch
 from app.services.product_unit import backfill_product_unit
 from app.services.product_description_merge import (
     is_new_description_shorter, merge_missing_lines,
@@ -963,6 +964,15 @@ async def apply_products_import(
         if dry_run:
             await db.rollback()
         else:
+            # Автодокачка фото (владелец, 29.10.2026, ПРАВИЛО №6,
+            # app/services/product_photo_autofetch.py) — импорт заполняет
+            # photo_link у многих строк сразу; передаём ВСЕ товары файла
+            # (новые + существующие, product_ids уже посчитан выше) —
+            # schedule_photo_fetch сам пропустит те, у кого нет ссылки или
+            # фото уже есть, второй фильтр здесь не нужен (Правило №6). ДО
+            # commit (queue_after_commit привязывается к событию after_commit
+            # ЭТОЙ транзакции, см. комментарий в products.py::create_product).
+            schedule_photo_fetch(db, product_ids)
             await db.commit()
     except Exception:
         await db.rollback()

@@ -31,6 +31,18 @@
           </span>
         </v-toolbar-title>
         <v-spacer />
+        <!-- Владелец (29.10.2026): «Добавить забытое из субсидии» — доступна
+             прямо с доски распределения (уже распределённая заявка,
+             status='converted'), не только из карточки заявки
+             (WishFormDialog.vue — тот же обработчик продублирован здесь,
+             т.к. это отдельный компонент без общего родителя с ним). -->
+        <v-btn
+          v-if="wish && wish.status === 'converted' && wish.subsidy_id"
+          variant="tonal" color="deep-purple" prepend-icon="mdi-playlist-plus" class="mr-2"
+          @click="openAppendFromSubsidy(wish)"
+        >
+          Добавить забытое из субсидии
+        </v-btn>
         <v-btn icon="mdi-close" title="Закрыть" @click="close" />
       </v-toolbar>
       <v-card-text class="pa-3 wish-kanban-dialog-cardtext">
@@ -70,6 +82,13 @@ import { ref } from 'vue'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import WishPurchasesKanban from './WishPurchasesKanban.vue'
 import { useWishesContext } from '@/composables/wishes/useWishesContext'
+// «Добавить забытое из субсидии» (владелец, 29.10.2026) — тот же
+// module-singleton диалог/режим, что и в WishFormDialog.vue (Правило №6,
+// второй диалог подбора плановых позиций не заводим).
+// requestAppendToWish — НЕ usePlanToRequest() целиком (регрессия 29.10.2026:
+// usePlanToRequest() зовёт useFeoLevel5Api(), который вне страницы субсидии
+// рвёт setup диалога; см. докстринг requestAppendToWish в usePlanToRequest.ts).
+import { requestAppendToWish } from '@/composables/subsidies/usePlanToRequest'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
 defineProps<{
@@ -82,6 +101,16 @@ const model = defineModel<boolean>({ required: true })
 
 const ctx = useWishesContext()
 const boardRef = ref<InstanceType<typeof WishDistributionKanban> | InstanceType<typeof WishPurchasesKanban> | null>(null)
+
+function openAppendFromSubsidy(wish: Wish) {
+  if (!wish.subsidy_id) {
+    ctx.showSnack('У заявки не указана субсидия — добавить позиции из плана нельзя', 'error')
+    return
+  }
+  requestAppendToWish(wish.id)
+  model.value = false
+  ctx.router.push(`/subsidies?sid=${wish.subsidy_id}`)
+}
 
 // Владелец (2026-09-16): «случайно вышел из окна, всё слетает». Каждый бросок
 // карточки уже сохранён PATCH-ом (см. WishDistributionKanban.vue) — единственное,

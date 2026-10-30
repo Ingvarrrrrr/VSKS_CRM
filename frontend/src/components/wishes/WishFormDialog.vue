@@ -1315,12 +1315,29 @@
           </template>
           <v-list density="compact">
             <v-list-item
+              v-if="purchaseNav.canOpenBoard()"
+              prepend-icon="mdi-view-column-outline"
+              title="Все закупки на одной доске"
+              @click="purchaseNav.goToBoard(editingWish)"
+            />
+            <v-list-item
               v-for="p in purchaseNav.relatedPurchases.value" :key="p.id"
               :title="`${p.registry_number || p.purchase_number || ('#' + p.id)} — ${p.status_label}`"
               @click="purchaseNav.goToPurchase(p.id, editingWish)"
             />
           </v-list>
         </v-menu>
+        <!-- Владелец (29.10.2026): «Добавить забытое из субсидии» — заявку уже
+             распределили на закупки, нашли забытые плановые позиции, присоединяем
+             их к ЭТОЙ заявке (не новой). Видна при наличии субсидии — см.
+             usePlanToRequest.ts::requestAppendToWish. -->
+        <v-btn
+          v-if="editingWishId && editingWish && editingWish.subsidy_id"
+          variant="tonal" color="deep-purple" prepend-icon="mdi-playlist-plus"
+          @click="openAppendFromSubsidy(editingWish as any)"
+        >
+          Добавить забытое из субсидии
+        </v-btn>
         <!-- Владелец, 2026-08-13: «останавливать могут все» -->
         <v-btn v-if="editingWishId && editingWish && !editingWish.stopped_at" variant="tonal" color="error"
                prepend-icon="mdi-stop-circle-outline" @click="actions.openStopDialog(editingWish)">
@@ -1703,6 +1720,14 @@ import { useWishItemsFeoAutosave } from '@/composables/wishes/useWishItemsFeoAut
 import { useWishActions, canDistributeWish } from '@/composables/wishes/useWishActions'
 import { useWishDistributionReset } from '@/composables/wishes/useWishDistributionReset'
 import { useWishPurchaseNav } from '@/composables/wishes/useWishPurchaseNav'
+// «Добавить забытое из субсидии» (владелец, 29.10.2026) — переоткрывает тот же
+// module-singleton диалог выбора плановых позиций, что и «Создать закупку на
+// основе плана» (FeoTreeToolbar.vue, Правило №6, второй диалог подбора не
+// заводим), в режиме append — см. usePlanToRequest.ts::requestAppendToWish
+// (НЕ usePlanToRequest() целиком — регрессия 29.10.2026: usePlanToRequest()
+// зовёт useFeoLevel5Api(), который вне страницы субсидии рвёт setup этого
+// диалога целиком, карточка заявки не открывалась).
+import { requestAppendToWish } from '@/composables/subsidies/usePlanToRequest'
 import type { Wish } from '@/composables/wishes/wishTypes'
 // item-forms-accommodation-transport.md (владелец, 2026-09-15): «договора на
 // перевозку и питание могут быть не только рамочные, но и разовые» — заявка
@@ -1787,10 +1812,31 @@ const distReset = useWishDistributionReset({
 })
 
 // «Перейти в закупку» (владелец, 30.09) — см. useWishPurchaseNav.ts.
+// openBoard — forward-reference на `actions` (объявлен ниже, useWishActions),
+// тот же приём, что и у approvers/wishLive выше: лямбда не вызывается до
+// первого клика «Все закупки на одной доске», к этому моменту `actions` уже
+// инициализирован (владелец, 29.10.2026, см. useWishPurchaseNav.ts про canOpenBoard).
 const purchaseNav = useWishPurchaseNav({
   apiFetch,
   router: ctx.router,
+  openBoard: (wish) => actions.openKanbanDialog(wish),
 })
+
+// «Добавить забытое из субсидии» (владелец, 29.10.2026) — открывает диалог
+// подбора плановых позиций (PlanToRequestDialog.vue) в режиме присоединения к
+// ЭТОЙ заявке: включает режим выбора на дереве ФЭО субсидии и переходит на
+// страницу субсидии (?sid=...), тот же query-параметр, что уже навигирует
+// AppBar.vue (SubsidiesView.vue его читает и выбирает субсидию при монтировании —
+// Правило №6, второй способ открыть субсидию не заводим).
+function openAppendFromSubsidy(wish: Wish) {
+  if (!wish.subsidy_id) {
+    ctx.showSnack('У заявки не указана субсидия — добавить позиции из плана нельзя', 'error')
+    return
+  }
+  requestAppendToWish(wish.id)
+  wishDialog.value = false
+  ctx.router.push(`/subsidies?sid=${wish.subsidy_id}`)
+}
 
 // Полностью оркестрованное открытие карточки — форма + участники + согласующие +
 // снимки автосейва ФЭО, ровно как единая функция openEditDialog в исходном файле.

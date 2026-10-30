@@ -194,6 +194,10 @@ from app.routers import wish_export as wish_export_router
 # catch-all, порядок не важен) — оба включены рядом с wishes.router ниже.
 from app.routers import wish_lists as wish_lists_router
 from app.routers import wish_items as wish_items_router
+# wish_append_from_plan (29.10.2026): «Добавить забытое из субсидии» — несёт
+# "/{wish_id}/append-from-plan" (на 1 сегмент длиннее catch-all "/{wish_id}",
+# порядок не важен, тот же принцип, что wish_items выше).
+from app.routers import wish_append_from_plan as wish_append_from_plan_router
 from app.routers import user_addresses as user_addresses_router
 from app.routers import org_config
 from app.routers import purchase_transitions
@@ -553,6 +557,7 @@ def register_routes(app: FastAPI) -> None:
     # — разрезаны из wishes.py, см. комментарий у импортов выше.
     app.include_router(wish_lists_router.router)
     app.include_router(wish_items_router.router)
+    app.include_router(wish_append_from_plan_router.router)
     app.include_router(wishes.router)
     app.include_router(push_router.router)
     app.include_router(permissions_router.router)

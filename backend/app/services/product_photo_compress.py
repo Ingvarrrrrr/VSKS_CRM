@@ -3,6 +3,13 @@
 ВСЕГДА хранятся сжатыми: длинная сторона ≤ MAX_SIDE_PX, формат WebP,
 качество ~QUALITY, прозрачность на белый фон, EXIF-поворот учтён.
 
+MAX_SIDE_PX=200 (владелец, 29.10.2026, повторное решение: для целей каталога
+— опознать товар на глаз в карточке/списке — достаточно 200 px, 400 px
+раздувало хранение/трафик без практической пользы). Старые уже сохранённые
+фото с стороной >200 px НЕ пересжимаются сами — см.
+backend/scripts/recompress_product_photos.py (разовый прогон, НЕ на проде
+автоматически).
+
 Без зависимостей от app.* / БД — этот модуль импортируется и внутри Docker
 (product_photo_store.py), и локально, вне контейнера, скриптом
 scripts/fetch_photos_local.py (там доступны только requests/httpx + Pillow,
@@ -12,7 +19,7 @@ scripts/fetch_photos_local.py (там доступны только requests/htt
 import io
 from typing import Optional
 
-MAX_SIDE_PX = 400
+MAX_SIDE_PX = 200
 WEBP_QUALITY = 75
 OUTPUT_MIME = "image/webp"
 

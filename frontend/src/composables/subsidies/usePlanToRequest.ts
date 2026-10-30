@@ -104,12 +104,54 @@ export const PRICE_MODE_ORDER: PriceMode[] = ['manual', 'catalog', 'plan']
 // источник подписи/порядка (Правило №6) — читают и дилог, и, при необходимости,
 // строка (PlanToRequestRow.vue — только чтобы убрать предупреждение «нет
 // товара», см. её докстринг).
-export type PlanToRequestTarget = 'wish' | 'advance'
+// 'append' (владелец, 29.10.2026, «Добавить забытое из субсидии») — заявку уже
+// распределили канбаном на несколько закупок, нашли забытые позиции плана,
+// присоединяем их к ТОЙ ЖЕ заявке (не новой!) — см. docstring
+// app/services/wish_append_from_plan.py. Режим включается ТОЛЬКО программно:
+// requestAppendToWish() запоминает запрос из WishFormDialog.vue/
+// WishKanbanDialog.vue, consumePendingAppend() подхватывает его на странице
+// субсидии (см. докстринги обеих функций ниже) — в общем переключателе
+// «Что создать» (PLAN_TO_REQUEST_TARGET_ORDER) не участвует, пользователь
+// этот режим не выбирает сам, диалог открывается уже в нём.
+export type PlanToRequestTarget = 'wish' | 'advance' | 'append'
 export const PLAN_TO_REQUEST_TARGET_LABELS: Record<PlanToRequestTarget, string> = {
   wish: 'Заявку на закупку',
   advance: 'Авансовый отчёт (уже куплено)',
+  append: 'Добавить забытое из субсидии',
 }
 export const PLAN_TO_REQUEST_TARGET_ORDER: PlanToRequestTarget[] = ['wish', 'advance']
+
+// Заявка, к которой присоединяем позиции в режиме 'append' — module-level,
+// как и остальное состояние этого файла (см. докстринг вверху). null — обычный
+// режим (создать новую заявку/авансовый отчёт).
+const appendToWishId = ref<number | null>(null)
+
+// РЕГРЕССИЯ 29.10.2026 (эта сессия): WishFormDialog.vue/WishKanbanDialog.vue
+// вызывали usePlanToRequest() целиком в setup, чтобы получить
+// startAppendSelectMode — но usePlanToRequest() зовёт useFeoLevel5Api()
+// (строка ниже), который ВНЕ страницы субсидии бросает «вызван до первого
+// построения (нужен ctx)» и обрывает весь setup диалога заявки (карточка
+// заявки вообще не открывалась). Фикс: запрос режима «добавить» — отдельная
+// module-level функция БЕЗ useFeoLevel5Api, пишет только простые refs;
+// реальное включение режима выбора (startSelectMode, которому нужен
+// feoLevel5.selectedPlannedItemIds) происходит уже на странице субсидии, при
+// штатном вызове usePlanToRequest() там (см. consumePendingAppend ниже,
+// дёргается из FeoTreeToolbar.vue). appendPending — признак «запрос ещё не
+// подхвачен страницей субсидии».
+const appendPending = ref(false)
+
+// Экспортируется напрямую (не через usePlanToRequest()) — единственная точка
+// входа для компонентов ВНЕ страницы субсидии (WishFormDialog.vue,
+// WishKanbanDialog.vue), которым нужно только запомнить «после перехода на
+// /subsidies включить режим добавления к этой заявке», без построения
+// feoLevel5/feoResiduals. Второй механизм «запомнить режим» не заводим
+// (Правило №6) — appendToWishId/target/appendPending те же module-level refs,
+// что читает и консьюмер на странице субсидии.
+export function requestAppendToWish(wishId: number) {
+  appendToWishId.value = wishId
+  target.value = 'append'
+  appendPending.value = true
+}
 
 // Строка диалога подбора — кандидат из бэкенда + редактируемое состояние
 // (количество/выбранный товар/цена). reactive — удобнее точечных ref-ов, поля
@@ -328,6 +370,22 @@ export function usePlanToRequest() {
     }
   }
 
+  // «Добавить забытое из субсидии» (владелец, 29.10.2026; фикс регрессии
+  // 29.10.2026 — см. докстринг requestAppendToWish/appendPending выше) —
+  // подхватывает ОТЛОЖЕННЫЙ запрос режима, оставленный requestAppendToWish()
+  // из WishFormDialog.vue/WishKanbanDialog.vue ДО перехода на страницу
+  // субсидии: включает тот же режим выбора (startSelectMode выше, Правило
+  // №6 — второй Set выбора не заводим), appendToWishId/target уже выставлены.
+  // Вызывается ИЗ FeoTreeToolbar.vue (построена на странице субсидии, где
+  // usePlanToRequest() вызван штатно и feoLevel5 уже существует) при каждой
+  // смене ctx.selectedId — no-op, если запроса не было (appendPending=false)
+  // или subsidyId ещё не известен.
+  function consumePendingAppend(subsidyId: number | null | undefined) {
+    if (!appendPending.value || subsidyId == null) return
+    appendPending.value = false
+    startSelectMode(subsidyId)
+  }
+
   // Очистка выбора без выхода из режима (владелец, задача 1а) — вызывается
   // при смене субсидии, пока режим выбора активен (см. watch в
   // FeoTreeToolbar.vue): чекбоксы не должны наследовать id прошлой субсидии.
@@ -343,6 +401,7 @@ export function usePlanToRequest() {
     feoLevel5.selectedPlannedItemIds.value = new Set()
     dialogOpen.value = false
     rows.value = []
+    appendToWishId.value = null
     // «Обновлять после подтверждения/отмены» (задача 1) — submitCreate тоже
     // зовёт cancelSelectMode() на успехе, второй вызов reloadPlanned не заводим.
     void feoResiduals.reloadPlanned()
@@ -765,7 +824,9 @@ export function usePlanToRequest() {
     currentSubsidyId.value = subsidyId
     title.value = ''
     globalPriceSource.value = 'catalog'
-    target.value = 'wish'
+    // 'append' выставлен заранее startAppendSelectMode() — не затираем его
+    // дефолтом 'wish' (Правило №6: appendToWishId — единственный признак режима).
+    if (appendToWishId.value == null) target.value = 'wish'
     rows.value = []
     candidatesProgress.value = null
     dialogOpen.value = true
@@ -807,7 +868,9 @@ export function usePlanToRequest() {
   // — блокировка по rowsMissingProduct применяется ТОЛЬКО в режиме 'wish'.
   // Единственное место этого условия — disabled-кнопка/чип «Без товара»/
   // прокрутка в PlanToRequestDialog.vue и submitCreate ниже читают отсюда.
-  const blockingMissingProductRows = computed(() => target.value === 'wish' ? rowsMissingProduct.value : [])
+  // 'append' присоединяет к НАСТОЯЩЕЙ заявке (не авансовому отчёту) — та же
+  // причина требовать товар, что и у 'wish' (см. комментарий выше).
+  const blockingMissingProductRows = computed(() => (target.value === 'wish' || target.value === 'append') ? rowsMissingProduct.value : [])
 
   async function writeToInitiator(row: PlanToRequestRow) {
     const target = row.linkedPurchases[0]
@@ -870,7 +933,27 @@ export function usePlanToRequest() {
           price_source: backendPriceSourceFor(r),
         })),
       }
-      if (target.value === 'advance') {
+      if (target.value === 'append') {
+        // «Добавить забытое из субсидии» — присоединяет к СУЩЕСТВУЮЩЕЙ заявке
+        // appendToWishId (app/routers/wish_append_from_plan.py), не создаёт
+        // новую. subsidy_id в теле — только подстраховка сервера от перепутанного
+        // диалога (см. докстринг роутера), title там не нужен вовсе.
+        const wishId = appendToWishId.value
+        if (!wishId) { showSnack('Не определена заявка, к которой добавляем позиции', 'error'); submitting.value = false; return }
+        const resp = await apiFetch<{ wish_id: number; purchase_id: number; items_count: number; warnings: string[] }>(
+          `/wishes/${wishId}/append-from-plan`,
+          { method: 'POST', body: JSON.stringify({ subsidy_id: currentSubsidyId.value, items: payload.items }) },
+        )
+        if (resp.warnings && resp.warnings.length) {
+          showSnack(`В заявку добавлено ${resp.items_count} поз. ${resp.warnings.join(' ')}`, 'warning')
+        } else {
+          showSnack(`В заявку добавлено ${resp.items_count} поз.`)
+        }
+        cancelSelectMode()
+        // Тот же маршрут «открыть заявку», что и у обычного создания заявки
+        // ниже (router.push(`/wishes?open=...`)) — второй способ не заводим.
+        await router.push(`/wishes?open=${resp.wish_id}`)
+      } else if (target.value === 'advance') {
         const resp = await apiFetch<{ purchase_id: number; registry_number: string | null; items_count: number; warnings: string[] }>(
           '/feo-planned-items/plan-to-wish/create-advance',
           { method: 'POST', body: JSON.stringify(payload) },
@@ -900,7 +983,12 @@ export function usePlanToRequest() {
         await router.push(`/wishes?open=${resp.wish_id}`)
       }
     } catch (e: any) {
-      showSnack(describeApiError(e, { fallback: target.value === 'advance' ? 'Не удалось создать авансовый отчёт' : 'Не удалось создать заявку', prefix: 'Ошибка' }), 'error')
+      const fallback = target.value === 'advance'
+        ? 'Не удалось создать авансовый отчёт'
+        : target.value === 'append'
+          ? 'Не удалось добавить позиции в заявку'
+          : 'Не удалось создать заявку'
+      showSnack(describeApiError(e, { fallback, prefix: 'Ошибка' }), 'error')
     } finally {
       submitting.value = false
     }
@@ -913,6 +1001,12 @@ export function usePlanToRequest() {
     target, setTarget,
     totalRowsCount, totalAmount, rowsMissingProduct, blockingMissingProductRows,
     startSelectMode, cancelSelectMode, clearSelection, openConfirmDialog, closeDialog,
+    // «Добавить забытое из субсидии» (владелец, 29.10.2026) — appendToWishId
+    // читает PlanToRequestDialog.vue (прятать переключатель «Что создать»/
+    // менять подписи); consumePendingAppend вызывает FeoTreeToolbar.vue на
+    // странице субсидии, запрос оставляют requestAppendToWish()
+    // (WishFormDialog.vue/WishKanbanDialog.vue) — см. докстринги выше.
+    appendToWishId, consumePendingAppend,
     setGlobalPriceSource, setRowPriceMode, pickCandidateForRow,
     recomputeRowPrice, writeToInitiator, submitCreate,
     // Выбор категории/сметы целиком + материализация ручных планов (задачи 1 и 2)

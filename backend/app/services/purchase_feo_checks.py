@@ -170,7 +170,37 @@ async def _item_feo_mismatch(
         if effective_cat_id and not await _category_within(db, planned_cat_id, effective_cat_id):
             reasons.append("planned")
 
-    if not purchase.feo_per_item and item.feo_category_id and item.feo_category_id != purchase.feo_category_id:
+    # Правка (задача 29.10.2026, разбиение заявки 226 на части разных
+    # категорий): две легитимные ситуации, которые раньше ложно давали
+    # reason="header" ("уберите свою категорию"):
+    #   1) шапка закупки не выбрана вовсе (feo_category_id is None) — "своя"
+    #      категория позиции не может "расходиться" с отсутствующей шапкой,
+    #      это режим "разные категории", пока владелец не выбрал общую
+    #      (purchase_split.py::resolve_part_feo_header должен в этом случае
+    #      уже включить feo_per_item=True — эта ветка подстраховка для
+    #      данных/путей, где флаг почему-то не выставлен);
+    #   2) своя категория позиции СОВПАДАЕТ с категорией её привязанной
+    #      плановой позиции (item.feo_planned_item_id), И эта плановая САМА
+    #      признана валидной выше (reason="planned" НЕ сработал, т.е. её
+    #      категория в пределах effective_cat_id) — позиция ПРАВИЛЬНО следует
+    #      за своей плановой, "рассинхронизация" здесь ложная. Доп. условие
+    #      "planned" not in reasons — иначе чужая-категории плановая (контроль
+    #      test_per_item_off_stale_own_category_and_planned_also_foreign_is_both)
+    #      маскировала бы СВОЁ собственное расхождение совпадением с ТАКОЙ ЖЕ
+    #      неверной категорией плановой — обе ошибки должны остаться видны
+    #      (reason="both").
+    _header_is_unset = purchase.feo_category_id is None
+    _own_matches_plan = (
+        item.feo_planned_item_id is not None
+        and planned_cat_id is not None
+        and item.feo_category_id == planned_cat_id
+        and "planned" not in reasons
+    )
+    if (
+        not purchase.feo_per_item and item.feo_category_id
+        and item.feo_category_id != purchase.feo_category_id
+        and not _header_is_unset and not _own_matches_plan
+    ):
         reasons.append("header")
 
     if not reasons:

@@ -39,6 +39,7 @@ from app.services.price_freshness import load_context as load_freshness_context,
 from app.services.price_actualization import actualize_product_price
 from app.services.product_list_postprocess import attach_price_stats as _attach_price_stats, postprocess_catalog_list
 from app.services.product_search import ProductSearchFilters, search_products, MAX_LIMIT, DEFAULT_LIMIT, MAX_IDS
+from app.services.product_photo_autofetch import schedule_photo_fetch
 from app.services.product_delete_impact import (
     get_product_delete_impact,
     has_blocking_dependents,
@@ -295,6 +296,14 @@ async def create_product(
             had_links=bool(data.get("price_links")), links=data.get("price_links") or [],
             user=current_user,
         )
+    # Автодокачка фото по внешней ссылке (владелец, 29.10.2026) — ОДНА
+    # функция для всех мест создания/правки товара со ссылкой (ПРАВИЛО №6,
+    # app/services/product_photo_autofetch.py); сама проверяет внутри себя,
+    # есть ли ссылка и нет ли уже сохранённого фото — здесь безусловно.
+    # ДО db.commit() (не после) — queue_after_commit привязывается к
+    # событию after_commit ЭТОЙ транзакции (notify_after_commit.py), вызов
+    # после commit() этого события уже не поймает.
+    schedule_photo_fetch(db, [db_product.id])
     await db.commit()
     await db.refresh(db_product)
     return db_product
@@ -408,6 +417,11 @@ async def update_product(
             user=current_user,
         )
 
+    # Автодокачка фото (владелец, 29.10.2026, ПРАВИЛО №6) — та же точка, что
+    # и в create_product выше (ДО commit, см. комментарий там); PUT шлёт
+    # форму целиком, photo_url/photo_link могли появиться/измениться в этом
+    # запросе.
+    schedule_photo_fetch(db, [db_product.id])
     await db.commit()
     await db.refresh(db_product)
     return db_product

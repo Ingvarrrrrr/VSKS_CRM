@@ -22,7 +22,7 @@ app/routers/wish_items.py (`wish_items.router.include_router(router)`), тот �
 здесь — один backend-запрос с уже присоединённым Product.
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,10 +51,28 @@ async def get_wish_purchases_board(
     from app.services.wish_access import ensure_wish_read_access
     await ensure_wish_read_access(wish, current_user, db)
 
+    # Закупки заявки = сама заявка ПЛЮС части её разбиения (задача 29.10.2026,
+    # заявка 226: «Разбить на закупки» создаёт дочерние Purchase с
+    # parent_purchase_id на исходную; part'и УЖЕ наследуют wish_id исходной —
+    # см. app/services/purchase_split.py::split_purchase_core — но на проде
+    # есть части, созданные ДО этой правки, у которых wish_id всё ещё NULL;
+    # backfill для них — alembic c7d9e1f3g5h7). Доходим до частей через
+    # parent_purchase_id, НЕ требуя wish_id у самой части — подстраховка для
+    # случая, когда backfill/миграция на конкретном стенде ещё не прогнаны.
+    # status='split' исключаем явно — это терминальная пометка родителя ПОСЛЕ
+    # разбиения (0 позиций, деньги/договор уже перенесены в части), показывать
+    # её в канбане заявки как отдельную колонку бессмысленно и пусто.
+    direct_ids_res = await db.execute(select(Purchase.id).where(Purchase.wish_id == wish_id))
+    direct_ids = [row[0] for row in direct_ids_res.all()]
+
+    board_filter = Purchase.wish_id == wish_id
+    if direct_ids:
+        board_filter = or_(board_filter, Purchase.parent_purchase_id.in_(direct_ids))
+
     purchases_res = await db.execute(
         select(Purchase)
         .options(selectinload(Purchase.items).selectinload(PurchaseItem.product))
-        .where(Purchase.wish_id == wish_id)
+        .where(board_filter, Purchase.status != "split")
         .order_by(Purchase.id)
     )
     purchases = purchases_res.scalars().all()

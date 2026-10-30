@@ -129,7 +129,7 @@
           <td>
             <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
               <template #activator="{ props: tip }">
-                <v-text-field v-bind="tip" v-model.number="item.quantity" type="number" density="compact"
+                <v-text-field v-bind="tip" v-model.number="item.quantity" v-number-only type="number" density="compact"
                   variant="outlined" hide-details class="my-1" :class="{ 'tz-over-plan': planExcessFor?.(item)?.qtyOver }"
                   :disabled="tzDisabled"
                   @update:model-value="emit('calc-item-total', idx)" />
@@ -157,6 +157,7 @@
               <template #activator="{ props: tip }">
                 <v-text-field
                   v-bind="tip"
+                  v-number-only
                   :model-value="moneyFieldDisplay(item, 'unit_price')"
                   density="compact" variant="outlined" hide-details class="my-1"
                   :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
@@ -367,20 +368,24 @@
              в узкую 90px колонку «Тип» — раньше рендерился внутри неё и переносился по
              одному слову, растягивая строку на ~700-1000px по вертикали («лапша»).
              Вынесено из узкой колонки по аналогии с ItemsTableStages.vue (stage-attrs-row). -->
-        <tr v-if="feoPerItem || allowPerItemPlan" class="feo-attrs-row" :class="{ 'cv-row': virtualize }">
+        <tr v-if="feoPerItem || allowPerItemPlan || hasFeoBinding(item)" class="feo-attrs-row" :class="{ 'cv-row': virtualize }">
           <td></td>
           <td></td>
           <td :colspan="totalColCount - 2">
             <div class="d-flex align-start ga-4 flex-wrap py-1">
-              <template v-if="feoPerItem">
+              <template v-if="feoPerItem || hasFeoBinding(item)">
                 <!-- data-field="item-feo-category-select-<uid>" — цель useWishForm.ts::
                      highlightMissingFeoCategory (kind='item'), wishFeoMissingTarget.ts.
                      Координатор (2026-10-26): id="item-row-<uid>" (строка 49 выше) висит
                      на ВЕРХНЕЙ строке товара (с корзиной удаления) — целиться туда для
                      подсветки ПОЛЯ категории опасно, стрелка утыкалась в иконку корзины.
-                     Это поле — в ОТДЕЛЬНОЙ feo-attrs-row строкой ниже, нужен свой узкий id. -->
+                     Это поле — в ОТДЕЛЬНОЙ feo-attrs-row строкой ниже, нужен свой узкий id.
+                     Владелец (29.10.2026): привязка видна ВСЕГДА, если она есть
+                     (hasFeoBinding) — даже когда feoPerItem выключен; в этом случае
+                     построчное редактирование запрещено (!feoPerItem в readonly ниже),
+                     тот же itemFeoLockTooltip объясняет блокировку, когда она есть. -->
                 <div :data-field="`item-feo-category-select-${item._uid ?? idx}`" style="flex:2 1 520px;min-width:320px">
-                  <v-tooltip :text="itemFeoLockTooltip(item) || ''" :disabled="!itemFeoLockTooltip(item)" location="top">
+                  <v-tooltip :text="itemFeoLockTooltip(item) || (!feoPerItem ? 'Категория/плановая позиция меняется только в режиме построчного ФЭО' : '')" :disabled="!itemFeoLockTooltip(item) && feoPerItem" location="top">
                     <template #activator="{ props: lockTip }">
                       <div v-bind="lockTip">
                         <FeoTreeSelect
@@ -389,7 +394,7 @@
                           :leaves="feoLeaves"
                           :plan-positions="plannedItems || []"
                           :node-amounts="nodeAmounts"
-                          :readonly="feoReadonly || isItemFeoCategoryLocked(item) || isWishItemCategoryLockedByPlan(item, !!isWishStage)"
+                          :readonly="feoReadonly || isItemFeoCategoryLocked(item) || isWishItemCategoryLockedByPlan(item, !!isWishStage) || !feoPerItem"
                           :error="isFeoMissing(item)"
                           label="Категория ФЭО"
                           required
@@ -405,7 +410,7 @@
                     {{ feoLockChipLabel(item, !!isWishStage) }}
                   </v-chip>
                 </div>
-                <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
+                <div v-if="feoPerItem && isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
                   <v-icon icon="mdi-alert-outline" size="14" />
                   Превышение: {{ fmtRub(overBudgetDelta(item)) }}
                 </div>
@@ -413,14 +418,17 @@
               <!-- F-PLAN: выбор плановой позиции плана закупок (Ур.5 ФЭО) для этой позиции.
                    category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id;
                    владелец 2026-08-17: в общем режиме (без своей категории у строки) падает на
-                   defaultFeoCategoryId — категорию, выбранную один раз в шапке заявки/закупки. -->
+                   defaultFeoCategoryId — категорию, выбранную один раз в шапке заявки/закупки.
+                   Владелец (29.10.2026): видна всегда при hasFeoBinding(item), даже вне режима —
+                   readonly дополнительно форсируется ниже, когда показана только из-за привязки. -->
               <FeoPlannedItemsSelect
-                v-if="feoPlannedPerItem || allowPerItemPlan"
+                v-if="feoPlannedPerItem || allowPerItemPlan || hasFeoBinding(item)"
+                :readonly="feoReadonly || !(feoPlannedPerItem || allowPerItemPlan)"
                 :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
                 :category-id="effectiveCategoryId(item)"
                 :nodes="feoNodes" :items="plannedItems || []"
                 :subsidy-id="subsidyId"
-                :amount="item.total_price" :readonly="feoReadonly" dense
+                :amount="item.total_price" dense
                 :pending-by-planned-item="pendingByPlannedItem"
                 :pending-items-by-planned-item="pendingItemsByPlannedItem"
                 :purchase-id="purchaseId"
@@ -474,7 +482,7 @@ import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/item
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import { formatPlanResidual, formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT, PLAN_PRICE_LOCKED_HINT } from '@/constants/planPriceLabels'
-import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT, isWishItemCategoryLockedByPlan } from '@/utils/feoItemLock'
+import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT, isWishItemCategoryLockedByPlan, hasFeoBinding } from '@/utils/feoItemLock'
 // item-forms-accommodation-transport.md: при спец-форме позиции («Проживание»/
 // «Перевозки автобусом») колонки Кол-во/Ед./Цена заменяются полями формы —
 // ItemRowFormSwitch.vue (переключатель формы строки + ItemFormFields внутри),

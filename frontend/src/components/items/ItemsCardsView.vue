@@ -186,13 +186,17 @@
                    category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id;
                    владелец 2026-08-17: в общем режиме падает на defaultFeoCategoryId — категорию,
                    выбранную один раз в шапке заявки/закупки. -->
+              <!-- Владелец (29.10.2026): видна всегда при hasFeoBinding(item), не только
+                   в режиме feoPlannedPerItem/allowPerItemPlan — см. тот же предикат в
+                   ItemsTableFlat.vue/ItemsTableStages.vue (ПРАВИЛО №6). -->
               <FeoPlannedItemsSelect
-                v-if="feoPlannedPerItem || allowPerItemPlan"
+                v-if="feoPlannedPerItem || allowPerItemPlan || hasFeoBinding(item)"
+                :readonly="feoReadonly || !(feoPlannedPerItem || allowPerItemPlan)"
                 :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
                 :category-id="effectiveCategoryId(item)"
                 :nodes="feoNodes" :items="plannedItems || []"
                 :subsidy-id="subsidyId"
-                :amount="item.total_price" :readonly="feoReadonly" dense class="mt-1"
+                :amount="item.total_price" dense class="mt-1"
                 :pending-by-planned-item="pendingByPlannedItem"
                 :pending-items-by-planned-item="pendingItemsByPlannedItem"
                 :purchase-id="purchaseId"
@@ -226,7 +230,7 @@
             <template v-else>
             <!-- Кол-во -->
             <v-col cols="6" sm="3">
-              <v-text-field v-model.number="item.quantity" type="number" density="compact"
+              <v-text-field v-model.number="item.quantity" v-number-only type="number" density="compact"
                 variant="outlined" label="Кол-во" hide-details :disabled="readonly"
                 :class="{ 'tz-over-plan': planExcessFor?.(item)?.qtyOver }"
                 @update:model-value="emit('calc-item-total', idx)" />
@@ -260,6 +264,7 @@
                 <template #activator="{ props: tip }">
                   <v-text-field
                     v-bind="tip"
+                    v-number-only
                     :model-value="moneyFieldDisplay(item, 'unit_price')"
                     density="compact" variant="outlined" label="Цена ед., ₽" hide-details
                     :disabled="readonly || isItemFeoCategoryLocked(item)"
@@ -433,7 +438,7 @@ import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlan
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { formatPlanResidual, formatMoneyInput, moneyFieldDisplay, moneyFieldOnInput, moneyFieldOnBlur } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT, PLAN_PRICE_LOCKED_HINT } from '@/constants/planPriceLabels'
-import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT, isWishItemCategoryLockedByPlan } from '@/utils/feoItemLock'
+import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT, isWishItemCategoryLockedByPlan, hasFeoBinding } from '@/utils/feoItemLock'
 import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'

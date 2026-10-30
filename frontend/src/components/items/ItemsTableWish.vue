@@ -123,7 +123,7 @@
           <td v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="3"></td>
           <template v-else>
           <td>
-            <v-text-field v-model.number="item.quantity" type="number" density="compact"
+            <v-text-field v-model.number="item.quantity" v-number-only type="number" density="compact"
               variant="outlined" hide-details class="my-1" :disabled="readonly"
               @update:model-value="emit('calc-item-total', idx)" />
           </td>
@@ -143,6 +143,7 @@
               <template #activator="{ props: tip }">
                 <v-text-field
                   v-bind="tip"
+                  v-number-only
                   :model-value="moneyFieldDisplay(item, 'unit_price')"
                   density="compact" variant="outlined" hide-details class="my-1"
                   :disabled="readonly || isItemFeoCategoryLocked(item)"

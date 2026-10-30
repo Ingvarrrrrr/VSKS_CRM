@@ -5,6 +5,7 @@ import './styles/gala.css'
 import { createPinia } from 'pinia'
 import router from './router'
 import { vResizableColumns } from './directives/resizable-columns'
+import { vNumberOnly } from './directives/numberOnly'
 import { initSwUpdate, initChunkLoadRecovery } from './composables/useSwUpdate'
 import VDialogWithClose from './components/global/VDialogWithClose.vue'
 import { migrateLegacyToken } from './composables/useLegacyTokenMigration'
@@ -27,6 +28,9 @@ app.use(vuetify)
 // PlanView, RiskRadarView).
 
 app.directive('resizable-columns', vResizableColumns)
+// Владелец (29.10.2026): «Кол-во»/«Цена ед.» — только число, браузерный
+// type="number" пропускал e/+/-/вставку текста (directives/numberOnly.ts).
+app.directive('number-only', vNumberOnly)
 
 // Глобально подменяем VDialog обёрткой с крестиком закрытия (см. комментарий
 // в components/global/VDialogWithClose.vue — почему обёрткой компонента, а не

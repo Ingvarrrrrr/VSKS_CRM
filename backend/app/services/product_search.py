@@ -18,10 +18,15 @@ r5s7u9w1y3a5_product_search_indexes.py почему description без инде�
 app/services/product_catalog_match.py, Правило №6, не плодим второй
 нормализатор для другой задачи).
 
-Ранжирование при search (без явного sort): точное совпадение имени (без
-регистра) → имя начинается с запроса → similarity(name, запрос) по убыванию
-→ name. Без search — sort по белому списку колонок (SORTABLE_COLUMNS),
-default 'name' asc.
+Ранжирование при search (без явного sort): САМЫЙ ПЕРВЫЙ член — общий
+word_match_rank_term (app/services/product_search_rank.py, Правило №6,
+владелец 29.10.2026) — первое слово названия стеммируется как слово
+запроса целиком / слово запроса встречается целым словом / только часть
+слова (подстрока), применён во ВСЕХ ветках (эта containment-лестница, FTS
+_fetch_fts_page, OR-ослабление _fetch_fts_page_or). ВТОРЫМ уровнем —
+точное совпадение имени (без регистра) → имя начинается с запроса →
+similarity(name, запрос) по убыванию → name. Без search — sort по белому
+списку колонок (SORTABLE_COLUMNS), default 'name' asc.
 
 ГИБРИДНОЕ РАНЖИРОВАНИЕ широких запросов (владелец, 26.10.2026, доработка):
 полная формула выше (similarity по ВСЕМ совпадениям) требует прочитать и
@@ -67,6 +72,7 @@ from app.services.product_query_parse import (
     product_type_synonyms,
     resolve_type_by_stem,
 )
+from app.services.product_search_rank import word_match_rank_term
 from app.services.product_words_correction import correct_unknown_words
 
 DEFAULT_LIMIT = 50
@@ -311,7 +317,18 @@ def build_product_search_query(
             exact_rank = case((func.lower(Product.name) == norm_search, 0), else_=1)
             startswith_rank = case((func.lower(Product.name).like(f"{_escape_like(norm_search)}%"), 0), else_=1)
             similarity_rank = func.similarity(Product.name, filters.search.strip())
-            q = q.order_by(exact_rank, startswith_rank, similarity_rank.desc(), Product.name)
+            # ПЕРВЫЙ член — общий word_match_rank_term (ПРАВИЛО №6, см.
+            # product_search_rank.py, владелец 29.10.2026): «масло 2х» не
+            # должен ранжировать кабель «...2х1,0...маслостойкий» (слово
+            # совпало только ПОДСТРОКОЙ) выше настоящих масел (слово
+            # совпадает ЦЕЛИКОМ) — остальная лестница (exact/startswith/
+            # similarity/name) остаётся ВТОРЫМ уровнем сортировки, как раньше.
+            order_terms: list = []
+            word_rank_term = word_match_rank_term(_search_words(filters.search))
+            if word_rank_term is not None:
+                order_terms.append(word_rank_term)
+            order_terms.extend([exact_rank, startswith_rank, similarity_rank.desc(), Product.name])
+            q = q.order_by(*order_terms)
     else:
         q = q.order_by(Product.name.asc(), Product.id.asc())
     return q
@@ -885,6 +902,31 @@ async def _fetch_fts_page(
     total = (await db.execute(count_q)).scalar_one()
 
     order_terms = []
+    # САМЫЙ ПЕРВЫЙ член — общий word_match_rank_term (ПРАВИЛО №6, см.
+    # product_search_rank.py, владелец 29.10.2026): «вода» не должен
+    # ранжировать «Кондиционер для аквариумной воды»/«Водовозка» (слово
+    # совпало только ПРЕФИКСОМ «вод:*» required_tsquery) выше настоящей
+    # «Воды ...» (первое слово названия стеммируется ТАК ЖЕ, как слово
+    # запроса целиком) — остальная лестница (тип/игрушки/бренд/ts_rank)
+    # остаётся ВТОРЫМ уровнем сортировки, как раньше.
+    #
+    # word_rank_tokens — ТОЛЬКО для этого бонуса: required-токен вида товара
+    # заменяется ВСЕМИ его синонимами (та же логика, что и
+    # _tsquery_type_group) — иначе регрессия на test_toy_marker_ranked_
+    # below_real_product_same_type (владелец, 28.10.2026): запрос «рация»
+    # без расширения синонимов даёт «Радиостанция Байкал-30» тир 0/1 (другое
+    # первое слово), а буквальным «Рация ...» — тир 2, и этот бонус
+    # перебивал бы штраф за игрушку/позицию типа, обгоняя правильный
+    # порядок. С синонимами оба получают тир 2 (ties), порядок внутри тира
+    # решает прежняя лестница (type_rank/toy_penalty), как раньше.
+    word_rank_tokens = list(text_tokens)
+    if parsed.type_literal and parsed.product_type:
+        type_synonyms = product_type_synonyms(parsed.product_type)
+        if type_synonyms:
+            word_rank_tokens = [t for t in word_rank_tokens if t != parsed.type_literal] + type_synonyms
+    word_rank_term = word_match_rank_term(word_rank_tokens)
+    if word_rank_term is not None:
+        order_terms.append(word_rank_term)
     type_rank_term = _type_position_rank_term(parsed.product_type, parsed.type_literal)
     if type_rank_term is not None:
         # САМЫЙ ПЕРВЫЙ член сортировки (владелец, 28.10.2026, п.2 задания) —
@@ -1044,7 +1086,16 @@ async def _fetch_fts_page_or(
         rank_expr = text(
             f"ts_rank({_FTS_DOC_SQL}, to_tsquery('russian', :or_tsquery_r)) DESC"
         ).bindparams(or_tsquery_r=or_tsquery)
-        page_q = page_q.order_by(rank_expr, Product.name.asc(), Product.id.asc())
+        or_order_terms: list = []
+        # ПЕРВЫЙ член — общий word_match_rank_term (ПРАВИЛО №6, см.
+        # product_search_rank.py) — самый нестрогий шаг лестницы (OR вместо
+        # AND), тем более важно не давать подстрочному совпадению обгонять
+        # целое слово.
+        or_word_rank_term = word_match_rank_term(words)
+        if or_word_rank_term is not None:
+            or_order_terms.append(or_word_rank_term)
+        or_order_terms.extend([rank_expr, Product.name.asc(), Product.id.asc()])
+        page_q = page_q.order_by(*or_order_terms)
     page_q = page_q.limit(limit).offset(offset)
     items = (await db.execute(page_q)).scalars().all()
     return list(items), total

@@ -465,6 +465,15 @@ const planToOrder = usePlanToOrderDialog()
 // FeoLevel5Panel.vue читает тот же feoResiduals.
 watch(() => ctx.selectedId.value, (id) => { planToRequest.ensureResidualsLoaded(id) }, { immediate: true })
 
+// Подхват отложенного «Добавить забытое из субсидии» (фикс регрессии
+// 29.10.2026, см. докстринг requestAppendToWish/consumePendingAppend в
+// usePlanToRequest.ts) — WishFormDialog.vue/WishKanbanDialog.vue запоминают
+// запрос ДО перехода на /subsidies?sid=..., здесь (где usePlanToRequest()
+// вызван штатно, feoLevel5 уже построен) включаем сам режим выбора, когда
+// subsidyId становится известен. immediate — на случай когда ctx.selectedId
+// уже выставлен к моменту монтирования тулбара (переход с query sid=...).
+watch(() => ctx.selectedId.value, (id) => { planToRequest.consumePendingAppend(id) }, { immediate: true })
+
 // N кандидатов на сворачивание — считается лениво при открытии субсидии
 // (задача 3), не на каждый рендер тулбара.
 watch(() => ctx.selectedId.value, (id) => {

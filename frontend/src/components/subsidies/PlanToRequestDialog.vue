@@ -11,7 +11,9 @@
     <v-card class="d-flex flex-column" style="height:100vh">
       <v-toolbar color="deep-purple" density="comfortable">
         <v-toolbar-title>
-          {{ planToRequest.target.value === 'advance' ? 'Авансовый отчёт из плана' : 'Заявка из плана' }}
+          {{ planToRequest.target.value === 'advance' ? 'Авансовый отчёт из плана'
+             : planToRequest.target.value === 'append' ? 'Добавить забытое из субсидии'
+             : 'Заявка из плана' }}
           — {{ ctx.selectedSubsidy.value?.name || 'субсидия' }}
         </v-toolbar-title>
         <v-spacer />
@@ -23,7 +25,11 @@
              авансовый отчёт сразу (уже свершившаяся покупка, товар из
              каталога необязателен). Единственный источник подписей/порядка —
              usePlanToRequest.ts (Правило №6). -->
-        <div class="d-flex align-center" style="gap:8px">
+        <!-- Переключатель «Что создать» скрыт в режиме 'append' (владелец,
+             29.10.2026) — присоединение к существующей заявке, этот выбор
+             пользователю здесь не предлагается (см. usePlanToRequest.ts::
+             requestAppendToWish/consumePendingAppend, вызывается программно). -->
+        <div v-if="planToRequest.target.value !== 'append'" class="d-flex align-center" style="gap:8px">
           <span class="text-caption text-medium-emphasis">Что создать:</span>
           <v-btn-toggle
             :model-value="planToRequest.target.value"
@@ -34,6 +40,7 @@
           </v-btn-toggle>
         </div>
         <v-text-field
+          v-if="planToRequest.target.value !== 'append'"
           v-model="planToRequest.title.value"
           :label="planToRequest.target.value === 'advance' ? 'Название (необязательно)' : 'Название заявки'"
           placeholder="По умолчанию сформирует сервер"
@@ -136,11 +143,11 @@
         <v-spacer />
         <v-btn variant="text" :disabled="planToRequest.submitting.value" @click="planToRequest.closeDialog()">Отмена</v-btn>
         <v-btn color="deep-purple" variant="flat"
-          :prepend-icon="planToRequest.target.value === 'advance' ? 'mdi-cash-check' : 'mdi-hand-heart-outline'"
+          :prepend-icon="planToRequest.target.value === 'advance' ? 'mdi-cash-check' : planToRequest.target.value === 'append' ? 'mdi-playlist-plus' : 'mdi-hand-heart-outline'"
           :loading="planToRequest.submitting.value"
           :disabled="!planToRequest.totalRowsCount.value || !!planToRequest.blockingMissingProductRows.value.length"
           @click="planToRequest.submitCreate()"
-        >{{ planToRequest.target.value === 'advance' ? 'Создать авансовый отчёт' : 'Создать заявку' }}</v-btn>
+        >{{ planToRequest.target.value === 'advance' ? 'Создать авансовый отчёт' : planToRequest.target.value === 'append' ? 'Добавить в заявку' : 'Создать заявку' }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

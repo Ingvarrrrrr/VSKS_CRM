@@ -84,3 +84,24 @@ export function isPurchaseFeoHeaderLocked(p: FeoHeaderLockableItem | null | unde
   if (p.wish_id == null) return false
   return p.purchase_method !== 'advance'
 }
+
+// Владелец (сессия 2026-10-29, закупки PEE-2026-00957/РЕЕ-2026-00912):
+// «привязка позиции к плановой должна быть видна всегда» — строка с категорией
+// ФЭО/плановой позицией (feo-attrs-row в ItemsTableFlat.vue/ItemsTableStages.vue,
+// её аналог в ItemsCardsView.vue) раньше рендерилась ТОЛЬКО при feoPerItem/
+// allowPerItemPlan и пропадала целиком, если позиция уже привязана, но режим
+// построчного ФЭО выключен — привязка «терялась» из вида. Единый предикат
+// (ПРАВИЛО №6, не копия по трём файлам): строка показывается ДОПОЛНИТЕЛЬНО,
+// когда у позиции есть собственная категория/узел ФЭО или плановая позиция,
+// независимо от режима; редактирование остаётся под теми же условиями, что
+// и раньше (см. feoPerItem/allowPerItemPlan в вызывающих компонентах).
+export interface FeoBoundItem {
+  feo_planned_item_id?: number | null
+  feo_category_id?: number | null
+  feo_node_id?: number | null
+}
+
+export function hasFeoBinding(item: FeoBoundItem | null | undefined): boolean {
+  if (!item) return false
+  return item.feo_planned_item_id != null || item.feo_category_id != null || item.feo_node_id != null
+}

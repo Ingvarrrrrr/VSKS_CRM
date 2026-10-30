@@ -121,6 +121,45 @@ def ensure_payments_splittable(payments: list[Payment]) -> None:
             )
 
 
+def resolve_part_feo_header(
+    header_feo_per_item: bool, header_feo_category_id: Optional[int],
+    item_category_ids: list[Optional[int]],
+) -> tuple[bool, Optional[int]]:
+    """ЕДИНЫЙ источник (ПРАВИЛО №6) того, какую шапку ФЭО получает ЧАСТЬ
+    разбиения — вызывается и из split_purchase_core (новое разбиение), и из
+    alembic-миграции c7d9e1f3g5h7 (backfill уже существующих на проде частей,
+    та же формула, не копия).
+
+    Баг (прод, заявка 226, задача 29.10.2026): закупку с позициями РАЗНЫХ
+    категорий ФЭО (унаследованными от разных плановых позиций) разбили на
+    части по колонкам канбана — каждая часть получила ЧУЖУЮ шапку
+    (feo_category_id исходной закупки целиком, feo_per_item=False), хотя
+    позиции внутри части могли остаться разных категорий → баннер
+    «РАСХОЖДЕНИЕ КАТЕГОРИИ ФЭО» (purchase_feo_checks.py) на каждой части.
+
+    Правило:
+    - позиции части (с заданной feo_category_id) больше ОДНОЙ различной
+      категории → часть переходит в режим "разные категории для каждого
+      товара" (feo_per_item=True), шапка не трогается (каждая позиция несёт
+      свою категорию уже сама);
+    - у всех позиций ОДНА и та же категория, а шапка исходной закупки была
+      пуста → шапка части получает эту единственную категорию (раньше у
+      такой части шапка осталась бы NULL, хотя все позиции явно про одну
+      статью — несовпадение шапки с позициями тоже триггерило баннер);
+    - исходный feo_per_item=True — наследуется независимо от категорий
+      позиций (владелец уже включил режим на закупке целиком, часть не
+      откатывает его обратно);
+    - иначе (0 или 1 категория у позиций, шапка уже заполнена, исходный
+      feo_per_item=False) — часть наследует шапку/флаг исходной БЕЗ изменений
+      (поведение до этой правки)."""
+    distinct_cats = {cid for cid in item_category_ids if cid is not None}
+    per_item = bool(header_feo_per_item) or len(distinct_cats) > 1
+    category_id = header_feo_category_id
+    if category_id is None and len(distinct_cats) == 1:
+        category_id = next(iter(distinct_cats))
+    return per_item, category_id
+
+
 def split_payments_amount(total_amount: Decimal, group_totals: list[Decimal]) -> list[Decimal]:
     """Пропорционально group_totals делит total_amount на len(group_totals) долей,
     последняя доля — остаток (Σ долей == total_amount до копейки, без потерь на
@@ -299,15 +338,29 @@ async def split_purchase_core(
             base_subject = (purchase.subject or purchase.item_name or "").strip()
             new_subject = f"{base_subject} — {display_key}".strip(" —") if base_subject else display_key
 
+            part_feo_per_item, part_feo_category_id = resolve_part_feo_header(
+                purchase.feo_per_item, purchase.feo_category_id,
+                [it.feo_category_id for it in group_items],
+            )
+
             new_p = Purchase(
                 subsidy_id=purchase.subsidy_id,
-                feo_category_id=purchase.feo_category_id,
+                # Часть заявки (wish_id) — иначе GET /wishes/{id}/purchases-board
+                # (wish_purchases_board.py) не находит части разбиения заявки и
+                # открывает пустой канбан (прод, заявка 226, 29.10.2026).
+                wish_id=purchase.wish_id,
+                feo_category_id=part_feo_category_id,
+                feo_per_item=part_feo_per_item,
                 item_name=new_subject or f"Закупка #{purchase.id}",
                 subject=new_subject,
                 planned_total_price=total,
                 total_nmck=total,
                 nmck=total,
-                status=stage_status or ("wishes" if purchase.status == "wishes" else "planned"),
+                # 'planned' — легаси-статус (не в STATUS_ORDER, см. покстринг
+                # purchase_amounts.py) — часть без стадии договора теперь
+                # получает 'plan_schedule' (единственный актуальный
+                # пред-договорный статус в STATUS_ORDER), не заводя новый.
+                status=stage_status or ("wishes" if purchase.status == "wishes" else "plan_schedule"),
                 assigned_user_id=purchase.assigned_user_id,
                 service_note_text=purchase.service_note_text,
                 service_note_by=purchase.service_note_by,

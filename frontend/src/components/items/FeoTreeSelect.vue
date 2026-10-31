@@ -21,10 +21,27 @@
       />
     </template>
 
+    <template v-else-if="readonly">
+      <div ref="fieldWrapEl" data-field="feo_category_select">
+        <v-textarea
+          :model-value="selectedPath"
+          readonly
+          no-resize
+          :auto-grow="false"
+          rows="1"
+          variant="outlined"
+          :density="horizontal ? 'compact' : 'comfortable'"
+          hide-details
+          :label="fieldLabel"
+          :error="!!error && !isLeafSelected"
+          class="feo-tree-field feo-tree-field--readonly"
+        />
+      </div>
+    </template>
+
     <template v-else>
       <v-menu
         v-model="menuOpen"
-        :disabled="!!readonly"
         :close-on-content-click="false"
         location="bottom start"
         transition="scale-transition"
@@ -94,7 +111,7 @@
           </div>
         </template>
 
-        <v-card class="feo-tree-menu-card">
+        <v-card v-if="menuOpen" class="feo-tree-menu-card">
           <!-- Поиск по всему дереву + «Развернуть/Свернуть всё» -->
           <div class="feo-tree-search pa-2 d-flex align-center ga-1">
             <v-text-field

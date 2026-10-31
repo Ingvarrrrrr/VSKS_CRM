@@ -225,11 +225,35 @@ async def _attach_item_product_snapshot(wish: Wish, enriched: WishOut, db: Async
     need_name_lookup = [wi for wi in wish_items if not wi.product_id and (wi.item_name or "").strip()]
     by_normalized_name: dict[str, list[int]] = {}
     if need_name_lookup:
-        name_rows = (await db.execute(select(Product.id, Product.name))).all()
-        for pid, name in name_rows:
-            key = _normalize_name(name or "")
-            if key:
-                by_normalized_name.setdefault(key, []).append(pid)
+        # ОПТИМИЗАЦИЯ (зависание при открытии заявки, 31.10.2026):
+        # Вместо SELECT всего каталога (300k+ записей) с блокировкой Event Loop Python
+        # на десятки секунд, ищем в БД точечно только кандидатов по нормализованным именам
+        # позиций текущей заявки.
+        from app.services.product_catalog_match import (
+            normalize_product_name,
+            _sql_normalized_name_expr,
+        )
+        from sqlalchemy import or_, func
+
+        norm_keys = {normalize_product_name(wi.item_name) for wi in need_name_lookup}
+        norm_keys.discard("")
+        raw_lowers = {(wi.item_name or "").strip().lower() for wi in need_name_lookup}
+        raw_lowers.discard("")
+
+        filters = []
+        if norm_keys:
+            filters.append(_sql_normalized_name_expr().in_(norm_keys))
+        if raw_lowers:
+            filters.append(func.lower(Product.name).in_(raw_lowers))
+
+        if filters:
+            name_rows = (await db.execute(
+                select(Product.id, Product.name).where(or_(*filters))
+            )).all()
+            for pid, name in name_rows:
+                key = _normalize_name(name or "")
+                if key:
+                    by_normalized_name.setdefault(key, []).append(pid)
 
     product_id_by_wish_item: dict[int, int] = {}
     all_product_ids: set[int] = set()

@@ -26,6 +26,7 @@ export function useWishApprovalCeilingPreview() {
   const loadedForWishId = ref<number | null>(null)
 
   async function load(wishId: number) {
+    if (loading.value) return
     if (loadedForWishId.value === wishId && data.value) return
     loading.value = true
     try {

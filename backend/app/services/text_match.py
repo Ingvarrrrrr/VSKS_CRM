@@ -119,8 +119,23 @@ def tokenize(s: str) -> list[str]:
     return [t for t in normalize(s).split() if len(t) >= 2 and t not in NOISE_TOKENS]
 
 
+_RU_SUFFIX_RE = re.compile(
+    r'(ями|ами|ого|его|ому|ему|ыми|ими|ьев|ьям|ьях|иям|иях|ией|'
+    r'ов|ев|ей|ам|ям|ах|ях|ом|ем|ой|ую|юю|ый|ий|ая|яя|ое|ее|ые|ие|ья|ия|ии|ью|'
+    r'а|я|ы|и|у|ю|е|о|ь)$'
+)
+
+
 def stem(t: str) -> str:
-    """Primitive 6-char prefix stem for Russian suffix handling."""
+    """Primitive prefix/suffix stem for Russian morphology handling:
+    strips common Russian inflectional endings on Cyrillic tokens when at
+    least a 3-char root remains (so plural/singular pairs shorter than 6 chars
+    like «ножи»/«нож», «блоки»/«блок», «файлы»/«файл», «папки»/«папка»,
+    «простые»/«простой» share a stem), then caps at 6 chars."""
+    if len(t) > 3 and _HAS_CYRILLIC_RE.search(t):
+        stripped = _RU_SUFFIX_RE.sub('', t)
+        if len(stripped) >= 3:
+            t = stripped
     return t[:6] if len(t) > 6 else t
 
 
@@ -186,7 +201,7 @@ def similarity(a: str, b: str) -> float:
     union = ta | tb
     if not union:
         return 0.0
-    return round(len(ta & tb) / len(union), 4)
+    return round(min(len(ta & tb) / len(union), 0.99), 4)
 
 
 _EXACT_MIN_QUERY_TOKENS = 3   # ниже — однословные/двусловные запросы слишком общие

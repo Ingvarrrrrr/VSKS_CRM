@@ -31,7 +31,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.product import Product
-from app.services.product_search import _search_words, _word_condition
+from app.services.product_search import MIN_TRIGRAM_WORD_LEN, _search_words, _word_condition
+from app.services.text_match import stem, tokenize
 
 PER_QUERY_CANDIDATE_LIMIT = 200
 
@@ -45,6 +46,18 @@ def _candidate_condition(query: str) -> Optional[ColumnElement]:
     if words:
         from sqlalchemy import and_
         conds.append(and_(*(_word_condition(w, search_description=False) for w in words)))
+    # Плановые позиции часто записаны во множественном числе («Ножи канцелярские»,
+    # «Степлеры канцелярские», «Карандаши простые», «Папки-регистраторы»), тогда
+    # как товары каталога — в единственном с длинным уточнением модели/размера
+    # (trigram similarity всей строки < 0.3, а буквальный ILIKE по полному слову
+    # с окончанием мн. ч. их отсекает ДО передачи в bulk_match). Вторая OR-ветка
+    # по стемам text_match.stem (>= MIN_TRIGRAM_WORD_LEN=3 символов, работает по
+    # тому же GIN trgm-индексу) подаёт эти товары в bulk_match.
+    stems = [stem(t) for t in tokenize(query)]
+    trgm_stems = [s for s in stems if len(s) >= MIN_TRIGRAM_WORD_LEN]
+    if trgm_stems:
+        from sqlalchemy import and_
+        conds.append(and_(*(_word_condition(s, search_description=False) for s in trgm_stems)))
     return or_(*conds)
 
 

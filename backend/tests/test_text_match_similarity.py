@@ -15,7 +15,7 @@ text_match._fold_word_homoglyphs docstring.
 fold для ТОЧНОГО дедупа каталога, здесь — узкий fold для ИНТЕРАКТИВНОГО
 ранжирования похожести, разные задачи и разный риск ложных срабатываний, см.
 докстринг _MIXED_WORD_HOMOGLYPHS в text_match.py)."""
-from app.services.text_match import normalize, similarity, tokenize
+from app.services.text_match import normalize, similarity, stem, tokenize
 
 
 GLOVE_QUERY = "Перчатки"
@@ -91,3 +91,20 @@ def test_homoglyph_fold_does_not_break_long_descriptive_name():
     norm = normalize(GLOVE_LONG_DESCRIPTIVE)
     assert "master" in norm and "pro" in norm
     assert "gsd" in norm
+
+
+def test_stem_strips_russian_plural_endings_on_short_roots():
+    """Короткие русские корни (<=6 букв вместе с окончанием) в плановых
+    позициях во множественном числе («Ножи канцелярские», «Блоки самоклеящиеся»,
+    «Файлы-вкладыши», «Папки-регистраторы», «Карандаши простые») обязаны
+    стеммироваться в ту же основу, что и товары каталога в единственном числе."""
+    assert stem("ножи") == stem("нож") == "нож"
+    assert stem("блоки") == stem("блок") == "блок"
+    assert stem("файлы") == stem("файл") == "файл"
+    assert stem("папки") == stem("папка") == "папк"
+    assert stem("простые") == stem("простой") == "прост"
+    # Ножи канцелярские vs нож канцелярский — все стемы совпадают, но строки
+    # после normalize() различаются числом → similarity = 0.99 (не 1.0, т.к.
+    # 100% зарезервировано за полным совпадением normalize).
+    assert similarity("Ножи канцелярские", "нож канцелярский") == 0.99
+

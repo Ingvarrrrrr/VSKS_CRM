@@ -185,25 +185,16 @@ export interface PlanToRequestRow {
   creatingTask: boolean
 }
 
-// Дефолтный режим цены строки (владелец, задача 3): «Из прошлых закупок» —
-// если у выбранного товара есть цена; иначе «По плану» — если у плановой
-// позиции задана цена за единицу; иначе «Ввести самостоятельно». Единственное
-// место этого решения — вызывается и при создании строки (emptyRowFrom), и
-// при смене товара (pickCandidateForRow), второй копии условия не заводим.
-//
-// Координатор (30.09.2026, авансовый режим): «цена по умолчанию — из
-// ПЛАНОВОЙ позиции, не из каталога» — даже если строке подобрался кандидат
-// с ценой (exact-match может проставиться сам, см. emptyRowFrom). Читает
-// module-level `target` напрямую (единственный источник режима «что
-// создать», см. его докстринг) — второй параметр не заводим.
+// Дефолтный режим цены строки (владелец, 31.10.2026: «при создании заявки из
+// субсидии автоматически должен ставиться для начала выбор "По плану"»):
+// «По плану» — если у плановой позиции есть плановая цена (в т.ч. вычисленная
+// из суммы плана); иначе «Из прошлых закупок» — если у выбранного товара есть
+// цена; иначе «Ввести самостоятельно». Единственное место этого решения —
+// вызывается и при создании строки (emptyRowFrom), и при смене товара
+// (pickCandidateForRow), второй копии условия не заводим (Правило №6).
 function defaultPriceModeFor(row: Pick<PlanToRequestRow, 'selectedCandidate' | 'planUnitPrice'>): PriceMode {
-  if (target.value === 'advance') {
-    if (row.planUnitPrice != null) return 'plan'
-    if (row.selectedCandidate?.price != null) return 'catalog'
-    return 'manual'
-  }
-  if (row.selectedCandidate?.price != null) return 'catalog'
   if (row.planUnitPrice != null) return 'plan'
+  if (row.selectedCandidate?.price != null) return 'catalog'
   return 'manual'
 }
 
@@ -254,7 +245,7 @@ const title = ref('')
 // строк» (такого понятия больше нет, см. докстринг PlanToRequestRow), только
 // подсветка последней нажатой кнопки в шапке диалога; сами строки всегда несут
 // свой priceMode независимо.
-const globalPriceSource = ref<PriceMode>('catalog')
+const globalPriceSource = ref<PriceMode>('plan')
 // «Что создать» (владелец, 30.09.2026) — module-level singleton, как и
 // остальное состояние этого файла (см. докстринг вверху файла); сбрасывается
 // на 'wish' при каждом openConfirmDialog (см. ниже), чтобы новый вызов не
@@ -823,7 +814,7 @@ export function usePlanToRequest() {
     if (selectedCount.value === 0) return
     currentSubsidyId.value = subsidyId
     title.value = ''
-    globalPriceSource.value = 'catalog'
+    globalPriceSource.value = 'plan'
     // 'append' выставлен заранее startAppendSelectMode() — не затираем его
     // дефолтом 'wish' (Правило №6: appendToWishId — единственный признак режима).
     if (appendToWishId.value == null) target.value = 'wish'

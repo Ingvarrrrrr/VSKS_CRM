@@ -750,3 +750,80 @@ async def test_create_wish_422_foreign_subsidy(db_session, test_user):
     from fastapi import HTTPException
     assert isinstance(exc_info.value, HTTPException)
     assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_candidates_and_create_wish_implied_plan_unit_price_when_unit_price_null(db_session, test_user, test_org):
+    """Боевой кейс субсидии «Абхазия» (позиция «Катер», id=5730): у позиции
+    заданы quantity=1 и amount=4 484 400, но unit_price=NULL (создана из плана
+    строки листовой категории без отдельной разбивки Ур.5). Кандидаты и создание
+    заявки с price_source='plan' обязаны вычислять подразумеваемую плановую цену
+    (amount / quantity), чтобы кнопка «По плану» была активна и итоговая сумма
+    заявки не теряла 4 484 400 ₽."""
+    import uuid
+    suffix = uuid.uuid4().hex[:8]
+    _subsidy, cat = await _make_subsidy_with_leaf(
+        db_session, f"Subsidy-kater-{suffix}", org_id=test_org.id, visible_to_user_id=test_user.id,
+    )
+    planned = await _make_planned_item(
+        db_session, cat, f"Катер {suffix}",
+        quantity=Decimal("1"), unit_price=None, amount=Decimal("4484400.00"),
+    )
+
+    cand_rows = await build_plan_to_wish_candidates(db_session, [planned.id], limit=6)
+    assert len(cand_rows) == 1
+    assert cand_rows[0]["plan_unit_price"] == Decimal("4484400.00")
+
+    items = [
+        PlanToWishItemInput(
+            feo_planned_item_id=planned.id,
+            quantity=Decimal("1"),
+            item_name=f"Катер спасательный {suffix}",
+            price_source="plan",
+        ),
+    ]
+    res = await create_wish_from_plan(db_session, test_user, _subsidy.id, None, items)
+
+    from sqlalchemy import select
+    wi = (await db_session.execute(select(WishItem).where(WishItem.wish_id == res["wish_id"]))).scalar_one()
+    assert wi.unit_price == Decimal("4484400.00")
+    assert wi.total_price == Decimal("4484400.00")
+
+
+@pytest.mark.asyncio
+async def test_candidates_plural_planned_item_matches_singular_catalog_product(db_session, test_user):
+    """Боевой кейс субсидии «Абхазия» («Ножи канцелярские»): плановая позиция во
+    множественном числе обязана находить каталожные товары в единственном числе
+    («Нож канцелярский 18 мм ...») в by_name."""
+    import uuid
+    suffix = uuid.uuid4().hex[:8]
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, f"Subsidy-knives-{suffix}")
+    planned = await _make_planned_item(
+        db_session, cat, f"Ножи канцелярские {suffix}",
+        quantity=Decimal("15"), unit_price=Decimal("300"), amount=Decimal("4500"),
+    )
+
+    p1 = Product(
+        name=f"Нож канцелярский {suffix}",
+        product_type="Нож",
+        category="Канцтовары",
+        price=Decimal("412"),
+        is_active=True,
+    )
+    p2 = Product(
+        name=f"Нож канцелярский 18 мм ErichKrause Standart с фиксатором лезвия {suffix}",
+        product_type="Нож канцелярский",
+        category="Канцтовары",
+        price=Decimal("119"),
+        is_active=True,
+    )
+    db_session.add_all([p1, p2])
+    await db_session.commit()
+    await db_session.refresh(p1)
+    await db_session.refresh(p2)
+
+    result = await build_plan_to_wish_candidates(db_session, [planned.id], limit=6)
+    row = result[0]
+    by_name_ids = {c["product_id"] for c in row["by_name"]}
+    assert p1.id in by_name_ids and p2.id in by_name_ids, f"expected both knives in by_name, got {row['by_name']}"
+

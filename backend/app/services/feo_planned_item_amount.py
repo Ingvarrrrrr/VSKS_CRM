@@ -67,3 +67,28 @@ def backfill_unit_price_on_quantity_change(
     implied_unit_price = (old_amount_d / old_qty_d).quantize(_CENTS, rounding=ROUND_HALF_UP)
     recomputed_amount = line_total(new_qty_d, implied_unit_price)
     return recomputed_amount, implied_unit_price
+
+
+def effective_plan_unit_price(planned) -> Optional[Decimal]:
+    """Эффективная плановая цена за единицу позиции ФЭО (Правило №6 — единая
+    точка для build_plan_to_wish_candidates и build_items_from_plan в
+    app/services/plan_to_wish.py):
+      - если planned.unit_price задана явно — возвращается она;
+      - если unit_price не задана (NULL — позиции из плана листовой категории
+        без отдельной строки Ур.5 в импорте ФЭО, напр. «Катер» в субсидии
+        «Абхазия», либо позиции, заведённые только с итоговой суммой amount),
+        но задана сумма planned.amount: при planned.quantity > 0 вычисляется
+        подразумеваемая цена за единицу (amount / quantity до копеек), иначе
+        возвращается сама сумма amount (как цена 1 ед.).
+    """
+    up = _dec_or_none(getattr(planned, "unit_price", None))
+    if up is not None:
+        return up
+    amt = _dec_or_none(getattr(planned, "amount", None))
+    if amt is None:
+        return None
+    qty = _dec_or_none(getattr(planned, "quantity", None))
+    if qty is not None and qty > 0:
+        return (amt / qty).quantize(_CENTS, rounding=ROUND_HALF_UP)
+    return amt
+

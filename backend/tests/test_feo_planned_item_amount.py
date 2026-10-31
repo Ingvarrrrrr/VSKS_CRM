@@ -5,8 +5,12 @@ feo_planned_item_amount.py) — единственное место автопе
 /feo-planned-items/{id}, one_time-режим), см. её докстринг.
 """
 from decimal import Decimal
+from types import SimpleNamespace
 
-from app.services.feo_planned_item_amount import backfill_unit_price_on_quantity_change
+from app.services.feo_planned_item_amount import (
+    backfill_unit_price_on_quantity_change,
+    effective_plan_unit_price,
+)
 
 
 def test_owner_example_backfills_unit_price_and_recomputes_amount():
@@ -61,3 +65,20 @@ def test_no_old_amount_or_quantity_no_backfill():
     )
     assert amount == Decimal("169000")
     assert unit_price is None
+
+
+def test_effective_plan_unit_price_derives_from_amount_when_unit_price_null():
+    """Субсидия «Абхазия», позиция «Катер» (id=5730): quantity=1, amount=4 484 400,
+    unit_price=None — подразумеваемая плановая цена за единицу = 4 484 400.00."""
+    kater = SimpleNamespace(quantity=Decimal("1.0000"), unit_price=None, amount=Decimal("4484400.00"))
+    assert effective_plan_unit_price(kater) == Decimal("4484400.00")
+
+    multi = SimpleNamespace(quantity=Decimal("4"), unit_price=None, amount=Decimal("338000.00"))
+    assert effective_plan_unit_price(multi) == Decimal("84500.00")
+
+    explicit = SimpleNamespace(quantity=Decimal("4"), unit_price=Decimal("80000.00"), amount=Decimal("338000.00"))
+    assert effective_plan_unit_price(explicit) == Decimal("80000.00")
+
+    empty = SimpleNamespace(quantity=Decimal("1"), unit_price=None, amount=None)
+    assert effective_plan_unit_price(empty) is None
+

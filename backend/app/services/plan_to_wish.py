@@ -51,6 +51,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.services.dictionaries import STATUS_LABELS
+from app.services.feo_planned_item_amount import effective_plan_unit_price
 from app.services.feo_plan_fact import (
     planned_item_consumption,
     plan_consumption_by_category,
@@ -59,7 +60,7 @@ from app.services.feo_plan_fact import (
 from app.services.item_amounts import line_total
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.product_snapshot import resolve_photo_url
-from app.services.text_match import normalize, tokenize, similarity as text_similarity, is_exact_match, SCORE_SUGGEST
+from app.services.text_match import normalize, tokenize, stem, similarity as text_similarity, is_exact_match, SCORE_SUGGEST
 
 
 _BY_TYPE_MIN_WORD_LEN = 4
@@ -250,9 +251,12 @@ async def build_plan_to_wish_candidates(
     )).all()
     products_by_type_norm: dict[str, list] = {}
     for prod in type_rows:
-        key = normalize(prod.product_type or "")
-        if key:
-            products_by_type_norm.setdefault(key, []).append(prod)
+        raw_type = prod.product_type or ""
+        key = normalize(raw_type)
+        stem_key = " ".join(stem(t) for t in tokenize(raw_type))
+        for k in {key, stem_key}:
+            if k:
+                products_by_type_norm.setdefault(k, []).append(prod)
 
     freshness_ctx = await load_freshness_context(db, org_id=None)
 
@@ -275,13 +279,22 @@ async def build_plan_to_wish_candidates(
         cands = name_res["candidates"]
         exact = None
         rest = cands
-        # is_exact_match проверяется ПОКА cands[0]["score"] ещё покрытие
+        # is_exact_match проверяется ПОКА cands[i]["score"] ещё покрытие
         # (text_match.score) — порог SCORE_AUTO в её докстринге завязан именно
-        # на эту семантику, менять на similarity нельзя.
-        if cands and is_exact_match(item_name, cands[0]["name"], cands[0]["score"]):
-            exact = cands[0]
+        # на эту семантику, менять на similarity нельзя. Полное совпадение
+        # нормализованного имени (normalize(item_name) == normalize(c["name"]))
+        # ищется по всему пулу cands на случай, если при равном coverage=1.0
+        # выше встал товар с более длинным названием и заполненным описанием.
+        exact_idx = next(
+            (i for i, c in enumerate(cands) if normalize(item_name) == normalize(c["name"])),
+            None,
+        )
+        if exact_idx is None and cands and is_exact_match(item_name, cands[0]["name"], cands[0]["score"]):
+            exact_idx = 0
+        if exact_idx is not None:
+            exact = cands[exact_idx]
             exact["score"] = 1.0  # владелец, 2026-09-21: «100% — когда имена совпадают»
-            rest = cands[1:]
+            rest = cands[:exact_idx] + cands[exact_idx + 1:]
         # Кандидат, у которого раньше был высокий score (даже >=SCORE_AUTO), но
         # is_exact_match его отсёк — остаётся в rest (rest==cands целиком, если
         # exact не назначен) и попадает в объединённый пул: выбор за
@@ -291,7 +304,15 @@ async def build_plan_to_wish_candidates(
         # после by_name), т.к. теперь участвуют в общем ранжировании по имени.
         exact_product_id = exact["product_id"] if exact else None
         name_norm = normalize(item_name)
-        match_targets = {t for t in ({name_norm} | {t for t in tokenize(item_name) if len(t) >= _BY_TYPE_MIN_WORD_LEN}) if t}
+        item_tokens = tokenize(item_name)
+        stem_phrase = " ".join(stem(t) for t in item_tokens)
+        match_targets = {
+            t for t in (
+                {name_norm, stem_phrase}
+                | {t for t in item_tokens if len(t) >= _BY_TYPE_MIN_WORD_LEN}
+                | {stem(t) for t in item_tokens if len(t) >= _BY_TYPE_MIN_WORD_LEN or len(stem(t)) >= 3}
+            ) if t
+        }
 
         type_matched_products: list = []
         seen_type_ids: set[int] = set()
@@ -346,7 +367,7 @@ async def build_plan_to_wish_candidates(
             "feo_category_id": cat.id,
             "feo_category_name": cat.name,
             "plan_quantity": plan_quantity,
-            "plan_unit_price": planned.unit_price,
+            "plan_unit_price": effective_plan_unit_price(planned),
             "plan_amount": planned.amount,
             "used_quantity": Decimal(str(cons["used_qty"] or 0)),
             "residual_quantity": residual_quantity,
@@ -503,6 +524,7 @@ async def build_items_from_plan(
 
         unit = (product.unit if product and product.unit else None) or planned.unit or "шт"
 
+        plan_unit_price = effective_plan_unit_price(planned)
         price_fallback = False
         if it.unit_price is not None:
             unit_price = it.unit_price
@@ -510,10 +532,10 @@ async def build_items_from_plan(
             if product is not None and product.price is not None:
                 unit_price = product.price
             else:
-                unit_price = planned.unit_price
+                unit_price = plan_unit_price
                 price_fallback = True
         else:  # price_source == 'plan' (или не передан) — плановая цена
-            unit_price = planned.unit_price
+            unit_price = plan_unit_price
         unit_price = unit_price if unit_price is not None else Decimal("0")
 
         total_price = line_total(it.quantity, unit_price)

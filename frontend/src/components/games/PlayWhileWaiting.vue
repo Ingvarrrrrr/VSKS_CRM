@@ -1,15 +1,20 @@
 <template>
-  <Transition name="duck-fade">
-    <button
-      v-if="showButton"
-      type="button"
-      class="duck-play-btn"
-      @click="openGame"
-    >
-      ▶ Поиграть, пока грузится
-    </button>
-  </Transition>
-  <DuckShootWindow v-model:open="gameOpen" @close="gameOpen = false" />
+  <Teleport to="body">
+    <Transition name="duck-fade">
+      <button
+        v-if="showButton"
+        type="button"
+        class="duck-play-btn"
+        @pointerdown.stop
+        @mousedown.stop
+        @focusin.stop
+        @click.stop="openGame"
+      >
+        ▶ Поиграть, пока грузится
+      </button>
+    </Transition>
+    <DuckShootWindow v-model:open="gameOpen" @close="gameOpen = false" />
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -46,7 +51,10 @@ onMounted(() => {
   position: fixed;
   right: 24px;
   bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-  z-index: 2400;
+  /* Выше Vuetify v-dialog/v-overlay-container (2400+, при вложенных меню/диалогах
+     растёт: 2402, 2404…), чтобы кнопка была видна и кликабельна поверх
+     полноэкранных диалогов вроде PlanToRequestDialog.vue. */
+  z-index: 10000;
   background: #fff;
   color: #111;
   border: 1px solid #111;

@@ -6,6 +6,7 @@
        закупка. Состояние/API — usePlanToRequest.ts (Правило №6, единственный
        источник). -->
   <v-dialog :model-value="planToRequest.dialogOpen.value" fullscreen persistent
+    :retain-focus="false"
     transition="dialog-bottom-transition"
     @update:model-value="(v: boolean) => { if (!v) planToRequest.closeDialog() }">
     <v-card class="d-flex flex-column" style="height:100vh">

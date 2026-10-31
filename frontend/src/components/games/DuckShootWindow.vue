@@ -2,7 +2,11 @@
   <div
     v-if="open"
     class="duck-backdrop"
-    @keydown.esc="handleClose"
+    @pointerdown.stop
+    @mousedown.stop
+    @click.stop
+    @focusin.stop
+    @keydown.esc.stop="handleClose"
   >
     <div
       class="duck-window"
@@ -111,6 +115,8 @@ function handleClose() {
 
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && props.open) {
+    e.stopImmediatePropagation()
+    e.preventDefault()
     handleClose()
   }
 }
@@ -177,11 +183,11 @@ watch(
 )
 
 onMounted(() => {
-  window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('keydown', handleKeydown, true)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('keydown', handleKeydown, true)
   unmountGame()
 })
 </script>
@@ -190,7 +196,8 @@ onBeforeUnmount(() => {
 .duck-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 2500;
+  /* Поверх кнопки .duck-play-btn (10000) и любых полноэкранных v-dialog (2400+). */
+  z-index: 10100;
   background: rgba(0, 0, 0, 0.35);
   display: flex;
   align-items: center;

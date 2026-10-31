@@ -15,7 +15,7 @@
         <v-icon size="16" icon="mdi-chevron-down" class="flex-shrink-0" />
       </div>
     </template>
-    <v-card class="feo-planned-dense-menu pa-1">
+    <v-card v-if="denseMenuOpen" class="feo-planned-dense-menu pa-1">
       <!-- «Призрак»: modelValue указывает на позицию, которой нет в items -->
       <div v-if="ghostRow" class="feo-tree-row feo-planned-ghost">
         <span class="feo-tree-rail" />

@@ -390,13 +390,16 @@ async def create_wish(
                 "item_name": item_data.get('item_name', ''),
                 "item_type": _item_type_for_create,
             }])
+            from app.services.units_okei import normalize_unit as _norm_okei_unit
+            _raw_unit = item_data.get('unit')
+            _unit_clean = _norm_okei_unit(_raw_unit) or _raw_unit or 'Штука'
             wi = WishItem(
                 wish_id=wish.id,
                 product_id=item_data.get('product_id'),
                 item_name=item_data.get('item_name', ''),
                 item_type=_item_type_for_create,
                 quantity=item_data.get('quantity', 1),
-                unit=item_data.get('unit', 'шт'),
+                unit=_unit_clean,
                 unit_price=item_data.get('unit_price', 0),
                 total_price=item_data.get('total_price', 0),
                 extra_attrs=item_data.get('extra_attrs') or {},  # item-forms-accommodation-transport.md
@@ -743,199 +746,201 @@ async def update_wish(
         ))
 
     if body.items is not None:
-        if old_status == "draft":
-            # Draft: delete+recreate (original behaviour)
-            await db.execute(delete(WishItem).where(WishItem.wish_id == wish.id))
-            # item-forms-accommodation-transport.md: wish.contract_form уже
-            # обновлён setattr-циклом выше (update_data) — item_form_for_wish_item
-            # по КАЖДОЙ строке видит и новую форму, и выбор строки (item_form).
-            for item_data in body.items:
-                if not _is_meaningful_item(item_data):
-                    continue  # пустая строка-заготовка — в БД не пишем
-                from app.services.payroll_category_guard import default_wish_item_type
+        # Обновляем существующие позиции in-place по id (в т.ч. в статусе 'draft'
+        # и 'rejected'), чтобы НЕ стирать WishItem.id, WishItem.target_column_key
+        # и FK PurchaseItem.wish_item_id (ON DELETE SET NULL иначе разрушал уже
+        # сделанную разбивку по закупкам при возврате заявки в черновик).
+        # Для 'draft'/'rejected' также поддерживается:
+        #   - фолбэк-сопоставление по нормализованному имени, если id не передан;
+        #   - добавление новых позиций (без совпавшего существующего WishItem);
+        #   - удаление позиций, выпавших из payload ИЛИ обнулённых (quantity <= 0).
+        from app.services.payroll_category_guard import (
+            default_wish_item_type,
+            assert_no_goods_in_payroll,
+        )
+        existing_items = {wi.id: wi for wi in wish.items}
+        explicit_ids = {
+            (d.get('id') if isinstance(d, dict) else getattr(d, 'id', None))
+            for d in body.items
+        }
+        unclaimed_by_name: dict[str, list[WishItem]] = {}
+        if old_status in ("draft", "rejected"):
+            for _ewi in wish.items:
+                if _ewi.id not in explicit_ids:
+                    _k = (_ewi.item_name or "").strip().lower()
+                    unclaimed_by_name.setdefault(_k, []).append(_ewi)
+
+        payload_ids: set[int] = set()
+        new_items_to_add: list[WishItem] = []
+
+        for item_data in body.items:
+            # Если у позиции явно поставили quantity <= 0 (например, «было 10 БОП
+            # стало 0»), принудительно обнуляем total_price в копии слота, чтобы
+            # _is_meaningful_item вернул False и позиция ушла в ids_to_delete.
+            if (
+                isinstance(item_data, dict)
+                and 'quantity' in item_data
+                and item_data['quantity'] is not None
+                and float(item_data['quantity'] or 0) <= 0
+            ):
+                item_data = {**item_data, 'total_price': 0}
+
+            if not _is_meaningful_item(item_data):
+                continue  # пустая строка-заготовка или обнулённая позиция — в БД не оставляем
+
+            item_id = item_data.get('id') if isinstance(item_data, dict) else getattr(item_data, 'id', None)
+            wi = existing_items.get(item_id) if item_id else None
+            if wi is None and item_id is None and old_status in ("draft", "rejected"):
+                _k = (item_data.get('item_name') or "").strip().lower()
+                _bucket = unclaimed_by_name.get(_k)
+                wi = _bucket.pop(0) if _bucket else None
+
+            if wi is None:
+                if old_status not in ("draft", "rejected"):
+                    continue
+                from app.services.units_okei import normalize_unit as _norm_okei_unit
+                _raw_unit_new = item_data.get('unit')
+                _unit_new = _norm_okei_unit(_raw_unit_new) or _raw_unit_new or 'Штука'
                 wi = WishItem(
                     wish_id=wish.id,
                     product_id=item_data.get('product_id'),
                     item_name=item_data.get('item_name', ''),
                     item_type=default_wish_item_type(item_data),
                     quantity=item_data.get('quantity', 1),
-                    unit=item_data.get('unit', 'шт'),
+                    unit=_unit_new,
                     unit_price=item_data.get('unit_price', 0),
                     total_price=item_data.get('total_price', 0),
-                    extra_attrs=item_data.get('extra_attrs') or {},  # item-forms-accommodation-transport.md
-                    item_form=item_data.get('item_form'),  # «Проживание и питание»
+                    extra_attrs=item_data.get('extra_attrs') or {},
+                    item_form=item_data.get('item_form'),
                     country_origin=item_data.get('country_origin', 'РФ'),
-                    feo_category_id=item_data.get('feo_category_id'),  # B9
-                    feo_planned_item_id=item_data.get('feo_planned_item_id'),  # план закупок ФЭО
+                    feo_category_id=item_data.get('feo_category_id'),
+                    feo_planned_item_id=item_data.get('feo_planned_item_id'),
                     over_plan=item_data.get('over_plan', False),
-                    needed_date=_as_date(item_data.get('needed_date')),  # W2
+                    needed_date=_as_date(item_data.get('needed_date')),
                     vat_rate=item_data.get('vat_rate'),
                     vat_on_top=item_data.get('vat_on_top'),
-                    # Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md).
                     tz_description=item_data.get('tz_description'),
-                    # Владелец (14.10.2026): round-trip того же значения, что
-                    # вернул GET (черновик удаляется и пересобирается целиком —
-                    # нет id для сопоставления со старой строкой, как и в
-                    # update_purchase; см. app/services/feo_item_lock.py).
                     from_plan=item_data.get('from_plan', False),
+                    target_column_key=item_data.get('target_column_key'),
                 )
-                # Задача 3 (владелец, 2026-09-20): при пересборе черновика payload
-                # может прислать РАССОГЛАСОВАННУЮ пару feo_planned_item_id/
-                # feo_category_id (например, фронт перетащил позицию в другую
-                # категорию, но не сбросил старую привязку к плановой позиции) —
-                # wi.feo_planned_item_id уже выставлен конструктором выше, проверяем
-                # ДО db.add(wi), чтобы вся операция не сохранила ничего частично.
                 await assert_wish_item_category_from_plan(db, wi, item_data.get('feo_category_id'))
-                # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 —
-                # после гейта «категория из плана» выше, до db.add(wi).
-                from app.services.payroll_category_guard import assert_no_goods_in_payroll
                 await assert_no_goods_in_payroll(db, wi.feo_category_id, [wi])
                 _row_item_form_wish_put_draft = item_form_for_wish_item(wish, wi)
                 if _row_item_form_wish_put_draft:
                     apply_item_amounts(wi, _row_item_form_wish_put_draft)
-                db.add(wi)
-            await db.flush()
-        else:
-            # Non-draft (submitted/approved/converted/rejected): update existing items in-place by id,
-            # and DELETE items that dropped out of the payload (owner removes a duplicate/empty row →
-            # it must actually disappear from the DB, not just from the UI). Add is still NOT
-            # supported here — out of scope, unchanged from prior behaviour (items without a
-            # matching id are silently skipped).
-            existing_items = {wi.id: wi for wi in wish.items}
-            payload_ids: set[int] = set()
-            # item-forms-accommodation-transport.md: форма берётся ПО СТРОКЕ
-            # (item_form_for_wish_item) ниже, не один источник на весь PUT —
-            # «Проживание и питание» допускает разные формы строк.
-            for item_data in body.items:
-                item_id = item_data.get('id') if isinstance(item_data, dict) else getattr(item_data, 'id', None)
-                if item_id:
-                    payload_ids.add(item_id)
-                wi = existing_items.get(item_id) if item_id else None
-                if wi is None:
-                    continue
-                _qty_set = 'quantity' in item_data
-                _price_set = 'unit_price' in item_data
-                _extra_set = 'extra_attrs' in item_data
-                _item_form_row_set = 'item_form' in item_data
-                _vat_on_top_row_set = 'vat_on_top' in item_data
-                if 'item_name' in item_data:
-                    wi.item_name = item_data['item_name']
-                if 'tz_description' in item_data:
-                    wi.tz_description = item_data['tz_description']
-                if _price_set:
-                    # Владелец (14.10.2026), решение (в): замок цены у
-                    # from_plan-позиции — та же проверка, что у PATCH/PUT
-                    # закупки (ПРАВИЛО №6, app/services/feo_item_lock.py::
-                    # assert_item_price_not_locked), не копия условия. wi —
-                    # ЖИВАЯ строка (update in-place по id, не пересоздана),
-                    # wi.unit_price здесь ещё старое значение из БД.
-                    assert_item_price_not_locked(wi, item_data['unit_price'])
-                    wi.unit_price = item_data['unit_price']
-                if _qty_set:
-                    wi.quantity = item_data['quantity']
-                if 'unit' in item_data:
-                    wi.unit = item_data['unit']
-                if _extra_set:
-                    wi.extra_attrs = item_data['extra_attrs'] or {}
-                if _item_form_row_set:
-                    wi.item_form = item_data['item_form']
-                if _vat_on_top_row_set:
-                    wi.vat_on_top = item_data['vat_on_top']
-                _row_item_form_wish_put_live = item_form_for_wish_item(wish, wi)
-                if _row_item_form_wish_put_live and (_qty_set or _price_set or _extra_set or _item_form_row_set):
-                    # ПРАВИЛО №6: compute_item_total/apply_item_amounts — единственный
-                    # писатель total_price для спец-форм (accommodation/transport/food).
-                    # quantity/unit_price ниже могут быть ПЕРЕЗАПИСАНЫ производными от
-                    # extra_attrs (см. apply_item_amounts) — прямой ввод не участвует.
-                    apply_item_amounts(wi, _row_item_form_wish_put_live)
-                elif 'total_price' in item_data:
-                    wi.total_price = item_data['total_price']
-                elif _qty_set or _price_set or _vat_on_top_row_set:
-                    # ПРАВИЛО №6: то же умножение, что и в purchase_items_edit.py/
-                    # wish_distribution.py — единственный писатель line_total().
-                    # Обычная позиция (item_form=None) — формула не меняется.
-                    # НДС сверху (02.10.2026): эффективный флаг строки (null = «как
-                    # у заявки») — item_amounts.effective_vat_on_top, не второй if/else.
-                    _on_top_wish_live = effective_vat_on_top(wi.vat_on_top, wish.tz_vat_on_top, wish.vat_mode)
-                    _rate_wish_live = effective_vat_rate(wi.vat_rate, wish.vat_mode, wish.vat_applicable, wish.vat_rate)
-                    wi.total_price = line_total(wi.quantity, wi.unit_price, rate=_rate_wish_live, on_top=_on_top_wish_live)
-                _wi_cat_changing = (
-                    'feo_category_id' in item_data
-                    and item_data['feo_category_id'] != wi.feo_category_id
+                new_items_to_add.append(wi)
+                continue
+
+            payload_ids.add(wi.id)
+            _qty_set = 'quantity' in item_data
+            _price_set = 'unit_price' in item_data
+            _extra_set = 'extra_attrs' in item_data
+            _item_form_row_set = 'item_form' in item_data
+            _vat_on_top_row_set = 'vat_on_top' in item_data
+            if 'product_id' in item_data and old_status in ("draft", "rejected"):
+                wi.product_id = item_data['product_id']
+            if 'item_type' in item_data and item_data.get('item_type') is not None and old_status in ("draft", "rejected"):
+                wi.item_type = default_wish_item_type(item_data)
+            if 'country_origin' in item_data and item_data.get('country_origin') and old_status in ("draft", "rejected"):
+                wi.country_origin = item_data['country_origin']
+            if 'target_column_key' in item_data and item_data['target_column_key'] is not None:
+                wi.target_column_key = item_data['target_column_key']
+            if 'from_plan' in item_data and item_data['from_plan'] is not None and old_status in ("draft", "rejected"):
+                wi.from_plan = bool(item_data['from_plan'])
+            if 'item_name' in item_data:
+                wi.item_name = item_data['item_name']
+            if 'tz_description' in item_data:
+                wi.tz_description = item_data['tz_description']
+            if _price_set:
+                assert_item_price_not_locked(wi, item_data['unit_price'])
+                wi.unit_price = item_data['unit_price']
+            if _qty_set:
+                wi.quantity = item_data['quantity']
+            if 'unit' in item_data:
+                from app.services.units_okei import normalize_unit as _norm_okei_unit
+                _u = item_data['unit']
+                wi.unit = _norm_okei_unit(_u) or _u or 'Штука'
+            if _extra_set:
+                wi.extra_attrs = item_data['extra_attrs'] or {}
+            if _item_form_row_set:
+                wi.item_form = item_data['item_form']
+            if _vat_on_top_row_set:
+                wi.vat_on_top = item_data['vat_on_top']
+            _row_item_form_wish_put_live = item_form_for_wish_item(wish, wi)
+            if _row_item_form_wish_put_live and (_qty_set or _price_set or _extra_set or _item_form_row_set):
+                apply_item_amounts(wi, _row_item_form_wish_put_live)
+            elif 'total_price' in item_data:
+                wi.total_price = item_data['total_price']
+            elif _qty_set or _price_set or _vat_on_top_row_set:
+                _on_top_wish_live = effective_vat_on_top(wi.vat_on_top, wish.tz_vat_on_top, wish.vat_mode)
+                _rate_wish_live = effective_vat_rate(wi.vat_rate, wish.vat_mode, wish.vat_applicable, wish.vat_rate)
+                wi.total_price = line_total(wi.quantity, wi.unit_price, rate=_rate_wish_live, on_top=_on_top_wish_live)
+            _wi_cat_changing = (
+                'feo_category_id' in item_data
+                and item_data['feo_category_id'] != wi.feo_category_id
+            )
+            if 'feo_category_id' in item_data:
+                wi.feo_category_id = item_data['feo_category_id']
+            if 'feo_planned_item_id' in item_data:
+                wi.feo_planned_item_id = item_data['feo_planned_item_id']
+            if (_wi_cat_changing or old_status == "draft") and wi.feo_planned_item_id is not None:
+                await assert_wish_item_category_from_plan(db, wi, wi.feo_category_id)
+            if _wi_cat_changing or old_status == "draft":
+                await assert_no_goods_in_payroll(db, wi.feo_category_id, [wi])
+            if 'over_plan' in item_data:
+                wi.over_plan = item_data['over_plan']
+            if 'needed_date' in item_data:
+                wi.needed_date = _as_date(item_data['needed_date'])
+            if 'vat_rate' in item_data:
+                wi.vat_rate = item_data['vat_rate']
+
+        for _new_wi in new_items_to_add:
+            wish.items.append(_new_wi)
+
+        # Позиции, которых больше нет в payload (или они обнулены quantity=0), — удаляем физически.
+        ids_to_delete = set(existing_items.keys()) - payload_ids
+        if ids_to_delete:
+            _locked_descr = await _wish_locked_descr(wish.id, db)
+            if _locked_descr:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Нельзя удалить позицию заявки: закупка {_locked_descr} уже на этапе "
+                        "договора. Отмените закупку вручную в реестре закупок, либо не удаляйте позицию."
+                    ),
                 )
-                if 'feo_category_id' in item_data:
-                    wi.feo_category_id = item_data['feo_category_id']
-                if 'feo_planned_item_id' in item_data:
-                    # Явный выбор плановой позиции с фронта (в т.ч. её очистка) —
-                    # доверяем как есть, автоперенос ниже не запускаем.
-                    wi.feo_planned_item_id = item_data['feo_planned_item_id']
-                # Владелец (22.10.2026, заявка №209): смена категории позиции
-                # по плану без переприсылки feo_planned_item_id — тот же
-                # единственный гейт (422), что у wish_items.py::patch_wish_item/
-                # wish_transitions.py::patch_wish_execution/update_wish (draft),
-                # см. app/services/wish_item_category_guard.py. Раньше здесь
-                # тихо переезжала/отвязывалась плановая позиция
-                # (_move_or_detach_planned_item) — владелец это отменил.
-                if _wi_cat_changing and wi.feo_planned_item_id is not None:
-                    await assert_wish_item_category_from_plan(db, wi, wi.feo_category_id)
-                if _wi_cat_changing:
-                    # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 —
-                    # построчная смена категории позиции (non-draft PUT) —
-                    # ПОСЛЕ гейтов переноса плановой позиции выше, wi.feo_category_id
-                    # уже присвоен итоговым значением.
-                    from app.services.payroll_category_guard import assert_no_goods_in_payroll
-                    await assert_no_goods_in_payroll(db, wi.feo_category_id, [wi])
-                if 'over_plan' in item_data:
-                    wi.over_plan = item_data['over_plan']
-                if 'needed_date' in item_data:
-                    wi.needed_date = _as_date(item_data['needed_date'])
-                if 'vat_rate' in item_data:
-                    wi.vat_rate = item_data['vat_rate']
-
-                # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07) — здесь
-                # раньше стоял жёсткий assert_tz_not_over_plan, блокировавший
-                # сохранение PUT заявки 409'ом. Владелец, 06.10.2026 (заявка №115,
-                # исполнитель Цокало): «На этапе Заявки превышение НЕ блокируется.
-                # Исполнитель должен мочь сохранить и отправить заявку. Согласующий
-                # решает — согласует или перераспределит». Жёсткий гейт снят —
-                # превышение теперь только НЕблокирующее предупреждение
-                # (tz_over_plan_warnings в ответе, см. app.services.wish_tz_warnings),
-                # согласование продолжает идти через collect_tz_over_plan_violations/
-                # register_tz_excess_approvals (wish_distribution.py/wish_convert.py),
-                # как и раньше — второй механизм НЕ заводится (ПРАВИЛО №6).
-
-            # Позиции, которых больше нет в payload, — удаляем физически.
-            ids_to_delete = set(existing_items.keys()) - payload_ids
-            if ids_to_delete:
-                _locked_descr = await _wish_locked_descr(wish.id, db)
-                if _locked_descr:
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(
-                            f"Нельзя удалить позицию заявки: закупка {_locked_descr} уже на этапе "
-                            "договора. Отмените закупку вручную в реестре закупок, либо не удаляйте позицию."
-                        ),
+            # Сироты в закупке: PurchaseItem с FK на удаляемую позицию (ondelete=SET NULL
+            # только обнулит связь, но НЕ уберёт строку) — чистим явно во всех до-договорных
+            # закупках (wishes/plan_schedule/work_in_progress) и пересчитываем их суммы.
+            _linked_purchases = await _wish_linked_purchases(wish.id, db)
+            _early_stage_purchases = [
+                p for p in _linked_purchases
+                if p.status in ("wishes", "plan_schedule", "work_in_progress")
+            ]
+            _early_stage_purchase_ids = {p.id for p in _early_stage_purchases}
+            if _early_stage_purchase_ids:
+                await db.execute(
+                    delete(PurchaseItem).where(
+                        PurchaseItem.wish_item_id.in_(ids_to_delete),
+                        PurchaseItem.purchase_id.in_(_early_stage_purchase_ids),
                     )
-                # Сироты в закупке: PurchaseItem с FK на удаляемую позицию (ondelete=SET NULL
-                # только обнулит связь, но НЕ уберёт строку) — чистим явно, но только пока
-                # закупка ещё не ушла дальше «Плана закупок» (иначе выше сработал бы гейт).
-                _linked_purchases = await _wish_linked_purchases(wish.id, db)
-                _early_stage_purchase_ids = {
-                    p.id for p in _linked_purchases if p.status in ("plan_schedule", "wishes")
-                }
-                if _early_stage_purchase_ids:
-                    await db.execute(
-                        delete(PurchaseItem).where(
-                            PurchaseItem.wish_item_id.in_(ids_to_delete),
-                            PurchaseItem.purchase_id.in_(_early_stage_purchase_ids),
-                        )
-                    )
-                # Удаляем через саму relationship-коллекцию (cascade="all, delete-orphan" на
-                # Wish.items), а не Core delete(): так wish.items остаётся синхронной в памяти
-                # для последующего сравнения _old_items/_new_items (сброс согласования ниже).
-                for _del_id in ids_to_delete:
-                    wish.items.remove(existing_items[_del_id])
+                )
+            for _del_id in ids_to_delete:
+                wish.items.remove(existing_items[_del_id])
 
+        await db.flush()
+        if ids_to_delete and _early_stage_purchases:
+            from decimal import Decimal as _DecWishDel
+            from app.services.purchase_money_writer import recalc_purchase_money
+            for _ep in _early_stage_purchases:
+                _rem_cnt = (await db.execute(
+                    select(func.count(PurchaseItem.id)).where(PurchaseItem.purchase_id == _ep.id)
+                )).scalar() or 0
+                await recalc_purchase_money(
+                    db, _ep, items_total=_DecWishDel("0") if _rem_cnt == 0 else None,
+                )
+                if _rem_cnt == 0:
+                    _ep.planned_quantity = 0
             await db.flush()
 
     # W2: re-approval trigger for submitted/approved/converted wishes

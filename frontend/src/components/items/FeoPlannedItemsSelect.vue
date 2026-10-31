@@ -120,49 +120,56 @@
       </template>
     </template>
 
-    <FeoPlannedCreateDialog
-      v-model="create.createDialog.value"
-      :category-name="rows.categoryName.value"
-      :form="create.createForm"
-      :amount-is-computed="create.createAmountIsComputed.value"
-      :price-caption="create.createPriceCaption.value"
-      :saving="create.createSaving.value"
-      @save="create.saveCreateDialog"
-    />
+    <template v-if="create.createDialog.value">
+      <FeoPlannedCreateDialog
+        v-model="create.createDialog.value"
+        :category-name="rows.categoryName.value"
+        :form="create.createForm"
+        :amount-is-computed="create.createAmountIsComputed.value"
+        :price-caption="create.createPriceCaption.value"
+        :saving="create.createSaving.value"
+        @save="create.saveCreateDialog"
+      />
+    </template>
 
-    <FeoPlannedDuplicateDialog
-      v-model="create.duplicateDialog.value"
-      :duplicate-info="create.duplicateInfo.value"
-      :attach-blocked-reason="create.attachBlockedReason.value"
-      :attach-disabled="create.attachDisabled.value"
-      :saving="create.createSaving.value"
-      :fmt="rows.fmt"
-      @attach="create.confirmAttachDuplicate"
-      @create-duplicate="create.confirmCreateDuplicate"
-    />
+    <template v-if="create.duplicateDialog.value">
+      <FeoPlannedDuplicateDialog
+        v-model="create.duplicateDialog.value"
+        :duplicate-info="create.duplicateInfo.value"
+        :attach-blocked-reason="create.attachBlockedReason.value"
+        :attach-disabled="create.attachDisabled.value"
+        :saving="create.createSaving.value"
+        :fmt="rows.fmt"
+        @attach="create.confirmAttachDuplicate"
+        @create-duplicate="create.confirmCreateDuplicate"
+      />
+    </template>
 
-    <FeoPlannedBulkChooserDialog
-      v-model="bulk.bulkChooserDialog.value"
-      v-model:mode="bulk.bulkMode.value"
-      v-model:single-name="bulk.bulkSingleName.value"
-      :category-name="rows.categoryName.value"
-      :bulk-items="bulkItems"
-      :manual-checked="bulk.manualChecked.value"
-      :bulk-total-amount="bulk.bulkTotalAmount.value"
-      :bulk-per-item-candidates="bulk.bulkPerItemCandidates.value"
-      :bulk-skipped-linked-count="bulk.bulkSkippedLinkedCount.value"
-      :bulk-preview-rows="bulk.bulkPreviewRows.value"
-      :bulk-preview-total="bulk.bulkPreviewTotal.value"
-      :bulk-creating="bulk.bulkCreating.value"
-      :fmt="rows.fmt"
-      @toggle-manual="bulk.toggleManualChecked"
-      @create="bulk.runBulkCreate"
-    />
+    <template v-if="bulk.bulkChooserDialog.value">
+      <FeoPlannedBulkChooserDialog
+        v-model="bulk.bulkChooserDialog.value"
+        v-model:mode="bulk.bulkMode.value"
+        v-model:single-name="bulk.bulkSingleName.value"
+        :category-name="rows.categoryName.value"
+        :bulk-items="bulkItems"
+        :manual-checked="bulk.manualChecked.value"
+        :bulk-total-amount="bulk.bulkTotalAmount.value"
+        :bulk-per-item-candidates="bulk.bulkPerItemCandidates.value"
+        :bulk-skipped-linked-count="bulk.bulkSkippedLinkedCount.value"
+        :bulk-preview-rows="bulk.bulkPreviewRows.value"
+        :bulk-preview-total="bulk.bulkPreviewTotal.value"
+        :bulk-creating="bulk.bulkCreating.value"
+        :fmt="rows.fmt"
+        @toggle-manual="bulk.toggleManualChecked"
+        @create="bulk.runBulkCreate"
+      />
+    </template>
 
-    <FeoPlannedConsumersDialog
-      v-model="consumers.consumersDialog.open"
-      :loading="consumers.consumersDialog.loading"
-      :error="consumers.consumersDialog.error"
+    <template v-if="consumers.consumersDialog.open">
+      <FeoPlannedConsumersDialog
+        v-model="consumers.consumersDialog.open"
+        :loading="consumers.consumersDialog.loading"
+        :error="consumers.consumersDialog.error"
       :row="consumers.consumersDialog.row"
       :data="consumers.consumersDialog.data"
       :dialog-pending-items="consumers.dialogPendingItems.value"
@@ -176,6 +183,7 @@
       :plan-residual-display="rows.planResidualDisplay"
       @go-to-purchase="consumers.goToPurchase"
     />
+    </template>
   </div>
 </template>
 

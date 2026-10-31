@@ -30,7 +30,14 @@ from app.services.item_tz import effective_item_tz, effective_item_tz_44fz
 
 def _enrich(w: Wish) -> WishOut:
     """Convert Wish ORM object to WishOut, filling computed name fields."""
+    from app.services.units_okei import normalize_unit as _norm_okei_unit
     d = WishOut.model_validate(w)
+    # Автонормализация единиц измерения (ОКЕИ / Росэлторг, «шт.» -> «Штука»):
+    for it in d.items:
+        if it.unit:
+            canonical = _norm_okei_unit(it.unit)
+            if canonical:
+                it.unit = canonical
     if w.creator:
         d.creator_name = w.creator.full_name or w.creator.username
     if w.approver:

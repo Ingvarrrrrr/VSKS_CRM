@@ -522,7 +522,9 @@ async def build_items_from_plan(
                     f"(плановая позиция {planned.id})",
                 )
 
-        unit = (product.unit if product and product.unit else None) or planned.unit or "шт"
+        from app.services.units_okei import normalize_unit as _norm_okei_unit
+        raw_unit = (product.unit if product and product.unit else None) or planned.unit or "Штука"
+        unit = _norm_okei_unit(raw_unit) or raw_unit or "Штука"
 
         plan_unit_price = effective_plan_unit_price(planned)
         price_fallback = False

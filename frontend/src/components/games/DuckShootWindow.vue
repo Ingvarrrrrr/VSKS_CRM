@@ -36,7 +36,7 @@
           aria-label="Показать/скрыть рекорды"
           @click="showLeaderboard = !showLeaderboard"
         >
-          🏆 Рекорды
+          🏆 Все рекорды
         </button>
         <button
           type="button"
@@ -47,6 +47,31 @@
           ✕
         </button>
       </div>
+
+      <!-- Компактная полоса ТОП-3 рекордов во время игры -->
+      <div class="duck-hud-bar">
+        <div class="duck-hud-top3">
+          <span class="duck-hud-label">🏆 ТОП-3:</span>
+          <template v-if="top3.length">
+            <span
+              v-for="(row, idx) in top3"
+              :key="idx"
+              class="duck-hud-item"
+              :class="{ 'duck-hud-item--me': row.is_me }"
+            >
+              <span class="duck-hud-rank">{{ idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉' }}</span>
+              <span class="duck-hud-nick">{{ row.nickname }}</span>
+              <span class="duck-hud-score">{{ row.score }}</span>
+            </span>
+          </template>
+          <span v-else class="duck-hud-empty">нет рекордов</span>
+        </div>
+        <div class="duck-hud-mybest">
+          <span>Мой рекорд: <b class="duck-hud-mybest-score">{{ currentBest }}</b></span>
+          <span v-if="playerNickname" class="duck-hud-player-nick">({{ playerNickname }})</span>
+        </div>
+      </div>
+
       <div class="duck-body">
         <div class="duck-canvas-wrapper">
           <div ref="canvasWrapperRef" class="duck-canvas-container" />
@@ -95,6 +120,17 @@
                 <div v-if="nickError" class="duck-gameover-error">{{ nickError }}</div>
               </div>
 
+              <!-- Полная таблица рекордов на Game Over экране -->
+              <div class="duck-gameover-leaderboard">
+                <div class="duck-gameover-leaderboard-title">ТАБЛИЦА РЕКОРДОВ</div>
+                <GameLeaderboard
+                  ref="leaderboardRef"
+                  :game="activeGame"
+                  theme="arcade"
+                  :hideNickEdit="true"
+                />
+              </div>
+
               <div class="duck-gameover-actions">
                 <button
                   type="button"
@@ -105,15 +141,8 @@
                 </button>
                 <button
                   type="button"
-                  class="duck-action-btn"
-                  @click="openLeaderboard"
-                >
-                  🏆 Рекорды
-                </button>
-                <button
-                  type="button"
                   class="duck-action-btn duck-action-btn--dismiss"
-                  title="Скрыть окно"
+                  title="Скрыть"
                   @click="gameOverCard = null"
                 >
                   ✕
@@ -121,9 +150,20 @@
               </div>
             </div>
           </div>
-        </div>
 
-        <GameLeaderboard v-if="showLeaderboard" :game="activeGame" class="duck-leaderboard" />
+          <!-- Модальное окно «Все рекорды» при вызове во время игры -->
+          <div v-if="showLeaderboard && !gameOverCard" class="duck-modal-overlay" @click.self="showLeaderboard = false">
+            <div class="duck-modal-card">
+              <div class="duck-modal-header">
+                <span>🏆 Рекорды: {{ GAME_REGISTRY.find(g => g.id === activeGame)?.title }}</span>
+                <button type="button" class="duck-close-sm" @click="showLeaderboard = false">✕</button>
+              </div>
+              <div class="duck-modal-body">
+                <GameLeaderboard :game="activeGame" theme="arcade" />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -136,9 +176,8 @@
 // загрузки его не закрывает, только меняет заголовок (иначе пользователь
 // теряет игру ровно в момент, когда страница досчиталась).
 //
-// Игры переключаются вкладками в заголовке, список — единственный источник
-// в gameRegistry.ts (Правило №6); переключение уничтожает текущую игру и
-// создаёт другую в том же canvas-контейнере.
+// Во время игры отображается компактный ТОП-3 в верхней полосе (HUD).
+// Полная таблица лидеров и ввод ника открываются на экране Game Over.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isBusy } from '../../composables/useLongWait'
 import { GAME_REGISTRY, isGameId, type GameId, type GameInstance } from './gameRegistry'
@@ -148,22 +187,25 @@ import {
   getCachedNickname,
   setNickname,
   submitScore,
+  type LeaderboardResponse,
 } from './gameScores'
 import GameLeaderboard from './GameLeaderboard.vue'
 
 const GAME_STORAGE_KEY = 'gala_last_game'
-const showLeaderboard = ref(true)
+const showLeaderboard = ref(false)
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [boolean]; close: [] }>()
 
 const canvasWrapperRef = ref<HTMLElement | null>(null)
 const windowRef = ref<HTMLElement | null>(null)
+const leaderboardRef = ref<{ load: () => Promise<void> } | null>(null)
 let game: GameInstance | null = null
 
 const activeGame = ref<GameId>(loadLastGame())
 const currentBest = ref(0)
 const playerNickname = ref(getCachedNickname())
+const leaderboardData = ref<LeaderboardResponse | null>(null)
 const gameOverCard = ref<{ score: number; isNewRecord: boolean } | null>(null)
 const savingNick = ref(false)
 const nickSaved = ref(false)
@@ -173,6 +215,29 @@ const titleText = computed(() => {
   const name = GAME_REGISTRY.find((g) => g.id === activeGame.value)?.title ?? ''
   return isBusy.value ? `${name} — пока грузится` : `${name} — страница загрузилась`
 })
+
+const top3 = computed(() => {
+  if (!leaderboardData.value) return []
+  const list = leaderboardData.value.account.length > 0
+    ? leaderboardData.value.account
+    : leaderboardData.value.global
+  return list.slice(0, 3)
+})
+
+async function refreshBoard() {
+  try {
+    const res = await getLeaderboard(activeGame.value)
+    leaderboardData.value = res
+    if (res.me.best) {
+      currentBest.value = res.me.best
+    }
+    if (res.me.nickname && res.me.nickname !== 'Игрок') {
+      playerNickname.value = res.me.nickname
+    }
+  } catch (e) {
+    console.warn('[games] fetch leaderboard failed', e)
+  }
+}
 
 function loadLastGame(): GameId {
   try {
@@ -193,6 +258,7 @@ function saveLastGame(kind: GameId) {
 
 function handleClose() {
   gameOverCard.value = null
+  showLeaderboard.value = false
   emit('update:open', false)
   emit('close')
 }
@@ -211,15 +277,9 @@ function createGame(kind: GameId, container: HTMLElement): GameInstance {
 }
 
 function wireGameScore(g: GameInstance, kind: GameId) {
-  getLeaderboard(kind)
-    .then((board) => {
-      g.setBest(board.me.best)
-      currentBest.value = board.me.best
-      if (board.me.nickname && board.me.nickname !== 'Игрок') {
-        playerNickname.value = board.me.nickname
-      }
-    })
-    .catch((e) => console.warn('[games] getLeaderboard failed', e))
+  refreshBoard().then(() => {
+    g.setBest(currentBest.value)
+  })
 
   g.onGameOver((score) => {
     const isNew = score > currentBest.value
@@ -233,6 +293,8 @@ function wireGameScore(g: GameInstance, kind: GameId) {
         g.setBest(result.best)
         currentBest.value = result.best
       }
+      refreshBoard()
+      leaderboardRef.value?.load()
     })
   })
 }
@@ -252,6 +314,8 @@ async function saveGameOverNickname() {
     if (gameOverCard.value) {
       await submitScore(activeGame.value, gameOverCard.value.score, saved)
     }
+    await refreshBoard()
+    leaderboardRef.value?.load()
     setTimeout(() => {
       nickSaved.value = false
     }, 2500)
@@ -260,10 +324,6 @@ async function saveGameOverNickname() {
   } finally {
     savingNick.value = false
   }
-}
-
-function openLeaderboard() {
-  showLeaderboard.value = true
 }
 
 function restartCurrentGame() {
@@ -291,6 +351,7 @@ function unmountGame() {
 function selectGame(kind: GameId) {
   if (activeGame.value === kind) return
   gameOverCard.value = null
+  showLeaderboard.value = false
   activeGame.value = kind
   saveLastGame(kind)
   if (props.open) {
@@ -306,11 +367,13 @@ watch(
     if (isOpen) {
       await nextTick()
       gameOverCard.value = null
+      showLeaderboard.value = false
       if (canvasWrapperRef.value) canvasWrapperRef.value.innerHTML = ''
       mountGame()
       windowRef.value?.focus()
     } else {
       gameOverCard.value = null
+      showLeaderboard.value = false
       unmountGame()
     }
   },
@@ -451,19 +514,96 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
+/* Полоса ТОП-3 рекордов во время игры (HUD) */
+.duck-hud-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  background: #141419;
+  color: #ddd;
+  border-bottom: 1px solid #333;
+  padding: 5px 12px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
+.duck-hud-top3 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.duck-hud-label {
+  font-weight: 700;
+  color: #ffcc00;
+  letter-spacing: 0.5px;
+}
+
+.duck-hud-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.duck-hud-item--me {
+  background: rgba(255, 204, 0, 0.15);
+  border-color: #ffcc00;
+  color: #fff;
+}
+
+.duck-hud-rank {
+  font-size: 11px;
+}
+
+.duck-hud-nick {
+  font-weight: 600;
+  color: #fff;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.duck-hud-score {
+  color: #4ade80;
+  font-weight: 700;
+}
+
+.duck-hud-empty {
+  color: #777;
+  font-style: italic;
+}
+
+.duck-hud-mybest {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #aaa;
+}
+
+.duck-hud-mybest-score {
+  color: #ffcc00;
+}
+
+.duck-hud-player-nick {
+  color: #38bdf8;
+}
+
 .duck-body {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   overflow: hidden;
-}
-
-@media (max-width: 560px) {
-  .duck-body {
-    flex-direction: column;
-    overflow-y: auto;
-  }
+  position: relative;
 }
 
 .duck-canvas-wrapper {
@@ -471,6 +611,8 @@ onBeforeUnmount(() => {
   min-height: 0;
   min-width: 0;
   position: relative;
+  width: 100%;
+  height: 100%;
 }
 
 .duck-canvas-container {
@@ -482,12 +624,12 @@ onBeforeUnmount(() => {
 .duck-gameover-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(0, 0, 0, 0.75);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 20;
-  padding: 16px;
+  padding: 12px;
   animation: duckFadeIn 0.15s ease-out;
 }
 
@@ -503,17 +645,19 @@ onBeforeUnmount(() => {
 }
 
 .duck-gameover-card {
-  background: #1e1e24;
+  background: #191920;
   color: #fff;
   border: 2px solid #ffcc00;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(255, 204, 0, 0.2);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7), 0 0 25px rgba(255, 204, 0, 0.25);
   border-radius: 8px;
-  padding: 20px 24px;
-  max-width: 360px;
+  padding: 18px 20px;
+  max-width: 440px;
   width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
@@ -623,6 +767,27 @@ onBeforeUnmount(() => {
   color: #f87171;
 }
 
+.duck-gameover-leaderboard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 6px;
+  background: #141419;
+}
+
+.duck-gameover-leaderboard-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: #ffcc00;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 4px;
+}
+
 .duck-gameover-actions {
   display: flex;
   gap: 8px;
@@ -659,18 +824,62 @@ onBeforeUnmount(() => {
   padding: 8px 0;
 }
 
-.duck-leaderboard {
-  flex: 0 0 auto;
-  border-left: 1px solid #111;
-  max-width: 280px;
+/* Модальное окно рекордов при клике на «Все рекорды» в шапке */
+.duck-modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  padding: 16px;
+  animation: duckFadeIn 0.15s ease-out;
 }
 
-@media (max-width: 560px) {
-  .duck-leaderboard {
-    border-left: none;
-    border-top: 1px solid #111;
-    max-width: none;
-    max-height: 45%;
-  }
+.duck-modal-card {
+  background: #191920;
+  color: #fff;
+  border: 2px solid #ffcc00;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  width: 380px;
+  max-width: 95%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.duck-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #141419;
+  border-bottom: 1px solid #333;
+  font-weight: 700;
+  font-size: 13px;
+  color: #ffcc00;
+}
+
+.duck-close-sm {
+  background: none;
+  border: none;
+  color: #aaa;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.duck-close-sm:hover {
+  color: #fff;
+}
+
+.duck-modal-body {
+  padding: 10px;
+  overflow-y: auto;
+  flex: 1 1 auto;
 }
 </style>

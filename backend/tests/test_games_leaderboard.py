@@ -76,7 +76,7 @@ async def test_global_leaderboard_has_no_fio(client, auth_headers, test_user):
 
 
 @pytest.mark.asyncio
-async def test_account_leaderboard_shows_fio_and_only_own_account(
+async def test_account_leaderboard_shows_nickname_and_only_own_account(
     client, auth_headers, test_user, make_user, db_session,
 ):
     await client.post("/api/games/tank/score", json={"score": 77}, headers=auth_headers)
@@ -105,11 +105,12 @@ async def test_account_leaderboard_shows_fio_and_only_own_account(
     r = await client.get("/api/games/tank/leaderboard", headers=auth_headers)
     assert r.status_code == 200, r.text
     body = r.json()
-    account_fios = [e["fio"] for e in body["account"]]
-    assert any("Test" in f or test_user.full_name.split()[0] in f for f in account_fios)
-    assert len(account_fios) == 1  # только свой аккаунт, не other_user (999)
+    account_nicks = [e["nickname"] for e in body["account"]]
+    # Ни в коем случае не должно быть реального ФИО в списке аккаунта
+    assert not any(test_user.full_name in n for n in account_nicks)
+    assert len(account_nicks) == 1  # только свой аккаунт, не other_user (999)
     for entry in body["account"]:
-        assert "score" in entry and "fio" in entry and "is_me" in entry
+        assert "score" in entry and "nickname" in entry and "is_me" in entry
 
 
 @pytest.mark.asyncio

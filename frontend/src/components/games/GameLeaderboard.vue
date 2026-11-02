@@ -1,5 +1,5 @@
 <template>
-  <div class="gl-panel">
+  <div class="gl-panel" :class="{ 'gl-panel--arcade': theme === 'arcade' }">
     <div class="gl-tabs">
       <button
         type="button"
@@ -19,9 +19,9 @@
       </button>
     </div>
 
-    <!-- Быстрое управление ником -->
-    <div class="gl-nick-card">
-      <div class="gl-nick-label">Ник в общем рейтинге:</div>
+    <!-- Быстрое управление ником (скрыто, если передано hideNickEdit) -->
+    <div v-if="!hideNickEdit" class="gl-nick-card">
+      <div class="gl-nick-label">Ник в рейтинге:</div>
       <div v-if="!editingNickname" class="gl-nick-display">
         <span class="gl-nick-current">{{ currentNickname }}</span>
         <button type="button" class="gl-nick-edit-btn" title="Сменить ник" @click="startEditNickname">
@@ -62,7 +62,7 @@
         :class="{ 'gl-row--me': row.is_me }"
       >
         <span class="gl-rank">{{ i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1 }}</span>
-        <span class="gl-name">{{ row.fio }} <span v-if="row.is_me" class="gl-me-tag">(Вы)</span></span>
+        <span class="gl-name">{{ row.nickname || 'Игрок' }} <span v-if="row.is_me" class="gl-me-tag">(Вы)</span></span>
         <span class="gl-score">{{ row.score }}</span>
       </div>
     </div>
@@ -75,7 +75,7 @@
         :class="{ 'gl-row--me': row.is_me }"
       >
         <span class="gl-rank">{{ i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1 }}</span>
-        <span class="gl-name">{{ row.nickname }} <span v-if="row.is_me" class="gl-me-tag">(Вы)</span></span>
+        <span class="gl-name">{{ row.nickname || 'Игрок' }} <span v-if="row.is_me" class="gl-me-tag">(Вы)</span></span>
         <span class="gl-score">{{ row.score }}</span>
       </div>
     </div>
@@ -83,8 +83,7 @@
 </template>
 
 <script setup lang="ts">
-// Компактная панель лидербордов для активной мини-игры (владелец, 30.10.2026).
-// Данные — ТОЛЬКО через gameScores.ts (Правило №6, единственный клиент).
+// Панель лидербордов мини-игр — только ники игроков (никакого ФИО!)
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { GameId } from './gameRegistry'
 import {
@@ -95,7 +94,17 @@ import {
   type LeaderboardResponse,
 } from './gameScores'
 
-const props = defineProps<{ game: GameId }>()
+const props = withDefaults(
+  defineProps<{
+    game: GameId
+    hideNickEdit?: boolean
+    theme?: 'light' | 'arcade'
+  }>(),
+  {
+    hideNickEdit: false,
+    theme: 'light',
+  }
+)
 
 const tab = ref<'account' | 'global'>('account')
 const data = ref<LeaderboardResponse | null>(null)
@@ -160,6 +169,8 @@ onMounted(() => {
 onUnmounted(() => {
   unsubscribe?.()
 })
+
+defineExpose({ load })
 </script>
 
 <style scoped>
@@ -173,9 +184,61 @@ onUnmounted(() => {
   border: 1px solid #111;
   padding: 8px;
   min-width: 220px;
-  max-width: 280px;
+  max-width: 100%;
   max-height: 100%;
   overflow-y: auto;
+}
+
+/* Arcade (Dark) Theme */
+.gl-panel--arcade {
+  background: #141419;
+  border: 1px solid #333;
+  color: #eee;
+}
+.gl-panel--arcade .gl-tab {
+  background: #222;
+  border-color: #444;
+  color: #ccc;
+}
+.gl-panel--arcade .gl-tab--active {
+  background: #ffcc00;
+  color: #111;
+  font-weight: 700;
+  border-color: #ffcc00;
+  text-decoration: none;
+}
+.gl-panel--arcade .gl-tab:hover:not(.gl-tab--active) {
+  background: #333;
+  color: #fff;
+}
+.gl-panel--arcade .gl-nick-card {
+  background: #1c1c24;
+  border-color: #333;
+}
+.gl-panel--arcade .gl-nick-label {
+  color: #aaa;
+}
+.gl-panel--arcade .gl-nick-current {
+  color: #ffcc00;
+}
+.gl-panel--arcade .gl-nick-input {
+  background: #111;
+  border-color: #555;
+  color: #fff;
+}
+.gl-panel--arcade .gl-row {
+  border-bottom: 1px solid #222;
+}
+.gl-panel--arcade .gl-row--me {
+  background: rgba(255, 204, 0, 0.12);
+  border: 1px solid #ffcc00;
+  color: #fff;
+}
+.gl-panel--arcade .gl-me-tag {
+  color: #ffcc00;
+}
+.gl-panel--arcade .gl-score {
+  color: #4ade80;
 }
 
 .gl-tabs {

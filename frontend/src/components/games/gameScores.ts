@@ -18,7 +18,8 @@ export interface SubmitScoreResult {
 }
 
 export interface LeaderboardEntryAccount {
-  fio: string
+  nickname: string
+  fio?: string
   score: number
   is_me: boolean
 }

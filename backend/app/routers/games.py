@@ -22,7 +22,6 @@ from app.auth.jwt import get_current_user, get_org_filter, get_single_org_id
 from app.database import get_db
 from app.models.game_score import GameScore, GameProfile, GAME_IDS
 from app.models.user import User
-from app.services.documents.formatting import _fio_to_initials
 
 router = APIRouter(prefix="/api/games", tags=["games"])
 
@@ -202,12 +201,13 @@ async def get_leaderboard(
 
     account_ids = await _account_org_ids(current_user)
 
-    # --- Аккаунт (личный кабинет): топ-10 по ФИО-коротко ---------------------
+    # --- Аккаунт (компания): топ-10 по нику (ТОЛЬКО НИК, никакого ФИО!) -----
     account_rows: list = []
     if account_ids:
         q = (
-            select(GameScore, User)
+            select(GameScore, GameProfile.nickname)
             .join(User, User.id == GameScore.user_id)
+            .outerjoin(GameProfile, GameProfile.user_id == GameScore.user_id)
             .where(
                 GameScore.game == game,
                 GameScore.best_score > 0,
@@ -221,11 +221,12 @@ async def get_leaderboard(
 
     account_list = [
         {
-            "fio": _fio_to_initials(u.full_name or u.username),
+            "nickname": nickname or DEFAULT_NICKNAME,
+            "fio": nickname or DEFAULT_NICKNAME,  # обратная совместимость (но содержит только ник!)
             "score": gs.best_score,
-            "is_me": u.id == current_user.id,
+            "is_me": gs.user_id == current_user.id,
         }
-        for gs, u in account_rows
+        for gs, nickname in account_rows
     ]
 
     # --- Глобальный: топ-10 по нику (НЕ отдаём fio/org/user_id) --------------

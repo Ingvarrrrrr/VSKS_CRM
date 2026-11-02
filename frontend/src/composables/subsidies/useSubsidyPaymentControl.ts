@@ -216,6 +216,23 @@ export interface PaymentControlDiscrepancyResponse {
   sign_error_hints: PaymentControlSignErrorHint[]
 }
 
+export interface PaymentControlBatchComboMatch {
+  bank_payment_id: number
+  payment_number: string | null
+  payment_date: string | null
+  amount: number
+  payee_name: string | null
+  payee_inn: string | null
+  purpose_text: string | null
+  combo: PaymentControlComboSuggestion
+}
+
+export interface PaymentControlBatchCombosResponse {
+  unattached_payments_count: number
+  matches_count: number
+  matches: PaymentControlBatchComboMatch[]
+}
+
 export function useSubsidyPaymentControl() {
   const data = ref<PaymentControlData | null>(null)
   const loading = ref(false)
@@ -365,10 +382,25 @@ export function useSubsidyPaymentControl() {
     })
   }
 
+  async function getBatchCombos(subsidyId: number): Promise<PaymentControlBatchCombosResponse> {
+    return apiFetch<PaymentControlBatchCombosResponse>(`/subsidies/${subsidyId}/payment-control/batch-combos`)
+  }
+
+  async function batchApplyCombos(
+    subsidyId: number,
+    matches: { bank_payment_id: number; purchase_ids: number[]; merge_purchases: boolean }[],
+  ): Promise<{ applied: number; errors: { bank_payment_id: number; error: string }[] }> {
+    return apiFetch(`/subsidies/${subsidyId}/payment-control/batch-apply-combos`, {
+      method: 'POST',
+      body: JSON.stringify({ matches }),
+    })
+  }
+
   return {
     data, loading, loadError, load, reload,
     codesData, codesLoading, codesSaving, loadCodes, saveCodes,
     fetchCandidates, fetchCandidatesFull, attachPurchase, attachCombo, findDiscrepancy, createPurchaseFromPayment,
     exporting, exportXlsx,
+    getBatchCombos, batchApplyCombos,
   }
 }

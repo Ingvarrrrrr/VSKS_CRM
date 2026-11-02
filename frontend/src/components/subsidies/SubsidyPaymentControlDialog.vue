@@ -80,6 +80,16 @@
               >
                 Найти расхождение по сумме
               </v-btn>
+              <v-btn
+                size="x-small"
+                variant="flat"
+                color="deep-purple"
+                prepend-icon="mdi-auto-fix"
+                class="ml-2"
+                @click="batchDialogRef?.open()"
+              >
+                Умный подбор комбинаций
+              </v-btn>
             </div>
 
             <!-- Панель интеллектуального поиска расхождения (Subset Sum 1–4 поз. + ошибка знака ÷2) -->
@@ -267,6 +277,12 @@
     :control="control"
     @created="control.reload()"
   />
+
+  <SubsidyPaymentControlBatchComboDialog
+    ref="batchDialogRef"
+    :subsidy-id="props.subsidyId"
+    @applied="control.reload()"
+  />
 </template>
 
 <script setup lang="ts">
@@ -288,6 +304,7 @@ import SubsidyPaymentControlArticlesTab from '@/components/subsidies/SubsidyPaym
 import SubsidyPaymentControlRowsTab from '@/components/subsidies/SubsidyPaymentControlRowsTab.vue'
 import SubsidyPaymentControlCandidatesDialog from '@/components/subsidies/SubsidyPaymentControlCandidatesDialog.vue'
 import SubsidyPaymentControlCreatePurchaseDialog from '@/components/subsidies/SubsidyPaymentControlCreatePurchaseDialog.vue'
+import SubsidyPaymentControlBatchComboDialog from '@/components/subsidies/SubsidyPaymentControlBatchComboDialog.vue'
 import SubsidyStatementTab from '@/components/subsidies/SubsidyStatementTab.vue'
 
 const props = defineProps<{
@@ -298,6 +315,7 @@ const props = defineProps<{
 const dialog = defineModel<boolean>({ default: false })
 const { mobile } = useDisplay()
 const control = props.control
+const batchDialogRef = ref<{ open: () => void } | null>(null)
 const data = computed(() => control.data.value)
 
 const tab = ref('articles')

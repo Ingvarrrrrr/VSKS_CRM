@@ -17,9 +17,14 @@
       {{ control.data.value.counts.duplicate }} возможных дублей<template v-if="control.data.value.totals.from_payment_unrefined_count">,
       {{ control.data.value.totals.from_payment_unrefined_count }} закупок по платёжкам — позиции не уточнены</template>.
     </div>
-    <v-btn size="small" color="error" variant="flat" class="mt-2" prepend-icon="mdi-table-check" @click="dialog = true">
-      Открыть сверку
-    </v-btn>
+    <div class="d-flex align-center flex-wrap gap-2 mt-2">
+      <v-btn size="small" color="error" variant="flat" prepend-icon="mdi-table-check" @click="dialog = true">
+        Открыть сверку
+      </v-btn>
+      <v-btn size="small" color="deep-purple" variant="flat" prepend-icon="mdi-auto-fix" @click="batchDialogRef?.open()">
+        Комбинаторный подбор оплат
+      </v-btn>
+    </div>
   </v-alert>
 
   <div
@@ -55,6 +60,12 @@
     :subsidy-id="props.subsidyId"
     :control="control"
   />
+
+  <SubsidyPaymentControlBatchComboDialog
+    ref="batchDialogRef"
+    :subsidy-id="props.subsidyId"
+    @applied="control.reload()"
+  />
 </template>
 
 <script setup lang="ts">
@@ -66,11 +77,13 @@ import { computed, ref, watch } from 'vue'
 import { useSubsidyPaymentControl } from '@/composables/subsidies/useSubsidyPaymentControl'
 import { formatCurrency } from '@/composables/subsidies/format'
 import SubsidyPaymentControlDialog from '@/components/subsidies/SubsidyPaymentControlDialog.vue'
+import SubsidyPaymentControlBatchComboDialog from '@/components/subsidies/SubsidyPaymentControlBatchComboDialog.vue'
 
 const props = defineProps<{ subsidyId: number | null | undefined }>()
 
 const control = useSubsidyPaymentControl()
 const dialog = ref(false)
+const batchDialogRef = ref<{ open: () => void } | null>(null)
 
 const otherSubsidiesList = computed(() => control.data.value?.other_subsidies || [])
 

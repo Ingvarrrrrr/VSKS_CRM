@@ -57,11 +57,17 @@ def _normalize_text_sql(column):
 
 def bank_payment_matches_subsidy(bp, subsidy) -> bool:
     """Одна строка (bp: BankPayment) — принадлежит ли субсидии subsidy (Subsidy).
-    См. докстринг модуля — правило п.1/2."""
+    См. докстринг модуля — правило п.1/2, а также поддержка копий-песочниц (copied_from_id)."""
     if bp is None or subsidy is None:
         return False
-    if getattr(bp, "subsidy_id", None) is not None and bp.subsidy_id == subsidy.id:
-        return True
+    bp_sid = getattr(bp, "subsidy_id", None)
+    if bp_sid is not None:
+        if bp_sid == subsidy.id:
+            return True
+        copied_from = getattr(subsidy, "copied_from_id", None)
+        if copied_from is not None and bp_sid == copied_from:
+            return True
+
     agreement = normalize_agreement_number(getattr(subsidy, "agreement_number", None))
     if not agreement:
         return False
@@ -78,12 +84,16 @@ def bank_payment_matches_subsidy(bp, subsidy) -> bool:
 
 def subsidy_scope_clause(subsidy):
     """SQL-условие для select(BankPayment).where(...) — строки, видные субсидии
-    subsidy (объект Subsidy, не id — нужен agreement_number). Используется вместо
-    прежнего `BankPayment.subsidy_id == subsidy_id` всюду, где выписка
-    фильтруется по субсидии для сопоставления/реестра."""
+    subsidy (объект Subsidy, не id — нужен agreement_number и copied_from_id).
+    Используется вместо прежнего `BankPayment.subsidy_id == subsidy_id` всюду,
+    где выписка фильтруется по субсидии для сопоставления/реестра."""
     from app.models.bank_statement import BankPayment
 
     conditions = [BankPayment.subsidy_id == subsidy.id]
+    copied_from = getattr(subsidy, "copied_from_id", None)
+    if copied_from is not None:
+        conditions.append(BankPayment.subsidy_id == copied_from)
+
     agreement = normalize_agreement_number(getattr(subsidy, "agreement_number", None))
     if agreement:
         # agreement состоит из цифр/дефисов/букв — без %/_ (LIKE-спецсимволов),

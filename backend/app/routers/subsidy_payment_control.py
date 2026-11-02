@@ -282,6 +282,127 @@ async def attach_bank_payment_combo(
 
 
 # ---------------------------------------------------------------------------
+# Пакетный комбинаторный подбор (Subset Sum) и пакетное применение
+# ---------------------------------------------------------------------------
+
+class _SingleComboApply(BaseModel):
+    bank_payment_id: int
+    purchase_ids: List[int]
+    merge_purchases: bool = True
+
+
+class _BatchApplyBody(BaseModel):
+    matches: List[_SingleComboApply]
+
+
+@router.get("/{sid}/payment-control/batch-combos")
+async def get_batch_combos(
+    sid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Пакетный поиск комбинаций сумм (Subset Sum 1–4 поз.) для всех непривязанных
+    платежей субсидии. Возвращает список совпадений с описанием того, что входит
+    в закупку, для подтверждения пользователем."""
+    subsidy = await _get_subsidy_for_read(sid, db, current_user)
+
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.services.bank_payment_subsidy_scope import subsidy_scope_clause
+    from app.services.payment_lookup import _attached_bank_payment_ids_in_subsidy, EXECUTED_STATUSES
+    from app.services.payment_smart_combo_matcher import (
+        load_unpaid_candidate_units,
+        find_subset_sum_combinations,
+    )
+
+    # 1. Загружаем все строки выписки, относящиеся к субсидии
+    bp_rows = (await db.execute(
+        select(BankPayment).where(subsidy_scope_clause(subsidy)).order_by(BankPayment.payment_date.desc(), BankPayment.id)
+    )).scalars().all()
+
+    # 2. Исключаем уже привязанные в этой субсидии и неисполненные
+    bp_ids = [bp.id for bp in bp_rows]
+    attached_ids = await _attached_bank_payment_ids_in_subsidy(db, bp_ids, sid)
+    unattached_bps = [
+        bp for bp in bp_rows
+        if bp.id not in attached_ids
+        and bp.amount is not None
+        and bp.amount > 0
+        and (bp.status or "").upper().strip() in EXECUTED_STATUSES
+    ]
+
+    # 3. Загружаем все неоплаченные закупки субсидии
+    units = await load_unpaid_candidate_units(db, sid)
+
+    matches = []
+    used_purchase_ids: set[int] = set()
+
+    for bp in sorted(unattached_bps, key=lambda b: float(b.amount or 0), reverse=True):
+        bp_amt = Decimal(str(bp.amount))
+        available_units = [u for u in units if u.purchase_id not in used_purchase_ids]
+        if not available_units:
+            break
+
+        combos = find_subset_sum_combinations(
+            available_units, bp_amt, purpose_text=bp.purpose_text
+        )
+        if not combos:
+            continue
+
+        best_combo = combos[0]
+        if best_combo["probability"] in ("high", "medium"):
+            combo_pids = {it["purchase_id"] for it in best_combo["items"]}
+            used_purchase_ids.update(combo_pids)
+            matches.append({
+                "bank_payment_id": bp.id,
+                "payment_number": bp.payment_number,
+                "payment_date": bp.payment_date.isoformat() if bp.payment_date else None,
+                "amount": float(bp.amount),
+                "payee_name": bp.payee_name,
+                "payee_inn": bp.payee_inn,
+                "purpose_text": bp.purpose_text,
+                "combo": best_combo,
+            })
+
+    return {
+        "unattached_payments_count": len(unattached_bps),
+        "matches_count": len(matches),
+        "matches": matches,
+    }
+
+
+@router.post("/{sid}/payment-control/batch-apply-combos")
+async def batch_apply_combos(
+    sid: int,
+    body: _BatchApplyBody,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Массовое применение подтверждённых комбинаций: объединяет закупки,
+    проставляет контрагента из платёжки и привязывает оплату."""
+    await _get_subsidy_for_write(sid, db, current_user)
+    from app.services.payment_smart_combo_matcher import merge_and_attach_combo
+
+    applied = 0
+    errors: list[dict] = []
+    for item in body.matches:
+        try:
+            bp = await _get_bank_payment_or_404(item.bank_payment_id, db)
+            await merge_and_attach_combo(
+                db, sid, bp, item.purchase_ids, merge_purchases=item.merge_purchases
+            )
+            applied += 1
+        except Exception as e:
+            errors.append({
+                "bank_payment_id": item.bank_payment_id,
+                "error": str(e),
+            })
+
+    await db.commit()
+    return {"applied": applied, "errors": errors}
+
+
+# ---------------------------------------------------------------------------
 # GET /payment-control/find-discrepancy
 # ---------------------------------------------------------------------------
 

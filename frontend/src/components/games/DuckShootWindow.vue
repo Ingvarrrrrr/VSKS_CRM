@@ -152,7 +152,7 @@ import {
 import GameLeaderboard from './GameLeaderboard.vue'
 
 const GAME_STORAGE_KEY = 'gala_last_game'
-const showLeaderboard = ref(false)
+const showLeaderboard = ref(true)
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [boolean]; close: [] }>()

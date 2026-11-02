@@ -78,7 +78,7 @@ async def test_stages_template_header_matches_parser_and_prefills_plan(db_sessio
 
     # Все поля, которые разбирает лист GoodsService, замаплены.
     for field in (
-        "purchase_no", "plan_item_name", "supplier", "plan_qty", "unit", "plan_price",
+        "purchase_no", "plan_item_name", "supplier", "inn", "plan_qty", "unit", "plan_price",
         "plan_amount", "fact_price", "fact_amount", "item_type",
         "path_l2", "path_l3", "path_l4", "path_l5",
         "stage_purchase_done", "stage_contracted", "stage_ordered", "stage_delivered",

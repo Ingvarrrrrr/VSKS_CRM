@@ -32,37 +32,44 @@ _HEADER = [
     "Номер закупки",                                                              # 0  purchase_no
     "Наименование товара",                                                        # 1  plan_item_name
     "Контрагент",                                                                 # 2  supplier
-    "Плановое количество",                                                        # 3  plan_qty
-    "Ед. изм. (ОКЕИ)",                                                            # 4  unit
-    "Плановая цена",                                                              # 5  plan_price
-    "Плановая стоимость за объём",                                                # 6  plan_amount
-    "Итоговая цена  за единицу товара",                                           # 7  fact_price
-    "Итоговая цена за объём",                                                     # 8  fact_amount
-    "Товары или Услуги",                                                          # 9  item_type
-    "Направление расходов по категориям в соответсвии с ФЭО",                     # 10 path_l2
-    "Тип расходов в соответсвии с ФЭО Конкретизированный",                        # 11 path_l3
-    "Направление расходов из приложений к ФЭО",                                   # 12 path_l4
-    "Тип расходов конкретизированный (сам придумываю общий тип для cебя)",        # 13 path_l5
-    "Закупка проведена",                                                          # 14 stage_purchase_done
-    "Договор заключен (устно или письменно)",                                     # 15 stage_contracted
-    "Товар заказан",                                                              # 16 stage_ordered
-    "Товар поставлен",                                                            # 17 stage_delivered
-    "Оплачено",                                                                   # 18 stage_paid (флаг — рядом "Оплачено в деньгах")
-    "Оплачено в деньгах",                                                         # 19 paid (сумма платежа)
-    "Аванс (да/нет)",                                                             # 20 advance
+    "ИНН Контрагента",                                                            # 3  inn
+    "Плановое количество",                                                        # 4  plan_qty
+    "Ед. изм. (ОКЕИ)",                                                            # 5  unit
+    "Плановая цена",                                                              # 6  plan_price
+    "Плановая стоимость за объём",                                                # 7  plan_amount
+    "Итоговая цена за единицу товара",                                            # 8  fact_price
+    "Итоговая цена за объём",                                                     # 9  fact_amount
+    "Товары или Услуги",                                                          # 10 item_type
+    "Направление расходов по категориям в соответствии с ФЭО",                     # 11 path_l2
+    "Тип расходов в соответствии с ФЭО Конкретизированный",                        # 12 path_l3
+    "Направление расходов из приложений к ФЭО",                                   # 13 path_l4
+    "Тип расходов конкретизированный (сам придумываю общий тип для cебя)",        # 14 path_l5
+    "Закупка проведена",                                                          # 15 stage_purchase_done
+    "Договор заключен (устно или письменно)",                                     # 16 stage_contracted
+    "Товар заказан",                                                              # 17 stage_ordered
+    "Товар поставлен",                                                            # 18 stage_delivered
+    "Оплачено",                                                                   # 19 stage_paid (флаг — рядом "Оплачено в деньгах")
+    "Оплачено в деньгах",                                                         # 20 paid (сумма платежа)
+    "Аванс (да/нет)",                                                             # 21 advance
 ]
 
 _COL_PURCHASE_NO = 0
 _COL_PLAN_ITEM_NAME = 1
-_COL_PLAN_QTY = 3
-_COL_PLAN_PRICE = 5
-_COL_PLAN_AMOUNT = 6
-_COL_PATH_L2 = 10
-_COL_PATH_L5 = 13  # l2..l5 — 4 подряд идущие колонки
+_COL_SUPPLIER = 2
+_COL_INN = 3
+_COL_PLAN_QTY = 4
+_COL_UNIT = 5
+_COL_PLAN_PRICE = 6
+_COL_PLAN_AMOUNT = 7
+_COL_FACT_PRICE = 8
+_COL_FACT_AMOUNT = 9
+_COL_ITEM_TYPE = 10
+_COL_PATH_L2 = 11
+_COL_PATH_L5 = 14  # l2..l5 — 4 подряд идущие колонки
 
 # Колонки со списком Да/Нет (не блокирующий выбор — showErrorMessage=False,
 # как и остальные dropdown'ы шаблона, lesson feedback_excel_template_dropdowns).
-_YES_NO_COLS = (14, 15, 16, 17, 18, 20)
+_YES_NO_COLS = (15, 16, 17, 18, 19, 21)
 
 
 async def build_stages_template_workbook(db: AsyncSession, subsidy_id: int) -> bytes:
@@ -83,6 +90,7 @@ async def build_stages_template_workbook(db: AsyncSession, subsidy_id: int) -> b
         row = [None] * len(_HEADER)
         row[_COL_PLAN_ITEM_NAME] = plan_item_name
         row[_COL_PLAN_QTY] = entry.get("quantity")
+        row[_COL_UNIT] = entry.get("unit")
         row[_COL_PLAN_PRICE] = entry.get("unit_price")
         row[_COL_PLAN_AMOUNT] = entry.get("amount")
         row[_COL_PATH_L2:_COL_PATH_L5 + 1] = levels

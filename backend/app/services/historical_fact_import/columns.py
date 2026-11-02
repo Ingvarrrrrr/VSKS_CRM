@@ -42,9 +42,9 @@ _HEADER_HINTS = (
 # один макет, не вторая копия индексов).
 TEMPLATE_HEADER: list = [None] * 28
 TEMPLATE_HEADER[0] = "Субсидия"
-TEMPLATE_HEADER[4] = "Уровень 2 (Направление расходов по ФЭО)"
-TEMPLATE_HEADER[5] = "Уровень 3 (Тип расходов по ФЭО)"
-TEMPLATE_HEADER[6] = "Уровень 4 (Конкретизированный)"
+TEMPLATE_HEADER[4] = "Направление расходов по категориям в соответствии с ФЭО"
+TEMPLATE_HEADER[5] = "Тип расходов в соответствии с ФЭО Конкретизированный"
+TEMPLATE_HEADER[6] = "Направление расходов из приложений к ФЭО"
 TEMPLATE_HEADER[7] = "Плановая позиция (папка НЕ создаётся)"
 TEMPLATE_HEADER[8] = "Товар/услуга/работа"
 TEMPLATE_HEADER[9] = "Комментарий"
@@ -283,6 +283,8 @@ def _map_columns_format(header: list) -> list:
             field = "status"
         elif "№ закупки" in h or "номер закупки" in h:
             field = "purchase_no"
+        elif "инн" in h:
+            field = "inn"
         elif "поставщик" in h or "контрагент" in h:
             field = "supplier"
         elif "коммент" in h:
@@ -294,8 +296,6 @@ def _map_columns_format(header: list) -> list:
         # значениям ниже build_columns().
         elif "тип договора" in h:
             field = "contract_kind"
-        elif h == "инн":
-            field = "inn"
         elif "номер договора" in h:
             field = "contract_number"
         elif "дата договора" in h:

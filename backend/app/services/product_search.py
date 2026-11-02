@@ -65,8 +65,10 @@ from app.services.product_name_signature_props import (
     TOY_MARKERS,
     TOY_SAFE_CHILD_TYPES,
 )
+from app.services.product_code_normalize import code_literal_regex
 from app.services.product_query_parse import (
     ParsedQuery,
+    _merge_letter_digit_split,
     get_manufacturer_brand_dictionary,
     parse_query,
     product_type_synonyms,
@@ -640,7 +642,15 @@ def _numeric_token_regex(token: str) -> str:
         num, unit = m.groups()
         return rf"(?<!\d){re.escape(num)}\s*{re.escape(unit)}(?!\w)"
     core = token.replace("·", "")
-    return rf"(?<![0-9a-zа-яёA-ZА-ЯЁ]){re.escape(core)}(?![0-9a-zа-яёA-ZА-ЯЁ])"
+    # Буквенно-цифровой код (владелец, 29.10.2026, «оп2»/«оп 2»/«ОП-2»/«op-2»
+    # должны находить «ОП-2» ТОЧНЫМ совпадением марки, не ослаблением) —
+    # code_literal_regex допускает тот же дефис/пробел на границе буква↔цифра,
+    # который _KEEP_ALNUM_RE в product_name_signature.py убрал при построении
+    # этого самого токена (см. docstring app.services.product_code_normalize,
+    # Правило №6 — зеркало той нормализации, не вторая). Голые числа без букв
+    # (один сегмент) — code_literal_regex возвращает re.escape как раньше,
+    # граница "125"/"1250" не меняется.
+    return rf"(?<![0-9a-zа-яёA-ZА-ЯЁ]){code_literal_regex(core)}(?![0-9a-zа-яёA-ZА-ЯЁ])"
 
 
 def _split_required_tokens(required: list) -> tuple[list[str], list[str]]:
@@ -1101,6 +1111,59 @@ async def _fetch_fts_page_or(
     return list(items), total
 
 
+def _is_mixed_letter_digit(token: str) -> bool:
+    """Токен несёт И буквы, И цифры ("оп2"/"оп-2"/"DGA504Z") — кандидат на
+    буквенно-цифровой КОД марки/артикула (владелец, 29.10.2026, добивка
+    задания п.A: single-token запрос БЕЗ слова-вида — "оп2" САМ ПО СЕБЕ, не
+    "огнетушитель оп2" — раньше уходил в легаси ILIKE, см. docstring
+    _search_bare_code_page ниже). Чисто цифровой артикул ("0510000410") —
+    False, здесь ничего не меняется, легаси-путь как раньше."""
+    return any(c.isalpha() for c in token) and any(c.isdigit() for c in token)
+
+
+async def _search_bare_code_page(
+    db: AsyncSession,
+    filters: ProductSearchFilters,
+    token: str,
+    *,
+    limit: int,
+    offset: int,
+    freshness_ctx: Optional[FreshnessContext],
+) -> tuple[list[Product], int]:
+    """Single-token запрос БЕЗ слова-вида, буквы+цифры вперемешку ("оп2",
+    "оп-2", "DGA504Z") — владелец, 29.10.2026, добивка задания п.A: легаси
+    ILIKE (_search_legacy_page) ищет ЛИТЕРАЛЬНУЮ подстроку и не находит код,
+    если каталожное название содержит дефис/пробел, которого в запросе нет
+    ("ОП-2" против "оп2") — ТА ЖЕ причина и ТОТ ЖЕ фикс, что у Шага 1 FTS-
+    лестницы (search_products, когда слово-вид распознано): переиспользуем
+    _numeric_condition (а через него — code_literal_regex), не второй
+    механизм (Правило №6). Граница кода (lookaround в _numeric_token_regex)
+    сама исключает смежные марки (ОП-20/ОП-25 для "оп2") — не ранжирование,
+    а фильтр, как и там. Настоящие артикулы без смешанного разделителя
+    ("DGA504Z") совпадают литерально же (необязательный separator = 0
+    символов), чисто цифровые ("0510000410") сюда не попадают вовсе (см.
+    _is_mixed_letter_digit — вызывающая сторона не зовёт эту функцию для
+    них). Вызывающая сторона падает на легаси при total=0 (не ухудшает
+    существующее поведение артикульного поиска)."""
+    def _base(entity):
+        q = select(entity)
+        q = _apply_non_search_filters(q, filters, freshness_ctx)
+        return q.where(_numeric_condition(token))
+
+    count_q = select(func.count()).select_from(_base(Product.id).subquery())
+    total = (await db.execute(count_q)).scalar_one()
+
+    page_q = _base(Product).options(defer(Product.characteristics))
+    sort_terms = _explicit_sort_terms(filters)
+    if sort_terms is not None:
+        page_q = page_q.order_by(*sort_terms)
+    else:
+        page_q = page_q.order_by(Product.name.asc(), Product.id.asc())
+    page_q = page_q.limit(limit).offset(offset)
+    items = (await db.execute(page_q)).scalars().all()
+    return list(items), total
+
+
 async def _search_legacy_page(
     db: AsyncSession,
     filters: ProductSearchFilters,
@@ -1221,7 +1284,41 @@ async def search_products(
     if not _has_letter_or_digit(raw):
         return [], 0, False
 
-    if _all_words_too_short_for_trigram(raw) or _looks_like_article_query(raw):
+    # Склейка «буква(-ы) + пробел + цифра» ДО проверки веток (владелец,
+    # 30.10.2026, дыра найдена в «оп2»-доработке п.A: "ОП 2"/"оп 2" —
+    # ДВА слова короче MIN_TRIGRAM_WORD_LEN каждое, _all_words_too_short_
+    # for_trigram(raw) срабатывает РАНЬШЕ, чем "оп2" (однословная форма)
+    # добирается до _looks_like_article_query/_is_mixed_letter_digit, и
+    # запрос уходил в легаси ILIKE напрямую, без попытки
+    # _search_bare_code_page вовсе — "ОП-2" в каталоге (дефис, которого в
+    # запросе нет) не находился). Переиспользуем ТОТ ЖЕ _merge_letter_digit_
+    # split, что parse_query() применяет перед build_signature (Правило
+    # №6, второй механизм склейки не завожен) — "оп 2" → "оп2" ДО выбора
+    # ветки, дальше идёт по той же цепочке, что уже слитная/дефисная
+    # запись. "для 2"/"пила 2" не склеиваются вовсе — предлог/вид товара
+    # отфильтрованы _is_mergeable_code_prefix, merged_raw совпадает с raw,
+    # ветвление не меняется. "бак 2" ("бак" — обычное слово, в словаре
+    # видов товара и предлогов его нет, поэтому СКЛЕИВАЕТСЯ в "бак2") идёт
+    # в _search_bare_code_page НИЖЕ, но это не регрессия: регекс там ищет
+    # ТОЧНОЕ "бак-2"/"бак 2"/"бак2" в каталоге — если такого товара нет
+    # (total=0), ветка проваливается в ТОТ ЖЕ легаси AND-ILIKE путь, что и
+    # раньше (см. `if total > 0` ниже); меняется поведение только когда
+    # каталог реально содержит код "бак2"/"бак-2" — тогда находка кода
+    # первым и есть правильный результат, не регрессия.
+    merged_raw = _merge_letter_digit_split(raw)
+    if _all_words_too_short_for_trigram(merged_raw) or _looks_like_article_query(merged_raw):
+        bare_token = merged_raw.strip()
+        if _looks_like_article_query(merged_raw) and _is_mixed_letter_digit(bare_token):
+            # Буквенно-цифровой код ОДНИМ токеном без слова-вида ("оп2",
+            # "оп-2", "оп 2" после склейки выше) — владелец, 29.10.2026,
+            # добивка задания п.A (см. docstring _search_bare_code_page).
+            # Проверяем ПЕРЕД легаси — если пусто, падаем на легаси как
+            # раньше (ничего не ухудшаем).
+            items, total = await _search_bare_code_page(
+                db, filters, bare_token, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
+            )
+            if total > 0:
+                return list(items), total, False
         items, total, _total_capped = await _search_legacy_page(
             db, filters, limit=limit, offset=offset, freshness_ctx=freshness_ctx,
         )

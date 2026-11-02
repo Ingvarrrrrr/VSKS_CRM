@@ -87,7 +87,17 @@
                   </div>
                   <div class="text-caption text-medium-emphasis">{{ nearMissReasonText(nm) }}</div>
                   <div class="d-flex flex-wrap gap-1 mt-1">
-                    <v-btn size="x-small" variant="tonal" color="success" :loading="attachingKey === attachKey(r, nm.purchase_id)" @click="onAttachNearMiss(r, nm, false)">Привязать</v-btn>
+                    <v-btn
+                      v-if="nm.purchase_ids && nm.purchase_ids.length > 1"
+                      size="x-small"
+                      variant="tonal"
+                      color="success"
+                      :loading="attachingKey === attachKey(r, nm.purchase_id) + ':combo'"
+                      @click="onAttachNearMissCombo(r, nm)"
+                    >
+                      Объединить ({{ nm.purchase_ids.length }} поз.) в закупку и привязать
+                    </v-btn>
+                    <v-btn v-else size="x-small" variant="tonal" color="success" :loading="attachingKey === attachKey(r, nm.purchase_id)" @click="onAttachNearMiss(r, nm, false)">Привязать</v-btn>
                     <v-btn v-if="nm.can_fix_amount" size="x-small" variant="tonal" color="orange" :loading="attachingKey === attachKey(r, nm.purchase_id) + ':fix'" @click="onAttachNearMiss(r, nm, true)">
                       Привязать и исправить сумму закупки на {{ formatCurrency(r.amount) }}
                     </v-btn>
@@ -188,6 +198,23 @@ const NEAR_MISS_REASON_LABELS: Record<string, (nm: PaymentControlNearMiss) => st
 function nearMissReasonText(nm: PaymentControlNearMiss): string {
   const fn = NEAR_MISS_REASON_LABELS[nm.reason]
   return fn ? fn(nm) : (nm.reason || 'похоже на эту закупку')
+}
+
+async function onAttachNearMissCombo(r: PaymentControlRow, nm: PaymentControlNearMiss) {
+  const bpId = r.bank_payment_ids[0]
+  if (!bpId || !nm.purchase_ids?.length) return
+  const key = attachKey(r, nm.purchase_id) + ':combo'
+  attachingKey.value = key
+  try {
+    const res = await props.control.attachCombo(props.subsidyId, bpId, nm.purchase_ids, true)
+    for (const w of (res.warnings || [])) toast.addToast(w, 'warning')
+    toast.success(`Позиции (${res.merged_count} шт.) объединены в закупку ${res.registry_number || '#' + res.primary_purchase_id} и привязаны к платёжке`)
+    await props.control.reload()
+  } catch (e: any) {
+    toast.addToast(describeApiError(e, { fallback: 'Не удалось объединить и привязать закупки' }), 'error')
+  } finally {
+    attachingKey.value = null
+  }
 }
 
 async function onAttachNearMiss(r: PaymentControlRow, nm: PaymentControlNearMiss, fixAmount: boolean) {

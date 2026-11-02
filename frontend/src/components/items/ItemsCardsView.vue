@@ -110,6 +110,7 @@
                   @pick="(c: MatchCandidate) => emit('inline-match-pick', idx, c)"
                   @create-new="emit('inline-match-create-new', idx)"
                   @clear="emit('inline-match-clear', idx)"
+                  @store-search="(q: string) => emit('inline-match-store-search', idx, q)"
                 />
                 <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
                   <template #activator="{ props: tip }">
@@ -645,6 +646,7 @@ const emit = defineEmits<{
   'inline-match-pick': [idx: number, candidate: MatchCandidate]
   'inline-match-create-new': [idx: number]
   'inline-match-clear': [idx: number]
+  'inline-match-store-search': [idx: number, query: string]
   'open-quick-product-edit': [item: EditorItem]
   'confirm-match': [idx: number]
   'calc-item-total': [idx: number]

@@ -10,6 +10,7 @@ import datetime as _dt
 from typing import Optional
 
 from tools.harvest.core.gala_contracts import load_gala_contracts
+from tools.harvest.core.logistics import normalize_characteristics
 
 _CONTRACTS = load_gala_contracts()
 
@@ -68,6 +69,19 @@ KNOWN_BRANDS_SEED: set[str] = {
     "makita", "bosch", "dewalt", "intel", "amd", "asus", "msi", "gigabyte",
     "kingston", "corsair", "samsung", "seagate", "western digital", "hp",
     "lenovo", "dell", "acer", "epson", "canon", "brother", "netac",
+    # Автобренды (масла, запчасти, фильтры, аккумуляторы, автохимия)
+    "total", "lukoil", "shell", "mobil", "motul", "zic", "castrol",
+    "лукойл", "mann", "filtron", "ngk", "denso", "valvoline",
+    "vag", "bosch", "brembo", "ferodo", "sakura", "marshall", "patron",
+    "stellox", "miles", "lynx", "trw", "ate", "textar", "zimmermann",
+    "ctr", "lemforder", "kayaba", "monroe", "bilstein", "gates", "dayco",
+    "contitech", "ina", "skf", "fag", "valeo", "hella", "osram", "philips",
+    "narva", "finwhale", "luzar", "fenox", "trialli", "belmag", "lada",
+    "avtovaz", "mahle", "kolbenschmidt", "elring", "corteco", "dolz", "hepu",
+    "stayer", "zubr", "kraftool", "berkut", "rdrive", "howter", "tyumen",
+    "varta", "delta", "eurostart", "fireball", "hyundai", "topla", "exide",
+    "hitec", "akom", "mutlu", "tab", "forse", "tornado", "nordman",
+    "rosneft", "gazpromneft", "газпромнефть", "sintec", "g-energy",
 }
 
 _BRAND_CHARACTERISTIC_NAMES = {"бренд", "производитель", "торговая марка"}
@@ -190,7 +204,7 @@ def build_item(
         "manufacturer_article": manufacturer_article,
         "store_article": store_article,
         "description": description,
-        "characteristics": characteristics or [],
+        "characteristics": normalize_characteristics(characteristics or []),
         "photos": photos or [],
         "links": links or [],
         "source_url": source_url,

@@ -23,17 +23,44 @@ function trimmed(v: string | null | undefined): string {
 
 /** Действующее ТЗ позиции для показа — своё, если заполнено, иначе каталожное
  * (mirrors backend/app/services/item_tz.py::effective_item_tz). mode='44fz' —
- * каталожный фолбэк берётся из _description_44fz (effective_item_tz_44fz);
- * своё ТЗ (tz_description) не различает режим — то же поле для обеих формулировок. */
+ * каталожный фолбэк берётся из _description_44fz (effective_item_tz_44fz); если
+ * оно пусто — делегируется exact-формуле (_description), ПРАВИЛО №6, владелец
+ * 27.10.2026: у товара может быть заполнено точное описание при пустой
+ * формулировке 44-ФЗ, второй механизм сборки здесь не пишется. Своё ТЗ
+ * (tz_description) не различает режим — то же поле для обеих формулировок. */
 export function effectiveTz(item: ItemWithTz, mode: 'exact' | '44fz' = 'exact'): string {
   const own = trimmed(item.tz_description)
   if (own) return own
-  return trimmed(mode === '44fz' ? item._description_44fz : item._description)
+  if (mode === '44fz') {
+    const direct44fz = trimmed(item._description_44fz)
+    if (direct44fz) return direct44fz
+    return effectiveTz(item, 'exact')
+  }
+  return trimmed(item._description)
+}
+
+/** Источник действующего текста effectiveTz (см. выше) — одна формула, не
+ * дублировать её отдельной проверкой в компонентах (ПРАВИЛО №6):
+ *  - 'own' — своё ТЗ позиции (tz_description) непустое;
+ *  - 'catalog' — каталожный текст пришёл прямо из нужного поля
+ *    (_description для exact, _description_44fz для 44fz);
+ *  - 'catalog_exact_fallback' — только для mode='44fz': формулировки 44-ФЗ у
+ *    товара нет, показано точное описание (_description) вместо неё;
+ *  - 'none' — нет ни своего текста, ни каталожного. */
+export function tzSource(item: ItemWithTz, mode: 'exact' | '44fz' = 'exact'): 'own' | 'catalog' | 'catalog_exact_fallback' | 'none' {
+  if (trimmed(item.tz_description)) return 'own'
+  if (mode === '44fz') {
+    if (trimmed(item._description_44fz)) return 'catalog'
+    if (trimmed(item._description)) return 'catalog_exact_fallback'
+    return 'none'
+  }
+  return trimmed(item._description) ? 'catalog' : 'none'
 }
 
 /** true — показанное выше значение взято из каталога (своего ТЗ нет). */
 export function isTzFromCatalog(item: ItemWithTz): boolean {
-  return !trimmed(item.tz_description) && !!trimmed(item._description)
+  const source = tzSource(item, 'exact')
+  return source === 'catalog'
 }
 
 /** Очищает своё ТЗ — дальше действует каталожное (см. effectiveTz выше). */

@@ -137,7 +137,7 @@ async def delete_config(
 @router.post('/{config_id}/run')
 async def run_config(
     config_id: int,
-    params: Optional[dict] = Body(None),
+    params: Optional[dict] = Body(None, embed=True),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

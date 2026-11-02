@@ -239,6 +239,9 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
       price_source: val.price_source ?? null,
       price_source_ref: val.price_source_ref ?? null,
       price_freshness: val.price_freshness ?? null,
+      // Владелец, 27.10.2026: страна происхождения — из товара; applyCandidate
+      // сам чистит поле строки в null, если у товара страны нет.
+      country_origin: val.country_origin ?? null,
     })
     item._description_44fz = val.description_44fz || undefined
     emitUpdate()
@@ -255,6 +258,15 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
 
   function onInlineMatchClear(idx: number) {
     clearItem(idx)
+  }
+
+  // Пункт «Искать «…» в магазинах» (владелец, 29.10.2026) — тот же обработчик
+  // уровня строки, что и onInlineMatchPick/onInlineMatchCreateNew выше,
+  // просто открывает пикер в режиме автозапуска поиска в магазинах
+  // (openProductPickerForStoreSearch определён ниже, рядом с остальным
+  // пикером).
+  function onInlineMatchStoreSearch(idx: number, query: string) {
+    openProductPickerForStoreSearch(idx, query)
   }
 
   // Fall back to the единое окно товара for "create new" from inline match.
@@ -320,9 +332,18 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     if (productPickerDialog.value) runPickerSearch(q)
   })
 
+  // «Искать в магазинах» сразу при открытии пикера (владелец, 29.10.2026,
+  // жалоба «в заявке нет возможности искать по магазинам») — ProductPickerDialog.vue
+  // сам запускает поиск в магазинах при открытии, когда этот флаг true
+  // (см. ProductPickerDialog.vue::autoStoreSearch). false — обычное открытие
+  // (строка-скрепка/«Новый товар»/клик по строке таблицы) не трогает магазины
+  // сверх уже существующей авто-подсказки по querySpecific.
+  const productPickerAutoStoreSearch = ref(false)
+
   function openProductPicker(idx: number, mode: 'normal' | 'repick' = 'normal') {
     pickerMode.value = mode
     productPickerIdx.value = idx
+    productPickerAutoStoreSearch.value = false
     const initialQuery = localItems.value[idx]?.item_name || ''
     suppressNextSearchWatch = true
     productPickerSearch.value = initialQuery
@@ -332,6 +353,22 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     // прошлый раз) — тогда watch не срабатывает вовсе, и флаг остался бы
     // висеть до следующего реального ввода. Снимаем его в конце тика на
     // случай если watch не сработал.
+    void nextTick(() => { suppressNextSearchWatch = false })
+  }
+
+  // Пункт «Искать «…» в магазинах» из подсказок InlineProductMatch.vue
+  // (владелец, 29.10.2026) — ТОТ ЖЕ пикер (openProductPicker выше), только с
+  // уже введённым текстом и autoStoreSearch=true (второго окна поиска не
+  // заводим, ПРАВИЛО №6).
+  function openProductPickerForStoreSearch(idx: number, query: string) {
+    pickerMode.value = 'normal'
+    productPickerIdx.value = idx
+    productPickerAutoStoreSearch.value = true
+    const initialQuery = (query || localItems.value[idx]?.item_name || '').trim()
+    suppressNextSearchWatch = true
+    productPickerSearch.value = initialQuery
+    productPickerDialog.value = true
+    runPickerSearch(initialQuery, { immediate: true })
     void nextTick(() => { suppressNextSearchWatch = false })
   }
 
@@ -389,10 +426,11 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     itemCategoryOptions, itemTypeOptions, itemsFilterActive, itemsDisplayRows, visibleItemsCount,
     hasUncatalogedSelected, uncatalogedSelectedCount,
     productFilter, hasProducts, onItemProductSelect,
-    onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
+    onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew, onInlineMatchStoreSearch,
     productPickerDialog, productPickerSearch, productPickerIdx, productPickerResults,
-    productPickerQuerySpecific,
+    productPickerQuerySpecific, productPickerAutoStoreSearch,
     pickerMode, pickerTitle, bindProductToItem,
     openProductPicker, openRepickPicker, selectFromPicker, createProductFromPicker,
+    openProductPickerForStoreSearch,
   }
 }

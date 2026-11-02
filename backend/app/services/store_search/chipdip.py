@@ -10,11 +10,25 @@ page — это другая форма ответа, поиск != катего
 `<span id="price_<id>">ЧИСЛО</span><span class="rub"> ₽</span>` (число —
 цена за ту единицу кратности, что показана в `calc_wrap`/data-min, здесь
 берётся как есть, без домножения — довизит на страницу товара для точной
-цены этим заданием не делается, см. ограничение ≤3 живых запросов/магазин)."""
+цены этим заданием не делается, см. ограничение ≤3 живых запросов/магазин).
+
+ДЕФЕКТ с прода 29.10.2026 (живые запросы «мустанг»/«пускатель» к chipdip.ru,
+фикстуры chipdip_mustang.html/chipdip_puskatel.html): тысячи в цене
+разделены НЕ обычным пробелом, а HTML-сущностью `&#160;` (неразрывный
+пробел) — например `<span id="price_8011810089">6&#160;240</span>` (сайт:
+6 240 ₽) и `<span id="price_9001160408">5&#160;000</span>` (сайт: 5 000 ₽).
+Старый разбор чистил текст регэкспом `[^\d.,]` — он выкидывает `&`, `#`,
+`;`, но НЕ цифры внутри самой сущности, поэтому "6&#160;240" превращался в
+"6" + "160" + "240" = 6160240 (эталон дефекта: «Колесо рулевое КАМАЗ-6520 …
+Мустанг» показывало 6 160 240,00 ₽ вместо 6 240 ₽; «Пускатель КМЭ» — 5 160
+000 ₽ вместо 5 000 ₽). Исправление — `html.unescape` ПЕРЕД чисткой, так
+`&#160;` становится настоящим \xa0-пробелом и убирается как пробел, а не
+остаётся цифрами."""
 from __future__ import annotations
 
 import re
 from decimal import Decimal
+from html import unescape as _html_unescape
 from urllib.parse import quote
 
 from app.services.store_search.base import StoreOffer, seller_inn_for_domain, store_display_name
@@ -51,7 +65,8 @@ def parse_search_html(html: str) -> list[StoreOffer]:
         price_m = _PRICE_RE.search(row)
         price = None
         if price_m:
-            digits = re.sub(r"[^\d.,]", "", price_m.group(1)).replace(",", ".")
+            unescaped = _html_unescape(price_m.group(1))
+            digits = re.sub(r"[^\d.,]", "", unescaped).replace(",", ".")
             if digits:
                 try:
                     price = Decimal(digits)
@@ -75,6 +90,7 @@ def parse_search_html(html: str) -> list[StoreOffer]:
 class ChipdipAdapter:
     key = STORE_KEY
     domain = DOMAIN
+    display_name = STORE_NAME_FALLBACK
 
     async def search(self, client, query: str, limit: int) -> list[StoreOffer]:
         url = SEARCH_URL.format(q=quote(query))

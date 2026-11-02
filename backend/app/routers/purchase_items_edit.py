@@ -1223,17 +1223,198 @@ async def delete_purchase_item(
     if not it or it.purchase_id != pid:
         raise HTTPException(404, "Позиция не найдена")
     p = await db.get(Purchase, pid)
-    # W3: позиция привязана к заявке — удалять только через заявку
-    if p is not None and p.wish_id is not None:
+    # W3 (сужено 2026-08-18 до p.status == 'wishes', как и в patch_purchase_item):
+    # пока закупка ещё скрыта на этапе заявки ('wishes') — удалять в заявке;
+    # после выхода в План закупок / Ведётся работа — редактируют в закупке.
+    if p is not None and p.wish_id is not None and p.status == "wishes":
         raise HTTPException(
             409,
             f"Позиция привязана к заявке #{p.wish_id} — редактируйте её в заявке",
         )
+    # Запись в историю изменений закупки (EntityChange)
+    try:
+        from app.models.entity_change import EntityChange as _EC
+        db.add(_EC(
+            entity_type="purchase",
+            entity_id=pid,
+            field_name="items",
+            old_value=f"Позиция «{it.item_name}» ({it.quantity or 0} {it.unit or 'шт.'} на {it.total_price or 0} ₽)",
+            new_value="Удалена из закупки (снята с плана)",
+            changed_by_id=current_user.id,
+            changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+        ))
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("entity_change record failed for purchase_item delete: %s", _exc)
+
     await db.delete(it)
     await db.flush()
     if p:
         await _recalc_purchase_totals(p, db)
+        # Если удалена ПОСЛЕДНЯЯ позиция закупки (и она ещё не в замороженном
+        # статусе), recalc_purchase_money по умолчанию не трогает пустую закупку
+        # (защита легаси-импорта без позиций) — явно обнуляем сумму, чтобы
+        # пустая закупка не держала старый резерв в ФЭО.
+        if p.status not in TZ_FROZEN_STATUSES:
+            rem_cnt = (await db.execute(
+                select(func.count(PurchaseItem.id)).where(PurchaseItem.purchase_id == p.id)
+            )).scalar() or 0
+            if rem_cnt == 0:
+                from app.services.purchase_money_writer import recalc_purchase_money
+                await recalc_purchase_money(db, p, items_total=Decimal("0"))
+                p.planned_quantity = 0
     if p and p.subsidy_id:
         await _create_plan_graph_version(subsidy_id=p.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение позиций закупки #{p.purchase_number or p.id}")
     await db.commit()
     return {"ok": True, "deleted_item_id": item_id}
+
+
+@router.post("/{pid}/sync-from-plan")
+async def sync_purchase_items_from_plan(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Актуализирует позиции закупки по текущему плану ФЭО (FeoPlannedItem):
+    - Если количество в плане уменьшилось (например, 10 → 4) — обновляет количество позиции в закупке.
+    - Если количество в плане обнулено (10 → 0) или позиция деактивирована — удаляет позицию из закупки.
+    - Пересчитывает итоговые суммы закупки, а при обнулении всех позиций — обнуляет плановые суммы.
+    - Фиксирует каждую правку в журнале корректировок закупки (EntityChange).
+    """
+    if not await _has_purchase_write_access(current_user, db):
+        raise HTTPException(403, "Нет прав на редактирование этой закупки")
+    p = await db.get(Purchase, pid)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+
+    # Договор уже подписан — автоматическая смена количества заблокирована
+    if p.status in ("contracted", "ordered", "delivered", "paid"):
+        raise HTTPException(
+            409,
+            f"Закупка уже находится в статусе «{p.status}» (договор подписан или исполнен). "
+            "Синхронизация с планом возможна только до заключения договора.",
+        )
+
+    items = (await db.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == pid).order_by(PurchaseItem.id)
+    )).scalars().all()
+
+    if not items:
+        return {"ok": True, "message": "В закупке нет позиций", "changes": [], "remaining_count": 0}
+
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.entity_change import EntityChange as _EC
+    from app.services.purchase_money_writer import recalc_purchase_money
+
+    changes = []
+    removed_items_count = 0
+    updated_items_count = 0
+
+    for it in items:
+        if not it.feo_planned_item_id:
+            continue
+        fpi = await db.get(FeoPlannedItem, it.feo_planned_item_id)
+        if not fpi:
+            continue
+
+        plan_qty = Decimal(str(fpi.quantity or 0))
+        cur_qty = Decimal(str(it.quantity or 0))
+
+        # 1. Позиция обнулена в плане или деактивирована -> удаляем из закупки
+        if not fpi.is_active or plan_qty <= Decimal("0"):
+            old_qty_str = f"{it.quantity or 0} {it.unit or 'шт.'}"
+            changes.append({
+                "item_id": it.id,
+                "item_name": it.item_name,
+                "action": "removed",
+                "reason": f"В плане ФЭО количество стало {plan_qty} (снято с плана)",
+                "old_quantity": float(cur_qty),
+                "new_quantity": 0.0,
+            })
+            db.add(_EC(
+                entity_type="purchase",
+                entity_id=pid,
+                field_name="items",
+                old_value=f"Позиция «{it.item_name}» ({old_qty_str})",
+                new_value="Снята из закупки по актуальному плану ФЭО (в плане 0 шт.)",
+                changed_by_id=current_user.id,
+                changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+                source="autoassign",
+                source_ref=fpi.id,
+            ))
+            await db.delete(it)
+            removed_items_count += 1
+
+        # 2. Количество в плане уменьшилось -> актуализируем
+        elif plan_qty < cur_qty:
+            old_qty_str = f"{it.quantity} {it.unit or 'шт.'}"
+            it.quantity = plan_qty
+            apply_item_amounts(
+                it, item_form_for_purchase_item(p, it),
+                vat_on_top=effective_vat_on_top(it.vat_on_top, p.tz_vat_on_top, p.vat_mode),
+                vat_rate=effective_vat_rate(it.vat_rate, p.vat_mode, p.vat_applicable, p.vat_rate),
+            )
+            if p.status == "plan_schedule":
+                it.planned_quantity = it.quantity
+                it.planned_total = it.total_price
+
+            changes.append({
+                "item_id": it.id,
+                "item_name": it.item_name,
+                "action": "reduced",
+                "reason": f"В плане ФЭО количество уменьшилось с {cur_qty} до {plan_qty}",
+                "old_quantity": float(cur_qty),
+                "new_quantity": float(plan_qty),
+            })
+            db.add(_EC(
+                entity_type="purchase",
+                entity_id=pid,
+                field_name="item_quantity",
+                old_value=f"Позиция «{it.item_name}»: {old_qty_str}",
+                new_value=f"Позиция «{it.item_name}»: {plan_qty} {it.unit or 'шт.'} (актуализация по плану ФЭО)",
+                changed_by_id=current_user.id,
+                changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+                source="autoassign",
+                source_ref=fpi.id,
+            ))
+            updated_items_count += 1
+
+    await db.flush()
+
+    # Пересчёт итогов закупки
+    rem_items = (await db.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == pid)
+    )).scalars().all()
+    rem_cnt = len(rem_items)
+
+    if rem_cnt == 0:
+        await recalc_purchase_money(db, p, items_total=Decimal("0"))
+        p.planned_quantity = 0
+    else:
+        new_items_sum = sum((it.total_price for it in rem_items if it.total_price is not None), Decimal("0"))
+        await recalc_purchase_money(db, p, items_total=new_items_sum)
+
+    if p.subsidy_id and (removed_items_count > 0 or updated_items_count > 0):
+        try:
+            await _create_plan_graph_version(
+                subsidy_id=p.subsidy_id,
+                db=db,
+                user=current_user,
+                note=f"Синхронизация с планом: закупка #{p.purchase_number or p.id} (снято: {removed_items_count}, уменьшено: {updated_items_count})",
+            )
+        except Exception:
+            pass
+
+    await db.commit()
+    await db.refresh(p)
+
+    return {
+        "ok": True,
+        "purchase_id": pid,
+        "remaining_items_count": rem_cnt,
+        "removed_items_count": removed_items_count,
+        "updated_items_count": updated_items_count,
+        "changes": changes,
+        "is_empty": rem_cnt == 0,
+        "suggest_stop": rem_cnt == 0 and p.status == "work_in_progress",
+    }

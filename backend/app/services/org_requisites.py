@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contractor import Contractor
 from app.models.organization import Organization
+from app.services.documents.org_name_case import doc_case_org_name, org_name_exceptions
 
 # Поля-реквизиты: при наличии привязанного контрагента читаются ИСКЛЮЧИТЕЛЬНО
 # из него (не смешиваются "бери непустое" — иначе ровно та же болезнь
@@ -67,6 +68,41 @@ def org_requisites(org: Organization, contractor: Optional[Contractor] = None) -
     if contractor is None:
         return {field: None for field in REQUISITE_FIELDS}
     return {field: getattr(contractor, field, None) for field in REQUISITE_FIELDS}
+
+
+def resolve_org_display_name(
+    org: Optional[Organization], contractor: Optional[Contractor]
+) -> Optional[str]:
+    """ЕДИНАЯ функция отображаемого имени организации (Правило №6) — дефект
+    org id=69 на проде, 27.10.2026: `organizations.name`/`Organization.name`
+    column_property читает ТОЛЬКО `contractor.name`, и если это поле у
+    контрагента пусто (историческая запись, или форма создания org не
+    заполнила его — см. create_organization), API отдавал None/"" — пустая
+    строка в дропдауне выбора организации (DeptCreateDialog.vue) и 500
+    ResponseValidationError на /api/hierarchy/graph (OrgOut.name: str).
+
+    Приоритет, без второго хранимого источника — это именно ОТОБРАЖЕНИЕ, а
+    не запись (ничего не персистируется здесь, в отличие от create_organization,
+    который дозаполняет пустые поля контрагента при создании):
+    1) `contractor.name` — короткое наименование, как ввёл пользователь;
+    2) `contractor.full_name`, приведённое к обычному регистру через
+       `doc_case_org_name` (app/services/documents/org_name_case.py) — ЕГРЮЛ
+       отдаёт полное наименование КАПСОМ (владелец, 27.10.2026), та же
+       функция и то же правило, что уже применяется при подстановке в
+       документы; `org.doc_name_exceptions` (если `org` передан) учитывается
+       так же, как и там;
+    3) None — у контрагента вовсе нет названия (не должно происходить после
+       фикса create_organization + бэкфилл-миграции; вызывающий сам решает,
+       чем заменить None — не здесь, чтобы не плодить второй текст фолбэка).
+    """
+    if contractor is None:
+        return None
+    if contractor.name:
+        return contractor.name
+    if contractor.full_name:
+        exceptions = org_name_exceptions(org) if org is not None else []
+        return doc_case_org_name(contractor.full_name, exceptions) or None
+    return None
 
 
 async def bulk_org_requisites(db: AsyncSession, orgs: Iterable[Organization]) -> dict[int, dict]:

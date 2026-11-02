@@ -103,6 +103,46 @@ def test_model_viscosity_token_normalizes():
     assert parsed.specific is True
 
 
+# ── марка через пробел («оп 2») = тот же код, что слитно/через дефис ───────
+#    (владелец, 29.10.2026, задание п.A)
+
+def test_letter_digit_space_merges_into_one_code_token():
+    parsed = parse_query("огнетушитель оп 2")
+    assert parsed.product_type == "огнетушитель"
+    assert "оп2" in parsed.required
+    # "оп" НЕ остаётся отдельным optional-словом — склеено в код целиком.
+    assert "оп" not in parsed.optional
+    assert parsed.optional == []
+
+
+def test_letter_digit_hyphen_and_fused_give_same_required_token():
+    # «ОП-2» (дефис) и «ОП2» (слитно) — РАНЬШЕ работали (одно слово с
+    # цифрой, _digit_tokens сам убирает дефис); «ОП 2» (пробел) — новая
+    # склейка выше должна давать ТОТ ЖЕ required-токен, не другой.
+    merged = parse_query("огнетушитель оп2").required
+    hyphen = parse_query("огнетушитель оп-2").required
+    spaced = parse_query("огнетушитель оп 2").required
+    assert merged == hyphen == spaced == ["огнетушитель", "оп2"]
+
+
+def test_stopword_before_digit_is_not_merged():
+    # "для 2" — "для" предлог (_PREPOSITION_STOPWORDS), не марка.
+    parsed = parse_query("огнетушитель для 2")
+    assert "для" not in parsed.required
+    assert all("для2" not in tok for tok in parsed.required)
+    assert "для" in parsed.dropped_stopwords
+
+
+def test_product_type_word_before_digit_is_not_merged():
+    # Короткое слово вида товара ("пила" — 4 буквы, PRODUCT_TYPE_WORDS) не
+    # склеивается с числом — у него уже своя обработка (type_literal).
+    parsed = parse_query("пила 2")
+    assert parsed.product_type == "пила"
+    assert "пила" in parsed.required
+    assert "пила2" not in parsed.required
+    assert "2" in parsed.required
+
+
 # ── опечатка — слово не распознано словарём вида товара → остаётся optional,
 #    specific=False (как «просто болгарка», не повод уходить в fuzzy здесь —
 #    это решает уже search_products на следующем шаге)

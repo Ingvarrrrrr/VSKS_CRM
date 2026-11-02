@@ -122,6 +122,34 @@ STORES: dict[str, dict] = {
         "ogrn": "1177847338074", "org_type": "Юр.лицо",
         "article_is_manufacturer": False,
     },
+    # Реквизиты сверены 28.10.2026: chipdip.ru/about/requisites,
+    # avtoall.ru/about/company — с сайта; emex.ru/contacts — ОГРН/адрес
+    # совпали со страницей; bi-bi.ru с сайта не прочитано (антибот-защита),
+    # подтверждено по реестру (запись «Атлант (Би-Би)»).
+    # article_is_manufacturer=True — у автозапчастей (bi-bi/avtoall/emex) и
+    # ChipDip «артикул» — это артикул производителя; в новых файлах
+    # manufacturer_article/store_article заданы явно, этот флаг для них не
+    # используется.
+    "bi-bi.ru": {
+        "name": "ООО «Атлант»", "inn": "7730208886",
+        "ogrn": "1167746704036", "org_type": "Юр.лицо",
+        "article_is_manufacturer": True,
+    },
+    "avtoall.ru": {
+        "name": "ООО «АВТООЛЛ»", "inn": "9701127481",
+        "ogrn": "1197746136961", "org_type": "Юр.лицо",
+        "article_is_manufacturer": True,
+    },
+    "chipdip.ru": {
+        "name": "АО «ЧИП и ДИП»", "inn": "7729108750",
+        "ogrn": "1027700271807", "org_type": "Юр.лицо",
+        "article_is_manufacturer": True,
+    },
+    "emex.ru": {
+        "name": "ООО «Эмекс.Ру»", "inn": "5027213485",
+        "ogrn": "1145027013999", "org_type": "Юр.лицо",
+        "article_is_manufacturer": True,
+    },
     # inari.pro — реквизиты НЕ подтверждены (ИНН из файла 1832034960 не
     # проходит контрольную цифру, владелец 27.10.2026) — в справочник
     # сознательно НЕ добавлен; seller_inn_for_* для него вернёт None, пока

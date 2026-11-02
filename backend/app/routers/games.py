@@ -45,12 +45,27 @@ def _validate_game(game: str) -> str:
 
 class ScoreIn(BaseModel):
     score: int
+    nickname: Optional[str] = None
 
     @field_validator("score")
     @classmethod
     def _check_range(cls, v: int) -> int:
         if v < 0 or v > MAX_SCORE:
             raise ValueError("score вне допустимого диапазона")
+        return v
+
+    @field_validator("nickname")
+    @classmethod
+    def _check_nickname(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if not NICKNAME_RE.match(v):
+            raise ValueError(
+                "Ник: 2-24 символа, буквы/цифры/пробел/._-"
+            )
         return v
 
 
@@ -80,7 +95,11 @@ async def _account_org_ids(current_user: User) -> list[int]:
     if ids:
         return list(ids)
     single = get_single_org_id(current_user)
-    return [single] if single else []
+    if single:
+        return [single]
+    if current_user.org_id:
+        return [current_user.org_id]
+    return []
 
 
 @router.post("/{game}/score")
@@ -92,37 +111,54 @@ async def submit_score(
 ):
     game = _validate_game(game)
 
+    # 1. Если передан nickname, сохраняем/обновляем в GameProfile
+    if payload.nickname:
+        prof_res = await db.execute(
+            select(GameProfile).where(GameProfile.user_id == current_user.id)
+        )
+        prof = prof_res.scalar_one_or_none()
+        if prof is None:
+            prof = GameProfile(user_id=current_user.id, nickname=payload.nickname)
+            db.add(prof)
+        else:
+            prof.nickname = payload.nickname
+
+    # 2. Аккаунт пользователя
+    acc_id = get_single_org_id(current_user) or current_user.org_id
+
+    # 3. Находим или создаем GameScore
+    result = await db.execute(
+        select(GameScore).where(
+            GameScore.user_id == current_user.id, GameScore.game == game
+        )
+    )
+    row = result.scalar_one_or_none()
+
     key = (current_user.id, game)
     now = time.monotonic()
     last = _last_submit_at.get(key)
-    if last is not None and (now - last) < _RATE_LIMIT_SECONDS:
-        # Повтор слишком быстро после предыдущего — тихо игнорируем сабмит,
-        # но всё равно отдаём актуальные best/rank (не ошибка для клиента).
-        pass
-    else:
-        _last_submit_at[key] = now
-        result = await db.execute(
-            select(GameScore).where(
-                GameScore.user_id == current_user.id, GameScore.game == game
-            )
+    is_throttled = last is not None and (now - last) < _RATE_LIMIT_SECONDS
+
+    if row is None:
+        row = GameScore(
+            user_id=current_user.id,
+            account_id=acc_id,
+            game=game,
+            best_score=payload.score,
+            plays=1,
         )
-        row = result.scalar_one_or_none()
-        if row is None:
-            row = GameScore(
-                user_id=current_user.id,
-                account_id=get_single_org_id(current_user),
-                game=game,
-                best_score=payload.score,
-                plays=1,
-            )
-            db.add(row)
-        else:
+        db.add(row)
+        _last_submit_at[key] = now
+    else:
+        if not is_throttled:
             row.plays = (row.plays or 0) + 1
-            if payload.score > row.best_score:
-                row.best_score = payload.score
-            if row.account_id is None:
-                row.account_id = get_single_org_id(current_user)
-        await db.commit()
+            _last_submit_at[key] = now
+        if payload.score > row.best_score:
+            row.best_score = payload.score
+        if row.account_id is None and acc_id is not None:
+            row.account_id = acc_id
+
+    await db.commit()
 
     best_result = await db.execute(
         select(GameScore).where(
@@ -172,7 +208,11 @@ async def get_leaderboard(
         q = (
             select(GameScore, User)
             .join(User, User.id == GameScore.user_id)
-            .where(GameScore.game == game, GameScore.account_id.in_(account_ids))
+            .where(
+                GameScore.game == game,
+                GameScore.best_score > 0,
+                (GameScore.account_id.in_(account_ids)) | (User.org_id.in_(account_ids)),
+            )
             .order_by(GameScore.best_score.desc())
             .limit(10)
         )
@@ -192,7 +232,7 @@ async def get_leaderboard(
     gq = (
         select(GameScore, GameProfile.nickname)
         .outerjoin(GameProfile, GameProfile.user_id == GameScore.user_id)
-        .where(GameScore.game == game)
+        .where(GameScore.game == game, GameScore.best_score > 0)
         .order_by(GameScore.best_score.desc())
         .limit(10)
     )
@@ -222,7 +262,11 @@ async def get_leaderboard(
     my_profile = profile_result.scalar_one_or_none()
     my_nickname = my_profile.nickname if my_profile else None
 
-    my_global_rank = await _rank_for(db, game, my_best, account_ids=None) if my_row else None
+    my_global_rank = (
+        await _rank_for(db, game, my_best, account_ids=None)
+        if (my_row and my_best > 0)
+        else None
+    )
 
     return {
         "me": {"best": my_best, "nickname": my_nickname or DEFAULT_NICKNAME},

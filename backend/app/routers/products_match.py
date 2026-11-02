@@ -29,6 +29,7 @@ from app.schemas.schemas import PriceFreshnessOut
 from app.services.product_matcher import bulk_match
 from app.services.product_match_candidates import fetch_match_candidates
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
+from app.services.product_interactive_match import interactive_match_candidates
 from app.services.product_snapshot import resolve_photo_url
 from app.services.item_types import normalize_item_type
 from app.services.product_catalog_guard import assert_can_edit_catalog
@@ -72,6 +73,11 @@ class _MatchCandidate(BaseModel):
     # организации проживания/питания» приходила в строку закупки типом «товар»).
     product_type: Optional[str] = None
     unit: Optional[str] = None
+    # Владелец, 27.10.2026 («если в файле нет страны — ничего не ставим»):
+    # страна происхождения товара — едет вместе с кандидатом, чтобы фронт
+    # (useItemMatching.ts::applyCandidate) мог подставить её в строку позиции
+    # и очистить, если у товара страны нет (не оставлять «РФ» по умолчанию).
+    country_origin: Optional[str] = None
 
 
 class _MatchResultItem(BaseModel):
@@ -117,7 +123,21 @@ async def _score_product_candidates(
     [{"query": str, "status": 'auto'|'suggest'|'create', "candidates": [candidate_dict, ...]}]
     candidate_dict несёт все поля формы _MatchCandidate (см. класс выше), включая
     product_type/unit.
-    """
+
+    `prefix=True` — ИНТЕРАКТИВНЫЙ набор в строке позиции (единственный признак,
+    см. _MatchRequest.prefix) — владелец, 29.10.2026, Правило №6: тот же порядок,
+    что у каталога «Товары» (GET /api/products/page → search_products), а не
+    второй, нечёткий механизм bulk_match ниже. Ответвление ЦЕЛИКОМ (SELECT
+    каталога/bulk_match/freshness ниже в этой функции не выполняются для этого
+    режима) — app.services.product_interactive_match.interactive_match_candidates
+    сам строит ТУ ЖЕ candidate-форму через search_products напрямую из Product
+    ORM-строк. prefix=False (батч/дедуп/plan-to-wish) — поведение не меняется."""
+    if prefix:
+        freshness_ctx = await load_freshness_context(db, org_id)
+        return await interactive_match_candidates(
+            db, queries, limit=limit, freshness_ctx=freshness_ctx, active_only=active_only,
+        )
+
     # 27.4-29: photo_url из БД ИЛИ /api/products/{id}/photo если фото в bytea (photo_data)
     # Сужение SQL (владелец, 2026-10-26): раньше здесь был select ВСЕГО каталога
     # (54 тыс.+ строк на каждый вызов) — теперь только trigram/ILIKE-кандидаты
@@ -186,6 +206,7 @@ async def _score_product_candidates(
                 "category": c.category,
                 "product_type": meta.product_type if meta else None,
                 "unit": meta.unit if meta else None,
+                "country_origin": meta.country_origin if meta else None,
                 "price_updated_at": (
                     meta.price_updated_at.isoformat() if meta and meta.price_updated_at else None
                 ),

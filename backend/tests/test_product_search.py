@@ -1036,3 +1036,217 @@ async def test_search_garbage_operators_with_letters_does_not_match_everything(d
     )
     assert total == 0
     assert meta["fuzzy"] is False
+
+
+# ── Код-марка «оп2»/«оп-2»/«оп 2»/«ОП2» = точное совпадение «ОП-2», выше
+#    «ОП-20»/«ОП-25»/«ОП-3»/«ОП-4» (владелец, 29.10.2026, жалоба №1) ────────
+
+@pytest.mark.asyncio
+async def test_code_grade_space_form_ranks_exact_code_first(db_session):
+    op2 = _mk(db_session, name="Огнетушитель порошковый ОП-2")
+    op20 = _mk(db_session, name="Огнетушитель порошковый ОП-20")
+    op25 = _mk(db_session, name="Огнетушитель порошковый ОП-25")
+    op3 = _mk(db_session, name="Огнетушитель порошковый ОП-3")
+    op4 = _mk(db_session, name="Огнетушитель порошковый ОП-4")
+    highprop = _mk(db_session, name="HighProp SNG01 заряд для автомобиля")
+    await db_session.commit()
+
+    for query in ("огнетушитель оп2", "огнетушитель оп-2", "огнетушитель ОП 2", "огнетушитель ОП2"):
+        items, total, capped = await search_products(db_session, ProductSearchFilters(search=query), limit=50, offset=0)
+        ids = [p.id for p in items]
+        assert ids, f"пусто для запроса {query!r}"
+        assert ids[0] == op2.id, f"{query!r}: первым должен идти ОП-2, получили id={ids[0]}"
+        assert op20.id not in ids, f"{query!r}: ОП-20 не должен находиться"
+        assert op25.id not in ids, f"{query!r}: ОП-25 не должен находиться"
+        assert op3.id not in ids
+        assert op4.id not in ids
+        assert highprop.id not in ids
+        assert capped is False
+
+
+@pytest.mark.asyncio
+async def test_bare_code_query_without_type_word_ranks_exact_code_first(db_session):
+    """Одиночный запрос «оп2» БЕЗ слова-вида («огнетушитель») — раньше
+    уходил в легаси ILIKE (_looks_like_article_query) и не находил «ОП-2»
+    из-за дефиса (владелец, 29.10.2026, добивка задания п.A)."""
+    op2 = _mk(db_session, name="Огнетушитель порошковый ОП-2")
+    op20 = _mk(db_session, name="Огнетушитель порошковый ОП-20")
+    op25 = _mk(db_session, name="Огнетушитель порошковый ОП-25")
+    await db_session.commit()
+
+    for query in ("оп2", "оп-2"):
+        items, total, capped = await search_products(db_session, ProductSearchFilters(search=query), limit=50, offset=0)
+        ids = [p.id for p in items]
+        assert ids and ids[0] == op2.id, f"{query!r}: первым должен идти ОП-2"
+        assert op20.id not in ids
+        assert op25.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_bare_code_query_with_space_form_ranks_exact_code_first(db_session):
+    """«ОП 2»/«оп 2» — ДВА слова (не single-token), каждое короче
+    MIN_TRIGRAM_WORD_LEN, раньше уходили в легаси ILIKE напрямую (дыра
+    найдена владельцем, 30.10.2026) и не находили «ОП-2» (дефис, которого
+    в запросе нет). Склейка _merge_letter_digit_split теперь применяется
+    ДО выбора ветки — «оп 2» идёт по той же цепочке, что «оп2»/«оп-2»."""
+    op2 = _mk(db_session, name="Огнетушитель порошковый ОП-2")
+    op20 = _mk(db_session, name="Огнетушитель порошковый ОП-20")
+    op25 = _mk(db_session, name="Огнетушитель порошковый ОП-25")
+    await db_session.commit()
+
+    for query in ("ОП 2", "оп 2"):
+        items, total, capped = await search_products(
+            db_session, ProductSearchFilters(search=query), limit=50, offset=0,
+        )
+        ids = [p.id for p in items]
+        assert ids and ids[0] == op2.id, f"{query!r}: первым должен идти ОП-2, получили {ids}"
+        assert op20.id not in ids, f"{query!r}: ОП-20 не должен находиться"
+        assert op25.id not in ids, f"{query!r}: ОП-25 не должен находиться"
+        assert capped is False
+
+
+@pytest.mark.asyncio
+async def test_bare_code_space_merge_does_not_break_plain_word_queries(db_session):
+    """Регрессия (владелец, 30.10.2026, п. «не ломать»): обычные короткие
+    запросы из слова+числа («для 2», «бак 2», «пила 2») не должны менять
+    поведение после склейки ДО выбора ветки — «для»/«пила» не склеиваются
+    вовсе (предлог/вид товара, _is_mergeable_code_prefix), «бак» склеился
+    бы в «бак2», но товара с таким кодом в каталоге нет → bare-code шаг
+    даёт total=0 и падает в ТОТ ЖЕ легаси AND-ILIKE путь, что и раньше."""
+    bak = _mk(db_session, name="Бак пластиковый 2 секции")
+    pila = _mk(db_session, name="Пила дисковая 2-скоростная")
+    extinguisher_dlya = _mk(db_session, name="Огнетушитель для 2-х литров")
+    unrelated = _mk(db_session, name="Прочий товар без чисел")
+    await db_session.commit()
+
+    items, total, capped = await search_products(
+        db_session, ProductSearchFilters(search="бак 2"), limit=50, offset=0,
+    )
+    ids = [p.id for p in items]
+    assert bak.id in ids
+    assert unrelated.id not in ids
+
+    items, total, capped = await search_products(
+        db_session, ProductSearchFilters(search="пила 2"), limit=50, offset=0,
+    )
+    ids = [p.id for p in items]
+    assert pila.id in ids
+    assert unrelated.id not in ids
+
+    items, total, capped = await search_products(
+        db_session, ProductSearchFilters(search="огнетушитель для 2"), limit=50, offset=0,
+    )
+    ids = [p.id for p in items]
+    assert extinguisher_dlya.id in ids
+    assert unrelated.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_bare_numeric_article_query_still_works(db_session):
+    """Чисто цифровой артикул ("0510000410") — старый легаси-путь, поведение
+    не меняется (регрессия к добивке задания п.A)."""
+    article = _mk(db_session, name="Деталь артикульная", article="0510000410")
+    unrelated = _mk(db_session, name="Деталь другая", article="1234567890")
+    await db_session.commit()
+
+    items, total, capped = await search_products(
+        db_session, ProductSearchFilters(search="0510000410"), limit=50, offset=0,
+    )
+    ids = [p.id for p in items]
+    assert article.id in ids
+    assert unrelated.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_bare_letter_digit_article_query_not_broken(db_session):
+    """Буквенно-цифровой артикул без разделителя ("DGA504Z") — новый путь
+    совпадает литерально же (необязательный разделитель = 0 символов),
+    не ломает существующий поиск по артикулу производителя."""
+    article = _mk(db_session, name="Шуруповерт аккумуляторный", article="DGA504Z")
+    unrelated = _mk(db_session, name="Прочий товар", article="XYZ999")
+    await db_session.commit()
+
+    items, total, capped = await search_products(
+        db_session, ProductSearchFilters(search="DGA504Z"), limit=50, offset=0,
+    )
+    ids = [p.id for p in items]
+    assert article.id in ids
+    assert unrelated.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_code_grade_query_still_finds_matching_grade_not_others(db_session):
+    """Регрессия: «огнетушитель оп-4» по-прежнему находит ОП-4 первым, не
+    ОП-2/ОП-20/ОП-25/ОП-3 — склейка кода не должна путать МАРКУ запроса с
+    другой маркой каталога."""
+    op2 = _mk(db_session, name="Огнетушитель порошковый ОП-2")
+    op4 = _mk(db_session, name="Огнетушитель порошковый ОП-4")
+    op40 = _mk(db_session, name="Огнетушитель порошковый ОП-40")
+    await db_session.commit()
+
+    items, total, capped = await search_products(
+        db_session, ProductSearchFilters(search="огнетушитель оп-4"), limit=50, offset=0,
+    )
+    ids = [p.id for p in items]
+    assert ids and ids[0] == op4.id
+    assert op2.id not in ids
+    assert op40.id not in ids
+
+
+# ── Интерактивный матчинг строки позиции (POST /products/match, prefix=True)
+#    даёт ТОТ ЖЕ порядок, что каталог search_products (владелец, 29.10.2026,
+#    жалоба №2, Правило №6) ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_interactive_match_prefix_matches_catalog_search_order(db_session):
+    from app.routers.products_match import _score_product_candidates
+
+    op2 = _mk(db_session, name="Огнетушитель порошковый ОП-2")
+    op3 = _mk(db_session, name="Огнетушитель порошковый ОП-3")
+    op25 = _mk(db_session, name="Огнетушитель порошковый ОП-25")
+    op70 = _mk(db_session, name="Огнетушитель порошковый ОП-70")
+    await db_session.commit()
+
+    query = "огнетушитель оп-2"
+    catalog_items, _total, _capped = await search_products(
+        db_session, ProductSearchFilters(search=query), limit=10, offset=0,
+    )
+    catalog_order = [p.id for p in catalog_items]
+
+    results = await _score_product_candidates(db_session, org_id=None, queries=[query], limit=10, prefix=True)
+    assert len(results) == 1
+    match_order = [c["product_id"] for c in results[0]["candidates"]]
+
+    assert match_order == catalog_order
+    assert match_order[0] == op2.id
+    assert op3.id not in match_order
+    assert op25.id not in match_order
+    assert op70.id not in match_order
+    # Score осмысленный (не одинаковая «100%» у всех кандидатов, владелец,
+    # задание п.B) — имя товара ("Огнетушитель порошковый ОП-2") не равно
+    # буквально запросу, поэтому это 'suggest', не 'auto'; с несколькими
+    # кандидатами скор убывал бы по позиции (здесь кандидат один — ОП-2
+    # единственный, кому AND(тип+марка) подходит).
+    assert results[0]["status"] == "suggest"
+    assert 0 < results[0]["candidates"][0]["score"] < 100.0
+
+
+@pytest.mark.asyncio
+async def test_interactive_match_exact_name_gets_auto_status(db_session):
+    """'auto' — ТОЛЬКО при буквальном совпадении имени (владелец, задание
+    п.B) — не любое score>=0.95 нечёткой метрики, как раньше у bulk_match."""
+    from app.routers.products_match import _score_product_candidates
+
+    exact = _mk(db_session, name="Огнетушитель ОП-2")
+    other = _mk(db_session, name="Огнетушитель ОП-2 с манометром")
+    await db_session.commit()
+
+    results = await _score_product_candidates(
+        db_session, org_id=None, queries=["Огнетушитель ОП-2"], limit=10, prefix=True,
+    )
+    candidates = results[0]["candidates"]
+    assert candidates[0]["product_id"] == exact.id
+    assert candidates[0]["score"] == 100.0
+    assert results[0]["status"] == "auto"
+    if len(candidates) > 1:
+        assert candidates[1]["score"] < candidates[0]["score"]

@@ -357,9 +357,14 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
 
     # ПРАВИЛО №6 (2026-09-05): единственный писатель денежных колонок — p
     # гарантированно не заморожена (ранний return выше по TZ_FROZEN_STATUSES),
-    # см. purchase_money_writer.py.
+    # см. purchase_money_writer.py. Если удалена последняя позиция закупки —
+    # явно передаём Decimal("0"), чтобы не оставалась старая сумма.
+    from decimal import Decimal as _DecSync
     from app.services.purchase_money_writer import recalc_purchase_money
-    await recalc_purchase_money(db, p)
+    _empty_after_remove = bool(items_removed) and not synced_items and not items_kept_manual
+    await recalc_purchase_money(db, p, items_total=_DecSync("0") if _empty_after_remove else None)
+    if _empty_after_remove:
+        p.planned_quantity = 0
     await db.flush()
 
     return {
@@ -1091,6 +1096,8 @@ async def _withdraw_wish_from_plan(wish_id: int, db: AsyncSession, *, action_tex
     # Ленивый импорт (во избежание цикла роутер↔сервис, см. докстринг модуля).
     from app.routers.wishes import _wish_linked_purchases
     from app.services.wish_access import wish_purchase_delete_blockers
+    from app.services.purchase_return_to_wish import ALLOWED_STATUSES as RETURNABLE_TO_WISH_STATUSES
+    from app.services.purchase_approval_reset import reset_purchase_approvals
 
     purchases = await _wish_linked_purchases(wish_id, db)
     # Общая проверка с delete_wish (ПРАВИЛО №6, 29.10.2026) — см.
@@ -1106,7 +1113,9 @@ async def _withdraw_wish_from_plan(wish_id: int, db: AsyncSession, *, action_tex
         )
     changed = False
     for p in purchases:
-        if p.status == "plan_schedule":
+        if p.status in RETURNABLE_TO_WISH_STATUSES:
+            if p.status == "work_in_progress" or p.approval_status is not None:
+                await reset_purchase_approvals(p, db)
             p.status = "wishes"
             changed = True
         # status == 'wishes' и прочие (например 'cancelled') — не трогаем

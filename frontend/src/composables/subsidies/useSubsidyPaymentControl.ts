@@ -8,6 +8,8 @@
 //   PUT  /subsidies/{id}/payment-control/codes            { codes }
 //   GET  /subsidies/{id}/payment-control/bank-payments/{bp_id}/candidates
 //   POST /subsidies/{id}/payment-control/bank-payments/{bp_id}/attach       { purchase_id }
+//   POST /subsidies/{id}/payment-control/bank-payments/{bp_id}/attach-combo { purchase_ids, merge_purchases }
+//   GET  /subsidies/{id}/payment-control/find-discrepancy?amount=...
 //   POST /subsidies/{id}/payment-control/bank-payments/{bp_id}/create-purchase  { feo_category_id? }
 import { ref } from 'vue'
 import { apiFetch } from '@/api'
@@ -24,17 +26,11 @@ export interface PaymentControlTotals {
   not_executed_total: number
   unknown_code_total: number
   from_payment_unrefined_count: number
-  // Квик-план 2026-10-06 (statement-control): контрольный итог сверху окна
-  // «Сверка» — «привязано N из M платёжек · A из B ₽ · не хватает C ₽».
   statement_count?: number
   attached_count?: number
   unattached_count?: number
   unattached_total?: number
   unattached_numbers?: string[]
-  // Платёжки выписки этой субсидии, у которых закупка уже привязана к ДРУГОЙ
-  // субсидии (общий номер соглашения — subsidy_scope_clause видит строку
-  // обеим) — не «без закупки», просто не её закупка. Инцидент 06.10: ФАДМ 2026_2
-  // (id 89) и ФАДМ_2026 (id 7) с общим номером соглашения.
   in_other_subsidies_count?: number
   in_other_subsidies_total?: number
 }
@@ -86,25 +82,25 @@ export interface PaymentControlRowPurchase {
   registry_number: string | null
   subject: string | null
   amount: number
-  // Строка листа «закупка N, заказ M» (квик-план 06.10) — null, если бэкенд
-  // ещё не прислал (старый контракт), тогда показываем только РЕЕ.
   sheet_ref?: string | null
 }
 
-// «Почти совпало» — подсказки к непривязанной платёжке (status=registry_only),
-// квик-план 2026-10-06: тот же ИНН/акт/сумма нескольких заказов, причина
-// словами владельца собирается на фронте по коду reason.
 export type PaymentControlNearMissReason = 'amount_close' | 'same_act' | 'orders_sum' | string
 
 export interface PaymentControlNearMiss {
   purchase_id: number
+  purchase_ids?: number[]
   registry_number: string | null
   subject: string | null
   contractor_name: string | null
   amount: number
   delta: number
   reason: PaymentControlNearMissReason
+  probability?: 'high' | 'medium' | 'low'
+  probability_label?: string
+  coherence_reason?: string
   can_fix_amount: boolean
+  can_merge?: boolean
 }
 
 export interface PaymentControlRow {
@@ -123,9 +119,7 @@ export interface PaymentControlRow {
   amount_diff: number
   unknown_code: boolean
   duplicate_with: string[]
-  // Только для status==='registry_only' — подсказки «почти совпало».
   near_miss?: PaymentControlNearMiss[]
-  // Только для status==='in_other_subsidy' — закупка, в которой уже числится эта платёжка.
   other_subsidy?: PaymentControlRowOtherSubsidy | null
 }
 
@@ -146,10 +140,6 @@ export interface PaymentControlData {
   articles: PaymentControlArticle[]
   rows: PaymentControlRow[]
   not_executed: PaymentControlNotExecuted[]
-  // Субсидии, в чьих закупках найдены платёжки выписки этой субсидии (общий
-  // номер соглашения) — для серой строки в баннере. Может отсутствовать
-  // (пустой список на бэкенде сериализуется как [], но на старом контракте
-  // поля не было).
   other_subsidies?: PaymentControlOtherSubsidy[]
 }
 
@@ -176,6 +166,56 @@ export interface PaymentControlCandidate {
   reason: string | null
 }
 
+export interface PaymentControlComboItem {
+  purchase_id: number
+  registry_number: string | null
+  subject: string | null
+  amount: number
+  contractor_id: number | null
+  contractor_name: string | null
+  feo_category_name: string | null
+  product_category: string | null
+  semantic_cluster: string | null
+  sheet_ref: string | null
+}
+
+export interface PaymentControlComboSuggestion {
+  purchase_ids: number[]
+  items: PaymentControlComboItem[]
+  total_amount: number
+  delta: number
+  count: number
+  score: number
+  probability: 'high' | 'medium' | 'low'
+  probability_label: string
+  coherence_reason: string
+  can_merge: boolean
+}
+
+export interface PaymentControlSignErrorHint {
+  purchase_id: number
+  registry_number: string | null
+  subject: string | null
+  amount: number
+  discrepancy_explained: number
+  contractor_name: string | null
+  feo_category_name: string | null
+  sheet_ref: string | null
+  reason: string
+}
+
+export interface PaymentControlCandidatesResponse {
+  items: PaymentControlCandidate[]
+  combo_suggestions?: PaymentControlComboSuggestion[]
+  sign_error_hints?: PaymentControlSignErrorHint[]
+}
+
+export interface PaymentControlDiscrepancyResponse {
+  target_amount: number
+  combo_suggestions: PaymentControlComboSuggestion[]
+  sign_error_hints: PaymentControlSignErrorHint[]
+}
+
 export function useSubsidyPaymentControl() {
   const data = ref<PaymentControlData | null>(null)
   const loading = ref(false)
@@ -186,9 +226,6 @@ export function useSubsidyPaymentControl() {
   const codesSaving = ref(false)
 
   let currentSubsidyId: number | null | undefined = null
-  // Инцидент 06.10: владелец переключил субсидию 7 → 89, ответ по 7 (считался
-  // дольше) пришёл ПОСЛЕ ответа по 89 и затёр верные данные — отбрасываем
-  // ответ, если за время await уже стартовал более новый load()/loadCodes().
   const loadGuard = useLatestRequest()
   const codesGuard = useLatestRequest()
 
@@ -243,10 +280,16 @@ export function useSubsidyPaymentControl() {
   }
 
   async function fetchCandidates(subsidyId: number, bpId: number): Promise<PaymentControlCandidate[]> {
-    const res = await apiFetch<{ items: PaymentControlCandidate[] }>(
+    const res = await apiFetch<PaymentControlCandidatesResponse>(
       `/subsidies/${subsidyId}/payment-control/bank-payments/${bpId}/candidates`,
     )
     return res.items || []
+  }
+
+  async function fetchCandidatesFull(subsidyId: number, bpId: number): Promise<PaymentControlCandidatesResponse> {
+    return apiFetch<PaymentControlCandidatesResponse>(
+      `/subsidies/${subsidyId}/payment-control/bank-payments/${bpId}/candidates`,
+    )
   }
 
   async function attachPurchase(
@@ -261,9 +304,27 @@ export function useSubsidyPaymentControl() {
     })
   }
 
-  // Выгрузка контрольного листа в Excel (квик-план 06.10) — файл, не JSON:
-  // тот же способ скачивания, что и useFleetExport.ts (fetch + bearer-токен +
-  // blob), apiFetch здесь не подходит — он парсит JSON-ответ.
+  async function attachCombo(
+    subsidyId: number,
+    bpId: number,
+    purchaseIds: number[],
+    mergePurchases = true,
+  ): Promise<{ ok: boolean; merged: boolean; primary_purchase_id: number; registry_number: string | null; merged_count: number; warnings: string[] }> {
+    return apiFetch(`/subsidies/${subsidyId}/payment-control/bank-payments/${bpId}/attach-combo`, {
+      method: 'POST',
+      body: JSON.stringify({ purchase_ids: purchaseIds, merge_purchases: mergePurchases }),
+    })
+  }
+
+  async function findDiscrepancy(
+    subsidyId: number,
+    amount: number,
+  ): Promise<PaymentControlDiscrepancyResponse> {
+    return apiFetch<PaymentControlDiscrepancyResponse>(
+      `/subsidies/${subsidyId}/payment-control/find-discrepancy?amount=${encodeURIComponent(amount)}`,
+    )
+  }
+
   const exporting = ref(false)
   async function exportXlsx(subsidyId: number): Promise<void> {
     exporting.value = true
@@ -307,7 +368,7 @@ export function useSubsidyPaymentControl() {
   return {
     data, loading, loadError, load, reload,
     codesData, codesLoading, codesSaving, loadCodes, saveCodes,
-    fetchCandidates, attachPurchase, createPurchaseFromPayment,
+    fetchCandidates, fetchCandidatesFull, attachPurchase, attachCombo, findDiscrepancy, createPurchaseFromPayment,
     exporting, exportXlsx,
   }
 }

@@ -17,7 +17,7 @@ export interface PriceFreshness {
   label: string
 }
 
-export type PriceSource = 'contract' | 'kp' | 'manual' | 'import' | 'monitoring'
+export type PriceSource = 'contract' | 'kp' | 'manual' | 'import' | 'monitoring' | 'store'
 
 export const PRICE_SOURCE_LABELS: Record<string, string> = {
   contract: 'договор',
@@ -25,6 +25,11 @@ export const PRICE_SOURCE_LABELS: Record<string, string> = {
   manual: 'вручную',
   import: 'импорт',
   monitoring: 'мониторинг цен',
+  // 'store' — добавлено 29.10.2026 (этап 2 живого поиска в магазинах, кнопка
+  // «Взять», backend/app/services/store_search/take.py): подпись читается
+  // «магазин kuvalda.ru» (label + formatSourceRef(ref), ref — ссылка на
+  // страницу товара → короткий домен), не «импорт kuvalda.ru».
+  store: 'магазин',
 }
 
 /** Global CSS class (defined in styles/gala.css) — единая подсветка устаревшей

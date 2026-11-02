@@ -442,6 +442,7 @@
           @inline-match-pick="onInlineMatchPick"
           @inline-match-create-new="onInlineMatchCreateNew"
           @inline-match-clear="onInlineMatchClear"
+          @inline-match-store-search="onInlineMatchStoreSearch"
           @open-quick-product-edit="openQuickProductEdit"
           @confirm-match="confirmMatch"
           @calc-item-total="calcItemTotal"
@@ -525,6 +526,7 @@
           @inline-match-pick="onInlineMatchPick"
           @inline-match-create-new="onInlineMatchCreateNew"
           @inline-match-clear="onInlineMatchClear"
+          @inline-match-store-search="onInlineMatchStoreSearch"
           @open-quick-product-edit="openQuickProductEdit"
           @confirm-match="confirmMatch"
           @calc-item-total="calcItemTotal"
@@ -583,6 +585,7 @@
         @inline-match-pick="onInlineMatchPick"
         @inline-match-create-new="onInlineMatchCreateNew"
         @inline-match-clear="onInlineMatchClear"
+        @inline-match-store-search="onInlineMatchStoreSearch"
         @open-quick-product-edit="openQuickProductEdit"
         @confirm-match="confirmMatch"
         @calc-item-total="calcItemTotal"
@@ -618,6 +621,7 @@
         @inline-match-pick="onInlineMatchPick"
         @inline-match-create-new="onInlineMatchCreateNew"
         @inline-match-clear="onInlineMatchClear"
+        @inline-match-store-search="onInlineMatchStoreSearch"
         @open-quick-product-edit="openQuickProductEdit"
         @calc-item-total="calcItemTotal"
         @remove-item="removeItem"
@@ -645,6 +649,7 @@
       :search="productPickerSearch"
       :results="productPickerResults"
       :query-specific="productPickerQuerySpecific"
+      :auto-store-search="productPickerAutoStoreSearch"
       :supports-full-product-dialog="props.supportsFullProductDialog"
       :title="pickerTitle"
       :photo-src="productPhotoSrc"
@@ -2088,9 +2093,9 @@ const {
   itemsGroupBy, itemsFilterCats, itemsFilterTypes,
   itemCategoryOptions, itemTypeOptions, itemsFilterActive, itemsDisplayRows, visibleItemsCount,
   hasUncatalogedSelected, uncatalogedSelectedCount, bulkAddCatalogLoading, bulkAddToCatalog,
-  onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
+  onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew, onInlineMatchStoreSearch,
   productPickerDialog, productPickerSearch, productPickerResults,
-  productPickerQuerySpecific,
+  productPickerQuerySpecific, productPickerAutoStoreSearch,
   pickerTitle, bindProductToItem,
   openProductPicker, openRepickPicker, selectFromPicker, createProductFromPicker,
 } = useItemsCatalog({

@@ -4,12 +4,21 @@ item-tz-description.md): у позиции может быть своё ТЗ (Wi
 PurchaseItem.tz_description), загруженное из файла при импорте; если его нет —
 действует ТЗ товара каталога (Product.description / description_44fz).
 
-Каталожный текст товара (description/description_44fz), если он пуст, а у
-товара заполнены структурированные характеристики (Product.characteristics) —
-собирается из них тем же единственным механизмом, что и везде в проекте
-(ПРАВИЛО №6): app/services/product_tech_description.py::build_tech_description
-(учитывает in_description=false). Второй сборщик текста из характеристик
-здесь не пишется.
+Каталожный текст товара для обычного режима (Product.description), если он
+пуст, а у товара заполнены структурированные характеристики
+(Product.characteristics) — собирается из них тем же единственным механизмом,
+что и везде в проекте (ПРАВИЛО №6):
+app/services/product_tech_description.py::build_tech_description (учитывает
+in_description=false). Второй сборщик текста из характеристик здесь не
+пишется.
+
+Для режима 44-ФЗ порядок: own (tz_description) → Product.description_44fz
+(прямое значение поля, БЕЗ отдельного фолбэка на характеристики здесь) →
+effective_item_tz(item, product) целиком, т.е. тот же Product.description с
+фолбэком на характеристики выше. Отдельного «description_44fz → характеристики»
+фолбэка не существует — если description_44fz пуст, товар с заполненным
+точным описанием (description) должен показывать его, а не куцую строку из
+характеристик, обходя description.
 
 Вызывается ВСЕМИ местами, которые раньше читали item.product.description
 напрямую для документов/выдачи:
@@ -64,10 +73,21 @@ def effective_item_tz(item, product=None) -> Optional[str]:
 def effective_item_tz_44fz(item, product=None) -> Optional[str]:
     """То же самое, но для режима 44-ФЗ (description_mode == '44fz') — своё
     ТЗ позиции не различает режим (одно поле на обе формулировки, как и было
-    решено владельцем для tz_description), каталожный текст — из
-    product.description_44fz (с тем же фолбэком на характеристики)."""
+    решено владельцем для tz_description). Каталожный текст — ПРЯМОЕ значение
+    product.description_44fz (без собственного фолбэка на характеристики
+    здесь); если его нет — результат делегируется целиком effective_item_tz,
+    который уже даёт product.description с фолбэком на характеристики через
+    _catalog_fallback (ПРАВИЛО №6, владелец 27.10.2026: у товара может быть
+    заполнено точное описание (description) при пустых description_44fz и
+    characteristics — тогда показываем точное описание, а не «описания
+    нет»)."""
     own = getattr(item, "tz_description", None)
     if own and own.strip():
         return own
     _product = product if product is not None else getattr(item, "product", None)
-    return _catalog_fallback(_product, "description_44fz") if _product else None
+    if not _product:
+        return None
+    direct_44fz = getattr(_product, "description_44fz", None)
+    if direct_44fz and direct_44fz.strip():
+        return direct_44fz
+    return effective_item_tz(item, _product)

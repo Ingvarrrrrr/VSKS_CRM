@@ -257,11 +257,11 @@ export function useWishApprovers(deps: {
       showSnack(e?.payload?.message || e?.message || 'Не удалось удалить согласующего', 'error')
     }
   }
-  async function decideApprover(approvalId: number, decision: 'approved' | 'rejected', tzNotRequired = false) {
+  async function decideApprover(approvalId: number, decision: 'approved' | 'rejected' | 'waiting_funds', tzNotRequired = false) {
     if (!editingWishId.value) return
     const flushedFeo = await flushFeoAutosave()
     if (!flushedFeo) return
-    if (decision === 'approved' && isWishEditable.value) {
+    if ((decision === 'approved' || decision === 'waiting_funds') && isWishEditable.value) {
       const currentSnapshot = wishPayloadSnapshotJson()
       if (currentSnapshot && currentSnapshot !== wishFormSavedSnapshot.value) {
         const saved = await saveWish(false)
@@ -297,6 +297,7 @@ export function useWishApprovers(deps: {
       if (res.convert_error) showSnack(res.convert_error, 'warning')
       else if (_convertedPurchase)
         showSnack(`Заявка согласована и перенесена в закупку ${_convertedPurchase.registry_number || `№${_convertedPurchase.id}`}`)
+      else if (decision === 'waiting_funds') showSnack('Заявка переведена в лист ожидания (без бюджета)')
       else showSnack(decision === 'approved' ? 'Согласовано' : 'Отклонено')
       showExcessWarnings(res.excess_warnings, 'Заявка согласована, закупка создана.')
       showPurchaseSync(res.purchase_sync)

@@ -70,6 +70,34 @@ def test_effective_item_tz_44fz_own_text_wins_over_44fz_catalog():
     assert effective_item_tz_44fz(item) == "Своё"
 
 
+def test_effective_item_tz_44fz_falls_back_to_exact_description_when_44fz_empty():
+    """description_44fz пуст, характеристик нет, но есть точное описание
+    (Product.description) — показываем его, а не «описания нет» (владелец,
+    27.10.2026: куцая/пустая формулировка 44-ФЗ не должна прятать точное
+    описание товара)."""
+    item = SimpleNamespace(
+        tz_description=None,
+        product=SimpleNamespace(description_44fz=None, characteristics=None, description="Точное описание товара"),
+    )
+    assert effective_item_tz_44fz(item) == "Точное описание товара"
+
+
+def test_effective_item_tz_44fz_prefers_full_description_over_thin_characteristics():
+    """description_44fz пуст; характеристики есть, но точное описание длиннее
+    и предпочитается над куцей строкой характеристик (effective_item_tz
+    сначала смотрит на product.description, и только если он пуст — собирает
+    текст из характеристик через _catalog_fallback)."""
+    item = SimpleNamespace(
+        tz_description=None,
+        product=SimpleNamespace(
+            description_44fz="",
+            characteristics=[{"name": "Марка", "value": "ПТС"}],
+            description="Длинное точное описание, 44fz пусто",
+        ),
+    )
+    assert effective_item_tz_44fz(item) == "Длинное точное описание, 44fz пусто"
+
+
 # ---------------------------------------------------------------------------
 # Миграция l2m3n4o5p6q7 — колонки существуют
 # ---------------------------------------------------------------------------

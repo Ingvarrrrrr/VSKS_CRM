@@ -47,8 +47,12 @@ def hash_password(password):
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
+    # "iat" — момент выдачи ЭТОГО токена (не передан вызывающим, всегда now):
+    # нужен скользящей cookie-сессии (app/auth/session_renew.py), чтобы отличить
+    # "выдан только что" от "выдан давно, но ещё не истёк" без доп. запроса в БД.
+    now = datetime.now(timezone.utc)
+    expire = now + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire, "iat": now})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 async def get_current_user(
@@ -88,6 +92,12 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Сессия завершена: пароль был изменён. Войдите заново",
         )
+    # Скользящая сессия (30 дней с ПОСЛЕДНЕЙ активности, не со входа):
+    # app/auth/session_renew.py — единственное место, решающее когда и как
+    # переиздать cookie-токен. Вызывается только здесь, ПОСЛЕ успешной
+    # проверки подписи/exp/token_version выше — повторной проверки там нет.
+    from app.auth.session_renew import maybe_queue_renewal
+    maybe_queue_renewal(request, payload, used_cookie=not _is_well_formed_jwt(bearer_token))
     # Multi-org: read org_ids list from JWT (superadmin multi-select)
     jwt_org_ids = payload.get("org_ids")
     if jwt_org_ids is not None:

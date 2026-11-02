@@ -183,6 +183,20 @@
         </template>
         <v-form ref="wishFormRef" @submit.prevent>
 
+          <!-- Баннер: заявка в листе ожидания -->
+          <v-alert
+            v-if="editingWish && editingWish.status === 'waiting_funds'"
+            type="info"
+            variant="tonal"
+            density="compact"
+            color="amber-darken-2"
+            class="mb-4"
+            icon="mdi-clock-outline"
+          >
+            <div><strong>Заявка в Листе ожидания:</strong> потребность согласована, но средства в текущем бюджете ФЭО ещё не выделены.</div>
+            <div class="text-caption mt-1">При появлении экономии или корректировке плана нажмите кнопку «Выделить финансирование → В план закупок» ниже.</div>
+          </v-alert>
+
           <!-- Баннер: редактирование одобренной/конвертированной заявки -->
           <v-alert
             v-if="editingWish && ['approved', 'converted'].includes(editingWish.status) && !editingWish.contracted_locked"
@@ -1044,7 +1058,7 @@
                       Позиции уйдут в закупку без технического задания — как у авансовых.
                     </div>
                     <WishApprovalCeilingWarning v-if="isFinalApprovalStep(a)" :preview="ceilingPreview.data.value" />
-                    <div class="d-flex" style="gap:8px">
+                    <div class="d-flex flex-wrap" style="gap:8px">
                       <v-btn
                         color="green"
                         variant="flat"
@@ -1054,6 +1068,15 @@
                         prepend-icon="mdi-check"
                         @click="decideApprover(a.id, 'approved', !!tzNotRequiredChecked[a.id])"
                       >Согласовать</v-btn>
+                      <v-btn
+                        v-if="form.canManageWaitingFunds.value"
+                        color="amber-darken-3"
+                        variant="tonal"
+                        size="small"
+                        :loading="decideLoading === a.id"
+                        prepend-icon="mdi-clock-outline"
+                        @click="decideApprover(a.id, 'waiting_funds')"
+                      >В лист ожидания</v-btn>
                       <v-btn
                         color="red"
                         variant="tonal"
@@ -1398,8 +1421,8 @@
             {{ wishFeoCategoryMissingTooltip }}
           </v-tooltip>
         </template>
-        <!-- approved/converted и editable (не contracted_locked): сохранить изменения -->
-        <template v-else-if="isWishEditable && editingWish && ['approved', 'converted'].includes(editingWish.status)">
+        <!-- approved/converted/waiting_funds и editable (не contracted_locked): сохранить изменения -->
+        <template v-else-if="isWishEditable && editingWish && ['approved', 'converted', 'waiting_funds'].includes(editingWish.status)">
           <v-btn color="primary" variant="tonal" :loading="saving" @click="saveWish(false)">
             Сохранить изменения
           </v-btn>
@@ -1409,6 +1432,11 @@
           <v-btn v-if="canDistributeWish(editingWish, ctx)" color="primary" variant="tonal" prepend-icon="mdi-view-column-outline"
                  @click="actions.openKanbanDialog(editingWish); wishDialog = false">
             Распределить
+          </v-btn>
+          <v-btn v-if="form.canManageWaitingFunds.value && editingWish.status === 'waiting_funds'" color="amber-darken-3" variant="flat" prepend-icon="mdi-cash-plus"
+                 :loading="actions.approvingId.value === editingWish.id"
+                 @click="actions.approveWish(editingWish).then(() => wishDialog = false)">
+            Выделить финансирование → В план закупок
           </v-btn>
           <v-btn v-if="ctx.isManagerOrAdmin.value && editingWish.status === 'approved'" color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
                  @click="actions.openConvertDialog(editingWish); wishDialog = false">
@@ -1450,6 +1478,16 @@
           </div>
           <v-btn color="error" variant="tonal" prepend-icon="mdi-close" @click="actions.openRejectDialog(editingWish); wishDialog = false">
             Отклонить
+          </v-btn>
+          <v-btn
+            v-if="form.canManageWaitingFunds.value"
+            color="amber-darken-3"
+            variant="tonal"
+            prepend-icon="mdi-clock-outline"
+            :loading="actions.deferringWaitingFundsId.value === editingWish.id"
+            @click="actions.deferWishToWaitingFunds(editingWish).then(() => wishDialog = false)"
+          >
+            В лист ожидания
           </v-btn>
           <v-tooltip :disabled="!wishFeoCategoryMissing" location="top">
             <template #activator="{ props: tipProps }">

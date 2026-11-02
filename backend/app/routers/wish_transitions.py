@@ -236,6 +236,44 @@ async def submit_wish(
     return wishes_core._enrich(wish)
 
 
+@router.post("/{wish_id}/waiting-funds", response_model=WishOut)
+async def defer_wish_to_waiting_funds(
+    wish_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Перевод заявки в «Лист ожидания (без бюджета)».
+
+    Доступно пользователям с правом wish.waiting_funds (по умолчанию менеджер, администратор).
+    Потребность заявки признаётся обоснованной, но закупка не создаётся и не нагружает
+    ФЭО субсидии до появления средств.
+    """
+    wish = await wishes_core._load_wish(wish_id, db)
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and wish.org_id not in org_ids:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+
+    if not wishes_core._is_saas(current_user) and current_user.role not in MANAGER_ROLES:
+        if not await has_org_key(current_user, db, wish.org_id, 'wish.waiting_funds', subsidy_id=wish.subsidy_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Нет права «Управление листом ожидания заявок» (wish.waiting_funds)",
+            )
+
+    if not wishes_core._is_saas(current_user) and wish.status not in ("submitted", "draft", "rejected"):
+        raise HTTPException(
+            status_code=400,
+            detail="В лист ожидания можно перевести заявку на согласовании, черновик или отклонённую",
+        )
+
+    wish.status = "waiting_funds"
+    await db.commit()
+    await db.refresh(wish)
+    wish = await wishes_core._load_wish(wish_id, db)
+    return wishes_core._enrich(wish)
+
+
 @router.post("/{wish_id}/approve", response_model=WishOut)
 async def approve_wish(
     wish_id: int,
@@ -243,30 +281,32 @@ async def approve_wish(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Approve a submitted wish (manager+ roles OR assigned approver, submitted -> approved).
+    """Approve a submitted wish or allocate funds for a waiting_funds wish.
 
-    tz_not_required (владелец, 30.09) — галочка «Без ТЗ (мелкие закупки)»
-    согласующего: тот же круг лиц, что уже проходит проверку ниже (менеджер+/
-    назначенный согласующий/SaaS), может пометить заявку так, чтобы созданная
-    закупка получила то же послабление гейта ТЗ, что и авансовые (см.
-    app.services.tz_items.tz_required). Только включает флаг — снятой галочкой
-    ранее выставленный флаг не сбросить отсюда.
+    Submitted -> approved/converted.
+    Waiting_funds -> approved/converted (requires wish.waiting_funds or manager+).
     """
     wish = await wishes_core._load_wish(wish_id, db)
 
-    if not wishes_core._is_saas(current_user) and wish.status != "submitted":
-        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе «На согласовании»")
+    if not wishes_core._is_saas(current_user) and wish.status not in ("submitted", "waiting_funds"):
+        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе «На согласовании» или «В очереди (лист ожидания)»")
 
     # Org isolation
     org_ids = get_org_filter(current_user)
     if org_ids is not None and wish.org_id not in org_ids:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
 
-    if not wishes_core._is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
-        raise HTTPException(status_code=403, detail="Одобрить заявку может менеджер+ или назначенный согласующий")
+    if not wishes_core._is_saas(current_user):
+        if wish.status == "waiting_funds":
+            # Выделение финансирования и перевод в план закупок из листа ожидания
+            if current_user.role not in MANAGER_ROLES and not await has_org_key(current_user, db, wish.org_id, 'wish.waiting_funds', subsidy_id=wish.subsidy_id):
+                raise HTTPException(status_code=403, detail="Нет права «Управление листом ожидания заявок» (wish.waiting_funds)")
+        elif current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
+            raise HTTPException(status_code=403, detail="Одобрить заявку может менеджер+ или назначенный согласующий")
 
     # W3: менеджер/SaaS может одобрить чужие pending без блокировки (allow_override=True)
-    await wishes_core._ensure_no_pending_approvals(wish, db, current_user, allow_override=True)
+    if wish.status == "submitted":
+        await wishes_core._ensure_no_pending_approvals(wish, db, current_user, allow_override=True)
 
     if tz_not_required and not wish.tz_not_required:
         # Владелец (30.09, уточнение): «Это должно быть ОТДЕЛЬНОЕ разрешение
@@ -676,7 +716,7 @@ async def force_wish_status(
     """
     if not wishes_core._is_saas(current_user):
         raise HTTPException(status_code=403, detail="Только superadmin/account_owner может переключать статусы напрямую")
-    allowed = {"draft", "submitted", "approved", "rejected", "converted"}
+    allowed = {"draft", "submitted", "approved", "rejected", "converted", "waiting_funds"}
     if body.status not in allowed:
         raise HTTPException(status_code=400, detail=f"Недопустимый статус. Разрешены: {sorted(allowed)}")
     wish = await wishes_core._load_wish(wish_id, db)

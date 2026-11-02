@@ -588,6 +588,41 @@ async def _purchase_tz_waive_action():
         logging.getLogger(__name__).warning(f"purchase.tz_waive action seed skipped (non-fatal): {e}")
 
 
+async def _wish_waiting_funds_action():
+    # Владелец (02.11.2026): «тот у кого стоит галочка, тот может и переводить.
+    # У роли менеджер и администратор - эта галочка стоит по умолчанию».
+    # Управляет правом перевода заявки в Лист ожидания (без бюджета) и выделения
+    # финансирования для перевода заявки из Листа ожидания в План закупок.
+    # Дефолт: superadmin/account_owner/admin/org_admin/manager=TRUE; employee=FALSE
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'wish.waiting_funds'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Управление листом ожидания заявок (перевод в очередь без бюджета и утверждение в план)',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', True), ('org_admin', True),
+                ('manager', True), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"wish.waiting_funds action seed skipped (non-fatal): {e}")
+
+
 async def _subsidy_view_payroll_action():
     # Владелец (решение 21.10.2026, план part1 ФОТ-видимость): «для того чтобы
     # в статистике ФОТ отображался у человека должна быть отдельная галочка.
@@ -851,6 +886,7 @@ async def run():
     await _staff_directory_tab()
     await _staff_location_view_action()
     await _purchase_tz_waive_action()
+    await _wish_waiting_funds_action()
     await _subsidy_view_payroll_action()
     await _advance_payment_decision_action()
     await _subsidy_correct_action()

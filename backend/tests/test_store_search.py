@@ -18,7 +18,7 @@ from app.services.store_search import (
 )
 from app.services.store_search.price_from_product_page import extract_price_and_image
 from app.services.store_search import service as store_search_service
-from app.services.store_search.base import StoreOffer
+from app.services.store_search.base import StoreBlocked, StoreOffer, store_display_name
 from app.services.store_search.relevance import filter_relevant_offers
 
 FIXTURES = Path(__file__).parent / "fixtures" / "store_search"
@@ -41,6 +41,53 @@ def test_kuvalda_parses_fixture():
     assert any(o.price is not None for o in offers)
 
 
+def test_store_display_names_are_human_not_keys():
+    """ДЕФЕКТ приёмки 29.10.2026: строка статусов магазинов показывала ключи
+    («kuvalda», «chipdip», «sima_land») вместо человекочитаемых имён —
+    service.py._STORE_DISPLAY_NAMES строился с fallback=key, а не
+    adapter.display_name (единственное место имени магазина, ПРАВИЛО №6,
+    см. base.py::StoreAdapter.display_name)."""
+    names = store_search_service._STORE_DISPLAY_NAMES
+    assert names["kuvalda"] == "Кувалда.ру"
+    assert names["chipdip"] == "ChipDip"
+    assert names["sima_land"] == "Сима-ленд"
+    for key, name in names.items():
+        assert name != key, f"{key}: display name совпадает с ключом магазина"
+
+
+def test_store_display_name_prefers_human_fallback_over_legal_entity():
+    """Дефект с прода 29.10.2026: строка статусов поиска показывала юрлицо
+    из справочника stores.py («ООО «Энтузиаст-С»», «ООО «НПО Промет»») —
+    владелец не узнавал магазин. store_display_name — ЕДИНСТВЕННОЕ место
+    (ПРАВИЛО №6), формирующее имя магазина для StoreOffer.store_name и
+    статусов; домены ниже заведены в stores.py под другим именем (юрлицо)."""
+    assert store_display_name("kuvalda.ru", "Кувалда.ру") == "Кувалда.ру"
+    assert store_display_name("safe.ru", "Safe.ru (ПРОМЕТ)") == "Safe.ru (ПРОМЕТ)"
+    assert store_display_name("chipdip.ru", "ChipDip") == "ChipDip"
+    # Домен, не заведённый в stores.py вообще — тоже просто fallback.
+    assert store_display_name("unknown-shop.example", "Неизвестный магазин") == "Неизвестный магазин"
+
+
+class _FakeBlockedClient:
+    def __init__(self, html: str):
+        self._html = html
+
+    async def get_text(self, url: str) -> str:
+        return self._html
+
+
+def test_kuvalda_search_raises_store_blocked_on_antibot_page():
+    """ПРАВИЛО №8 п.6 — статус не должен молча стать 'ok' с 0 предложений,
+    если магазин отдал антибот/капча-страницу вместо результатов поиска.
+    Пока это не воспроизведено на kuvalda.ru (см. отчёт сессии, живой запрос
+    с прода вернул валидный OfferCatalog) — тест фиксирует механизм на
+    будущее синтетической страницей-заглушкой."""
+    blocked_html = "<html><body>Attention Required! | Cloudflare</body></html>"
+    client = _FakeBlockedClient(blocked_html)
+    with pytest.raises(StoreBlocked):
+        asyncio.run(kuvalda.KuvaldaAdapter().search(client, "перфоратор", 10))
+
+
 def test_safe_parses_fixture():
     offers = safe.parse_search_html(_read("safe.html"))
     assert len(offers) >= 5
@@ -56,6 +103,53 @@ def test_chipdip_parses_fixture():
     assert all(o.url.startswith("https://www.chipdip.ru/product/") for o in offers)
     assert any(o.manufacturer == "Yageo" for o in offers)
     assert any(o.price is not None for o in offers)
+
+
+def test_chipdip_price_with_nbsp_thousands_separator():
+    """Дефект с прода 29.10.2026: цена «6&#160;240» (неразрывный пробел как
+    разделитель тысяч) разбиралась как 6160240 — цифры самой HTML-сущности
+    &#160; («160») приклеивались между группами цены. Фикстура —
+    chipdip_mustang.html, живой запрос «мустанг» (сайт: 6 240 ₽ и 5 000 ₽,
+    см. отчёт сессии)."""
+    offers = chipdip.parse_search_html(_read("chipdip_mustang.html"))
+    by_id = {o.store_article: o for o in offers}
+    koleso = by_id.get("8011810089")
+    assert koleso is not None
+    assert koleso.price == Decimal("6240")
+    tnnd = by_id.get("8059054339")
+    assert tnnd is not None
+    assert tnnd.price == Decimal("4050")
+    for o in offers:
+        assert o.price is None or o.price < Decimal("1000000"), (
+            f"цена {o.price} у {o.name!r} похожа на склейку с nbsp-сущностью"
+        )
+
+
+def test_chipdip_name_decodes_html_entities():
+    """ДЕФЕКТ приёмки 29.10.2026: название несло HTML-сущность — «Колесо
+    рулевое КАМАЗ-6520 с бардачком &quot;Мустанг&quot; ИКАР» вместо кавычек
+    «Мустанг». chipdip.py декодировал html.unescape только у цены, не у
+    name — чинится ОДНИМ местом в StoreOffer.__post_init__ (base.py), не в
+    адаптере, поэтому сущность должна исчезнуть уже на выходе из
+    parse_search_html без правки регэкспов chipdip.py."""
+    offers = chipdip.parse_search_html(_read("chipdip_mustang.html"))
+    koleso = next(o for o in offers if o.store_article == "8011810089")
+    assert "&quot;" not in koleso.name
+    assert '"Мустанг"' in koleso.name
+
+
+def test_store_offer_post_init_decodes_html_entities_everywhere():
+    """StoreOffer — единственное место создания предложения живого поиска
+    (ПРАВИЛО №6): декодирование HTML-сущностей в name/manufacturer сделано
+    ОДИН раз в __post_init__, а не в каждом адаптере — проверяем это прямо
+    на датаклассе, а не только через фикстуру одного магазина."""
+    offer = StoreOffer(
+        store_key="x", store_name="X", seller_inn=None,
+        name="Пускатель &quot;КМЭ&quot;", price=None, url="https://x.example/p",
+        manufacturer="Brand &amp; Co",
+    )
+    assert offer.name == 'Пускатель "КМЭ"'
+    assert offer.manufacturer == "Brand & Co"
 
 
 def test_sima_land_parses_fixture():

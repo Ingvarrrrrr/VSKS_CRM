@@ -159,17 +159,71 @@ def _product_type_phrase_words(product_type: str, folded_text: str) -> set:
     return out
 
 
+_MERGE_PREFIX_MAX_LEN = 4
+_LETTER_DIGIT_SPLIT_RE = re.compile(
+    rf"(?<![0-9a-zA-Zа-яёА-ЯЁ])([a-zA-Zа-яёА-ЯЁ]{{1,{_MERGE_PREFIX_MAX_LEN}}})\s+(?=\d)"
+)
+
+
+def _is_mergeable_code_prefix(word: str) -> bool:
+    """«Короткая буквенная часть» перед числом — кандидат на склейку в ОДИН
+    код («оп 2» → «оп2», владелец, 29.10.2026, «поиск оп2 как марка ОП-2»,
+    задание п.A) ТОЛЬКО если это НЕ обычное слово: не предлог/союз
+    (_PREPOSITION_STOPWORDS — "для 2", "на 2" не марка) и не вид товара из
+    словаря PRODUCT_TYPE_WORDS ("бак 2" — "бак" сам вид товара, у него уже
+    своя обработка через type_literal выше, склейка его с числом сломала бы
+    распознавание вида). Длина ≤4 символа отфильтрована до вызова (см.
+    _LETTER_DIGIT_SPLIT_RE) — настоящие марки ("ОП","ОУ","ОВП","ОВЭ","КЛОП",
+    "РС"...) короче обычных слов-существительных; полного словаря русского
+    языка в проекте нет (не сканировать внешний словарь ради этой эвристики)
+    — используются ДВА списка, которые уже есть и служат той же цели разбора
+    фразы (не третий словарь, Правило №6)."""
+    folded = fold_brand_or_code(word)
+    if folded in _PREPOSITION_STOPWORDS:
+        return False
+    if folded in PRODUCT_TYPE_WORDS:
+        return False
+    return True
+
+
+def _merge_letter_digit_split(raw: str) -> str:
+    """«огнетушитель оп 2» → «огнетушитель оп2» ДО разбора build_signature
+    (владелец, 29.10.2026, задание п.A): набор марки через пробел должен
+    давать тот же код, что слитно («оп2») или через дефис («ОП-2») —
+    _digit_tokens (product_name_signature.py) уже сводит дефис/слитную
+    запись к одному ключу (_KEEP_ALNUM_RE), но делит слова ПРОБЕЛОМ и не
+    склеивает короткое буквенное слово СО СТОРОНЫ, ПРЕДШЕСТВУЮЩЕЙ цифре
+    (там композитный суффикс — только буква ПОСЛЕ кода, не ДО, другая
+    задача — модификатор модели). Склеиваем сами, здесь, ДО вызова
+    build_signature — второй нормализатор кодов не заводим: результат
+    "оп2" дальше идёт по ТОЙ ЖЕ цепочке _digit_tokens/_numeric_condition,
+    что и слитная/дефисная запись (Правило №6). Склейка — ТОЛЬКО если
+    короткая часть НЕ обычное слово (_is_mergeable_code_prefix) — не трогает
+    "для 2", "бак 2"/"вид товара 2 шт" и т.п."""
+    def _repl(m: "re.Match") -> str:
+        prefix = m.group(1)
+        return prefix if _is_mergeable_code_prefix(prefix) else m.group(0)
+    return _LETTER_DIGIT_SPLIT_RE.sub(_repl, raw)
+
+
 def parse_query(q: Optional[str], brand_dictionary=None) -> ParsedQuery:
     """Разбирает поисковую фразу на required/optional токены поверх
     build_signature() (Правило №6 — см. docstring модуля). brand_dictionary —
     тот же контракт, что у build_signature (`.find_in_name(name) ->
     str | None`); можно не передавать — тогда бренд не определяется из
-    текста фразы (specific по бренду не сработает, остальное — работает)."""
+    текста фразы (specific по бренду не сработает, остальное — работает).
+
+    ParsedQuery.raw остаётся ИСХОДНОЙ строкой (как ввёл пользователь) —
+    склейка "буква+пробел+цифра" (_merge_letter_digit_split, см. docstring)
+    применяется ТОЛЬКО к тексту, который идёт в build_signature/_split_words
+    ниже (разбор на required/optional), не к тому, что видят toy_penalty/
+    result_meta и прочие потребители parsed.raw."""
     raw = (q or "").strip()
     if not raw:
         return ParsedQuery(raw=raw)
 
-    sig = build_signature({"name": raw}, brand_dictionary)
+    merged_raw = _merge_letter_digit_split(raw)
+    sig = build_signature({"name": merged_raw}, brand_dictionary)
 
     required: list = []
     seen_required: set = set()
@@ -179,8 +233,8 @@ def parse_query(q: Optional[str], brand_dictionary=None) -> ParsedQuery:
             seen_required.add(val)
             required.append(val)
 
-    words = _split_words(raw)
-    folded_text = fold_brand_or_code(raw)
+    words = _split_words(merged_raw)
+    folded_text = fold_brand_or_code(merged_raw)
 
     # Вид товара — required несёт ЛИТЕРАЛЬНОЕ слово(а) ИЗ ФРАЗЫ, НЕ
     # канонический вид из словаря (владелец, 28.10.2026, найдено при

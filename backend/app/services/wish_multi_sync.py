@@ -272,8 +272,19 @@ async def sync_multi_purchase_from_wish(wish, purchases: list, db: AsyncSession)
             await _backfill_item_type_from_plan(synced_items, db)
 
         await db.flush()
+        from decimal import Decimal as _DecMulti
+        _synced_pids = {pi.purchase_id for pi in synced_items}
         for p in active_purchases:
-            await recalc_purchase_money(db, p)
+            _empty_after_remove = (
+                bool(items_removed[p.id])
+                and p.id not in _synced_pids
+                and not items_kept_manual[p.id]
+            )
+            await recalc_purchase_money(
+                db, p, items_total=_DecMulti("0") if _empty_after_remove else None,
+            )
+            if _empty_after_remove:
+                p.planned_quantity = 0
         await db.flush()
 
         for p in active_purchases:

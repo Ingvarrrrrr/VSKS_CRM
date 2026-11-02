@@ -54,7 +54,14 @@ class OkOut(BaseModel):
 
 class OrgOut(BaseModel):
     id: int
-    name: str
+    # Дефект (прод, 27.10.2026, org id=69): `name` был `str` (обязательное) —
+    # org.name теперь column_property от Contractor.name (Правило №6,
+    # app/models/organization.py); если у привязанного контрагента имя
+    # пустое, column_property возвращает None, и граф целиком падал 500
+    # ResponseValidationError. Корневой фикс — create_organization больше не
+    # теряет введённое имя (app/routers/organizations.py), это лишь защита,
+    # как и у OrganizationOut.name (app/schemas/auth.py) — см. тот комментарий.
+    name: Optional[str] = None
     inn: Optional[str] = None
     color: Optional[str] = None  # Phase 30: hex цвет орг для иерархии
     contractor_id: Optional[int] = None  # привязка к контрагенту (единая карточка)
@@ -225,7 +232,13 @@ async def get_hierarchy_graph(
     user_ids = {u.id for u in users}
     extra_orgs_map: dict[int, list[int]] = {}
     user_org_details: dict[int, list[dict]] = {}  # user_id -> [{org_id, org_name, position, salary, pct}]
-    org_name_map = {o.id: o.name for o in orgs}
+    # Дефект org id=69 (27.10.2026): o.name (column_property) пуст, если у
+    # контрагента пусто `name` — resolve_org_display_name (один источник,
+    # app/services/org_requisites.py) добавляет fallback на full_name.
+    # `Organization.contractor` — lazy="joined" (app/models/organization.py),
+    # поэтому o.contractor доступен без доп. запроса.
+    from app.services.org_requisites import resolve_org_display_name
+    org_name_map = {o.id: (resolve_org_display_name(o, o.contractor) or "") for o in orgs}
     memberships_by_user: dict[int, list] = {}
     if user_ids:
         uo_rows = (await db.execute(
@@ -315,7 +328,7 @@ async def get_hierarchy_graph(
     ]
 
     return {
-        "orgs": [{"id": o.id, "name": o.name, "inn": getattr(o, "inn", None), "color": getattr(o, "color", None), "contractor_id": getattr(o, "contractor_id", None)} for o in deduped_orgs],
+        "orgs": [{"id": o.id, "name": resolve_org_display_name(o, o.contractor), "inn": getattr(o, "inn", None), "color": getattr(o, "color", None), "contractor_id": getattr(o, "contractor_id", None)} for o in deduped_orgs],
         "departments": [
             {
                 "id": d.id, "name": d.name, "org_id": d.org_id,

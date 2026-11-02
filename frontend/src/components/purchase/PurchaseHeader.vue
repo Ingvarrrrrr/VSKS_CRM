@@ -66,6 +66,19 @@
           prepend-icon="mdi-swap-horizontal-bold" @click="onCopyToSubsidy">
           Скопировать в субсидию…
         </v-btn>
+        <!-- Актуализировать по плану ФЭО (если в плане изменилось количество: 10 БОП → 0 или 10 → 4) -->
+        <v-btn
+          v-if="isEdit && purchaseId && ['wishes', 'plan_schedule', 'work_in_progress'].includes(form?.status || purchaseData?.status)"
+          size="x-small"
+          variant="tonal"
+          color="deep-purple"
+          prepend-icon="mdi-sync"
+          :loading="syncingPlan"
+          title="Сверить и обновить позиции закупки по актуальному плану ФЭО"
+          @click="onSyncFromPlan"
+        >
+          Актуализировать по плану
+        </v-btn>
         <v-icon v-if="form.is_monthly_payment" size="small" color="blue" title="Ежемесячный платёж">mdi-calendar-sync</v-icon>
         <span v-if="isEdit && form.registry_number" class="text-caption text-medium-emphasis">
           Реестр: {{ form.registry_number }}
@@ -222,6 +235,8 @@ interface Props {
   // purchase.copy_to_subsidy (authStore.hasAction, считается в родителе).
   onCopyToSubsidy: () => void
   canCopyToSubsidy: boolean
+  syncingPlan?: boolean
+  onSyncFromPlan?: () => void
   // Квик-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б): на
   // стадии 'delivered' у авансового кнопка «Остановить» ниже физически и есть
   // «Отказать в оплате» директора (can_stop_purchase расширил порог до 'paid'

@@ -23,7 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
 
-VALID_PRICE_SOURCES = ("contract", "kp", "manual", "import", "monitoring")
+VALID_PRICE_SOURCES = ("contract", "kp", "manual", "import", "monitoring", "store")
+# "store" — добавлено 29.10.2026 (этап 2 живого поиска в магазинах, POST
+# /api/products/store-take, app/services/store_search/take.py): цена, которую
+# сервер сам снял со страницы магазина по кнопке «Взять», а не загрузил из
+# файла поставщика ("import") — отдельное значение, чтобы подпись у товара
+# читалась «магазин kuvalda.ru», а не «импорт kuvalda.ru» (см.
+# frontend/src/composables/usePriceFreshness.ts::PRICE_SOURCE_LABELS,
+# ПРАВИЛО №6 — единственный список допустимых источников).
 
 
 def _parse_collected_date(collected_at) -> Optional[_date]:

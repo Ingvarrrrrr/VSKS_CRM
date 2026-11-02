@@ -21,6 +21,9 @@
         </div>
         <div class="text-body-2 text-medium-emphasis mb-3">
           Сумма: <b>{{ formatCurrency((Number(state.form.quantity) || 0) * (Number(state.form.unit_price) || 0)) }}</b>
+          <span v-if="state.form.quantity === 0" class="text-warning ml-2">
+            (Кол-во 0 — при сохранении позиция будет удалена из закупки)
+          </span>
         </div>
         <FeoTreeSelect
           v-model="state.form.feo_category_id"
@@ -229,6 +232,15 @@ async function save() {
       body.item_name = state.form.item_name
     }
     const normQuantity = numOrNull(state.form.quantity)
+    if (normQuantity === 0 && (numOrNull(state.original.quantity) ?? 0) > 0) {
+      await apiFetch<any>(`/purchases/${state.purchaseId}/items/${state.itemId}`, {
+        method: 'DELETE',
+      })
+      state.show = false
+      await ctx.refreshReqData(state.catId ?? undefined)
+      showSnack('Позиция удалена из закупки (количество 0)')
+      return
+    }
     if (normQuantity !== numOrNull(state.original.quantity)) {
       body.quantity = normQuantity
     }

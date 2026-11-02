@@ -9,7 +9,7 @@
     <div v-if="showCatalogReadOnly" class="hv-tz-catalog-block">
       <div class="hv-tz-catalog-text">{{ catalogText }}</div>
       <div class="d-flex align-center ga-2 mt-1">
-        <span class="text-caption text-medium-emphasis">из каталога товара</span>
+        <span class="text-caption text-medium-emphasis">{{ catalogCaption }}</span>
         <v-btn
           size="x-small" variant="text" color="primary" density="compact"
           prepend-icon="mdi-pencil-outline"
@@ -65,7 +65,7 @@
 // обычный текст, а не как placeholder пустого поля. Формула «действующее
 // ТЗ» — effectiveTz (utils/itemTz.ts), ЕДИНСТВЕННАЯ, не дублируется здесь.
 import { computed } from 'vue'
-import { effectiveTz, resetTzToCatalog, tzTextsDiffer } from '@/utils/itemTz'
+import { effectiveTz, resetTzToCatalog, tzTextsDiffer, tzSource } from '@/utils/itemTz'
 
 type EditorItem = any
 
@@ -96,9 +96,17 @@ const catalogTextRaw = computed(() =>
   props.mode === '44fz' ? props.item._description_44fz : props.item._description
 )
 
-const showCatalogReadOnly = computed(() => !ownText.value && !!effective.value)
+// Источник показанного текста — tzSource (ЕДИНСТВЕННАЯ формула, ПРАВИЛО №6),
+// не дублировать проверку "есть/нет описания" отдельно от неё.
+const source = computed(() => tzSource(props.item, props.mode))
+const showCatalogReadOnly = computed(() => source.value === 'catalog' || source.value === 'catalog_exact_fallback')
 const catalogText = computed(() => effective.value)
-const noDescriptionAnywhere = computed(() => !ownText.value && !effective.value)
+const noDescriptionAnywhere = computed(() => source.value === 'none')
+const catalogCaption = computed(() =>
+  source.value === 'catalog_exact_fallback'
+    ? 'формулировки 44-ФЗ у товара нет — показано точное описание'
+    : 'из каталога товара'
+)
 
 function startEditingFromCatalog() {
   props.item.tz_description = catalogText.value

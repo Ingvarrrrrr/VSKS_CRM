@@ -206,7 +206,112 @@ async def get_bank_payment_candidates(
                 "paid_by_statement": float(p.payment_amount) if p.payment_amount is not None else None,
                 "reason": c.get("label"),
             })
-    return {"items": items}
+
+    # Умный перебор составных сумм (Subset Sum) с оценкой близости категорий
+    # («Очень вероятно» vs «Маловероятно») — в т.ч. среди закупок без контрагента
+    # («напокупали, а проставить у кого и как забыли»).
+    from decimal import Decimal
+    from app.services.payment_smart_combo_matcher import (
+        load_unpaid_candidate_units,
+        find_subset_sum_combinations,
+        find_sign_error_candidates,
+    )
+    combo_suggestions: list[dict] = []
+    sign_error_hints: list[dict] = []
+    if bp.amount is not None:
+        bp_amt = Decimal(str(bp.amount))
+        units = await load_unpaid_candidate_units(db, sid, preferred_contractor_inn=bp.payee_inn)
+        combo_suggestions = find_subset_sum_combinations(
+            units, bp_amt, purpose_text=bp.purpose_text,
+        )
+        sign_error_hints = find_sign_error_candidates(units, bp_amt)
+        # Если штатный поиск по контрагенту ничего не нашёл, добавляем одиночные
+        # совпадения (count==1) также в плоский список items для обратной совместимости.
+        for cs in combo_suggestions:
+            if cs["count"] == 1:
+                first_it = cs["items"][0]
+                pid = first_it["purchase_id"]
+                if pid not in seen_purchase_ids:
+                    seen_purchase_ids.add(pid)
+                    items.append({
+                        "purchase_id": pid,
+                        "registry_number": first_it.get("registry_number"),
+                        "subject": first_it.get("subject"),
+                        "contractor_name": first_it.get("contractor_name"),
+                        "contract_price": first_it.get("amount"),
+                        "paid_by_statement": None,
+                        "reason": f"{cs['probability_label']}: {cs['coherence_reason']}",
+                    })
+
+    return {
+        "items": items,
+        "combo_suggestions": combo_suggestions,
+        "sign_error_hints": sign_error_hints,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /payment-control/bank-payments/{bp_id}/attach-combo
+# ---------------------------------------------------------------------------
+
+class _AttachComboBody(BaseModel):
+    purchase_ids: List[int]
+    merge_purchases: bool = True
+
+
+@router.post("/{sid}/payment-control/bank-payments/{bp_id}/attach-combo")
+async def attach_bank_payment_combo(
+    sid: int,
+    bp_id: int,
+    body: _AttachComboBody,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Группирует выбранную комбинацию позиций/закупок в одну закупку (при
+    merge_purchases=True), проставляет контрагента из банковской платёжки и
+    привязывает платёж."""
+    await _get_subsidy_for_write(sid, db, current_user)
+    bp = await _get_bank_payment_or_404(bp_id, db)
+
+    from app.services.payment_smart_combo_matcher import merge_and_attach_combo
+    result = await merge_and_attach_combo(
+        db, sid, bp, body.purchase_ids, merge_purchases=body.merge_purchases,
+    )
+    await db.commit()
+    return result
+
+
+# ---------------------------------------------------------------------------
+# GET /payment-control/find-discrepancy
+# ---------------------------------------------------------------------------
+
+@router.get("/{sid}/payment-control/find-discrepancy")
+async def find_payment_discrepancy(
+    sid: int,
+    amount: float,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Поиск источника расхождения на заданную сумму (например, 28 000 ₽ или 800 ₽):
+    1) Составные суммы из 1–4 позиций/закупок (Subset Sum) с ранжированием по
+       близости категорий («Очень вероятно» / «Маловероятно»);
+    2) Ловушка знака (сумма ÷ 2, например 14 000 ₽ для расхождения 28 000 ₽)."""
+    await _get_subsidy_for_read(sid, db, current_user)
+    from decimal import Decimal
+    from app.services.payment_smart_combo_matcher import (
+        load_unpaid_candidate_units,
+        find_subset_sum_combinations,
+        find_sign_error_candidates,
+    )
+    target = Decimal(str(abs(amount)))
+    units = await load_unpaid_candidate_units(db, sid)
+    combos = find_subset_sum_combinations(units, target)
+    sign_errors = find_sign_error_candidates(units, target)
+    return {
+        "target_amount": float(target),
+        "combo_suggestions": combos,
+        "sign_error_hints": sign_errors,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -71,7 +71,10 @@ def test_new_stores_27_10_requisites():
     assert seller_inn_for_url("https://www.regard.ru/p/1") == "7730234438"
     assert seller_inn_for_url("https://kuvalda.ru/p/1") == "6319060894"
     assert seller_inn_for_url("https://safe.ru/p/1") == "7751009218"
-    assert seller_inn_for_url("https://promalper.com/p/1") == "7806293316"
+    assert seller_inn_for_url("https://bi-bi.ru/product/e1") == "7730208886"
+    assert seller_inn_for_url("https://www.avtoall.ru/item-1") == "9701127481"
+    assert seller_inn_for_url("https://www.chipdip.ru/product/1") == "7729108750"
+    assert seller_inn_for_url("https://emex.ru/products/1") == "5027213485"
     # inari.pro — реквизиты не подтверждены, сознательно не добавлен.
     assert seller_inn_for_url("https://inari.pro/p/1") is None
 

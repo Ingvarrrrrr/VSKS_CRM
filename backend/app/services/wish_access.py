@@ -35,19 +35,21 @@ async def _wish_linked_purchases(wish_id: int, db: AsyncSession) -> list:
 
 
 def wish_purchase_delete_blockers(purchases: list) -> list[str]:
-    """Закупки заявки, ушедшие дальше «Плана закупок» (work_in_progress/
-    contracted/ordered/delivered/paid) — блокируют и откат заявки в план
-    (_withdraw_wish_from_plan), и полное удаление заявки (delete_wish,
-    29.10.2026). Одна причина блокировки — один источник (ПРАВИЛО №6), раньше
-    список строился инлайн только в _withdraw_wish_from_plan; текст 409
-    собирает вызывающая точка (разный `action_text`)."""
+    """Закупки заявки, дошедшие до договора (contracted/ordered/delivered/paid) —
+    блокируют и откат заявки в черновик (_withdraw_wish_from_plan), и полное
+    удаление заявки (delete_wish, 29.10.2026). Статусы ДО договора
+    (RETURNABLE_TO_WISH_STATUSES: plan_schedule и work_in_progress «Ведётся
+    работа» — выставлена на площадку, до подписания договора) откат не
+    блокируют и возвращаются в 'wishes' (ПРАВИЛО №6, согласовано с
+    app/services/purchase_return_to_wish.py::RETURNABLE_TO_WISH_STATUSES)."""
     from app.routers.purchase_budget import PLANNED_STATUSES
     from app.routers.purchase_export import _STATUS_LABELS
     from app.services.purchase_label import purchase_label
+    from app.services.purchase_return_to_wish import ALLOWED_STATUSES as RETURNABLE_TO_WISH_STATUSES
 
     blockers: list[str] = []
     for p in purchases:
-        if p.status != "plan_schedule" and p.status in PLANNED_STATUSES:
+        if p.status not in RETURNABLE_TO_WISH_STATUSES and p.status in PLANNED_STATUSES:
             label = _STATUS_LABELS.get(p.status, p.status)
             blockers.append(f"{purchase_label(p)} «{p.item_name or ''}» на стадии «{label}»")
     return blockers
@@ -340,13 +342,18 @@ def _item_field(it, name: str, default=None):
 
 
 def _is_meaningful_item(it) -> bool:
-    """Строка-заготовка (без названия, количества и суммы) — фронт создаёт их
-    заранее для будущего ввода; в БД, План закупок и в гейты они попадать не должны.
+    """Строка-заготовка (без названия, количества и суммы) или обнулённая позиция
+    (quantity явно задан <= 0 при нулевой сумме, например «было 10 БОП стало 0») —
+    в БД, План закупок и в гейты они попадать не должны.
     Принимает как ORM WishItem, так и «сырой» dict из body.items."""
     name = _item_field(it, "item_name") or ""
-    quantity = _item_field(it, "quantity") or 0
-    total_price = _item_field(it, "total_price") or 0
-    return bool(str(name).strip() or float(quantity or 0) or float(total_price or 0))
+    raw_qty = _item_field(it, "quantity")
+    raw_total = _item_field(it, "total_price")
+    qty_val = float(raw_qty or 0)
+    total_val = float(raw_total or 0)
+    if raw_qty is not None and qty_val <= 0 and total_val <= 0:
+        return False
+    return bool(str(name).strip() or qty_val > 0 or total_val > 0)
 
 
 async def _wish_locked_descr(wish_id: int, db: AsyncSession) -> Optional[str]:

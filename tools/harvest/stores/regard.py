@@ -26,15 +26,25 @@ tools.harvest.core.runner / gala_writer (ПРАВИЛО №5/№6).
     запятым в "Параметр N" и никогда не заходил на страницу товара)."""
 from __future__ import annotations
 
-import json
 import re
 from typing import Optional
 
 from tools.harvest.core import gala_writer
 from tools.harvest.core.http import HttpClient
 from tools.harvest.core.runner import StoreSpec, harvest as _run_harvest
+from tools.harvest.stores._backend_bridge import load_store_page_module
 
 STORE_NAME = "regard"
+
+# Разбор страницы товара (JSON-LD "Product" + CharacteristicsItem_*) —
+# backend/app/services/store_pages/regard.py (ПРАВИЛО №6, тот же код нужен
+# live-поиску, take.py). find_jsonld переиспользуется ниже и для разбора
+# страницы РАЗДЕЛА (OfferCatalog); manufacturer_article_from — ТАКЖЕ из
+# build_item ниже, когда товар не посещался (фолбэк по коду в скобках).
+_store_page = load_store_page_module("regard")
+_find_jsonld = _store_page.find_jsonld
+_manufacturer_article_from = _store_page.manufacturer_article_from
+parse_product_page = _store_page.parse_product_page
 
 # Статический короткий список разделов (владелец может расширить). Полный
 # обход каталога этим заданием не запускается.
@@ -46,31 +56,8 @@ CATEGORIES: list[tuple[str, str, list[str]]] = [
     ),
 ]
 
-_JSONLD_RE = re.compile(r'<script\s+type="application/ld\+json">([\s\S]*?)</script>')
-_SPEC_ITEM_RE = re.compile(
-    r'CharacteristicsItem_name__[\w]+"><span>([^<]*)</span>.*?'
-    r'CharacteristicsItem_value__[\w]+">(.*?)</div></div>',
-    re.DOTALL,
-)
-_TAG_RE = re.compile(r"<[^>]+>")
-_TRAILING_CODE_RE = re.compile(r"\(([^()]{4,})\)\s*$")
-_JUNK_NAME_PREFIXES = ("технические характеристики",)
-_JUNK_VALUE_PREFIXES = ("скачать",)
-
-
 def page_url(category_url: str, page: int) -> str:
     return f"{category_url}?page={page}"
-
-
-def _find_jsonld(html: str, type_name: str) -> Optional[dict]:
-    for block in _JSONLD_RE.findall(html):
-        try:
-            obj = json.loads(block)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if isinstance(obj, dict) and obj.get("@type") == type_name:
-            return obj
-    return None
 
 
 def parse_category_page(html: str) -> list[dict]:
@@ -101,50 +88,6 @@ def needs_product_visit(candidate: dict) -> bool:
     # названия (см. build_item), характеристики пустые. Визит включается
     # только флагом CLI --with-details (StoreSpec.supports_details=True).
     return False
-
-
-def _parse_characteristics(html: str) -> list[dict]:
-    characteristics = []
-    for name, value_html in _SPEC_ITEM_RE.findall(html):
-        name = name.strip()
-        value = _TAG_RE.sub("", value_html).replace("&nbsp", " ").strip()
-        if not name or not value:
-            continue
-        if name.strip().lower().startswith(_JUNK_NAME_PREFIXES):
-            continue
-        if value.strip().lower().startswith(_JUNK_VALUE_PREFIXES):
-            continue
-        characteristics.append({"name": name, "value": value, "unit": None, "in_description": False})
-    return characteristics
-
-
-def _manufacturer_article_from(name: str, product_jsonld: dict, characteristics: list[dict]) -> Optional[str]:
-    for c in characteristics:
-        if c["name"].strip().lower() == "код производителя":
-            return c["value"] or None
-
-    mpn = product_jsonld.get("mpn")
-    if mpn:
-        return str(mpn).strip() or None
-
-    # FALLBACK (владелец, см. docstring модуля): код в скобках на конце
-    # названия товара, только если нет явного поля.
-    m = _TRAILING_CODE_RE.search(name or "")
-    if m and any(ch.isdigit() for ch in m.group(1)):
-        return m.group(1).strip()
-    return None
-
-
-def parse_product_page(html: str, url: str) -> dict:
-    product = _find_jsonld(html, "Product") or {}
-    characteristics = _parse_characteristics(html)
-    name = product.get("name") or ""
-    return {
-        "jsonld_brand": product.get("brand"),
-        "manufacturer_article": _manufacturer_article_from(name, product, characteristics),
-        "store_sku": str(product.get("sku")).strip() if product.get("sku") else None,
-        "characteristics": characteristics,
-    }
 
 
 def build_item(candidate: dict, enrichment: dict, known_brands: set) -> Optional[dict]:

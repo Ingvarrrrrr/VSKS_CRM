@@ -32,6 +32,8 @@
       :can-decide-advance-payment="canDecideAdvancePayment"
       :on-copy-to-subsidy="onCopyToSubsidy"
       :can-copy-to-subsidy="canCopyToSubsidy"
+      :syncing-plan="syncingPlan"
+      :on-sync-from-plan="onSyncFromPlan"
     />
 
     <PurchaseStopDialog
@@ -3350,6 +3352,36 @@ function onCopyToSubsidy() {
 }
 function onPurchaseCopiedToSubsidy() {
   loadPurchase()
+}
+
+// Актуализация позиций закупки по текущему плану ФЭО (10 БОП → 0 или 10 → 4)
+const syncingPlan = ref(false)
+async function onSyncFromPlan() {
+  if (!purchaseId.value) return
+  if (!confirm('Актуализировать позиции закупки по текущему плану ФЭО?\n\nЕсли количество в плане уменьшилось — закупка обновится.\nЕсли позиция в плане обнулена (0 шт.) — она будет снята из закупки.')) return
+  syncingPlan.value = true
+  try {
+    const res = await apiFetch<any>(`/purchases/${purchaseId.value}/sync-from-plan`, { method: 'POST' })
+    if (res.ok) {
+      const removed = res.removed_items_count || 0
+      const updated = res.updated_items_count || 0
+      if (removed > 0 || updated > 0) {
+        showSnack(`План актуализирован: снято позиций: ${removed}, уменьшено: ${updated}`, 'success')
+      } else {
+        showSnack('Позиции закупки полностью соответствуют актуальному плану ФЭО', 'info')
+      }
+      await loadPurchase()
+      if (res.suggest_stop) {
+        if (confirm('В закупке не осталось активных позиций (все сняты по плану). Хотите остановить закупку сейчас?')) {
+          onStopPurchase()
+        }
+      }
+    }
+  } catch (e: any) {
+    showSnack(e?.detail || e?.payload?.message || e?.message || 'Не удалось синхронизировать с планом', 'error')
+  } finally {
+    syncingPlan.value = false
+  }
 }
 
 const itemsEditorRef = ref<any>(null)

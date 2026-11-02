@@ -48,6 +48,7 @@ _APPROVAL_STATUS_LABELS = {
     "pending": "Ожидает решения",
     "approved": "Согласовано",
     "rejected": "Отклонено",
+    "waiting_funds": "В листе ожидания",
 }
 
 
@@ -451,8 +452,14 @@ async def decide_wish_approval(
         raise HTTPException(404, "Согласующий не найден")
 
     decision = body.get("decision")
-    if decision not in ("approved", "rejected"):
-        raise HTTPException(422, "decision должен быть 'approved' или 'rejected'")
+    if decision not in ("approved", "rejected", "waiting_funds"):
+        raise HTTPException(422, "decision должен быть 'approved', 'rejected' или 'waiting_funds'")
+
+    if decision == "waiting_funds":
+        if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES:
+            if not await has_org_key(current_user, db, wish.org_id, 'wish.waiting_funds', subsidy_id=wish.subsidy_id):
+                raise HTTPException(status_code=403, detail="Нет права «Управление листом ожидания заявок» (wish.waiting_funds)")
+
     convert_error: str | None = None
     _convert_warning: str | None = None
     _created_ids: list[int] = []
@@ -571,6 +578,15 @@ async def decide_wish_approval(
                 await notify_wish_rejected(wish, creator, decided_name, body.get("comment"))
             except Exception as e:
                 logger.warning("notify_wish_rejected failed: %s", e)
+    elif decision == "waiting_funds":
+        wish.status = "waiting_funds"
+        await db.commit()
+        if creator and creator.id != current_user.id:
+            try:
+                from app.notifications import notify_wish_approved
+                await notify_wish_approved(wish, creator)
+            except Exception as e:
+                logger.warning("notify_wish_approved on waiting_funds failed: %s", e)
     else:
         # approved — если все approved → заявка полностью согласована
         remaining = (await db.execute(

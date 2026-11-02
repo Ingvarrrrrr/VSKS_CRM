@@ -157,6 +157,25 @@ export function useWishActions(deps: {
 
   // Approve
   const approvingId = ref<number | null>(null)
+  const deferringWaitingFundsId = ref<number | null>(null)
+
+  async function deferWishToWaitingFunds(wish: Wish) {
+    deferringWaitingFundsId.value = wish.id
+    try {
+      const res = await apiFetch<Wish>(`/wishes/${wish.id}/waiting-funds`, { method: 'POST' })
+      if (editingWish.value && editingWish.value.id === wish.id) {
+        editingWish.value = res
+        if (form.wishForm.value) (form.wishForm.value as any).status = 'waiting_funds'
+      }
+      showSnack('Заявка переведена в лист ожидания (без бюджета)', 'success')
+      await reloadActiveTab()
+    } catch (e: any) {
+      showSnack(`Ошибка перевода в лист ожидания: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
+    } finally {
+      deferringWaitingFundsId.value = null
+    }
+  }
+
   // Владелец (30.09): «Без ТЗ (мелкие закупки)» — та же галочка, что у решения
   // по конкретному шагу цепочки (useWishApprovers.tzNotRequiredChecked), но
   // для быстрого одобрения «без согласования остальных» (POST /wishes/{id}/approve),
@@ -530,6 +549,7 @@ export function useWishActions(deps: {
     deletingId, deleteWish,
     deleteConfirmDialog, deletingWishItem, openDeleteDialog, confirmDeleteWish,
     approvingId, approveWish, quickApproveTzNotRequired,
+    deferringWaitingFundsId, deferWishToWaitingFunds,
     rejectDialog, rejectingWish, rejectionReason, rejectingWishItem, openRejectDialog, rejectWish,
     kanbanDialog, kanbanWish, kanbanItems, openKanbanDialog, onKanbanApproved,
     downloadingServiceNoteId, downloadingExcelId, downloadServiceNote, downloadWishExcel,

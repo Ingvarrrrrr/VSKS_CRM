@@ -117,8 +117,8 @@
             <v-text-field v-model="form.country_origin"
               label="Страна производства *"
               variant="outlined" density="compact" :disabled="readonlyCatalog"
-              hint="Обязательно для Приложения №3 (колонка P)"
-              persistent-hint
+              :hint="!form.country_origin ? 'Укажите страну — нужна для Приложения №3' : ''"
+              :persistent-hint="!form.country_origin"
               :rules="[v => !!v?.trim() || 'Укажите страну производства']"
             />
           </v-col>

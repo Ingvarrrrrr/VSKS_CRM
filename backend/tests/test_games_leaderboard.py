@@ -135,3 +135,23 @@ async def test_nickname_validation(client, auth_headers):
     r = await client.put("/api/games/nickname", json={"nickname": None}, headers=auth_headers)
     assert r.status_code == 200
     assert r.json()["nickname"] == "Игрок"
+
+
+@pytest.mark.asyncio
+async def test_submit_score_with_nickname(client, auth_headers):
+    r = await client.post(
+        "/api/games/egg/score",
+        json={"score": 120, "nickname": "Волк_НуПогоди"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["best"] == 120
+
+    r = await client.get("/api/games/nickname", headers=auth_headers)
+    assert r.status_code == 200
+    assert r.json()["nickname"] == "Волк_НуПогоди"
+
+    r = await client.get("/api/games/egg/leaderboard", headers=auth_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert any(e["nickname"] == "Волк_НуПогоди" and e["score"] == 120 for e in body["global"])

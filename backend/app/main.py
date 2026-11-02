@@ -25,12 +25,14 @@ from app.models.org_billing import OrgBillingPaid  # ensure org_billing_paid tab
 from app.models.purchase_comment import PurchaseComment  # ensure purchase_comments table is created
 from app.models import bank_statement  # ensure bank_statement_imports / bank_payments tables registered
 from app.models.entity_change import EntityChange, EntityFieldSeen  # ensure entity_changes / entity_field_seen tables registered
+from app.models.game_score import GameScore, GameProfile  # ensure game_scores / game_profiles tables registered
 
 from app.startup import lifespan
 from app.errors import register_error_handlers
 from app.errors_db import register_db_error_handlers
 from app.routes import register_routes
 from app.auth.csrf_protection import CsrfProtectionMiddleware
+from app.auth.session_renew import SessionRenewMiddleware
 from app.config import settings
 
 # Аудит безопасности 2026-10-20: /docs, /redoc, /openapi.json были доступны
@@ -53,6 +55,10 @@ app = FastAPI(
 # раньше роутеров — add_middleware оборачивает в порядке LIFO, значит её
 # добавляем ПОСЛЕ add_correlation_id, чтобы correlation_id уже был на 403.
 app.add_middleware(CsrfProtectionMiddleware)
+
+# Скользящая сессия: 30 дней с последней активности, не со входа (app/auth/
+# session_renew.py — источник истины, что/когда продлевать).
+app.add_middleware(SessionRenewMiddleware)
 
 
 @app.middleware("http")

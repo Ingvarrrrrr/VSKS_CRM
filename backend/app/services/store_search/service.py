@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Optional
 
@@ -24,17 +25,27 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.product_name_signature import _split_words
-from app.services.product_query_parse import get_manufacturer_brand_dictionary, parse_query
+from app.services.product_name_signature_props import ACCESSORY_MARKERS
+from app.services.product_query_parse import (
+    get_manufacturer_brand_dictionary,
+    parse_query,
+    product_type_synonyms,
+)
 from app.services.product_search import _looks_like_article_query
-from app.services.store_search.base import StoreOffer, store_display_name
+from app.services.store_search.base import StoreBlocked, StoreOffer
 from app.services.store_search.registry import ADAPTERS, ARTICLE_ONLY_STORES
 from app.services.store_search.relevance import filter_relevant_offers
 
 # Имя магазина для stores[] даже когда он не дал ни одного предложения
-# (таймаут/ошибка/лимит частоты) — тот же store_display_name (ПРАВИЛО №6),
-# что использует каждый адаптер для StoreOffer.store_name.
+# (таймаут/ошибка/лимит частоты) — читаем ОДИН И ТОТ ЖЕ источник, что и
+# StoreOffer.store_name у каждого адаптера: атрибут adapter.display_name
+# (= STORE_NAME_FALLBACK модуля адаптера, см. base.py::StoreAdapter,
+# ПРАВИЛО №6). Дефект приёмки 29.10.2026: раньше здесь был fallback=key —
+# строка статусов показывала «kuvalda»/«chipdip»/«sima_land» вместо
+# человекочитаемых имён, потому что store_display_name(domain, fallback)
+# просто возвращает fallback, а сюда передавался ключ, а не имя.
 _STORE_DISPLAY_NAMES: dict[str, str] = {
-    key: store_display_name(adapter.domain, key) for key, adapter in ADAPTERS.items()
+    key: adapter.display_name for key, adapter in ADAPTERS.items()
 }
 
 PER_STORE_TIMEOUT_SECONDS = 5.0
@@ -200,12 +211,54 @@ async def _search_one_store(
     except asyncio.TimeoutError:
         offers = []
         status = "timeout"
+    except StoreBlocked:
+        offers = []
+        status = "blocked"
     except Exception:
         offers = []
         status = "error"
 
     ms = int((time.monotonic() - t0) * 1000)
     return {"key": store_key, "offers": offers, "status": status, "count": len(offers), "ms": ms}
+
+
+_ACCESSORY_RE = re.compile(
+    "|".join(re.escape(m) for m in ACCESSORY_MARKERS), re.IGNORECASE,
+) if ACCESSORY_MARKERS else None
+
+
+def _accessory_bucket(name_lower: str, parsed) -> int:
+    """0 — вид товара запроса стоит В НАЧАЛЕ названия предложения, 2 — в
+    названии есть маркер-принадлежность (ACCESSORY_MARKERS,
+    product_name_signature_props.py — ТОТ ЖЕ словарь и та же идея, что
+    _type_position_rank_term в product_search.py использует для своего
+    каталога, Правило №6 — второй словарь/механизм «аксессуар ниже вида» не
+    заводим, только переносим в Python-ранжирование предложений магазинов),
+    1 — нейтрально (ни то, ни другое). Находка QA (владелец, 29.10.2026):
+    «перфоратор makita» ранжировал аксессуары («Держатель для бит для
+    перфораторов Makita») РЯДОМ с самими перфораторами — _rank_offer ниже
+    считал долю required-токенов (бренд+вид), а у аксессуара оба слова тоже
+    есть в названии, доля та же. Бакет — ПЕРВЫЙ член сортировки (важнее доли
+    совпадения), как и у _type_position_rank_term там же."""
+    product_type = getattr(parsed, "product_type", None)
+    type_literal = getattr(parsed, "type_literal", None)
+    if not product_type or not type_literal:
+        return 1
+    synonyms = product_type_synonyms(product_type)
+    if not synonyms:
+        return 1
+    # «начало названия» — само первое слово ИЛИ второе (после одного
+    # прилагательного) — то же упрощённое окно "1-2 слова", что в
+    # _type_position_rank_term (product_search.py).
+    syn_alt = "|".join(re.escape(s) for s in synonyms)
+    start_re = re.compile(
+        rf"^\s*(?:\S+\s+){{0,1}}(?:{syn_alt})(?![a-zа-яё0-9])", re.IGNORECASE,
+    )
+    if start_re.search(name_lower):
+        return 0
+    if _ACCESSORY_RE is not None and _ACCESSORY_RE.search(name_lower):
+        return 2
+    return 1
 
 
 def _rank_offer(offer: StoreOffer, parsed) -> tuple:
@@ -217,7 +270,12 @@ def _rank_offer(offer: StoreOffer, parsed) -> tuple:
     ранжирования предложений одного запроса, см. задание «иначе — порядок
     магазина»): считаем долю required-токенов разбора, вошедших в название
     предложения (регистронезависимо), затем наличие цены (предложения с
-    ценой выше предложений без неё)."""
+    ценой выше предложений без неё).
+
+    _accessory_bucket (см. docstring выше) — ПЕРВЫЙ член сортировки:
+    аксессуар «для» вида товара не должен стоять рядом с самим видом только
+    потому, что в названии аксессуара тоже упомянуты бренд и вид (владелец,
+    29.10.2026, QA живого поиска)."""
     name_lower = (offer.name or "").lower()
     required = getattr(parsed, "required", []) or []
     if required:
@@ -226,7 +284,38 @@ def _rank_offer(offer: StoreOffer, parsed) -> tuple:
     else:
         score = 0.0
     has_price = 1 if offer.price is not None else 0
-    return (-score, -has_price)
+    return (_accessory_bucket(name_lower, parsed), -score, -has_price)
+
+
+async def find_cached_offer(
+    store_key: str, query: str, url: str, db: Optional[AsyncSession] = None, limit: int = 20,
+) -> Optional[StoreOffer]:
+    """Предложение по `url` для «Взять» (POST /api/products/store-take,
+    app/services/store_search/take.py) — ПЕРЕИСПОЛЬЗУЕТ кэш/поиск этого же
+    модуля (ПРАВИЛО №6, второй поход в магазин по другому пути не пишем):
+    сперва смотрит в _cache по (store_key, clean_query(query)) — тот же ключ,
+    что кладёт search_stores() выше; кэша нет (протух/ещё не искали) —
+    повторяет поиск ОДНОГО магазина через _search_one_store (та же защита
+    лимита частоты/таймаута/кэширования результата, что у обычного запроса).
+
+    None — ни в кэше, ни в свежем поиске предложения с этим url не нашлось
+    (вызывающий роутер отвечает 404 «предложение устарело»)."""
+    if store_key not in ADAPTERS:
+        return None
+    brand_dictionary = await get_manufacturer_brand_dictionary(db) if db is not None else None
+    cleaned_query = clean_query(query, brand_dictionary=brand_dictionary)
+
+    offers = _cache_get(store_key, cleaned_query)
+    if offers is None:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(PER_STORE_TIMEOUT_SECONDS)) as http:
+            client = _StoreHttpClient(http)
+            result = await _search_one_store(client, store_key, cleaned_query, limit)
+            offers = result["offers"]
+
+    for offer in offers:
+        if offer.url == url:
+            return offer
+    return None
 
 
 async def search_stores(

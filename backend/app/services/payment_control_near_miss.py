@@ -81,22 +81,54 @@ async def build_near_miss(
     limit: int = 3,
 ) -> list[dict]:
     """Лучшие ``limit`` подсказок для одной непривязанной строки выписки."""
-    if not bp_payee_inn:
-        return []
-
-    rows = (await db.execute(
-        select(Purchase, Contractor.inn, Contractor.name)
-        .join(Contractor, Contractor.id == Purchase.contractor_id)
-        .where(
-            Purchase.subsidy_id == subsidy_id,
-            Purchase.stopped_at.is_(None),
-            Purchase.contract_price.isnot(None),
-            Contractor.inn == bp_payee_inn,
-        )
-    )).all()
+    rows = []
+    if bp_payee_inn:
+        rows = (await db.execute(
+            select(Purchase, Contractor.inn, Contractor.name)
+            .join(Contractor, Contractor.id == Purchase.contractor_id)
+            .where(
+                Purchase.subsidy_id == subsidy_id,
+                Purchase.stopped_at.is_(None),
+                Purchase.contract_price.isnot(None),
+                Contractor.inn == bp_payee_inn,
+            )
+        )).all()
     same_inn = [(p, name) for (p, _inn, name) in rows if p.id not in matched_purchase_ids]
     if not same_inn:
-        return []
+        # Фолбэк для закупок без контрагента («напокупали, а проставить у кого и
+        # как забыли»): ищем одиночные или составные совпадения по сумме с оценкой
+        # категорийной близости («Очень вероятно» / «Маловероятно»).
+        from app.services.payment_smart_combo_matcher import (
+            load_unpaid_candidate_units,
+            find_subset_sum_combinations,
+        )
+        units = await load_unpaid_candidate_units(db, subsidy_id, preferred_contractor_inn=bp_payee_inn)
+        no_cont_units = [u for u in units if u.contractor_id is None and u.purchase_id not in matched_purchase_ids]
+        combos = find_subset_sum_combinations(
+            no_cont_units, bp_amount, purpose_text=bp_purpose_text, max_results=limit,
+        )
+        fallback_hints: list[dict] = []
+        for cs in combos:
+            names_joined = " + ".join(
+                f"{it['subject']} ({it['amount']:g} ₽)" for it in cs["items"]
+            )
+            first_it = cs["items"][0]
+            fallback_hints.append({
+                "purchase_id": first_it["purchase_id"],
+                "purchase_ids": cs["purchase_ids"],
+                "registry_number": first_it["registry_number"],
+                "subject": names_joined if cs["count"] > 1 else first_it["subject"],
+                "contractor_name": None,
+                "amount": cs["total_amount"],
+                "delta": cs["delta"],
+                "reason": f"{cs['probability_label']} ({cs['coherence_reason']})",
+                "probability": cs["probability"],
+                "probability_label": cs["probability_label"],
+                "coherence_reason": cs["coherence_reason"],
+                "can_fix_amount": False,
+                "can_merge": cs["can_merge"],
+            })
+        return fallback_hints[:limit]
 
     hints: list[dict] = []
     tol = max(AMOUNT_CLOSE_ABS, (bp_amount * AMOUNT_CLOSE_PCT).quantize(Decimal("0.01")))

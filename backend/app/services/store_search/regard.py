@@ -95,6 +95,7 @@ def parse_search_json(raw: str, query: str = "") -> list[StoreOffer]:
 class RegardAdapter:
     key = STORE_KEY
     domain = DOMAIN
+    display_name = STORE_NAME_FALLBACK
 
     async def search(self, client, query: str, limit: int) -> list[StoreOffer]:
         body = json.dumps({

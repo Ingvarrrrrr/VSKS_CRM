@@ -220,8 +220,8 @@
                   <tr>
                     <th style="width:90px">Стадия</th>
                     <th style="min-width:220px">Наименование</th>
-                    <th style="width:90px">Кол-во</th>
-                    <th style="width:80px">Ед.</th>
+                    <th style="min-width:70px">Кол-во</th>
+                    <th style="min-width:130px">Ед.</th>
                     <th style="min-width:110px">Цена ед., ₽</th>
                     <th v-if="showVatColumnsInExpandRow" style="width:90px">НДС %</th>
                     <th v-if="showVatColumnsInExpandRow" style="min-width:100px">НДС сумма, ₽</th>
@@ -277,9 +277,9 @@
                     <td>
                       <v-select
                         v-model="item.unit" :items="unitSelectOptions(item.unit)" density="compact" variant="outlined"
-                        hide-details class="my-1" :disabled="readonly"
+                        hide-details class="my-1 unit-select" :disabled="readonly"
                         :error="!isOkeiUnit(item.unit)"
-                        :title="!isOkeiUnit(item.unit) ? 'Выберите единицу измерения из списка' : undefined"
+                        :title="!isOkeiUnit(item.unit) ? 'Выберите единицу измерения из списка' : (item.unit || undefined)"
                       />
                     </td>
                     <td>
@@ -1168,6 +1168,21 @@ const emit = defineEmits<{
 .nested-stages-table :deep(.v-field) {
   --v-field-padding-start: 8px;
   --v-field-padding-end: 8px;
+}
+/* Колонка «Ед.»: полное название ОКЕИ («Тонна; метрическая тонна (1000 кг)»)
+   не влезает в узкую колонку — показываем одной строкой с многоточием,
+   полный текст — в :title на v-select (scoped-стили не достают до внутренностей
+   v-select, поэтому :deep()). */
+.unit-select :deep(.v-select__selection) {
+  max-width: 100%;
+  overflow: hidden;
+}
+.unit-select :deep(.v-select__selection-text) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  max-width: 100%;
 }
 .stage-tz-row td {
   background: rgba(25, 118, 210, 0.04);

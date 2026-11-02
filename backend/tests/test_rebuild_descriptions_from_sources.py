@@ -187,8 +187,14 @@ async def test_process_file_apply_fills_country_origin_from_file_leaves_other_un
     k_spasatel_rescue_nomenclature.json — два товара в БД с дефолтом
     country_origin='РФ'. У первого в файле специфика даёт
     "Страна производства": country_origin должен ЗАМЕНИТЬСЯ (безусловно,
-    даже если старое значение было непустым). У второго товара в файле нет
-    страны вообще — country_origin НЕ трогается (остаётся 'РФ')."""
+    даже если старое значение было непустым).
+
+    ОБНОВЛЕНО 27.10.2026 (решение владельца «если в файле нет страны —
+    ничего не ставим», отменяет прежнюю формулировку 26.10 для ВТОРОГО
+    товара): у товара, где в файле страны нет вообще, а в БД стоит ровно
+    дефолт 'РФ' — country_origin теперь ОЧИЩАЕТСЯ до NULL (не остаётся
+    'РФ') — это и есть новое правило, см. scripts/rebuild_descriptions_from_sources.py
+    (country_rf_to_null)."""
     p_with_country = Product(
         name="Аптечка автомобильная", category="Медицина",
         country_origin="РФ",
@@ -232,8 +238,74 @@ async def test_process_file_apply_fills_country_origin_from_file_leaves_other_un
     assert report.matched == 2
     assert report.country_will_change == 1
     assert report.country_to_non_rf == 1
+    assert report.country_rf_to_null == 1
 
     await db_session.refresh(p_with_country)
     await db_session.refresh(p_without_country)
     assert p_with_country.country_origin == "Франция"
-    assert p_without_country.country_origin == "РФ"
+    assert p_without_country.country_origin is None
+
+
+@pytest.mark.asyncio
+async def test_process_file_rf_to_null_dry_run_does_not_touch_db(db_session, test_user):
+    """--dry-run (apply=False) должен ТОЛЬКО считать country_rf_to_null, не
+    меняя БД — основной режим задания владельца 27.10.2026 (--apply
+    запускать отдельно и осознанно)."""
+    p = Product(name="Жилет сигнальный dry-run", category="Безопасность", country_origin="РФ")
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    raw = [{
+        "name": "Жилет сигнальный dry-run", "category": "Безопасность", "unit": "шт",
+        "price_rub": 200, "source_store": "К-Спасатель",
+        "link_1": "", "photo_url": None, "description": "",
+        "specifications": {},
+    }]
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        from pathlib import Path
+        json_path = Path(tmp) / "k_spasatel_rescue_nomenclature.json"
+        json_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+        match_index = ProductMatchIndex([p])
+        report = await _process_file(str(json_path), match_index, apply=False)
+
+    assert report.country_rf_to_null == 1
+    await db_session.refresh(p)
+    assert p.country_origin == "РФ"  # dry-run — БД не менялась
+
+
+@pytest.mark.asyncio
+async def test_process_file_rf_to_null_skips_already_empty_country(db_session, test_user):
+    """Товар, у которого country_origin уже пуст (не 'рф') — не кандидат:
+    нечего очищать, country_rf_to_null не должен его считать.
+
+    country_origin=null() (не Python None) — см.
+    tests/test_products_import_apply_country_origin.py: простое
+    `country_origin=None` в конструкторе на INSERT НЕ перебивает
+    python-side column default модели ("РФ"), а sqlalchemy.null()
+    перебивает. Здесь нужен товар РЕАЛЬНО с NULL в БД, иначе тест проверял
+    бы не то, что заявлено."""
+    from sqlalchemy import null
+    p = Product(name="Товар без страны вовсе", category="Безопасность", country_origin=null())
+    db_session.add(p)
+    await db_session.commit()
+    await db_session.refresh(p)
+
+    raw = [{
+        "name": "Товар без страны вовсе", "category": "Безопасность", "unit": "шт",
+        "price_rub": 200, "source_store": "К-Спасатель",
+        "link_1": "", "photo_url": None, "description": "",
+        "specifications": {},
+    }]
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        from pathlib import Path
+        json_path = Path(tmp) / "k_spasatel_rescue_nomenclature.json"
+        json_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+        match_index = ProductMatchIndex([p])
+        report = await _process_file(str(json_path), match_index, apply=False)
+
+    assert report.country_rf_to_null == 0

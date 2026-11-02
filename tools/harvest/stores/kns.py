@@ -39,9 +39,14 @@ from typing import Optional
 
 from tools.harvest.core import gala_writer
 from tools.harvest.core.runner import StoreSpec, harvest as _run_harvest
+from tools.harvest.stores._backend_bridge import load_store_page_module
 
 STORE_NAME = "kns"
 BASE_URL = "https://www.kns.ru"
+
+# Разбор ПОДСТРАНИЦЫ характеристик — backend/app/services/store_pages/kns.py
+# (ПРАВИЛО №6, тот же код нужен live-поиску, take.py, при довизите).
+parse_product_page = load_store_page_module("kns").parse_product_page
 
 # Статический короткий список разделов (владелец может расширить — полный
 # список разделов см. в старом harvest_kns_massive.py). Полный обход
@@ -57,11 +62,6 @@ _FIELD_RE = re.compile(
 _ITEM_BRAND_RE = re.compile(r"item_brand:\s*'([^']*)'")
 _ITEM_VARIANT_RE = re.compile(r"item_variant:\s*'([^']*)'")
 _PRODUCT_LINK_RE = re.compile(r'href="(/product/[^"?]+/)"')
-_CHAR_ROW_RE = re.compile(
-    r'field-ex-name"[^>]*>\s*([^<]+?)\s*</div>\s*<div class="[^"]*word-break-all"[^>]*>(.*?)</div>',
-    re.DOTALL,
-)
-_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def page_url(category_url: str, page: int) -> str:
@@ -118,28 +118,6 @@ def needs_product_visit(candidate: dict) -> bool:
     # или артикул — тогда характеристики (где внутри таблицы тоже есть
     # "Производитель"/"PN") становятся единственным способом их добрать.
     return not (candidate.get("brand") and candidate.get("manufacturer_article"))
-
-
-def parse_product_page(html: str, url: str) -> dict:
-    characteristics = []
-    manufacturer_article = None
-    brand = None
-    for name, value_html in _CHAR_ROW_RE.findall(html):
-        value = _TAG_RE.sub("", value_html).strip()
-        name = name.strip()
-        if not name or not value:
-            continue
-        characteristics.append({"name": name, "value": value, "unit": None, "in_description": False})
-        name_lower = name.lower()
-        if name_lower == "pn" and not manufacturer_article:
-            manufacturer_article = value
-        elif name_lower == "производитель" and not brand:
-            brand = value
-    return {
-        "characteristics": characteristics,
-        "manufacturer_article": manufacturer_article,
-        "brand": brand,
-    }
 
 
 def build_item(candidate: dict, enrichment: dict, known_brands: set) -> Optional[dict]:

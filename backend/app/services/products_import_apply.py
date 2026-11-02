@@ -33,7 +33,7 @@ from datetime import date as _date_type, datetime as _dt
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -854,13 +854,33 @@ async def apply_products_import(
                     import_note=_import_note,
                     updated_at=_dt.utcnow(),
                     updated_by=_user_name,
+                    # Решение владельца, 27.10.2026: «если в файле нет
+                    # страны — ничего не ставим». Раньше country_origin
+                    # присваивался ТОЛЬКО когда country_origin_val непустой
+                    # (`if country_origin_val: p.country_origin = ...`) — при
+                    # пустом значении атрибут вообще не трогался, и flush
+                    # применял python-side column default модели
+                    # (Product.country_origin, default="РФ",
+                    # app/models/product.py) — ровно баг, который нашёл
+                    # владелец (товар id 103679: в k_spasatel-файле страны
+                    # нет, в БД стояла "РФ").
+                    #
+                    # ЭМПИРИЧЕСКИ ПРОВЕРЕНО (test_products_import_apply_country_origin.py)
+                    # — и это НЕ то, что ожидалось по общей документации
+                    # SQLAlchemy: простое явное присвоение `country_origin=None`
+                    # (что в конструкторе, что через `p.country_origin = None`
+                    # до первого flush) на INSERT'е НЕ побеждает default —
+                    # SQLAlchemy ORM для скалярного column-default трактует
+                    # None-значение атрибута на момент INSERT как «не
+                    # задано» и всё равно подставляет "РФ". Default
+                    # игнорируется только при явном sqlalchemy.null() ИЛИ на
+                    # UPDATE (второй flush после того как объект уже
+                    # persisted) — default применяется лишь к INSERT.
+                    # Решение: sqlalchemy.null() — валидный Core-сентинел
+                    # «SQL NULL», при INSERT'е передаётся как есть, без
+                    # участия column default; читается обратно как None.
+                    country_origin=(country_origin_val if country_origin_val else null()),
                 )
-                if country_origin_val:
-                    # Не передаём country_origin в конструктор Product(...)
-                    # напрямую — там нет дефолта кроме None/"РФ" из модели, а
-                    # передача None затёрла бы его; ставим после, только если
-                    # файл реально принёс значение.
-                    p.country_origin = country_origin_val
                 db.add(p)
                 # Задача 2: сразу делаем видимым для последующих строк ЭТОГО
                 # ЖЕ файла — повтор позиции внутри файла находит этот товар

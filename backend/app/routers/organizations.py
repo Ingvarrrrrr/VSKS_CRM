@@ -17,7 +17,7 @@ from app.routers.legal import client_ip
 from app.schemas.schemas import OrganizationCreate, OrganizationOut, RegisterRequest, UserOut
 from app.utils.email import send_verification_email
 from app.services.fio import compose_fio, resolve_user_name_input
-from app.services.org_requisites import org_requisites
+from app.services.org_requisites import org_requisites, resolve_org_display_name
 from app.services.legal_constants import (
     PD_CONSENT_DOCUMENTS,
     PD_CONSENT_VERSION,
@@ -57,8 +57,12 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         # region/color/director_*), ORM «expire»-ит её вычисляемые поля и
         # синхронный getattr вне await падает MissingGreenlet (см.
         # org_requisites.py). `c.name` — обычная колонка Contractor, тот же
-        # источник, без ловушки.
-        name=(c.name if c else None),
+        # источник, без ловушки. Дефект org id=69 (27.10.2026): если у
+        # контрагента `name` пусто, резолвим отображаемое имя через
+        # resolve_org_display_name (один источник, Правило №6) — fallback на
+        # full_name в обычном регистре вместо None/"" в дропдауне создания
+        # отдела и графе иерархии.
+        name=resolve_org_display_name(org, c),
         full_name=req['full_name'],
         inn=req['inn'],
         kpp=req['kpp'],
@@ -435,16 +439,23 @@ async def create_organization(
             'signatory_first_name': data.signatory_first_name,
             'signatory_middle_name': data.signatory_middle_name,
         }
-        # data.contractor_id явно выбран (существующий контрагент) — его
-        # поля не перетираем формой создания org; данные контрагента и так
-        # побеждают (Правило №6). Только что найденному/созданному по ИНН
-        # контрагенту (в _auto_link_contractor_by_inn) — заполняем пустые.
-        if data.contractor_id is None:
-            _updates = {f: v for f, v in _new_fields.items() if v is not None and not getattr(_linked_contractor, f, None)}
-            if _updates:
-                apply_requisite_fields(_linked_contractor, _updates)
-            if _org_signatory and not _linked_contractor.signatory:
-                _linked_contractor.signatory = _org_signatory
+        # Дефект (прод, 27.10.2026, org id=69): при ЯВНО выбранном
+        # data.contractor_id (контрагент из автокомплита/карточки) эта ветка
+        # раньше пропускалась целиком — "данные контрагента и так побеждают".
+        # Но если У КОНТРАГЕНТА поле реально пусто (напр. `name` — историческая
+        # запись без короткого наименования), то, что ввёл пользователь в форме
+        # создания org, терялось молча, а org.name/column_property оставался
+        # NULL (видно на /api/organizations/ и валило /api/hierarchy/graph
+        # ResponseValidationError). Фикс: заполняем ТОЛЬКО пустые поля
+        # контрагента в ОБОИХ случаях — explicit и auto-linked (условие
+        # `data.contractor_id is None` снято) — непустые поля контрагента всё
+        # равно не трогаем (`not getattr(...)` ниже), побеждает контрагент,
+        # второй источник не завели (Правило №6).
+        _updates = {f: v for f, v in _new_fields.items() if v is not None and not getattr(_linked_contractor, f, None)}
+        if _updates:
+            apply_requisite_fields(_linked_contractor, _updates)
+        if _org_signatory and not _linked_contractor.signatory:
+            _linked_contractor.signatory = _org_signatory
     if _becomes_owner:
         # Та же транзакция, что и org — запись поручения обязана существовать
         # для КАЖДОЙ организации, где current_user становится owner_user_id

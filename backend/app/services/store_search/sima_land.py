@@ -72,6 +72,7 @@ def parse_search_json(raw: str) -> list[StoreOffer]:
 class SimaLandAdapter:
     key = STORE_KEY
     domain = DOMAIN
+    display_name = STORE_NAME_FALLBACK
 
     async def search(self, client, query: str, limit: int) -> list[StoreOffer]:
         url = SEARCH_URL.format(q=quote(query), limit=limit)

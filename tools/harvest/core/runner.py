@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from tools.harvest.core import checkpoint, gala_writer
+from tools.harvest.core import checkpoint, gala_writer, quality
 from tools.harvest.core.http import HttpClient, StoreAbortedError
 
 DEFAULT_MAX_PAGES_PER_CATEGORY = 5
@@ -65,6 +65,8 @@ class StoreSpec:
     # визит включается флагом CLI --with-details (владелец, 27.10.2026,
     # regard — первый сборщик с этим режимом).
     supports_details: bool = False
+    custom_headers: Optional[dict] = None
+    session_refresh_fn: Optional[Callable[[], dict]] = None
 
 
 def _load_existing_items(out_path: str) -> list[dict]:
@@ -155,7 +157,13 @@ def harvest(
     визита) включает визит ради необязательных "подробностей"
     (характеристики/точный артикул) — игнорируется, если prices_only=True."""
     effective_pause = pause_per_domain if pause_per_domain is not None else spec.default_pause_per_domain
-    client = HttpClient(spec.name, pause_per_domain=effective_pause, concurrency=spec.concurrency)
+    client = HttpClient(
+        spec.name,
+        pause_per_domain=effective_pause,
+        concurrency=spec.concurrency,
+        headers=spec.custom_headers,
+        session_refresh_fn=spec.session_refresh_fn,
+    )
     ckpt_path = checkpoint.checkpoint_path(out_path)
     processed = checkpoint.load_processed(ckpt_path) if resume else set()
 
@@ -249,6 +257,7 @@ def harvest(
 
             processed.add(cat_url)
             print(f"[{spec.name}] {cat_name}: +{cat_added} (всего {len(items)})")
+            quality.write_catalog(manifest, out_path)
 
     except StoreAbortedError as e:
         print(f"[{spec.name}] остановлено: {e}")

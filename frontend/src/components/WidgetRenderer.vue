@@ -76,7 +76,7 @@ async function reload() {
       `/report-configs/${props.widget.source_config_id}/run`,
       {
         method: 'POST',
-        body: JSON.stringify(props.parameters || {}),
+        body: JSON.stringify({ params: props.parameters || {} }),
       }
     )
   } catch (e: any) {

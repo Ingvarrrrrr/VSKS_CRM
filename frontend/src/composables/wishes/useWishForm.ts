@@ -792,6 +792,9 @@ export function useWishForm(deps: {
   // самое право (purchase.tz_waive) в wish_transitions.py::approve_wish и
   // wish_approvals.py::decide_wish_approval — see permission_seeds.py.
   const canWaiveTz = computed(() => can(ACTIONS.PURCHASE_TZ_WAIVE!))
+  const canManageWaitingFunds = computed(() =>
+    ctx.isManagerOrAdmin.value || can(ACTIONS.WISH_WAITING_FUNDS!)
+  )
   const canEditAssignee = computed(() =>
     !!editingWish.value
     && ['submitted', 'approved'].includes(editingWish.value.status)
@@ -1335,6 +1338,7 @@ export function useWishForm(deps: {
     { value: 'draft', title: 'Черновик' },
     { value: 'submitted', title: 'Отправлена' },
     { value: 'approved', title: 'Одобрена' },
+    { value: 'waiting_funds', title: 'Лист ожидания' },
     { value: 'rejected', title: 'Отклонена' },
     { value: 'converted', title: 'Конвертирована' },
   ]
@@ -1394,7 +1398,7 @@ export function useWishForm(deps: {
     highlightMissingFeoCategory, highlightMissingApprovers, focusApproversField, onAddApproversClick,
     undoRedoWish, totalNmck, onSubsidyChange,
     isWishEditable, isDialogAssignee, isDialogCreator, canAssigneeAct, isChainApprover, setIsChainApprover,
-    canEditWishFeo, canEditAssignee, canDecideWish, canWaiveTz,
+    canEditWishFeo, canEditAssignee, canDecideWish, canWaiveTz, canManageWaitingFunds,
     resetForm, openCreateDialog, openEditDialog,
     wishFormSavedSnapshot, buildWishPayload, wishPayloadSnapshotJson, saveWish,
     handleMissingDatesError, handleMissingFeoCategoryError,

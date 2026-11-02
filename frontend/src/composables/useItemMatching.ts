@@ -24,6 +24,10 @@ export interface MatchCandidate {
   price_source?: string | null
   price_source_ref?: string | null
   price_freshness?: PriceFreshness | null
+  // Владелец, 27.10.2026: «если в файле нет страны — ничего не ставим» —
+  // страна происхождения едет из товара каталога, а не подставляется
+  // откуда-то отдельно (см. applyCandidate() ниже).
+  country_origin?: string | null
 }
 
 export type MatchStatus = 'auto' | 'suggest' | 'create'
@@ -160,6 +164,11 @@ export function useItemMatching() {
    *    total_price пересчитывается по той же формуле qty × unit_price либо
    *    тоже становится null (тот же приём, что useItemsTotals.ts::calcItemTotal
    *    — Правило №6, вторая конвенция не заводится).
+   *  - country_origin (владелец, 27.10.2026, «если в файле нет страны — ничего
+   *    не ставим»): берётся из товара (cand.country_origin), при отсутствии у
+   *    товара страны — очищается в null (не «РФ» и не старое значение от
+   *    предыдущего товара); не трогается только для позиций из Плана закупок
+   *    (from_plan) — та же защита, что и у цены выше.
    *  - marks match_confirmed = true
    */
   function applyCandidate(row: MatchableRow, cand: MatchCandidate): void {
@@ -194,6 +203,13 @@ export function useItemMatching() {
         row.total_price = null
       }
       row.price_from_catalog = true
+    }
+    // Владелец, 27.10.2026: страна происхождения — из товара, безусловно (не
+    // завязана на isSameProduct/manualPrice, у страны нет понятия «ручная
+    // правка», это отдельный атрибут) — кроме позиций из Плана закупок, где
+    // план главнее. Нет страны у товара → поле строки чистится в null.
+    if (!(row as any).from_plan) {
+      row.country_origin = cand.country_origin ?? null
     }
     row.match_confirmed = true
   }

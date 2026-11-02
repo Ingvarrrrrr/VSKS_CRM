@@ -12,13 +12,14 @@
 """
 from app.services.wish_tabs import WISH_TAB_STATUS_SETS, wish_tab_statuses
 
-ALL_STATUSES = {"draft", "submitted", "approved", "rejected", "converted"}
+ALL_STATUSES = {"draft", "submitted", "approved", "rejected", "converted", "waiting_funds"}
 
 
 def test_all_includes_draft_and_converted():
     s = wish_tab_statuses("all")
     assert "draft" in s
     assert "converted" in s
+    assert "waiting_funds" in s
     assert s == ALL_STATUSES
 
 
@@ -27,7 +28,12 @@ def test_submitted_includes_downstream_but_not_draft():
     assert "approved" in s
     assert "rejected" in s
     assert "converted" in s
+    assert "waiting_funds" in s
     assert "draft" not in s
+
+
+def test_waiting_funds_is_exact():
+    assert wish_tab_statuses("waiting_funds") == {"waiting_funds"}
 
 
 def test_approved_includes_converted():

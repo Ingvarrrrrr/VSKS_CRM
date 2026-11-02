@@ -153,6 +153,12 @@ export function avgPriceBasisText(n: number): string {
 // каталоге — все читают отсюда, не дублируют switch/case у себя.
 const PRICE_SOURCE_LABELS: Record<string, string> = {
   contract: 'Договор', kp: 'КП', import: 'Импорт', monitoring: 'Мониторинг', manual: 'Вручную',
+  // 'store' — этап 2 живого поиска в магазинах, кнопка «Взять» (владелец,
+  // 29.10.2026, backend/app/services/store_search/take.py). Тот же список
+  // источников дублирован здесь и в composables/usePriceFreshness.ts
+  // (PRICE_SOURCE_LABELS) — предсуществующий дубль (ПРАВИЛО №6, не трогаем
+  // в этой задаче, вне её объёма), держим оба списка синхронными.
+  store: 'Магазин',
 }
 export function priceSourceLabel(source: string, sourceRef?: string | null): string {
   const base = PRICE_SOURCE_LABELS[source] || source

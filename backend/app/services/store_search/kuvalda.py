@@ -17,7 +17,9 @@ import re
 from decimal import Decimal
 from urllib.parse import quote
 
-from app.services.store_search.base import StoreOffer, seller_inn_for_domain, store_display_name
+from app.services.store_search.base import (
+    StoreBlocked, StoreOffer, seller_inn_for_domain, store_display_name,
+)
 
 STORE_KEY = "kuvalda"
 DOMAIN = "kuvalda.ru"
@@ -26,6 +28,30 @@ STORE_NAME_FALLBACK = "Кувалда.ру"
 SEARCH_URL = "https://www.kuvalda.ru/catalog/search/?keyword={q}"
 
 _JSONLD_RE = re.compile(r'<script\s+type="application/ld\+json"[^>]*>([\s\S]*?)</script>')
+
+# Диагностика с прода 29.10.2026 (owner-жалоба — kuvalda.ru всегда 0): живой
+# запрос из контейнера backend_a дал 200 и валидный OfferCatalog (см. отчёт
+# сессии) — блокировки по IP прода на момент проверки НЕТ, антибот-маркеры
+# ниже на живом ответе не встретились. Оставлены как защита на будущее
+# (ПРАВИЛО №8 п.6): если kuvalda включит JS-челлендж/капчу, страница обычно
+# всё равно отдаётся с HTTP 200 (service.py::get_text иначе вернул бы None
+# и parse_search_html просто не нашёл бы OfferCatalog, что неотличимо от
+# честных «0 найдено» — см. StoreBlocked в base.py).
+_BLOCK_MARKERS = (
+    "cf-browser-verification",
+    "checking your browser",
+    "id=\"challenge-form\"",
+    "attention required",
+    "qrator",
+    "доступ ограничен",
+    "access denied",
+    "captcha",
+)
+
+
+def _looks_blocked(html: str) -> bool:
+    lowered = html.lower()
+    return any(marker in lowered for marker in _BLOCK_MARKERS)
 
 
 def _find_offer_catalog(html: str) -> dict:
@@ -67,10 +93,13 @@ def parse_search_html(html: str) -> list[StoreOffer]:
 class KuvaldaAdapter:
     key = STORE_KEY
     domain = DOMAIN
+    display_name = STORE_NAME_FALLBACK
 
     async def search(self, client, query: str, limit: int) -> list[StoreOffer]:
         url = SEARCH_URL.format(q=quote(query))
         html = await client.get_text(url)
         if not html:
             return []
+        if _looks_blocked(html):
+            raise StoreBlocked(f"{DOMAIN}: антибот-страница вместо результатов поиска")
         return parse_search_html(html)[:limit]

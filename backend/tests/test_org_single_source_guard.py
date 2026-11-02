@@ -214,3 +214,105 @@ async def test_editing_contractor_card_updates_organization_name(
     r3 = await client.get(f"/api/organizations/{org_id}", headers=superadmin_headers)
     assert r3.status_code == 200, r3.text
     assert r3.json()["name"] == "Org_Single_Source_Guard_Renamed_From_Contractor"
+
+
+# ---------------------------------------------------------------------------
+# Дефект org id=69 (прод, 27.10.2026): OrgCreateDialog.vue/useOrgCreate.ts с
+# ЯВНО выбранным существующим контрагентом, у которого `name` пусто.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_org_with_explicit_contractor_backfills_empty_name(
+    client, superadmin_headers, db_session,
+):
+    """Воспроизводит прод-дефект: контрагент с пустым `name` выбран ЯВНО
+    (data.contractor_id передан, как делает useOrgCreate.ts при выборе из
+    автокомплита/по ИНН) — форма создания org всё равно обязана дозаполнить
+    пустое имя контрагента (ПРАВИЛО №6: только пустые поля, непустые не
+    трогаем — см. create_organization). До фикса эта ветка была пропущена
+    целиком ("данные контрагента и так побеждают"), и org.name/column_property
+    оставался NULL."""
+    from app.models.contractor import Contractor
+
+    contractor = Contractor(name="", inn=None)
+    db_session.add(contractor)
+    await db_session.commit()
+    await db_session.refresh(contractor)
+    assert contractor.name == ""  # предусловие: ровно та же пустота, что на проде
+
+    r = await client.post(
+        "/api/organizations/",
+        json={
+            "name": "ООО Ромашка (из карточки контрагента)",
+            "contractor_id": contractor.id,
+        },
+        headers=superadmin_headers,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["contractor_id"] == contractor.id
+    assert body["name"] == "ООО Ромашка (из карточки контрагента)"
+
+    await db_session.refresh(contractor)
+    assert contractor.name == "ООО Ромашка (из карточки контрагента)"
+
+    # GET /api/organizations/ отдаёт то же имя, а не пусто/None (дефект был
+    # виден в т.ч. в списке организаций диалога создания отдела).
+    r2 = await client.get("/api/organizations/", headers=superadmin_headers)
+    assert r2.status_code == 200, r2.text
+    names = {o["id"]: o["name"] for o in r2.json()}
+    assert names.get(body["id"]) == "ООО Ромашка (из карточки контрагента)"
+
+
+@pytest.mark.asyncio
+async def test_create_org_with_explicit_contractor_does_not_overwrite_existing_name(
+    client, superadmin_headers, db_session,
+):
+    """Контрагент с УЖЕ заполненным `name` — форма создания org не должна
+    перетирать его (контрагент побеждает, Правило №6), даже если в форме
+    передано другое название."""
+    from app.models.contractor import Contractor
+
+    contractor = Contractor(name="ООО Существующее Имя", inn=None)
+    db_session.add(contractor)
+    await db_session.commit()
+    await db_session.refresh(contractor)
+
+    r = await client.post(
+        "/api/organizations/",
+        json={"name": "Другое имя из формы", "contractor_id": contractor.id},
+        headers=superadmin_headers,
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "ООО Существующее Имя"
+
+    await db_session.refresh(contractor)
+    assert contractor.name == "ООО Существующее Имя"
+
+
+@pytest.mark.asyncio
+async def test_hierarchy_graph_does_not_500_and_shows_backfilled_name(
+    client, superadmin_headers, db_session,
+):
+    """/api/hierarchy/graph (OrgOut.name) не должен падать 500
+    ResponseValidationError, если бэкфилл почему-то не сработал бы (защитный
+    слой) — и обязан показать реальное имя контрагента после фикса."""
+    from app.models.contractor import Contractor
+
+    contractor = Contractor(name="", inn=None)
+    db_session.add(contractor)
+    await db_session.commit()
+    await db_session.refresh(contractor)
+
+    r = await client.post(
+        "/api/organizations/",
+        json={"name": "Орг для графа иерархии", "contractor_id": contractor.id},
+        headers=superadmin_headers,
+    )
+    assert r.status_code == 201, r.text
+    org_id = r.json()["id"]
+
+    r2 = await client.get("/api/hierarchy/graph", headers=superadmin_headers)
+    assert r2.status_code == 200, r2.text
+    orgs_by_id = {o["id"]: o["name"] for o in r2.json()["orgs"]}
+    assert orgs_by_id.get(org_id) == "Орг для графа иерархии"

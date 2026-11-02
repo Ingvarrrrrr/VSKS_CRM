@@ -43,6 +43,36 @@ export function usePivotConfig() {
   function removeRow(idx: number) { state.rows.splice(idx, 1); dirty.value = true }
   function removeCol(idx: number) { state.cols.splice(idx, 1); dirty.value = true }
   function removeMeasure(idx: number) { state.measures.splice(idx, 1); dirty.value = true }
+
+  /** Drag-and-drop (usePivotDragDrop.ts): переставить измерение внутри Строк/Колонок
+   * или перенести между ними, по индексу источника/назначения. Единственное место,
+   * меняющее state.rows/state.cols при DnD — composable DnD сам массивы не трогает. */
+  function moveDimension(
+    from: 'rows' | 'cols', fromIdx: number,
+    to: 'rows' | 'cols', toIdx: number,
+  ) {
+    const fromArr = state[from]
+    if (fromIdx < 0 || fromIdx >= fromArr.length) return
+    const [item] = fromArr.splice(fromIdx, 1)
+    if (!item) return
+    const toArr = state[to]
+
+    let insertAt = toIdx
+    if (from === to && fromIdx < toIdx) insertAt -= 1  // сдвиг после удаления из того же массива
+
+    // Защита от дубля: если поле уже есть в целевом массиве (перетащили в тот же
+    // массив, где оно уже стояло дальше, или по ошибке повторно) — убираем старое
+    // вхождение перед вставкой, чтобы не получить два одинаковых чипа.
+    const dupIdx = toArr.findIndex((d) => d.key === item.key)
+    if (dupIdx !== -1) {
+      toArr.splice(dupIdx, 1)
+      if (dupIdx < insertAt) insertAt -= 1
+    }
+
+    insertAt = Math.max(0, Math.min(insertAt, toArr.length))
+    toArr.splice(insertAt, 0, item)
+    dirty.value = true
+  }
   function setFilter(key: string, value: any) {
     if (value === null || value === undefined || (Array.isArray(value) && !value.length)) delete state.filters[key]
     else state.filters[key] = value
@@ -92,6 +122,7 @@ export function usePivotConfig() {
     dirty,
     addRow, addCol, addMeasure,
     removeRow, removeCol, removeMeasure,
+    moveDimension,
     setFilter,
     addCalcColumn, removeCalcColumn,
     buildQuery, loadFromConfig, clear,

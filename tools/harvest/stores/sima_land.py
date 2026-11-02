@@ -63,6 +63,23 @@ def _characteristics_from(item: dict) -> list[dict]:
     weight = item.get("weight")
     if weight:
         characteristics.append({"name": "Вес", "value": str(weight), "unit": "г", "in_description": False})
+    prod_vol = item.get("product_volume")
+    if prod_vol is not None and str(prod_vol).strip():
+        characteristics.append({"name": "Объём", "value": str(prod_vol), "unit": "л", "in_description": False})
+    pack_vol = item.get("package_volume")
+    if pack_vol is not None and str(pack_vol).strip():
+        characteristics.append({"name": "Объём упаковки", "value": str(pack_vol), "unit": "л", "in_description": False})
+    box_vol = item.get("box_volume")
+    if box_vol is not None and str(box_vol).strip():
+        characteristics.append({"name": "Объём коробки", "value": str(box_vol), "unit": "л", "in_description": False})
+    in_box = item.get("in_box")
+    if in_box is not None and str(in_box).strip():
+        characteristics.append({"name": "Количество в коробке", "value": str(in_box), "unit": "шт", "in_description": False})
+    box_d = item.get("box_depth")
+    box_w = item.get("box_width")
+    box_h = item.get("box_height")
+    if box_d and box_w and box_h:
+        characteristics.append({"name": "Габариты коробки", "value": f"{box_d} × {box_w} × {box_h}", "unit": None, "in_description": False})
     return characteristics
 
 

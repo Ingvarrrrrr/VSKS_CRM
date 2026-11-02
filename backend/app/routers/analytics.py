@@ -14,6 +14,24 @@ from datetime import datetime
 router = APIRouter(prefix='/api/analytics', tags=['analytics'])
 
 
+def _safe_query_error_message(e: Exception) -> str:
+    """Понятное сообщение для QUERY_FAILED — без полного SQL-дампа.
+
+    Баг 23.10.2026: раньше в detail.message клался str(e) целиком — у
+    SQLAlchemy-исключений (ProgrammingError/DBAPIError и т.п.) это весь текст
+    SQL-запроса с параметрами, который долетал до фронта и там же показывался
+    пользователю ("Детали: [object Object]" — соседний баг в ApiErrorDialog.vue,
+    но сама полезная нагрузка всё равно непригодна для прочтения человеком).
+    Берём только тип исключения + первую строку текста (до SQL-деталей),
+    с обрезкой по длине — для разработчика достаточно, чтобы понять класс
+    ошибки, не вываливая конструкцию запроса/значения фильтров.
+    """
+    first_line = str(e).split('\n', 1)[0].strip()
+    if len(first_line) > 300:
+        first_line = first_line[:300] + '…'
+    return f'{type(e).__name__}: {first_line}' if first_line else type(e).__name__
+
+
 @router.get('/fields')
 async def get_fields(user: User = Depends(get_current_user)):
     """Каталог всех доступных полей для UI-конфигуратора отчётов."""
@@ -57,7 +75,7 @@ async def post_query(
     except Exception as e:
         import logging
         logging.exception('analytics/query failed')
-        raise HTTPException(status_code=500, detail={'code': 'QUERY_FAILED', 'message': str(e)})
+        raise HTTPException(status_code=500, detail={'code': 'QUERY_FAILED', 'message': _safe_query_error_message(e)})
 
 
 @router.post('/drill')
@@ -76,7 +94,7 @@ async def post_drill(
     except Exception as e:
         import logging
         logging.exception('analytics/drill failed')
-        raise HTTPException(status_code=500, detail={'code': 'DRILL_FAILED', 'message': str(e)})
+        raise HTTPException(status_code=500, detail={'code': 'DRILL_FAILED', 'message': _safe_query_error_message(e)})
 
 
 @router.post('/export.xlsx')

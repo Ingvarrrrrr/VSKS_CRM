@@ -10,7 +10,7 @@ from sqlalchemy import select, func, and_, literal, inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
-from sqlalchemy import text
+from sqlalchemy import literal_column
 
 from app.services.field_registry import (
     FIELDS, ALLOWED_KEYS, ALLOWED_AGGS, FieldDef, get_field,
@@ -43,16 +43,33 @@ _TABLE_PREFIX_MAP: Dict[str, Any] = {
 
 # === Базовые JOINs ===
 
-def _base_query(include_contract_items: bool = True):
-    """Базовый select из purchases + LEFT JOIN всех связанных таблиц.
+# Баг-фикс 23.10.2026 (прод висел >60с — декартово произведение из-за JOIN
+# contract_items без фильтра cardinality) + 23.10.2026 (та же причина у
+# events/bank_payments — проверено тестом test_pivot_engine_query.py:
+# SAWarning "cartesian product" на любом поле этих источников, т.к.
+# _base_query() их вообще не join'ил: таблица появлялась в SQL сама по
+# себе, без ON-условия, Postgres делал CROSS JOIN).
+#
+# Источники, для которых JOIN в _base_query добавляется ТОЛЬКО когда конфиг
+# реально использует поле оттуда (а не всегда) — см. _config_needs_optional_joins,
+# единственное место, решающее это по FieldDef.source (ПРАВИЛО №6).
+# contract_item/bank_payment — 1:N от purchases (JOIN размножает строки,
+# нужен контроль); event — N:1 (Purchase.event_id → Event.id, размножения
+# нет), но решение «нужен ли вообще» всё равно идёт через тот же механизм —
+# не по риску умножения, а чтобы не плодить в FROM лишние LEFT JOIN на
+# таблицы, которых конфиг не просил.
+_OPTIONAL_JOIN_SOURCES = frozenset({'contract_item', 'event', 'bank_payment'})
 
-    include_contract_items (баг-фикс 23.10.2026, REQUEST_TIMEOUT в конструкторе
-    сводных): JOIN contract_items размножает строки — одна закупка → N позиций
-    договора, и SUM(purchases.planned_quantity) по GROUP BY, не включающему
-    contract_items.*, умножается на число позиций. JOIN нужен ТОЛЬКО когда
-    конфиг реально ссылается на поле из contract_items — вызывающая сторона
-    решает это через `_config_needs_contract_items()` (единственное место,
-    где это определяется — см. ниже), не здесь.
+
+def _base_query(needed_joins: 'frozenset[str]' = frozenset()):
+    """Базовый select из purchases + LEFT JOIN связанных таблиц.
+
+    needed_joins — подмножество _OPTIONAL_JOIN_SOURCES, вычисленное вызывающей
+    стороной через _config_needs_optional_joins(). Таблицы из него джойнятся
+    ПО РЕАЛЬНОЙ СВЯЗИ с purchases:
+      - contract_item: ContractItem.purchase_id == Purchase.id (1:N)
+      - event:         Event.id == Purchase.event_id (N:1)
+      - bank_payment:  BankPayment.matched_purchase_id == Purchase.id (1:N)
     """
     from sqlalchemy.orm import aliased
     feo_l1 = aliased(FeoCategory, name='feo_l1')
@@ -69,29 +86,39 @@ def _base_query(include_contract_items: bool = True):
         .outerjoin(feo_l2, and_(feo_l3.parent_id == feo_l2.id, feo_l2.level == 2))
         .outerjoin(feo_l1, and_(feo_l2.parent_id == feo_l1.id, feo_l1.level == 1))
     )
-    if include_contract_items:
-        # Phase 27.1: LEFT JOIN contract_items для полей contracted_qty / contracted_total / etc.
-        # Cardinality: одна закупка → N contract_items → row-multiplication.
-        # Подключается только когда конфиг реально использует поле из contract_items
-        # (см. _config_needs_contract_items) — иначе SUM по полям закупки задваивается/
-        # утраивается без видимой причины.
+    if 'contract_item' in needed_joins:
+        # Phase 27.1: contracted_qty / contracted_total / etc. Cardinality: одна
+        # закупка → N contract_items → row-multiplication без фильтра/группировки
+        # по полям contract_items — именно поэтому опционален.
         q = q.outerjoin(ContractItem, Purchase.id == ContractItem.purchase_id)
+    if 'event' in needed_joins and _EVENT_MODEL is not None:
+        q = q.outerjoin(_EVENT_MODEL, Purchase.event_id == _EVENT_MODEL.id)
+    if 'bank_payment' in needed_joins:
+        # Платёжка опознаётся за закупкой через BankPayment.matched_purchase_id
+        # (FK на purchases.id, см. app/models/bank_statement.py). Одна закупка
+        # может иметь несколько платежей (предоплата+доплата и т.п.) — тот же
+        # риск умножения строк, что у contract_items, поэтому тоже опционален.
+        q = q.outerjoin(BankPayment, BankPayment.matched_purchase_id == Purchase.id)
     return q, feo_l1, feo_l2, feo_l3
 
 
-def _config_needs_contract_items(*field_key_lists: List[str]) -> bool:
-    """Единственное место, решающее нужен ли JOIN contract_items.
+def _config_needs_optional_joins(*field_key_lists: List[str]) -> 'frozenset[str]':
+    """Единственное место, решающее какие опциональные JOIN'ы (_OPTIONAL_JOIN_SOURCES)
+    нужны конфигу — обобщение прежней _config_needs_contract_items на events/
+    bank_payments (владелец, 23.10.2026): тот же механизм, тот же источник
+    истины (FieldDef.source), не вторая функция рядом.
 
-    Смотрит в field_registry.FieldDef.source — не хардкодит список ключей,
-    чтобы при добавлении нового поля с source='contract_item' решение
-    подхватилось автоматически (ПРАВИЛО №6 — один источник истины).
+    Не хардкодит список ключей — при добавлении нового поля с
+    source='contract_item'/'event'/'bank_payment' решение подхватится
+    автоматически (ПРАВИЛО №6 — один источник истины).
     """
+    needed: set = set()
     for keys in field_key_lists:
         for key in keys:
             f = get_field(key)
-            if f is not None and f.source == 'contract_item':
-                return True
-    return False
+            if f is not None and f.source in _OPTIONAL_JOIN_SOURCES:
+                needed.add(f.source)
+    return frozenset(needed)
 
 
 def _filter_keys_needing_contract_items(filters: Dict[str, Any]) -> List[str]:
@@ -106,7 +133,17 @@ def _resolve_column(field: FieldDef, feo_l1, feo_l2, feo_l3) -> ColumnElement:
     Поддерживает 3 случая:
     1. "purchases.column_name" → Purchase.column_name
     2. "feo_l1.name" → aliased FeoCategory column
-    3. CASE WHEN/EXTRACT/to_char/etc — raw text() как fallback
+    3. CASE WHEN/EXTRACT/to_char/COALESCE(...)/подзапросы — literal_column(expr) как fallback
+
+    Баг-фикс 23.10.2026 (прод, 500 при добавлении меры «Плановая сумма» с полем из
+    сложного выражения): раньше сложные случаи заворачивались в text(expr). TextClause
+    не реализует .label() (roles.py бросает NotImplementedError при select_cols.append(
+    col.label(dim_key)) в _execute_pivot) и не поддерживает .ilike()/.in_()/>=/.desc()
+    в _build_filters()/order_by — ломался и pivot, и фильтры по таким полям.
+    literal_column(expr) даёт тот же «сырой SQL-текст», но как полноценный ColumnElement:
+    .label() работает в select/group_by/agg, сравнения работают в WHERE, .desc()/.asc()
+    работают в ORDER BY. expr приходит только из захардкоженного field_registry.FIELDS,
+    не из пользовательского ввода — тот же уровень доверия, что был у text().
     """
     expr = field.sql_expr.strip()
 
@@ -126,8 +163,9 @@ def _resolve_column(field: FieldDef, feo_l1, feo_l2, feo_l3) -> ColumnElement:
                 if col is not None:
                     return col
 
-    # Сложные случаи (CASE/EXTRACT/to_char) — text()
-    return text(expr)
+    # Сложные случаи (CASE/EXTRACT/to_char/COALESCE/подзапросы) — literal_column(),
+    # не text() (см. докстринг выше).
+    return literal_column(expr)
 
 
 def _apply_agg(col_expr, agg: str):
@@ -224,7 +262,7 @@ async def execute_query(
 
     filters_cfg = config.get('filters', {})
     measure_fields = [m.get('field') for m in config.get('measures', []) if m.get('field')]
-    needs_contract_items = _config_needs_contract_items(
+    needed_joins = _config_needs_optional_joins(
         config.get('rows', []),
         config.get('cols', []),
         config.get('columns', []),
@@ -233,7 +271,7 @@ async def execute_query(
         _filter_keys_needing_contract_items(filters_cfg),
     )
 
-    base, feo_l1, feo_l2, feo_l3 = _base_query(include_contract_items=needs_contract_items)
+    base, feo_l1, feo_l2, feo_l3 = _base_query(needed_joins=needed_joins)
     base = _apply_org_filter(base, user)
     where = _build_filters(filters_cfg, feo_l1, feo_l2, feo_l3)
     if where:

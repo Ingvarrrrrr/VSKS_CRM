@@ -30,7 +30,11 @@
                       :key="f.key"
                       :title="f.label"
                       :subtitle="f.key"
-                      style="cursor: pointer"
+                      draggable="true"
+                      class="pivot-draggable-field"
+                      style="cursor: grab"
+                      @dragstart="dnd.onCatalogDragStart($event, f)"
+                      @dragend="dnd.resetDrag()"
                     >
                       <template #append>
                         <v-btn size="x-small" variant="text" icon="mdi-arrow-up" title="В строки" @click.stop="pivot.addRow(f)" />
@@ -48,8 +52,12 @@
                   :key="f.key"
                   :title="f.label"
                   :subtitle="f.group"
+                  draggable="true"
+                  class="pivot-draggable-field"
+                  style="cursor: grab"
                   @click="pivot.addMeasure(f)"
-                  style="cursor: pointer"
+                  @dragstart="dnd.onCatalogDragStart($event, f)"
+                  @dragend="dnd.resetDrag()"
                 >
                   <template #prepend><v-icon size="16">mdi-numeric</v-icon></template>
                 </v-list-item>
@@ -61,31 +69,65 @@
 
       <!-- CENTER: drop-зоны -->
       <v-col cols="5" class="px-2">
-        <v-card class="pa-3 mb-2">
+        <v-card
+          class="pa-3 mb-2 pivot-dropzone"
+          :class="{ 'pivot-dropzone--active': dnd.activeZone.value === 'rows' }"
+          @dragover="dnd.onZoneDragOver($event, 'rows')"
+          @dragleave="dnd.onZoneDragLeave($event, 'rows')"
+          @drop="dnd.onZoneDrop($event, 'rows')"
+        >
           <strong>Строки</strong>
-          <div v-if="!pivot.state.rows.length" class="text-grey text-caption">Нажмите ↑ у поля слева</div>
+          <div v-if="!pivot.state.rows.length" class="text-grey text-caption">
+            Перетащите поле сюда или нажмите ↑ у поля слева
+          </div>
           <v-chip
             v-for="(r, idx) in pivot.state.rows"
             :key="r.key"
-            class="ma-1"
+            class="ma-1 pivot-draggable-chip"
+            :class="{ 'pivot-chip--drop-before': dnd.activeZone.value === 'rows' && dnd.activeChipIndex.value === idx }"
             closable
+            draggable="true"
+            @dragstart="dnd.onChipDragStart($event, 'rows', idx, r)"
+            @dragend="dnd.resetDrag()"
+            @dragover="dnd.onChipDragOver($event, 'rows', idx)"
             @click:close="pivot.removeRow(idx)"
           >{{ r.label }}</v-chip>
         </v-card>
-        <v-card class="pa-3 mb-2">
+        <v-card
+          class="pa-3 mb-2 pivot-dropzone"
+          :class="{ 'pivot-dropzone--active': dnd.activeZone.value === 'cols' }"
+          @dragover="dnd.onZoneDragOver($event, 'cols')"
+          @dragleave="dnd.onZoneDragLeave($event, 'cols')"
+          @drop="dnd.onZoneDrop($event, 'cols')"
+        >
           <strong>Колонки</strong>
-          <div v-if="!pivot.state.cols.length" class="text-grey text-caption">Опционально</div>
+          <div v-if="!pivot.state.cols.length" class="text-grey text-caption">
+            Опционально — перетащите поле сюда или нажмите → у поля слева
+          </div>
           <v-chip
             v-for="(c, idx) in pivot.state.cols"
             :key="c.key"
-            class="ma-1"
+            class="ma-1 pivot-draggable-chip"
+            :class="{ 'pivot-chip--drop-before': dnd.activeZone.value === 'cols' && dnd.activeChipIndex.value === idx }"
             closable
+            draggable="true"
+            @dragstart="dnd.onChipDragStart($event, 'cols', idx, c)"
+            @dragend="dnd.resetDrag()"
+            @dragover="dnd.onChipDragOver($event, 'cols', idx)"
             @click:close="pivot.removeCol(idx)"
           >{{ c.label }}</v-chip>
         </v-card>
-        <v-card class="pa-3 mb-2">
+        <v-card
+          class="pa-3 mb-2 pivot-dropzone"
+          :class="{ 'pivot-dropzone--active': dnd.activeZone.value === 'measures' }"
+          @dragover="dnd.onZoneDragOver($event, 'measures')"
+          @dragleave="dnd.onZoneDragLeave($event, 'measures')"
+          @drop="dnd.onZoneDrop($event, 'measures')"
+        >
           <strong>Значения (меры)</strong>
-          <div v-if="!pivot.state.measures.length" class="text-grey text-caption">Выберите меру на вкладке «Меры»</div>
+          <div v-if="!pivot.state.measures.length" class="text-grey text-caption">
+            Перетащите меру сюда или выберите на вкладке «Меры»
+          </div>
           <v-list density="compact">
             <v-list-item v-for="(m, idx) in pivot.state.measures" :key="m.key">
               <v-list-item-title>{{ m.label }}</v-list-item-title>
@@ -183,29 +225,17 @@
             <v-chip size="x-small">{{ result.rows_count || 0 }} стр.</v-chip>
           </div>
           <v-progress-linear v-if="loading" indeterminate />
-          <v-table density="compact" v-if="result.rows?.length" hover>
-            <thead>
-              <tr>
-                <th v-for="d in pivot.state.rows" :key="d.key">{{ d.label }}</th>
-                <th v-for="d in pivot.state.cols" :key="d.key">{{ d.label }}</th>
-                <th v-for="m in pivot.state.measures" :key="m.key" class="text-right">{{ m.label }}</th>
-                <th v-for="cc in pivot.state.calc_columns" :key="JSON.stringify(cc)" class="text-right">{{ calcLabel(cc) }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, idx) in result.rows" :key="idx" style="cursor: pointer" @click="drillTo(row)">
-                <td v-for="d in pivot.state.rows" :key="d.key">{{ row[d.key] ?? '' }}</td>
-                <td v-for="d in pivot.state.cols" :key="d.key">{{ row[d.key] ?? '' }}</td>
-                <td v-for="m in pivot.state.measures" :key="m.key" class="text-right">{{ fmtNumber(row[m.key]) }}</td>
-                <td v-for="cc in pivot.state.calc_columns" :key="JSON.stringify(cc)" class="text-right">{{ fmtCalc(row, cc) }}</td>
-              </tr>
-              <tr v-if="result.totals" class="bg-blue-lighten-4 font-weight-bold">
-                <td :colspan="pivot.state.rows.length + pivot.state.cols.length">Итого</td>
-                <td v-for="m in pivot.state.measures" :key="m.key" class="text-right">{{ fmtNumber(result.totals[m.key]) }}</td>
-                <td v-for="cc in pivot.state.calc_columns" :key="JSON.stringify(cc)"></td>
-              </tr>
-            </tbody>
-          </v-table>
+          <PivotResultTable
+            v-if="result.rows?.length"
+            :row-dims="pivot.state.rows"
+            :col-dims="pivot.state.cols"
+            :measures="pivot.state.measures"
+            :calc-columns="pivot.state.calc_columns"
+            :rows="result.rows"
+            :totals="result.totals"
+            clickable-rows
+            @row-click="drillTo"
+          />
           <div v-else class="text-center text-grey pa-4">
             {{ previewEmptyHint }}
           </div>
@@ -296,13 +326,17 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { usePivotConfig } from '@/composables/usePivotConfig'
+import { usePivotDragDrop } from '@/composables/usePivotDragDrop'
 import { purchaseStatusLabel } from '@/constants/purchaseStatus'
+import PivotResultTable from '@/components/reports/PivotResultTable.vue'
+import { aggOptions, fmtNumber, calcLabel } from '@/utils/pivotDisplay'
 
 const route = useRoute()
 const router = useRouter()
 const { mobile } = useDisplay()
 const toast = useToast()
 const pivot = usePivotConfig()
+const dnd = usePivotDragDrop(pivot)
 
 const fields = ref<any[]>([])
 const groups = ref<string[]>([])
@@ -359,14 +393,6 @@ const statusOptions = [
   { value: 'delivered', title: purchaseStatusLabel('delivered') },
   { value: 'paid', title: purchaseStatusLabel('paid') },
 ]
-const aggOptions = [
-  { value: 'sum', title: 'Сумма' },
-  { value: 'avg', title: 'Среднее' },
-  { value: 'count', title: 'Количество' },
-  { value: 'count_distinct', title: 'Уникальных' },
-  { value: 'min', title: 'Минимум' },
-  { value: 'max', title: 'Максимум' },
-]
 const calcTypeOptions = [
   { value: 'share', title: '% от итога' },
   { value: 'cumulative', title: 'Нарастающий итог' },
@@ -386,28 +412,6 @@ const dimensionsByGroup = computed<Record<string, any[]>>(() => {
 })
 const measures = computed(() => fields.value.filter((f) => f.is_measure))
 
-function fmtNumber(v: any) {
-  if (v === null || v === undefined || v === '') return ''
-  const n = Number(v)
-  if (isNaN(n)) return String(v)
-  return n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
-}
-function fmtCalc(row: any, cc: any) {
-  if (cc.type === 'share') {
-    const v = row[`share_${cc.measure}`]
-    if (v === undefined) return ''
-    return (Number(v) * 100).toFixed(1) + '%'
-  }
-  if (cc.type === 'cumulative') return fmtNumber(row[`cumulative_${cc.measure}`])
-  if (cc.type === 'delta') return fmtNumber(row[`delta_${cc.actual}_vs_${cc.plan}`])
-  return ''
-}
-function calcLabel(cc: any) {
-  if (cc.type === 'share') return `% от итога: ${cc.measure}`
-  if (cc.type === 'cumulative') return `Нараст.: ${cc.measure}`
-  if (cc.type === 'delta') return `Δ: ${cc.actual} vs ${cc.plan}`
-  return ''
-}
 function updateDateFilter() {
   if (filterDateFrom.value || filterDateTo.value) {
     pivot.setFilter('contract_date', { from: filterDateFrom.value || undefined, to: filterDateTo.value || undefined })
@@ -584,3 +588,31 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+/* Drag-and-drop подсветка зон (usePivotDragDrop.ts) — только CSS, логика допуска
+   поля в зону целиком в composable, здесь лишь визуальный отклик. */
+.pivot-dropzone {
+  transition: background-color 0.12s ease, outline-color 0.12s ease;
+  outline: 2px dashed transparent;
+  outline-offset: -2px;
+}
+.pivot-dropzone--active {
+  background-color: rgba(var(--v-theme-primary), 0.08);
+  outline-color: rgb(var(--v-theme-primary));
+}
+.pivot-draggable-field {
+  cursor: grab;
+}
+.pivot-draggable-chip {
+  cursor: grab;
+}
+.pivot-draggable-chip:active {
+  cursor: grabbing;
+}
+.pivot-chip--drop-before {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 1px;
+}
+</style>
+

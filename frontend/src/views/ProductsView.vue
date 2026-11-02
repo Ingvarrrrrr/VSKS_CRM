@@ -77,6 +77,10 @@
         :loading="storeSearch.loading.value"
         :error="storeSearch.error.value"
         :has-searched="storeSearch.hasSearched.value"
+        :taking-url="storeSearch.takingUrl.value"
+        :take-error="storeSearch.takeError.value"
+        @take="onTakeOffer"
+        @dismiss-take-error="storeSearch.takeError.value = null"
       />
     </div>
 
@@ -277,6 +281,7 @@ import ProductsActualizeDialog from '@/components/products/ProductsActualizeDial
 import ProductDescriptionProposals from '@/components/products/ProductDescriptionProposals.vue'
 import SimilarProductsDialog from '@/components/products/SimilarProductsDialog.vue'
 import StoreOffersPanel from '@/components/products/StoreOffersPanel.vue'
+import type { StoreOfferDTO } from '@/api'
 
 import { useProductsData } from '@/composables/products/useProductsData'
 import { useProductsColumns, ALL_COLUMNS } from '@/composables/products/useProductsColumns'
@@ -374,6 +379,29 @@ const { tzVerifying, verifyTz, unverifyTz } = useProductsTz({ products, showSnac
 const {
   priceSourceOptions, actualizeDialog, actualizeForm, openActualizeDialog, saveActualization,
 } = useProductsActualize({ products, showSnack, onActualized: loadStaleCount })
+
+// «Взять» предложение живого поиска в каталог (владелец, 29.10.2026) —
+// takeOffer() сам пишет товар/цену на бэкенде (useStoreSearch.ts), здесь
+// только реакция на успех: список обновляем (новый/обновлённый товар должен
+// быть виден сразу), открываем его карточку (то же openEdit, что и у клика
+// по строке таблицы — ПРАВИЛО №6, второго способа открыть карточку не
+// заводим) и показываем тост с именем магазина. Ошибка уже показана текстом
+// в StoreOffersPanel.vue (storeSearch.takeError) — здесь просто не даём
+// необработанному исключению всплыть.
+async function onTakeOffer(offer: StoreOfferDTO): Promise<void> {
+  try {
+    const product = await storeSearch.takeOffer(offer)
+    await load()
+    showSnack(
+      product.created
+        ? `Товар добавлен в каталог из магазина ${offer.store_name}`
+        : `Обновлена цена из магазина ${offer.store_name}`,
+    )
+    openEdit(product)
+  } catch {
+    // Текст ошибки уже в storeSearch.takeError.value.
+  }
+}
 
 onMounted(() => { load(); loadProductOptions(); loadPendingProposalsCount(); loadStaleCount() })
 </script>

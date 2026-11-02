@@ -77,6 +77,26 @@ describe('useItemMatching.applyCandidate', () => {
   })
 })
 
+// Владелец, 27.10.2026: «если в файле нет страны — ничего не ставим» — страна
+// происхождения строки должна идти от Product.country_origin, не от дефолта.
+describe('useItemMatching.applyCandidate — country_origin', () => {
+  it('кандидат со страной — country_origin строки берётся от товара', () => {
+    const { applyCandidate } = useItemMatching()
+    const row = makeRow({ product_id: 1, country_origin: null } as any)
+    const cand = makeCandidate({ product_id: 2, name: 'Товар из Китая', country_origin: 'Китай' })
+    applyCandidate(row, cand)
+    expect((row as any).country_origin).toBe('Китай')
+  })
+
+  it('кандидат без страны (товар сменился) — country_origin строки становится null, не остаётся старым', () => {
+    const { applyCandidate } = useItemMatching()
+    const row = makeRow({ product_id: 1, country_origin: 'Китай' } as any)
+    const cand = makeCandidate({ product_id: 2, name: 'Товар без страны', country_origin: null })
+    applyCandidate(row, cand)
+    expect((row as any).country_origin).toBeNull()
+  })
+})
+
 describe('useItemMatching.clearBinding', () => {
   it('сбрасывает товар и связанные служебные поля', () => {
     const { clearBinding } = useItemMatching()

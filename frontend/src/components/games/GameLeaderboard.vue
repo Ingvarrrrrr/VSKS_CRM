@@ -19,10 +19,36 @@
       </button>
     </div>
 
+    <!-- Быстрое управление ником -->
+    <div class="gl-nick-card">
+      <div class="gl-nick-label">Ник в общем рейтинге:</div>
+      <div v-if="!editingNickname" class="gl-nick-display">
+        <span class="gl-nick-current">{{ currentNickname }}</span>
+        <button type="button" class="gl-nick-edit-btn" title="Сменить ник" @click="startEditNickname">
+          ✏️ Сменить
+        </button>
+      </div>
+      <div v-else class="gl-nick-edit-row">
+        <input
+          v-model="nicknameDraft"
+          class="gl-nick-input"
+          maxlength="24"
+          placeholder="Ник (2-24 симв.)"
+          @keydown.enter="saveNicknameAction"
+          @keydown.esc="editingNickname = false"
+        />
+        <button type="button" class="gl-nick-action-btn gl-nick-save" :disabled="saving" @click="saveNicknameAction">
+          {{ saving ? '…' : '✓' }}
+        </button>
+        <button type="button" class="gl-nick-action-btn" @click="editingNickname = false">✕</button>
+      </div>
+      <div v-if="nicknameError" class="gl-error">{{ nicknameError }}</div>
+    </div>
+
     <div class="gl-me">
-      <span>Мой лучший результат: <b>{{ data?.me.best ?? 0 }}</b></span>
+      <span>Мой рекорд: <b>{{ data?.me.best ?? 0 }}</b></span>
       <span v-if="tab === 'global' && data?.my_global_rank" class="gl-me-rank">
-        Место: {{ data.my_global_rank }}
+        Место: #{{ data.my_global_rank }}
       </span>
     </div>
 
@@ -35,8 +61,8 @@
         class="gl-row"
         :class="{ 'gl-row--me': row.is_me }"
       >
-        <span class="gl-rank">{{ i + 1 }}</span>
-        <span class="gl-name">{{ row.fio }}</span>
+        <span class="gl-rank">{{ i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1 }}</span>
+        <span class="gl-name">{{ row.fio }} <span v-if="row.is_me" class="gl-me-tag">(Вы)</span></span>
         <span class="gl-score">{{ row.score }}</span>
       </div>
     </div>
@@ -48,30 +74,10 @@
         class="gl-row"
         :class="{ 'gl-row--me': row.is_me }"
       >
-        <span class="gl-rank">{{ i + 1 }}</span>
-        <span class="gl-name">{{ row.nickname }}</span>
+        <span class="gl-rank">{{ i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1 }}</span>
+        <span class="gl-name">{{ row.nickname }} <span v-if="row.is_me" class="gl-me-tag">(Вы)</span></span>
         <span class="gl-score">{{ row.score }}</span>
       </div>
-    </div>
-
-    <div class="gl-nickname">
-      <template v-if="!editingNickname">
-        <span>Ник: {{ data?.me.nickname ?? 'Игрок' }}</span>
-        <button type="button" class="gl-link-btn" @click="startEditNickname">изменить</button>
-      </template>
-      <template v-else>
-        <input
-          v-model="nicknameDraft"
-          class="gl-nick-input"
-          maxlength="24"
-          placeholder="Ник (2-24 символа)"
-          @keydown.enter="saveNickname"
-          @keydown.esc="editingNickname = false"
-        />
-        <button type="button" class="gl-link-btn" @click="saveNickname">сохранить</button>
-        <button type="button" class="gl-link-btn" @click="editingNickname = false">отмена</button>
-      </template>
-      <span v-if="nicknameError" class="gl-error">{{ nicknameError }}</span>
     </div>
   </div>
 </template>
@@ -79,11 +85,12 @@
 <script setup lang="ts">
 // Компактная панель лидербордов для активной мини-игры (владелец, 30.10.2026).
 // Данные — ТОЛЬКО через gameScores.ts (Правило №6, единственный клиент).
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { GameId } from './gameRegistry'
 import {
   getLeaderboard,
   setNickname,
+  getCachedNickname,
   onGameOver,
   type LeaderboardResponse,
 } from './gameScores'
@@ -93,9 +100,17 @@ const props = defineProps<{ game: GameId }>()
 const tab = ref<'account' | 'global'>('account')
 const data = ref<LeaderboardResponse | null>(null)
 const loading = ref(false)
+const saving = ref(false)
 const editingNickname = ref(false)
 const nicknameDraft = ref('')
 const nicknameError = ref('')
+
+const currentNickname = computed(() => {
+  if (data.value?.me.nickname && data.value.me.nickname !== 'Игрок') {
+    return data.value.me.nickname
+  }
+  return getCachedNickname() || 'Игрок'
+})
 
 async function load() {
   loading.value = true
@@ -109,20 +124,25 @@ async function load() {
 }
 
 function startEditNickname() {
-  nicknameDraft.value = data.value?.me.nickname === 'Игрок' ? '' : (data.value?.me.nickname ?? '')
+  const cur = currentNickname.value
+  nicknameDraft.value = cur === 'Игрок' ? '' : cur
   nicknameError.value = ''
   editingNickname.value = true
 }
 
-async function saveNickname() {
+async function saveNicknameAction() {
   nicknameError.value = ''
+  saving.value = true
   try {
     const trimmed = nicknameDraft.value.trim()
     const result = await setNickname(trimmed.length ? trimmed : null)
     if (data.value) data.value.me.nickname = result
     editingNickname.value = false
+    await load()
   } catch (e: any) {
-    nicknameError.value = 'Не удалось сохранить ник'
+    nicknameError.value = 'Ошибка (2-24 симв., буквы/цифры/._-)'
+  } finally {
+    saving.value = false
   }
 }
 
@@ -152,8 +172,8 @@ onUnmounted(() => {
   background: #fff;
   border: 1px solid #111;
   padding: 8px;
-  min-width: 200px;
-  max-width: 260px;
+  min-width: 220px;
+  max-width: 280px;
   max-height: 100%;
   overflow-y: auto;
 }
@@ -177,6 +197,7 @@ onUnmounted(() => {
 .gl-tab--active {
   font-weight: 700;
   text-decoration: underline;
+  background: #f4f4f4;
 }
 
 .gl-tab:hover {
@@ -184,38 +205,132 @@ onUnmounted(() => {
   color: #fff;
 }
 
+.gl-nick-card {
+  background: #fafafa;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gl-nick-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #666;
+}
+
+.gl-nick-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.gl-nick-current {
+  font-weight: 700;
+  color: #111;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-nick-edit-btn {
+  background: none;
+  border: none;
+  color: #0284c7;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+.gl-nick-edit-btn:hover {
+  text-decoration: underline;
+}
+
+.gl-nick-edit-row {
+  display: flex;
+  gap: 4px;
+}
+
+.gl-nick-input {
+  border: 1px solid #111;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 2px;
+}
+
+.gl-nick-action-btn {
+  background: #fff;
+  border: 1px solid #111;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 2px;
+}
+.gl-nick-action-btn:hover {
+  background: #eee;
+}
+
+.gl-nick-save {
+  background: #111;
+  color: #fff;
+}
+.gl-nick-save:hover {
+  background: #333;
+}
+
 .gl-me {
   display: flex;
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
+  padding: 2px 0;
 }
 
 .gl-me-rank {
-  opacity: 0.8;
+  opacity: 0.85;
+  font-weight: 600;
+  color: #0284c7;
 }
 
 .gl-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   min-height: 40px;
 }
 
 .gl-row {
   display: flex;
   gap: 6px;
-  align-items: baseline;
+  align-items: center;
+  padding: 2px 4px;
+  border-radius: 3px;
 }
 
 .gl-row--me {
   font-weight: 700;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+}
+
+.gl-me-tag {
+  font-size: 10px;
+  color: #0284c7;
+  font-weight: 600;
+  margin-left: 2px;
 }
 
 .gl-rank {
-  width: 1.6em;
+  width: 1.8em;
   flex: 0 0 auto;
-  opacity: 0.7;
+  text-align: center;
 }
 
 .gl-name {
@@ -227,43 +342,17 @@ onUnmounted(() => {
 
 .gl-score {
   flex: 0 0 auto;
+  font-weight: 700;
 }
 
 .gl-empty {
   opacity: 0.6;
-  padding: 4px 0;
-}
-
-.gl-nickname {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  border-top: 1px solid #ccc;
-  padding-top: 6px;
-}
-
-.gl-link-btn {
-  background: none;
-  border: none;
-  color: #111;
-  text-decoration: underline;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 12px;
-  padding: 0;
-}
-
-.gl-nick-input {
-  border: 1px solid #111;
-  font-family: inherit;
-  font-size: 12px;
-  padding: 2px 4px;
-  width: 110px;
+  padding: 8px 0;
+  text-align: center;
 }
 
 .gl-error {
   color: #b00020;
-  flex: 1 1 100%;
+  font-size: 11px;
 }
 </style>

@@ -65,24 +65,52 @@ _CONVERTERS = {
     "store_nomenclature": from_store_nomenclature.convert,
 }
 
+# Задача (владелец, 27.10.2026): какие конвертеры УМЕЮТ дать country_origin
+# из исходных данных. Проверено на реальных файлах 27.10.2026:
+# baucenter/store_nomenclature парсят specifications по общему списку ключей
+# app.services.catalog_gala.country_names.COUNTRY_KEY_NAMES ("Страна
+# производства"/"Страна-производитель" и т.п.) и отдают item["country_origin"].
+# electro_mpo/vkusvill/gala_sheet — страну НЕ парсят вовсе (проверено: ни в
+# одном из source_files/electro_mpo_*.json и vkusvill_*.json нет ключа со
+# словом "стран" ни в specifications, ни в properties) — для них
+# item.get("country_origin") всегда None независимо от того, что в сыром
+# файле. Не добавляем парсинг «на всякий случай» без реального поля-источника
+# в данных — нет такого поля, нет и что извлекать.
+_COUNTRY_CAPABLE_SOURCES = {"baucenter", "store_nomenclature"}
+
 # Файлы по умолчанию (владелец, 26.10.2026) — ВСЕ выгрузки поставщиков,
 # кроме catalog_goods_1010.json (не формат catalog_gala — уже плоский формат
 # обычного импорта, без specifications/raw-структуры, см. отчёт --dry-run).
+#
+# ПЕРЕКЛЮЧЕНО на /app/source_files/ (владелец, 27.10.2026, задание по стране
+# производства): "C:\Users\1\Downloads\Товары и ТЗ\*.json" были перезаписаны
+# внешним исполнителем 27.10 в 08:53 — в новом k_spasatel-файле "Россия"
+# подставлена ВСЕМ 9761 позициям (не реальные данные поставщика, не
+# использовать для country_origin). /app/source_files/* внутри контейнера
+# backend_a — те же выгрузки, датированы 25-26.10, ДО подмены; скрипт
+# выполняется через `docker exec vsks_crm-backend_a-1 python -m
+# scripts.rebuild_descriptions_from_sources ...`, поэтому путь /app/... —
+# обычный локальный путь изнутри контейнера.
+# electro_mpo_nomenclature.json (без суффикса, 150 позиций) добавлен —
+# тот же формат, что у electro_mpo_nomenclature_1000/massive/breakers/cables
+# (name/category/section/subsection/price/unit/url/photo/specifications),
+# подхватывается тем же конвертером через префикс basename.
 DEFAULT_FILES = [
-    r"C:\Users\1\Downloads\Товары и ТЗ\fire_equipment_nomenclature.json",
-    r"C:\Users\1\Downloads\Товары и ТЗ\k_spasatel_rescue_nomenclature.json",
-    r"C:\Users\1\Downloads\Товары и ТЗ\promalp_height_safety_nomenclature.json",
-    r"C:\Users\1\Downloads\Товары и ТЗ\rescue_medical_nomenclature.json",
-    r"C:\Users\1\Downloads\Товары и ТЗ\sima_land_catalog_all.json",
-    r"C:\Users\1\Downloads\baucenter_construction_all.json",
-    r"C:\Users\1\Downloads\baucenter_electro_lighting.json",
-    r"C:\Users\1\Downloads\baucenter_tools_hardware.json",
-    r"C:\Users\1\Downloads\electro_mpo_breakers_all.json",
-    r"C:\Users\1\Downloads\electro_mpo_cables_all.json",
-    r"C:\Users\1\Downloads\electro_mpo_nomenclature_1000.json",
-    r"C:\Users\1\Downloads\electro_mpo_nomenclature_massive.json",
-    r"C:\Users\1\Downloads\vkusvill_grocery_nomenclature.json",
-    r"C:\Users\1\Downloads\vkusvill_grocery_nomenclature_1000.json",
+    r"/app/source_files/fire_equipment_nomenclature.json",
+    r"/app/source_files/k_spasatel_rescue_nomenclature.json",
+    r"/app/source_files/promalp_height_safety_nomenclature.json",
+    r"/app/source_files/rescue_medical_nomenclature.json",
+    r"/app/source_files/sima_land_catalog_all.json",
+    r"/app/source_files/baucenter_construction_all.json",
+    r"/app/source_files/baucenter_electro_lighting.json",
+    r"/app/source_files/baucenter_tools_hardware.json",
+    r"/app/source_files/electro_mpo_breakers_all.json",
+    r"/app/source_files/electro_mpo_cables_all.json",
+    r"/app/source_files/electro_mpo_nomenclature.json",
+    r"/app/source_files/electro_mpo_nomenclature_1000.json",
+    r"/app/source_files/electro_mpo_nomenclature_massive.json",
+    r"/app/source_files/vkusvill_grocery_nomenclature.json",
+    r"/app/source_files/vkusvill_grocery_nomenclature_1000.json",
 ]
 
 DEFAULT_CSV_PATH = (
@@ -92,6 +120,14 @@ DEFAULT_CSV_PATH = (
 
 LASTIK_PRODUCT_ID = 152085
 LASTIK_NAME_HINT = "ластик фигурный"
+
+# Контрольный пример владельца (27.10.2026, задание по country_origin):
+# товар id=103679 «Взрывозащищенный пожарный робот HighProp RXR-MC100BGD» —
+# в k_spasatel-файле страны нет, в БД (прод) стоит 'РФ' — должен попасть в
+# country_rf_to_null. Записываем отдельно от обычных до-20 samples (которые
+# заполняются по порядку обработки файла и этот конкретный id могут не
+# захватить).
+COUNTRY_CONTROL_PRODUCT_ID = 103679
 
 
 # --- выбор конвертера (переиспользует scripts/catalog_to_gala.py) ---------
@@ -215,6 +251,17 @@ class FileReport:
     country_to_non_rf: int = 0  # из них — новое значение НЕ "РФ"/"Россия"
     manufacturer_will_change: int = 0
     article_will_change: int = 0
+    # Задача (владелец, 27.10.2026, решение «если в файле нет страны —
+    # ничего не ставим»): НОВЫЙ отдельный счётчик — товар сопоставлен с
+    # файлом, в БД сейчас country_origin == "РФ" (точно, без учёта
+    # регистра/пробелов), а файл для этой позиции НЕ даёт страну вообще
+    # (item_country is None — конвертер либо не нашёл её в specifications,
+    # либо вообще не умеет её парсить, см. _COUNTRY_CAPABLE_SOURCES) →
+    # кандидат на очистку в NULL. Отдельный от country_will_change/
+    # country_to_non_rf счётчик — те считают случай "файл ДАЛ значение".
+    country_rf_to_null: int = 0
+    country_rf_to_null_samples: list = field(default_factory=list)  # [{"id","name"}], до 20 на файл
+    country_control_hit: Optional[dict] = None  # {"id","name"} если нашли COUNTRY_CONTROL_PRODUCT_ID
     shorter_samples: list = field(default_factory=list)  # [{"name","old","new"}]
     merged_samples: list = field(default_factory=list)  # [{"name","old","new","merged"}], до 10 на файл (Задача 1/3)
     change_samples: list = field(default_factory=list)  # [{"name","old","new"}], первые 3 изменённых файла (Задача 3)
@@ -317,6 +364,26 @@ async def _process_file(
         if article_changes:
             report.article_will_change += 1
 
+        # Задача (владелец, 27.10.2026, решение «если в файле нет страны —
+        # ничего не ставим»): ОТДЕЛЬНОЕ правило от блока выше — там действие
+        # только когда файл ДАЛ значение (item_country is not None). Здесь —
+        # обратный случай: файл НЕ дал страну вообще (item_country is None,
+        # независимо от причины — не нашёл в specifications или конвертер
+        # вообще не умеет её парсить, см. _COUNTRY_CAPABLE_SOURCES), а в БД
+        # сейчас стоит ровно "рф" (без учёта регистра/пробелов, та же
+        # нормализация _norm_simple, что и выше) — это дефолт модели
+        # (Product.country_origin, default="РФ", app/models/product.py), а
+        # не данные, которые кто-то реально вводил. Старое пустое значение
+        # (не "рф") — трогать НЕЧЕГО, не считаем кандидатом.
+        country_rf_to_null = item_country is None and _norm_simple(old_country) == "рф"
+        if country_rf_to_null:
+            report.country_rf_to_null += 1
+            product_id = getattr(product, "id", None)
+            if len(report.country_rf_to_null_samples) < 20:
+                report.country_rf_to_null_samples.append({"id": product_id, "name": name})
+            if product_id == COUNTRY_CONTROL_PRODUCT_ID:
+                report.country_control_hit = {"id": product_id, "name": name}
+
         if apply:
             # "Безусловно" — пишем, если файл дал значение, не только когда
             # оно отличается от старого (отличие и так гарантирует запись
@@ -326,6 +393,17 @@ async def _process_file(
             # description/set_product_description).
             if item_country is not None:
                 product.country_origin = item_country
+            elif country_rf_to_null:
+                # Явное присвоение None на UPDATE (товар уже persisted, НЕ
+                # INSERT) — python-side column default модели применяется
+                # ТОЛЬКО к INSERT, на UPDATE SQLAlchemy шлёт NULL как есть
+                # (проверено эмпирически, см.
+                # tests/test_products_import_apply_country_origin.py и
+                # tests/test_rebuild_descriptions_from_sources.py — тот же
+                # механизм, что и исправление products_import_apply.py, но
+                # там это INSERT, поэтому там нужен sqlalchemy.null(), а не
+                # обычный None).
+                product.country_origin = None
             if item_manufacturer is not None:
                 product.manufacturer = item_manufacturer
             if item_article is not None:
@@ -419,6 +497,9 @@ def _print_report(reports: list) -> None:
             # другое РФ-подобное значение).
             f"  country_origin: станет НЕ-РФ: {r.country_to_non_rf} "
             f"(всего изменится значение country_origin: {r.country_will_change})\n"
+            # Задача 27.10.2026: РФ (дефолт модели) → NULL, когда файл не
+            # даёт страну вообще — отдельный счётчик от блока выше.
+            f"  country_origin: 'РФ' -> NULL (файл не даёт страну): {r.country_rf_to_null}\n"
             # manufacturer и article считаются РАЗДЕЛЬНО (не одной суммой) —
             # каждое число: сколько товаров получат другое значение этого
             # поля (файл дал непустое значение, отличается от текущего в БД
@@ -426,6 +507,11 @@ def _print_report(reports: list) -> None:
             f"  manufacturer изменится: {r.manufacturer_will_change}, "
             f"article изменится: {r.article_will_change}"
         )
+        if r.country_rf_to_null_samples:
+            sample_str = ", ".join(
+                f"id={s['id']} «{s['name']}»" for s in r.country_rf_to_null_samples[:5]
+            )
+            print(f"    примеры (до 5 из {r.country_rf_to_null}): {sample_str}")
         total.total_items += r.total_items
         total.matched += r.matched
         total.unmatched += r.unmatched
@@ -441,6 +527,7 @@ def _print_report(reports: list) -> None:
         total.country_to_non_rf += r.country_to_non_rf
         total.manufacturer_will_change += r.manufacturer_will_change
         total.article_will_change += r.article_will_change
+        total.country_rf_to_null += r.country_rf_to_null
 
     print(
         f"\n=== ИТОГО (все файлы) ===\n"
@@ -453,9 +540,20 @@ def _print_report(reports: list) -> None:
         f"  ПРОВЕРКА — короче старого ПОСЛЕ объединения (должно быть 0): {total.shorter_after_merge_count}\n"
         f"  country_origin станет НЕ-РФ: {total.country_to_non_rf} "
         f"(всего изменится country_origin: {total.country_will_change})\n"
+        f"  country_origin 'РФ' -> NULL (файл не даёт страну): {total.country_rf_to_null}\n"
         f"  manufacturer изменится: {total.manufacturer_will_change}, "
         f"article изменится: {total.article_will_change}"
     )
+
+    # Контрольный пример владельца: товар id=103679 должен попасть в число
+    # найденных для k_spasatel (если в этом прогоне он включён в files).
+    # country_control_hit заполняется В _process_file ВСЕГДА при совпадении
+    # (не зависит от cap-а 20 обычных samples выше).
+    control_hit = next((r.country_control_hit for r in reports if r.country_control_hit), None)
+    if control_hit:
+        print(f"\n=== Контроль: товар id=103679 «{control_hit['name']}» НАЙДЕН среди РФ->NULL ===")
+    else:
+        print("\n=== Контроль: товар id=103679 НЕ найден среди РФ->NULL в этом прогоне ===")
 
     sima = next((r for r in reports if "sima_land" in r.path.lower()), None)
     if sima and not sima.error:

@@ -5,7 +5,7 @@
       <h2 class="text-h5">{{ configName || 'Запуск отчёта' }}</h2>
       <v-chip class="ml-3" size="small" color="primary" v-if="configId">{{ configId }}</v-chip>
       <v-spacer />
-      <v-btn variant="outlined" prepend-icon="mdi-pencil" :to="`/reports/lists/${configId}/edit`" class="mr-2" v-if="configId">Редактировать</v-btn>
+      <v-btn variant="outlined" prepend-icon="mdi-pencil" :to="editLink" class="mr-2" v-if="configId">Редактировать</v-btn>
       <v-btn color="success" prepend-icon="mdi-file-excel" @click="exportExcel" class="mr-2" :disabled="!rows.length">Excel</v-btn>
       <v-btn color="error" prepend-icon="mdi-file-pdf-box" @click="exportPdf" :disabled="!rows.length">PDF</v-btn>
     </div>
@@ -67,6 +67,16 @@
       <div v-if="!rows.length && !loading" class="text-center text-grey pa-6">
         {{ parameters.length ? 'Нажмите «Сформировать»' : 'Нет данных' }}
       </div>
+      <div v-else-if="kind === 'pivot'" style="overflow-x: auto">
+        <PivotResultTable
+          :row-dims="pivotRowDims"
+          :col-dims="pivotColDims"
+          :measures="pivotMeasures"
+          :calc-columns="pivotCalcColumns"
+          :rows="rows"
+          :totals="totals"
+        />
+      </div>
       <div v-else style="overflow-x: auto">
         <v-table density="compact" hover>
           <thead>
@@ -86,10 +96,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
+import PivotResultTable from '@/components/reports/PivotResultTable.vue'
+import { measureLabel } from '@/utils/pivotDisplay'
 
 const route = useRoute()
 const toast = useToast()
@@ -97,13 +109,36 @@ const toast = useToast()
 const configId = ref<number | null>(null)
 const configName = ref('')
 const configJson = ref<any>(null)
+const kind = ref<'list' | 'pivot' | 'dashboard' | string>('list')
 const parameters = ref<any[]>([])
 const paramValues = ref<Record<string, any>>({})
 const columns = ref<any[]>([])
 const rows = ref<any[]>([])
 const rowsCount = ref(0)
+const totals = ref<Record<string, any> | null>(null)
 const loading = ref(false)
 const subsidies = ref<any[]>([])
+// Каталог полей (/analytics/fields) — тот же запрос, что в PivotBuilderView.vue,
+// единственный источник человеческих подписей для измерений/мер сводной.
+const fieldsCatalog = ref<any[]>([])
+
+const editLink = computed(() =>
+  kind.value === 'pivot' ? `/reports/pivots/${configId.value}/edit` : `/reports/lists/${configId.value}/edit`,
+)
+
+function fieldLabel(key: string): string {
+  return fieldsCatalog.value.find((f) => f.key === key)?.label || key
+}
+
+const pivotRowDims = computed(() => (configJson.value?.rows || []).map((k: string) => ({ key: k, label: fieldLabel(k) })))
+const pivotColDims = computed(() => (configJson.value?.cols || []).map((k: string) => ({ key: k, label: fieldLabel(k) })))
+const pivotMeasures = computed(() =>
+  (configJson.value?.measures || []).map((m: any) => ({
+    key: `${m.agg}_${m.field}`,
+    label: measureLabel(fieldLabel(m.field), m.agg),
+  })),
+)
+const pivotCalcColumns = computed(() => configJson.value?.calc_columns || [])
 
 async function runReport() {
   loading.value = true
@@ -114,6 +149,7 @@ async function runReport() {
     })
     rows.value = result.rows || []
     rowsCount.value = result.rows_count || result.rows?.length || 0
+    totals.value = result.totals || null
     if (result.columns) columns.value = result.columns
   } catch (e: any) {
     toast.error('Ошибка запуска: ' + (e?.message || String(e)))
@@ -209,15 +245,23 @@ onMounted(async () => {
     ])
     configName.value = cfg.name
     configJson.value = cfg.config_json || null
+    kind.value = cfg.kind || 'list'
     parameters.value = cfg.parameters_json || []
     subsidies.value = Array.isArray(subs) ? subs : subs.items || []
-    // Build columns from config_json for header display
-    const c = cfg.config_json || {}
-    const fieldCols = (c.columns || []).map((k: string) => ({ key: k, header: k, field_type: '' }))
-    const compCols = (c.computed_columns || [])
-      .filter((cc: any) => cc.type !== 'format')
-      .map((cc: any) => ({ key: cc.key, header: cc.key, field_type: '' }))
-    columns.value = [...fieldCols, ...compCols]
+    if (kind.value === 'pivot') {
+      // Человеческие подписи измерений/мер — из общего каталога полей
+      // (тот же запрос, что в PivotBuilderView.vue).
+      const f = await apiFetch<any>('/analytics/fields')
+      fieldsCatalog.value = f.fields || []
+    } else {
+      // Build columns from config_json for header display
+      const c = cfg.config_json || {}
+      const fieldCols = (c.columns || []).map((k: string) => ({ key: k, header: k, field_type: '' }))
+      const compCols = (c.computed_columns || [])
+        .filter((cc: any) => cc.type !== 'format')
+        .map((cc: any) => ({ key: cc.key, header: cc.key, field_type: '' }))
+      columns.value = [...fieldCols, ...compCols]
+    }
     // Auto-run if no parameters
     if (!parameters.value.length) {
       await runReport()

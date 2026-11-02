@@ -33,6 +33,7 @@ export const statusColor: Record<string, string> = {
   approved: 'green',
   rejected: 'red',
   converted: 'purple',
+  waiting_funds: 'amber-darken-2',
   // Псевдо-статус строки авансового отчёта без заявки-компаньона (задача
   // владельца 16.10.2026, см. WishesView.vue::advanceToPseudoWish) — не статус
   // Wish, завязываться на него нигде кроме отображения чипа нельзя.
@@ -44,6 +45,7 @@ export const statusLabel: Record<string, string> = {
   approved: 'Согласовано',
   rejected: 'Не согласовано',
   converted: 'Передано в исполнение',
+  waiting_funds: 'Лист ожидания',
   advance: 'Авансовый',
 }
 

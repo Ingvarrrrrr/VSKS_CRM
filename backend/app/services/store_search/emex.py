@@ -90,6 +90,7 @@ def parse_search_json(raw: str) -> list[StoreOffer]:
 class EmexAdapter:
     key = STORE_KEY
     domain = DOMAIN
+    display_name = STORE_NAME_FALLBACK
 
     async def search(self, client, query: str, limit: int) -> list[StoreOffer]:
         if not looks_like_article_query(query):

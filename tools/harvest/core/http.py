@@ -105,6 +105,31 @@ def _raw_get(url: str, headers: dict) -> tuple[Optional[int], Optional[str]]:
     return _urllib_get(url, headers)
 
 
+def _urllib_post(url: str, headers: dict, data: bytes) -> tuple[Optional[int], Optional[str]]:
+    req = urllib.request.Request(url, headers=headers, data=data)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status, r.read().decode("utf-8", errors="ignore")
+    except urllib.error.HTTPError as e:
+        return e.code, None
+    except Exception:
+        return None, None
+
+
+def _httpx_post(url: str, headers: dict, data: bytes) -> tuple[Optional[int], Optional[str]]:
+    try:
+        resp = httpx.post(url, headers=headers, content=data, timeout=15.0, follow_redirects=True)
+        return resp.status_code, resp.text
+    except Exception:
+        return None, None
+
+
+def _raw_post(url: str, headers: dict, data: bytes) -> tuple[Optional[int], Optional[str]]:
+    if httpx is not None:
+        return _httpx_post(url, headers, data)
+    return _urllib_post(url, headers, data)
+
+
 class HttpClient:
     """Троттлинг per-domain (не глобальный, только при concurrency==1) +
     параллельные запросы per-domain (concurrency>1) + экспоненциальный
@@ -118,6 +143,7 @@ class HttpClient:
         pause_per_domain: float = 1.0,
         concurrency: int = 1,
         headers: Optional[dict] = None,
+        session_refresh_fn: Optional[object] = None,
     ):
         self.store = store
         self.base_pause_per_domain = pause_per_domain
@@ -125,10 +151,28 @@ class HttpClient:
         self.pause_per_domain = pause_per_domain
         self.concurrency = self.base_concurrency
         self.headers = headers or DEFAULT_HEADERS
+        self.session_refresh_fn = session_refresh_fn
         self._last_request_at: dict[str, float] = {}
         self._last_failure_at: Optional[float] = None
         self._rate_lock = threading.Lock()
         self.stats = FailureStats()
+
+    def is_bot_challenge(self, body: str) -> bool:
+        if not body or len(body) > 50000:
+            return False
+        return "gorizontal-vertikal" in body or ("__js_p_" in body and "get_jhash" in body)
+
+    def refresh_session_headers(self) -> bool:
+        if self.session_refresh_fn is None or not callable(self.session_refresh_fn):
+            return False
+        try:
+            new_headers = self.session_refresh_fn()
+            if new_headers and isinstance(new_headers, dict):
+                self.headers.update(new_headers)
+                return True
+        except Exception:
+            pass
+        return False
 
     def _throttle(self, domain: str) -> None:
         # При concurrency>1 троттлинг по минимальному зазору не применяется
@@ -160,14 +204,31 @@ class HttpClient:
 
     def fetch(self, url: str) -> Optional[str]:
         self._maybe_recover()
+        post_data = None
+        req_headers = dict(self.headers)
+        if "#POST:" in url:
+            url, post_body = url.split("#POST:", 1)
+            post_data = post_body.encode("utf-8")
+            req_headers["Content-Type"] = "application/json"
+            req_headers["Accept"] = "application/json"
         domain = urlparse(url).netloc
         status = None
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             self._throttle(domain)
-            status, body = _raw_get(url, self.headers)
+            if post_data is not None:
+                status, body = _raw_post(url, req_headers, post_data)
+            else:
+                status, body = _raw_get(url, req_headers)
 
             if status is not None and 200 <= status < 300 and body is not None:
+                if self.is_bot_challenge(body):
+                    if self.refresh_session_headers():
+                        req_headers = dict(self.headers)
+                        if post_data is not None:
+                            req_headers["Content-Type"] = "application/json"
+                            req_headers["Accept"] = "application/json"
+                        continue
                 self.stats.record_success()
                 return body
 
@@ -217,7 +278,17 @@ class HttpClient:
 def fetch(url: str, headers: Optional[dict] = None) -> Optional[str]:
     """Разовый запрос без троттлинга/backoff — только для единичных скачиваний
     (например, фикстур тестов). Основной сбор идёт через HttpClient.fetch()."""
-    status, body = _raw_get(url, headers or DEFAULT_HEADERS)
+    post_data = None
+    req_headers = dict(headers or DEFAULT_HEADERS)
+    if "#POST:" in url:
+        url, post_body = url.split("#POST:", 1)
+        post_data = post_body.encode("utf-8")
+        req_headers["Content-Type"] = "application/json"
+        req_headers["Accept"] = "application/json"
+    if post_data is not None:
+        status, body = _raw_post(url, req_headers, post_data)
+    else:
+        status, body = _raw_get(url, req_headers)
     if status is not None and 200 <= status < 300:
         return body
     return None

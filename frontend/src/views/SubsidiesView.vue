@@ -496,9 +496,9 @@ function openReqItemEdit(node: FeoNode, item: FeoReqItem) {
 function openReqItemEditFromActual(node: FeoNode, actual: FeoActualItem) {
   reqItemEditDialogRef.value?.openFromActual(node, actual)
 }
-// Позиция «из заявки»: точечно удалить её из плана нельзя — заявка уже согласована.
+// Позиция «из заявки»: пока закупка в скрытом статусе 'wishes', точечно удалить её нельзя — редактируют в заявке.
 function confirmReqItemDelete(node: FeoNode, item: FeoReqItem) {
-  if (item.wish_id) {
+  if (item.wish_id && item.purchase_status === 'wishes') {
     wishBlockedDeleteDialogRef.value?.open(item.wish_id, node.id, item.item_name, item.quantity, item.unit, item.total_price)
     return
   }

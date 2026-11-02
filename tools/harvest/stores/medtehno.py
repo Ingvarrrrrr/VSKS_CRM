@@ -28,15 +28,19 @@ tools.harvest.core.runner / gala_writer (ПРАВИЛО №5/№6).
     manufacturer_article всегда None, store_article — слаг из URL)."""
 from __future__ import annotations
 
-import html as _html
 import re
 from typing import Optional
 
 from tools.harvest.core import gala_writer
 from tools.harvest.core.runner import StoreSpec, harvest as _run_harvest
+from tools.harvest.stores._backend_bridge import load_store_page_module
 
 STORE_NAME = "medtehno"
 BASE_URL = "https://www.medtehno.ru"
+
+# Разбор страницы товара — backend/app/services/store_pages/medtehno.py
+# (ПРАВИЛО №6, тот же код нужен live-поиску, take.py, при довизите).
+parse_product_page = load_store_page_module("medtehno").parse_product_page
 
 # Статический короткий список разделов (владелец может расширить по
 # /catalog/ на главной). Полный обход каталога этим заданием не запускается.
@@ -49,20 +53,6 @@ CATEGORIES: list[tuple[str, str, list[str]]] = [
 ]
 
 _PRODUCT_LINK_RE = re.compile(r'href="(/catalog/invalid_kol/[a-zA-Z0-9_\-]+/)"')
-_H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.DOTALL)
-_PRICE_RE = re.compile(r'itemprop="price"[^>]*>([\d.]+)</span>')
-_IMAGE_RE = re.compile(r'itemprop="image"[^>]*content="([^"]+)"')
-_SPEC_ROW_RE = re.compile(
-    r"<tr[^>]*>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*</tr>", re.DOTALL
-)
-_TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _clean(text: str) -> str:
-    text = _TAG_RE.sub(" ", text)
-    text = _html.unescape(text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
 
 
 def page_url(category_url: str, page: int) -> str:
@@ -86,31 +76,6 @@ def needs_product_visit(candidate: dict) -> bool:
     # Цена, характеристики и имя полностью отсутствуют в карточке
     # раздела у этого шаблона — визит всегда обязателен.
     return True
-
-
-def parse_product_page(html: str, url: str) -> dict:
-    h1 = _H1_RE.search(html)
-    name = _clean(h1.group(1)) if h1 else None
-
-    price_m = _PRICE_RE.search(html)
-    price = float(price_m.group(1)) if price_m else None
-
-    image_m = _IMAGE_RE.search(html)
-    image = image_m.group(1) if image_m else None
-
-    characteristics = []
-    for raw_name, raw_value in _SPEC_ROW_RE.findall(html):
-        name_clean = _clean(raw_name).rstrip(":").strip()
-        value_clean = _clean(raw_value).strip()
-        if name_clean and value_clean and len(name_clean) < 80:
-            characteristics.append({"name": name_clean, "value": value_clean, "unit": None, "in_description": False})
-
-    return {
-        "name": name,
-        "price": price,
-        "photos": [image] if image else [],
-        "characteristics": characteristics,
-    }
 
 
 def build_item(candidate: dict, enrichment: dict, known_brands: set) -> Optional[dict]:

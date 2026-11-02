@@ -48,7 +48,81 @@
         </button>
       </div>
       <div class="duck-body">
-        <div ref="canvasWrapperRef" class="duck-canvas-wrapper" />
+        <div class="duck-canvas-wrapper">
+          <div ref="canvasWrapperRef" class="duck-canvas-container" />
+
+          <!-- Модальное окно по окончании игры (Game Over) -->
+          <div v-if="gameOverCard" class="duck-gameover-overlay">
+            <div class="duck-gameover-card">
+              <div class="duck-gameover-badge">ИГРА ОКОНЧЕНА</div>
+
+              <div class="duck-gameover-score-row">
+                <div class="duck-gameover-score-box">
+                  <span class="duck-gameover-score-label">Счёт</span>
+                  <span class="duck-gameover-score-val">{{ gameOverCard.score }}</span>
+                </div>
+                <div class="duck-gameover-score-box">
+                  <span class="duck-gameover-score-label">Рекорд</span>
+                  <span class="duck-gameover-score-val">{{ Math.max(currentBest, gameOverCard.score) }}</span>
+                </div>
+              </div>
+
+              <div v-if="gameOverCard.isNewRecord" class="duck-gameover-newrecord">
+                🎉 Новый личный рекорд!
+              </div>
+
+              <div class="duck-gameover-nick-box">
+                <label class="duck-gameover-nick-label">Ваш ник для таблицы рекордов:</label>
+                <div class="duck-gameover-nick-row">
+                  <input
+                    v-model="playerNickname"
+                    type="text"
+                    maxlength="24"
+                    placeholder="Введите ник (2-24 симв.)"
+                    class="duck-gameover-input"
+                    @keydown.enter.stop="saveGameOverNickname"
+                  />
+                  <button
+                    type="button"
+                    class="duck-gameover-save-btn"
+                    :class="{ 'duck-gameover-save-btn--saved': nickSaved }"
+                    :disabled="savingNick"
+                    @click="saveGameOverNickname"
+                  >
+                    {{ savingNick ? '...' : (nickSaved ? '✓ Сохранено' : 'Сохранить') }}
+                  </button>
+                </div>
+                <div v-if="nickError" class="duck-gameover-error">{{ nickError }}</div>
+              </div>
+
+              <div class="duck-gameover-actions">
+                <button
+                  type="button"
+                  class="duck-action-btn duck-action-btn--primary"
+                  @click="restartCurrentGame"
+                >
+                  ▶ Сыграть ещё раз
+                </button>
+                <button
+                  type="button"
+                  class="duck-action-btn"
+                  @click="openLeaderboard"
+                >
+                  🏆 Рекорды
+                </button>
+                <button
+                  type="button"
+                  class="duck-action-btn duck-action-btn--dismiss"
+                  title="Скрыть окно"
+                  @click="gameOverCard = null"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <GameLeaderboard v-if="showLeaderboard" :game="activeGame" class="duck-leaderboard" />
       </div>
     </div>
@@ -64,17 +138,20 @@
 //
 // Игры переключаются вкладками в заголовке, список — единственный источник
 // в gameRegistry.ts (Правило №6); переключение уничтожает текущую игру и
-// создаёт другую в том же canvas-контейнере. Файл оставлен под старым именем
-// DuckShootWindow.vue, чтобы не трогать единственный импорт в PlayWhileWaiting.vue.
+// создаёт другую в том же canvas-контейнере.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isBusy } from '../../composables/useLongWait'
 import { GAME_REGISTRY, isGameId, type GameId, type GameInstance } from './gameRegistry'
-import { getLeaderboard, reportGameOver } from './gameScores'
+import {
+  getLeaderboard,
+  reportGameOver,
+  getCachedNickname,
+  setNickname,
+  submitScore,
+} from './gameScores'
 import GameLeaderboard from './GameLeaderboard.vue'
 
 const GAME_STORAGE_KEY = 'gala_last_game'
-// Видимость панели рекордов — только в памяти (не сохраняется между
-// открытиями окна), кнопка-переключатель в заголовке.
 const showLeaderboard = ref(false)
 
 const props = defineProps<{ open: boolean }>()
@@ -85,6 +162,12 @@ const windowRef = ref<HTMLElement | null>(null)
 let game: GameInstance | null = null
 
 const activeGame = ref<GameId>(loadLastGame())
+const currentBest = ref(0)
+const playerNickname = ref(getCachedNickname())
+const gameOverCard = ref<{ score: number; isNewRecord: boolean } | null>(null)
+const savingNick = ref(false)
+const nickSaved = ref(false)
+const nickError = ref('')
 
 const titleText = computed(() => {
   const name = GAME_REGISTRY.find((g) => g.id === activeGame.value)?.title ?? ''
@@ -109,6 +192,7 @@ function saveLastGame(kind: GameId) {
 }
 
 function handleClose() {
+  gameOverCard.value = null
   emit('update:open', false)
   emit('close')
 }
@@ -126,20 +210,69 @@ function createGame(kind: GameId, container: HTMLElement): GameInstance {
   return def.create(container)
 }
 
-// Рекорд ("Рекорд" в HUD игры) — единственный источник истины сервер
-// (Правило №6): засеваем его из лидерборда сразу после создания игры и
-// обновляем ответом submitScore после каждого game over. Игра должна
-// работать офлайн/без входа — любая ошибка здесь только логируется.
 function wireGameScore(g: GameInstance, kind: GameId) {
   getLeaderboard(kind)
-    .then((board) => g.setBest(board.me.best))
+    .then((board) => {
+      g.setBest(board.me.best)
+      currentBest.value = board.me.best
+      if (board.me.nickname && board.me.nickname !== 'Игрок') {
+        playerNickname.value = board.me.nickname
+      }
+    })
     .catch((e) => console.warn('[games] getLeaderboard failed', e))
 
   g.onGameOver((score) => {
-    reportGameOver(kind, score).then((result) => {
-      if (result) g.setBest(result.best)
+    const isNew = score > currentBest.value
+    gameOverCard.value = { score, isNewRecord: isNew }
+    if (isNew) {
+      currentBest.value = score
+    }
+    const nickToSend = playerNickname.value?.trim() || undefined
+    reportGameOver(kind, score, nickToSend).then((result) => {
+      if (result) {
+        g.setBest(result.best)
+        currentBest.value = result.best
+      }
     })
   })
+}
+
+async function saveGameOverNickname() {
+  const nick = playerNickname.value.trim()
+  if (!nick || nick.length < 2 || nick.length > 24) {
+    nickError.value = 'Ник: от 2 до 24 символов'
+    return
+  }
+  savingNick.value = true
+  nickError.value = ''
+  try {
+    const saved = await setNickname(nick)
+    playerNickname.value = saved
+    nickSaved.value = true
+    if (gameOverCard.value) {
+      await submitScore(activeGame.value, gameOverCard.value.score, saved)
+    }
+    setTimeout(() => {
+      nickSaved.value = false
+    }, 2500)
+  } catch (e: any) {
+    nickError.value = 'Ошибка (2-24 симв., буквы/цифры/._-)'
+  } finally {
+    savingNick.value = false
+  }
+}
+
+function openLeaderboard() {
+  showLeaderboard.value = true
+}
+
+function restartCurrentGame() {
+  gameOverCard.value = null
+  if (props.open) {
+    unmountGame()
+    if (canvasWrapperRef.value) canvasWrapperRef.value.innerHTML = ''
+    mountGame()
+  }
 }
 
 function mountGame() {
@@ -157,11 +290,11 @@ function unmountGame() {
 
 function selectGame(kind: GameId) {
   if (activeGame.value === kind) return
+  gameOverCard.value = null
   activeGame.value = kind
   saveLastGame(kind)
   if (props.open) {
     unmountGame()
-    // очищаем canvas прошлой игры, чтобы новая создала свой
     if (canvasWrapperRef.value) canvasWrapperRef.value.innerHTML = ''
     mountGame()
   }
@@ -172,10 +305,12 @@ watch(
   async (isOpen) => {
     if (isOpen) {
       await nextTick()
+      gameOverCard.value = null
       if (canvasWrapperRef.value) canvasWrapperRef.value.innerHTML = ''
       mountGame()
       windowRef.value?.focus()
     } else {
+      gameOverCard.value = null
       unmountGame()
     }
   },
@@ -232,10 +367,6 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-/* Узкое окно (телефон): вкладок (4) + заголовка + ✕ не хватает места в одну
-   строку — заголовок переносится на вторую строку (order+flex-basis:100%),
-   вкладки остаются прокручиваемыми в первой строке, ✕ всегда виден справа
-   в первой строке (Правило №8 п.7 — ничего не должно уезжать за экран). */
 .duck-tabs {
   display: flex;
   gap: 4px;
@@ -320,8 +451,6 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
-/* Игра + панель рекордов: рядом на широком экране, друг под другом на узком
-   (телефон) — Правило №8 п.7, ничего не должно упираться за экран. */
 .duck-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -344,10 +473,196 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
+.duck-canvas-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Модальный оверлей Game Over */
+.duck-gameover-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  padding: 16px;
+  animation: duckFadeIn 0.15s ease-out;
+}
+
+@keyframes duckFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.duck-gameover-card {
+  background: #1e1e24;
+  color: #fff;
+  border: 2px solid #ffcc00;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(255, 204, 0, 0.2);
+  border-radius: 8px;
+  padding: 20px 24px;
+  max-width: 360px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.duck-gameover-badge {
+  text-align: center;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #ffcc00;
+  text-transform: uppercase;
+}
+
+.duck-gameover-score-row {
+  display: flex;
+  justify-content: space-around;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.duck-gameover-score-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.duck-gameover-score-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #aaa;
+}
+
+.duck-gameover-score-val {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.duck-gameover-newrecord {
+  text-align: center;
+  color: #4ade80;
+  font-weight: 700;
+  font-size: 13px;
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px dashed #4ade80;
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.duck-gameover-nick-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.duck-gameover-nick-label {
+  font-size: 11px;
+  color: #ccc;
+}
+
+.duck-gameover-nick-row {
+  display: flex;
+  gap: 6px;
+}
+
+.duck-gameover-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: #111;
+  border: 1px solid #555;
+  color: #fff;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  border-radius: 4px;
+  outline: none;
+}
+.duck-gameover-input:focus {
+  border-color: #ffcc00;
+}
+
+.duck-gameover-save-btn {
+  background: #333;
+  color: #ffcc00;
+  border: 1px solid #ffcc00;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.duck-gameover-save-btn:hover:not(:disabled) {
+  background: #ffcc00;
+  color: #111;
+}
+.duck-gameover-save-btn--saved {
+  background: #166534;
+  border-color: #22c55e;
+  color: #fff;
+}
+
+.duck-gameover-error {
+  font-size: 11px;
+  color: #f87171;
+}
+
+.duck-gameover-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.duck-action-btn {
+  flex: 1 1 auto;
+  background: #2a2a32;
+  color: #fff;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+}
+.duck-action-btn:hover {
+  background: #3a3a44;
+}
+.duck-action-btn--primary {
+  background: #ffcc00;
+  color: #111;
+  border-color: #ffcc00;
+}
+.duck-action-btn--primary:hover {
+  background: #ffe066;
+}
+.duck-action-btn--dismiss {
+  flex: 0 0 34px;
+  padding: 8px 0;
+}
+
 .duck-leaderboard {
   flex: 0 0 auto;
   border-left: 1px solid #111;
-  max-width: 260px;
+  max-width: 280px;
 }
 
 @media (max-width: 560px) {

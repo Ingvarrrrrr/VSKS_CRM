@@ -101,6 +101,12 @@
           </v-chip>
         </v-tab>
         <v-tab v-if="ctx.isManagerOrAdmin.value" value="all">Заявки сотрудников</v-tab>
+        <v-tab value="waiting_funds">
+          Лист ожидания
+          <v-chip v-if="wishCounts['waiting_funds']" size="x-small" color="amber-darken-2" variant="tonal" class="ml-2">
+            {{ wishCounts['waiting_funds'] }}
+          </v-chip>
+        </v-tab>
       </v-tabs>
       <v-spacer />
       <v-btn
@@ -256,6 +262,62 @@
       />
     </div>
 
+    <!-- ── WAITING FUNDS TAB ── -->
+    <div v-if="activeTab === 'waiting_funds' && !searchEmptyState">
+      <v-alert
+        type="info"
+        variant="tonal"
+        color="amber-darken-2"
+        icon="mdi-clock-outline"
+        class="mb-4"
+      >
+        <div class="d-flex align-center justify-space-between flex-wrap ga-2">
+          <div>
+            <strong>Лист ожидания:</strong> потребность в закупках подтверждена, но средства в текущем ФЭО ещё не выделены.
+            При появлении экономии или корректировке плана переведите заявку в План закупок.
+          </div>
+          <div v-if="waitingFundsSummary.count > 0" class="text-body-2 font-weight-bold">
+            В очереди: {{ waitingFundsSummary.count }} на сумму {{ formatMoney(waitingFundsSummary.total) }} ₽
+          </div>
+        </div>
+      </v-alert>
+      <WishBulkBar
+        :selected-count="bulk.selected.value.length"
+        :dialog="bulk.bulkDialog"
+        @action="a => bulk.openBulkConfirm(a, allWishesFiltered)"
+        @confirm="bulk.runBulkAction"
+        @close="bulk.closeBulkDialog"
+        @clear="bulk.clearSelection"
+      />
+      <WishAllTab
+        :items="allWishesFiltered"
+        :headers="wishHeadersAll"
+        :loading="loadingAll"
+        :col-filters="colFilters"
+        :col-sort="colSort"
+        :subsidy-name-options="wishSubsidyNameOptions"
+        :downloading-excel-id="downloadingExcelId"
+        :approving-id="approvingId"
+        :deleting-id="deletingId"
+        :selected="bulk.selected.value"
+        :all-filter="allFilter"
+        :all-filters="allFilters"
+        :wish-counts="wishCounts"
+        :all-wishes-truncated="allWishesTruncated"
+        :mobile="mobile"
+        @filter-change="onAllFilterChange"
+        @open-edit="onOpenEdit"
+        @kanban="onKanban"
+        @approve="onApprove"
+        @reject="onReject"
+        @convert="onConvert"
+        @delete="onDeleteWish"
+        @download-excel="onDownloadExcel"
+        @open-approve-sheet="onOpenApproveSheet"
+        @update:selected="v => bulk.selected.value = v"
+      />
+    </div>
+
     <WishFormDialog
       ref="formDialogRef"
       :mobile="mobile"
@@ -311,6 +373,7 @@
 // WishFormDialog.vue (через ref + defineExpose, единственно возможный способ
 // открыть карточку строкой из таблицы — см. комментарий в этом файле).
 import { computed, onMounted, ref, watch } from 'vue'
+import { formatMoney } from '@/utils/formatMoney'
 import { usePageCache } from '@/composables/usePageCache'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
@@ -356,9 +419,16 @@ const allFilters = [
   { value: 'draft', label: 'Черновики' },
   { value: 'submitted', label: 'Отправленные' },
   { value: 'approved', label: 'Одобренные' },
+  { value: 'waiting_funds', label: 'Лист ожидания' },
   { value: 'rejected', label: 'Отклонённые' },
   { value: 'converted', label: 'Конвертированные' },
 ]
+
+const waitingFundsSummary = computed(() => {
+  const items = allWishes.value.filter(w => w.status === 'waiting_funds')
+  const total = items.reduce((sum, w) => sum + (Number(w.estimated_price) || 0), 0)
+  return { count: items.length, total }
+})
 
 // Счётчики по вкладкам (GET /wishes/counts) — накопительные множества статусов.
 const wishCounts = ref<Record<string, number>>({})
@@ -519,6 +589,10 @@ async function reloadActiveTab() {
   if (activeTab.value === 'my') await loadWishes()
   else if (activeTab.value === 'incoming') await loadIncoming()
   else if (activeTab.value === 'all') await loadAllWishes()
+  else if (activeTab.value === 'waiting_funds') {
+    allFilter.value = 'waiting_funds'
+    await loadAllWishes()
+  }
 }
 
 function onAllFilterChange(v: string) {
@@ -631,6 +705,10 @@ watch(activeTab, (v) => {
   if (v === 'my') loadWishes()
   else if (v === 'incoming') loadIncoming()
   else if (v === 'all') loadAllWishes()
+  else if (v === 'waiting_funds') {
+    allFilter.value = 'waiting_funds'
+    loadAllWishes()
+  }
 })
 
 // Deep-link: ?open={wish_id} — открыть заявку напрямую, не дожидаясь загрузки
@@ -717,7 +795,7 @@ usePageCache({
   refresh: () => {
     if (activeTab.value === 'my') loadWishes()
     else if (activeTab.value === 'incoming') loadIncoming()
-    else if (activeTab.value === 'all') loadAllWishes()
+    else if (activeTab.value === 'all' || activeTab.value === 'waiting_funds') loadAllWishes()
     loadPendingWishConsents()
     if (route.query.open) void openFromQuery()
   },

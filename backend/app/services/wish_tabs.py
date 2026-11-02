@@ -31,11 +31,12 @@ from __future__ import annotations
 # на порядок словаря.
 WISH_TAB_STATUS_SETS: dict[str, set[str]] = {
     "draft": {"draft"},
-    "submitted": {"submitted", "approved", "rejected", "converted"},
+    "submitted": {"submitted", "approved", "rejected", "converted", "waiting_funds"},
     "approved": {"approved", "converted"},
+    "waiting_funds": {"waiting_funds"},
     "rejected": {"rejected"},
     "converted": {"converted"},
-    "all": {"draft", "submitted", "approved", "rejected", "converted"},
+    "all": {"draft", "submitted", "approved", "rejected", "converted", "waiting_funds"},
 }
 
 

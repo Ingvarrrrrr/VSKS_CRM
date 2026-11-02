@@ -1,12 +1,15 @@
 <!--
   StoreOffersPanel.vue — список предложений живого поиска по магазинам
-  (этап 1, владелец, 28.10.2026). ОДИН компонент (ПРАВИЛО №6) — используется
-  и в ProductPickerDialog.vue, и на странице «Товары» (ProductsView.vue),
-  через общий composables/products/useStoreSearch.ts.
+  (этап 1, владелец, 28.10.2026; «Взять» — этап 2, владелец, 29.10.2026).
+  ОДИН компонент (ПРАВИЛО №6) — используется и в ProductPickerDialog.vue, и
+  на странице «Товары» (ProductsView.vue), через общий composables/products/
+  useStoreSearch.ts.
 
-  Кнопки «Взять в закупку/каталог» ЗДЕСЬ НЕТ (этап 2) — только просмотр и
-  переход в магазин. Цена — formatMoney (ПРАВИЛО №6, тот же хелпер, что и
-  везде в проекте, второй форматтер не пишем).
+  Клик по карточке = «Взять» (emit('take', offer), владелец 29.10.2026:
+  «нажатие на найденный товар — команда применить»). Переход в магазин —
+  ТОЛЬКО через иконку ↗ справа (своя ссылка с @click.stop, чтобы не
+  запускать «Взять» одновременно). Цена — formatMoney (ПРАВИЛО №6, тот же
+  хелпер, что и везде в проекте, второй форматтер не пишем).
 -->
 <template>
   <div class="store-offers-panel">
@@ -20,18 +23,26 @@
     </v-alert>
 
     <template v-else-if="hasSearched">
+      <v-alert v-if="takeError" type="error" density="compact" variant="tonal" class="mb-2" closable
+        @click:close="emit('dismiss-take-error')">
+        {{ takeError }}
+      </v-alert>
+
       <div v-if="!offers.length" class="store-offers-panel__empty text-medium-emphasis">
         Ничего не нашлось в подключённых магазинах.
       </div>
 
       <div v-else class="store-offers-panel__list">
-        <a
+        <div
           v-for="(offer, idx) in offers"
           :key="`${offer.store_key}-${offer.store_article || idx}`"
-          :href="offer.url"
-          target="_blank"
-          rel="noopener noreferrer"
           class="store-offer-card"
+          :class="{ 'store-offer-card--busy': takingUrl === offer.url }"
+          :title="takingUrl === offer.url ? 'Берём товар…' : 'Нажмите, чтобы взять товар в базу'"
+          role="button"
+          tabindex="0"
+          @click="!takingUrl && emit('take', offer)"
+          @keydown.enter="!takingUrl && emit('take', offer)"
         >
           <img
             v-if="offer.image_url"
@@ -52,8 +63,12 @@
             </div>
           </div>
 
-          <v-icon icon="mdi-open-in-new" size="16" class="store-offer-card__open" />
-        </a>
+          <v-progress-circular v-if="takingUrl === offer.url" indeterminate size="18" width="2" color="primary" />
+          <a v-else :href="offer.url" target="_blank" rel="noopener noreferrer"
+            class="store-offer-card__open" title="Открыть в магазине" @click.stop>
+            <v-icon icon="mdi-open-in-new" size="16" />
+          </a>
+        </div>
       </div>
 
       <div v-if="stores.length" class="store-offers-panel__statuses text-caption text-medium-emphasis">
@@ -75,6 +90,16 @@ defineProps<{
   loading: boolean
   error: string | null
   hasSearched: boolean
+  /** url предложения, которое сейчас берётся (useStoreSearch.ts::takingUrl) —
+      спиннер рисуется ТОЛЬКО на этой карточке, остальные кликабельны как обычно. */
+  takingUrl?: string | null
+  /** Текст ошибки последнего «Взять» (useStoreSearch.ts::takeError). */
+  takeError?: string | null
+}>()
+
+const emit = defineEmits<{
+  take: [offer: StoreOfferDTO]
+  'dismiss-take-error': []
 }>()
 
 function statusText(s: StoreStatusDTO): string {
@@ -118,10 +143,19 @@ function statusText(s: StoreStatusDTO): string {
   border-radius: 8px;
   text-decoration: none;
   color: inherit;
+  cursor: pointer;
   transition: background-color 0.15s ease;
 }
 .store-offer-card:hover {
   background-color: rgba(0, 0, 0, 0.04);
+}
+.store-offer-card--busy {
+  opacity: 0.7;
+  cursor: default;
+  pointer-events: none;
+}
+.store-offer-card--busy .store-offer-card__open {
+  pointer-events: none;
 }
 
 .store-offer-card__img {

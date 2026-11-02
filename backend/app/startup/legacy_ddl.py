@@ -307,6 +307,64 @@ async def _contractor_card_columns():
         )
 
 
+async def _ensure_game_tables():
+    # Лидерборды мини-игр окна ожидания — game_scores и game_profiles
+    try:
+        from sqlalchemy import text as _text
+        async with engine.begin() as conn:
+            await conn.execute(_text("""
+                CREATE TABLE IF NOT EXISTS game_scores (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    account_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+                    game VARCHAR(16) NOT NULL,
+                    best_score INTEGER NOT NULL DEFAULT 0,
+                    plays INTEGER NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+            """))
+            await conn.execute(_text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'uq_game_score_user_game'
+                    ) THEN
+                        ALTER TABLE game_scores
+                            ADD CONSTRAINT uq_game_score_user_game UNIQUE (user_id, game);
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'ck_game_score_game_id'
+                    ) THEN
+                        ALTER TABLE game_scores
+                            ADD CONSTRAINT ck_game_score_game_id
+                            CHECK (game IN ('duck', 'brick', 'tank', 'egg'));
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'ck_game_score_non_negative'
+                    ) THEN
+                        ALTER TABLE game_scores
+                            ADD CONSTRAINT ck_game_score_non_negative CHECK (best_score >= 0);
+                    END IF;
+                END $$;
+            """))
+            await conn.execute(_text(
+                "CREATE INDEX IF NOT EXISTS ix_game_scores_game_best_score "
+                "ON game_scores (game, best_score DESC);"
+            ))
+            await conn.execute(_text(
+                "CREATE INDEX IF NOT EXISTS ix_game_scores_account_game "
+                "ON game_scores (account_id, game, best_score DESC);"
+            ))
+            await conn.execute(_text("""
+                CREATE TABLE IF NOT EXISTS game_profiles (
+                    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    nickname VARCHAR(24)
+                );
+            """))
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"game tables setup skipped (non-fatal): {e}")
+
+
 async def run():
     """Вызывает все idempotent DDL-блоки в исходном порядке (см. app/__init__.py.lifespan до разрезания)."""
     await _phase22_bank_payments_hash_migration()
@@ -327,3 +385,4 @@ async def run():
     await _b_event_wishes_event_id_column()
     await _b_exec_wishes_execution_columns()
     await _contractor_card_columns()
+    await _ensure_game_tables()

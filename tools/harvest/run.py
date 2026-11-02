@@ -25,7 +25,11 @@ import os
 
 from tools.harvest.core import quality
 from tools.harvest.stores import (
+    avtoall,
     baucenter,
+    bi_bi,
+    chipdip,
+    emex,
     ice_age,
     inari,
     k_spasatel,
@@ -57,6 +61,10 @@ DEFAULT_PREVIOUS_FILES = {
     "promalper": "promalper_height_safety_equipment.json",
     "safe": "safe_promet_metal_furniture_racks.json",
     "magazin01": "fire_equipment_nomenclature.json",
+    "bi_bi": "bi_bi_auto_catalog.json",
+    "emex": "emex_auto_catalog.json",
+    "avtoall": "avtoall_auto_catalog.json",
+    "chipdip": "chipdip_electronics_tools.json",
 }
 
 STORES = {
@@ -72,6 +80,10 @@ STORES = {
     "promalper": promalper.harvest,
     "safe": safe.harvest,
     "inari": inari.harvest,
+    "bi_bi": bi_bi.harvest,
+    "emex": emex.harvest,
+    "avtoall": avtoall.harvest,
+    "chipdip": chipdip.harvest,
 }
 
 

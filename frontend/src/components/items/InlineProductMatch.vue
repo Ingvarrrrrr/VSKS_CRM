@@ -10,7 +10,19 @@
     <!-- Perf (lazy matcher): when NOT active, render a lightweight read-only field
          instead of the heavy v-autocomplete (menu + virtual list + tooltips). The
          real autocomplete only mounts once the user focuses/clicks this row. On
-         initial render of N rows, ZERO v-autocomplete instances mount. -->
+         initial render of N rows, ZERO v-autocomplete instances mount.
+
+         ДЕФЕКТ приёмки 29.10.2026 (окно «Новая заявка», 1440×900, свежедобавленная
+         строка внизу формы): `@mousedown` БЕЗ `.prevent` — браузер успевает
+         нативно сфокусировать именно ЭТО readonly-поле (как ЛЮБОЙ клик по
+         focusable-элементу) ещё ДО того, как Vue успевает переключить active
+         и смонтировать настоящий v-autocomplete; нативный фокус без
+         preventScroll прокручивает тесный диалог далеко вниз (к «Обоснование
+         и сроки»), меню автозаполнения, которое открывается следом, попадает
+         в тот же скролл и закрывается. `.prevent` отменяет нативный
+         фокус/скролл СТАРОГО поля — activate() ниже сам фокусирует НОВОЕ
+         поле с preventScroll (см. его докстринг). -->
+
     <v-text-field
       v-if="!active"
       :model-value="displayName"
@@ -24,7 +36,7 @@
       class="flex-grow-1 inline-match-lazy"
       style="min-width:200px"
       @focus="activate"
-      @mousedown="activate"
+      @mousedown.prevent="activate"
       @paste="onLazyPaste"
     />
 
@@ -104,14 +116,34 @@
           </div>
         </v-list-item>
       </template>
-      <template v-if="!hideCreateNew" #append-item>
-        <v-divider />
-        <v-list-item link @click="emitCreateNew">
-          <template #prepend>
-            <v-icon icon="mdi-plus" color="teal" />
-          </template>
-          <v-list-item-title class="text-teal">Создать новый товар…</v-list-item-title>
-        </v-list-item>
+      <template #append-item>
+        <!-- Жалоба владельца (29.10.2026): «при формировании заявки вообще
+             нет возможности искать по магазинам, только в БД». Пункт виден
+             ВСЕГДА (не только когда !hideCreateNew — поиск в магазинах не
+             пишет в каталог сам по себе, в отличие от «Создать новый товар»,
+             так что ограничение supportsFullProductDialog к нему не
+             относится), но только когда есть что искать (тот же порог длины,
+             что у подбора по каталогу). -->
+        <template v-if="!hideCreateNew">
+          <v-divider />
+          <v-list-item link @click="emitCreateNew">
+            <template #prepend>
+              <v-icon icon="mdi-plus" color="teal" />
+            </template>
+            <v-list-item-title class="text-teal">Создать новый товар…</v-list-item-title>
+          </v-list-item>
+        </template>
+        <template v-if="!isSearchTooShort(searchText)">
+          <v-divider />
+          <v-list-item link @click="emitStoreSearch">
+            <template #prepend>
+              <v-icon icon="mdi-storefront-search-outline" color="primary" />
+            </template>
+            <v-list-item-title class="text-primary">
+              Искать «{{ truncatedSearchText }}» в магазинах
+            </v-list-item-title>
+          </v-list-item>
+        </template>
       </template>
     </v-autocomplete>
   </div>
@@ -170,6 +202,11 @@ const emit = defineEmits<{
    *  candidate. Row-based consumers (ItemsTableFlat and friends, PurchaseItemsEditor)
    *  already own item_name via pick/import and don't listen to this — additive only. */
   'update:search-text': [text: string]
+  /** Пункт «Искать «…» в магазинах» (владелец, 29.10.2026) — родитель
+   *  открывает ТОТ ЖЕ ProductPickerDialog.vue, что и кнопка-скрепка/«Новый
+   *  товар» (ПРАВИЛО №6, второго окна поиска не заводим), с этим текстом и
+   *  сразу запущенным поиском в магазинах. */
+  'store-search': [query: string]
 }>()
 
 const { matching, matchOne } = useItemMatching()
@@ -183,7 +220,7 @@ const searchText = ref(props.itemName || '')
 // shown instead. Once activated for a row it stays active for the session — that
 // is intentional and keeps the logic simple while avoiding N mounted autocompletes.
 const active = ref(false)
-const autocompleteRef = ref<{ focus?: () => void; blur?: () => void } | null>(null)
+const autocompleteRef = ref<{ focus?: () => void; blur?: () => void; $el?: HTMLElement } | null>(null)
 
 // Read-only display text for the lightweight (inactive) state. For both bound
 // (productId != null) and unbound rows the visible label is the row's item_name.
@@ -197,8 +234,30 @@ function activate() {
     void runMatch(searchText.value)
   }
   // Focus the real autocomplete once it has mounted.
+  //
+  // ДЕФЕКТ приёмки 29.10.2026 (окно «Новая заявка», 1440×900, строка добавлена
+  // ближе к низу формы): обычный `.focus()` без preventScroll — браузер сам
+  // решает, КАК прокрутить скроллящийся контейнер (.v-card-text диалога),
+  // чтобы новый фокус был виден, и на тесной высоте проматывает диалог
+  // слишком далеко вниз (к «Обоснование и сроки», см. отчёт приёмки) — меню
+  // автозаполнения, которое только что открылось, попадает в тот же скролл
+  // контейнера и закрывается (scroll-strategy меню). На высоте 2000px диалог
+  // целиком помещается без скролла — потому там не воспроизводилось.
+  // Фикс — focus({preventScroll:true}) на НАСТОЯЩЕМ input (сам Vuetify
+  // .focus() опции не прокидывает). Без своего scrollIntoView() ПОСЛЕ —
+  // строка и так видна (иначе по ней не кликнуть), а любой дополнительный
+  // скролл именно в момент открытия меню — та прокрутка контейнера, от
+  // которой меню и закрывается (reposition-стратегия v-menu не успевает
+  // отработать достаточно быстро на резком скачке скролла). preventScroll
+  // достаточно: он не даёт браузеру самому решить, куда скроллить контейнер
+  // диалога ради фокуса.
   void nextTick(() => {
-    autocompleteRef.value?.focus?.()
+    const inputEl = autocompleteRef.value?.$el?.querySelector('input') as HTMLInputElement | null
+    if (inputEl) {
+      inputEl.focus({ preventScroll: true })
+    } else {
+      autocompleteRef.value?.focus?.()
+    }
   })
 }
 
@@ -385,6 +444,18 @@ function onSelect(val: MatchCandidate | null) {
 // обычного выбора кандидата — не второй механизм закрытия меню.
 function emitCreateNew() {
   emit('create-new')
+  void nextTick(() => { autocompleteRef.value?.blur?.() })
+}
+
+// «Искать в магазинах» (владелец, 29.10.2026) — тот же blur-после-клика
+// приём, что у emitCreateNew выше (иначе поле остаётся с двумя строками
+// текста и открытым меню, см. комментарий onSelect).
+const truncatedSearchText = computed(() => {
+  const t = searchText.value || ''
+  return t.length > 40 ? `${t.slice(0, 40)}…` : t
+})
+function emitStoreSearch() {
+  emit('store-search', searchText.value || '')
   void nextTick(() => { autocompleteRef.value?.blur?.() })
 }
 

@@ -33,7 +33,6 @@ tools.harvest.core.runner / gala_writer (ПРАВИЛО №5/№6).
     и страна есть только на странице товара."""
 from __future__ import annotations
 
-import html as _html
 import json
 import re
 from typing import Optional
@@ -41,9 +40,15 @@ from typing import Optional
 from tools.harvest.core import gala_writer
 from tools.harvest.core.http import HttpClient
 from tools.harvest.core.runner import StoreSpec, harvest as _run_harvest
+from tools.harvest.stores._backend_bridge import load_store_page_module
 
 STORE_NAME = "baucenter"
 BASE_URL = "https://baucenter.ru"
+
+# Разбор страницы товара (Next.js data-JSON) — backend/app/services/
+# store_pages/baucenter.py (ПРАВИЛО №6, тот же код нужен live-поиску,
+# take.py, при довизите).
+parse_product_page = load_store_page_module("baucenter").parse_product_page
 _FALLBACK_BUILD_ID = "lCk8p3TEBrSa1BteCoW7A"
 
 # Статический короткий список листовых разделов — по одному на каждую из
@@ -67,10 +72,6 @@ CATEGORIES: list[tuple[str, str, list[str]]] = [
         ["Инструмент", "Столярно-слесарный"],
     ),
 ]
-
-_COUNTRY_TITLE_RE = re.compile(r"^страна", re.IGNORECASE)
-_TAG_RE = re.compile(r"<[^>]+>")
-
 
 def discover_build_id(client: HttpClient) -> str:
     """Живой запрос главной страницы за текущим buildId (меняется при
@@ -96,15 +97,6 @@ def make_page_url(build_id: str):
     def _page_url(category_slug: str, page: int) -> str:
         return page_url(category_slug, page).format(build_id=build_id)
     return _page_url
-
-
-def _clean_description(raw: Optional[str]) -> Optional[str]:
-    if not raw:
-        return None
-    text = _TAG_RE.sub(" ", raw)
-    text = _html.unescape(text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text or None
 
 
 def parse_category_page(raw: str) -> list[dict]:
@@ -138,36 +130,6 @@ def needs_product_visit(candidate: dict) -> bool:
     # Характеристики и страна происхождения есть только на странице
     # товара (листинг их не несёт) — визит нужен всегда.
     return True
-
-
-def parse_product_page(html_text: str, url: str) -> dict:
-    try:
-        data = json.loads(html_text)
-    except (json.JSONDecodeError, ValueError):
-        return {}
-    product = (
-        data.get("pageProps", {})
-        .get("initialState", {})
-        .get("product", {})
-        .get("currentProductData", {})
-        .get("product", {})
-    )
-    characteristics = []
-    country = None
-    for prop in product.get("properties") or []:
-        title = (prop.get("title") or "").strip()
-        value = (prop.get("value") or "").strip()
-        if not title or not value:
-            continue
-        characteristics.append({"name": title, "value": value, "unit": None, "in_description": False})
-        if _COUNTRY_TITLE_RE.match(title):
-            country = value
-    return {
-        "brand": (product.get("brand") or "").strip() or None,
-        "characteristics": characteristics,
-        "description": _clean_description(product.get("description")),
-        "country_origin": country,
-    }
 
 
 def build_item(candidate: dict, enrichment: dict, known_brands: set) -> Optional[dict]:

@@ -235,10 +235,25 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
         return field ? `${field}: ${e.msg}` : e.msg
       }).join('; ')
     }
+    // Баг 23.10.2026 («Детали: [object Object]» в ApiErrorDialog.vue): details
+    // раньше мог стать объектом (structuredDetail / parsed?.details), а ApiErrorDialog
+    // склеивает его прямо в строку шаблона (`${header}\n\n${error.value.details}`) —
+    // объект превращается в литеральную строку "[object Object]". details — ВСЕГДА
+    // строка: объект сериализуется через JSON.stringify с отступами (читаемо в «Технических
+    // деталях»/копировании), а не через String()/конкатенацию.
+    const rawDetails = structuredDetail || parsed?.details
+    let detailsStr = ''
+    if (rawDetails && typeof rawDetails === 'object') {
+      try { detailsStr = JSON.stringify(rawDetails, null, 2) } catch { detailsStr = String(rawDetails) }
+    } else if (rawDetails) {
+      detailsStr = String(rawDetails)
+    } else {
+      detailsStr = text || ''
+    }
     const payload = {
       code: structuredDetail?.code || parsed?.code || `HTTP_${res.status}`,
       message: detailMsg,
-      details: structuredDetail || parsed?.details || text || '',
+      details: detailsStr,
       correlation_id: parsed?.correlation_id || res.headers.get('X-Correlation-ID') || '',
     }
     // 409 Conflict = expected business logic error; handled locally by callers, no global dialog
@@ -326,4 +341,15 @@ export async function fetchStoreSearch(q: string, stores?: string[], signal?: Ab
   params.set('q', q)
   for (const s of stores || []) params.append('stores', s)
   return apiFetch<StoreSearchResponse>(`/products/store-search?${params.toString()}`, { signal })
+}
+
+// «Взять» предложение живого поиска в каталог (этап 2, владелец, 29.10.2026) —
+// POST /api/products/store-take, backend/app/services/store_search/take.py.
+// Возвращает ПОЛНЫЙ товар каталога (та же форма ProductOut, что отдают GET
+// /api/products/{id} и подбор товара) — вызывающий код (StoreOffersPanel.vue
+// через useStoreSearch.ts) подставляет результат туда же, куда обычный выбор
+// товара из каталога (ПРАВИЛО №6 — второй путь выбора не заводим).
+export async function fetchStoreTake(storeKey: string, url: string, query: string): Promise<any> {
+  const body: any = { store_key: storeKey, url, query }
+  return apiFetch<any>('/products/store-take', { method: 'POST', body })
 }

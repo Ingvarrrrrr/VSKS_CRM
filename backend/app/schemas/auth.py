@@ -192,7 +192,12 @@ class OrganizationCreate(BaseModel):
 
 class OrganizationOut(BaseModel):
     id: int
-    name: str
+    # Правило №6 (миграция w6x7y8z9a0b1): name — column_property, читающая
+    # Contractor.name. У org без contractor_id (не должно происходить, но
+    # доработка 17.10.2026 нашла осиротевшие org в деве без привязки —
+    # утечка изоляции тестов, не прод-путь) значение None — список
+    # организаций не должен падать 500 целиком из-за ОДНОЙ такой записи.
+    name: Optional[str] = None
     full_name: Optional[str] = None
     inn: Optional[str] = None
     kpp: Optional[str] = None
@@ -232,14 +237,14 @@ class OrganizationOut(BaseModel):
     website: Optional[str] = None
     # Fabrikant: город заключения договора
     contract_city: Optional[str] = None
+    # Владелец 27.10.2026: исключения регистра/написания для подстановки
+    # полного наименования организации в документы.
+    doc_name_exceptions: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class RegisterRequest(BaseModel):
     org_name: str
     org_inn: Optional[str] = None
-    # Владелец 27.10.2026: исключения регистра/написания для подстановки
-    # полного наименования организации в документы.
-    doc_name_exceptions: Optional[str] = None
     username: Optional[str] = None
     password: str
     full_name: Optional[str] = None

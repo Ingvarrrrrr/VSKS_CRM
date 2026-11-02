@@ -60,6 +60,7 @@ def parse_search_html_links(html: str) -> list[tuple[str, str]]:
 class Magazin01Adapter:
     key = STORE_KEY
     domain = DOMAIN
+    display_name = STORE_NAME_FALLBACK
 
     async def search(self, client, query: str, limit: int) -> list[StoreOffer]:
         url = SEARCH_URL.format(q=quote(query))

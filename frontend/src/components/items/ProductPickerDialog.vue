@@ -93,7 +93,11 @@
             :loading="storeSearch.loading.value"
             :error="storeSearch.error.value"
             :has-searched="storeSearch.hasSearched.value"
+            :taking-url="storeSearch.takingUrl.value"
+            :take-error="storeSearch.takeError.value"
             class="mt-2 text-left"
+            @take="onTakeOffer"
+            @dismiss-take-error="storeSearch.takeError.value = null"
           />
         </div>
       </v-card-text>
@@ -112,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import type { ProductLike } from '@/components/items/types'
 import { useDisplay } from 'vuetify'
 import { formatUnitWithPack } from '@/utils/units'
@@ -120,6 +124,7 @@ import { formatUnitWithPack } from '@/utils/units'
 // useProductSearch.ts/useItemsCatalog.ts::runPickerSearch.
 import { SEARCH_PLACEHOLDER, searchRemainingHint, isSearchTooShort } from '@/composables/products/useProductSearch'
 import { useStoreSearch } from '@/composables/products/useStoreSearch'
+import type { StoreOfferDTO } from '@/api'
 import StoreOffersPanel from '@/components/products/StoreOffersPanel.vue'
 
 const { mobile } = useDisplay()
@@ -141,6 +146,12 @@ const props = defineProps<{
       такого поля — PlanToRequestDialog.vue), просто не передаёт пропс —
       тогда авто-запуска нет, остаётся только кнопка. */
   querySpecific?: boolean
+  /** «Искать «…» в магазинах» из InlineProductMatch.vue (владелец,
+   *  29.10.2026) — true, когда родитель открыл этот диалог ИМЕННО по этому
+   *  пункту (useItemsCatalog.ts::openProductPickerForStoreSearch): поиск в
+   *  магазинах запускается сам при открытии, не дожидаясь клика по кнопке
+   *  «Искать в магазинах»/авто-срабатывания по querySpecific. */
+  autoStoreSearch?: boolean
 }>()
 
 const remainingHint = computed(() => searchRemainingHint(props.search))
@@ -163,8 +174,47 @@ function runStoreSearch(): void {
   void storeSearch.search(props.search)
 }
 
+// «Взять» предложение живого поиска (владелец, 29.10.2026) — ТОТ ЖЕ emit
+// 'pick', что и выбор товара из нашей базы (строка таблицы выше, ПРАВИЛО
+// №6 — второй путь выбора не заводим): родитель (selectFromPicker/
+// onItemProductSelect в useItemsCatalog.ts) сам закрывает диалог и
+// применяет товар к строке. Ошибка — просто текст в StoreOffersPanel.vue
+// (storeSearch.takeError), здесь только не даём необработанному исключению
+// всплыть дальше.
+async function onTakeOffer(offer: StoreOfferDTO): Promise<void> {
+  try {
+    const product = await storeSearch.takeOffer(offer)
+    emit('pick', product)
+  } catch {
+    // Текст ошибки уже выставлен в storeSearch.takeError.value — ничего
+    // дополнительно показывать не нужно.
+  }
+}
+
 watch(() => props.search, () => storeSearch.reset())
-watch(() => props.modelValue, (open) => { if (!open) storeSearch.reset() })
+watch(() => props.modelValue, (open) => {
+  if (!open) { storeSearch.reset(); return }
+  // autoStoreSearch (владелец, 29.10.2026) — диалог открыт по пункту «Искать
+  // «…» в магазинах»: запускаем поиск сразу, без ожидания клика по кнопке.
+  //
+  // ДЕФЕКТ приёмки 29.10.2026 (окно выбора товара открывалось, но живой
+  // поиск молча не находил ничего — "hasSearched=false, offers=0" при
+  // проверке): useItemsCatalog.ts::openProductPickerForStoreSearch
+  // выставляет productPickerSearch И productPickerDialog ПОДРЯД в одном
+  // тике — оба prop'а (`search`/`modelValue`) меняются вместе первый раз
+  // (с '' /false на реальные значения), поэтому watch(search) ВЫШЕ тоже
+  // срабатывает в этом же тике и зовёт storeSearch.reset() — а reset()
+  // дёргает abortController.abort(), который обрывает ТОЛЬКО ЧТО
+  // запущенный fetch ниже (search()/fetchStoreSearch), если reset()
+  // отработал ПОСЛЕ него (порядок между двумя independent watch() в одном
+  // флаше не гарантирован). nextTick() откладывает запуск поиска до ПОСЛЕ
+  // того, как оба watcher'а уже точно отработали в этом тике — обычное
+  // открытие пикера БЕЗ autoStoreSearch это не затрагивает (runStoreSearch
+  // там вообще не вызывается).
+  if (props.autoStoreSearch && props.search.trim() && !isSearchTooShort(props.search)) {
+    void nextTick(() => runStoreSearch())
+  }
+})
 
 // Наш каталог ничего не нашёл по осмысленному запросу (не короче
 // MIN_SEARCH_CHARS) И querySpecific===true (бренд/модель/величина в

@@ -97,7 +97,7 @@ _SIGNATORY_SUBSIDY_KEYS = (
     "customer_signatory", "customer_signatory_position", "customer_signatory_name",
     "customer_signatory_name_genitive", "customer_signatory_initials",
     "customer_signatory_name_initials", "customer_signatory_basis",
-    "customer_name", "customer_full_name", "customer_inn", "customer_kpp",
+    "customer_short_name", "customer_full_name", "customer_inn", "customer_kpp",
     "contract_city",
     "contractor_signatory_position", "contractor_signatory_name",
     "contractor_signatory_name_genitive", "contractor_signatory_initials",
@@ -150,7 +150,7 @@ _CONTEXTS_BUILD_PATH = os.path.join(
 # регрессия (вторая копия той же формулы, ПРАВИЛО №6).
 _SINGLE_SOURCE_KEY_LITERALS = (
     '"customer_signatory"', '"customer_signatory_position"',
-    '"customer_signatory_name"', '"customer_name"', '"customer_full_name"',
+    '"customer_signatory_name"', '"customer_short_name"', '"customer_full_name"',
     '"contractor_signatory_position"', '"contractor_signatory_name"',
     '"contractor_ogrnip"',
     '"subsidy_agreement_number"', '"subsidy_agreement_date"',

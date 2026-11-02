@@ -25,13 +25,22 @@ harvest_kuvalda_massive_catalog.py, который вообще не заход�
 угадывал бренд/артикул по первому/последнему слову названия)."""
 from __future__ import annotations
 
-import json
 import re
 from typing import Optional
 
 from tools.harvest.core import gala_writer
 from tools.harvest.core.http import HttpClient
 from tools.harvest.core.runner import StoreSpec, harvest as _run_harvest
+from tools.harvest.stores._backend_bridge import load_store_page_module
+
+# Разбор страницы товара (JSON-LD "Product" + таблица характеристик) живёт
+# в backend/app/services/store_pages/kuvalda.py (ПРАВИЛО №6 — тот же код
+# нужен и живому поиску, app/services/store_search/take.py, довизит после
+# «Взять»). _find_jsonld переиспользуется ЗДЕСЬ же ниже для разбора
+# страницы РАЗДЕЛА (OfferCatalog) — второй копии функции не заводим.
+_store_page = load_store_page_module("kuvalda")
+_find_jsonld = _store_page.find_jsonld
+parse_product_page = _store_page.parse_product_page
 
 STORE_NAME = "kuvalda"
 CATEGORY_INDEX_URL = "https://www.kuvalda.ru/catalog/"
@@ -47,10 +56,6 @@ CATEGORIES: list[tuple[str, str, list[str]]] = [
 
 _CAT_LINK_RE = re.compile(r'<a[^>]*href="(/catalog/\d+[^"]*)"[^>]*>(.*?)</a>', re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
-_SPEC_ITEM_RE = re.compile(
-    r'product-specs__characteristics-item">\s*<span>([^<]*)</span>\s*<span>([^<]*)</span>'
-)
-_JSONLD_RE = re.compile(r'<script\s+type="application/ld\+json"[^>]*>([\s\S]*?)</script>')
 
 
 def discover_categories(client: HttpClient) -> list[tuple[str, str, list[str]]]:
@@ -73,17 +78,6 @@ def page_url(category_url: str, page: int) -> str:
     if page <= 1:
         return category_url
     return f"{category_url}page-{page}/"
-
-
-def _find_jsonld(html: str, type_name: str) -> Optional[dict]:
-    for block in _JSONLD_RE.findall(html):
-        try:
-            obj = json.loads(block)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if isinstance(obj, dict) and obj.get("@type") == type_name:
-            return obj
-    return None
 
 
 def parse_category_page(html: str) -> list[dict]:
@@ -114,21 +108,6 @@ def needs_product_visit(candidate: dict) -> bool:
     # названии (см. докстринг модуля — ~0.1% строк по данным владельца).
     name = candidate.get("name")
     return gala_writer.find_brand_in_name(name, set()) is None
-
-
-def parse_product_page(html: str, url: str) -> dict:
-    product = _find_jsonld(html, "Product") or {}
-    characteristics = [
-        {"name": name.strip(), "value": value.strip() or None, "unit": None, "in_description": False}
-        for name, value in _SPEC_ITEM_RE.findall(html)
-        if name.strip()
-    ]
-    return {
-        "jsonld_brand": product.get("brand"),
-        "manufacturer_article": (str(product.get("sku")).strip() if product.get("sku") else None),
-        "characteristics": characteristics,
-        "description": product.get("description"),
-    }
 
 
 def build_item(candidate: dict, enrichment: dict, known_brands: set) -> Optional[dict]:

@@ -61,7 +61,7 @@
 
           <!-- Контрольные суммы -->
           <v-sheet rounded="lg" border class="pa-3 mb-4">
-            <div class="d-flex flex-wrap gap-x-6 gap-y-2 text-body-2">
+            <div class="d-flex flex-wrap gap-x-6 gap-y-2 text-body-2 align-center">
               <span><b>Исполнено по выписке всего:</b> {{ formatCurrency(data.totals.executed_total) }} ({{ data.totals.executed_count }})</span>
               <span><b>Сверяется с закупками:</b> {{ formatCurrency(data.totals.reconciled_total) }}</span>
               <span><b>Найдено в закупках:</b> {{ formatCurrency(data.totals.found_in_purchases) }}</span>
@@ -70,7 +70,117 @@
               </span>
               <span class="text-medium-emphasis"><b>Не сверяется:</b> {{ formatCurrency(data.totals.not_reconciled_total) }}</span>
               <span class="text-medium-emphasis"><b>Не исполнены (справочно):</b> {{ formatCurrency(data.totals.not_executed_total) }} ({{ data.totals.not_executed_count }})</span>
+              <v-spacer />
+              <v-btn
+                size="x-small"
+                variant="tonal"
+                color="deep-purple"
+                prepend-icon="mdi-calculator-variant"
+                @click="toggleDiscrepancySearch"
+              >
+                Найти расхождение по сумме
+              </v-btn>
             </div>
+
+            <!-- Панель интеллектуального поиска расхождения (Subset Sum 1–4 поз. + ошибка знака ÷2) -->
+            <v-expand-transition>
+              <div v-if="showDiscrepancyPanel" class="mt-3 pt-3" style="border-top: 1px dashed rgba(0,0,0,0.12);">
+                <div class="d-flex flex-wrap align-center gap-2 mb-2">
+                  <v-text-field
+                    v-model.number="discrepancyAmount"
+                    type="number"
+                    label="Сумма расхождения или платежа, ₽"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    style="max-width: 260px;"
+                    @keyup.enter="runDiscrepancySearch"
+                  />
+                  <v-text-field
+                    v-model="discrepancyHint"
+                    label="Подсказка (назначение / товар, необязательно)"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    style="max-width: 300px;"
+                    @keyup.enter="runDiscrepancySearch"
+                  />
+                  <v-btn
+                    size="small"
+                    color="deep-purple"
+                    variant="flat"
+                    :loading="discrepancyLoading"
+                    prepend-icon="mdi-magnify"
+                    @click="runDiscrepancySearch"
+                  >
+                    Проверить комбинации
+                  </v-btn>
+                  <v-btn
+                    v-if="data.totals.difference"
+                    size="x-small"
+                    variant="text"
+                    @click="fillFromTotalsDiff"
+                  >
+                    Подставить разницу ({{ formatCurrency(Math.abs(data.totals.difference)) }})
+                  </v-btn>
+                </div>
+
+                <div v-if="discrepancyResult" class="mt-2">
+                  <!-- Ошибка знака ÷2 -->
+                  <v-alert
+                    v-if="discrepancyResult.sign_error_hints?.length"
+                    type="warning"
+                    variant="tonal"
+                    density="compact"
+                    class="mb-2 text-caption"
+                  >
+                    <div class="font-weight-bold">Возможная ошибка знака (сумма ÷ 2):</div>
+                    <div v-for="sh in discrepancyResult.sign_error_hints" :key="sh.purchase_id">
+                      • {{ sh.explanation }}
+                    </div>
+                  </v-alert>
+
+                  <!-- Составные комбинации 1–4 позиций -->
+                  <div v-if="discrepancyResult.combo_suggestions?.length" class="d-flex flex-column gap-2">
+                    <v-sheet
+                      v-for="(combo, idx) in discrepancyResult.combo_suggestions"
+                      :key="idx"
+                      rounded="md"
+                      border
+                      class="pa-2 text-caption"
+                    >
+                      <div class="d-flex align-center justify-space-between flex-wrap gap-2">
+                        <div class="d-flex align-center gap-2">
+                          <v-chip
+                            size="x-small"
+                            :color="combo.probability === 'high' ? 'success' : combo.probability === 'medium' ? 'warning' : 'grey'"
+                            variant="flat"
+                          >
+                            {{ combo.probability_label }}
+                          </v-chip>
+                          <b>Сумма: {{ formatCurrency(combo.total_amount) }} ₽</b>
+                          <span class="text-medium-emphasis">({{ combo.count }} поз.)</span>
+                        </div>
+                        <span class="text-medium-emphasis">{{ combo.reason }}</span>
+                      </div>
+                      <div class="mt-1">
+                        <span
+                          v-for="(it, iIdx) in combo.items"
+                          :key="it.purchase_id"
+                          class="mr-2"
+                        >
+                          <b>#{{ it.registry_number || it.purchase_id }}</b>
+                          {{ it.display_name }} — {{ formatCurrency(it.amount) }} ₽<span v-if="iIdx < combo.items.length - 1"> + </span>
+                        </span>
+                      </div>
+                    </v-sheet>
+                  </div>
+                  <div v-else-if="!discrepancyResult.sign_error_hints?.length" class="text-caption text-medium-emphasis">
+                    Точных комбинаций из 1–4 неоплаченных позиций на сумму {{ formatCurrency(discrepancyResult.target_amount) }} ₽ не найдено.
+                  </div>
+                </div>
+              </div>
+            </v-expand-transition>
           </v-sheet>
 
           <v-tabs v-model="tab" class="mb-3">
@@ -166,7 +276,11 @@
 // диалог, не отдельный fetch здесь). Полноэкранный на мобиле.
 import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
-import { useSubsidyPaymentControl, type PaymentControlRow } from '@/composables/subsidies/useSubsidyPaymentControl'
+import {
+  useSubsidyPaymentControl,
+  type PaymentControlRow,
+  type DiscrepancySearchResponse,
+} from '@/composables/subsidies/useSubsidyPaymentControl'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { useToast } from '@/composables/useToast'
 import { describeApiError } from '@/utils/apiErrorMessage'
@@ -188,6 +302,43 @@ const data = computed(() => control.data.value)
 
 const tab = ref('articles')
 const toast = useToast()
+
+// Панель интеллектуального поиска расхождения по сумме (Subset Sum + ÷2)
+const showDiscrepancyPanel = ref(false)
+const discrepancyAmount = ref<number | null>(null)
+const discrepancyHint = ref('')
+const discrepancyLoading = ref(false)
+const discrepancyResult = ref<DiscrepancySearchResponse | null>(null)
+
+function toggleDiscrepancySearch() {
+  showDiscrepancyPanel.value = !showDiscrepancyPanel.value
+  if (showDiscrepancyPanel.value && !discrepancyAmount.value && data.value?.totals.difference) {
+    discrepancyAmount.value = Math.abs(data.value.totals.difference)
+  }
+}
+
+function fillFromTotalsDiff() {
+  if (data.value?.totals.difference) {
+    discrepancyAmount.value = Math.abs(data.value.totals.difference)
+    runDiscrepancySearch()
+  }
+}
+
+async function runDiscrepancySearch() {
+  if (!props.subsidyId || !discrepancyAmount.value || discrepancyAmount.value <= 0) return
+  discrepancyLoading.value = true
+  try {
+    discrepancyResult.value = await control.findDiscrepancy(
+      props.subsidyId,
+      discrepancyAmount.value,
+      discrepancyHint.value || undefined,
+    )
+  } catch (e: any) {
+    toast.addToast(describeApiError(e, { fallback: 'Не удалось выполнить поиск комбинаций' }), 'error')
+  } finally {
+    discrepancyLoading.value = false
+  }
+}
 
 function fmtDate(d: string | null): string {
   if (!d) return '—'

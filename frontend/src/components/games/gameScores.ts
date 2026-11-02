@@ -36,19 +36,54 @@ export interface LeaderboardResponse {
   my_global_rank: number | null
 }
 
-export async function submitScore(game: GameId, score: number): Promise<SubmitScoreResult> {
-  return apiFetch<SubmitScoreResult>(`/games/${game}/score`, {
+const NICKNAME_STORAGE_KEY = 'gala_game_nickname'
+
+export function getCachedNickname(): string {
+  try {
+    return localStorage.getItem(NICKNAME_STORAGE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function setCachedNickname(nickname: string): void {
+  try {
+    if (nickname && nickname !== 'Игрок') {
+      localStorage.setItem(NICKNAME_STORAGE_KEY, nickname)
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function submitScore(game: GameId, score: number, nickname?: string | null): Promise<SubmitScoreResult> {
+  const body: { score: number; nickname?: string } = { score }
+  if (nickname && nickname.trim()) {
+    body.nickname = nickname.trim()
+  }
+  const result = await apiFetch<SubmitScoreResult>(`/games/${game}/score`, {
     method: 'POST',
-    body: JSON.stringify({ score }),
+    body: JSON.stringify(body),
   })
+  if (nickname && nickname.trim()) {
+    setCachedNickname(nickname.trim())
+  }
+  return result
 }
 
 export async function getLeaderboard(game: GameId): Promise<LeaderboardResponse> {
-  return apiFetch<LeaderboardResponse>(`/games/${game}/leaderboard`)
+  const res = await apiFetch<LeaderboardResponse>(`/games/${game}/leaderboard`)
+  if (res?.me?.nickname && res.me.nickname !== 'Игрок') {
+    setCachedNickname(res.me.nickname)
+  }
+  return res
 }
 
 export async function getNickname(): Promise<string> {
   const r = await apiFetch<{ nickname: string }>('/games/nickname')
+  if (r.nickname && r.nickname !== 'Игрок') {
+    setCachedNickname(r.nickname)
+  }
   return r.nickname
 }
 
@@ -57,6 +92,9 @@ export async function setNickname(nickname: string | null): Promise<string> {
     method: 'PUT',
     body: JSON.stringify({ nickname }),
   })
+  if (r.nickname && r.nickname !== 'Игрок') {
+    setCachedNickname(r.nickname)
+  }
   return r.nickname
 }
 
@@ -65,9 +103,9 @@ export async function setNickname(nickname: string | null): Promise<string> {
 // после того, как reportGameOver отработал — без второго источника данных.
 const GAME_OVER_EVENT = 'gala-game-over'
 
-export async function reportGameOver(game: GameId, score: number): Promise<SubmitScoreResult | null> {
+export async function reportGameOver(game: GameId, score: number, nickname?: string | null): Promise<SubmitScoreResult | null> {
   try {
-    const result = await submitScore(game, score)
+    const result = await submitScore(game, score, nickname)
     try {
       window.dispatchEvent(new CustomEvent(GAME_OVER_EVENT, { detail: { game, score, result } }))
     } catch {

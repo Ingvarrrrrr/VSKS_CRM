@@ -14,6 +14,8 @@ app/routers/products.py (PUT/PATCH) перед записью Product.characteri
 """
 from fastapi import HTTPException
 
+from app.services.product_characteristics_parse import _separate_unit
+
 MAX_ITEMS = 200
 MAX_NAME_LEN = 200
 MAX_VALUE_LEN = 2000
@@ -50,6 +52,10 @@ def normalize_characteristics(raw_items) -> list:
         if not name or not value:
             continue
         unit = str(data.get("unit") or "").strip() or None
+        if not unit:
+            val_part, unit_part = _separate_unit(value)
+            value = str(val_part or "").strip()
+            unit = str(unit_part or "").strip() or None
         if len(name) > MAX_NAME_LEN:
             raise HTTPException(status_code=400, detail=f"Название характеристики длиннее {MAX_NAME_LEN} символов: «{name[:50]}…»")
         if len(value) > MAX_VALUE_LEN:

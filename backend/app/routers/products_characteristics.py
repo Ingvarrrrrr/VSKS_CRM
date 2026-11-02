@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from app.auth.jwt import get_current_user
 from app.models.user import User
 from app.schemas.products import ProductCharacteristic
+from app.services.product_characteristics_fetch import fetch_characteristics_from_url
 from app.services.product_characteristics_parse import (
     MAX_TEXT_LENGTH,
     parse_pasted_characteristics,
@@ -44,8 +45,21 @@ class CharacteristicsParseIn(BaseModel):
     text: str
 
 
+class CharacteristicsFetchUrlIn(BaseModel):
+    url: str
+
+
 class CharacteristicsParseOut(BaseModel):
     items: list[ProductCharacteristic]
+
+
+@router.post("/fetch-from-url", response_model=CharacteristicsParseOut)
+async def fetch_characteristics_url(
+    body: CharacteristicsFetchUrlIn,
+    current_user: User = Depends(get_current_user),
+):
+    items = await fetch_characteristics_from_url(body.url)
+    return CharacteristicsParseOut(items=[ProductCharacteristic(**i) for i in items])
 
 
 @router.post("/parse", response_model=CharacteristicsParseOut)

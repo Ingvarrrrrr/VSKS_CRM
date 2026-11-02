@@ -250,6 +250,7 @@
               :model-value="form.characteristics"
               :readonly="characteristicsReadonly"
               :mobile="mobile"
+              :source-urls="productSourceUrls"
               @update:model-value="onCharacteristicsUpdate"
               @description-generated="onCharacteristicsDescription"
               @error="onCharacteristicsError"
@@ -582,6 +583,22 @@ function applyGeneratedTz44() {
   }
   tz44Pending.value = null
 }
+
+const productSourceUrls = computed(() => {
+  const urls: string[] = []
+  if (props.form.priceLinks) {
+    for (const l of props.form.priceLinks) {
+      if (l.url?.trim()) urls.push(l.url.trim())
+    }
+  }
+  if (props.form.clarification_link?.trim()) {
+    urls.push(props.form.clarification_link.trim())
+  }
+  if (props.form.photo_link?.trim()) {
+    urls.push(props.form.photo_link.trim())
+  }
+  return [...new Set(urls)]
+})
 
 // Характеристики (владелец, задача «ручное заполнение характеристик»,
 // 26.10.2026): ProductCharacteristicsEditor.vue сам зовёт preview-роутер

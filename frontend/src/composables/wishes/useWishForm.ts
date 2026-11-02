@@ -712,6 +712,26 @@ export function useWishForm(deps: {
     if (wishDialog.value) loadWishFrameworkContracts()
   })
 
+  // Авто-синхронизация: если у позиций появляются плановые позиции или разные категории,
+  // включаем режим per-item (feo_per_item = true), чтобы переключатель не оставался ложно выключенным.
+  watch(
+    () => (wishForm.value.items as any[]).map(i => `${i.feo_planned_item_id ?? ''}:${i.feo_category_id ?? ''}`).join(','),
+    () => {
+      const items = wishForm.value.items as any[]
+      if (!items.length) return
+      const hasPlan = items.some(i => i.feo_planned_item_id != null)
+      const distinctCats = new Set(items.map(i => i.feo_category_id).filter(id => id != null))
+      if (hasPlan || distinctCats.size > 1) {
+        if (!wishForm.value.feo_per_item) {
+          wishForm.value.feo_per_item = true
+        }
+      }
+      if (wishFeoSelected.value == null && distinctCats.size === 1) {
+        wishFeoSelected.value = distinctCats.values().next().value as number
+      }
+    }
+  )
+
   const totalNmck = computed(() =>
     wishForm.value.items.reduce((sum, i) => sum + (i.total_price || 0), 0)
   )
@@ -928,6 +948,8 @@ export function useWishForm(deps: {
           // extra_attrs выше) — без него перезагрузка заявки теряла бы, какую
           // форму (проживание/питание) выбрал пользователь для строки.
           item_form: i.item_form ?? null,
+          target_column_key: i.target_column_key ?? null,
+          from_plan: i.from_plan ?? false,
           purchase_match: i.purchase_match ?? null,
           // Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md,
           // Этап Б) — ЕДИНСТВЕННЫЙ источник, который реально сохраняется на
@@ -988,7 +1010,21 @@ export function useWishForm(deps: {
   const wishFormSavedSnapshot = ref<string>('')
 
   function buildWishPayload() {
-    const feo = wishFeoSelected.value
+    const hasPlanLinked = (wishForm.value.items as any[]).some((i: any) => i.feo_planned_item_id != null)
+    const distinctCats = new Set(
+      (wishForm.value.items as any[]).map((i: any) => i.feo_category_id).filter((id: any) => id != null)
+    )
+    const effectiveFeoPerItem = Boolean(wishForm.value.feo_per_item || hasPlanLinked || distinctCats.size > 1)
+    if (effectiveFeoPerItem && !wishForm.value.feo_per_item) {
+      wishForm.value.feo_per_item = true
+    }
+
+    let feo = wishFeoSelected.value
+    if (feo == null && distinctCats.size === 1) {
+      feo = distinctCats.values().next().value as number
+      wishFeoSelected.value = feo
+    }
+
     let title = (wishForm.value.title || '').trim().slice(0, 255)
     if (!title) {
       const names = wishForm.value.items.map(i => i.item_name).filter(Boolean)
@@ -1002,23 +1038,30 @@ export function useWishForm(deps: {
     return {
       ...wishForm.value,
       feo_category_id: feo,
-      feo_per_item: wishForm.value.feo_per_item,
+      feo_per_item: effectiveFeoPerItem,
       title,
       contractor_id: wishForm.value.contractor_id || null,
       contractor_name: (wishForm.value.contractor_name || '').toString().trim() || null,
       items: wishForm.value.items
         .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
-        .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, price_from_catalog, ...rest }) => ({
-          ...rest,
-          quantity: numOrNull((rest as any).quantity),
-          unit_price: numOrNull((rest as any).unit_price),
-          total_price: numOrNull((rest as any).total_price),
-          feo_category_id: wishForm.value.feo_per_item
-            ? ((rest as any).feo_category_id ?? feo ?? null)
-            : (feo ?? null),
-          feo_planned_item_id: (rest as any).feo_planned_item_id ?? null,
-          over_plan: !!((rest as any).over_plan),
-        })),
+        .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, price_from_catalog, ...rest }) => {
+          const plannedCatId = (rest as any).feo_planned_item_id != null
+            ? wishPlannedResiduals.value?.find(p => p.kind === 'planned_item' && p.id === (rest as any).feo_planned_item_id)?.category_id
+            : null
+          const itemCatId = (rest as any).feo_category_id ?? plannedCatId
+
+          return {
+            ...rest,
+            quantity: numOrNull((rest as any).quantity),
+            unit_price: numOrNull((rest as any).unit_price),
+            total_price: numOrNull((rest as any).total_price),
+            feo_category_id: (effectiveFeoPerItem || (rest as any).feo_planned_item_id != null)
+              ? (itemCatId ?? feo ?? null)
+              : (feo ?? null),
+            feo_planned_item_id: (rest as any).feo_planned_item_id ?? null,
+            over_plan: !!((rest as any).over_plan),
+          }
+        }),
     }
   }
   function wishPayloadSnapshotJson(): string {

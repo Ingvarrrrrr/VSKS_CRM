@@ -35,6 +35,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/wishes", tags=["wish-approvals"])
 
+_WISH_STATUS_LABELS = {
+    "draft": "Черновик",
+    "submitted": "На согласовании",
+    "approved": "Согласована",
+    "rejected": "Отклонена",
+    "converted": "В плане закупок",
+    "completed": "Завершена",
+}
+
+_APPROVAL_STATUS_LABELS = {
+    "pending": "Ожидает решения",
+    "approved": "Согласовано",
+    "rejected": "Отклонено",
+}
+
 
 def _approval_dict(a: WishApproval, names: dict[int, str] | None = None) -> dict:
     """names — пакетно резолвленные ФИО (см. _resolve_decided_names), только
@@ -254,7 +269,7 @@ async def add_wish_approver(
             raise HTTPException(
                 400,
                 f"Добавить согласующего можно только к черновику, отклонённой или отправленной на согласование заявке "
-                f"(текущий статус: {wish.status})"
+                f"(текущий статус: «{_WISH_STATUS_LABELS.get(wish.status, wish.status)}»)"
             )
     user_id = int(body.get("user_id", 0))
     if not user_id:
@@ -447,7 +462,7 @@ async def decide_wish_approval(
     _duplicate_warnings: list[dict] = []
 
     if not _is_saas(current_user) and wish.status != "submitted":
-        raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть 'submitted')")
+        raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть «На согласовании»)")
 
     # Владелец (2026-09-29, уточнение; актуально и после 22.10.2026): отдельного
     # запрета «автор заявки не согласовывает свою же заявку» НЕТ — согласующим
@@ -460,7 +475,8 @@ async def decide_wish_approval(
         raise HTTPException(403, "Решение может принять только назначенный согласующий или менеджер+")
 
     if a.status != "pending":
-        raise HTTPException(400, f"По этому согласующему уже принято решение: {a.status}")
+        _decision_label = _APPROVAL_STATUS_LABELS.get(a.status, a.status)
+        raise HTTPException(400, f"По этому согласующему уже принято решение: «{_decision_label}»")
 
     # Sequential: нельзя согласовать, пока нижестоящие (меньший order_num) ещё pending
     if wish.approval_mode == "sequential":

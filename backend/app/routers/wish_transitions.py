@@ -157,7 +157,7 @@ async def submit_wish(
         if not await wishes_core._is_wish_member(wish_id, current_user.id, db):
             raise HTTPException(status_code=403, detail="Отправить на согласование может автор или участник заявки")
     if not wishes_core._is_saas(current_user) and wish.status not in ("draft", "rejected"):
-        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'draft' или 'rejected'")
+        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе «Черновик» или «Отклонена»")
 
     # Проверяем наличие согласующих: нельзя отправить заявку неизвестно кому
     from app.models.wish_approval import WishApproval as _WA_submit
@@ -255,7 +255,7 @@ async def approve_wish(
     wish = await wishes_core._load_wish(wish_id, db)
 
     if not wishes_core._is_saas(current_user) and wish.status != "submitted":
-        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'submitted'")
+        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе «На согласовании»")
 
     # Org isolation
     org_ids = get_org_filter(current_user)
@@ -322,7 +322,7 @@ async def reject_wish(
     wish = await wishes_core._load_wish(wish_id, db)
 
     if not wishes_core._is_saas(current_user) and wish.status != "submitted":
-        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'submitted'")
+        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе «На согласовании»")
 
     # Org isolation
     org_ids = get_org_filter(current_user)
@@ -378,7 +378,7 @@ async def patch_wish_execution(
     from app.services.wish_access import ensure_wish_read_access
     await ensure_wish_read_access(wish, current_user, db)
     if not wishes_core._is_saas(current_user) and wish.status not in ("submitted", "approved"):
-        raise HTTPException(status_code=400, detail="Срок и исполнителя можно задать только на статусах submitted/approved")
+        raise HTTPException(status_code=400, detail="Срок и исполнителя можно задать только в статусах «На согласовании» или «Согласована»")
     if not wishes_core._is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
         # Согласующий из цепочки тоже может править (в т.ч. сменить ФЭО, если не согласен)
         from app.models.wish_approval import WishApproval

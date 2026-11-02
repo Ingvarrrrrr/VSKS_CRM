@@ -446,7 +446,9 @@
                 color="primary"
                 hide-details
                 class="mb-3"
-                :disabled="!isWishEditable"
+                :disabled="!isWishEditable || hasPlanLinkedItems"
+                :hint="hasPlanLinkedItems ? 'Включено автоматически: позиции привязаны к плану закупок' : undefined"
+                :persistent-hint="hasPlanLinkedItems"
                 @update:model-value="onWishFeoPerItemChange"
               />
               <!-- data-field="feo_category" — одна из ТРЁХ целей highlightMissingFeoCategory

@@ -71,9 +71,11 @@ export function useWishItemsFeoAutosave(deps: {
   )
 
   function feoExecutionItemsPayload(): { id: number; feo_category_id: number | null; feo_planned_item_id: number | null }[] {
+    const hasPlanLinked = (wishForm.value.items as any[]).some(i => i.feo_planned_item_id != null)
+    const effectivePerItem = wishForm.value.feo_per_item || hasPlanLinked
     return wishItemsFeoDirtyList.value.map(it => ({
       id: it.id,
-      feo_category_id: wishForm.value.feo_per_item ? it.feo_category_id : (wishFeoSelected.value ?? null),
+      feo_category_id: (effectivePerItem || it.feo_planned_item_id != null) ? it.feo_category_id : (wishFeoSelected.value ?? null),
       feo_planned_item_id: it.feo_planned_item_id,
     }))
   }

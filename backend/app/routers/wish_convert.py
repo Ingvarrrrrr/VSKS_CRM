@@ -597,7 +597,9 @@ async def approve_distribution(
     if not wishes_core._is_saas(current_user) and wish.status == "converted":
         raise HTTPException(status_code=400, detail="Заявка уже распределена")
     if not wishes_core._is_saas(current_user) and wish.status not in ("draft", "submitted", "approved"):
-        raise HTTPException(status_code=400, detail=f"Нельзя распределить заявку в статусе {wish.status}")
+        from app.routers.feo_planned_items import _WISH_STATUS_LABELS
+        _status_label = _WISH_STATUS_LABELS.get(wish.status, wish.status)
+        raise HTTPException(status_code=400, detail=f"Нельзя распределить заявку в статусе «{_status_label}»")
     if current_user.role not in ADMIN_ROLES and wish.assigned_to != current_user.id:
         raise HTTPException(status_code=403, detail="Распределять заявку может админ или назначенный согласующий")
     if not wish.items:
@@ -626,4 +628,5 @@ async def approve_distribution(
         "excess_warnings": getattr(wish, "_excess_warnings", []),
         "tz_excess_approvals": getattr(wish, "_tz_excess_approvals", []),
         "type_excess_approvals": getattr(wish, "_type_excess_approvals", []),
+        "purchase_sync": getattr(wish, "_purchase_sync", None),
     }

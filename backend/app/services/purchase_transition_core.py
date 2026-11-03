@@ -137,6 +137,7 @@ async def apply_purchase_status_transition(
     current_idx: int, target_idx: int, event_note: str = None,
     commit: bool = True, send_notification: bool = True,
     skip_plan_excess_gates: bool = False, plan_excess_messages_out: list = None,
+    via_paid_confirmation: bool = False,
 ) -> list[dict]:
     """Гейты + смена статуса + побочные эффекты — БЕЗ permission/direction
     проверок (это ответственность вызывающего). current_idx/target_idx —
@@ -206,7 +207,22 @@ async def apply_purchase_status_transition(
                         return True
                 return False
 
-            if _has_acceptance_doc(p):
+            # Владелец, 03.11.2026: «Оплатили — значит, если не было пометки,
+            # что это авансовый платёж, то значит это уже поставлено. Давай по
+            # умолчанию возьмём, что нашлась оплата, значит всё уже поставили и
+            # надо дать возможность перевести в оплачено.»
+            if via_paid_confirmation and not getattr(p, "is_prepayment", False):
+                required_fields = [f for f in required_fields if not f.startswith("acceptance_doc")]
+                if not p.acceptance_doc_name:
+                    p.acceptance_doc_name = "По выписке (оплата)"
+                if not p.acceptance_doc_date:
+                    from datetime import date
+                    p.acceptance_doc_date = p.payment_doc_date or date.today()
+                if not p.acceptance_doc_number:
+                    p.acceptance_doc_number = p.payment_doc_number or "б/н"
+                if not p.acceptance_doc_amount:
+                    p.acceptance_doc_amount = p.payment_amount or p.contract_price
+            elif _has_acceptance_doc(p):
                 required_fields = [f for f in required_fields if not f.startswith("acceptance_doc")]
         if target_status == "delivered" and getattr(p, "purchase_method", None) == "advance":
             from app.models.purchase_receipt import PurchaseReceipt
@@ -283,7 +299,7 @@ async def apply_purchase_status_transition(
                         },
                     )
                 ci_count = await copy_items_to_contract(db, pid)
-            elif not tz_required(p):
+            elif not tz_required(p) or via_paid_confirmation:
                 # Владелец (30.09, заявка №92): «после того как согласующий
                 # разрешит или запретит — можно двигать дальше» — закупка с
                 # tz_not_required=True (или, как и раньше, purchase_method=
@@ -382,6 +398,20 @@ async def apply_purchase_status_transition(
 
     if target_status == "delivered":
         await _autofill_accepted_fields(p, db)
+
+    if target_status == "paid":
+        from app.models.purchase_paid_confirmation import PurchasePaidConfirmation
+        from datetime import datetime, timezone
+        confs = (await db.execute(
+            select(PurchasePaidConfirmation).where(
+                PurchasePaidConfirmation.purchase_id == pid,
+                PurchasePaidConfirmation.status == "pending",
+            )
+        )).scalars().all()
+        for conf in confs:
+            conf.status = "confirmed"
+            conf.decided_by = getattr(current_user, "id", None)
+            conf.decided_at = datetime.now(timezone.utc)
 
     if target_status == "contracted" and p.items:
         sub = await db.get(Subsidy, p.subsidy_id) if p.subsidy_id else None

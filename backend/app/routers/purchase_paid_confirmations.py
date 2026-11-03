@@ -176,6 +176,7 @@ async def _walk_to_paid(
                 p, p.id, next_status, current_user, db, cur_idx, cur_idx + 1,
                 event_note=event_note, commit=commit, send_notification=send_notification,
                 skip_plan_excess_gates=True, plan_excess_messages_out=plan_excess_messages_out,
+                via_paid_confirmation=True,
             )
         except HTTPException as exc:
             return visited, (next_status, exc.detail)
@@ -211,6 +212,9 @@ async def _simulate_confirm_chain(
     _format_plan_excess_warning)."""
     from app.routers.purchase_transitions import STATUS_LABELS
     from app.services.purchase_payments import PAID_CONFIRMATION_ELIGIBLE_STATUSES
+
+    if p.status == "paid":
+        return None, None
 
     if p.status not in PAID_CONFIRMATION_ELIGIBLE_STATUSES:
         label = STATUS_LABELS.get(p.status, p.status)
@@ -372,9 +376,18 @@ async def _list_confirmation_dicts(db: AsyncSession, rows: list[PurchasePaidConf
         for pay in all_payments:
             payments_by_purchase.setdefault(pay.purchase_id, []).append(pay)
 
+    from datetime import datetime, timezone
+    need_commit = False
     items = []
     for c in rows:
         p = purchases.get(c.purchase_id)
+        if c.status == "pending" and p is not None and p.status == "paid":
+            # Закупка уже в статусе «Оплачено» — подтверждение выполнено, не показываем в pending
+            c.status = "confirmed"
+            c.decided_at = datetime.now(timezone.utc)
+            need_commit = True
+            continue
+
         purchase_dict = _build_purchase_dict(p, contractor_names.get(p.contractor_id)) if p is not None else None
         payments_dict = _confirmation_payments_dict(payments_by_purchase.get(c.purchase_id, []))
         items.append(_base_confirmation_dict(
@@ -382,6 +395,9 @@ async def _list_confirmation_dicts(db: AsyncSession, rows: list[PurchasePaidConf
             blocked_reason=None, plan_excess_warning=c.plan_excess_warning,
             checked=c.status != "pending",
         ))
+
+    if need_commit:
+        await db.commit()
     return items
 
 
@@ -463,6 +479,13 @@ async def confirm_paid_confirmation(
         raise HTTPException(404, "Закупка не найдена")
     from app.services.purchase_payments import PAID_CONFIRMATION_ELIGIBLE_STATUSES
     if p.status not in PAID_CONFIRMATION_ELIGIBLE_STATUSES:
+        if p.status == "paid":
+            c.status = "confirmed"
+            c.decided_by = current_user.id
+            from datetime import datetime, timezone
+            c.decided_at = datetime.now(timezone.utc)
+            await db.commit()
+            return await _confirmation_to_dict(db, c, current_user)
         raise HTTPException(
             409,
             f"Закупка больше не в статусе, из которого подтверждается оплата (сейчас «{p.status}») — "

@@ -3,14 +3,14 @@
 Пользователь с этим флагом (а также superadmin и account_owner по умолчанию)
 может объединять несколько закупок в одну.
 
-Revision ID: f6a7b8c9d0e1
+Revision ID: f7b8c9d0e1f2
 Revises: e5f6g7h8i9j0
 Create Date: 2026-11-03 16:50:00.000000
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = 'f6a7b8c9d0e1'
+revision = 'f7b8c9d0e1f2'
 down_revision = 'e5f6g7h8i9j0'
 branch_labels = None
 depends_on = None

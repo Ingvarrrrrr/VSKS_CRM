@@ -159,6 +159,7 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     headers: {
       ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       ...authHeaders(),
+      ...(method === 'GET' ? { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' } : {}),
       ...(options.headers || {}),
     },
   })

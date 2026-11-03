@@ -748,7 +748,13 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         if (data.deleted_count) msg += `, удалено узлов ${data.deleted_count}`
         if (data.comments_created) msg += `, комментариев ${data.comments_created}`
         showSnack(msg)
-        if (ctx?.selectedId.value) { await ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
+        const targetSub = feoImportTargetSubsidy.value
+        const reloadSubId = (targetSub && ctx?.allSubsidies?.value?.some((s: any) => s.id === targetSub)) ? targetSub : ctx?.selectedId?.value
+        if (reloadSubId) {
+          if (ctx?.selectedId && ctx.selectedId.value !== reloadSubId) ctx.selectedId.value = reloadSubId
+          await ctx.loadFeo(reloadSubId)
+          ctx.syncFeoFilled()
+        }
       }
     } catch (e: any) {
       // fetchWithNetworkRetry переводит сетевую ошибку в e.payload.message
@@ -778,7 +784,13 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     feoImport.recomputing = false; feoImport.resultStale = false; feoImport.recomputeError = null
     if (_recomputeTimer) { clearTimeout(_recomputeTimer); _recomputeTimer = null }
     _recomputeQueued = false
-    if (wasCreated && ctx?.selectedId.value) { ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
+    const targetSub = feoImportTargetSubsidy.value
+    const reloadSubId = (targetSub && ctx?.allSubsidies?.value?.some((s: any) => s.id === targetSub)) ? targetSub : ctx?.selectedId?.value
+    if (wasCreated && reloadSubId) {
+      if (ctx?.selectedId && ctx.selectedId.value !== reloadSubId) ctx.selectedId.value = reloadSubId
+      ctx.loadFeo(reloadSubId)
+      ctx.syncFeoFilled()
+    }
   }
 
   return {

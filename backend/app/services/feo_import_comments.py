@@ -43,24 +43,54 @@ apply_feo_comments(state) — вызывается ОДИН раз из `feo_imp
 после `strip()` (регистр — как есть, задача не просила нормализовывать
 регистр). Пустая ячейка — `register_*` вызывать не нужно (см. `get_cell`,
 возвращает None для пустых/«none»/«null»)."""
+from datetime import date, datetime, time
+import re
 from sqlalchemy import select
 
 from app.models.feo_comment import FeoComment
 
 
+def is_valid_comment_text(val: any) -> bool:
+    """Проверяет, что значение действительно является осмысленным текстовым комментарием.
+
+    Защита (владелец, 04.11): комментарии — это только текст, находящийся в
+    столбце «Комментарии». Служебные даты Excel (2026-05-25 00:00:00), числа,
+    суммы и пустые строки отсекаются и не попадают в комментарии.
+    """
+    if val is None:
+        return False
+    if isinstance(val, (datetime, date, time)):
+        return False
+    s = str(val).strip()
+    if not s or len(s) < 2:
+        return False
+    # Отсекаем даты вида 2026-05-25, 2026-05-25 00:00:00, 25.05.2026
+    if re.match(r'^\d{4}-\d{2}-\d{2}', s):
+        return False
+    if re.match(r'^\d{1,2}[./]\d{1,2}[./]\d{2,4}', s):
+        return False
+    # Отсекаем чисто числовые значения / суммы / проценты (- 118 888,53 ₽, 100%, 123)
+    if re.match(r'^[-+]?\s*[\d\s.,]+(?:[₽%]|руб\.?|р\.?)?$', s, re.IGNORECASE):
+        return False
+    return True
+
+
 def register_item_comment_intent(state, row_num: int, text: str | None) -> None:
     """Комментарий строки, задавшей «Плановую позицию» (см. докстринг модуля)."""
-    if not text:
+    if not is_valid_comment_text(text):
         return
-    state.comment_item_texts[row_num] = text
+    state.comment_item_texts[row_num] = str(text).strip()
 
 
 def register_category_comment_intent(state, leaf, row_num: int, text: str | None) -> None:
-    """Комментарий строки БЕЗ «Плановой позиции» — относится к категории
-    (`leaf`) этой строки. `leaf.id` уже реальный (см. докстринг модуля)."""
-    if not text or leaf is None or leaf.id is None:
-        return
-    state.comment_category_intents.append((leaf.id, row_num, text))
+    """Комментарий строки БЕЗ «Плановой позиции».
+
+    Защита (владелец, 04.11): «комментарии только в столбце "Комментарии"
+    находятся и больше нигде и комментарии это текст». Строки без плановой позиции
+    не должны засорять дерево категорий служебными пометками.
+    """
+    # Не регистрируем комментарии к категориям из строк без позиций
+    return
 
 
 def record_item_id(state, row_num: int, item_id: int) -> None:

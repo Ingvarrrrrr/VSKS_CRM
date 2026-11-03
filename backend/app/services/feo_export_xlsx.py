@@ -24,7 +24,8 @@ from typing import Optional
 
 try:
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Protection
+    from openpyxl.worksheet.datavalidation import DataValidation
 except ImportError:  # pragma: no cover
     Workbook = None
 
@@ -97,6 +98,201 @@ def compute_row_stage_values(segments: list, plan_amount: float) -> dict:
     return out
 
 
+async def load_item_procurement_and_payments(
+    db,
+    item_ids: list[int],
+    leaf_cat_ids: Optional[list[int]] = None,
+) -> dict:
+    """Загружает данные закупок и платежей для строк выгрузки ФЭО:
+    номер закупки, контрагент, ИНН, дата платежа, номер платёжного документа,
+    сумма платёжного документа, назначение платежа, КБК, статус платежа."""
+    from sqlalchemy import select
+    from app.models.purchase_item import PurchaseItem
+    from app.models.purchase import Purchase
+    from app.models.contractor import Contractor
+    from app.models.payment import Payment
+    from app.models.bank_statement import BankPayment
+
+    result: dict = {}
+    if not item_ids and not leaf_cat_ids:
+        return result
+
+    pi_rows = []
+    if item_ids:
+        q_pi = (
+            select(
+                PurchaseItem.feo_planned_item_id,
+                PurchaseItem.contractor_name.label("pi_c_name"),
+                PurchaseItem.contractor_inn.label("pi_c_inn"),
+                Purchase.id.label("p_id"),
+                Purchase.purchase_number,
+                Purchase.registry_number,
+                Purchase.payment_doc_number.label("p_pay_doc"),
+                Purchase.payment_doc_date.label("p_pay_date"),
+                Purchase.payment_amount.label("p_pay_amt"),
+                Purchase.status.label("p_status"),
+                Purchase.contractor_id,
+                Contractor.name.label("c_name"),
+                Contractor.inn.label("c_inn"),
+            )
+            .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+            .outerjoin(Contractor, Purchase.contractor_id == Contractor.id)
+            .where(
+                PurchaseItem.feo_planned_item_id.in_(item_ids),
+                Purchase.stopped_at.is_(None),
+            )
+        )
+        pi_rows = (await db.execute(q_pi)).all()
+
+    cat_p_rows = []
+    if leaf_cat_ids:
+        q_cat = (
+            select(
+                Purchase.feo_category_id,
+                Purchase.id.label("p_id"),
+                Purchase.purchase_number,
+                Purchase.registry_number,
+                Purchase.payment_doc_number.label("p_pay_doc"),
+                Purchase.payment_doc_date.label("p_pay_date"),
+                Purchase.payment_amount.label("p_pay_amt"),
+                Purchase.status.label("p_status"),
+                Purchase.contractor_id,
+                Contractor.name.label("c_name"),
+                Contractor.inn.label("c_inn"),
+            )
+            .outerjoin(Contractor, Purchase.contractor_id == Contractor.id)
+            .where(
+                Purchase.feo_category_id.in_(leaf_cat_ids),
+                Purchase.stopped_at.is_(None),
+            )
+        )
+        cat_p_rows = (await db.execute(q_cat)).all()
+
+    all_p_ids = list({r.p_id for r in pi_rows} | {r.p_id for r in cat_p_rows})
+    payments_by_pid: dict[int, list] = {}
+    if all_p_ids:
+        q_pay = (
+            select(
+                Payment.purchase_id,
+                Payment.document_number.label("pay_doc"),
+                Payment.payment_date.label("pay_date"),
+                Payment.amount.label("pay_amt"),
+                Payment.payment_purpose.label("pay_purpose"),
+                BankPayment.payment_number.label("bp_num"),
+                BankPayment.payment_date.label("bp_date"),
+                BankPayment.amount.label("bp_amt"),
+                BankPayment.purpose_text.label("bp_purpose"),
+                BankPayment.parsed_kbk,
+                BankPayment.expense_code,
+                BankPayment.status.label("bp_status"),
+                BankPayment.payee_name.label("bp_payee_name"),
+                BankPayment.payee_inn.label("bp_payee_inn"),
+            )
+            .outerjoin(BankPayment, Payment.bank_payment_id == BankPayment.id)
+            .where(Payment.purchase_id.in_(all_p_ids))
+        )
+        pay_rows = (await db.execute(q_pay)).all()
+        for pr in pay_rows:
+            payments_by_pid.setdefault(pr.purchase_id, []).append(pr)
+
+    def _format_bucket(b: dict) -> dict:
+        p_num = ", ".join(sorted(b["purchases"])) if b["purchases"] else ""
+        c_name = ", ".join(sorted(b["contractors"])) if b["contractors"] else ""
+        c_inn = ", ".join(sorted(b["inns"])) if b["inns"] else ""
+        pay_doc = ", ".join(sorted(b["docs"])) if b["docs"] else ""
+        pay_dt = ", ".join(sorted(b["dates"])) if b["dates"] else ""
+        pay_amt = round(b["total_paid"], 2) if b["total_paid"] > 0 else ""
+        pay_purpose = "; ".join(sorted(b["purposes"])) if b["purposes"] else ""
+        pay_kbk = ", ".join(sorted(b["kbk"])) if b["kbk"] else ""
+        pay_status = ", ".join(sorted(b["statuses"])) if b["statuses"] else ""
+        return {
+            "purchase_number": p_num,
+            "contractor_name": c_name,
+            "contractor_inn": c_inn,
+            "payment_doc_number": pay_doc,
+            "payment_date": pay_dt,
+            "payment_amount": pay_amt,
+            "payment_purpose": pay_purpose,
+            "payment_kbk": pay_kbk,
+            "payment_status": pay_status,
+        }
+
+    buckets: dict = {}
+    for r in pi_rows:
+        b = buckets.setdefault(r.feo_planned_item_id, {
+            "purchases": set(), "contractors": set(), "inns": set(),
+            "docs": set(), "dates": set(), "total_paid": 0.0,
+            "purposes": set(), "kbk": set(), "statuses": set(),
+        })
+        p_num = str(r.purchase_number) if r.purchase_number is not None else (r.registry_number or f"#{r.p_id}")
+        if p_num:
+            b["purchases"].add(p_num)
+        c_name = r.c_name or getattr(r, "pi_c_name", None)
+        c_inn = r.c_inn or getattr(r, "pi_c_inn", None)
+        if c_name:
+            b["contractors"].add(c_name)
+        if c_inn:
+            b["inns"].add(c_inn)
+
+        p_pays = payments_by_pid.get(r.p_id, [])
+        if p_pays:
+            for pay in p_pays:
+                doc = pay.bp_num or pay.pay_doc
+                if doc: b["docs"].add(str(doc))
+                dt = pay.bp_date or pay.pay_date
+                if dt: b["dates"].add(dt.strftime("%d.%m.%Y"))
+                amt = pay.bp_amt if pay.bp_amt is not None else pay.pay_amt
+                if amt and float(amt) > 0:
+                    b["total_paid"] += float(amt)
+                purp = pay.bp_purpose or pay.pay_purpose
+                if purp: b["purposes"].add(str(purp).strip()[:150])
+                kbk_val = pay.expense_code or pay.parsed_kbk
+                if kbk_val: b["kbk"].add(str(kbk_val))
+                st = pay.bp_status or "Оплачено"
+                if st: b["statuses"].add(str(st))
+                if not c_name and pay.bp_payee_name: b["contractors"].add(pay.bp_payee_name)
+                if not c_inn and pay.bp_payee_inn: b["inns"].add(pay.bp_payee_inn)
+        else:
+            if r.p_pay_doc: b["docs"].add(str(r.p_pay_doc))
+            if r.p_pay_date: b["dates"].add(r.p_pay_date.strftime("%d.%m.%Y"))
+            if r.p_pay_amt and float(r.p_pay_amt) > 0:
+                b["total_paid"] += float(r.p_pay_amt)
+
+    for r in cat_p_rows:
+        b = buckets.setdefault(f"c{r.feo_category_id}", {
+            "purchases": set(), "contractors": set(), "inns": set(),
+            "docs": set(), "dates": set(), "total_paid": 0.0,
+            "purposes": set(), "kbk": set(), "statuses": set(),
+        })
+        p_num = str(r.purchase_number) if r.purchase_number is not None else (r.registry_number or f"#{r.p_id}")
+        if p_num:
+            b["purchases"].add(p_num)
+        c_name = r.c_name
+        c_inn = r.c_inn
+        if c_name: b["contractors"].add(c_name)
+        if c_inn: b["inns"].add(c_inn)
+        p_pays = payments_by_pid.get(r.p_id, [])
+        if p_pays:
+            for pay in p_pays:
+                doc = pay.bp_num or pay.pay_doc
+                if doc: b["docs"].add(str(doc))
+                dt = pay.bp_date or pay.pay_date
+                if dt: b["dates"].add(dt.strftime("%d.%m.%Y"))
+                amt = pay.bp_amt if pay.bp_amt is not None else pay.pay_amt
+                if amt and float(amt) > 0:
+                    b["total_paid"] += float(amt)
+                purp = pay.bp_purpose or pay.pay_purpose
+                if purp: b["purposes"].add(str(purp).strip()[:150])
+                kbk_val = pay.expense_code or pay.parsed_kbk
+                if kbk_val: b["kbk"].add(str(kbk_val))
+                st = pay.bp_status or "Оплачено"
+                if st: b["statuses"].add(str(st))
+                if not c_name and pay.bp_payee_name: b["contractors"].add(pay.bp_payee_name)
+                if not c_inn and pay.bp_payee_inn: b["inns"].add(pay.bp_payee_inn)
+
+    return {k: _format_bucket(v) for k, v in buckets.items()}
+
+
 async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: bool = False):
     """Строит openpyxl.Workbook «Выгрузить ФЭО» по субсидии `sub` (столбцы —
     `selected_keys`, см. app.services.feo_export_columns). Единственная точка
@@ -153,11 +349,13 @@ async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: 
     item_ids = [it.id for it in feo_items]
     item_segments_map = await planned_item_stage_segments(db, item_ids)
     cat_segments_map = await category_plan_stage_segments(db, leaf_cat_ids)
+    procurement_map = await load_item_procurement_and_payments(db, item_ids, leaf_cat_ids)
 
     wb = Workbook()
     ws, top_rows, last_row = render_feo_tree_sheet(
         wb, sub.name[:31], selected_keys, roots, items_by_cat,
         item_segments_map, cat_segments_map, totals_label=f"{sub.name} — итого всего",
+        procurement_map=procurement_map,
     )
 
     if with_summary:
@@ -174,6 +372,7 @@ def render_feo_tree_sheet(
     wb, sheet_title: str, selected_keys: list, roots: list,
     items_by_cat: dict, item_segments_map: dict, cat_segments_map: dict,
     *, totals_label: str, include_row_ids: bool = True,
+    procurement_map: Optional[dict] = None,
 ):
     """Рисует дерево категорий/позиций на активном листе новой книги `wb` —
     ЕДИНСТВЕННОЕ место, которое знает оформление/формулы выгрузки «Выгрузить
@@ -223,13 +422,9 @@ def render_feo_tree_sheet(
     ws.row_dimensions[HEADER_ROW].height = 32
     ws.freeze_panes = f"A{DATA_FIRST_ROW}"
 
-    # Загрузка обратно (владелец 20.10.2026): колонка «№ в системе» всегда
-    # есть в файле (row_id — в DEFAULT_KEYS, см. feo_export_columns.py), но
-    # скрыта от человека — несёт только id для app.services.
-    # feo_roundtrip_import.parse при обратной загрузке.
+    # Уникальный хэш / ID строки (задача владельца 03.11.2026):
+    # колонка видна в конце таблицы, заблокирована от ручного редактирования.
     ci_row_id = column_index(selected_keys, "row_id")
-    if ci_row_id is not None:
-        ws.column_dimensions[ws.cell(row=HEADER_ROW, column=ci_row_id).column_letter].hidden = True
 
     row_num = DATA_FIRST_ROW
 
@@ -241,6 +436,7 @@ def render_feo_tree_sheet(
             if fill:
                 cell.fill = fill
             cell.font = font
+            cell.protection = Protection(locked=(key == "row_id"))
             if key in MONEY_KEYS and isinstance(val, (int, float)):
                 cell.number_format = NUM_FMT
         r = row_num
@@ -257,6 +453,7 @@ def render_feo_tree_sheet(
         stage_vals = compute_row_stage_values(segments, plan_amount)
         ordered_amt = stage_vals["ordered"]
         to_order = stage_vals["to_order"]
+        proc = (procurement_map or {}).get(item.id, {})
         values = {
             "name": "  " * depth + item.name,
             # «Кол-во по ФЭО»/«Цена за ед. по ФЭО» — ВТОРОЙ, независимый
@@ -274,6 +471,15 @@ def render_feo_tree_sheet(
             "row_type": "Позиция",
             "row_id": (f"p{item.id}" if item.id is not None else "") if include_row_ids else "",
             **stage_vals,
+            "purchase_number": proc.get("purchase_number", ""),
+            "contractor_name": proc.get("contractor_name", ""),
+            "contractor_inn": proc.get("contractor_inn", ""),
+            "payment_doc_number": proc.get("payment_doc_number", ""),
+            "payment_date": proc.get("payment_date", ""),
+            "payment_amount": proc.get("payment_amount", ""),
+            "payment_purpose": proc.get("payment_purpose", ""),
+            "payment_kbk": proc.get("payment_kbk", ""),
+            "payment_status": proc.get("payment_status", ""),
         }
         row_idx = _write_row(values, None, ITEM_FONT)
         ci_feo = column_index(selected_keys, "feo")
@@ -347,6 +553,18 @@ def render_feo_tree_sheet(
         if is_leaf:
             values["plan"] = own_plan
             values.update(stage_vals)
+            cat_proc = (procurement_map or {}).get(f"c{c.id}", {})
+            values.update({
+                "purchase_number": cat_proc.get("purchase_number", ""),
+                "contractor_name": cat_proc.get("contractor_name", ""),
+                "contractor_inn": cat_proc.get("contractor_inn", ""),
+                "payment_doc_number": cat_proc.get("payment_doc_number", ""),
+                "payment_date": cat_proc.get("payment_date", ""),
+                "payment_amount": cat_proc.get("payment_amount", ""),
+                "payment_purpose": cat_proc.get("payment_purpose", ""),
+                "payment_kbk": cat_proc.get("payment_kbk", ""),
+                "payment_status": cat_proc.get("payment_status", ""),
+            })
         if c.level == 1:
             fill = L1_FILL
         elif c.level == 2:
@@ -421,6 +639,47 @@ def render_feo_tree_sheet(
     last_col_letter = ws.cell(row=HEADER_ROW, column=n_cols).column_letter
     ws.auto_filter.ref = f"A{HEADER_ROW}:{last_col_letter}{max(last_row, HEADER_ROW)}"
 
+    # Выпадающий список «Да / Нет» для статусных колонок (задача владельца 03.11.2026)
+    status_keys = {"active", "in_work", "contracted", "ordered_flag", "delivered", "paid_marked", "paid_confirmed"}
+    dv_yes_no = DataValidation(
+        type="list",
+        formula1="_meta!$D$1:$D$2",
+        allow_blank=True,
+    )
+    dv_yes_no.error = "Выберите значение из списка (Да / Нет)"
+    dv_yes_no.errorTitle = "Недопустимое значение"
+    ws.add_data_validation(dv_yes_no)
+
+    max_validation_row = max(last_row + 100, 200)
+
+    for sk in status_keys:
+        ci_st = column_index(selected_keys, sk)
+        if ci_st is not None:
+            col_letter = ws.cell(row=HEADER_ROW, column=ci_st).column_letter
+            dv_yes_no.add(f"{col_letter}{DATA_FIRST_ROW}:{col_letter}{max_validation_row}")
+
+    # Запасные строки с формулой автогенерации хэша/ID для новых строк (задача владельца 03.11.2026):
+    # При заполнении колонки A (наименование) в столбце Хэш автоматически появляется NEW-<номер_строки>
+    if ci_row_id is not None:
+        for spare_r in range(last_row + 1, last_row + 51):
+            c_spare = ws.cell(row=spare_r, column=ci_row_id, value=f'=IF(A{spare_r}<>"","NEW-"&ROW(),"")')
+            c_spare.protection = Protection(locked=True)
+            for ci_other in range(1, n_cols + 1):
+                if ci_other != ci_row_id:
+                    ws.cell(row=spare_r, column=ci_other).protection = Protection(locked=False)
+
+    # Защита листа от случайного изменения заблокированных ячеек (столбец row_id),
+    # без пароля, разрешая сортировку, фильтрацию, форматирование, добавление и удаление строк:
+    ws.protection.sheet = True
+    ws.protection.enable()
+    ws.protection.autoFilter = False
+    ws.protection.sort = False
+    ws.protection.formatCells = False
+    ws.protection.formatColumns = False
+    ws.protection.formatRows = False
+    ws.protection.insertRows = False
+    ws.protection.deleteRows = False
+
     return ws, top_rows, last_row
 
 
@@ -442,6 +701,9 @@ def _write_roundtrip_meta_sheet(wb, subsidy_id: Optional[int]) -> None:
     meta["B2"] = datetime.now(timezone.utc).isoformat()
     meta["A3"] = "format_version"
     meta["B3"] = ROUNDTRIP_FORMAT_VERSION
+    # Справочник для выпадающего списка DataValidation (Да / Нет)
+    meta["D1"] = "Да"
+    meta["D2"] = "Нет"
 
 
 def build_feo_roundtrip_template_workbook():

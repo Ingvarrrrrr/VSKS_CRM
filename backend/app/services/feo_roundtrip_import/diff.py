@@ -136,13 +136,22 @@ def _norm_name(s: Optional[str]) -> str:
     return re.sub(r"\s+", " ", (s or "").strip())
 
 
+def _is_new_row_tag(raw: Optional[str]) -> bool:
+    if not raw:
+        return True
+    s = raw.strip().lower()
+    return s.startswith("new") or s.startswith("нов")
+
+
 def _parse_row_id(raw: Optional[str]) -> tuple[Optional[str], Optional[int]]:
     if not raw:
         return None, None
     raw = raw.strip()
+    if _is_new_row_tag(raw):
+        return None, None
     if len(raw) < 2:
         return None, None
-    prefix, rest = raw[0], raw[1:]
+    prefix, rest = raw[0].lower(), raw[1:]
     if prefix not in ("c", "p") or not rest.isdigit():
         return None, None
     return prefix, int(rest)
@@ -225,6 +234,9 @@ async def build_preview(
     for rr in resolved:
         if rr.error:
             result.errors.append({"row": rr.parsed.row_num, "message": rr.error})
+            continue
+        if _is_new_row_tag(rr.parsed.row_id_raw):
+            rr.is_new = True
             continue
         prefix, ent_id = _parse_row_id(rr.parsed.row_id_raw)
         if prefix is None and rr.parsed.row_id_raw:

@@ -39,6 +39,13 @@ _LABEL_BY_KEY = {k: label for k, label, _g, _w, _d in FEO_EXPORT_COLUMNS if k in
 # менять регистр при автозамене/автозаполнении, тот же приём устойчивости,
 # что и у остального импорта ФЭО, см. feo_import_common.norm).
 _KEY_BY_LABEL_NORM = {label.strip().lower(): k for k, label in _LABEL_BY_KEY.items()}
+# Синонимы для обратной совместимости старых выгрузок и вариантов именования хэша
+_KEY_BY_LABEL_NORM["№ в системе"] = "row_id"
+_KEY_BY_LABEL_NORM["хэш / id строки"] = "row_id"
+_KEY_BY_LABEL_NORM["хэш/id строки"] = "row_id"
+_KEY_BY_LABEL_NORM["id строки"] = "row_id"
+_KEY_BY_LABEL_NORM["хэш"] = "row_id"
+_KEY_BY_LABEL_NORM["hash"] = "row_id"
 
 NAME_HEADER = _LABEL_BY_KEY["name"]
 FORMAT_VERSION = "feo-export-1"

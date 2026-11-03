@@ -68,6 +68,18 @@ FEO_EXPORT_COLUMNS: list[tuple] = [
         (f"{key}_amt", f"{label}, ₽", "Стадии", 16, True),
     )
 ] + [
+    # Данные закупки и платежа (задача владельца 03.11.2026: отображение
+    # контрагента, ИНН, номера закупки и реквизитов платежа по каждой позиции)
+    ("purchase_number", "Номер закупки", "Закупки и платежи", 18, True),
+    ("contractor_name", "Контрагент", "Закупки и платежи", 30, True),
+    ("contractor_inn", "ИНН контрагента", "Закупки и платежи", 15, True),
+    ("payment_doc_number", "Номер платёжного документа", "Закупки и платежи", 22, True),
+    ("payment_date", "Дата платежа", "Закупки и платежи", 14, True),
+    ("payment_amount", "Сумма платёжного документа (₽)", "Закупки и платежи", 20, True),
+    ("payment_purpose", "Назначение платежа", "Закупки и платежи", 40, True),
+    ("payment_kbk", "КБК / Код расходов", "Закупки и платежи", 18, True),
+    ("payment_status", "Статус платежа", "Закупки и платежи", 16, True),
+] + [
     # Обязательная служебная колонка (всегда включена, см.
     # resolve_selected_keys ниже) — нужна формуле «Итого по фильтру» в
     # feo_export_xlsx.py (SUMPRODUCT по SUBTOTAL с исключением строк
@@ -76,19 +88,16 @@ FEO_EXPORT_COLUMNS: list[tuple] = [
     # «Позиция» (плановая позиция), «Категория без позиций» (лист без детей
     # и без плановых позиций — budget/значения заданы литералом).
     ("row_type", "Тип строки", "Служебное", 22, True),
-    # Загрузка обратно (задача владельца 20.10.2026): скрытая служебная
-    # колонка-идентификатор — «c<id>» категория / «p<id>» плановая позиция.
-    # Всегда включена (см. always= ниже) и всегда СКРЫТА на листе
-    # (column_dimensions[...].hidden=True в feo_export_xlsx.py) — не
-    # показывается в каталоге выбора столбцов пользователю (см.
-    # columns_catalog() ниже, единственный фильтр, не второй список).
-    ("row_id", "№ в системе", "Служебное", 14, True),
+    # Уникальный идентификатор/хэш строки (задача владельца 03.11.2026):
+    # «c<id>» категория / «p<id>» плановая позиция / «NEW-<row>» для новых.
+    # Расположен в самом конце таблицы, защищён от ручного редактирования.
+    ("row_id", "Хэш / ID строки", "Служебное", 18, True),
 ]
 
 _BY_KEY = {k: (label, group, width) for k, label, group, width, _d in FEO_EXPORT_COLUMNS}
 ALL_KEYS: list = [k for k, *_ in FEO_EXPORT_COLUMNS]
 DEFAULT_KEYS: list = [k for k, _l, _g, _w, is_default in FEO_EXPORT_COLUMNS if is_default]
-MONEY_KEYS: set = {"feo", "plan", "ordered", "to_order", "residual", "feo_unit_price", "plan_unit_price"} | {f"{k}_amt" for k, _ in STAGE_DEFS}
+MONEY_KEYS: set = {"feo", "plan", "ordered", "to_order", "residual", "feo_unit_price", "plan_unit_price", "payment_amount"} | {f"{k}_amt" for k, _ in STAGE_DEFS}
 # Текстовые Да/Частично/Нет столбцы по стадиям — у строк категорий остаются
 # пустыми (владелец: «у категорий текстовые стадии — пусто»).
 STAGE_TEXT_KEYS: tuple = tuple(k for k, _ in STAGE_DEFS)

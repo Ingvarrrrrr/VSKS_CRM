@@ -215,12 +215,14 @@ async def load_item_procurement_and_payments(
                 Payment.payment_date.label("pay_date"),
                 Payment.amount.label("pay_amt"),
                 Payment.payment_purpose.label("pay_purpose"),
+                Payment.expense_code.label("pay_expense_code"),
                 BankPayment.payment_number.label("bp_num"),
                 BankPayment.payment_date.label("bp_date"),
                 BankPayment.amount.label("bp_amt"),
                 BankPayment.purpose_text.label("bp_purpose"),
                 BankPayment.parsed_kbk,
                 BankPayment.expense_code,
+                BankPayment.raw_json.label("bp_raw_json"),
                 BankPayment.status.label("bp_status"),
                 BankPayment.payee_name.label("bp_payee_name"),
                 BankPayment.payee_inn.label("bp_payee_inn"),
@@ -236,9 +238,10 @@ async def load_item_procurement_and_payments(
         return {
             "purchases": set(), "contractors": set(), "inns": set(),
             "contracts": set(), "contract_amounts": set(), "order_amount": 0.0,
+            "purchase_totals_by_pid": {},
             "seen_p_ids": set(),
             "docs": set(), "dates": set(), "total_paid": 0.0,
-            "purposes": set(), "kbk": set(), "statuses": set(),
+            "purposes": set(), "kbk": set(), "expense_groups": set(), "statuses": set(),
         }
 
     def _format_bucket(b: dict) -> dict:
@@ -247,6 +250,8 @@ async def load_item_procurement_and_payments(
         c_inn = ", ".join(sorted(b["inns"])) if b["inns"] else ""
         c_doc = ", ".join(sorted(b["contracts"])) if b["contracts"] else ""
         c_amt = max(b["contract_amounts"]) if b["contract_amounts"] else 0.0
+        p_amt = sum(b["purchase_totals_by_pid"].values()) if b["purchase_totals_by_pid"] else 0.0
+        expense_grp = ", ".join(sorted(b["expense_groups"])) if b["expense_groups"] else ""
         pay_doc = ", ".join(sorted(b["docs"])) if b["docs"] else ""
         pay_dt = ", ".join(sorted(b["dates"])) if b["dates"] else ""
         pay_amt = round(b["total_paid"], 2) if b["total_paid"] > 0 else ""
@@ -258,13 +263,15 @@ async def load_item_procurement_and_payments(
             "contract_amount": round(c_amt, 2) if c_amt > 0 else "",
             "order_amount": round(b["order_amount"], 2) if b["order_amount"] > 0 else "",
             "purchase_number": p_num,
+            "purchase_amount": round(p_amt, 2) if p_amt > 0 else "",
             "contractor_name": c_name,
             "contractor_inn": c_inn,
             "payment_doc_number": pay_doc,
             "payment_date": pay_dt,
             "payment_amount": pay_amt,
-            "payment_purpose": pay_purpose,
+            "expense_group_code": expense_grp,
             "payment_kbk": pay_kbk,
+            "payment_purpose": pay_purpose,
             "payment_status": pay_status,
         }
 
@@ -274,6 +281,9 @@ async def load_item_procurement_and_payments(
         p_num = str(r.purchase_number) if r.purchase_number is not None else (r.registry_number or f"#{r.p_id}")
         if p_num:
             b["purchases"].add(p_num)
+        p_tot = float(r.p_final_amt or r.p_contract_price or 0.0)
+        if p_tot > 0:
+            b["purchase_totals_by_pid"][r.p_id] = p_tot
         c_name = r.c_name or getattr(r, "pi_c_name", None)
         c_inn = r.c_inn or getattr(r, "pi_c_inn", None)
         if c_name:
@@ -319,6 +329,18 @@ async def load_item_procurement_and_payments(
                 if purp: b["purposes"].add(str(purp).strip()[:150])
                 kbk_val = pay.expense_code or pay.parsed_kbk
                 if kbk_val: b["kbk"].add(str(kbk_val))
+                # Недетализированный код расходов (200 / 300)
+                short_code = None
+                raw_j = pay.bp_raw_json
+                if raw_j and isinstance(raw_j, dict):
+                    short_code = raw_j.get("КОД РАСХОДОВ") or raw_j.get("Код расходов")
+                if not short_code:
+                    ec = pay.expense_code or getattr(pay, "pay_expense_code", None)
+                    if ec:
+                        ec_str = str(ec).strip()
+                        short_code = ec_str[:4] if len(ec_str) >= 4 else ec_str
+                if short_code:
+                    b["expense_groups"].add(str(short_code))
                 st = pay.bp_status or "Оплачено"
                 if st: b["statuses"].add(str(st))
                 if not c_name and pay.bp_payee_name: b["contractors"].add(pay.bp_payee_name)
@@ -334,6 +356,9 @@ async def load_item_procurement_and_payments(
         p_num = str(r.purchase_number) if r.purchase_number is not None else (r.registry_number or f"#{r.p_id}")
         if p_num:
             b["purchases"].add(p_num)
+        p_tot = float(r.p_final_amt or r.p_contract_price or 0.0)
+        if p_tot > 0:
+            b["purchase_totals_by_pid"][r.p_id] = p_tot
         c_name = r.c_name
         c_inn = r.c_inn
         if c_name: b["contractors"].add(c_name)
@@ -372,6 +397,17 @@ async def load_item_procurement_and_payments(
                 if purp: b["purposes"].add(str(purp).strip()[:150])
                 kbk_val = pay.expense_code or pay.parsed_kbk
                 if kbk_val: b["kbk"].add(str(kbk_val))
+                short_code = None
+                raw_j = pay.bp_raw_json
+                if raw_j and isinstance(raw_j, dict):
+                    short_code = raw_j.get("КОД РАСХОДОВ") or raw_j.get("Код расходов")
+                if not short_code:
+                    ec = pay.expense_code or getattr(pay, "pay_expense_code", None)
+                    if ec:
+                        ec_str = str(ec).strip()
+                        short_code = ec_str[:4] if len(ec_str) >= 4 else ec_str
+                if short_code:
+                    b["expense_groups"].add(str(short_code))
                 st = pay.bp_status or "Оплачено"
                 if st: b["statuses"].add(str(st))
                 if not c_name and pay.bp_payee_name: b["contractors"].add(pay.bp_payee_name)
@@ -513,7 +549,7 @@ def render_feo_tree_sheet(
         cell.font = HEADER_FONT
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         ws.column_dimensions[cell.column_letter].width = width
-    ws.row_dimensions[HEADER_ROW].height = 32
+    ws.row_dimensions[HEADER_ROW].height = 36
     ws.freeze_panes = f"A{DATA_FIRST_ROW}"
 
     # Уникальный хэш / ID строки (задача владельца 03.11.2026):
@@ -567,15 +603,17 @@ def render_feo_tree_sheet(
             **stage_vals,
             "contract_number": proc.get("contract_number", ""),
             "contract_amount": proc.get("contract_amount", ""),
-            "order_amount": proc.get("order_amount", ""),
             "purchase_number": proc.get("purchase_number", ""),
+            "purchase_amount": proc.get("purchase_amount", ""),
+            "order_amount": proc.get("order_amount", ""),
             "contractor_name": proc.get("contractor_name", ""),
             "contractor_inn": proc.get("contractor_inn", ""),
             "payment_doc_number": proc.get("payment_doc_number", ""),
             "payment_date": proc.get("payment_date", ""),
             "payment_amount": proc.get("payment_amount", ""),
-            "payment_purpose": proc.get("payment_purpose", ""),
+            "expense_group_code": proc.get("expense_group_code", ""),
             "payment_kbk": proc.get("payment_kbk", ""),
+            "payment_purpose": proc.get("payment_purpose", ""),
             "payment_status": proc.get("payment_status", ""),
         }
         # Градиент от жёлтого к зелёному в зависимости от стадии (задача владельца 03.11.2026)
@@ -668,15 +706,17 @@ def render_feo_tree_sheet(
             values.update({
                 "contract_number": cat_proc.get("contract_number", ""),
                 "contract_amount": cat_proc.get("contract_amount", ""),
-                "order_amount": cat_proc.get("order_amount", ""),
                 "purchase_number": cat_proc.get("purchase_number", ""),
+                "purchase_amount": cat_proc.get("purchase_amount", ""),
+                "order_amount": cat_proc.get("order_amount", ""),
                 "contractor_name": cat_proc.get("contractor_name", ""),
                 "contractor_inn": cat_proc.get("contractor_inn", ""),
                 "payment_doc_number": cat_proc.get("payment_doc_number", ""),
                 "payment_date": cat_proc.get("payment_date", ""),
                 "payment_amount": cat_proc.get("payment_amount", ""),
-                "payment_purpose": cat_proc.get("payment_purpose", ""),
+                "expense_group_code": cat_proc.get("expense_group_code", ""),
                 "payment_kbk": cat_proc.get("payment_kbk", ""),
+                "payment_purpose": cat_proc.get("payment_purpose", ""),
                 "payment_status": cat_proc.get("payment_status", ""),
             })
         if is_leaf:

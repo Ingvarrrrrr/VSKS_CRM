@@ -26,8 +26,10 @@ try:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Protection
     from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.formatting.rule import FormulaRule
 except ImportError:  # pragma: no cover
     Workbook = None
+    FormulaRule = None
 
 from app.services.feo_export_columns import (
     MONEY_KEYS,
@@ -103,12 +105,14 @@ async def load_item_procurement_and_payments(
     item_ids: list[int],
     leaf_cat_ids: Optional[list[int]] = None,
 ) -> dict:
-    """Загружает данные закупок и платежей для строк выгрузки ФЭО:
-    номер закупки, контрагент, ИНН, дата платежа, номер платёжного документа,
+    """Загружает данные закупок, договоров и платежей для строк выгрузки ФЭО:
+    номер договора, сумма по договору, сумма заказа, номер закупки,
+    контрагент, ИНН, дата платежа, номер платёжного документа,
     сумма платёжного документа, назначение платежа, КБК, статус платежа."""
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     from app.models.purchase_item import PurchaseItem
     from app.models.purchase import Purchase
+    from app.models.contract import Contract
     from app.models.contractor import Contractor
     from app.models.payment import Payment
     from app.models.bank_statement import BankPayment
@@ -122,11 +126,17 @@ async def load_item_procurement_and_payments(
         q_pi = (
             select(
                 PurchaseItem.feo_planned_item_id,
+                PurchaseItem.total_price.label("pi_total_price"),
+                PurchaseItem.final_total.label("pi_final_total"),
                 PurchaseItem.contractor_name.label("pi_c_name"),
                 PurchaseItem.contractor_inn.label("pi_c_inn"),
                 Purchase.id.label("p_id"),
                 Purchase.purchase_number,
                 Purchase.registry_number,
+                Purchase.contract_id,
+                Purchase.contract_number.label("p_contract_num"),
+                Purchase.contract_price.label("p_contract_price"),
+                Purchase.final_total_amount.label("p_final_amt"),
                 Purchase.payment_doc_number.label("p_pay_doc"),
                 Purchase.payment_doc_date.label("p_pay_date"),
                 Purchase.payment_amount.label("p_pay_amt"),
@@ -134,9 +144,12 @@ async def load_item_procurement_and_payments(
                 Purchase.contractor_id,
                 Contractor.name.label("c_name"),
                 Contractor.inn.label("c_inn"),
+                Contract.number.label("contract_num"),
+                Contract.max_amount.label("contract_max_amt"),
             )
             .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
             .outerjoin(Contractor, Purchase.contractor_id == Contractor.id)
+            .outerjoin(Contract, Purchase.contract_id == Contract.id)
             .where(
                 PurchaseItem.feo_planned_item_id.in_(item_ids),
                 Purchase.stopped_at.is_(None),
@@ -152,6 +165,10 @@ async def load_item_procurement_and_payments(
                 Purchase.id.label("p_id"),
                 Purchase.purchase_number,
                 Purchase.registry_number,
+                Purchase.contract_id,
+                Purchase.contract_number.label("p_contract_num"),
+                Purchase.contract_price.label("p_contract_price"),
+                Purchase.final_total_amount.label("p_final_amt"),
                 Purchase.payment_doc_number.label("p_pay_doc"),
                 Purchase.payment_doc_date.label("p_pay_date"),
                 Purchase.payment_amount.label("p_pay_amt"),
@@ -159,14 +176,34 @@ async def load_item_procurement_and_payments(
                 Purchase.contractor_id,
                 Contractor.name.label("c_name"),
                 Contractor.inn.label("c_inn"),
+                Contract.number.label("contract_num"),
+                Contract.max_amount.label("contract_max_amt"),
             )
             .outerjoin(Contractor, Purchase.contractor_id == Contractor.id)
+            .outerjoin(Contract, Purchase.contract_id == Contract.id)
             .where(
                 Purchase.feo_category_id.in_(leaf_cat_ids),
                 Purchase.stopped_at.is_(None),
             )
         )
         cat_p_rows = (await db.execute(q_cat)).all()
+
+    all_c_ids = list({r.contract_id for r in pi_rows if r.contract_id} | {r.contract_id for r in cat_p_rows if r.contract_id})
+    contract_orders_totals: dict[int, float] = {}
+    if all_c_ids:
+        q_c_tot = (
+            select(
+                Purchase.contract_id,
+                func.sum(func.coalesce(Purchase.final_total_amount, Purchase.contract_price, 0)).label("tot"),
+            )
+            .where(
+                Purchase.contract_id.in_(all_c_ids),
+                Purchase.stopped_at.is_(None),
+            )
+            .group_by(Purchase.contract_id)
+        )
+        for c_id, tot in (await db.execute(q_c_tot)).all():
+            contract_orders_totals[c_id] = float(tot or 0.0)
 
     all_p_ids = list({r.p_id for r in pi_rows} | {r.p_id for r in cat_p_rows})
     payments_by_pid: dict[int, list] = {}
@@ -195,10 +232,21 @@ async def load_item_procurement_and_payments(
         for pr in pay_rows:
             payments_by_pid.setdefault(pr.purchase_id, []).append(pr)
 
+    def _make_bucket():
+        return {
+            "purchases": set(), "contractors": set(), "inns": set(),
+            "contracts": set(), "contract_amounts": set(), "order_amount": 0.0,
+            "seen_p_ids": set(),
+            "docs": set(), "dates": set(), "total_paid": 0.0,
+            "purposes": set(), "kbk": set(), "statuses": set(),
+        }
+
     def _format_bucket(b: dict) -> dict:
         p_num = ", ".join(sorted(b["purchases"])) if b["purchases"] else ""
         c_name = ", ".join(sorted(b["contractors"])) if b["contractors"] else ""
         c_inn = ", ".join(sorted(b["inns"])) if b["inns"] else ""
+        c_doc = ", ".join(sorted(b["contracts"])) if b["contracts"] else ""
+        c_amt = max(b["contract_amounts"]) if b["contract_amounts"] else 0.0
         pay_doc = ", ".join(sorted(b["docs"])) if b["docs"] else ""
         pay_dt = ", ".join(sorted(b["dates"])) if b["dates"] else ""
         pay_amt = round(b["total_paid"], 2) if b["total_paid"] > 0 else ""
@@ -206,6 +254,9 @@ async def load_item_procurement_and_payments(
         pay_kbk = ", ".join(sorted(b["kbk"])) if b["kbk"] else ""
         pay_status = ", ".join(sorted(b["statuses"])) if b["statuses"] else ""
         return {
+            "contract_number": c_doc,
+            "contract_amount": round(c_amt, 2) if c_amt > 0 else "",
+            "order_amount": round(b["order_amount"], 2) if b["order_amount"] > 0 else "",
             "purchase_number": p_num,
             "contractor_name": c_name,
             "contractor_inn": c_inn,
@@ -219,11 +270,7 @@ async def load_item_procurement_and_payments(
 
     buckets: dict = {}
     for r in pi_rows:
-        b = buckets.setdefault(r.feo_planned_item_id, {
-            "purchases": set(), "contractors": set(), "inns": set(),
-            "docs": set(), "dates": set(), "total_paid": 0.0,
-            "purposes": set(), "kbk": set(), "statuses": set(),
-        })
+        b = buckets.setdefault(r.feo_planned_item_id, _make_bucket())
         p_num = str(r.purchase_number) if r.purchase_number is not None else (r.registry_number or f"#{r.p_id}")
         if p_num:
             b["purchases"].add(p_num)
@@ -233,6 +280,30 @@ async def load_item_procurement_and_payments(
             b["contractors"].add(c_name)
         if c_inn:
             b["inns"].add(c_inn)
+
+        c_num = r.contract_num or r.p_contract_num
+        if c_num:
+            b["contracts"].add(str(c_num))
+
+        if r.pi_final_total is not None and float(r.pi_final_total) > 0:
+            item_amt = float(r.pi_final_total)
+        elif r.pi_total_price is not None and float(r.pi_total_price) > 0:
+            item_amt = float(r.pi_total_price)
+        else:
+            item_amt = float(r.p_final_amt or r.p_contract_price or 0.0)
+        b["order_amount"] += item_amt
+
+        if r.p_id not in b["seen_p_ids"]:
+            b["seen_p_ids"].add(r.p_id)
+            c_tot = 0.0
+            if r.contract_max_amt is not None and float(r.contract_max_amt) > 0:
+                c_tot = float(r.contract_max_amt)
+            elif r.contract_id and r.contract_id in contract_orders_totals:
+                c_tot = contract_orders_totals[r.contract_id]
+            elif r.p_final_amt or r.p_contract_price:
+                c_tot = float(r.p_final_amt or r.p_contract_price or 0.0)
+            if c_tot > 0:
+                b["contract_amounts"].add(c_tot)
 
         p_pays = payments_by_pid.get(r.p_id, [])
         if p_pays:
@@ -259,11 +330,7 @@ async def load_item_procurement_and_payments(
                 b["total_paid"] += float(r.p_pay_amt)
 
     for r in cat_p_rows:
-        b = buckets.setdefault(f"c{r.feo_category_id}", {
-            "purchases": set(), "contractors": set(), "inns": set(),
-            "docs": set(), "dates": set(), "total_paid": 0.0,
-            "purposes": set(), "kbk": set(), "statuses": set(),
-        })
+        b = buckets.setdefault(f"c{r.feo_category_id}", _make_bucket())
         p_num = str(r.purchase_number) if r.purchase_number is not None else (r.registry_number or f"#{r.p_id}")
         if p_num:
             b["purchases"].add(p_num)
@@ -271,6 +338,26 @@ async def load_item_procurement_and_payments(
         c_inn = r.c_inn
         if c_name: b["contractors"].add(c_name)
         if c_inn: b["inns"].add(c_inn)
+
+        c_num = r.contract_num or r.p_contract_num
+        if c_num:
+            b["contracts"].add(str(c_num))
+
+        item_amt = float(r.p_final_amt or r.p_contract_price or 0.0)
+        b["order_amount"] += item_amt
+
+        if r.p_id not in b["seen_p_ids"]:
+            b["seen_p_ids"].add(r.p_id)
+            c_tot = 0.0
+            if r.contract_max_amt is not None and float(r.contract_max_amt) > 0:
+                c_tot = float(r.contract_max_amt)
+            elif r.contract_id and r.contract_id in contract_orders_totals:
+                c_tot = contract_orders_totals[r.contract_id]
+            elif r.p_final_amt or r.p_contract_price:
+                c_tot = float(r.p_final_amt or r.p_contract_price or 0.0)
+            if c_tot > 0:
+                b["contract_amounts"].add(c_tot)
+
         p_pays = payments_by_pid.get(r.p_id, [])
         if p_pays:
             for pay in p_pays:
@@ -400,6 +487,13 @@ def render_feo_tree_sheet(
     L2_FILL = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
     L3_FILL = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
     L4_FILL = PatternFill(start_color="EEF4FB", end_color="EEF4FB", fill_type="solid")
+
+    # Палитра градиента от жёлтого к зелёному (задача владельца 03.11.2026)
+    FILL_CONFIRMED = PatternFill(start_color="86EFAC", end_color="86EFAC", fill_type="solid")  # насыщенный зелёный (Подтверждено выпиской)
+    FILL_MARKED = PatternFill(start_color="A7F3D0", end_color="A7F3D0", fill_type="solid")     # светло-зелёный (Оплачено по отметке)
+    FILL_ORDERED = PatternFill(start_color="D9F99D", end_color="D9F99D", fill_type="solid")   # лайм / жёлто-зелёный (Товар заказан)
+    FILL_IN_WORK = PatternFill(start_color="FEF08A", end_color="FEF08A", fill_type="solid")   # тёплый жёлтый (Закупка в работе)
+    FILL_PLAN = PatternFill(start_color="FEF9C3", end_color="FEF9C3", fill_type="solid")      # светло-жёлтый (Запланировано)
     BOLD_FONT = Font(bold=True)
     SEMI_FONT = Font(bold=False)
     ITEM_FONT = Font(italic=True, color="475569")
@@ -471,6 +565,9 @@ def render_feo_tree_sheet(
             "row_type": "Позиция",
             "row_id": (f"p{item.id}" if item.id is not None else "") if include_row_ids else "",
             **stage_vals,
+            "contract_number": proc.get("contract_number", ""),
+            "contract_amount": proc.get("contract_amount", ""),
+            "order_amount": proc.get("order_amount", ""),
             "purchase_number": proc.get("purchase_number", ""),
             "contractor_name": proc.get("contractor_name", ""),
             "contractor_inn": proc.get("contractor_inn", ""),
@@ -481,7 +578,21 @@ def render_feo_tree_sheet(
             "payment_kbk": proc.get("payment_kbk", ""),
             "payment_status": proc.get("payment_status", ""),
         }
-        row_idx = _write_row(values, None, ITEM_FONT)
+        # Градиент от жёлтого к зелёному в зависимости от стадии (задача владельца 03.11.2026)
+        if stage_vals.get("paid_confirmed") == "Да":
+            row_fill = FILL_CONFIRMED
+        elif stage_vals.get("paid_marked") == "Да":
+            row_fill = FILL_MARKED
+        elif stage_vals.get("ordered_flag") == "Да" or ordered_amt > 0:
+            row_fill = FILL_ORDERED
+        elif stage_vals.get("in_work") == "Да":
+            row_fill = FILL_IN_WORK
+        elif plan_amount > 0:
+            row_fill = FILL_PLAN
+        else:
+            row_fill = None
+
+        row_idx = _write_row(values, row_fill, ITEM_FONT)
         ci_feo = column_index(selected_keys, "feo")
         ci_ordered = column_index(selected_keys, "ordered")
         ci_to_order = column_index(selected_keys, "to_order")
@@ -505,7 +616,7 @@ def render_feo_tree_sheet(
         формулы при агрегации), поэтому категория с подкатегориями получала
         0 — баг владельца 20.10.2026 (п.1). SUM считает обычные ссылки на
         ячейки честно, независимо от того, что там — число или формула."""
-        keys = ("feo", "plan", "ordered", "to_order", "residual") + STAGE_AMOUNT_KEYS
+        keys = ("feo", "plan", "ordered", "to_order", "residual", "order_amount", "contract_amount") + STAGE_AMOUNT_KEYS
         for key in keys:
             ci = column_index(selected_keys, key)
             if ci is None:
@@ -555,6 +666,9 @@ def render_feo_tree_sheet(
             values.update(stage_vals)
             cat_proc = (procurement_map or {}).get(f"c{c.id}", {})
             values.update({
+                "contract_number": cat_proc.get("contract_number", ""),
+                "contract_amount": cat_proc.get("contract_amount", ""),
+                "order_amount": cat_proc.get("order_amount", ""),
                 "purchase_number": cat_proc.get("purchase_number", ""),
                 "contractor_name": cat_proc.get("contractor_name", ""),
                 "contractor_inn": cat_proc.get("contractor_inn", ""),
@@ -565,7 +679,20 @@ def render_feo_tree_sheet(
                 "payment_kbk": cat_proc.get("payment_kbk", ""),
                 "payment_status": cat_proc.get("payment_status", ""),
             })
-        if c.level == 1:
+        if is_leaf:
+            if stage_vals.get("paid_confirmed") == "Да":
+                fill = FILL_CONFIRMED
+            elif stage_vals.get("paid_marked") == "Да":
+                fill = FILL_MARKED
+            elif stage_vals.get("ordered_flag") == "Да" or stage_vals.get("ordered", 0) > 0:
+                fill = FILL_ORDERED
+            elif stage_vals.get("in_work") == "Да":
+                fill = FILL_IN_WORK
+            elif own_plan > 0:
+                fill = FILL_PLAN
+            else:
+                fill = L4_FILL
+        elif c.level == 1:
             fill = L1_FILL
         elif c.level == 2:
             fill = L2_FILL
@@ -614,7 +741,7 @@ def render_feo_tree_sheet(
     # умножает на 1/0 по столбцу «Тип строки» (row_type): складываются
     # только «Позиция» и «Категория без позиций», категории с SUM-формулой
     # исключены, чтобы не задваивать.
-    money_keys = ("feo", "plan", "ordered", "to_order", "residual") + STAGE_AMOUNT_KEYS
+    money_keys = ("feo", "plan", "ordered", "to_order", "residual", "order_amount", "contract_amount", "payment_amount") + STAGE_AMOUNT_KEYS
     ci_row_type = column_index(selected_keys, "row_type")
     row_type_col_letter = ws.cell(row=1, column=ci_row_type).column_letter if ci_row_type else None
     for key in money_keys:
@@ -638,6 +765,67 @@ def render_feo_tree_sheet(
 
     last_col_letter = ws.cell(row=HEADER_ROW, column=n_cols).column_letter
     ws.auto_filter.ref = f"A{HEADER_ROW}:{last_col_letter}{max(last_row, HEADER_ROW)}"
+
+    # Условное форматирование строк: плавный градиент от жёлтого к зелёному (задача владельца 03.11.2026)
+    if FormulaRule is not None and last_row >= DATA_FIRST_ROW:
+        ci_rt = column_index(selected_keys, "row_type")
+        ci_plan = column_index(selected_keys, "plan")
+        ci_ord = column_index(selected_keys, "ordered")
+        ci_iw = column_index(selected_keys, "in_work")
+        ci_of = column_index(selected_keys, "ordered_flag")
+        ci_pm = column_index(selected_keys, "paid_marked")
+        ci_pc = column_index(selected_keys, "paid_confirmed")
+
+        if ci_rt:
+            col_rt = ws.cell(row=HEADER_ROW, column=ci_rt).column_letter
+            cf_range = f"A{DATA_FIRST_ROW}:{last_col_letter}{last_row}"
+
+            rules = []
+            if ci_pc:
+                col_pc = ws.cell(row=HEADER_ROW, column=ci_pc).column_letter
+                rules.append(FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_pc}{DATA_FIRST_ROW}="Да")'],
+                    fill=FILL_CONFIRMED,
+                    stopIfTrue=True,
+                ))
+            if ci_pm:
+                col_pm = ws.cell(row=HEADER_ROW, column=ci_pm).column_letter
+                rules.append(FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_pm}{DATA_FIRST_ROW}="Да")'],
+                    fill=FILL_MARKED,
+                    stopIfTrue=True,
+                ))
+            if ci_of or ci_ord:
+                conds = []
+                if ci_of:
+                    col_of = ws.cell(row=HEADER_ROW, column=ci_of).column_letter
+                    conds.append(f'${col_of}{DATA_FIRST_ROW}="Да"')
+                if ci_ord:
+                    col_ord = ws.cell(row=HEADER_ROW, column=ci_ord).column_letter
+                    conds.append(f'${col_ord}{DATA_FIRST_ROW}>0')
+                or_cond = f'OR({", ".join(conds)})' if len(conds) > 1 else conds[0]
+                rules.append(FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", {or_cond})'],
+                    fill=FILL_ORDERED,
+                    stopIfTrue=True,
+                ))
+            if ci_iw:
+                col_iw = ws.cell(row=HEADER_ROW, column=ci_iw).column_letter
+                rules.append(FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_iw}{DATA_FIRST_ROW}="Да")'],
+                    fill=FILL_IN_WORK,
+                    stopIfTrue=True,
+                ))
+            if ci_plan:
+                col_plan = ws.cell(row=HEADER_ROW, column=ci_plan).column_letter
+                rules.append(FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_plan}{DATA_FIRST_ROW}>0)'],
+                    fill=FILL_PLAN,
+                    stopIfTrue=True,
+                ))
+
+            for rule in rules:
+                ws.conditional_formatting.add(cf_range, rule)
 
     # Выпадающий список «Да / Нет» для статусных колонок (задача владельца 03.11.2026)
     status_keys = {"active", "in_work", "contracted", "ordered_flag", "delivered", "paid_marked", "paid_confirmed"}

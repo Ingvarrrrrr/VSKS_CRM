@@ -47,38 +47,43 @@ STAGE_DEFS: list[tuple] = [
 # выключены по умолчанию) — владелец просил видеть количество по ФЭО сразу.
 FEO_EXPORT_COLUMNS: list[tuple] = [
     ("name", "Наименование", "Основное", 45, True),
-    ("code", "Код", "Основное", 12, False),
-    ("app", "Прил.", "Основное", 10, False),
-    ("feo_qty", "Кол-во по ФЭО", "Основное", 12, True),
-    ("feo_unit", "Ед.", "Основное", 8, True),
+    ("code", "Код", "Основное", 14, False),
+    ("app", "Прил.", "Основное", 12, False),
+    ("feo_qty", "Кол-во по ФЭО", "Основное", 14, True),
+    ("feo_unit", "Ед.", "Основное", 12, True),
     ("feo_unit_price", "Цена за ед. по ФЭО (₽)", "Основное", 18, True),
     ("feo", "Финансирование по ФЭО (₽)", "Основное", 20, True),
-    ("plan_qty", "Кол-во по плану", "Основное", 12, True),
+    ("plan_qty", "Кол-во по плану", "Основное", 14, True),
     ("plan_unit_price", "Цена за ед. по плану (₽)", "Основное", 18, True),
     ("plan", "Запланировано (₽)", "Основное", 20, True),
     ("ordered", "Заказано (₽)", "Основное", 18, True),
     ("to_order", "Надо заказать (₽)", "Основное", 18, True),
     ("residual", "Остаток (₽)", "Основное", 18, True),
-    ("active", "Активна", "Основное", 10, True),
+    ("active", "Активна", "Основное", 14, True),
 ] + [
-    col
+    # Статусы выполнения стадий («Да» / «Нет» с выпадающим списком)
+    (key, label, "Стадии", 16, True)
     for key, label in STAGE_DEFS
-    for col in (
-        (key, label, "Стадии", 16, True),
-        (f"{key}_amt", f"{label}, ₽", "Стадии", 16, True),
-    )
 ] + [
-    # Данные закупки и платежа (задача владельца 03.11.2026: отображение
-    # контрагента, ИНН, номера закупки и реквизитов платежа по каждой позиции)
-    ("purchase_number", "Номер закупки", "Закупки и платежи", 18, True),
-    ("contractor_name", "Контрагент", "Закупки и платежи", 30, True),
-    ("contractor_inn", "ИНН контрагента", "Закупки и платежи", 15, True),
+    # Договор, заказ, закупки и платежи (задача владельца 03.11.2026:
+    # «не хватает столбца который считает Сумму за каждый заказ внутри договора, Сумму по Договору»)
+    ("contract_number", "Номер договора", "Договор и закупки", 20, True),
+    ("contract_amount", "Сумма по договору (₽)", "Договор и закупки", 22, True),
+    ("order_amount", "Сумма заказа внутри договора (₽)", "Договор и закупки", 24, True),
+    ("purchase_number", "Номер закупки", "Договор и закупки", 18, True),
+    ("contractor_name", "Контрагент", "Договор и закупки", 30, True),
+    ("contractor_inn", "ИНН контрагента", "Договор и закупки", 16, True),
     ("payment_doc_number", "Номер платёжного документа", "Закупки и платежи", 22, True),
     ("payment_date", "Дата платежа", "Закупки и платежи", 14, True),
-    ("payment_amount", "Сумма платёжного документа (₽)", "Закупки и платежи", 20, True),
+    ("payment_amount", "Сумма платёжного документа (₽)", "Закупки и платежи", 22, True),
     ("payment_purpose", "Назначение платежа", "Закупки и платежи", 40, True),
     ("payment_kbk", "КБК / Код расходов", "Закупки и платежи", 18, True),
     ("payment_status", "Статус платежа", "Закупки и платежи", 16, True),
+] + [
+    # Суммы по стадиям (задача владельца 03.11.2026: оставлены и сдвинуты в конец таблицы,
+    # чтобы не мешали просмотру основных данных, но были доступны для сводных отчётов)
+    (f"{key}_amt", f"{label}, ₽", "Суммы по стадиям", 18, True)
+    for key, label in STAGE_DEFS
 ] + [
     # Обязательная служебная колонка (всегда включена, см.
     # resolve_selected_keys ниже) — нужна формуле «Итого по фильтру» в
@@ -97,7 +102,11 @@ FEO_EXPORT_COLUMNS: list[tuple] = [
 _BY_KEY = {k: (label, group, width) for k, label, group, width, _d in FEO_EXPORT_COLUMNS}
 ALL_KEYS: list = [k for k, *_ in FEO_EXPORT_COLUMNS]
 DEFAULT_KEYS: list = [k for k, _l, _g, _w, is_default in FEO_EXPORT_COLUMNS if is_default]
-MONEY_KEYS: set = {"feo", "plan", "ordered", "to_order", "residual", "feo_unit_price", "plan_unit_price", "payment_amount"} | {f"{k}_amt" for k, _ in STAGE_DEFS}
+MONEY_KEYS: set = {
+    "feo", "plan", "ordered", "to_order", "residual",
+    "feo_unit_price", "plan_unit_price", "payment_amount",
+    "order_amount", "contract_amount",
+} | {f"{k}_amt" for k, _ in STAGE_DEFS}
 # Текстовые Да/Частично/Нет столбцы по стадиям — у строк категорий остаются
 # пустыми (владелец: «у категорий текстовые стадии — пусто»).
 STAGE_TEXT_KEYS: tuple = tuple(k for k, _ in STAGE_DEFS)

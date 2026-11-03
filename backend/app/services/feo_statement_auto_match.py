@@ -56,6 +56,26 @@ from app.routers.contracts import ensure_contract_linked
 logger = logging.getLogger(__name__)
 
 
+def _is_procurement_bank_payment(bp: BankPayment) -> bool:
+    """Проверка, относится ли платёж к закупкам товаров, работ и услуг.
+    Исключает зарплату (0100*), налоги/ЕНП (0810*, 0820*) и пособия/стипендии."""
+    ec = str(bp.expense_code or "").strip()
+    if ec:
+        if not (ec.startswith("02") or ec.startswith("03") or ec.startswith("200") or ec.startswith("300")):
+            return False
+
+    # Защита по семантике: налоги и зарплата никогда не привязываются к закупкам ТРУ
+    txt = f"{bp.payee_name or ''} {bp.purpose_text or ''}".lower()
+    forbidden_markers = (
+        "единый налоговый платеж", "енп", "фнс россии", "отпускные",
+        "заработная плата", "заработной платы", "аванс за первую половину",
+        "выплата зарплаты", "налог на доходы", "страховые взносы",
+    )
+    if any(m in txt for m in forbidden_markers):
+        return False
+    return True
+
+
 def _clean_text(t: Optional[str]) -> str:
     return (t or "").lower().replace("ё", "е")
 
@@ -117,7 +137,10 @@ async def match_unattached_statement_to_feo(
 
     unattached_bps = [
         b for b in bps
-        if b.id not in already_attached_bps and b.id not in used_bp_ids and (b.amount or 0) > 0
+        if b.id not in already_attached_bps
+        and b.id not in used_bp_ids
+        and (b.amount or 0) > 0
+        and _is_procurement_bank_payment(b)
     ]
 
     # 2. Активные позиции ФЭО субсидии

@@ -68,15 +68,16 @@ async def test_item_partial_ordered_and_category_subtotal(client, db_session, ad
     wb = load_workbook(BytesIO(r.content))
     ws = wb.active
 
-    def _find_row(exact_name):
-        for row in ws.iter_rows(min_row=4):
-            v = row[0].value
-            if v and v.strip() == exact_name:
-                return row[0].row
-        raise AssertionError(f"row not found: {exact_name}")
-
     headers = [c.value for c in ws[3]]
     ci = {h: i + 1 for i, h in enumerate(headers)}
+    name_col_idx = ci.get("Наименование товара", 1) - 1
+
+    def _find_row(exact_name):
+        for row in ws.iter_rows(min_row=4):
+            v = row[name_col_idx].value
+            if v and v.strip() == exact_name:
+                return row[name_col_idx].row
+        raise AssertionError(f"row not found: {exact_name}")
 
     r_item = _find_row("Комбинезон")
     r_leaf = _find_row("Спецодежда")

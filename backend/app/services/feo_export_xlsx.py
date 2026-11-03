@@ -477,13 +477,33 @@ async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: 
     cat_ids = [c.id for c in cats]
 
     from app.models.feo_planned_item import FeoPlannedItem
-    # Загружаем ВСЕ активные плановые позиции категорий (не отсекая feo_amount is None,
-    # иначе в субсидиях с ФЭО=план или без отдельного ввода колонок ФЭО позиции исчезают)
-    feo_items = (await db.execute(
-        select(FeoPlannedItem).where(
+    from sqlalchemy import or_, and_, exists
+
+    # Проверяем, есть ли у субсидии позиции с явно заданным feo_amount.
+    # Если да (субсидии со строгим разделением ФЭО и плана) — выгружаем позиции ФЭО (feo_amount is not None).
+    # Если нет (субсидии, где план = ФЭО, напр. ДНР) — выгружаем все активные позиции (is_active == True).
+    has_explicit_feo = (await db.execute(
+        select(exists().where(
+            FeoPlannedItem.feo_category_id.in_(cat_ids),
+            FeoPlannedItem.is_active == True,
+            FeoPlannedItem.feo_amount.is_not(None),
+        ))
+    )).scalar()
+
+    if has_explicit_feo:
+        feo_items_filter = and_(
+            FeoPlannedItem.feo_category_id.in_(cat_ids),
+            FeoPlannedItem.is_active == True,
+            FeoPlannedItem.feo_amount.is_not(None),
+        )
+    else:
+        feo_items_filter = and_(
             FeoPlannedItem.feo_category_id.in_(cat_ids),
             FeoPlannedItem.is_active == True,
         )
+
+    feo_items = (await db.execute(
+        select(FeoPlannedItem).where(feo_items_filter)
     )).scalars().all()
     items_by_cat: dict = {}
     for it in sorted(feo_items, key=lambda x: (x.sort_order is None, x.sort_order or 0, x.id)):
@@ -655,6 +675,23 @@ def render_feo_tree_sheet(
         elif item_raw_type.lower().startswith("работ"):
             item_raw_type = "Работы"
 
+        # Оплачено в деньгах по данной конкретной позиции:
+        # Берём фактическую оплату именно этой позиции из сегментов стадий (paid_confirmed_amt или paid_marked_amt).
+        # Это исключает раздувание суммы при объединении нескольких товаров в одну общую закупку/платёж.
+        item_paid_amt = stage_vals.get("paid_confirmed_amt") or stage_vals.get("paid_marked_amt")
+        if item_paid_amt is None or float(item_paid_amt) == 0.0:
+            if stage_vals.get("paid_confirmed") == "Да" or stage_vals.get("paid_marked") == "Да":
+                item_paid_amt = proc.get("fact_amount") or plan_amount
+            else:
+                raw_paid = proc.get("paid_amount_money")
+                if raw_paid and float(raw_paid) > 0:
+                    fact_amt = proc.get("fact_amount") or plan_amount
+                    item_paid_amt = min(float(fact_amt), float(raw_paid)) if fact_amt else float(raw_paid)
+                else:
+                    item_paid_amt = ""
+        else:
+            item_paid_amt = round(float(item_paid_amt), 2)
+
         values = {
             "feo_direction": dir_val,
             "feo_type": type_val,
@@ -679,7 +716,7 @@ def render_feo_tree_sheet(
             "fact_qty": proc.get("fact_qty", ""),
             "fact_unit_price": proc.get("fact_unit_price", ""),
             "fact_amount": proc.get("fact_amount", ""),
-            "paid_amount_money": proc.get("paid_amount_money", ""),
+            "paid_amount_money": item_paid_amt,
             "purchase_number": proc.get("purchase_number", ""),
             "order_number": proc.get("order_number", ""),
             "contractor_name": proc.get("contractor_name", ""),

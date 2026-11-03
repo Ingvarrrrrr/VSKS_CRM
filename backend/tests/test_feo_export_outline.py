@@ -97,16 +97,20 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
 
     assert ws.sheet_properties.outlinePr.summaryBelow is False
 
-    names = [c.value.strip() for c in ws["A"] if c.value]
+    headers = [c.value for c in ws[3]]
+    name_col_idx = (headers.index("Наименование товара") if "Наименование товара" in headers else 0)
+    col_letter = ws.cell(3, name_col_idx + 1).column_letter
+
+    names = [c.value.strip() for c in ws[col_letter] if c.value]
     assert "Позиция ФЭО 1" in names
     assert "Позиция ФЭО 2" in names
     assert "Только внутренний план" not in names
 
     def _find_row(name_contains):
         for row in ws.iter_rows(min_row=4):
-            v = row[0].value
+            v = row[name_col_idx].value
             if v and name_contains in v:
-                return row[0].row
+                return row[name_col_idx].row
         raise AssertionError(f"row not found: {name_contains}")
 
     r_root = _find_row("Направление")
@@ -122,9 +126,9 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
     assert ws.row_dimensions[r_item1].outline_level == 2
     assert ws.row_dimensions[r_item2].outline_level == 2
 
-    # Строки позиций скрыты по умолчанию.
-    assert ws.row_dimensions[r_item1].hidden is True
-    assert ws.row_dimensions[r_item2].hidden is True
+    # Строки позиций раскрыты сразу (задача владельца 03.11.2026: не прятать позиции).
+    assert ws.row_dimensions[r_item1].hidden is False
+    assert ws.row_dimensions[r_item2].hidden is False
 
     # Столбцы теперь ищем по заголовку — новые колонки «Кол-во по ФЭО»/«Цена
     # за ед. по ФЭО»/«Кол-во по плану»/«Цена за ед. по плану» (задача
@@ -132,7 +136,7 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
     # «Запланировано» с жёстких B/C (app.services.feo_export_columns.DEFAULT_KEYS).
     headers0 = [c.value for c in ws[3]]
     ci_feo = headers0.index("Финансирование по ФЭО (₽)") + 1
-    ci_plan = headers0.index("Запланировано (₽)") + 1
+    ci_plan = (headers0.index("Плановая стоимость за объём") if "Плановая стоимость за объём" in headers0 else headers0.index("Запланировано (₽)")) + 1
     feo_col_letter = ws.cell(row=3, column=ci_feo).column_letter
 
     assert ws.cell(r_item1, ci_feo).value == 1000.0

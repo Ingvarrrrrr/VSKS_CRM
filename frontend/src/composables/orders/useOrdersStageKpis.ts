@@ -39,9 +39,8 @@ export function useOrdersStageKpis(subsidyId: Ref<number | null>) {
   }
 
   const scopedRows = computed(() => {
-    const visible = rows.value.filter(r => !r.is_sandbox)
-    if (subsidyId.value) return visible.filter(r => r.id === subsidyId.value)
-    return visible
+    if (subsidyId.value) return rows.value.filter(r => r.id === subsidyId.value)
+    return rows.value.filter(r => !r.is_sandbox)
   })
 
   const contracts = computed(() => scopedRows.value.reduce((s, r) => s + (r.total_contracts || 0), 0))

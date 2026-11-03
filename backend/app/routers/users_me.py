@@ -43,6 +43,7 @@ async def get_me(
     ниже по функции.
     """
     out = UserOut.model_validate(current_user)
+    out.can_merge_purchases = bool(current_user.can_merge_purchases or current_user.role in ('superadmin', 'account_owner'))
     out.has_license_scan = bool(current_user.license_scan)
     from app.config import settings as _settings_me
     out.telegram_enabled = _settings_me.TELEGRAM_ENABLED

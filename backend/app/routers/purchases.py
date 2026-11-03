@@ -2505,6 +2505,27 @@ async def delete_purchase(
     return {"ok": True}
 
 
+class PurchaseMergeRequest(BaseModel):
+    target_purchase_id: int
+    source_purchase_ids: List[int]
+
+
+@router.post("/merge")
+async def merge_purchases_endpoint(
+    data: PurchaseMergeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Объединение нескольких закупок в одну (задача владельца 03.11.2026)."""
+    from app.services.purchase_merge import merge_purchases
+    return await merge_purchases(
+        db=db,
+        target_purchase_id=data.target_purchase_id,
+        source_purchase_ids=data.source_purchase_ids,
+        current_user=current_user,
+    )
+
+
 
 
 # Ленивый ре-экспорт (PEP 562 module __getattr__) символов, которые уехали в

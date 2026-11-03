@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.contract import Contract
 from app.models.contract_subsidy import ContractSubsidy
+from app.models.subsidy import Subsidy
 from app.models.purchase import Purchase
 from app.models.contractor import Contractor
 from app.schemas.schemas import ContractCreate, ContractOut, ContractSubsidyOut, ContractUpdateResponse, ContractSyncWarnings
@@ -29,6 +30,19 @@ from app.routers.purchase_budget import FRAMEWORK_TYPES
 from app.routers.contracts_approval import _build_approval_purchase_fields  # noqa: F401
 from app.services.contracts_linking import ensure_contract_linked  # noqa: F401
 from app.services.contract_delete import assert_contract_deletable_and_unlink
+
+async def _build_extra_subsidies_out(cid: int, db: AsyncSession) -> list[ContractSubsidyOut]:
+    """Детерминированная загрузка extra_subsidies без риска lazy-load MissingGreenlet."""
+    res = await db.execute(
+        select(ContractSubsidy.id, ContractSubsidy.subsidy_id, Subsidy.name)
+        .outerjoin(Subsidy, Subsidy.id == ContractSubsidy.subsidy_id)
+        .where(ContractSubsidy.contract_id == cid)
+        .order_by(ContractSubsidy.id)
+    )
+    return [
+        ContractSubsidyOut(id=r[0], subsidy_id=r[1], subsidy_name=r[2])
+        for r in res.all()
+    ]
 
 async def _enrich_contract_from_purchases(c: Contract, db: AsyncSession) -> int:
     """Auto-fill ПУСТЫЕ optional fields на Contract из любой связанной Purchase.
@@ -182,6 +196,8 @@ async def list_contracts(
         q = q.where(clause)
     result = await db.execute(q)
     contracts = result.scalars().all()
+    subsidies_name_rows = (await db.execute(select(Subsidy.id, Subsidy.name))).all()
+    subsidies_name_map = {r[0]: r[1] for r in subsidies_name_rows}
     out = []
     for c in contracts:
         # phase26-l-2: COALESCE chain contract_price → planned_total_price → total_nmck
@@ -255,7 +271,7 @@ async def list_contracts(
         if c.subsidy:
             d.subsidy_name = c.subsidy.name
         d.extra_subsidies = [
-            ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
+            ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=subsidies_name_map.get(es.subsidy_id))
             for es in (c.extra_subsidies or [])
         ]
         # Владелец (2026-09-02): «рамочный договор без закупок внутри должен быть
@@ -410,10 +426,7 @@ async def create_contract(
     if c.subsidy:
         d.subsidy_name = c.subsidy.name
         d.subsidy_is_sandbox = bool(c.subsidy.is_sandbox)
-    d.extra_subsidies = [
-        ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
-        for es in (c.extra_subsidies or [])
-    ]
+    d.extra_subsidies = await _build_extra_subsidies_out(c.id, db)
     return d
 
 @router.put("/{cid}", response_model=ContractUpdateResponse)
@@ -545,10 +558,7 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
     if c.subsidy:
         d.subsidy_name = c.subsidy.name
         d.subsidy_is_sandbox = bool(c.subsidy.is_sandbox)
-    d.extra_subsidies = [
-        ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
-        for es in (c.extra_subsidies or [])
-    ]
+    d.extra_subsidies = await _build_extra_subsidies_out(c.id, db)
     return ContractUpdateResponse(
         contract=d,
         n_updated_purchases=n_updated_purchases,

@@ -65,6 +65,16 @@
           />
         </v-list>
       </v-menu>
+      <v-btn
+        v-if="canMergePurchases && selectedOrders.length >= 2"
+        color="indigo"
+        variant="tonal"
+        size="small"
+        prepend-icon="mdi-call-merge"
+        @click="mergeDialogRef?.open(selectedOrders)"
+      >
+        Объединить закупки ({{ selectedOrders.length }})
+      </v-btn>
       <v-spacer />
       <v-btn v-if="isAdmin" color="error" variant="tonal" size="small" prepend-icon="mdi-delete" @click="confirmBulkDelete">
         Удалить выбранные
@@ -156,6 +166,7 @@
     <OrdersImportDialog ref="importDialogRef" :subsidies="subsidies" :show-snack="showSnack" :on-imported="loadOrders" />
     <OrdersScansDialog ref="scansDialogRef" :subsidies="subsidies" :show-snack="showSnack" />
     <OrdersPaymentMatchDialog ref="paymentMatchDialogRef" :subsidies="subsidies" :show-snack="showSnack" :on-applied="loadOrders" />
+    <OrdersMergeDialog ref="mergeDialogRef" :show-snack="showSnack" :on-merged="() => { selectedOrders = []; loadOrders() }" />
     <OrdersFilterPresetDialog :dialog="filterPresetDialog" :filters="filters" :subsidies="subsidies" :on-confirm="confirmSaveFilterPreset" />
 
     <!-- Column Config Dialog -->
@@ -196,6 +207,7 @@ import OrdersFilesViewerDialog from '@/components/orders/OrdersFilesViewerDialog
 import OrdersImportDialog from '@/components/orders/OrdersImportDialog.vue'
 import OrdersScansDialog from '@/components/orders/OrdersScansDialog.vue'
 import OrdersPaymentMatchDialog from '@/components/orders/OrdersPaymentMatchDialog.vue'
+import OrdersMergeDialog from '@/components/orders/OrdersMergeDialog.vue'
 import OrdersFilterPresetDialog from '@/components/orders/OrdersFilterPresetDialog.vue'
 import OrdersExportDialog from '@/components/orders/OrdersExportDialog.vue'
 import PurchaseStopDialog from '@/components/orders/PurchaseStopDialog.vue'
@@ -291,7 +303,14 @@ const filesViewerRef = ref<InstanceType<typeof OrdersFilesViewerDialog> | null>(
 const importDialogRef = ref<InstanceType<typeof OrdersImportDialog> | null>(null)
 const scansDialogRef = ref<InstanceType<typeof OrdersScansDialog> | null>(null)
 const paymentMatchDialogRef = ref<InstanceType<typeof OrdersPaymentMatchDialog> | null>(null)
+const mergeDialogRef = ref<InstanceType<typeof OrdersMergeDialog> | null>(null)
 const exportDialogRef = ref<InstanceType<typeof OrdersExportDialog> | null>(null)
+
+const canMergePurchases = computed(() =>
+  ['superadmin', 'account_owner'].includes(authStore.user?.role || '') ||
+  !!authStore.user?.can_merge_purchases ||
+  localStorage.getItem('can_merge_purchases') === 'true'
+)
 
 // Владелец (2026-09-17): "заявки не в работе" скрыты в реестре обычными
 // фильтрами — эта плашка появляется, только когда открыт именно такой

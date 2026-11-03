@@ -45,6 +45,7 @@ export function useStaffEditUser(options: {
     origPosition: '',
     // Diagnostic: departments where this user is head (head_user_id)
     headedDepts: [] as { id: number; name: string; org_name?: string }[],
+    can_merge_purchases: false,
     // 29-15: водительские данные
     can_drive: false,
     license_series: '',
@@ -215,6 +216,7 @@ export function useStaffEditUser(options: {
     editDialog.max_chat_id = (item as any).max_chat_id || ''
     editDialog.exclude_from_directory = !!(item as any).exclude_from_directory
     editDialog.all_orgs_access = !!(item as any).all_orgs_access
+    editDialog.can_merge_purchases = !!(item as any).can_merge_purchases
     editDialog.superior_user_id = (item as any).superior_user_id ?? null
     // 29-15: водительские данные
     editDialog.can_drive = !!(item as any).can_drive
@@ -374,6 +376,7 @@ export function useStaffEditUser(options: {
         max_chat_id: editDialog.max_chat_id || null,
         exclude_from_directory: editDialog.exclude_from_directory,
         all_orgs_access: editDialog.all_orgs_access,
+        can_merge_purchases: editDialog.can_merge_purchases,
         superior_user_id: editDialog.superior_user_id,
         // 29-15: водительские данные
         can_drive: editDialog.can_drive,

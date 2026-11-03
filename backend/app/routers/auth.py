@@ -136,7 +136,8 @@ async def login(req: LoginRequest, request: Request, response: Response, db: Asy
     # Token осталось Optional для обратной совместимости схемы.
     return Token(role=user.role, full_name=user.full_name,
                  org_id=effective_org_id, org_name=org_name, user_id=user.id,
-                 can_publish=user.can_publish or False)
+                 can_publish=user.can_publish or False,
+                 can_merge_purchases=bool(user.can_merge_purchases or user.role in ('superadmin', 'account_owner')))
 
 
 class ForgotPasswordRequest(BaseModel):

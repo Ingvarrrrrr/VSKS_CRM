@@ -205,6 +205,15 @@
           class="mb-3"
         />
 
+        <!-- Разрешение на объединение закупок -->
+        <v-checkbox
+          v-model="dialog.can_merge_purchases"
+          label="Разрешить объединение закупок"
+          density="compact"
+          hide-details
+          class="mb-3"
+        />
+
         <!-- 29-15: Может водить ТС + данные ВУ -->
         <v-checkbox
           v-model="dialog.can_drive"

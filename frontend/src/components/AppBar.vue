@@ -997,6 +997,7 @@ onMounted(async () => {
     if (me.role) localStorage.setItem('user_role', me.role)
     if (me.full_name || me.username) localStorage.setItem('user_name', me.full_name || me.username)
     if (me.can_publish !== undefined) localStorage.setItem('can_publish', me.can_publish ? 'true' : 'false')
+    if (me.can_merge_purchases !== undefined) localStorage.setItem('can_merge_purchases', me.can_merge_purchases ? 'true' : 'false')
   } catch {}
 
   await loadMyOrgs()

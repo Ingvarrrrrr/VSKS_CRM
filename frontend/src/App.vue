@@ -173,6 +173,7 @@ onMounted(async () => {
         if (user.full_name) localStorage.setItem('user_name', user.full_name)
         if (user.id) localStorage.setItem('user_id', String(user.id))
         localStorage.setItem('can_publish', user.can_publish ? 'true' : 'false')
+        localStorage.setItem('can_merge_purchases', user.can_merge_purchases ? 'true' : 'false')
       } else if (res.status === 401) {
         clearLoggedIn()
         localStorage.removeItem('user_role')

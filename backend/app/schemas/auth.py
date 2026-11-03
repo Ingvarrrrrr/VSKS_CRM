@@ -25,6 +25,7 @@ class Token(BaseModel):
     org_name: Optional[str] = None
     user_id: Optional[int] = None
     can_publish: bool = False
+    can_merge_purchases: bool = False
 
 # User
 class UserCreate(BaseModel):
@@ -70,6 +71,7 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     avatar: Optional[str] = None
     inn: Optional[str] = None
+    can_merge_purchases: Optional[bool] = None
     exclude_from_directory: Optional[bool] = None
     all_orgs_access: Optional[bool] = None  # доступ ко всем организациям аккаунта, роль не меняется
     superior_user_id: Optional[int] = None  # вышестоящий начальник (иерархия согласования)
@@ -114,6 +116,7 @@ class UserOut(BaseModel):
     is_email_confirmed: bool = True
     has_signature: bool = False
     can_publish: bool = False
+    can_merge_purchases: bool = False
     inn: Optional[str] = None
     exclude_from_directory: bool = False
     all_orgs_access: bool = False  # доступ ко всем организациям аккаунта, роль не меняется

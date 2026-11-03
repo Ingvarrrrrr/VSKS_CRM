@@ -224,6 +224,15 @@ async def match_unattached_statement_to_feo(
     attach_warnings: list[str] = []
 
     if not dry_run and matched_pairs:
+        assigned_uid = None
+        if subsidy.org_id:
+            from app.services.service_note_people import org_staff_user_ids
+            staff_uids = await org_staff_user_ids(db, subsidy.org_id)
+            if current_user and current_user.id in staff_uids:
+                assigned_uid = current_user.id
+            elif staff_uids:
+                assigned_uid = next(iter(staff_uids))
+
         for m in matched_pairs:
             bp: BankPayment = m["bp"]
             fpi: FeoPlannedItem = m["fpi"]
@@ -258,7 +267,7 @@ async def match_unattached_statement_to_feo(
                 feo_category_id=fpi.feo_category_id,
                 contract_number=bp.parsed_contract_number or None,
                 contract_date=contract_date,
-                assigned_user_id=current_user.id if current_user else None,
+                assigned_user_id=assigned_uid,
                 items=[item],
             )
 

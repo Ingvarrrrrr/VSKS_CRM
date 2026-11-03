@@ -144,6 +144,7 @@ const login = async () => {
     }
     if (data.org_name) localStorage.setItem('user_org_name', data.org_name)
     localStorage.setItem('can_publish', data.can_publish ? 'true' : 'false')
+    localStorage.setItem('can_merge_purchases', data.can_merge_purchases ? 'true' : 'false')
     // 152-ФЗ: effective permissions (/users/me) сюда больше НЕ грузим — этот
     // вызов всё равно отбрасывался следующей строкой (window.location.href
     // делает полную перезагрузку, Pinia-стор создаётся заново), а до гейта

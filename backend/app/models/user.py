@@ -32,6 +32,7 @@ class User(Base):
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
     superior_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # вышестоящий начальник (ручной override иерархии)
     can_publish = Column(Boolean, default=False, nullable=False, server_default="false")  # Разрешение на публикацию закупок
+    can_merge_purchases = Column(Boolean, default=False, nullable=False, server_default="false")  # Разрешение на объединение закупок
     exclude_from_directory = Column(Boolean, default=False, nullable=False, server_default="false")  # Не включать в справочник сотрудников
     # Доступ ко всем организациям аккаунта (root_org_id-дерево), БЕЗ смены роли.
     # Замена ручному заведению user_org_access построчно на каждую организацию.

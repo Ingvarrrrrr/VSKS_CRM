@@ -453,8 +453,13 @@ async def load_unpaid_candidate_units(
 
     units: list[CandidateUnit] = []
     for p in purchases:
+        pis = items_by_pid.get(p.id, [])
+        pis_sum = sum((Decimal(str(pi.total_price)) for pi in pis if pi.total_price is not None), Decimal(0))
+
         raw_amt = p.contract_price if p.contract_price is not None else (
-            p.planned_total_price if p.planned_total_price is not None else p.total_nmck
+            p.planned_total_price if p.planned_total_price is not None else (
+                p.total_nmck if p.total_nmck is not None else (pis_sum if pis_sum > 0 else None)
+            )
         )
         if raw_amt is None:
             continue
@@ -470,7 +475,6 @@ async def load_unpaid_candidate_units(
         if preferred_contractor_inn and c_obj and c_obj.inn and c_obj.inn != preferred_contractor_inn:
             continue
 
-        pis = items_by_pid.get(p.id, [])
         feo_id = p.feo_category_id or next((pi.feo_category_id for pi in pis if pi.feo_category_id), None)
         feo_obj = feo_map.get(feo_id) if feo_id else None
 
@@ -665,11 +669,24 @@ async def merge_and_attach_combo(
             warnings_out=warnings,
         )
     except ServicePeriodAttachConflict as exc:
-        await db.rollback()
         raise HTTPException(409, service_period_conflict_detail(str(exc), exc.purchase_id, exc.occupied_period))
     except PaymentAttachError as exc:
-        await db.rollback()
         raise HTTPException(409, str(exc))
+
+    # Переводим закупку в статус paid и гарантируем контрагента на уровне закупки и позиций
+    for p in target_purchases:
+        if contractor_obj:
+            if not p.contractor_id:
+                p.contractor_id = contractor_obj.id
+            # Обновляем контрагента и на позициях закупки
+            p_items = (await db.execute(
+                select(PurchaseItem).where(PurchaseItem.purchase_id == p.id)
+            )).scalars().all()
+            for pi in p_items:
+                if not pi.contractor_id:
+                    set_item_contractor(pi, contractor=contractor_obj, name=contractor_obj.name)
+        p.status = "paid"
+    await db.flush()
 
     return {
         "ok": True,

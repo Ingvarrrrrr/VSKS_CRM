@@ -128,7 +128,15 @@ async def build_feo_export_workbook(db, sub, selected_keys: list, with_summary: 
     )).scalars().all()
     cat_ids = [c.id for c in cats]
 
-    feo_items = await _active_feo_items_with_amount(db, cat_ids)
+    from app.models.feo_planned_item import FeoPlannedItem
+    # Загружаем ВСЕ активные плановые позиции категорий (не отсекая feo_amount is None,
+    # иначе в субсидиях с ФЭО=план или без отдельного ввода колонок ФЭО позиции исчезают)
+    feo_items = (await db.execute(
+        select(FeoPlannedItem).where(
+            FeoPlannedItem.feo_category_id.in_(cat_ids),
+            FeoPlannedItem.is_active == True,
+        )
+    )).scalars().all()
     items_by_cat: dict = {}
     for it in sorted(feo_items, key=lambda x: (x.sort_order is None, x.sort_order or 0, x.id)):
         items_by_cat.setdefault(it.feo_category_id, []).append(it)
@@ -240,11 +248,11 @@ def render_feo_tree_sheet(
         return r
 
     def write_item_row(item, depth):
-        feo_amount = float(item.feo_amount) if item.feo_amount is not None else None
         plan_amount = float(item.amount) if item.amount is not None else 0.0
-        feo_unit_price = getattr(item, "feo_unit_price", None)
+        feo_amount = float(item.feo_amount) if item.feo_amount is not None else (plan_amount if plan_amount > 0 else None)
+        feo_unit_price = getattr(item, "feo_unit_price", None) or getattr(item, "unit_price", None)
         plan_unit_price = getattr(item, "unit_price", None)
-        feo_quantity = getattr(item, "feo_quantity", None)
+        feo_quantity = getattr(item, "feo_quantity", None) or getattr(item, "quantity", None)
         segments = item_segments_map.get(item.id, {}).get("segments", [])
         stage_vals = compute_row_stage_values(segments, plan_amount)
         ordered_amt = stage_vals["ordered"]
@@ -281,7 +289,7 @@ def render_feo_tree_sheet(
                 ws.cell(row_idx, ci_residual, value=round(feo_val - ordered_amt - to_order, 2))
             ws.cell(row_idx, ci_residual).number_format = NUM_FMT
         ws.row_dimensions[row_idx].outline_level = min(depth, _MAX_OUTLINE)
-        ws.row_dimensions[row_idx].hidden = True
+        ws.row_dimensions[row_idx].hidden = False
         return row_idx
 
     def _money_subtotal(row_idx: int, child_rows: list) -> None:

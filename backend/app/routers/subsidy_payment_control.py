@@ -387,10 +387,11 @@ async def batch_apply_combos(
     errors: list[dict] = []
     for item in body.matches:
         try:
-            bp = await _get_bank_payment_or_404(item.bank_payment_id, db)
-            await merge_and_attach_combo(
-                db, sid, bp, item.purchase_ids, merge_purchases=item.merge_purchases
-            )
+            async with db.begin_nested():
+                bp = await _get_bank_payment_or_404(item.bank_payment_id, db)
+                await merge_and_attach_combo(
+                    db, sid, bp, item.purchase_ids, merge_purchases=item.merge_purchases
+                )
             applied += 1
         except Exception as e:
             errors.append({

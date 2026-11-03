@@ -1485,9 +1485,11 @@ onMounted(() => {
   // проверяет, не печатает ли человек в поле/не открыт ли диалог — здесь только
   // подписка/отписка.
   window.addEventListener('keydown', handleFeoUndoKeydown)
+  window.addEventListener('subsidy-data-changed', refreshVisibleSubsidy)
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', handleFeoUndoKeydown)
+  window.removeEventListener('subsidy-data-changed', refreshVisibleSubsidy)
 })
 
 // Тихое обновление видимой субсидии (список + дерево ФЭО текущей, без

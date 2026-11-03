@@ -175,6 +175,10 @@ const props = defineProps<{
   onApplied?: () => void
 }>()
 
+const emit = defineEmits<{
+  (e: 'applied'): void
+}>()
+
 const { mobile } = useDisplay()
 const control = useSubsidyPaymentControl()
 
@@ -246,7 +250,9 @@ async function applyMatches() {
     }))
     const res = await control.batchApplyCombos(props.subsidyId, payload)
     visible.value = false
+    emit('applied')
     props.onApplied?.()
+    window.dispatchEvent(new CustomEvent('subsidy-data-changed', { detail: { subsidyId: props.subsidyId } }))
   } catch (e: any) {
     error.value = e?.message || 'Ошибка применения комбинаций'
   } finally {

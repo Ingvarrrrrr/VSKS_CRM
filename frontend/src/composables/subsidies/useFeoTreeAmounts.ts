@@ -457,7 +457,9 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   }
 
   function feoPlannedDisplayRaw(node: FeoNode): number {
-    return planTreeByCat.value[node.id]?.display || 0
+    const entry = planTreeByCat.value[node.id]
+    if (!entry) return 0
+    return Number(entry.full_display ?? entry.display ?? 0)
   }
 
   function feoPlannedDisplayFor(node: FeoNode): number {

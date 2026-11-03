@@ -238,6 +238,19 @@
 .subsidies-page .kpi-card:hover::before { opacity: 1; }
 .subsidies-page .kpi-budget::before            { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
 .subsidies-page .kpi-plan_schedule::before     { box-shadow: 0 0 30px rgba(245,158,11,0.15); }
+.subsidies-page .kpi-card--over-budget {
+  border: 1.5px solid #EF4444 !important;
+  background: rgba(239, 68, 68, 0.04) !important;
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.22) !important;
+}
+.subsidies-page .kpi-card--over-budget .kpi-icon-box {
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #EF4444 !important;
+}
+.subsidies-page .kpi-card--over-budget .kpi-value {
+  color: #EF4444 !important;
+  font-weight: 700 !important;
+}
 .subsidies-page .kpi-work::before              { box-shadow: 0 0 30px rgba(99,102,241,0.15); }
 .subsidies-page .kpi-ordered::before           { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
 .subsidies-page .kpi-contracts::before         { box-shadow: 0 0 30px rgba(2,132,199,0.15); }

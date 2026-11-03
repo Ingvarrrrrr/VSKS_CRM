@@ -95,11 +95,14 @@
     <!-- 2. Запланировано -->
     <v-tooltip location="bottom" :disabled="true">
       <template #activator="{ props: tip }">
-        <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="kpi.kpiCardClass('plan_schedule')" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в плане закупок" @click="openCardDrill('plan_schedule', 'all')">
+        <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="[kpi.kpiCardClass('plan_schedule'), isPlanOverBudget ? 'kpi-card--over-budget' : '']" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в плане закупок" @click="openCardDrill('plan_schedule', 'all')">
           <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('plan_schedule') ?? 0) : kpiSubAnim_plan_schedule) }}</div>
+            <div class="kpi-value" :style="isPlanOverBudget ? 'color:#EF4444 !important;font-weight:700' : ''">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('plan_schedule') ?? 0) : kpiSubAnim_plan_schedule) }}</div>
             <div class="kpi-label" title="Сумма всех плановых позиций">Запланировано</div>
+            <div v-if="isPlanOverBudget && planOverBudgetDiff > 0.005" class="kpi-sub-note kpi-ceiling-over text-caption" style="color:#EF4444;font-weight:700" title="План превышает бюджет ФЭО">
+              выше бюджета ФЭО на {{ formatCurrency(planOverBudgetDiff) }}
+            </div>
             <!-- Шаг 6 (план humble-stirring-emerson.md, 23.10.2026), текст
                  ПЕРЕРАБОТАН 27.10.2026 — ссылка «выше ФЭО на N» поясняет, что
                  часть УЖЕ показанной полной суммы карточки лежит выше ФЭО
@@ -773,6 +776,16 @@ const planOverCeilingAmount = computed(() => ctx.selectedSubsidy.value?.plan_ove
 const ceilingOverMatchesCards = computed(() =>
   Math.abs(planOverCeilingAmount.value - (kpiSubTarget_plan_schedule.value - kpiSubTarget_budget.value)) <= 0.01
 )
+const planOverBudgetDiff = computed(() => {
+  const plan = isPayrollOnly.value ? (payrollOnlyValue('plan_schedule') ?? 0) : kpiSubTarget_plan_schedule.value
+  const budget = isPayrollOnly.value ? (payrollOnlyValue('budget') ?? 0) : kpiSubTarget_budget.value
+  const diff = roundMoney(plan - budget)
+  if (budget > 0 && diff > 0.005) return diff
+  if (planOverCeilingAmount.value > 0.005) return roundMoney(planOverCeilingAmount.value)
+  if (pendingExcessForCeilingNote.total.value > 0.005) return roundMoney(pendingExcessForCeilingNote.total.value)
+  return 0
+})
+const isPlanOverBudget = computed(() => planOverBudgetDiff.value > 0.005)
 // Шаг доработки (владелец, 23.10.2026) — три случая текста красной строки
 // (см. docstring frontend/src/utils/planCeilingNote.ts): план карточки уже
 // выше бюджета / план+«на согласовании» вместе превысят бюджет / статьи без
@@ -1117,6 +1130,19 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
 </script>
 
 <style scoped>
+.kpi-card--over-budget {
+  border: 1.5px solid #EF4444 !important;
+  background-color: rgba(239, 68, 68, 0.04) !important;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.25) !important;
+}
+.kpi-card--over-budget .kpi-icon-box {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+  color: #EF4444 !important;
+}
+.kpi-card--over-budget .kpi-value {
+  color: #EF4444 !important;
+  font-weight: 700 !important;
+}
 /* Задача владельца 15.10.2026: план субсидии выше жёсткого потолка ФЭО —
    красная строка на карточке «Запланировано» (PLAN_OVER_SUBSIDY_CEILING). */
 .kpi-ceiling-over {

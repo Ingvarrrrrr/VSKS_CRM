@@ -163,6 +163,25 @@ describe('useFeoTreeAmounts — ДНР_2026: расчёт группы с соб
     expect(api.feoHasOverspentDescendant(node)).toBe(false)
   })
 
+  it('feoPlannedDisplayFor возвращает full_display, если он есть в planTreeByCat (полный план с превышением)', () => {
+    const node = makeNode({ id: 60, name: 'Прочие расходы', parent_id: null, budget: 29296715.73 })
+    const planTreeByCat: Record<number, Partial<PlanTreeEntry>> = {
+      60: {
+        plan_manual: 29350775.73,
+        display: 29296715.73,
+        full_display: 29350775.73,
+        excess_over_feo: 54060,
+        excess_amount: 54060,
+      },
+    }
+    const ctx = buildCtx(planTreeByCat, [node])
+    const api = useFeoTreeAmounts(ctx)
+
+    expect(api.feoPlannedDisplayFor(node)).toBe(29350775.73)
+    expect(api.feoFinDiff(node)).toBeLessThan(-54000)
+    expect(api.feoIsOverBudget(node)).toBe(true)
+  })
+
   it('узел со своим ФЭО, план больше budget — настоящее превышение: feoFinDiff<0 (красный) и есть чем объяснить', () => {
     const node = makeNode({ id: 50, name: 'С ФЭО', parent_id: null, budget: 800000 })
     const planTreeByCat: Record<number, Partial<PlanTreeEntry>> = {

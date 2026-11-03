@@ -496,7 +496,7 @@
       <!-- Превышение плана над финансированием ФЭО — требует согласования цепочкой. -->
       <div v-if="ctx.excessFor(node)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
         <div v-if="node.budget != null" class="w-100 font-weight-bold" style="color:#DC2626;font-size:12px;margin-bottom:2px">
-          план {{ formatCurrency(ctx.feoPlannedDisplayFor(node)) }} = {{ formatCurrency(node.budget) }} (согласовано по ФЭО) + {{ formatCurrency(ctx.excessFor(node)!.amount) }} (требует согласования)
+          план {{ formatCurrency(roundMoney((node.budget || 0) + (ctx.excessFor(node)?.amount || 0))) }} = {{ formatCurrency(node.budget) }} (согласовано по ФЭО) + {{ formatCurrency(ctx.excessFor(node)!.amount) }} (требует согласования)
         </div>
         <template v-if="ctx.excessApprovalFor(node)?.status === 'pending'">
           <v-chip size="x-small" color="orange" variant="flat">
@@ -995,7 +995,7 @@ import { useAuthStore } from '@/stores/auth'
 import { ACTIONS } from '@/constants/permissionActions'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
-import { formatCurrency } from '@/composables/subsidies/format'
+import { formatCurrency, roundMoney } from '@/composables/subsidies/format'
 import { useFeoComments } from '@/composables/subsidies/useFeoComments'
 import { usePlanToRequest, RESIDUAL_SELECTION_TOOLTIP } from '@/composables/subsidies/usePlanToRequest'
 import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCollapse'

@@ -621,6 +621,7 @@ export interface ExcessPlanItem {
 }
 export interface PlanTreeEntry {
   display: number; display_quantity: number
+  full_display?: number
   excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
   plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
   // Правка 12.10.2026 (план lazy-swimming-hollerith.md, п.4б) — «план из

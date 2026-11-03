@@ -31,7 +31,7 @@ from app.services.feo_import_common import to_dec
 # вычисленные на экспорте, игнорируются при чтении, задача владельца, п.2).
 READABLE_KEYS = (
     "name", "code", "app", "feo_qty", "feo_unit", "feo_unit_price", "feo",
-    "plan_qty", "plan_unit_price", "plan", "active",
+    "plan_qty", "plan_unit_price", "plan", "active", "notes",
     "row_type", "row_id",
 )
 _LABEL_BY_KEY = {k: label for k, label, _g, _w, _d in FEO_EXPORT_COLUMNS if k in READABLE_KEYS}
@@ -39,7 +39,19 @@ _LABEL_BY_KEY = {k: label for k, label, _g, _w, _d in FEO_EXPORT_COLUMNS if k in
 # менять регистр при автозамене/автозаполнении, тот же приём устойчивости,
 # что и у остального импорта ФЭО, см. feo_import_common.norm).
 _KEY_BY_LABEL_NORM = {label.strip().lower(): k for k, label in _LABEL_BY_KEY.items()}
-# Синонимы для обратной совместимости старых выгрузок и вариантов именования хэша
+# Синонимы для обратной совместимости старых и новых выгрузок
+_KEY_BY_LABEL_NORM["наименование"] = "name"
+_KEY_BY_LABEL_NORM["наименование товара"] = "name"
+_KEY_BY_LABEL_NORM["ед."] = "feo_unit"
+_KEY_BY_LABEL_NORM["ед. изм."] = "feo_unit"
+_KEY_BY_LABEL_NORM["ед. изм. (океи)"] = "feo_unit"
+_KEY_BY_LABEL_NORM["кол-во по плану"] = "plan_qty"
+_KEY_BY_LABEL_NORM["плановое количество"] = "plan_qty"
+_KEY_BY_LABEL_NORM["цена за ед. по плану (₽)"] = "plan_unit_price"
+_KEY_BY_LABEL_NORM["плановая цена"] = "plan_unit_price"
+_KEY_BY_LABEL_NORM["запланировано (₽)"] = "plan"
+_KEY_BY_LABEL_NORM["плановая стоимость за объём"] = "plan"
+_KEY_BY_LABEL_NORM["комментарий"] = "notes"
 _KEY_BY_LABEL_NORM["№ в системе"] = "row_id"
 _KEY_BY_LABEL_NORM["хэш / id строки"] = "row_id"
 _KEY_BY_LABEL_NORM["хэш/id строки"] = "row_id"
@@ -48,6 +60,7 @@ _KEY_BY_LABEL_NORM["хэш"] = "row_id"
 _KEY_BY_LABEL_NORM["hash"] = "row_id"
 
 NAME_HEADER = _LABEL_BY_KEY["name"]
+NAME_HEADER_ALIASES = {"наименование", "наименование товара"}
 FORMAT_VERSION = "feo-export-1"
 _HEADER_SEARCH_ROWS = 10
 
@@ -96,13 +109,12 @@ def _norm_header(s) -> str:
 
 def _find_header_row(ws) -> Optional[int]:
     """Строка заголовков — первая из первых _HEADER_SEARCH_ROWS строк листа,
-    где есть ячейка со значением «Наименование» (точное совпадение после
-    strip/lower — ПРАВИЛО №6, та же подпись, что в FEO_EXPORT_COLUMNS)."""
-    name_norm = NAME_HEADER.strip().lower()
+    где есть ячейка со значением «Наименование» или «Наименование товара»
+    (точное совпадение после strip/lower)."""
     max_row = min(_HEADER_SEARCH_ROWS, ws.max_row or 0)
     for r in range(1, max_row + 1):
         for c in range(1, (ws.max_column or 0) + 1):
-            if _norm_header(ws.cell(row=r, column=c).value) == name_norm:
+            if _norm_header(ws.cell(row=r, column=c).value) in NAME_HEADER_ALIASES:
                 return r
     return None
 

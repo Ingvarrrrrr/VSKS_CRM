@@ -52,7 +52,7 @@ _DONE_EPS = 0.999
 
 
 def _stage_amounts(segments: list) -> dict:
-    """{stage_key: (amount_sum, share_sum)} по каждой из шести колонок
+    """{stage_key: (amount_sum, share_sum)} по каждой из колонок
     «Стадии» для одного набора segments[] (одна плановая позиция ИЛИ одна
     листовая категория с собственным планом) — см. докстринг модуля."""
     out: dict = {}
@@ -60,6 +60,9 @@ def _stage_amounts(segments: list) -> dict:
         if key == "delivered":
             amt = sum(s["amount"] for s in segments if s.get("delivered"))
             share = sum(s["share"] for s in segments if s.get("delivered"))
+        elif key == "purchase_done":
+            amt = sum(s["amount"] for s in segments if _STAGE_RANK.get(s["stage"], 0) >= _STAGE_RANK["in_work"])
+            share = sum(s["share"] for s in segments if _STAGE_RANK.get(s["stage"], 0) >= _STAGE_RANK["in_work"])
         else:
             rank = _STAGE_RANK[key if key != "ordered_flag" else "ordered"]
             amt = sum(s["amount"] for s in segments if _STAGE_RANK.get(s["stage"], 0) >= rank)
@@ -126,12 +129,16 @@ async def load_item_procurement_and_payments(
         q_pi = (
             select(
                 PurchaseItem.feo_planned_item_id,
+                PurchaseItem.quantity.label("pi_qty"),
+                PurchaseItem.unit_price.label("pi_unit_price"),
+                PurchaseItem.final_unit_price.label("pi_final_unit_price"),
                 PurchaseItem.total_price.label("pi_total_price"),
                 PurchaseItem.final_total.label("pi_final_total"),
                 PurchaseItem.contractor_name.label("pi_c_name"),
                 PurchaseItem.contractor_inn.label("pi_c_inn"),
                 Purchase.id.label("p_id"),
                 Purchase.purchase_number,
+                Purchase.order_number.label("p_order_number"),
                 Purchase.registry_number,
                 Purchase.contract_id,
                 Purchase.contract_number.label("p_contract_num"),
@@ -164,6 +171,7 @@ async def load_item_procurement_and_payments(
                 Purchase.feo_category_id,
                 Purchase.id.label("p_id"),
                 Purchase.purchase_number,
+                Purchase.order_number.label("p_order_number"),
                 Purchase.registry_number,
                 Purchase.contract_id,
                 Purchase.contract_number.label("p_contract_num"),
@@ -240,6 +248,7 @@ async def load_item_procurement_and_payments(
             "contracts": set(), "contract_amounts": set(), "order_amount": 0.0,
             "purchase_totals_by_pid": {},
             "seen_p_ids": set(),
+            "fact_quantities": [], "fact_unit_prices": [], "order_numbers": set(),
             "docs": set(), "dates": set(), "total_paid": 0.0,
             "purposes": set(), "kbk": set(), "expense_groups": set(), "statuses": set(),
         }
@@ -258,14 +267,22 @@ async def load_item_procurement_and_payments(
         pay_purpose = "; ".join(sorted(b["purposes"])) if b["purposes"] else ""
         pay_kbk = ", ".join(sorted(b["kbk"])) if b["kbk"] else ""
         pay_status = ", ".join(sorted(b["statuses"])) if b["statuses"] else ""
+        fact_q = sum(b["fact_quantities"]) if b["fact_quantities"] else ""
+        fact_up = round(b["fact_unit_prices"][0], 2) if b["fact_unit_prices"] else ""
+        order_no = ", ".join(sorted(b["order_numbers"])) if b["order_numbers"] else ""
         return {
             "contract_number": c_doc,
             "contract_amount": round(c_amt, 2) if c_amt > 0 else "",
             "order_amount": round(b["order_amount"], 2) if b["order_amount"] > 0 else "",
             "purchase_number": p_num,
+            "order_number": order_no,
             "purchase_amount": round(p_amt, 2) if p_amt > 0 else "",
             "contractor_name": c_name,
             "contractor_inn": c_inn,
+            "fact_qty": fact_q,
+            "fact_unit_price": fact_up,
+            "fact_amount": round(b["order_amount"], 2) if b["order_amount"] > 0 else "",
+            "paid_amount_money": pay_amt,
             "payment_doc_number": pay_doc,
             "payment_date": pay_dt,
             "payment_amount": pay_amt,
@@ -294,6 +311,15 @@ async def load_item_procurement_and_payments(
         c_num = r.contract_num or r.p_contract_num
         if c_num:
             b["contracts"].add(str(c_num))
+
+        if r.p_order_number:
+            b["order_numbers"].add(str(r.p_order_number))
+
+        if r.pi_qty is not None and float(r.pi_qty) > 0:
+            b["fact_quantities"].append(float(r.pi_qty))
+        f_up = r.pi_final_unit_price if r.pi_final_unit_price is not None else r.pi_unit_price
+        if f_up is not None and float(f_up) > 0:
+            b["fact_unit_prices"].append(float(f_up))
 
         if r.pi_final_total is not None and float(r.pi_final_total) > 0:
             item_amt = float(r.pi_final_total)
@@ -367,6 +393,9 @@ async def load_item_procurement_and_payments(
         c_num = r.contract_num or r.p_contract_num
         if c_num:
             b["contracts"].add(str(c_num))
+
+        if r.p_order_number:
+            b["order_numbers"].add(str(r.p_order_number))
 
         item_amt = float(r.p_final_amt or r.p_contract_price or 0.0)
         b["order_amount"] += item_amt
@@ -573,7 +602,12 @@ def render_feo_tree_sheet(
         row_num += 1
         return r
 
-    def write_item_row(item, depth):
+    def write_item_row(item, depth, ancestors=None):
+        ancestors = ancestors or []
+        dir_val = ancestors[0] if len(ancestors) > 0 else ""
+        type_val = ancestors[1] if len(ancestors) > 1 else ""
+        subdir_val = ancestors[2] if len(ancestors) > 2 else (ancestors[-1] if len(ancestors) > 0 else "")
+
         plan_amount = float(item.amount) if item.amount is not None else 0.0
         feo_amount = float(item.feo_amount) if item.feo_amount is not None else (plan_amount if plan_amount > 0 else None)
         feo_unit_price = getattr(item, "feo_unit_price", None) or getattr(item, "unit_price", None)
@@ -584,30 +618,76 @@ def render_feo_tree_sheet(
         ordered_amt = stage_vals["ordered"]
         to_order = stage_vals["to_order"]
         proc = (procurement_map or {}).get(item.id, {})
+
+        in_w = stage_vals.get("in_work", "Нет")
+        cont = stage_vals.get("contracted", "Нет")
+        ord_f = stage_vals.get("ordered_flag", "Нет")
+        deliv = stage_vals.get("delivered", "Нет")
+        paid_m = stage_vals.get("paid_marked", "Нет")
+        paid_c = stage_vals.get("paid_confirmed", "Нет")
+        is_done = "Да" if (cont == "Да" or ord_f == "Да" or deliv == "Да" or paid_m == "Да" or paid_c == "Да") else in_w
+        prot = "Да" if cont == "Да" else "Нет"
+
+        if paid_c == "Да" or paid_m == "Да":
+            st_name = "Оплачено"
+        elif deliv == "Да":
+            st_name = "Товар поставлен"
+        elif ord_f == "Да":
+            st_name = "Товар заказан"
+        elif cont == "Да":
+            st_name = "Договор заключен"
+        elif in_w == "Да":
+            st_name = "Ведётся работа"
+        else:
+            st_name = "План закупок"
+
+        item_raw_type = getattr(item, "item_type", "")
+        if not item_raw_type:
+            low_n = item.name.lower()
+            if any(k in low_n for k in ("услуг", "работ", "аренд", "перевоз", "проживан", "монтаж", "ремонт")):
+                item_raw_type = "Услуги"
+            else:
+                item_raw_type = "Товары"
+        elif item_raw_type.lower().startswith("услуг"):
+            item_raw_type = "Услуги"
+        elif item_raw_type.lower().startswith("товар"):
+            item_raw_type = "Товары"
+        elif item_raw_type.lower().startswith("работ"):
+            item_raw_type = "Работы"
+
         values = {
+            "feo_direction": dir_val,
+            "feo_type": type_val,
+            "feo_subdirection": subdir_val,
             "name": "  " * depth + item.name,
-            # «Кол-во по ФЭО»/«Цена за ед. по ФЭО» — ВТОРОЙ, независимый
-            # комплект чисел (feo_quantity/feo_unit_price, см. докстринг
-            # FeoPlannedItem) — НЕ quantity/unit_price (те — план, колонки
-            # ниже). «Ед.» — общее поле `unit`, одно на оба количества.
-            "feo_qty": float(feo_quantity) if feo_quantity is not None else "",
             "feo_unit": item.unit or "",
-            "feo_unit_price": float(feo_unit_price) if feo_unit_price is not None else "",
-            "feo": feo_amount if feo_amount is not None else "",
             "plan_qty": float(item.quantity) if item.quantity is not None else "",
             "plan_unit_price": float(plan_unit_price) if plan_unit_price is not None else "",
             "plan": plan_amount,
-            "active": "Да" if item.is_active else "Нет",
-            "row_type": "Позиция",
-            "row_id": (f"p{item.id}" if item.id is not None else "") if include_row_ids else "",
-            **stage_vals,
-            "contract_number": proc.get("contract_number", ""),
-            "contract_amount": proc.get("contract_amount", ""),
+            "notes": getattr(item, "notes", "") or "",
+            "stage_status": st_name,
+            "item_type": item_raw_type,
+            "is_in_plan": "Да",
+            "in_work": in_w,
+            "purchase_done": is_done,
+            "protocol_signed": prot,
+            "contracted": cont,
+            "ordered_flag": ord_f,
+            "delivered": deliv,
+            "paid_marked": paid_m,
+            "paid_confirmed": paid_c,
+            "fact_qty": proc.get("fact_qty", ""),
+            "fact_unit_price": proc.get("fact_unit_price", ""),
+            "fact_amount": proc.get("fact_amount", ""),
+            "paid_amount_money": proc.get("paid_amount_money", ""),
             "purchase_number": proc.get("purchase_number", ""),
-            "purchase_amount": proc.get("purchase_amount", ""),
-            "order_amount": proc.get("order_amount", ""),
+            "order_number": proc.get("order_number", ""),
             "contractor_name": proc.get("contractor_name", ""),
             "contractor_inn": proc.get("contractor_inn", ""),
+            "contract_number": proc.get("contract_number", ""),
+            "contract_amount": proc.get("contract_amount", ""),
+            "purchase_amount": proc.get("purchase_amount", ""),
+            "order_amount": proc.get("order_amount", ""),
             "payment_doc_number": proc.get("payment_doc_number", ""),
             "payment_date": proc.get("payment_date", ""),
             "payment_amount": proc.get("payment_amount", ""),
@@ -615,6 +695,13 @@ def render_feo_tree_sheet(
             "payment_kbk": proc.get("payment_kbk", ""),
             "payment_purpose": proc.get("payment_purpose", ""),
             "payment_status": proc.get("payment_status", ""),
+            "feo_qty": float(feo_quantity) if feo_quantity is not None else "",
+            "feo_unit_price": float(feo_unit_price) if feo_unit_price is not None else "",
+            "feo": feo_amount if feo_amount is not None else "",
+            "active": "Да" if item.is_active else "Нет",
+            "row_type": "Позиция",
+            "row_id": (f"p{item.id}" if item.id is not None else "") if include_row_ids else "",
+            **stage_vals,
         }
         # Градиент от жёлтого к зелёному в зависимости от стадии (задача владельца 03.11.2026)
         if stage_vals.get("paid_confirmed") == "Да":
@@ -648,69 +735,64 @@ def render_feo_tree_sheet(
         return row_idx
 
     def _money_subtotal(row_idx: int, child_rows: list) -> None:
-        """Денежные/стадийные столбцы строки-категории = SUM(прямые дети).
-        НЕ SUBTOTAL: SUBTOTAL(9,...) игнорирует ячейки, которые сами —
-        результат другого SUBTOTAL (Excel пропускает вложенные subtotal-
-        формулы при агрегации), поэтому категория с подкатегориями получала
-        0 — баг владельца 20.10.2026 (п.1). SUM считает обычные ссылки на
-        ячейки честно, независимо от того, что там — число или формула."""
-        keys = ("feo", "plan", "ordered", "to_order", "residual", "order_amount", "contract_amount") + STAGE_AMOUNT_KEYS
+        """Денежные/стадийные столбцы строки-категории = SUM(прямые дети)."""
+        keys = (
+            "plan", "fact_amount", "paid_amount_money", "order_amount",
+            "feo", "ordered", "to_order", "residual",
+        ) + STAGE_AMOUNT_KEYS
         for key in keys:
             ci = column_index(selected_keys, key)
-            if ci is None:
-                continue
-            if not child_rows:
+            if ci is None or not child_rows:
                 continue
             col_letter = ws.cell(row=row_idx, column=ci).column_letter
             refs = ",".join(f"{col_letter}{cr}" for cr in child_rows)
             cell = ws.cell(row_idx, ci, value=f"=SUM({refs})")
             cell.number_format = NUM_FMT
 
-    def write_node(node, depth=0):
+    def write_node(node, depth=0, ancestors=None):
+        ancestors = ancestors or []
         c = node["cat"]
-        # «Есть дети» — ТЕ ЖЕ строки-прямые-дети, что раньше считал старый
-        # роутер (child_rows = собственные плановые позиции + подкатегории),
-        # а не только подкатегории: категория-лист без собственных подкатегорий,
-        # но с плановыми позициями — всё равно агрегирует их формулой
-        # (иначе своя "feo" литералом конфликтовала бы с budget, заданным
-        # вручную "для сверки", и терялась бы сумма позиций).
+        dir_val = ancestors[0] if len(ancestors) > 0 else c.name
+        type_val = ancestors[1] if len(ancestors) > 1 else (c.name if len(ancestors) == 1 else "")
+        subdir_val = ancestors[2] if len(ancestors) > 2 else (c.name if len(ancestors) >= 2 else "")
+
         has_own_items = bool(items_by_cat.get(c.id))
         has_subcats = bool(node["children"])
         is_leaf = not has_own_items and not has_subcats
         leaf_segments = cat_segments_map.get(c.id, {}).get("segments", []) if is_leaf else []
-        # «План» листовой категории — та же величина, что и в прежнем
-        # экспорте (сумма покупок, привязанных НАПРЯМУЮ к категории, не
-        # через плановую позицию) — ПРАВИЛО №6, второй расчёт плана
-        # категории не заводим; для категории с детьми план — SUBTOTAL ниже.
         own_plan = sum(float(s["amount"]) for s in leaf_segments) if leaf_segments else 0.0
         stage_vals = compute_row_stage_values(leaf_segments, own_plan) if is_leaf else {}
 
         values = {
+            "feo_direction": dir_val,
+            "feo_type": type_val,
+            "feo_subdirection": subdir_val,
             "name": "  " * depth + c.name,
             "code": c.code or "",
             "app": c.appendix or "",
             "feo": float(c.budget) if c.budget is not None else "",
             "active": "Да" if c.is_active else "Нет",
-            # «Категория» — есть дети (подкатегории и/или собственные
-            # плановые позиции, т.е. в строке будет SUM-формула по ним);
-            # «Категория без позиций» — лист без детей (значения — литералы
-            # budget/stage_vals выше), см. колонку row_type в
-            # feo_export_columns.py.
             "row_type": "Категория без позиций" if is_leaf else "Категория",
             "row_id": (f"c{c.id}" if c.id is not None else "") if include_row_ids else "",
         }
         if is_leaf:
             values["plan"] = own_plan
+            values["is_in_plan"] = "Да"
             values.update(stage_vals)
             cat_proc = (procurement_map or {}).get(f"c{c.id}", {})
             values.update({
-                "contract_number": cat_proc.get("contract_number", ""),
-                "contract_amount": cat_proc.get("contract_amount", ""),
+                "fact_qty": cat_proc.get("fact_qty", ""),
+                "fact_unit_price": cat_proc.get("fact_unit_price", ""),
+                "fact_amount": cat_proc.get("fact_amount", ""),
+                "paid_amount_money": cat_proc.get("paid_amount_money", ""),
                 "purchase_number": cat_proc.get("purchase_number", ""),
-                "purchase_amount": cat_proc.get("purchase_amount", ""),
-                "order_amount": cat_proc.get("order_amount", ""),
+                "order_number": cat_proc.get("order_number", ""),
                 "contractor_name": cat_proc.get("contractor_name", ""),
                 "contractor_inn": cat_proc.get("contractor_inn", ""),
+                "contract_number": cat_proc.get("contract_number", ""),
+                "contract_amount": cat_proc.get("contract_amount", ""),
+                "purchase_amount": cat_proc.get("purchase_amount", ""),
+                "order_amount": cat_proc.get("order_amount", ""),
                 "payment_doc_number": cat_proc.get("payment_doc_number", ""),
                 "payment_date": cat_proc.get("payment_date", ""),
                 "payment_amount": cat_proc.get("payment_amount", ""),
@@ -745,8 +827,8 @@ def render_feo_tree_sheet(
         if depth > 0:
             ws.row_dimensions[row_idx].outline_level = min(depth, _MAX_OUTLINE)
 
-        child_rows = [write_item_row(it, depth + 1) for it in items_by_cat.get(c.id, [])]
-        child_rows += [write_node(ch, depth + 1) for ch in node["children"]]
+        child_rows = [write_item_row(it, depth + 1, ancestors + [c.name]) for it in items_by_cat.get(c.id, [])]
+        child_rows += [write_node(ch, depth + 1, ancestors + [c.name]) for ch in node["children"]]
 
         if child_rows:
             _money_subtotal(row_idx, child_rows)
@@ -766,7 +848,7 @@ def render_feo_tree_sheet(
 
         return row_idx
 
-    top_rows = [write_node(root) for root in roots]
+    top_rows = [write_node(root, 0, []) for root in roots]
     last_row = row_num - 1
 
     # Строка 1 «Итого всего» — SUM по корневым категориям верхнего уровня
@@ -781,7 +863,19 @@ def render_feo_tree_sheet(
     # умножает на 1/0 по столбцу «Тип строки» (row_type): складываются
     # только «Позиция» и «Категория без позиций», категории с SUM-формулой
     # исключены, чтобы не задваивать.
-    money_keys = ("feo", "plan", "ordered", "to_order", "residual", "order_amount", "contract_amount", "payment_amount") + STAGE_AMOUNT_KEYS
+    money_keys = (
+        "feo",
+        "plan",
+        "fact_amount",
+        "paid_amount_money",
+        "purchase_amount",
+        "order_amount",
+        "contract_amount",
+        "payment_amount",
+        "ordered",
+        "to_order",
+        "residual",
+    ) + STAGE_AMOUNT_KEYS
     ci_row_type = column_index(selected_keys, "row_type")
     row_type_col_letter = ws.cell(row=1, column=ci_row_type).column_letter if ci_row_type else None
     for key in money_keys:
@@ -868,7 +962,18 @@ def render_feo_tree_sheet(
                 ws.conditional_formatting.add(cf_range, rule)
 
     # Выпадающий список «Да / Нет» для статусных колонок (задача владельца 03.11.2026)
-    status_keys = {"active", "in_work", "contracted", "ordered_flag", "delivered", "paid_marked", "paid_confirmed"}
+    status_keys = {
+        "active",
+        "is_in_plan",
+        "in_work",
+        "purchase_done",
+        "protocol_signed",
+        "contracted",
+        "ordered_flag",
+        "delivered",
+        "paid_marked",
+        "paid_confirmed",
+    }
     dv_yes_no = DataValidation(
         type="list",
         formula1="_meta!$D$1:$D$2",
@@ -887,10 +992,12 @@ def render_feo_tree_sheet(
             dv_yes_no.add(f"{col_letter}{DATA_FIRST_ROW}:{col_letter}{max_validation_row}")
 
     # Запасные строки с формулой автогенерации хэша/ID для новых строк (задача владельца 03.11.2026):
-    # При заполнении колонки A (наименование) в столбце Хэш автоматически появляется NEW-<номер_строки>
+    # При заполнении колонки наименования в столбце Хэш автоматически появляется NEW-<номер_строки>
     if ci_row_id is not None:
+        ci_name = column_index(selected_keys, "name")
+        col_name_letter = ws.cell(row=HEADER_ROW, column=ci_name).column_letter if ci_name else "A"
         for spare_r in range(last_row + 1, last_row + 51):
-            c_spare = ws.cell(row=spare_r, column=ci_row_id, value=f'=IF(A{spare_r}<>"","NEW-"&ROW(),"")')
+            c_spare = ws.cell(row=spare_r, column=ci_row_id, value=f'=IF(${col_name_letter}{spare_r}<>"","NEW-"&ROW(),"")')
             c_spare.protection = Protection(locked=True)
             for ci_other in range(1, n_cols + 1):
                 if ci_other != ci_row_id:

@@ -59,16 +59,18 @@ async def test_roundtrip_template_downloads_with_howto_sheet_and_empty_row_ids(
         v = ws.cell(row=3, column=c).value
         if v:
             hmap[str(v).strip()] = c
-    assert "№ в системе" in hmap
+    row_id_key = "Хэш / ID строки" if "Хэш / ID строки" in hmap else "№ в системе"
+    assert row_id_key in hmap
     assert "Тип строки" in hmap
 
-    row_id_col = hmap["№ в системе"]
+    row_id_col = hmap[row_id_key]
+    name_key = "Наименование товара" if "Наименование товара" in hmap else "Наименование"
     for r in range(4, ws.max_row + 1):
-        name_val = ws.cell(row=r, column=hmap["Наименование"]).value
+        name_val = ws.cell(row=r, column=hmap[name_key]).value
         if not name_val or not str(name_val).strip():
             continue
         assert ws.cell(row=r, column=row_id_col).value in (None, ""), \
-            f"строка {r} несёт непустую «№ в системе»"
+            f"строка {r} несёт непустую «{row_id_key}»"
 
 
 @pytest.mark.asyncio

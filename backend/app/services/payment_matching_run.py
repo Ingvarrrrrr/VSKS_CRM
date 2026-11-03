@@ -186,6 +186,17 @@ async def run_match_payments(db: AsyncSession, subsidy_id: int, dry_run: bool = 
 
     report["multi"] = multi_report
 
+    # Системное сопоставление оставшихся непривязанных платежей выписки
+    # с позициями сметы ФЭО (задача владельца 03.11.2026):
+    try:
+        from app.services.feo_statement_auto_match import match_unattached_statement_to_feo
+        feo_match_report = await match_unattached_statement_to_feo(
+            db, subsidy_id, used_bp_ids=used_bp_ids, dry_run=dry_run,
+        )
+        report["feo_statement_match"] = feo_match_report
+    except Exception as feo_exc:
+        report["feo_statement_match"] = {"error": str(feo_exc)}
+
     if not dry_run:
         await db.commit()
 

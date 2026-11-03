@@ -299,6 +299,24 @@ async def match_payments_endpoint(
     return await run_match_payments(db, subsidy_id, dry_run=dry_run)
 
 
+@router.post("/match-statement-feo")
+async def match_statement_feo_endpoint(
+    subsidy_id: int = Query(...),
+    dry_run: bool = Query(True),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Системный подбор и создание закупок из непривязанных строк казначейской выписки
+    под плановые позиции ФЭО (задача 03.11.2026).
+    dry_run=true (умолчание) — только отчёт без записи в БД.
+    dry_run=false — создаёт закупки, привязывает платежи и обновляет статусы."""
+    await _get_subsidy_for_payments(subsidy_id, db, current_user)
+    from app.services.feo_statement_auto_match import match_unattached_statement_to_feo
+    return await match_unattached_statement_to_feo(
+        db, subsidy_id, current_user=current_user, dry_run=dry_run,
+    )
+
+
 @router.get("/{pid}/vat-payment-check")
 async def get_purchase_vat_payment_check(
     pid: int,

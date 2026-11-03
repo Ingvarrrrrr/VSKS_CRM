@@ -91,7 +91,7 @@
                   <b>Получатель:</b> {{ m.payee_name || 'Не указан' }}
                   <span v-if="m.payee_inn" class="text-medium-emphasis">(ИНН: {{ m.payee_inn }})</span>
                 </div>
-                <div v-if="m.purpose_text" class="text-truncate text-medium-emphasis" :title="m.purpose_text">
+                <div v-if="m.purpose_text" class="text-medium-emphasis mt-1" style="white-space: normal; word-break: break-word; line-height: 1.35;">
                   <b>Назначение:</b> {{ m.purpose_text }}
                 </div>
               </div>

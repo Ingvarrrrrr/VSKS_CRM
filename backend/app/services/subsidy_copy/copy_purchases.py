@@ -119,6 +119,24 @@ async def copy_purchases(
     item_id_map: dict[int, int] = {}
     old_parent_by_new: dict[int, int] = {}  # new_purchase_id -> old parent_purchase_id (2-й проход)
 
+    # Предзагрузка чеков и файлов всех закупок разом — избавляет от 2*N запросов к БД
+    # при копировании субсидий с 500+ закупками (проблема REQUEST_TIMEOUT 60с).
+    source_pids = [p.id for p in purchases]
+    receipts_by_purchase: dict[int, list[PurchaseReceipt]] = {}
+    files_by_purchase: dict[int, list[PurchaseFile]] = {}
+    if source_pids:
+        all_rcpts = (await db.execute(
+            select(PurchaseReceipt).where(PurchaseReceipt.purchase_id.in_(source_pids))
+        )).scalars().all()
+        for r in all_rcpts:
+            receipts_by_purchase.setdefault(r.purchase_id, []).append(r)
+
+        all_files = (await db.execute(
+            select(PurchaseFile).where(PurchaseFile.purchase_id.in_(source_pids))
+        )).scalars().all()
+        for f in all_files:
+            files_by_purchase.setdefault(f.purchase_id, []).append(f)
+
     for p in purchases:
         # Чеки читаются ДО клонирования закупки — задание 08.10.2026, п.3:
         # если хоть один чек этой закупки уже лежит в ДРУГОЙ закупке (не в
@@ -128,9 +146,7 @@ async def copy_purchases(
         # тот же единственный поиск дублей, что в receipts_creation.py и
         # purchase_receipts_import.py (ПРАВИЛО №6), с exclude_purchase_id=p.id
         # (исходная закупка — не дубль самой себя).
-        receipts = (await db.execute(
-            select(PurchaseReceipt).where(PurchaseReceipt.purchase_id == p.id)
-        )).scalars().all()
+        receipts = receipts_by_purchase.get(p.id, [])
 
         duplicate_ref: Optional[str] = None
         for rcpt in receipts:
@@ -173,6 +189,7 @@ async def copy_purchases(
         # Чеки (уже прочитаны выше) — ДО позиций (PurchaseItem.receipt_id
         # ссылается на них).
         receipt_id_map: dict[int, int] = {}
+        added_receipts: list[tuple[int, PurchaseReceipt]] = []
         for rcpt in receipts:
             # uq_receipt_fiscal (fiscal_drive_number, fiscal_document_number,
             # fiscal_sign) — ГЛОБАЛЬНОЕ ограничение на всю таблицу purchase_
@@ -188,8 +205,11 @@ async def copy_purchases(
                 fiscal_drive_number=None, fiscal_document_number=None, fiscal_sign=None,
             )
             db.add(new_r)
+            added_receipts.append((rcpt.id, new_r))
+        if added_receipts:
             await db.flush()
-            receipt_id_map[rcpt.id] = new_r.id
+            for old_rcpt_id, new_r in added_receipts:
+                receipt_id_map[old_rcpt_id] = new_r.id
 
         # Клонирование позиций закупки — общий хелпер (ПРАВИЛО №6), см.
         # clone_items.py: та же функция используется scripts/fadm_restore_items.py
@@ -203,9 +223,7 @@ async def copy_purchases(
         item_id_map.update(new_item_ids)
 
         # Файлы — та же ссылка на физический файл (filepath), новая строка.
-        files = (await db.execute(
-            select(PurchaseFile).where(PurchaseFile.purchase_id == p.id)
-        )).scalars().all()
+        files = files_by_purchase.get(p.id, [])
         for f in files:
             db.add(clone_row(f, PurchaseFile, purchase_id=new_p.id))
 

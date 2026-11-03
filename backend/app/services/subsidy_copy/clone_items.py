@@ -64,6 +64,7 @@ async def clone_purchase_items(
     )).scalars().all()
 
     item_id_map: dict[int, int] = {}
+    added: list[tuple[int, PurchaseItem]] = []
     for it in items:
         kwargs = dict(
             purchase_id=new_purchase_id,
@@ -75,6 +76,10 @@ async def clone_purchase_items(
         kwargs.update(overrides)  # overrides побеждают (напр. явный feo_planned_item_id/feo_category_id)
         new_it = clone_row(it, PurchaseItem, **kwargs)
         db.add(new_it)
+        added.append((it.id, new_it))
+
+    if added:
         await db.flush()
-        item_id_map[it.id] = new_it.id
+        for old_id, new_it in added:
+            item_id_map[old_id] = new_it.id
     return item_id_map

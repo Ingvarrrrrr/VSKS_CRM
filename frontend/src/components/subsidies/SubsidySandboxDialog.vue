@@ -127,7 +127,10 @@ async function doCopy() {
   if (!target.value) return
   copying.value = true
   try {
-    const created = await apiFetch<{ id: number; name: string }>(`/subsidies/${target.value.id}/copy`, { method: 'POST' })
+    const created = await apiFetch<{ id: number; name: string }>(`/subsidies/${target.value.id}/copy`, {
+      method: 'POST',
+      timeoutMs: 300_000,
+    })
     showSnack(`Копия «${created.name}» создана`, 'success')
     visible.value = false
     emit('changed')
@@ -142,7 +145,10 @@ async function doDelete() {
   if (!target.value) return
   saving.value = true
   try {
-    await apiFetch(`/subsidies/${target.value.id}/sandbox`, { method: 'DELETE' })
+    await apiFetch(`/subsidies/${target.value.id}/sandbox`, {
+      method: 'DELETE',
+      timeoutMs: 300_000,
+    })
     ctx.allSubsidies.value = ctx.allSubsidies.value.filter((s: SubsidyRow) => s.id !== target.value!.id)
     if (ctx.selectedId.value === target.value.id) ctx.selectedId.value = null
     showSnack('Копия удалена целиком', 'warning')

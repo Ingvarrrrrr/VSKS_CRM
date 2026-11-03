@@ -55,6 +55,8 @@ export interface ApiFetchOptions extends RequestInit {
    * бы задвоить запись.
    */
   retryOnNetworkError?: boolean
+  /** Кастомный таймаут запроса в миллисекундах (по умолчанию REQUEST_TIMEOUT_MS = 60_000). */
+  timeoutMs?: number
 }
 
 // Сетевая ошибка (сервер недоступен/DNS/CORS/обрыв соединения — браузерный
@@ -86,9 +88,10 @@ export function buildFetchError(code: string, message: string, details = '', sup
   err.payload = payload
   return err
 }
-export function translateFetchThrow(fetchErr: any, suppressErrorDialog = false): any {
+export function translateFetchThrow(fetchErr: any, suppressErrorDialog = false, timeoutMs = REQUEST_TIMEOUT_MS): any {
   if (fetchErr?.name === 'AbortError') {
-    return buildFetchError('REQUEST_TIMEOUT', 'Сервер не ответил за 60 секунд — повторите попытку', '', suppressErrorDialog)
+    const sec = Math.round(timeoutMs / 1000)
+    return buildFetchError('REQUEST_TIMEOUT', `Сервер не ответил за ${sec} секунд — повторите попытку`, '', suppressErrorDialog)
   }
   return buildFetchError('NETWORK_ERROR', 'Нет связи с сервером — повторите действие', fetchErr?.message || '', suppressErrorDialog)
 }
@@ -137,8 +140,9 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   // Внешний AbortController поверх пользовательского options.signal: signal
   // передаёт useProductSearch.ts (отмена устаревшего поиска при вводе) — отмена
   // вызывающего не должна читаться как таймаут (см. catch ниже).
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS
   const timeoutController = new AbortController()
-  const timeoutId = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS)
+  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs)
   if (options.signal) {
     if (options.signal.aborted) timeoutController.abort()
     else options.signal.addEventListener('abort', () => timeoutController.abort(), { once: true })
@@ -180,10 +184,10 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
         if (options.signal?.aborted) {
           throw new DOMException('Запрос отменён', 'AbortError')
         }
-        throw translateFetchThrow(retryErr, options.suppressErrorDialog)
+        throw translateFetchThrow(retryErr, options.suppressErrorDialog, timeoutMs)
       }
     } else {
-      throw translateFetchThrow(fetchErr, options.suppressErrorDialog)
+      throw translateFetchThrow(fetchErr, options.suppressErrorDialog, timeoutMs)
     }
   }
   // 27.4-24: успешный ответ → сбрасываем счётчик 5xx

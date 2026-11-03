@@ -157,3 +157,4 @@ async def merge_purchases(
         "wish_ids": unique_wish_ids,
         "message": f"Успешно объединено {len(sources)} закупок в {target.registry_number or target.id}",
     }
+

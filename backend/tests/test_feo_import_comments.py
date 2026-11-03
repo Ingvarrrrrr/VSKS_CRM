@@ -159,10 +159,10 @@ async def test_row_comment_creates_one_item_comment_and_reimport_does_not_duplic
 
 
 @pytest.mark.asyncio
-async def test_row_without_item_attaches_comment_to_category(db_session):
-    """Строка БЕЗ «Плановой позиции» (только уровни) + «Комментарий» →
-    комментарий уходит к КАТЕГОРИИ этой строки (самый глубокий уровень), а не
-    теряется и не пишется в notes."""
+async def test_row_without_item_does_not_attach_comment_to_category(db_session):
+    """Владелец (04.11): комментарии привязываются строго к позициям (item),
+    а не к категориям. Строка БЕЗ плановой позиции не создает комментариев
+    к категории."""
     subsidy = await _make_subsidy(db_session)
     try:
         rows = [mk_row(
@@ -171,7 +171,7 @@ async def test_row_without_item_attaches_comment_to_category(db_session):
         )]
         result = await _import(db_session, subsidy.id, rows)
         assert result["errors"] == []
-        assert result["comments_created"] == 1
+        assert result["comments_created"] == 0
 
         cats = await _get_categories(db_session, subsidy.id)
         by_name = {c.name: c for c in cats}
@@ -181,9 +181,7 @@ async def test_row_without_item_attaches_comment_to_category(db_session):
             select(FeoComment).where(FeoComment.feo_category_id == leaf.id)
         )
         comments = res.scalars().all()
-        assert len(comments) == 1
-        assert comments[0].text == "Требует уточнения по смете"
-        assert comments[0].feo_planned_item_id is None
+        assert len(comments) == 0
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)
 

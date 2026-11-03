@@ -934,15 +934,7 @@
                не строгость теста, а реальный клик мимо цели у живого
                пользователя). Свой маленький уголковый бейдж вместо этого:
                pointer-events:none, чтобы клик всегда доходил до кнопки под ним. -->
-          <span class="feo-comment-icon-wrap">
-            <v-btn
-              :icon="categoryCommentCount > 0 ? 'mdi-comment-text' : 'mdi-comment-text-outline'"
-              variant="text" size="x-small" :color="commentsExpanded ? 'teal' : 'grey-darken-1'"
-              title="Комментарии к этой категории"
-              @click.stop="commentsExpanded = !commentsExpanded"
-            />
-            <span v-if="categoryCommentCount > 0" class="feo-comment-count-badge">{{ categoryCommentCount }}</span>
-          </span>
+<!-- Комментарии на уровне категорий отключены (владелец, 04.11) -->
         </div>
       </div>
     </td>
@@ -974,13 +966,7 @@
        Правка 2026-09-14: больше не гейтится общим переключателем видимости
        (тот теперь управляет только начальным раскрытием, см. commentsExpanded
        ниже) — только собственным состоянием раскрытия этой ветки. -->
-  <tr v-if="commentsExpanded">
-    <td colspan="8" style="padding:0">
-      <div style="margin:6px 8px 10px 32px;padding:8px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px">
-        <FeoCommentThread :feo-category-id="node.id" :subsidy-id="subsidyId" />
-      </div>
-    </td>
-  </tr>
+
 </template>
 
 <script setup lang="ts">

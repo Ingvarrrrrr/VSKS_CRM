@@ -434,6 +434,20 @@ async def _subsidy_org_materialize_backfill():
 # app/services/org_dedup.py::_merge_duplicate_orgs_by_inn.
 
 
+async def _clean_orphan_category_comments():
+    # Владелец (04.11): комментарии привязываются строго к позициям (item),
+    # а не к категориям. Удаляет любые исторические комментарии к категориям.
+    try:
+        from app.database import async_session
+        from sqlalchemy import text
+        async with async_session() as db:
+            await db.execute(text("DELETE FROM feo_comments WHERE feo_category_id IS NOT NULL"))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"_clean_orphan_category_comments skipped: {e}")
+
+
 async def _price_freshness_fx_rates_refresh():
     # price-freshness: разовый бэкафилл истории курса USD + обновление на
     # сегодня с cbr.ru при старте (владелец, 2026-08-29 + ревью 2026-08-29).
@@ -466,4 +480,5 @@ async def run():
     await _phase26_bb_fuzzy_link_items_to_receipts()
     await _phase26_w_backfill_contractor_from_receipts()
     await _subsidy_org_materialize_backfill()
+    await _clean_orphan_category_comments()
     await _price_freshness_fx_rates_refresh()

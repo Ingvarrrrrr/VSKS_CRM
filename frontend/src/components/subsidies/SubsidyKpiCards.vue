@@ -100,7 +100,7 @@
           <div class="kpi-body">
             <div class="kpi-value" :style="isPlanOverBudget ? 'color:#EF4444 !important;font-weight:700' : ''">{{ formatCurrency(isPayrollOnly ? (payrollOnlyValue('plan_schedule') ?? 0) : kpiSubAnim_plan_schedule) }}</div>
             <div class="kpi-label" title="Сумма всех плановых позиций">Запланировано</div>
-            <div v-if="isPlanOverBudget && planOverBudgetDiff > 0.005" class="kpi-sub-note kpi-ceiling-over text-caption" style="color:#EF4444;font-weight:700" title="План превышает бюджет ФЭО">
+            <div v-if="isPlanOverBudget && planOverBudgetDiff > 0.005" class="kpi-sub-note kpi-ceiling-over text-caption" style="color:#EF4444;font-weight:700;cursor:pointer;text-decoration:underline dotted" title="Нажмите, чтобы увидеть позиции и закупки превышения" @click.stop="openPlanExcessDialog">
               выше бюджета ФЭО на {{ formatCurrency(planOverBudgetDiff) }}
             </div>
             <!-- Шаг 6 (план humble-stirring-emerson.md, 23.10.2026), текст
@@ -648,6 +648,85 @@
     @close="orderSubstitutionDialogVisible = false"
     @open-purchase="(id) => { orderSubstitutionDialogVisible = false; ctx.router.push(`/orders/${id}/edit`) }"
   />
+  <!-- Диалог позиций превышения бюджета ФЭО (владелец, 04.11) -->
+  <v-dialog v-model="planExcessDialogVisible" max-width="680">
+    <v-card>
+      <v-card-title class="d-flex align-center justify-space-between pb-1">
+        <span class="text-h6" style="color:#DC2626">Превышение бюджета ФЭО</span>
+        <v-btn icon="mdi-close" variant="text" size="small" @click="planExcessDialogVisible = false" />
+      </v-card-title>
+      <v-card-subtitle class="pt-0">
+        План превышает финансирование по ФЭО на <strong>{{ formatCurrency(planOverBudgetDiff) }}</strong>. Позиции и категории, вызвавшие превышение:
+      </v-card-subtitle>
+      <v-card-text class="pt-2">
+        <div v-if="!planExcessDialogRows.length" class="text-caption text-medium-emphasis py-4 text-center">
+          Нет отдельных позиций-виновников — превышение распределено по категориям.
+        </div>
+        <div v-else class="d-flex flex-column ga-2">
+          <div
+            v-for="(row, idx) in planExcessDialogRows"
+            :key="idx"
+            class="pa-3 rounded border"
+            style="background:#FFF5F5;border-color:#FCA5A5 !important"
+          >
+            <div class="d-flex align-start justify-space-between ga-2">
+              <div style="min-width:0;flex:1">
+                <div class="text-caption text-medium-emphasis" style="line-height:1.2;margin-bottom:2px">
+                  <v-icon icon="mdi-folder-outline" size="14" class="mr-1" />{{ row.path }}
+                </div>
+                <div class="font-weight-bold text-body-2" style="color:#1E293B">
+                  {{ row.itemName }}
+                </div>
+                <div v-if="row.purchaseNumber || row.purchaseId" class="text-caption text-medium-emphasis mt-1">
+                  Закупка: № {{ row.purchaseNumber || row.purchaseId }}
+                </div>
+              </div>
+              <div class="text-right">
+                <div class="font-weight-bold" style="color:#DC2626;font-size:14px;white-space:nowrap">
+                  +{{ formatCurrency(row.amount) }}
+                </div>
+                <div class="d-flex align-center justify-end ga-1 mt-2">
+                  <v-btn
+                    size="x-small"
+                    color="primary"
+                    variant="tonal"
+                    prepend-icon="mdi-crosshairs-gps"
+                    @click="showExcessInTree(row)"
+                  >
+                    Показать в дереве
+                  </v-btn>
+                  <v-btn
+                    v-if="row.purchaseId"
+                    size="x-small"
+                    color="secondary"
+                    variant="outlined"
+                    prepend-icon="mdi-open-in-new"
+                    @click="openExcessPurchase(row.purchaseId)"
+                  >
+                    Закупка
+                  </v-btn>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </v-card-text>
+      <v-card-actions class="px-4 pb-4 pt-1">
+        <v-btn
+          color="error"
+          variant="tonal"
+          prepend-icon="mdi-format-list-bulleted"
+          @click="highlightAllExcessInTree"
+        >
+          Подсветить все в дереве
+        </v-btn>
+        <v-spacer />
+        <v-btn variant="text" @click="planExcessDialogVisible = false">
+          Закрыть
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script setup lang="ts">
@@ -669,7 +748,7 @@ import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
 // пункту») — singleton уже построен SubsidiesView.vue с ctx, здесь
 // переиспользуется без аргумента (тот же приём, что у useFeoTreeExcess()
 // выше).
-import { useExcessDrilldown } from '@/composables/subsidies/useExcessDrilldown'
+import { useExcessDrilldown, totalPlanOverFeoTargetIds } from '@/composables/subsidies/useExcessDrilldown'
 // Шаг доработки (владелец, 23.10.2026) — тот же источник «на согласовании»,
 // что у PendingExcessNote.vue (ПРАВИЛО №6, не вторая формула), нужен здесь
 // для текста красной строки «план выше ФЭО» (planCeilingNoteText ниже).
@@ -1126,6 +1205,120 @@ function onTypeRowClick(stage: SplitStageKey, kind: ItemTypeKind) {
   if (!statuses) return
   cardDrills.openStageKind(stage, kind, `${KPI_STAGE_LABELS[stage] || stage} · ${KIND_LABELS[kind]}`, statuses)
 }
+
+
+const planExcessDialogVisible = ref(false)
+
+function openPlanExcessDialog() {
+  planExcessDialogVisible.value = true
+}
+
+function openExcessPurchase(purchaseId: number) {
+  planExcessDialogVisible.value = false
+  ctx.router.push(`/orders/${purchaseId}/edit`)
+}
+
+function highlightAllExcessInTree() {
+  planExcessDialogVisible.value = false
+  excessDrilldown.activate('total', { direction: 'over', chipAmount: planOverBudgetDiff.value })
+}
+
+function showExcessInTree(row: { categoryId: number; path: string; itemName: string; categoryName: string }) {
+  planExcessDialogVisible.value = false
+  excessDrilldown.activate('total', { direction: 'over', chipAmount: planOverBudgetDiff.value })
+  ctx.goToFeoSearchResult({
+    key: `c-${row.categoryId}`,
+    kind: 'category',
+    id: row.categoryId,
+    name: row.categoryName,
+    path: row.path,
+    categoryId: row.categoryId,
+  })
+}
+
+const planExcessDialogRows = computed(() => {
+  const categories = ctx.feoCategories.value
+  const planTree = ctx.planTreeByCat.value
+  if (!categories.length || !planTree) return []
+
+  const catMap = new Map<number, any>()
+  for (const c of categories) catMap.set(c.id, c)
+
+  function getPath(catId: number): string {
+    const parts: string[] = []
+    let cur: any = catMap.get(catId)
+    while (cur) {
+      parts.unshift(cur.name)
+      cur = cur.parent_id != null ? catMap.get(cur.parent_id) : null
+    }
+    return parts.join(' → ')
+  }
+
+  const rows: Array<{
+    categoryId: number
+    path: string
+    categoryName: string
+    itemName: string
+    purchaseId: number | null
+    purchaseNumber: string | number | null
+    amount: number
+  }> = []
+
+  const targetCatIds = totalPlanOverFeoTargetIds(categories, planTree)
+  const catIdsToInspect = targetCatIds.length
+    ? targetCatIds
+    : Object.keys(planTree)
+        .map(Number)
+        .filter(id => (planTree[id]?.excess_amount || 0) > 0.005 || (planTree[id]?.excess_over_feo || 0) > 0.005)
+
+  for (const catId of catIdsToInspect) {
+    const entry = planTree[catId]
+    if (!entry) continue
+    const cat = catMap.get(catId)
+    const categoryName = cat?.name || `#${catId}`
+    const path = getPath(catId)
+    const excessAmt = Number(entry.excess_over_feo || entry.excess_amount || 0)
+
+    const culprit = entry.excess_culprit
+    if (culprit?.culprits?.length) {
+      for (const c of culprit.culprits) {
+        rows.push({
+          categoryId: catId,
+          path,
+          categoryName,
+          itemName: c.item_name || 'Позиция закупки',
+          purchaseId: c.purchase_id,
+          purchaseNumber: c.purchase_number,
+          amount: c.amount || excessAmt,
+        })
+      }
+    } else if (culprit) {
+      rows.push({
+        categoryId: catId,
+        path,
+        categoryName,
+        itemName: culprit.item_name || 'Позиция закупки',
+        purchaseId: culprit.purchase_id,
+        purchaseNumber: culprit.purchase_number,
+        amount: culprit.amount_at_crossing || excessAmt,
+      })
+    } else {
+      const items = ctx.plannedItemsByCat.value[catId] || []
+      const overItem = items.find(it => it.name && excessAmt > 0)
+      rows.push({
+        categoryId: catId,
+        path,
+        categoryName,
+        itemName: overItem ? overItem.name : 'Превышение плана над ФЭО',
+        purchaseId: null,
+        purchaseNumber: null,
+        amount: excessAmt,
+      })
+    }
+  }
+
+  return rows
+})
 
 </script>
 

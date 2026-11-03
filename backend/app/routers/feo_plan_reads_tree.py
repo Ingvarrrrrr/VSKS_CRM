@@ -135,6 +135,7 @@ async def get_feo_plan_tree(
             "plan": node["plan"],
             "budget": node["budget"],
             "display": node["display"],
+            "full_display": node.get("full_display", node["display"]),
             "residual": node["residual"],
             "forecast": node["forecast"],
             "forecast_over": node["forecast_over"],

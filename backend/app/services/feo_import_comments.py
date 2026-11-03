@@ -120,10 +120,8 @@ async def apply_feo_comments(state) -> None:
         stripped = text.strip()
         if stripped:
             intents.append(("item", item_id, stripped))
-    for cat_id, _row_num, text in state.comment_category_intents:
-        stripped = text.strip()
-        if stripped:
-            intents.append(("category", cat_id, stripped))
+    # Владелец (04.11): комментарии привязываются строго к позициям (item),
+    # к категориям комментарии не привязываются и не создаются.
 
     if not intents:
         return

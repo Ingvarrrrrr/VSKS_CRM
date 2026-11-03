@@ -97,15 +97,19 @@ async def match_unattached_statement_to_feo(
             select(User).where(User.role == "superadmin").limit(1)
         )).scalar_one_or_none()
 
-    # 1. Непривязанные исполненные платежи субсидии
+    # 1. Непривязанные исполненные платежи (для копии-песочницы берём платежи оригинала)
+    bps_subsidy_id = subsidy.copied_from_id if (subsidy.is_sandbox and subsidy.copied_from_id) else subsidy.id
+
     already_attached_bps = set((await db.execute(
-        select(Payment.bank_payment_id).where(Payment.bank_payment_id.is_not(None))
+        select(Payment.bank_payment_id)
+        .join(Purchase, Payment.purchase_id == Purchase.id)
+        .where(Purchase.subsidy_id == subsidy.id, Payment.bank_payment_id.is_not(None))
     )).scalars().all())
 
     bps = (await db.execute(
         select(BankPayment)
         .where(
-            BankPayment.subsidy_id == subsidy_id,
+            BankPayment.subsidy_id == bps_subsidy_id,
             BankPayment.status.in_(EXECUTED_STATUSES),
         )
         .order_by(BankPayment.payment_date.asc().nulls_last(), BankPayment.id.asc())
@@ -324,3 +328,4 @@ async def match_unattached_statement_to_feo(
         "created_purchases": created_purchases,
         "warnings": attach_warnings,
     }
+

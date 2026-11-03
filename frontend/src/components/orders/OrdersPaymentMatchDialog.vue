@@ -38,11 +38,25 @@
             <v-chip color="success" variant="tonal" size="small">
               {{ state.applied ? 'Разнесено' : 'Будет разнесено' }}: {{ state.report.attached.length }}
             </v-chip>
+            <v-chip v-if="(state.report as any).feo_statement_match?.matched_count" color="teal" variant="tonal" size="small">
+              {{ state.applied ? 'Создано по ФЭО' : 'Будет создано по ФЭО' }}: {{ (state.report as any).feo_statement_match.matched_count }} ({{ formatMoney((state.report as any).feo_statement_match.matched_total_amount) }})
+            </v-chip>
             <v-chip color="warning" variant="tonal" size="small">Неоднозначно: {{ state.report.ambiguous.length }}</v-chip>
             <v-chip color="grey" variant="tonal" size="small">Не найдено: {{ state.report.not_found.length }}</v-chip>
             <v-chip v-if="state.report.suspicious.length" color="error" variant="tonal" size="small">
               Подозрительные дубли: {{ state.report.suspicious.length }}
             </v-chip>
+          </div>
+
+          <div v-if="(state.report as any).feo_statement_match?.matched_items?.length" class="mb-3">
+            <div class="text-subtitle-2 font-weight-bold mb-1 text-teal-darken-2">
+              {{ state.applied ? 'Создано закупок по смете ФЭО' : 'Будет создано закупок по смете ФЭО' }}:
+              {{ (state.report as any).feo_statement_match.matched_count }} ({{ formatMoney((state.report as any).feo_statement_match.matched_total_amount) }})
+            </div>
+            <div v-for="(m, idx) in (state.report as any).feo_statement_match.matched_items" :key="idx" class="text-body-2 mb-1">
+              Платёж № {{ m.payment_number || '—' }} ({{ formatMoney(m.amount) }}, {{ m.payee_name }}):
+              <span class="text-medium-emphasis">[{{ m.category_name }}] {{ m.fpi_name }}</span>
+            </div>
           </div>
 
           <div v-if="state.report.attached.length" class="mb-3">
@@ -101,10 +115,10 @@
           <v-btn variant="text" @click="state.report = null">Назад</v-btn>
           <v-btn
             color="indigo" variant="flat" :loading="state.loading"
-            :disabled="!state.report.attached.length"
+            :disabled="!state.report.attached.length && !((state.report as any).feo_statement_match?.matched_count)"
             @click="applyMatch"
           >
-            Применить ({{ state.report.attached.length }})
+            Применить ({{ (state.report.attached?.length || 0) + ((state.report as any).feo_statement_match?.matched_count || 0) }})
           </v-btn>
         </template>
         <template v-else>

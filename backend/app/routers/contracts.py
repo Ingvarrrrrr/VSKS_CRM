@@ -369,7 +369,7 @@ async def create_contract(
             dup_q = dup_q.where(Contract.subsidy_id == data.subsidy_id)
         if data.date:
             dup_q = dup_q.where(Contract.date == data.date)
-        dup = (await db.execute(dup_q)).scalar_one_or_none()
+        dup = (await db.execute(dup_q)).scalars().first()
         if dup:
             raise HTTPException(
                 409,
@@ -388,20 +388,31 @@ async def create_contract(
     # Phase 27.1.6: auto-fill empty fields from linked purchases (если уже привязаны)
     await _enrich_contract_from_purchases(c, db)
 
+    seen_create_sids = set()
     for sid in extra_ids:
-        db.add(ContractSubsidy(contract_id=c.id, subsidy_id=sid))
+        if sid and sid != c.subsidy_id and sid not in seen_create_sids:
+            seen_create_sids.add(sid)
+            db.add(ContractSubsidy(contract_id=c.id, subsidy_id=sid))
     await db.commit()
     await db.refresh(c)
     result = await db.execute(
         select(Contract).options(
+            selectinload(Contract.contractor),
+            selectinload(Contract.subsidy),
             selectinload(Contract.extra_subsidies).selectinload(ContractSubsidy.subsidy)
         ).where(Contract.id == c.id)
     )
     c = result.scalar_one()
     d = ContractOut.model_validate(c)
+    if c.contractor:
+        d.contractor_name = c.contractor.name
+        d.contractor_inn = c.contractor.inn
+    if c.subsidy:
+        d.subsidy_name = c.subsidy.name
+        d.subsidy_is_sandbox = bool(c.subsidy.is_sandbox)
     d.extra_subsidies = [
         ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
-        for es in c.extra_subsidies
+        for es in (c.extra_subsidies or [])
     ]
     return d
 
@@ -431,7 +442,7 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
             dup_q = dup_q.where(Contract.subsidy_id == data.subsidy_id)
         if data.date:
             dup_q = dup_q.where(Contract.date == data.date)
-        dup = (await db.execute(dup_q)).scalar_one_or_none()
+        dup = (await db.execute(dup_q)).scalars().first()
         if dup:
             raise HTTPException(409, f"Договор с таким номером и контрагентом уже существует (ID {dup.id})")
     extra_ids = data.extra_subsidy_ids or []
@@ -485,6 +496,7 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
                     changed_by_name=getattr(current_user, 'full_name', None) or getattr(current_user, 'username', None),
                     old_values=old_vals,
                     new_values=new_vals,
+                    commit=False,
                 )
 
         # Warnings: amount_over_max
@@ -503,12 +515,16 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
                     out_of_validity.append(p.id)
         warnings.date_out_of_validity = out_of_validity
 
-    # Replace extra subsidies
+    # Replace extra subsidies: flush deleted first to prevent unique constraint conflict in PostgreSQL
     old_extras = await db.execute(select(ContractSubsidy).where(ContractSubsidy.contract_id == cid))
     for es in old_extras.scalars().all():
         await db.delete(es)
+    await db.flush()
+    seen_update_sids = set()
     for sid in extra_ids:
-        db.add(ContractSubsidy(contract_id=cid, subsidy_id=sid))
+        if sid and sid != c.subsidy_id and sid not in seen_update_sids:
+            seen_update_sids.add(sid)
+            db.add(ContractSubsidy(contract_id=cid, subsidy_id=sid))
 
     # Phase 27.1.6: auto-fill пустые fields из связанных Purchase
     await _enrich_contract_from_purchases(c, db)
@@ -516,14 +532,22 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
     await db.commit()
     result2 = await db.execute(
         select(Contract).options(
+            selectinload(Contract.contractor),
+            selectinload(Contract.subsidy),
             selectinload(Contract.extra_subsidies).selectinload(ContractSubsidy.subsidy)
         ).where(Contract.id == cid)
     )
     c = result2.scalar_one()
     d = ContractOut.model_validate(c)
+    if c.contractor:
+        d.contractor_name = c.contractor.name
+        d.contractor_inn = c.contractor.inn
+    if c.subsidy:
+        d.subsidy_name = c.subsidy.name
+        d.subsidy_is_sandbox = bool(c.subsidy.is_sandbox)
     d.extra_subsidies = [
         ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
-        for es in c.extra_subsidies
+        for es in (c.extra_subsidies or [])
     ]
     return ContractUpdateResponse(
         contract=d,

@@ -236,8 +236,14 @@ async def _check_budget(
 
         if used + new_amt > Decimal(str(planned.amount)):
             remaining = Decimal(str(planned.amount)) - used
-            raise HTTPException(
-                422,
+            msg = (
                 f"Превышение плана по позиции «{planned.name}». "
                 f"Доступный остаток: {remaining:,.2f} ₽, запрашивается: {new_amt:,.2f} ₽"
             )
+            # Владелец (2026-09-02, 2026-11-03): при редактировании (exclude_pid) или raise_on_exceed=False
+            # сохранять закупку можно всегда — превышение регистрируется в PlanExcessApproval
+            # (app.routers.purchases::register_tz_excess_approvals), а блокируется ДВИЖЕНИЕ
+            # закупки дальше по стадиям (assert_no_pending_tz_excess в purchase_transitions.py).
+            if exclude_pid is not None or not raise_on_exceed:
+                return {"code": "PLAN_ITEM_EXCEEDED", "message": msg, "subsidy_id": subsidy_id}
+            raise HTTPException(422, msg)

@@ -20,7 +20,8 @@
   <v-select
     v-model="feoImportTargetSubsidy"
     :items="allSubsidies"
-    item-title="name" item-value="id"
+    :item-title="(s: any) => s.name + (s.is_sandbox ? ' (????? ??? ?????????????)' : '')"
+    item-value="id"
     label="Субсидия назначения (для строк без столбца «Субсидия»)"
     variant="outlined" density="compact" clearable class="mb-3"
     hint="Если в файле колонка «Субсидия» пустая — все строки будут отнесены к выбранной субсидии"

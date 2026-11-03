@@ -157,15 +157,19 @@ def _parse_row_id(raw: Optional[str]) -> tuple[Optional[str], Optional[int]]:
     return prefix, int(rest)
 
 
-def check_meta_mismatch(meta: Optional[MetaInfo], subsidy_id: int) -> Optional[str]:
+def check_meta_mismatch(meta: Optional[MetaInfo], subsidy_id: int, sub: Optional[Any] = None) -> Optional[str]:
     """Файл выгружен из ДРУГОЙ субсидии (лист _meta) — жёсткий отказ, без
     флага-обхода (владелец выбрал безопасный вариант — см. докстринг задачи):
     строки файла могли случайно совпасть по № записи с сущностями ЭТОЙ
     субсидии только по счастливой нумерации id, подмена категории/позиции
     под другим именем была бы трудно заметна человеком в предпросмотре.
+    Исключение: субсидия-песочница (is_sandbox), куда разрешено загружать
+    выгрузку из оригинальной субсидии-источника (copied_from_id).
     Роутер вызывает это ПЕРЕД build_preview, чтобы вернуть явный HTTP 400, а
     не прятать ошибку внутри обычного списка `errors` предпросмотра."""
     if meta is not None and meta.subsidy_id is not None and meta.subsidy_id != subsidy_id:
+        if sub is not None and getattr(sub, "is_sandbox", False) and sub.copied_from_id == meta.subsidy_id:
+            return None
         return (
             f"Файл выгружен из другой субсидии (id={meta.subsidy_id}) — "
             f"загрузка в субсидию id={subsidy_id} отклонена. Выгрузите файл "
@@ -181,7 +185,9 @@ async def build_preview(
     НЕ пишет в БД (только SELECT)."""
     result = PreviewResult()
 
-    _mismatch = check_meta_mismatch(meta, subsidy_id)
+    from app.models.subsidy import Subsidy
+    sub = await db.get(Subsidy, subsidy_id)
+    _mismatch = check_meta_mismatch(meta, subsidy_id, sub)
     if _mismatch:
         result.errors.append({"row": None, "message": _mismatch})
         return result
@@ -259,24 +265,28 @@ async def build_preview(
 
         if rr.kind == KIND_CATEGORY:
             cat = cat_by_id.get(ent_id)
+            if cat is None and sub is not None and getattr(sub, "is_sandbox", False):
+                cat = next((c for c in cats if c.name.strip().lower() == rr.parsed.name.strip().lower()), None)
             if cat is None:
                 rr.error = f"Строка {rr.parsed.row_num}: категория №{ent_id} не найдена в этой субсидии"
                 result.errors.append({"row": rr.parsed.row_num, "message": rr.error})
                 continue
             rr.is_new = False
             rr.entity_kind = "category"
-            rr.entity_id = ent_id
-            seen_cat_ids.add(ent_id)
+            rr.entity_id = cat.id
+            seen_cat_ids.add(cat.id)
         else:
             item = item_by_id.get(ent_id)
+            if item is None and sub is not None and getattr(sub, "is_sandbox", False):
+                item = next((it for it in item_rows if it.name.strip().lower() == rr.parsed.name.strip().lower()), None)
             if item is None:
                 rr.error = f"Строка {rr.parsed.row_num}: плановая позиция №{ent_id} не найдена в этой субсидии"
                 result.errors.append({"row": rr.parsed.row_num, "message": rr.error})
                 continue
             rr.is_new = False
             rr.entity_kind = "item"
-            rr.entity_id = ent_id
-            seen_item_ids.add(ent_id)
+            rr.entity_id = item.id
+            seen_item_ids.add(item.id)
 
     # --- родитель, помеченный ошибкой, тянет ошибку на детей (fail-safe) ---
     error_indices = {i for i, rr in enumerate(resolved) if rr.error}

@@ -149,6 +149,9 @@ async def _require_feo_category_write(
         org_id = sub.org_id if sub is not None else None
         if await has_org_key(current_user, db, org_id, "feo_category.edit", subsidy_id=subsidy_id):
             return
+        if sub is not None and getattr(sub, "is_sandbox", False) and sub.copied_from_id:
+            if await has_org_key(current_user, db, org_id, "feo_category.edit", subsidy_id=sub.copied_from_id):
+                return
         _deny()
         return
 

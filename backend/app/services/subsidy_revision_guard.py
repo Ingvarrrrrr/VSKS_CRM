@@ -58,7 +58,7 @@ async def subsidy_edit_mode(db: AsyncSession, user, subsidy_id: "int | None") ->
     subsidy = (await db.execute(
         select(Subsidy).where(Subsidy.id == subsidy_id)
     )).scalar_one_or_none()
-    if subsidy is None or subsidy.status != "approved":
+    if subsidy is None or subsidy.is_sandbox or subsidy.status != "approved":
         return MODE_DIRECT
 
     if await has_org_key(user, db, subsidy.org_id, "subsidy.edit", subsidy_id=subsidy_id):

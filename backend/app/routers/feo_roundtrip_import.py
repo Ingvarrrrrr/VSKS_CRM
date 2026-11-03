@@ -93,7 +93,7 @@ async def roundtrip_preview(
     """Предпросмотр: что изменится в дереве категорий/плановых позиций,
     если загрузить этот файл обратно в субсидию `subsidy_id`. НЕ пишет в БД —
     build_preview делает только SELECT."""
-    await _load_subsidy(db, subsidy_id)
+    sub = await _load_subsidy(db, subsidy_id)
     await _require_write(current_user, db, subsidy_id)
 
     fname = (file.filename or "").lower()
@@ -104,7 +104,7 @@ async def roundtrip_preview(
     parsed = parse_roundtrip_workbook(content)
     if parsed.errors:
         raise HTTPException(400, {"message": "; ".join(parsed.errors)})
-    _mismatch = check_meta_mismatch(parsed.meta, subsidy_id)
+    _mismatch = check_meta_mismatch(parsed.meta, subsidy_id, sub)
     if _mismatch:
         raise HTTPException(400, {"message": _mismatch})
 
@@ -135,7 +135,7 @@ async def roundtrip_apply(
     parsed = parse_roundtrip_workbook(content)
     if parsed.errors:
         raise HTTPException(400, {"message": "; ".join(parsed.errors)})
-    _mismatch = check_meta_mismatch(parsed.meta, subsidy_id)
+    _mismatch = check_meta_mismatch(parsed.meta, subsidy_id, sub)
     if _mismatch:
         raise HTTPException(400, {"message": _mismatch})
 

@@ -546,7 +546,9 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       feoImport.selectedSheet = data.sheets[0]?.name || ''
       feoIgnoredCols.value = []
       feoAutoMap(data.sheets[0]?.headers || [])
-      feoImportTargetSubsidy.value = ctx?.selectedId.value ?? null
+      const curId = ctx?.selectedId.value ?? null
+      const isKnown = curId != null && ctx?.allSubsidies?.value?.some((s: any) => s.id === curId)
+      feoImportTargetSubsidy.value = isKnown ? curId : null
       feoImport.step = 2
     } catch (e: any) {
       // fetchWithNetworkRetry уже перевела сетевую ошибку в человекочитаемый
@@ -610,7 +612,9 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       fd.append('dry_run', dryRun ? 'true' : 'false')
       fd.append('apply_remap', 'true')
       fd.append('col_subsidy',  String(m['subsidy']  ?? -1))
-      fd.append('default_subsidy_id', String(feoImportTargetSubsidy.value ?? -1))
+      const targetSub = feoImportTargetSubsidy.value
+      const isKnownTarget = targetSub != null && ctx?.allSubsidies?.value?.some((s: any) => s.id === targetSub)
+      fd.append('default_subsidy_id', String(isKnownTarget ? targetSub : -1))
       fd.append('col_lvl2',     String(m['lvl2']     ?? -1))
       fd.append('col_lvl3',     String(m['lvl3']     ?? -1))
       fd.append('col_lvl4',     String(m['lvl4']     ?? -1))

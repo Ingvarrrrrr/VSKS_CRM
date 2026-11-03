@@ -407,6 +407,12 @@ async def import_feo_mapped(
     if col_subsidy < 0 and default_subsidy_id <= 0:
         raise HTTPException(400, "Укажите столбец Субсидия или выберите субсидию назначения")
 
+    if default_subsidy_id and default_subsidy_id > 0:
+        from app.models.subsidy import Subsidy as _Subsidy
+        _target_sub = await db.get(_Subsidy, default_subsidy_id)
+        if not _target_sub:
+            raise HTTPException(404, f"Субсидия с ID {default_subsidy_id} не найдена. Возможно, копия была удалена или пересоздана — обновите страницу.")
+
     # B2: если субсидия назначения ОДНА на весь импорт (нет построчной колонки
     # «Субсидия», задан только default_subsidy_id) — проверяем право именно по ней
     # уже здесь (строже и точнее, отказ до чтения файла). Если субсидия построчная

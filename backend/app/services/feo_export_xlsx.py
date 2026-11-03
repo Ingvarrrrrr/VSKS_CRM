@@ -245,7 +245,8 @@ async def load_item_procurement_and_payments(
     def _make_bucket():
         return {
             "purchases": set(), "contractors": set(), "inns": set(),
-            "contracts": set(), "contract_amounts": set(), "order_amount": 0.0,
+            "contracts": set(), "contract_amounts": set(), "contract_residuals": set(),
+            "order_amount": 0.0,
             "purchase_totals_by_pid": {},
             "seen_p_ids": set(),
             "fact_quantities": [], "fact_unit_prices": [], "order_numbers": set(),
@@ -259,6 +260,7 @@ async def load_item_procurement_and_payments(
         c_inn = ", ".join(sorted(b["inns"])) if b["inns"] else ""
         c_doc = ", ".join(sorted(b["contracts"])) if b["contracts"] else ""
         c_amt = max(b["contract_amounts"]) if b["contract_amounts"] else 0.0
+        c_res = max(b["contract_residuals"]) if b["contract_residuals"] else 0.0
         p_amt = sum(b["purchase_totals_by_pid"].values()) if b["purchase_totals_by_pid"] else 0.0
         expense_grp = ", ".join(sorted(b["expense_groups"])) if b["expense_groups"] else ""
         pay_doc = ", ".join(sorted(b["docs"])) if b["docs"] else ""
@@ -273,6 +275,7 @@ async def load_item_procurement_and_payments(
         return {
             "contract_number": c_doc,
             "contract_amount": round(c_amt, 2) if c_amt > 0 else "",
+            "contract_residual": round(c_res, 2) if c_res > 0 else "",
             "order_amount": round(b["order_amount"], 2) if b["order_amount"] > 0 else "",
             "purchase_number": p_num,
             "order_number": order_no,
@@ -332,14 +335,19 @@ async def load_item_procurement_and_payments(
         if r.p_id not in b["seen_p_ids"]:
             b["seen_p_ids"].add(r.p_id)
             c_tot = 0.0
+            c_res = 0.0
             if r.contract_max_amt is not None and float(r.contract_max_amt) > 0:
                 c_tot = float(r.contract_max_amt)
+                orders_sum = contract_orders_totals.get(r.contract_id, float(r.p_final_amt or r.p_contract_price or 0.0))
+                c_res = max(0.0, c_tot - orders_sum)
             elif r.contract_id and r.contract_id in contract_orders_totals:
                 c_tot = contract_orders_totals[r.contract_id]
             elif r.p_final_amt or r.p_contract_price:
                 c_tot = float(r.p_final_amt or r.p_contract_price or 0.0)
             if c_tot > 0:
                 b["contract_amounts"].add(c_tot)
+            if c_res > 0:
+                b["contract_residuals"].add(c_res)
 
         p_pays = payments_by_pid.get(r.p_id, [])
         if p_pays:
@@ -403,14 +411,19 @@ async def load_item_procurement_and_payments(
         if r.p_id not in b["seen_p_ids"]:
             b["seen_p_ids"].add(r.p_id)
             c_tot = 0.0
+            c_res = 0.0
             if r.contract_max_amt is not None and float(r.contract_max_amt) > 0:
                 c_tot = float(r.contract_max_amt)
+                orders_sum = contract_orders_totals.get(r.contract_id, float(r.p_final_amt or r.p_contract_price or 0.0))
+                c_res = max(0.0, c_tot - orders_sum)
             elif r.contract_id and r.contract_id in contract_orders_totals:
                 c_tot = contract_orders_totals[r.contract_id]
             elif r.p_final_amt or r.p_contract_price:
                 c_tot = float(r.p_final_amt or r.p_contract_price or 0.0)
             if c_tot > 0:
                 b["contract_amounts"].add(c_tot)
+            if c_res > 0:
+                b["contract_residuals"].add(c_res)
 
         p_pays = payments_by_pid.get(r.p_id, [])
         if p_pays:
@@ -723,6 +736,7 @@ def render_feo_tree_sheet(
             "contractor_inn": proc.get("contractor_inn", ""),
             "contract_number": proc.get("contract_number", ""),
             "contract_amount": proc.get("contract_amount", ""),
+            "contract_residual": proc.get("contract_residual", ""),
             "purchase_amount": proc.get("purchase_amount", ""),
             "order_amount": proc.get("order_amount", ""),
             "payment_doc_number": proc.get("payment_doc_number", ""),
@@ -828,6 +842,7 @@ def render_feo_tree_sheet(
                 "contractor_inn": cat_proc.get("contractor_inn", ""),
                 "contract_number": cat_proc.get("contract_number", ""),
                 "contract_amount": cat_proc.get("contract_amount", ""),
+                "contract_residual": cat_proc.get("contract_residual", ""),
                 "purchase_amount": cat_proc.get("purchase_amount", ""),
                 "order_amount": cat_proc.get("order_amount", ""),
                 "payment_doc_number": cat_proc.get("payment_doc_number", ""),

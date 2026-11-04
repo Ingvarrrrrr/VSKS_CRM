@@ -225,6 +225,7 @@ export interface PaymentControlBatchComboMatch {
   payee_inn: string | null
   purpose_text: string | null
   combo: PaymentControlComboSuggestion
+  alternatives?: PaymentControlComboSuggestion[]
 }
 
 export interface PaymentControlBatchCombosResponse {

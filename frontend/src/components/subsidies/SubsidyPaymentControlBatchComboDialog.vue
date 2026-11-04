@@ -96,6 +96,28 @@
                 </div>
               </div>
 
+              <!-- Выбор альтернативной комбинации (если найдено несколько вариантов) -->
+              <div v-if="m.alternatives && m.alternatives.length > 1" class="d-flex align-center flex-wrap gap-2 mb-2 pa-2 rounded bg-purple-lighten-5">
+                <span class="text-caption font-weight-bold text-deep-purple">Вариант подбора:</span>
+                <v-btn-toggle
+                  :model-value="m.combo.purchase_ids.join(',')"
+                  mandatory
+                  density="compact"
+                  color="deep-purple"
+                  variant="outlined"
+                  @update:model-value="(val) => selectAlternative(m, String(val))"
+                >
+                  <v-btn
+                    v-for="(alt, aIdx) in m.alternatives"
+                    :key="alt.purchase_ids.join(',')"
+                    :value="alt.purchase_ids.join(',')"
+                    size="x-small"
+                  >
+                    Вариант {{ aIdx + 1 }} ({{ alt.count }} поз.)
+                  </v-btn>
+                </v-btn-toggle>
+              </div>
+
               <!-- Что входит в закупку (список позиций) -->
               <div class="pl-2" style="border-left: 3px solid #7c4dff;">
                 <div class="text-caption font-weight-bold mb-1 text-grey-darken-2">
@@ -214,6 +236,14 @@ function selectAll(val: boolean) {
   })
 }
 
+function selectAlternative(m: SelectableMatch, idsKey: string) {
+  if (!m.alternatives) return
+  const found = m.alternatives.find((a) => a.purchase_ids.join(',') === idsKey)
+  if (found) {
+    m.combo = found
+  }
+}
+
 async function open() {
   if (!props.subsidyId) return
   visible.value = true
@@ -225,7 +255,7 @@ async function open() {
     unattachedCount.value = res.unattached_payments_count
     matches.value = res.matches.map((m) => ({
       ...m,
-      selected: m.combo.probability === 'high' || m.combo.probability === 'medium',
+      selected: m.combo.probability === 'high',
       merge_purchases: true,
     }))
   } catch (e: any) {

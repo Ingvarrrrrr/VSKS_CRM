@@ -147,9 +147,76 @@ def _unit_category_signature(u: CandidateUnit) -> dict:
     }
 
 
+
+def is_unit_contractor_conflicting(
+    u: CandidateUnit,
+    payee_name: Optional[str] = None,
+    payee_inn: Optional[str] = None,
+) -> bool:
+    """Возвращает True, если закупка явно принадлежит ДРУГОМУ контрагенту,
+    и не может быть привязана к платежу с данным payee_name / payee_inn."""
+    p_inn = str(payee_inn or "").strip()
+    u_inn = str(u.contractor_inn or "").strip()
+    if p_inn and u_inn and p_inn != u_inn:
+        return True
+
+    p_name_low = str(payee_name or "").lower().replace("«", '"').replace("»", '"')
+    u_text = f"{u.contractor_name or ''} {u.subject or ''}".lower().replace("«", '"').replace("»", '"')
+
+    # Ищем кавычки организаций в названии/предмете закупки: например "ПРЕДРЕЙСОВЫЙ"
+    quotes = re.findall(r'"([^"]{4,})"', u_text)
+    for q in quotes:
+        q_clean = q.strip().lower()
+        if q_clean not in ("прочее", "товар", "услуга", "товары", "услуги", "договор", "заказ"):
+            if p_name_low and q_clean not in p_name_low:
+                return True
+
+    # Если у закупки явно задан контрагент, а у платежа другое имя
+    if u.contractor_name and p_name_low:
+        u_cname = u.contractor_name.lower().replace("«", '"').replace("»", '"')
+        if u_cname and u_cname not in p_name_low and p_name_low not in u_cname:
+            u_stems = _word_stems(u_cname)
+            p_stems = _word_stems(p_name_low)
+            if u_stems and not (u_stems & p_stems):
+                return True
+
+    return False
+
+
+def _unit_payee_priority(u: CandidateUnit, payee_name: Optional[str], payee_inn: Optional[str]) -> int:
+    """Приоритет кандидата для конкретного платежа:
+    0 — точное совпадение ИНН или названия контрагента;
+    1 — закупка без контрагента;
+    2 — прочие."""
+    p_inn = str(payee_inn or "").strip()
+    u_inn = str(u.contractor_inn or "").strip()
+    if p_inn and u_inn and p_inn == u_inn:
+        return 0
+
+    p_name = str(payee_name or "").lower().replace("«", '"').replace("»", '"')
+    u_name = str(u.contractor_name or "").lower().replace("«", '"').replace("»", '"')
+    if p_name and u_name and (p_name in u_name or u_name in p_name):
+        return 0
+
+    combined = f"{u.contractor_name or ''} {u.subject or ''}".lower().replace("«", '"').replace("»", '"')
+    if p_name:
+        quotes = re.findall(r'"([^"]{4,})"', combined)
+        for q in quotes:
+            q_clean = q.strip().lower()
+            if q_clean not in ("прочее", "товар", "услуга", "товары", "услуги") and q_clean in p_name:
+                return 0
+
+    if u.contractor_id is None and not u.contractor_inn:
+        return 1
+
+    return 2
+
+
 def evaluate_combo_coherence(
     units: list[CandidateUnit],
     purpose_text: Optional[str] = None,
+    payee_name: Optional[str] = None,
+    payee_inn: Optional[str] = None,
 ) -> dict:
     """Оценивает смысловую и категорийную связность комбинации позиций/закупок.
 
@@ -208,9 +275,11 @@ def evaluate_combo_coherence(
     # Каталожные категории товаров
     if len(prod_cats) >= 2 and len(distinct_prod_cats) == 1:
         pcat = next(iter(distinct_prod_cats))
-        score += 25
-        if not reasons:
-            reasons.append(f"одна категория каталога «{pcat}»")
+        # Не давать бонус за фиктивную категорию "Прочее"
+        if pcat.strip().lower() not in ("прочее", "прочие", "разное", "не указано"):
+            score += 25
+            if not reasons:
+                reasons.append(f"одна категория каталога «{pcat}»")
     elif len(distinct_prod_cats) >= 2 and len(distinct_semantics) < 2:
         score -= 25
         penalties.append(f"разные категории товаров ({' + '.join(sorted(distinct_prod_cats))})")
@@ -260,8 +329,26 @@ def evaluate_combo_coherence(
         p_stems = _word_stems(purpose_text)
         all_unit_stems = set().union(*(s["stems"] for s in sigs))
         if p_stems & all_unit_stems:
-            score += 10
+            score += 15
             reasons.append("совпадает с назначением платежа")
+
+        # Штраф за несовпадение услуг и товаров:
+        # Если в платеже прямо написано "услуг", "работ", "перевозк", "медосмотр", "обслуживан",
+        # а в комбинации намешаны товары или чисто товарные категории (чайники, посуда, мыши)
+        p_low = purpose_text.lower()
+        is_payment_service = any(w in p_low for w in ("услуг", "работ", "перевозк", "медосмотр", "техосмотр", "обслуживан", "страхован"))
+        has_goods = any(s["item_type"] == "товар" or (s["semantic"] and s["semantic"] in ("Продукты питания и вода", "ИТ, связь и оргтехника", "Канцелярия и хозтовары")) for s in sigs)
+        if is_payment_service and has_goods and len(units) > 1:
+            score -= 35
+            penalties.append("товары не соответствуют запрашиваемым услугам в платеже")
+
+    # 7. Бонус за совпадение контрагента с получателем платежа
+    if payee_inn or payee_name:
+        for u in units:
+            if _unit_payee_priority(u, payee_name, payee_inn) == 0:
+                score += 30
+                reasons.append(f"совпадает контрагент «{payee_name or u.contractor_name}»")
+                break
 
     # Штраф за размер комбинации (2 лучше, чем 4 при прочих равных)
     score -= (len(units) - 2) * 3
@@ -297,6 +384,8 @@ def find_subset_sum_combinations(
     target_amount: Decimal,
     *,
     purpose_text: Optional[str] = None,
+    payee_name: Optional[str] = None,
+    payee_inn: Optional[str] = None,
     tol: Decimal = AMOUNT_TOL,
     max_combo_size: int = MAX_COMBO_SIZE,
     max_results: int = MAX_COMBO_RESULTS,
@@ -308,11 +397,15 @@ def find_subset_sum_combinations(
 
     valid_units = [
         u for u in units
-        if u.amount is not None and Decimal(0) < u.amount <= target_amount + tol
+        if u.amount is not None
+        and Decimal(0) < u.amount <= target_amount + tol
+        and not is_unit_contractor_conflicting(u, payee_name=payee_name, payee_inn=payee_inn)
     ]
-    # Сортируем кандидатов: сначала без контрагента (наиболее частый случай
-    # «забыли проставить у кого и как»), затем по близости к дате/ID.
-    valid_units.sort(key=lambda u: (0 if u.contractor_id is None else 1, u.purchase_id))
+    # Сортируем кандидатов:
+    # 0 — совпадение по контрагенту (ИНН/название) — приоритет №1;
+    # 1 — без контрагента («забыли проставить»);
+    # затем по ID закупки.
+    valid_units.sort(key=lambda u: (_unit_payee_priority(u, payee_name, payee_inn), u.purchase_id))
     pool = valid_units[:MAX_POOL_SIZE]
 
     results: list[dict] = []
@@ -321,7 +414,7 @@ def find_subset_sum_combinations(
         for combo in itertools.combinations(pool, k):
             total = sum((u.amount for u in combo), Decimal(0))
             if abs(total - target_amount) <= tol:
-                eval_res = evaluate_combo_coherence(list(combo), purpose_text=purpose_text)
+                eval_res = evaluate_combo_coherence(list(combo), purpose_text=purpose_text, payee_name=payee_name, payee_inn=payee_inn)
                 can_merge = len(combo) >= 2 and len({u.contractor_id for u in combo if u.contractor_id is not None}) <= 1
                 results.append({
                     "purchase_ids": [u.purchase_id for u in combo],

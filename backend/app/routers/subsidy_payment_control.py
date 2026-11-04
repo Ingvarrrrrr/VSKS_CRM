@@ -320,7 +320,31 @@ async def get_batch_combos(
         select(BankPayment).where(subsidy_scope_clause(subsidy)).order_by(BankPayment.payment_date.desc(), BankPayment.id)
     )).scalars().all()
 
-    # 2. Исключаем уже привязанные в этой субсидии и неисполненные
+    def _is_procurement_payment(bp: BankPayment) -> bool:
+        """Проверяет, относится ли платёж к закупкам товаров, работ и услуг (200 и 300 коды).
+        Исключает заработную плату (01*), налоги/ЕНП и командировочные выплаты (08*)."""
+        ec = str(bp.expense_code or "").strip()
+        if not ec and bp.purpose_text:
+            m = re.search(r';\s*(\d{4,})', bp.purpose_text)
+            if m:
+                ec = m.group(1)
+        if ec:
+            if not (ec.startswith("02") or ec.startswith("03") or ec.startswith("200") or ec.startswith("300")):
+                return False
+
+        txt = f"{bp.payee_name or ''} {bp.purpose_text or ''}".lower()
+        forbidden_markers = (
+            "единый налоговый платеж", "енп", "фнс россии", "отпускные",
+            "заработная плата", "заработной платы", "аванс за первую половину",
+            "выплата зарплаты", "налог на доходы", "страховые взносы",
+            "командирован", "суточн", "выплаты,связанные с командированием",
+            "выплаты, связанные с командированием",
+        )
+        if any(m in txt for m in forbidden_markers):
+            return False
+        return True
+
+    # 2. Исключаем уже привязанные в этой субсидии, неисполненные и НЕ-закупочные (ФОТ/налоги/командировки)
     bp_ids = [bp.id for bp in bp_rows]
     attached_ids = await _attached_bank_payment_ids_in_subsidy(db, bp_ids, sid)
     unattached_bps = [
@@ -329,6 +353,7 @@ async def get_batch_combos(
         and bp.amount is not None
         and bp.amount > 0
         and (bp.status or "").upper().strip() in EXECUTED_STATUSES
+        and _is_procurement_payment(bp)
     ]
 
     # 3. Загружаем все неоплаченные закупки субсидии
@@ -337,14 +362,40 @@ async def get_batch_combos(
     matches = []
     used_purchase_ids: set[int] = set()
 
-    for bp in sorted(unattached_bps, key=lambda b: float(b.amount or 0), reverse=True):
+    # ДВУХПРОХОДНЫЙ ПОДБОР (владелец, 04.11):
+    # Проход 1: платежи конкретных поставщиков с точным совпадением контрагента (по ИНН или названию,
+    # например, ООО «ПРЕДРЕЙСОВЫЙ»). Они связываются первыми со своими закупками!
+    # Проход 2: остальные платежи подбирают комбинации из оставшихся свободных закупок.
+
+    def has_contractor_match(bp: BankPayment) -> bool:
+        p_inn = str(bp.payee_inn or "").strip()
+        p_name = str(bp.payee_name or "").lower()
+        for u in units:
+            if p_inn and u.contractor_inn and str(u.contractor_inn).strip() == p_inn:
+                return True
+            if p_name and u.contractor_name and (p_name in u.contractor_name.lower() or u.contractor_name.lower() in p_name):
+                return True
+        return False
+
+    pass1_bps = [bp for bp in unattached_bps if has_contractor_match(bp)]
+    pass2_bps = [bp for bp in unattached_bps if not has_contractor_match(bp)]
+
+    # Сортируем: сначала крупные суммы
+    sorted_bps = sorted(pass1_bps, key=lambda b: float(b.amount or 0), reverse=True) + \
+                 sorted(pass2_bps, key=lambda b: float(b.amount or 0), reverse=True)
+
+    for bp in sorted_bps:
         bp_amt = Decimal(str(bp.amount))
         available_units = [u for u in units if u.purchase_id not in used_purchase_ids]
         if not available_units:
             break
 
         combos = find_subset_sum_combinations(
-            available_units, bp_amt, purpose_text=bp.purpose_text
+            available_units,
+            bp_amt,
+            purpose_text=bp.purpose_text,
+            payee_name=bp.payee_name,
+            payee_inn=bp.payee_inn,
         )
         if not combos:
             continue
@@ -362,6 +413,7 @@ async def get_batch_combos(
                 "payee_inn": bp.payee_inn,
                 "purpose_text": bp.purpose_text,
                 "combo": best_combo,
+                "alternatives": combos[:3],
             })
 
     return {

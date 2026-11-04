@@ -132,7 +132,16 @@ export function usePaymentsColumns(options: { importId: { value: number | null }
       }
       if (f.type === 'text') {
         if (!f.q) continue
-        if (!String(v ?? '').toLowerCase().includes(f.q.toLowerCase())) return false
+        const rawQ = String(f.q).trim()
+        if (!rawQ) continue
+        // Поддержка фильтрации по нескольким условиям через запятую, пробел, точку с запятой (0200, 0300)
+        const tokens = rawQ.split(/[,;\s|]+/).map(t => t.trim().toLowerCase()).filter(Boolean)
+        const valStr = String(v ?? '').toLowerCase()
+        if (tokens.length > 1) {
+          if (!tokens.some(t => valStr.includes(t))) return false
+        } else if (tokens.length === 1) {
+          if (!valStr.includes(tokens[0])) return false
+        }
       } else if (f.type === 'enum') {
         if (!f.values || f.values.length === 0) continue
         if (!f.values.includes(v)) return false

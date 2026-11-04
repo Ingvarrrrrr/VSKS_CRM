@@ -338,8 +338,8 @@ def evaluate_combo_coherence(
         p_low = purpose_text.lower()
         is_payment_service = any(w in p_low for w in ("услуг", "работ", "перевозк", "медосмотр", "техосмотр", "обслуживан", "страхован"))
         has_goods = any(s["item_type"] == "товар" or (s["semantic"] and s["semantic"] in ("Продукты питания и вода", "ИТ, связь и оргтехника", "Канцелярия и хозтовары")) for s in sigs)
-        if is_payment_service and has_goods and len(units) > 1:
-            score -= 35
+        if is_payment_service and has_goods:
+            score -= 60
             penalties.append("товары не соответствуют запрашиваемым услугам в платеже")
 
     # 7. Бонус за совпадение контрагента с получателем платежа
@@ -354,7 +354,8 @@ def evaluate_combo_coherence(
     score -= (len(units) - 2) * 3
     score = max(5, min(99, score))
 
-    if penalties and score < 50:
+    has_service_goods_conflict = bool(purpose_text and is_payment_service and has_goods)
+    if has_service_goods_conflict or (penalties and score < 50):
         probability = "low"
         probability_label = "Маловероятно"
         reason_text = "; ".join(penalties + reasons)
@@ -762,7 +763,21 @@ async def merge_and_attach_combo(
             warnings_out=warnings,
         )
     except ServicePeriodAttachConflict as exc:
-        raise HTTPException(409, service_period_conflict_detail(str(exc), exc.purchase_id, exc.occupied_period))
+        # Пакетное применение: если месяц помесячной закупки не определился автоматически,
+        # пробуем привязать к месяцу самого платежа, чтобы не срывать массовое сопоставление
+        if bp.payment_date:
+            fallback_month = bp.payment_date.replace(day=1)
+            try:
+                await attach(
+                    db, group, [bp.id],
+                    allocations=allocations,
+                    service_periods={p.id: fallback_month for p in target_purchases if p.is_monthly_payment},
+                    warnings_out=warnings,
+                )
+            except Exception:
+                raise HTTPException(409, service_period_conflict_detail(str(exc), exc.purchase_id, exc.occupied_period))
+        else:
+            raise HTTPException(409, service_period_conflict_detail(str(exc), exc.purchase_id, exc.occupied_period))
     except PaymentAttachError as exc:
         raise HTTPException(409, str(exc))
 

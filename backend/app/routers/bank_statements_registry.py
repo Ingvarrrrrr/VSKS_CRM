@@ -266,6 +266,13 @@ async def list_bank_payment_registry(
         d["matched_purchase_item_name"] = p["item_name"] if p else None
         d["matched_purchase_amount"] = p["amount"] if p else None
         # Этап 7в
+        raw_code = (bp.raw_json or {}).get("КОД РАСХОДОВ") or (bp.raw_json or {}).get("Код расходов")
+        if raw_code:
+            d["expense_code_short"] = str(raw_code).strip()
+        elif bp.expense_code:
+            d["expense_code_short"] = str(bp.expense_code)[:4]
+        else:
+            d["expense_code_short"] = None
         d["expense_code_name"] = expense_code_names.get(bp.expense_code) if bp.expense_code else None
         d["attached_purchases"] = attached_by_bp.get(bp.id, [])
         out.append(d)

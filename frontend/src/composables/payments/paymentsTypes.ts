@@ -56,6 +56,7 @@ export interface BankPayment {
   created_at: string | null
   // Этап 7в
   expense_code: string | null
+  expense_code_short: string | null
   expense_code_name: string | null
   attached_purchases: Array<{
     purchase_id: number
@@ -103,6 +104,7 @@ export const colMetaDefaults: Record<string, { width?: number; sortable?: boolea
   matched_contract_id:         { width: 240, sortable: false },
   matched_purchase_id:         { width: 240, sortable: false },
   matched_subsidy_id:          { width: 200, sortable: false },
+  expense_code_short:          { width: 130 },
   expense_code:                { width: 150 },
   attached_purchases:          { width: 220, sortable: false },
   created_at:                  { width: 150 },
@@ -145,7 +147,8 @@ export const coreColumnDefs: ColumnDef[] = [
   { title: 'Дата договора (авто)', key: 'parsed_contract_date', group: 'core', ...colMetaDefaults['parsed_contract_date'] },
   { title: 'КБК', key: 'parsed_kbk', group: 'core', ...colMetaDefaults['parsed_kbk'] },
   // Этап 7в: код расходов (КРЦС) + куда фактически разнесён (новое групповое сопоставление)
-  { title: 'Код расходов', key: 'expense_code', group: 'core', ...colMetaDefaults['expense_code'] },
+  { title: 'Краткий код расходов', key: 'expense_code_short', group: 'core', ...colMetaDefaults['expense_code_short'] },
+  { title: 'Код расходов (детализированный)', key: 'expense_code', group: 'core', ...colMetaDefaults['expense_code'] },
   { title: 'Куда отнесён', key: 'attached_purchases', group: 'core', ...colMetaDefaults['attached_purchases'] },
   // Match
   { title: 'Match: Контрагент', key: 'matched_contractor_id', group: 'core', ...colMetaDefaults['matched_contractor_id'] },

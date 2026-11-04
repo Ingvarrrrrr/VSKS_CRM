@@ -59,6 +59,7 @@
               <th class="text-right">Сумма</th>
               <th>Назначение</th>
               <th>Статья</th>
+              <th>Краткий код</th>
               <th>Закупка</th>
               <th>Файл выгрузки</th>
             </tr>
@@ -75,6 +76,7 @@
                 <PaymentPurposeCell :text="r.purpose_text" />
               </td>
               <td class="text-caption">{{ r.expense_name || r.expense_code || '—' }}</td>
+              <td class="text-caption font-weight-medium">{{ r.expense_code_short || (r.expense_code ? r.expense_code.slice(0, 4) : '—') }}</td>
               <td style="min-width:160px">
                 <template v-if="r.attached && r.attached.length">
                   <div v-for="a in r.attached" :key="a.purchase_id" class="d-flex align-center gap-1 flex-wrap">
@@ -162,13 +164,20 @@ const filteredRows = computed(() => {
   else if (procurementFilter.value === 'other') list = list.filter(r => !r.is_procurement)
   if (attachedFilter.value === 'attached') list = list.filter(r => r.attached && r.attached.length > 0)
   else if (attachedFilter.value === 'unattached') list = list.filter(r => !r.attached || !r.attached.length)
-  const q = search.value.trim().toLowerCase()
+  const q = search.value?.trim().toLowerCase()
   if (q) {
-    list = list.filter(r =>
-      (r.payment_number || '').toLowerCase().includes(q) ||
-      (r.payee_name || '').toLowerCase().includes(q) ||
-      (r.payee_inn || '').toLowerCase().includes(q),
-    )
+    const tokens = q.split(/[,;\s|]+/).map(t => t.trim()).filter(Boolean)
+    list = list.filter(r => {
+      const matchTarget = [
+        r.payment_number || '',
+        r.payee_name || '',
+        r.payee_inn || '',
+        r.expense_code || '',
+        r.expense_code_short || '',
+        (r.expense_code || '').slice(0, 4),
+      ].join(' ').toLowerCase()
+      return tokens.some(t => matchTarget.includes(t))
+    })
   }
   return list
 })

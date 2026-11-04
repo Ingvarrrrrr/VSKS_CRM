@@ -191,6 +191,7 @@ import {
   type PaymentControlBatchComboMatch,
 } from '@/composables/subsidies/useSubsidyPaymentControl'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{
   subsidyId: number | null | undefined
@@ -203,6 +204,7 @@ const emit = defineEmits<{
 
 const { mobile } = useDisplay()
 const control = useSubsidyPaymentControl()
+const { success: showSuccess, error: showError } = useToast()
 
 const visible = ref(false)
 const loading = ref(false)
@@ -279,6 +281,12 @@ async function applyMatches() {
       merge_purchases: m.merge_purchases,
     }))
     const res = await control.batchApplyCombos(props.subsidyId, payload)
+    if (res.applied > 0) {
+      showSuccess(`Успешно привязано комбинаций оплат: ${res.applied}. Закупки переведены в «Оплачено».`)
+    }
+    if (res.errors && res.errors.length > 0) {
+      showError(`Ошибки при привязке (${res.errors.length}): ${res.errors.map((e: any) => e.error).join('; ')}`)
+    }
     visible.value = false
     emit('applied')
     props.onApplied?.()

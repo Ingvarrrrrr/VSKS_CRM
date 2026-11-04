@@ -380,9 +380,28 @@ async def get_batch_combos(
     pass1_bps = [bp for bp in unattached_bps if has_contractor_match(bp)]
     pass2_bps = [bp for bp in unattached_bps if not has_contractor_match(bp)]
 
-    # Сортируем: сначала крупные суммы
-    sorted_bps = sorted(pass1_bps, key=lambda b: float(b.amount or 0), reverse=True) + \
-                 sorted(pass2_bps, key=lambda b: float(b.amount or 0), reverse=True)
+    # Сортируем хронологически (владелец, 04.11):
+    # Pass 1 — платежи с совпадением контрагента, затем Pass 2 — остальные.
+    # Внутри каждой группы — строго по возрастанию даты платежа (ранние платежи
+    # должны сопоставляться с более ранними закупками/заявками!).
+    sorted_bps = (
+        sorted(
+            pass1_bps,
+            key=lambda b: (
+                b.payment_date or datetime.date.min,
+                b.payment_number or "",
+                b.id,
+            ),
+        )
+        + sorted(
+            pass2_bps,
+            key=lambda b: (
+                b.payment_date or datetime.date.min,
+                b.payment_number or "",
+                b.id,
+            ),
+        )
+    )
 
     for bp in sorted_bps:
         bp_amt = Decimal(str(bp.amount))

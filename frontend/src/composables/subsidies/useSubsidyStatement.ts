@@ -22,6 +22,8 @@ export interface StatementRow {
   amount: number
   purpose_text: string | null
   expense_code: string | null
+  expense_code_short?: string | null
+  expense_code_name?: string | null
   expense_name: string | null
   is_procurement: boolean
   attached: StatementRowAttachment[]

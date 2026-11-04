@@ -154,6 +154,7 @@ class BankPaymentOut(BaseModel):
     # app/services/payment_basis.py::expense_code; expense_code_name — расшифровка
     # из справочника expense_codes, простановлена в bank_statements.py::list_bank_payment_registry.
     expense_code: Optional[str] = None
+    expense_code_short: Optional[str] = None
     expense_code_name: Optional[str] = None
     # Этап 7в: «Куда отнесён» — закупки, на которые платёж РЕАЛЬНО разнесён через
     # Payment(matched_confirmed=true); может быть несколько при allocations-сплите.

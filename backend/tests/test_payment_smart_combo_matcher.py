@@ -161,3 +161,23 @@ def test_contractor_isolation_predreysovy_vs_afinets():
     assert top["probability"] == "high"
     assert top["probability_label"] == "Очень вероятно"
 
+
+def test_kettles_disqualified_for_service_payment():
+    """Когда все родные закупки Предрейсового исчерпаны, чайники не должны предлагаться с вероятностью 'Вероятно'."""
+    u_tea1 = _make_unit(20, "Чайник электрический", 8500, item_type="товар")
+    u_tea2 = _make_unit(21, "Чайник электрический", 8500, item_type="товар")
+
+    combos = find_subset_sum_combinations(
+        [u_tea1, u_tea2],
+        Decimal("17000"),
+        payee_name='ООО "ПРЕДРЕЙСОВЫЙ"',
+        payee_inn="7704351079",
+        purpose_text="Закупка услуг.: по пров.предр.медосмотра водит. 02.2026",
+    )
+    # Чайники под платежом за медосмотр получают вероятность 'low' (Маловероятно),
+    # поэтому они не будут навязаны в окне пакетного подбора!
+    assert len(combos) == 1
+    assert combos[0]["probability"] == "low"
+    assert combos[0]["probability_label"] == "Маловероятно"
+
+

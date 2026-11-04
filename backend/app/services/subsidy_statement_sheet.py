@@ -61,6 +61,8 @@ async def build_statement_sheet(db: AsyncSession, subsidy: Subsidy) -> dict:
     out_rows = []
     for bp in bp_rows:
         meta = code_map.get(bp.expense_code) if bp.expense_code else None
+        raw_code = (bp.raw_json or {}).get("КОД РАСХОДОВ") or (bp.raw_json or {}).get("Код расходов")
+        short_code = str(raw_code).strip() if raw_code else (str(bp.expense_code)[:4] if bp.expense_code else None)
         attached = []
         for pay in payments_by_bp.get(bp.id, []):
             p = purchase_map.get(pay.purchase_id)
@@ -81,6 +83,7 @@ async def build_statement_sheet(db: AsyncSession, subsidy: Subsidy) -> dict:
             "amount": float(bp.amount or 0),
             "purpose_text": bp.purpose_text,
             "expense_code": bp.expense_code,
+            "expense_code_short": short_code,
             "expense_name": meta.name if meta else None,
             "is_procurement": bool(meta.is_procurement) if meta else None,
             "attached": attached,

@@ -81,6 +81,14 @@
         @sort="dir => applySort('parsed_kbk', dir)"
         @hide="toggleVisible('parsed_kbk', false)" />
     </template>
+    <template #header.expense_code_short="{ column }">
+      <ColumnHeaderMenu col-key="expense_code_short" :title="column.title" col-type="text"
+        :model-value="colFilters['expense_code_short'] ?? null"
+        :sort-by="getSortBy('expense_code_short')"
+        @update:model-value="v => setFilter('expense_code_short', v)"
+        @sort="dir => applySort('expense_code_short', dir)"
+        @hide="toggleVisible('expense_code_short', false)" />
+    </template>
     <template #header.expense_code="{ column }">
       <ColumnHeaderMenu col-key="expense_code" :title="column.title" col-type="text"
         :model-value="colFilters['expense_code'] ?? null"

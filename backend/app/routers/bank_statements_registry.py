@@ -60,13 +60,14 @@ async def list_bank_payment_registry(
     matched: Optional[bool] = Query(None),
     confirmed: Optional[bool] = Query(None),
     payee_inn: Optional[str] = Query(None),
+    subsidy_id: Optional[int] = Query(None, description="Фильтр по субсидии (scope-clause соглашения)"),
     import_id: Optional[int] = Query(None, description="Фильтр по ID прогона импорта"),
     disposition: Optional[str] = Query(
         None,
         description="Этап 7в: 'free' — не разнесённые ни на одну закупку, "
                      "'attached' — уже разнесённые (есть Payment с matched_confirmed=true).",
     ),
-    limit: int = Query(200, ge=1, le=2000),
+    limit: int = Query(1000, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
     _=Depends(require_action("payment.registry_view")),
@@ -96,6 +97,13 @@ async def list_bank_payment_registry(
         filters.append(BankPayment.matched_confirmed == confirmed)
     if payee_inn:
         filters.append(BankPayment.payee_inn == payee_inn)
+    if subsidy_id is not None:
+        sub_obj = await db.get(SubsidyModel, subsidy_id)
+        if sub_obj:
+            from app.services.bank_payment_subsidy_scope import subsidy_scope_clause
+            filters.append(subsidy_scope_clause(sub_obj))
+        else:
+            filters.append(BankPayment.subsidy_id == subsidy_id)
 
     q = select(BankPayment)
     if filters:

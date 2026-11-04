@@ -638,7 +638,7 @@ async def merge_and_attach_combo(
     if bp.matched_contractor_id:
         contractor_obj = await db.get(Contractor, bp.matched_contractor_id)
     if not contractor_obj and (bp.payee_inn or bp.payee_name):
-        cid, _created = await find_or_create_contractor(db, bp.payee_name, bp.payee_inn)
+        cid = await find_or_create_contractor(db, bp.payee_name, bp.payee_inn)
         if cid:
             contractor_obj = await db.get(Contractor, cid)
             bp.matched_contractor_id = cid

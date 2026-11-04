@@ -12,10 +12,28 @@
       <v-card-text class="px-6">
         <v-text-field v-model="frameworkSearch" prepend-inner-icon="mdi-magnify"
           label="Поиск по номеру, контрагенту, ИНН, предмету"
-          variant="outlined" density="compact" clearable hide-details class="mb-4" />
+          variant="outlined" density="compact" clearable hide-details class="mb-3" />
+        <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-3">
+          <v-switch
+            v-model="onlyThisSubsidy"
+            color="primary"
+            density="compact"
+            hide-details
+            label="Только договоры этой субсидии"
+          />
+          <span v-if="!onlyThisSubsidy" class="text-caption text-medium-emphasis">
+            Показаны договоры всех субсидий и организаций
+          </span>
+          <span v-else class="text-caption text-medium-emphasis">
+            Скрыты сторонние договоры аккаунта
+          </span>
+        </div>
         <v-progress-linear v-if="frameworkLoading" indeterminate color="primary" class="mb-3" />
-        <div v-if="!frameworkLoading && !filteredFrameworkContracts.length" class="text-center text-medium-emphasis py-6">
-          Рамочных договоров не найдено
+        <div v-if="!frameworkLoading && !displayContracts.length" class="text-center text-medium-emphasis py-6">
+          <div class="mb-2">Рамочных договоров не найдено</div>
+          <v-btn v-if="onlyThisSubsidy && filteredFrameworkContracts.length" size="small" variant="text" color="primary" @click="onlyThisSubsidy = false">
+            Показать все договоры аккаунта ({{ filteredFrameworkContracts.length }})
+          </v-btn>
         </div>
         <v-table v-else density="compact">
           <thead>
@@ -144,15 +162,29 @@ const GROUP_LABELS: Record<number, string> = {
   3: 'Остальные договоры аккаунта',
 }
 
+const onlyThisSubsidy = ref(true)
+
+const displayContracts = computed(() => {
+  if (!onlyThisSubsidy.value) {
+    return props.filteredFrameworkContracts
+  }
+  // По умолчанию показываем строго договоры этой субсидии (группа 1 или без разделения)
+  return props.filteredFrameworkContracts.filter(
+    c => !c.contract_group || c.contract_group === 1
+  )
+})
+
 const groupedContracts = computed(() => {
-  const order = [1, 2, 3, 0]
+  const order = onlyThisSubsidy.value ? [1, 0] : [1, 2, 3, 0]
   const buckets = new Map<number, any[]>(order.map(key => [key, [] as any[]]))
-  for (const c of props.filteredFrameworkContracts) {
+  for (const c of displayContracts.value) {
     const key = c.contract_group && [1, 2, 3].includes(c.contract_group) ? c.contract_group : 0
-    buckets.get(key)!.push(c)
+    if (buckets.has(key)) {
+      buckets.get(key)!.push(c)
+    }
   }
   return order
-    .map(key => ({ key, label: GROUP_LABELS[key] || '', items: buckets.get(key) || [] }))
+    .map(key => ({ key, label: onlyThisSubsidy.value ? '' : (GROUP_LABELS[key] || ''), items: buckets.get(key) || [] }))
     .filter(g => g.items.length)
 })
 

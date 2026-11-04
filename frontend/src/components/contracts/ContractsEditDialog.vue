@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="dialog.show" max-width="680" :fullscreen="mobile">
+  <v-dialog v-model="dialog.show" max-width="780" :fullscreen="mobile">
     <v-card>
       <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
         {{ dialog.id ? 'Редактировать документ' : 'Новый документ' }}
@@ -17,7 +17,7 @@
               :items="contractTypeItems" item-title="label" item-value="value"
               label="Тип документа *" variant="outlined" density="compact" />
           </v-col>
-          <v-col cols="12" md="4">
+          <v-col cols="12" md="6">
             <v-select v-model="dialog.form.purchase_method"
               :items="purchaseMethodItems" item-title="label" item-value="value"
               label="Способ закупки" variant="outlined" density="compact" clearable />
@@ -31,13 +31,13 @@
               ]"
               label="Товары / Услуги" variant="outlined" density="compact" clearable />
           </v-col>
-          <v-col cols="12" md="4">
+          <v-col cols="12" md="8">
             <ContractorPicker
               v-model="dialog.form.contractor_id"
               :initial-contractor="dialogInitialContractor"
               @select="onContractorPicked" />
           </v-col>
-          <v-col cols="12" md="6">
+          <v-col cols="12" md="12">
             <v-select v-model="dialog.form.subsidy_id"
               :items="subsidies" item-title="name" item-value="id"
               label="Основная субсидия" variant="outlined" density="compact" clearable />
@@ -76,27 +76,30 @@
           </v-col>
         </v-row>
       </v-card-text>
-      <v-card-actions class="px-4 pb-3">
+      <v-card-actions class="px-4 pb-3 flex-wrap gap-2" style="min-height: auto;">
         <v-btn v-if="isAdmin && dialog.id" color="error" variant="text" prepend-icon="mdi-delete"
+          size="small"
           @click="onDeleteFromDialog">Удалить</v-btn>
         <v-btn
           v-if="dialog.id && dialog.form.contract_type && dialog.form.contract_type.startsWith('framework_')"
           color="teal" variant="tonal" prepend-icon="mdi-plus"
+          size="small"
           @click="onOpenMonthlyStages"
         >
-          Создать ежемесячные этапы
+          Месячные этапы
         </v-btn>
         <v-btn
           v-if="dialog.id && (dialog.form.contract_type === 'framework_cumulative' || dialog.form.contract_type === 'framework_with_amount')"
           color="indigo" variant="tonal" prepend-icon="mdi-file-check-outline"
+          size="small"
           :loading="approvalPurchaseLoading"
           @click="onOpenApprovalPurchase"
         >
           Согласование и документы
         </v-btn>
         <v-spacer />
-        <v-btn variant="text" @click="dialog.show = false">Отмена</v-btn>
-        <v-btn color="primary" variant="tonal" :loading="dialog.saving" @click="onSave">Сохранить</v-btn>
+        <v-btn variant="text" size="small" @click="dialog.show = false">Отмена</v-btn>
+        <v-btn color="primary" variant="flat" size="small" :loading="dialog.saving" @click="onSave">Сохранить</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

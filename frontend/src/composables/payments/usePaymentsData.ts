@@ -45,7 +45,8 @@ export function usePaymentsData(options: {
   async function loadPayments() {
     loading.value = true
     try {
-      const params = new URLSearchParams({ limit: '200' })
+      const params = new URLSearchParams({ limit: '2000' })
+      if (filterSubsidyId.value) params.set('subsidy_id', String(filterSubsidyId.value))
       if (filters.fDateFrom.value) params.set('date_from', filters.fDateFrom.value)
       if (filters.fDateTo.value) params.set('date_to', filters.fDateTo.value)
       if (filters.fStatus.value) params.set('status', filters.fStatus.value)
@@ -74,7 +75,7 @@ export function usePaymentsData(options: {
   const searchedItems = computed(() => {
     let items = payments.value as any[]
     if (filterSubsidyId.value) {
-      items = items.filter(i => i.matched_subsidy_id === filterSubsidyId.value)
+      items = items.filter(i => (i.matched_subsidy_id === filterSubsidyId.value) || (i.subsidy_id === filterSubsidyId.value))
     }
     if (searchQuery.value.trim()) {
       const q = searchQuery.value.toLowerCase()

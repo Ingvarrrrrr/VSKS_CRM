@@ -26,7 +26,8 @@
         @hide="toggleVisible('payment_number', false)" />
     </template>
     <template #header.payer_name="{ column }">
-      <ColumnHeaderMenu col-key="payer_name" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="payer_name" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'payer_name')"
         :model-value="colFilters['payer_name'] ?? null"
         :sort-by="getSortBy('payer_name')"
         @update:model-value="v => setFilter('payer_name', v)"
@@ -34,7 +35,8 @@
         @hide="toggleVisible('payer_name', false)" />
     </template>
     <template #header.payee_name="{ column }">
-      <ColumnHeaderMenu col-key="payee_name" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="payee_name" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'payee_name')"
         :model-value="colFilters['payee_name'] ?? null"
         :sort-by="getSortBy('payee_name')"
         @update:model-value="v => setFilter('payee_name', v)"
@@ -66,7 +68,8 @@
         @hide="toggleVisible('purpose_text', false)" />
     </template>
     <template #header.parsed_contract_number="{ column }">
-      <ColumnHeaderMenu col-key="parsed_contract_number" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="parsed_contract_number" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'parsed_contract_number')"
         :model-value="colFilters['parsed_contract_number'] ?? null"
         :sort-by="getSortBy('parsed_contract_number')"
         @update:model-value="v => setFilter('parsed_contract_number', v)"
@@ -74,7 +77,8 @@
         @hide="toggleVisible('parsed_contract_number', false)" />
     </template>
     <template #header.parsed_kbk="{ column }">
-      <ColumnHeaderMenu col-key="parsed_kbk" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="parsed_kbk" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'parsed_kbk')"
         :model-value="colFilters['parsed_kbk'] ?? null"
         :sort-by="getSortBy('parsed_kbk')"
         @update:model-value="v => setFilter('parsed_kbk', v)"
@@ -82,7 +86,8 @@
         @hide="toggleVisible('parsed_kbk', false)" />
     </template>
     <template #header.expense_code_short="{ column }">
-      <ColumnHeaderMenu col-key="expense_code_short" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="expense_code_short" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'expense_code_short')"
         :model-value="colFilters['expense_code_short'] ?? null"
         :sort-by="getSortBy('expense_code_short')"
         @update:model-value="v => setFilter('expense_code_short', v)"
@@ -90,7 +95,8 @@
         @hide="toggleVisible('expense_code_short', false)" />
     </template>
     <template #header.expense_code="{ column }">
-      <ColumnHeaderMenu col-key="expense_code" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="expense_code" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'expense_code')"
         :model-value="colFilters['expense_code'] ?? null"
         :sort-by="getSortBy('expense_code')"
         @update:model-value="v => setFilter('expense_code', v)"

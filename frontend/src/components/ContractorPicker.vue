@@ -21,6 +21,12 @@
       @update:focused="onFocused"
       @click:clear="$emit('clear')"
     >
+      <template #selection="{ item }">
+        <span class="text-body-2 text-truncate" style="max-width: 100%" :title="item.raw?.name">
+          {{ item.raw?.name }}
+          <span v-if="item.raw?.inn" class="text-caption text-medium-emphasis ml-1">({{ item.raw.inn }})</span>
+        </span>
+      </template>
       <template #item="{ item, props: itemProps }">
         <v-list-item v-bind="itemProps" :title="undefined">
           <template #title>

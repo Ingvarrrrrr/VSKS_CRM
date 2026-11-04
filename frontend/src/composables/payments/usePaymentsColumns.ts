@@ -114,7 +114,12 @@ export function usePaymentsColumns(options: { importId: { value: number | null }
 
   function uniqValues(rows: any[], key: string): (string | number | null)[] {
     const set = new Set<any>()
-    rows.forEach(r => set.add(r?.[key] ?? null))
+    rows.forEach(r => {
+      const v = key.startsWith('raw_') ? (r?.raw_json?.[key.slice(4)] ?? null) : (r?.[key] ?? null)
+      if (v !== null && v !== undefined && v !== '') {
+        set.add(v)
+      }
+    })
     return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? '')))
   }
 
@@ -144,7 +149,9 @@ export function usePaymentsColumns(options: { importId: { value: number | null }
         }
       } else if (f.type === 'enum') {
         if (!f.values || f.values.length === 0) continue
-        if (!f.values.includes(v)) return false
+        const strValues = f.values.map((x: any) => x === null || x === undefined ? '' : String(x))
+        const valStr = v === null || v === undefined ? '' : String(v)
+        if (!f.values.includes(v) && !strValues.includes(valStr)) return false
       } else if (f.type === 'number') {
         const n = typeof v === 'number' ? v : parseFloat(v)
         if (f.min != null && !(n >= f.min)) return false

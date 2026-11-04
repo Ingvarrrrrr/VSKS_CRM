@@ -28,6 +28,19 @@
         hide-details
         style="max-width:200px"
       />
+      <v-select
+        v-model="expenseCodeFilter"
+        :items="expenseCodeOptions"
+        label="Краткий код"
+        multiple
+        chips
+        closable-chips
+        clearable
+        density="compact"
+        variant="outlined"
+        hide-details
+        style="min-width:220px; max-width:340px"
+      />
       <v-text-field
         v-model="search"
         placeholder="Поиск по № / получателю / ИНН"
@@ -129,6 +142,7 @@ const loadError = statement.loadError
 const statusFilter = ref<'all' | 'executed' | 'other'>('all')
 const procurementFilter = ref<'all' | 'procurement' | 'other'>('all')
 const attachedFilter = ref<'all' | 'attached' | 'unattached'>('all')
+const expenseCodeFilter = ref<string[]>([])
 const search = ref('')
 
 const statusOptions = [
@@ -147,13 +161,31 @@ const attachedOptions = [
   { title: 'Не привязан', value: 'unattached' },
 ]
 
+const expenseCodeOptions = computed(() => {
+  const codes = new Set<string>()
+  for (const r of rows.value) {
+    const c = r.expense_code_short || (r.expense_code ? r.expense_code.slice(0, 4) : '')
+    if (c) codes.add(c)
+  }
+  return Array.from(codes).sort().map(code => {
+    let desc = ''
+    if (code.startsWith('01')) desc = ' (Оплата труда)'
+    else if (code.startsWith('02')) desc = ' (Товары, работы, услуги)'
+    else if (code.startsWith('03')) desc = ' (Приобретение активов)'
+    else if (code.startsWith('08')) desc = ' (Командировки / налоги)'
+    return { title: `${code}${desc}`, value: code }
+  })
+})
+
 function statusLabel(s: string): string {
-  if (s === 'executed' || s === 'исполнен') return 'исполнен'
+  const low = (s || '').toLowerCase().trim()
+  if (low === 'executed' || low === 'исполнен') return 'исполнен'
   return s || '—'
 }
 
 function isExecuted(r: StatementRow): boolean {
-  return r.status === 'executed' || r.status === 'исполнен'
+  const low = (r.status || '').toLowerCase().trim()
+  return low === 'executed' || low === 'исполнен'
 }
 
 const filteredRows = computed(() => {
@@ -164,6 +196,12 @@ const filteredRows = computed(() => {
   else if (procurementFilter.value === 'other') list = list.filter(r => !r.is_procurement)
   if (attachedFilter.value === 'attached') list = list.filter(r => r.attached && r.attached.length > 0)
   else if (attachedFilter.value === 'unattached') list = list.filter(r => !r.attached || !r.attached.length)
+  if (expenseCodeFilter.value && expenseCodeFilter.value.length > 0) {
+    list = list.filter(r => {
+      const c = r.expense_code_short || (r.expense_code ? r.expense_code.slice(0, 4) : '')
+      return expenseCodeFilter.value.includes(c)
+    })
+  }
   const q = search.value?.trim().toLowerCase()
   if (q) {
     const tokens = q.split(/[,;\s|]+/).map(t => t.trim()).filter(Boolean)

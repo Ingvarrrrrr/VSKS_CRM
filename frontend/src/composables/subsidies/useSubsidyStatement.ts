@@ -25,6 +25,9 @@ export interface StatementRow {
   expense_code_short?: string | null
   expense_code_name?: string | null
   expense_name: string | null
+  basis_doc_text?: string | null
+  basis_doc_number?: string | null
+  basis_doc_date?: string | null
   is_procurement: boolean
   attached: StatementRowAttachment[]
   import_file_name: string | null

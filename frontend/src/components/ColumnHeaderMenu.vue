@@ -73,23 +73,8 @@
           Фильтр
         </v-list-subheader>
 
-        <!-- text -->
-        <template v-if="colType === 'text'">
-          <div class="px-3 pb-2">
-            <v-text-field
-              :model-value="textLocal"
-              placeholder="Содержит…"
-              density="compact"
-              variant="outlined"
-              hide-details
-              clearable
-              @update:model-value="onTextInput"
-            />
-          </div>
-        </template>
-
-        <!-- enum -->
-        <template v-else-if="colType === 'enum'">
+        <!-- enum or any column with items provided -->
+        <template v-if="colType === 'enum' || (items && items.length > 0 && colType !== 'number' && colType !== 'date')">
           <div class="px-3 pb-1">
             <v-text-field
               v-model="enumSearch"
@@ -114,6 +99,21 @@
               hide-details
               class="px-3"
               @update:model-value="(v) => onEnumToggle(item, v as boolean)"
+            />
+          </div>
+        </template>
+
+        <!-- text without items -->
+        <template v-else-if="colType === 'text'">
+          <div class="px-3 pb-2">
+            <v-text-field
+              :model-value="textLocal"
+              placeholder="Содержит…"
+              density="compact"
+              variant="outlined"
+              hide-details
+              clearable
+              @update:model-value="onTextInput"
             />
           </div>
         </template>

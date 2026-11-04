@@ -18,7 +18,8 @@
   >
     <!-- ColumnHeaderMenu slots — только типизированные core-колонки -->
     <template #header.payment_number="{ column }">
-      <ColumnHeaderMenu col-key="payment_number" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="payment_number" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'payment_number')"
         :model-value="colFilters['payment_number'] ?? null"
         :sort-by="getSortBy('payment_number')"
         @update:model-value="v => setFilter('payment_number', v)"
@@ -44,7 +45,8 @@
         @hide="toggleVisible('payee_name', false)" />
     </template>
     <template #header.payer_inn="{ column }">
-      <ColumnHeaderMenu col-key="payer_inn" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="payer_inn" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'payer_inn')"
         :model-value="colFilters['payer_inn'] ?? null"
         :sort-by="getSortBy('payer_inn')"
         @update:model-value="v => setFilter('payer_inn', v)"
@@ -52,7 +54,8 @@
         @hide="toggleVisible('payer_inn', false)" />
     </template>
     <template #header.payee_inn="{ column }">
-      <ColumnHeaderMenu col-key="payee_inn" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="payee_inn" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'payee_inn')"
         :model-value="colFilters['payee_inn'] ?? null"
         :sort-by="getSortBy('payee_inn')"
         @update:model-value="v => setFilter('payee_inn', v)"
@@ -60,12 +63,39 @@
         @hide="toggleVisible('payee_inn', false)" />
     </template>
     <template #header.purpose_text="{ column }">
-      <ColumnHeaderMenu col-key="purpose_text" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="purpose_text" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'purpose_text')"
         :model-value="colFilters['purpose_text'] ?? null"
         :sort-by="getSortBy('purpose_text')"
         @update:model-value="v => setFilter('purpose_text', v)"
         @sort="dir => applySort('purpose_text', dir)"
         @hide="toggleVisible('purpose_text', false)" />
+    </template>
+    <template #header.basis_doc_text="{ column }">
+      <ColumnHeaderMenu col-key="basis_doc_text" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'basis_doc_text')"
+        :model-value="colFilters['basis_doc_text'] ?? null"
+        :sort-by="getSortBy('basis_doc_text')"
+        @update:model-value="v => setFilter('basis_doc_text', v)"
+        @sort="dir => applySort('basis_doc_text', dir)"
+        @hide="toggleVisible('basis_doc_text', false)" />
+    </template>
+    <template #header.basis_doc_number="{ column }">
+      <ColumnHeaderMenu col-key="basis_doc_number" :title="column.title" col-type="enum"
+        :items="uniqValues(payments, 'basis_doc_number')"
+        :model-value="colFilters['basis_doc_number'] ?? null"
+        :sort-by="getSortBy('basis_doc_number')"
+        @update:model-value="v => setFilter('basis_doc_number', v)"
+        @sort="dir => applySort('basis_doc_number', dir)"
+        @hide="toggleVisible('basis_doc_number', false)" />
+    </template>
+    <template #header.basis_doc_date="{ column }">
+      <ColumnHeaderMenu col-key="basis_doc_date" :title="column.title" col-type="date"
+        :model-value="colFilters['basis_doc_date'] ?? null"
+        :sort-by="getSortBy('basis_doc_date')"
+        @update:model-value="v => setFilter('basis_doc_date', v)"
+        @sort="dir => applySort('basis_doc_date', dir)"
+        @hide="toggleVisible('basis_doc_date', false)" />
     </template>
     <template #header.parsed_contract_number="{ column }">
       <ColumnHeaderMenu col-key="parsed_contract_number" :title="column.title" col-type="enum"

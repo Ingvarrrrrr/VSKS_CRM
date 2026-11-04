@@ -43,8 +43,9 @@
                 <ColumnHeaderMenu
                   col-key="payment_number"
                   title="№"
-                  col-type="text"
+                  col-type="enum"
                   :hide-action="false"
+                  :items="uniqValues(rows, 'payment_number')"
                   :model-value="colFilters['payment_number'] ?? null"
                   :sort-by="getSortBy('payment_number')"
                   @update:model-value="v => setFilter('payment_number', v)"
@@ -93,12 +94,26 @@
                 <ColumnHeaderMenu
                   col-key="payee_inn"
                   title="ИНН"
-                  col-type="text"
+                  col-type="enum"
                   :hide-action="false"
+                  :items="uniqValues(rows, 'payee_inn')"
                   :model-value="colFilters['payee_inn'] ?? null"
                   :sort-by="getSortBy('payee_inn')"
                   @update:model-value="v => setFilter('payee_inn', v)"
                   @sort="dir => applySort('payee_inn', dir)"
+                />
+              </th>
+              <th style="min-width: 180px">
+                <ColumnHeaderMenu
+                  col-key="basis_doc_display"
+                  title="Документ-основание"
+                  col-type="enum"
+                  :hide-action="false"
+                  :items="uniqValues(rows, 'basis_doc_display')"
+                  :model-value="colFilters['basis_doc_display'] ?? null"
+                  :sort-by="getSortBy('basis_doc_display')"
+                  @update:model-value="v => setFilter('basis_doc_display', v)"
+                  @sort="dir => applySort('basis_doc_display', dir)"
                 />
               </th>
               <th style="min-width: 130px" class="text-right">
@@ -118,8 +133,9 @@
                 <ColumnHeaderMenu
                   col-key="purpose_text"
                   title="Назначение"
-                  col-type="text"
+                  col-type="enum"
                   :hide-action="false"
+                  :items="uniqValues(rows, 'purpose_text')"
                   :model-value="colFilters['purpose_text'] ?? null"
                   :sort-by="getSortBy('purpose_text')"
                   @update:model-value="v => setFilter('purpose_text', v)"
@@ -187,6 +203,7 @@
               <td class="text-caption">{{ statusLabel(r.status) }}</td>
               <td style="max-width:200px" class="text-truncate" :title="r.payee_name || ''">{{ r.payee_name || '—' }}</td>
               <td class="text-no-wrap font-mono">{{ r.payee_inn || '—' }}</td>
+              <td style="max-width:220px" class="text-truncate" :title="getRowValue(r, 'basis_doc_display') || ''">{{ getRowValue(r, 'basis_doc_display') || '—' }}</td>
               <td class="text-right text-no-wrap font-weight-medium">{{ formatCurrency(r.amount) }}</td>
               <td style="max-width:280px">
                 <PaymentPurposeCell :text="r.purpose_text" />
@@ -282,6 +299,9 @@ function statusLabel(s: string | null | undefined): string {
 }
 
 function getRowValue(r: StatementRow, key: string): any {
+  if (key === 'basis_doc_display') {
+    return r.basis_doc_text || (r.basis_doc_number ? `№ ${r.basis_doc_number}${r.basis_doc_date ? ' от ' + fmtDate(r.basis_doc_date) : ''}` : null)
+  }
   if (key === 'expense_code_short') {
     return r.expense_code_short || (r.expense_code ? r.expense_code.slice(0, 4) : null)
   }

@@ -20,7 +20,8 @@
   >
     <!-- ColumnHeaderMenu slots -->
     <template #header.number="{ column }">
-      <ColumnHeaderMenu col-key="number" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="number" :title="column.title" col-type="enum"
+        :items="uniqValues(contracts, 'number')"
         :model-value="colFilters['number'] ?? null"
         :sort-by="getSortBy('number')"
         @update:model-value="v => setFilter('number', v)"
@@ -60,7 +61,8 @@
       />
     </template>
     <template #header.contractor_name="{ column }">
-      <ColumnHeaderMenu col-key="contractor_name" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="contractor_name" :title="column.title" col-type="enum"
+        :items="uniqValues(contracts, 'contractor_name')"
         :model-value="colFilters['contractor_name'] ?? null"
         :sort-by="getSortBy('contractor_name')"
         @update:model-value="v => setFilter('contractor_name', v)"
@@ -142,7 +144,8 @@
       />
     </template>
     <template #header.subject="{ column }">
-      <ColumnHeaderMenu col-key="subject" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="subject" :title="column.title" col-type="enum"
+        :items="uniqValues(contracts, 'subject')"
         :model-value="colFilters['subject'] ?? null"
         :sort-by="getSortBy('subject')"
         @update:model-value="v => setFilter('subject', v)"
@@ -171,7 +174,8 @@
       />
     </template>
     <template #header.notes="{ column }">
-      <ColumnHeaderMenu col-key="notes" :title="column.title" col-type="text"
+      <ColumnHeaderMenu col-key="notes" :title="column.title" col-type="enum"
+        :items="uniqValues(contracts, 'notes')"
         :model-value="colFilters['notes'] ?? null"
         :sort-by="getSortBy('notes')"
         @update:model-value="v => setFilter('notes', v)"

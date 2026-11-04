@@ -86,6 +86,9 @@ async def build_statement_sheet(db: AsyncSession, subsidy: Subsidy) -> dict:
             "expense_code_short": short_code,
             "expense_name": meta.name if meta else None,
             "is_procurement": bool(meta.is_procurement) if meta else None,
+            "basis_doc_text": bp.basis_doc_text,
+            "basis_doc_number": bp.basis_doc_number,
+            "basis_doc_date": bp.basis_doc_date.isoformat() if bp.basis_doc_date else None,
             "attached": attached,
             "import_file_name": import_map.get(bp.import_id) if bp.import_id else None,
         })

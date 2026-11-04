@@ -109,6 +109,7 @@
       :headers="tableHeaders"
       :items="filteredOrdersWithRowNum"
       :filtered-orders="filteredOrders"
+      :all-orders="orders"
       :ceiling-badges="ceilingBadges"
       :loading="loading"
       v-model:selected-orders="selectedOrders"

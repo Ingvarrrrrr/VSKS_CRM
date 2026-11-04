@@ -175,10 +175,18 @@ export function getRowField(row: any, key: string): any {
   return getter ? getter(row) : (row?.[key] ?? null)
 }
 
-export function uniqValues(rows: any[], key: string): (string | number | null)[] {
+export function uniqValues(rows: any, key: string): (string | number | null)[] {
   const set = new Set<any>()
-  rows.forEach(r => set.add(r?.[key] ?? null))
-  return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? '')))
+  const items = (rows && typeof rows === 'object' && 'value' in rows) ? rows.value : rows
+  if (Array.isArray(items)) {
+    items.forEach((r: any) => {
+      const v = getRowField(r, key)
+      if (v !== null && v !== undefined && v !== '') {
+        set.add(v)
+      }
+    })
+  }
+  return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'ru', { numeric: true }))
 }
 
 export function useOrdersColumns() {

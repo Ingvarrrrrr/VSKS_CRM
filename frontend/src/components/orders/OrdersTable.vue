@@ -25,7 +25,8 @@
     >
       <!-- Column header menus -->
       <template #header.registry_number="{ column }">
-        <ColumnHeaderMenu col-key="registry_number" :title="String(column.title)" col-type="text"
+        <ColumnHeaderMenu col-key="registry_number" :title="String(column.title)" col-type="enum"
+          :items="uniqValues(baseOrders, 'registry_number')"
           :model-value="colFilters['registry_number'] ?? null"
           :sort-by="getSortBy('registry_number')"
           @update:model-value="v => setFilter('registry_number', v)"
@@ -33,7 +34,8 @@
           @hide="toggleVisible('registry_number', false)" />
       </template>
       <template #header.subject="{ column }">
-        <ColumnHeaderMenu col-key="subject" :title="String(column.title)" col-type="text"
+        <ColumnHeaderMenu col-key="subject" :title="String(column.title)" col-type="enum"
+          :items="uniqValues(baseOrders, 'subject')"
           :model-value="colFilters['subject'] ?? null"
           :sort-by="getSortBy('subject')"
           @update:model-value="v => setFilter('subject', v)"
@@ -42,7 +44,7 @@
       </template>
       <template #header.contractor_name="{ column }">
         <ColumnHeaderMenu col-key="contractor_name" :title="String(column.title)" col-type="enum"
-          :items="uniqValues(filteredOrders, 'contractor_name')"
+          :items="uniqValues(baseOrders, 'contractor_name')"
           :model-value="colFilters['contractor_name'] ?? null"
           :sort-by="getSortBy('contractor_name')"
           @update:model-value="v => setFilter('contractor_name', v)"
@@ -51,7 +53,7 @@
       </template>
       <template #header.subsidy_name="{ column }">
         <ColumnHeaderMenu col-key="subsidy_name" :title="String(column.title)" col-type="enum"
-          :items="uniqValues(filteredOrders, 'subsidy_name')"
+          :items="uniqValues(baseOrders, 'subsidy_name')"
           :model-value="colFilters['subsidy_name'] ?? null"
           :sort-by="getSortBy('subsidy_name')"
           @update:model-value="v => setFilter('subsidy_name', v)"
@@ -68,7 +70,8 @@
           @hide="toggleVisible('effective_price', false)" />
       </template>
       <template #header.contract_number="{ column }">
-        <ColumnHeaderMenu col-key="contract_number" :title="String(column.title)" col-type="text"
+        <ColumnHeaderMenu col-key="contract_number" :title="String(column.title)" col-type="enum"
+          :items="uniqValues(baseOrders, 'contract_number')"
           :model-value="colFilters['contract_number'] ?? null"
           :sort-by="getSortBy('contract_number')"
           @update:model-value="v => setFilter('contract_number', v)"
@@ -115,7 +118,8 @@
       </template>
       <!-- Phase 26-K: доп. соглашение и дата заказа -->
       <template #header.agreement_number="{ column }">
-        <ColumnHeaderMenu col-key="agreement_number" :title="String(column.title)" col-type="text"
+        <ColumnHeaderMenu col-key="agreement_number" :title="String(column.title)" col-type="enum"
+          :items="uniqValues(baseOrders, 'agreement_number')"
           :model-value="colFilters['agreement_number'] ?? null"
           :sort-by="getSortBy('agreement_number')"
           @update:model-value="v => setFilter('agreement_number', v)"
@@ -131,7 +135,8 @@
           @hide="toggleVisible('agreement_date', false)" />
       </template>
       <template #header.order_number="{ column }">
-        <ColumnHeaderMenu col-key="order_number" :title="String(column.title)" col-type="text"
+        <ColumnHeaderMenu col-key="order_number" :title="String(column.title)" col-type="enum"
+          :items="uniqValues(baseOrders, 'order_number')"
           :model-value="colFilters['order_number'] ?? null"
           :sort-by="getSortBy('order_number')"
           @update:model-value="v => setFilter('order_number', v)"
@@ -540,6 +545,7 @@ function openCeilingFunding(item: Purchase) {
 const props = defineProps<{
   headers: any[]
   items: any[]
+  allOrders?: Purchase[]
   filteredOrders: Purchase[]
   // Значок потолка (владелец, 21.10.2026) — карта purchase_id -> over_amount
   // из GET /api/purchases/ceiling-badges (useOrdersData.ts::ceilingBadges),
@@ -572,6 +578,7 @@ const emit = defineEmits<{
   'resume-purchase': [item: Purchase]
 }>()
 
+const baseOrders = computed(() => (props.allOrders && props.allOrders.length) ? props.allOrders : props.items)
 const router = useRouter()
 </script>
 

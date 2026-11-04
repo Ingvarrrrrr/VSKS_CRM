@@ -144,7 +144,8 @@
           <ColumnHeaderMenu
             col-key="displayName"
             :title="column.title"
-            col-type="text"
+            col-type="enum"
+            :items="uniqValues(enrichedItems, 'displayName')"
             :model-value="cfg.state.value.filters['displayName'] ?? null"
             :sort-by="getSortBy('displayName')"
             @update:model-value="(v: FilterValue | null) => setFilter('displayName', v)"
@@ -234,7 +235,8 @@
           <ColumnHeaderMenu
             col-key="registry_number"
             :title="column.title"
-            col-type="text"
+            col-type="enum"
+            :items="uniqValues(enrichedItems, 'registry_number')"
             :model-value="cfg.state.value.filters['registry_number'] ?? null"
             :sort-by="getSortBy('registry_number')"
             @update:model-value="(v: FilterValue | null) => setFilter('registry_number', v)"
@@ -246,7 +248,8 @@
           <ColumnHeaderMenu
             col-key="purchase_number"
             :title="column.title"
-            col-type="text"
+            col-type="enum"
+            :items="uniqValues(enrichedItems, 'purchase_number')"
             :model-value="cfg.state.value.filters['purchase_number'] ?? null"
             :sort-by="getSortBy('purchase_number')"
             @update:model-value="(v: FilterValue | null) => setFilter('purchase_number', v)"
@@ -258,7 +261,8 @@
           <ColumnHeaderMenu
             col-key="subject"
             :title="column.title"
-            col-type="text"
+            col-type="enum"
+            :items="uniqValues(enrichedItems, 'subject')"
             :model-value="cfg.state.value.filters['subject'] ?? null"
             :sort-by="getSortBy('subject')"
             @update:model-value="(v: FilterValue | null) => setFilter('subject', v)"

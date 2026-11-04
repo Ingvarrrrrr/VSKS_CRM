@@ -185,3 +185,67 @@ async def sync_denormalized_contractor_names(
     """))
     await db.commit()
     return {"ok": True, "updated_rows": result.rowcount}
+
+
+@router.post("/backfill-from-statements")
+async def backfill_contractors_from_statements(
+    limit: int = Query(250, ge=1, le=1000, description="Сколько контрагентов из выписок создать/обогатить"),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """Создаёт контрагентов по ИНН из банковских выписок (bank_payments) с автозаполнением реквизитов из ЕГРЮЛ."""
+    from app.models.bank_statement import BankPayment
+    from app.services.contractor_auto_create import ensure_contractor_from_inn
+
+    # Находим уникальные ИНН из bank_payments, которых ещё нет в contractors
+    subq = select(Contractor.inn).where(Contractor.inn.isnot(None))
+    q = (
+        select(
+            BankPayment.payee_inn,
+            func.max(BankPayment.payee_name).label("name"),
+            func.max(BankPayment.payee_bik).label("bik"),
+            func.max(BankPayment.payee_bank).label("bank"),
+            func.max(BankPayment.payee_account).label("account"),
+            func.max(BankPayment.payee_kpp).label("kpp"),
+        )
+        .where(
+            BankPayment.payee_inn.isnot(None),
+            BankPayment.payee_inn != "",
+            BankPayment.payee_inn.notin_(subq),
+        )
+        .group_by(BankPayment.payee_inn)
+        .limit(limit)
+    )
+    rows = (await db.execute(q)).all()
+
+    created = 0
+    failed = 0
+    for r in rows:
+        try:
+            c = await ensure_contractor_from_inn(
+                r.payee_inn,
+                r.name,
+                db,
+                bik=r.bik,
+                bank_name=r.bank,
+                account=r.account,
+                kpp=r.kpp,
+            )
+            if c:
+                created += 1
+                # Обновляем matched_contractor_id на bank_payments
+                await db.execute(
+                    _text("UPDATE bank_payments SET matched_contractor_id = :cid WHERE payee_inn = :inn AND matched_contractor_id IS NULL"),
+                    {"cid": c.id, "inn": r.payee_inn},
+                )
+        except Exception:
+            failed += 1
+
+    await db.commit()
+    return {
+        "ok": True,
+        "total_missing_processed": len(rows),
+        "created_contractors": created,
+        "failed": failed,
+    }
+

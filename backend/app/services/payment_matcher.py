@@ -122,10 +122,21 @@ async def resolve_subsidy(
 async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
     """Заполняет matched_*_id поля без commit. Caller сам делает db.commit()."""
 
-    # 1. Contractor по ИНН (точное совпадение)
+    # 1. Contractor по ИНН (точное совпадение + автосоздание/обогащение из ЕГРЮЛ)
     if bp.payee_inn:
         q = await db.execute(select(Contractor).where(Contractor.inn == bp.payee_inn).limit(1))
         contractor = q.scalar_one_or_none()
+        if not contractor:
+            from app.services.contractor_auto_create import ensure_contractor_from_inn
+            contractor = await ensure_contractor_from_inn(
+                bp.payee_inn,
+                bp.payee_name,
+                db,
+                bik=bp.payee_bik,
+                bank_name=bp.payee_bank,
+                account=bp.payee_account,
+                kpp=bp.payee_kpp,
+            )
         if contractor:
             bp.matched_contractor_id = contractor.id
 

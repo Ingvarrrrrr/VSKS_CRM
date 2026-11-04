@@ -391,14 +391,19 @@ async def commit_import(
             real_number = group.get("contract_number")
             real_date = _parse_iso_date(group.get("contract_date"))
 
+            all_group_item_names = [r["name"].strip() for r in group_rows if r.get("name") and r["name"].strip()]
+            unique_all_names = list(dict.fromkeys(all_group_item_names))
+            head_items_desc = ", ".join(unique_all_names)
+            head_subject = head_items_desc or f'{group.get("supplier") or "(без поставщика)"} — рамочный договор'
+            head_purchase_subject = (head_subject[:490] + '...') if len(head_subject) > 490 else head_subject
+
             head_data = PurchaseCreate(
                 subsidy_id=subsidy_id,
                 status="contracted",
                 contractor_id=contractor_id,
                 purchase_method="single",
                 purchase_contract_type=contract_type,
-                subject=f'{group.get("supplier") or "(без поставщика)"} — рамочный договор '
-                        f'(закупка {group.get("purchase_no") or ""})',
+                subject=head_purchase_subject,
                 items=[],
             )
             head, _ = await insert_purchase_with_items(db, head_data, current_user, items_data=[], total_nmck=None)
@@ -420,6 +425,10 @@ async def commit_import(
                 if contract:
                     contract.max_amount = Decimal(str(limit_amount))
                 head.contract_price = Decimal(str(limit_amount))
+            if head.contract_id and head_subject:
+                contract = await db.get(Contract, head.contract_id)
+                if contract and not contract.subject:
+                    contract.subject = head_subject
 
             db.add(PurchaseEvent(
                 purchase_id=head.id,
@@ -449,6 +458,20 @@ async def commit_import(
                 # у каждой позиции своя feo_category_id (уже пишется выше).
                 order_feo_per_item = len(order_category_ids) > 1
 
+                order_item_names = [r["name"].strip() for r in order_rows if r.get("name") and r["name"].strip()]
+                unique_item_names = list(dict.fromkeys(order_item_names))
+                items_desc = ", ".join(unique_item_names)
+                order_no_str = order.get("order_no")
+                if order_no_str and items_desc:
+                    child_subject = f"Заказ {order_no_str} — {items_desc}"
+                elif order_no_str:
+                    child_subject = f"Заказ {order_no_str}"
+                elif items_desc:
+                    child_subject = items_desc
+                else:
+                    child_subject = group.get("supplier") or ""
+                child_purchase_subject = (child_subject[:490] + '...') if len(child_subject) > 490 else child_subject
+
                 child_data = PurchaseCreate(
                     subsidy_id=subsidy_id,
                     status=order_status,
@@ -458,7 +481,7 @@ async def commit_import(
                     feo_category_id=order_category_id,
                     feo_per_item=order_feo_per_item,
                     order_number=order.get("order_no") or None,
-                    subject=f'Заказ {order.get("order_no")} — {group.get("supplier") or ""}',
+                    subject=child_purchase_subject,
                     items=order_items,
                 )
                 child, _ = await insert_purchase_with_items(
@@ -616,6 +639,11 @@ async def commit_import(
         group_category_id = next(iter(group_category_ids)) if len(group_category_ids) == 1 else None
         group_feo_per_item = len(group_category_ids) > 1
 
+        single_item_names = [r["name"].strip() for r in group_rows if r.get("name") and r["name"].strip()]
+        unique_single_names = list(dict.fromkeys(single_item_names))
+        single_subject = ", ".join(unique_single_names) or None
+        single_purchase_subject = ((single_subject[:490] + '...') if len(single_subject) > 490 else single_subject) if single_subject else None
+
         data = PurchaseCreate(
             subsidy_id=subsidy_id,
             status=target_status,
@@ -623,6 +651,7 @@ async def commit_import(
             purchase_method="single",
             feo_category_id=group_category_id,
             feo_per_item=group_feo_per_item,
+            subject=single_purchase_subject,
             items=items_data,
         )
         p, _created_items = await insert_purchase_with_items(
@@ -661,10 +690,13 @@ async def commit_import(
                 real_number=group.get("contract_number"),
                 real_date=_parse_iso_date(group.get("contract_date")),
             )
-            if p.contract_id and total_amount > 0:
+            if p.contract_id:
                 c = await db.get(Contract, p.contract_id)
-                if c and c.max_amount is None:
-                    c.max_amount = total_amount
+                if c:
+                    if total_amount > 0 and c.max_amount is None:
+                        c.max_amount = total_amount
+                    if single_subject and not c.subject:
+                        c.subject = single_subject
         else:
             # «В работе» — договора ещё нет (владелец: «не отмечена → закупка
             # в работе БЕЗ суммы договора»). recalc_purchase_money внутри

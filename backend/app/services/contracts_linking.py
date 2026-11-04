@@ -27,7 +27,7 @@ async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:
     if not num:
         return
 
-    # Already linked — sync any changed fields (date, contractor) to contract record
+    # Already linked — sync any changed fields (date, contractor, subject) to contract record
     if p.contract_id:
         existing = await db.get(Contract, p.contract_id)
         if existing and existing.number == num:
@@ -35,6 +35,8 @@ async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:
                 existing.date = p.contract_date
             if p.contractor_id and existing.contractor_id != p.contractor_id:
                 existing.contractor_id = p.contractor_id
+            if p.subject and not existing.subject:
+                existing.subject = p.subject
             return
 
     # Resolve contractor INN if we have a contractor_id
@@ -88,6 +90,7 @@ async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:
             contractor_id=p.contractor_id,
             subsidy_id=p.subsidy_id,
             status="active",
+            subject=p.subject,
         )
         if (p.purchase_contract_type or "single") == "single":
             from app.services.purchase_amounts import contract_amount, purchase_amounts
@@ -98,12 +101,15 @@ async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:
                 contract.max_amount = amt
         db.add(contract)
         await db.flush()
-    elif contract.contract_type == "single" and contract.max_amount is None:
-        from app.services.purchase_amounts import contract_amount, purchase_amounts
-        amt = contract_amount(p)
-        if amt is None:
-            amt = purchase_amounts(p).plan
-        if amt:
-            contract.max_amount = amt
+    else:
+        if p.subject and not contract.subject:
+            contract.subject = p.subject
+        if contract.contract_type == "single" and contract.max_amount is None:
+            from app.services.purchase_amounts import contract_amount, purchase_amounts
+            amt = contract_amount(p)
+            if amt is None:
+                amt = purchase_amounts(p).plan
+            if amt:
+                contract.max_amount = amt
 
     p.contract_id = contract.id

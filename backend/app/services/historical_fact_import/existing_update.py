@@ -114,8 +114,7 @@ async def materialize_contract(db: AsyncSession, p: Purchase, *, force_temp_numb
     if real_number:
         p.contract_number = real_number
         p.contract_number_is_temporary = False
-        if real_date:
-            p.contract_date = real_date
+        p.contract_date = real_date
     elif force_temp_number or not p.contract_number:
         p.contract_number = await generate_temp_contract_number(p, db)
         p.contract_number_is_temporary = True

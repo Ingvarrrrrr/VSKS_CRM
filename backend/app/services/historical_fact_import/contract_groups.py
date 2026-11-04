@@ -232,7 +232,10 @@ def build_contract_group(rows: list[dict], *, status_of: Callable[[dict], Option
     kind = next((k for k in kinds_present if k in FRAMEWORK_KINDS), None) or KIND_SINGLE
 
     raw_number = next((r.get("contract_number") for r in rows if r.get("contract_number")), None)
-    contract_date = next((r.get("contract_date") for r in rows if r.get("contract_date")), None)
+    dates = {r.get("contract_date") for r in rows if r.get("contract_date")}
+    # Дата договора берётся из колонки "Дата договора". Если её нет или если в одном договоре
+    # несколько позиций с разными датами документов оснований — не ставим дату (None).
+    contract_date = next(iter(dates)) if len(dates) == 1 else None
     info = ContractGroupInfo(
         kind=kind,
         contract_number=real_contract_number(raw_number),

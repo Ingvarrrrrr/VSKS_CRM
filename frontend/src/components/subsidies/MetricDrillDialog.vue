@@ -15,7 +15,7 @@
      StageFeoDrillDialog/ContractsDrillDialog). Строка-заголовок окна — словами
      владельца (METRIC_TITLES ниже), не internal-имена метрик. -->
 <template>
-  <v-dialog :model-value="visible" max-width="1100" scrollable :fullscreen="mobile"
+  <v-dialog :model-value="visible" :max-width="showStatementCols ? 1360 : 1100" scrollable :fullscreen="mobile"
     @update:model-value="v => !v && emit('close')">
     <v-card>
       <v-card-title class="d-flex align-center pa-4"
@@ -42,13 +42,15 @@
         </div>
         <v-alert v-else-if="error" type="error" variant="tonal" density="compact" class="ma-3">{{ error }}</v-alert>
         <div v-else style="overflow-x:auto">
-          <v-table density="compact" style="min-width:900px">
+          <v-table density="compact" :style="showStatementCols ? 'min-width:1180px' : 'min-width:900px'">
             <thead>
               <tr>
                 <th class="px-4">№ закупки / позиция</th>
                 <th class="px-4">Предмет</th>
                 <th class="px-4">Поставщик</th>
                 <th class="px-4">Направление ФЭО</th>
+                <th v-if="showStatementCols" class="px-4">Направление расходов (выписка)</th>
+                <th v-if="showStatementCols" class="px-4">Назначение платежа (выписка)</th>
                 <th class="px-4">Статус</th>
                 <th class="text-right px-4">Сумма</th>
               </tr>
@@ -65,27 +67,50 @@
                   </template>
                   <template v-else>{{ r.purchase_number || r.purchase_id || '—' }}</template>
                 </td>
-                <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.subject || '—' }}</td>
-                <td class="px-4 text-caption">{{ r.supplier || r.contractor || '—' }}</td>
-                <td class="px-4 text-caption" style="max-width:220px;white-space:normal">{{ r.category_path || '—' }}</td>
+                <td class="px-4 py-2" style="max-width:240px;white-space:normal;font-size:13px">{{ r.subject || '—' }}</td>
+                <td class="px-4 text-caption" style="max-width:190px;white-space:normal">{{ r.supplier || r.contractor || '—' }}</td>
+                <td class="px-4 text-caption" style="max-width:210px;white-space:normal">{{ r.category_path || '—' }}</td>
+                <td v-if="showStatementCols" class="px-4 py-2 text-caption" style="max-width:210px;white-space:normal">
+                  {{ r.statement_expense_direction || '—' }}
+                </td>
+                <td v-if="showStatementCols" class="px-4 py-2 text-caption" style="max-width:280px;white-space:normal" @click.stop>
+                  <template v-if="r.statement_purpose">
+                    <span v-if="expandedPurposes.has(rowKey(r, idx)) || r.statement_purpose.length <= 90">
+                      {{ r.statement_purpose }}
+                    </span>
+                    <span v-else>
+                      {{ r.statement_purpose.slice(0, 90) }}…
+                    </span>
+                    <a
+                      v-if="r.statement_purpose.length > 90"
+                      href="#"
+                      class="d-block text-primary text-decoration-none mt-1"
+                      style="font-size:11px"
+                      @click.prevent.stop="togglePurpose(rowKey(r, idx))"
+                    >
+                      {{ expandedPurposes.has(rowKey(r, idx)) ? 'свернуть' : 'показать полностью' }}
+                    </a>
+                  </template>
+                  <template v-else>—</template>
+                </td>
                 <td class="px-4 text-caption">{{ r.row_type === 'purchase' ? (purchaseStatusLabel(r.status) || '—') : (r.status || '—') }}</td>
                 <td class="text-right px-4 font-weight-medium" :class="r.row_type === 'budget' ? 'font-weight-bold' : 'text-primary'">
                   {{ formatCurrency(r.amount) }}
                 </td>
               </tr>
               <tr v-if="search.filtered.value.length === 0">
-                <td colspan="6" class="text-center py-6 text-medium-emphasis">
+                <td :colspan="showStatementCols ? 8 : 6" class="text-center py-6 text-medium-emphasis">
                   {{ rows.length === 0 ? 'Нет данных' : 'Ничего не найдено по поиску' }}
                 </td>
               </tr>
             </tbody>
             <tfoot v-if="rows.length">
               <tr>
-                <td colspan="5" class="px-4 text-right font-weight-medium">Итого</td>
+                <td :colspan="showStatementCols ? 7 : 5" class="px-4 text-right font-weight-medium">Итого</td>
                 <td class="text-right px-4 font-weight-bold text-primary">{{ formatCurrency(total) }}</td>
               </tr>
               <tr v-if="mismatch">
-                <td colspan="5" class="px-4 text-right text-error">не сходится с карточкой на</td>
+                <td :colspan="showStatementCols ? 7 : 5" class="px-4 text-right text-error">не сходится с карточкой на</td>
                 <td class="text-right px-4 font-weight-bold text-error">{{ formatCurrency(Math.abs(total - cardTotal)) }}</td>
               </tr>
             </tfoot>
@@ -132,6 +157,9 @@ interface MetricDrillRow {
   name?: string | null
   contribution?: number | null
   committed?: number | null
+  statement_expense_direction?: string | null
+  statement_purpose?: string | null
+  statement_payments?: any[]
 }
 
 const props = withDefaults(defineProps<{
@@ -171,6 +199,19 @@ const error = ref<string | null>(null)
 const rows = ref<MetricDrillRow[]>([])
 const total = ref(0)
 const cardTotal = ref(0)
+const expandedPurposes = ref<Set<string>>(new Set())
+
+const showStatementCols = computed(() =>
+  props.metric === 'paid_confirmed' ||
+  (props.metric === 'paid_declared' && rows.value.some(r => r.statement_expense_direction || r.statement_purpose)),
+)
+
+function togglePurpose(key: string) {
+  const next = new Set(expandedPurposes.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedPurposes.value = next
+}
 
 const mismatch = computed(() => Math.abs(total.value - cardTotal.value) > 0.01)
 

@@ -212,17 +212,30 @@ async def get_bank_payment_candidates(
     # («напокупали, а проставить у кого и как забыли»).
     from decimal import Decimal
     from app.services.payment_smart_combo_matcher import (
+        split_uncontracted_multi_item_purchases,
         load_unpaid_candidate_units,
         find_subset_sum_combinations,
         find_sign_error_candidates,
+        is_unit_contractor_conflicting,
+        detect_semantic_cluster,
+        _word_stems,
     )
+    split_cnt = await split_uncontracted_multi_item_purchases(db, sid)
+    if split_cnt > 0:
+        await db.commit()
+
     combo_suggestions: list[dict] = []
     sign_error_hints: list[dict] = []
+    partial_purchases: list[dict] = []
     if bp.amount is not None:
         bp_amt = Decimal(str(bp.amount))
         units = await load_unpaid_candidate_units(db, sid, preferred_contractor_inn=bp.payee_inn)
         combo_suggestions = find_subset_sum_combinations(
-            units, bp_amt, purpose_text=bp.purpose_text,
+            units,
+            bp_amt,
+            purpose_text=bp.purpose_text,
+            payee_name=bp.payee_name,
+            payee_inn=bp.payee_inn,
         )
         sign_error_hints = find_sign_error_candidates(units, bp_amt)
         # Если штатный поиск по контрагенту ничего не нашёл, добавляем одиночные
@@ -243,10 +256,61 @@ async def get_bank_payment_candidates(
                         "reason": f"{cs['probability_label']}: {cs['coherence_reason']}",
                     })
 
+        # Крупные/сводные закупки субсидии (остаток > суммы платёжки, напр. 1694 ГСМ 413 050,66 ₽
+        # или 1695 Проезд 407 184,10 ₽), к которым платёж можно привязать как частичную оплату (транш).
+        all_units = await load_unpaid_candidate_units(db, sid)
+        p_stems = _word_stems(bp.purpose_text or "")
+        p_sem = detect_semantic_cluster(bp.purpose_text or "")
+        p_low = (bp.purpose_text or "").lower()
+        for u in all_units:
+            if u.is_sub_item:
+                continue
+            if is_unit_contractor_conflicting(u, payee_name=bp.payee_name, payee_inn=bp.payee_inn):
+                continue
+            u_text = " ".join([u.subject or ""] + (u.item_names or []))
+            u_stems = _word_stems(u_text)
+            u_sem = detect_semantic_cluster(u_text)
+            match_score = 0
+            reasons_list = []
+            if u.amount > bp_amt:
+                reasons_list.append(f"остаток к оплате {float(u.amount):,.2f} ₽ (транш)".replace(",", " "))
+                match_score += 10
+            if p_stems & u_stems:
+                match_score += 50
+                reasons_list.append("совпадает с назначением платежа")
+            elif ("гсм" in p_low or "топлив" in p_low or "бензин" in p_low) and "гсм" in u_text.lower():
+                match_score += 50
+                reasons_list.append("сводная закупка ГСМ")
+            elif ("перевозк" in p_low or "проезд" in p_low or "пассажир" in p_low or "билет" in p_low) and "проезд" in u_text.lower():
+                match_score += 50
+                reasons_list.append("сводная закупка Проезд")
+            elif p_sem and u_sem and p_sem == u_sem:
+                match_score += 30
+                reasons_list.append(f"тематика «{u_sem}»")
+
+            partial_purchases.append({
+                "purchase_id": u.purchase_id,
+                "registry_number": u.registry_number,
+                "sheet_ref": u.sheet_ref,
+                "subject": u.subject,
+                "contractor_name": u.contractor_name,
+                "contract_price": float(u.amount),
+                "paid_by_statement": None,
+                "match_score": match_score,
+                "is_larger_parent": u.amount > bp_amt,
+                "reason": " · ".join(reasons_list) if reasons_list else (u.sheet_ref or "Доступная закупка субсидии"),
+            })
+
+        partial_purchases.sort(
+            key=lambda x: (x["match_score"], 1 if x["is_larger_parent"] else 0, x["contract_price"] or 0),
+            reverse=True,
+        )
+
     return {
         "items": items,
         "combo_suggestions": combo_suggestions,
         "sign_error_hints": sign_error_hints,
+        "all_unpaid_purchases": partial_purchases,
     }
 
 
@@ -257,6 +321,7 @@ async def get_bank_payment_candidates(
 class _AttachComboBody(BaseModel):
     purchase_ids: List[int]
     merge_purchases: bool = True
+    approve_amount_diff: bool = False
 
 
 @router.post("/{sid}/payment-control/bank-payments/{bp_id}/attach-combo")
@@ -275,7 +340,12 @@ async def attach_bank_payment_combo(
 
     from app.services.payment_smart_combo_matcher import merge_and_attach_combo
     result = await merge_and_attach_combo(
-        db, sid, bp, body.purchase_ids, merge_purchases=body.merge_purchases,
+        db,
+        sid,
+        bp,
+        body.purchase_ids,
+        merge_purchases=body.merge_purchases,
+        approve_amount_diff=body.approve_amount_diff,
     )
     await db.commit()
     return result
@@ -289,6 +359,7 @@ class _SingleComboApply(BaseModel):
     bank_payment_id: int
     purchase_ids: List[int]
     merge_purchases: bool = True
+    approve_amount_diff: bool = False
 
 
 class _BatchApplyBody(BaseModel):
@@ -301,19 +372,31 @@ async def get_batch_combos(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Пакетный поиск комбинаций сумм (Subset Sum 1–4 поз.) для всех непривязанных
-    платежей субсидии. Возвращает список совпадений с описанием того, что входит
-    в закупку, для подтверждения пользователем."""
+    """Строгий пошаговый поиск сопоставлений (по правилу владельца 04.11.2026):
+    0) Разделение многопозиционных закупок без контрагента на отдельные закупки с виртуальными номерами РЕЕ-...;
+    1) Закупки с уже известным подрядчиком сопоставляются ТОЛЬКО с выплатами того же подрядчика и ТОЛЬКО при точном совпадении суммы (Δ = 0.00 ₽);
+    2) Одиночные совпадения 1-к-1 (Δ = 0.00 ₽) среди единичных закупок без подрядчика;
+    3) Комбинаторика 2–4 единичных закупок без подрядчика, дающих точную сумму выплаты (Δ = 0.00 ₽), с объединением в одну закупку;
+    4) Одиночные кандидаты с расхождением в копейки и рубли (0 < |Δ| <= 5.00 ₽) — строго со статусом «Требует согласования суммы» на подтверждение человека."""
     subsidy = await _get_subsidy_for_read(sid, db, current_user)
 
     from decimal import Decimal
+    import datetime
+    import re
     from sqlalchemy import select
     from app.services.bank_payment_subsidy_scope import subsidy_scope_clause
     from app.services.payment_lookup import _attached_bank_payment_ids_in_subsidy, EXECUTED_STATUSES
     from app.services.payment_smart_combo_matcher import (
+        split_uncontracted_multi_item_purchases,
         load_unpaid_candidate_units,
         find_subset_sum_combinations,
+        is_same_contractor_unit,
     )
+
+    # Шаг 0: гарантируем, что каждая позиция без контрагента выделена в отдельную закупку с виртуальным номером РЕЕ-...
+    split_cnt = await split_uncontracted_multi_item_purchases(db, sid)
+    if split_cnt > 0:
+        await db.commit()
 
     # 1. Загружаем все строки выписки, относящиеся к субсидии (строго в хронологическом порядке)
     bp_rows = (await db.execute(
@@ -356,84 +439,155 @@ async def get_batch_combos(
         and _is_procurement_payment(bp)
     ]
 
+    sorted_bps = sorted(
+        unattached_bps,
+        key=lambda b: (
+            b.payment_date or datetime.date.min,
+            b.payment_number or "",
+            b.id,
+        ),
+    )
+
     # 3. Загружаем все неоплаченные закупки субсидии
     units = await load_unpaid_candidate_units(db, sid)
 
     matches = []
-    used_purchase_ids: set[int] = set()
+    used_whole_purchase_ids: set[int] = set()
+    matched_bp_ids: set[int] = set()
 
-    # ДВУХПРОХОДНЫЙ ПОДБОР (владелец, 04.11):
-    # Проход 1: платежи конкретных поставщиков с точным совпадением контрагента (по ИНН или названию,
-    # например, ООО «ПРЕДРЕЙСОВЫЙ»). Они связываются первыми со своими закупками!
-    # Проход 2: остальные платежи подбирают комбинации из оставшихся свободных закупок.
+    def _record_match(bp: BankPayment, best_combo: dict, combos: list[dict]):
+        matched_bp_ids.add(bp.id)
+        for it in best_combo["items"]:
+            used_whole_purchase_ids.add(it["purchase_id"])
+        matches.append({
+            "bank_payment_id": bp.id,
+            "payment_number": bp.payment_number,
+            "payment_date": bp.payment_date.isoformat() if bp.payment_date else None,
+            "amount": float(bp.amount),
+            "payee_name": bp.payee_name,
+            "payee_inn": bp.payee_inn,
+            "purpose_text": bp.purpose_text,
+            "combo": best_combo,
+            "alternatives": combos[:3],
+        })
 
-    def has_contractor_match(bp: BankPayment) -> bool:
-        p_inn = str(bp.payee_inn or "").strip()
-        p_name = str(bp.payee_name or "").lower()
-        for u in units:
-            if p_inn and u.contractor_inn and str(u.contractor_inn).strip() == p_inn:
-                return True
-            if p_name and u.contractor_name and (p_name in u.contractor_name.lower() or u.contractor_name.lower() in p_name):
-                return True
-        return False
-
-    pass1_bps = [bp for bp in unattached_bps if has_contractor_match(bp)]
-    pass2_bps = [bp for bp in unattached_bps if not has_contractor_match(bp)]
-
-    # Сортируем хронологически (владелец, 04.11):
-    # Pass 1 — платежи с совпадением контрагента, затем Pass 2 — остальные.
-    # Внутри каждой группы — строго по возрастанию даты платежа (ранние платежи
-    # должны сопоставляться с более ранними закупками/заявками!).
-    sorted_bps = (
-        sorted(
-            pass1_bps,
-            key=lambda b: (
-                b.payment_date or datetime.date.min,
-                b.payment_number or "",
-                b.id,
-            ),
-        )
-        + sorted(
-            pass2_bps,
-            key=lambda b: (
-                b.payment_date or datetime.date.min,
-                b.payment_number or "",
-                b.id,
-            ),
-        )
-    )
-
+    # =========================================================================
+    # ШАГ 1: Закупки с уже известным подрядчиком (тот же подрядчик + точная сумма Δ = 0.00 ₽)
+    # =========================================================================
     for bp in sorted_bps:
+        if bp.id in matched_bp_ids:
+            continue
+        same_contractor_units = [
+            u for u in units
+            if u.purchase_id not in used_whole_purchase_ids
+            and u.contractor_id is not None
+            and is_same_contractor_unit(u, bp.payee_name, bp.payee_inn)
+        ]
+        if not same_contractor_units:
+            continue
         bp_amt = Decimal(str(bp.amount))
-        available_units = [u for u in units if u.purchase_id not in used_purchase_ids]
-        if not available_units:
-            break
-
         combos = find_subset_sum_combinations(
-            available_units,
+            same_contractor_units,
             bp_amt,
             purpose_text=bp.purpose_text,
             payee_name=bp.payee_name,
             payee_inn=bp.payee_inn,
+            allow_single=True,
+            allow_multi=True,
+            allow_approval_tol=False,
         )
-        if not combos:
-            continue
+        if combos and combos[0]["probability"] in ("high", "medium"):
+            _record_match(bp, combos[0], combos)
 
-        best_combo = combos[0]
-        if best_combo["probability"] in ("high", "medium"):
-            combo_pids = {it["purchase_id"] for it in best_combo["items"]}
-            used_purchase_ids.update(combo_pids)
-            matches.append({
-                "bank_payment_id": bp.id,
-                "payment_number": bp.payment_number,
-                "payment_date": bp.payment_date.isoformat() if bp.payment_date else None,
-                "amount": float(bp.amount),
-                "payee_name": bp.payee_name,
-                "payee_inn": bp.payee_inn,
-                "purpose_text": bp.purpose_text,
-                "combo": best_combo,
-                "alternatives": combos[:3],
-            })
+    # =========================================================================
+    # ШАГ 2: Единичные совпадения 1-к-1 среди позиций БЕЗ подрядчика (точная сумма Δ = 0.00 ₽)
+    # =========================================================================
+    for allowed_probs in (("high",), ("high", "medium")):
+        for bp in sorted_bps:
+            if bp.id in matched_bp_ids:
+                continue
+            uncontracted_units = [
+                u for u in units
+                if u.purchase_id not in used_whole_purchase_ids
+                and u.contractor_id is None
+            ]
+            if not uncontracted_units:
+                break
+            bp_amt = Decimal(str(bp.amount))
+            combos = find_subset_sum_combinations(
+                uncontracted_units,
+                bp_amt,
+                purpose_text=bp.purpose_text,
+                payee_name=bp.payee_name,
+                payee_inn=bp.payee_inn,
+                allow_single=True,
+                allow_multi=False,
+                allow_approval_tol=False,
+            )
+            if combos and combos[0]["probability"] in allowed_probs:
+                _record_match(bp, combos[0], combos)
+
+    # =========================================================================
+    # ШАГ 3: Комбинаторика 2–4 единичных позиций БЕЗ подрядчика (точная сумма Δ = 0.00 ₽)
+    # =========================================================================
+    for allowed_probs in (("high",), ("high", "medium")):
+        for bp in sorted_bps:
+            if bp.id in matched_bp_ids:
+                continue
+            uncontracted_units = [
+                u for u in units
+                if u.purchase_id not in used_whole_purchase_ids
+                and u.contractor_id is None
+            ]
+            if not uncontracted_units:
+                break
+            bp_amt = Decimal(str(bp.amount))
+            combos = find_subset_sum_combinations(
+                uncontracted_units,
+                bp_amt,
+                purpose_text=bp.purpose_text,
+                payee_name=bp.payee_name,
+                payee_inn=bp.payee_inn,
+                allow_single=False,
+                allow_multi=True,
+                allow_approval_tol=False,
+            )
+            if combos and combos[0]["probability"] in allowed_probs:
+                _record_match(bp, combos[0], combos)
+
+    # =========================================================================
+    # ШАГ 4: Расхождения в копейки и рубли (0 < |Δ| <= 5.00 ₽) — строго на согласование человека
+    # =========================================================================
+    for bp in sorted_bps:
+        if bp.id in matched_bp_ids:
+            continue
+        candidate_units = [
+            u for u in units
+            if u.purchase_id not in used_whole_purchase_ids
+            and (
+                u.contractor_id is None
+                or is_same_contractor_unit(u, bp.payee_name, bp.payee_inn)
+            )
+        ]
+        if not candidate_units:
+            break
+        bp_amt = Decimal(str(bp.amount))
+        combos = find_subset_sum_combinations(
+            candidate_units,
+            bp_amt,
+            purpose_text=bp.purpose_text,
+            payee_name=bp.payee_name,
+            payee_inn=bp.payee_inn,
+            allow_single=True,
+            allow_multi=False,
+            allow_approval_tol=True,
+        )
+        approval_combos = [c for c in combos if c.get("needs_amount_approval")]
+        if approval_combos:
+            _record_match(bp, approval_combos[0], approval_combos)
+
+    # Сортируем итоговые совпадения по дате платежа
+    matches.sort(key=lambda m: (m.get("payment_date") or "", m.get("bank_payment_id") or 0))
 
     return {
         "unattached_payments_count": len(unattached_bps),
@@ -450,7 +604,7 @@ async def batch_apply_combos(
     current_user=Depends(get_current_user),
 ):
     """Массовое применение подтверждённых комбинаций: объединяет закупки,
-    проставляет контрагента из платёжки и привязывает оплату."""
+    проставляет контрагента и закрывающие документы из платёжки и привязывает оплату."""
     await _get_subsidy_for_write(sid, db, current_user)
     from app.services.payment_smart_combo_matcher import merge_and_attach_combo
 
@@ -461,13 +615,19 @@ async def batch_apply_combos(
             async with db.begin_nested():
                 bp = await _get_bank_payment_or_404(item.bank_payment_id, db)
                 await merge_and_attach_combo(
-                    db, sid, bp, item.purchase_ids, merge_purchases=item.merge_purchases
+                    db,
+                    sid,
+                    bp,
+                    item.purchase_ids,
+                    merge_purchases=item.merge_purchases,
+                    approve_amount_diff=item.approve_amount_diff,
                 )
             applied += 1
         except Exception as e:
+            err_msg = getattr(e, "detail", None) or str(e)
             errors.append({
                 "bank_payment_id": item.bank_payment_id,
-                "error": str(e),
+                "error": str(err_msg),
             })
 
     await db.commit()
@@ -528,10 +688,26 @@ async def attach_bank_payment(
     bp = await _get_bank_payment_or_404(bp_id, db)
 
     from app.models.purchase import Purchase
+    from app.models.contractor import Contractor
+    from app.services.contractor_resolve import find_or_create_contractor
+    from app.services.payment_smart_combo_matcher import enrich_purchase_from_bank_payment
     from decimal import Decimal
+
     purchase = await db.get(Purchase, body.purchase_id)
     if not purchase or purchase.subsidy_id != sid:
         raise HTTPException(404, "Закупка не найдена в этой субсидии")
+
+    contractor_obj: Optional[Contractor] = None
+    if bp.matched_contractor_id:
+        contractor_obj = await db.get(Contractor, bp.matched_contractor_id)
+    if not contractor_obj and (bp.payee_inn or bp.payee_name):
+        cid = await find_or_create_contractor(db, bp.payee_name, bp.payee_inn)
+        if cid:
+            contractor_obj = await db.get(Contractor, cid)
+            bp.matched_contractor_id = cid
+    if contractor_obj and not purchase.contractor_id:
+        purchase.contractor_id = contractor_obj.id
+        await db.flush()
 
     fixed_amount: Optional[dict] = None
     if body.fix_amount:
@@ -562,10 +738,11 @@ async def attach_bank_payment(
         payments=[],
     )
     warnings: list[str] = []
+    bp_amt_dec = Decimal(str(bp.amount or 0))
     try:
         await attach(
             db, group, [bp.id],
-            allocations={purchase.id: Decimal(str(bp.amount or 0))},
+            allocations={purchase.id: bp_amt_dec},
             warnings_out=warnings,
         )
     except ServicePeriodAttachConflict as exc:
@@ -575,6 +752,7 @@ async def attach_bank_payment(
         await db.rollback()
         raise HTTPException(409, str(exc))
 
+    await enrich_purchase_from_bank_payment(db, purchase, bp, bp_amt_dec, contractor_obj=contractor_obj)
     await db.commit()
     result = {"ok": True, "warnings": warnings}
     if fixed_amount is not None:

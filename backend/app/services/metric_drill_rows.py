@@ -383,6 +383,87 @@ async def not_committed_level_drill(db: AsyncSession, subsidy_ids: list[int], me
 # paid_declared / paid_confirmed — карточка «Оплачено».
 # ---------------------------------------------------------------------------
 
+async def _statement_info_by_purchase(
+    db: AsyncSession, purchase_ids, confirmed_only: bool = False,
+) -> dict[int, dict]:
+    """Подгружает реквизиты банковской выписки (Направление расходов по коду выписки,
+    Назначение платежа, №/дату ПП и получателя) для строк расшифровки «Оплачено»."""
+    from app.models.bank_statement import BankPayment
+    from app.models.expense_code import ExpenseCode
+    from app.models.payment import Payment
+
+    pids = [pid for pid in dict.fromkeys(purchase_ids) if pid is not None]
+    if not pids:
+        return {}
+
+    q = (
+        select(Payment, BankPayment)
+        .outerjoin(BankPayment, Payment.bank_payment_id == BankPayment.id)
+        .where(Payment.purchase_id.in_(pids))
+        .order_by(Payment.payment_date.asc().nulls_last(), Payment.id.asc())
+    )
+    if confirmed_only:
+        q = q.where(Payment.confirmed_by_statement.is_(True))
+
+    pay_rows = (await db.execute(q)).all()
+    if not pay_rows:
+        return {}
+
+    code_rows = (await db.execute(select(ExpenseCode.code, ExpenseCode.name))).all()
+    code_names = {r.code: r.name for r in code_rows}
+
+    by_pid: dict[int, list[dict]] = {}
+    for pay, bp in pay_rows:
+        code = (bp.expense_code if bp and bp.expense_code else pay.expense_code) or None
+        ename = code_names.get(code) if code else None
+        purpose = (bp.purpose_text if bp and bp.purpose_text else pay.payment_purpose) or None
+        p_num = (bp.payment_number if bp and bp.payment_number else pay.document_number) or None
+        p_date = (bp.payment_date if bp and bp.payment_date else pay.payment_date)
+        payee_name = bp.payee_name if bp else None
+        payee_inn = bp.payee_inn if bp else None
+        by_pid.setdefault(pay.purchase_id, []).append({
+            "payment_number": p_num,
+            "payment_date": p_date.isoformat() if p_date else None,
+            "amount": float(pay.amount or (bp.amount if bp else 0) or 0),
+            "payee_name": payee_name,
+            "payee_inn": payee_inn,
+            "expense_code": code,
+            "expense_name": ename,
+            "purpose_text": purpose,
+            "confirmed_by_statement": bool(pay.confirmed_by_statement),
+        })
+
+    result: dict[int, dict] = {}
+    for pid, plist in by_pid.items():
+        dirs: list[str] = []
+        purposes: list[str] = []
+        payees: list[str] = []
+        for item in plist:
+            c = item["expense_code"]
+            n = item["expense_name"]
+            d_str = f"{c} — {n}" if (c and n) else (n or c or "")
+            if d_str and d_str not in dirs:
+                dirs.append(d_str)
+            purp = (item["purpose_text"] or "").strip()
+            if purp:
+                prefix = f"ПП №{item['payment_number']}" if item.get("payment_number") else ""
+                if item.get("payment_date"):
+                    prefix = f"{prefix} от {item['payment_date']}".strip()
+                full_p = f"{prefix}: {purp}" if prefix and len(plist) > 1 else purp
+                if full_p not in purposes:
+                    purposes.append(full_p)
+            pn = (item["payee_name"] or "").strip()
+            if pn and pn not in payees:
+                payees.append(pn)
+        result[pid] = {
+            "statement_payments": plist,
+            "statement_expense_direction": "; ".join(dirs) if dirs else None,
+            "statement_purpose": " | ".join(purposes) if purposes else None,
+            "statement_payee": "; ".join(payees) if payees else None,
+        }
+    return result
+
+
 async def paid_drill(db: AsyncSession, subsidy_ids: list[int], metric: str, kind: Optional[str] = None) -> dict:
     field = "declared" if metric == "paid_declared" else "confirmed"
     rows = await paid_breakdown_rows(db, subsidy_ids)
@@ -400,6 +481,7 @@ async def paid_drill(db: AsyncSession, subsidy_ids: list[int], metric: str, kind
         rows_out = [
             await _purchase_row(texts, purchases, contractor_names, subsidy_names, r["purchase_id"], float(r[field]), category_paths)
             for r in rows
+            if float(r[field] or 0.0) > 0
         ]
     else:
         from app.services.item_type_split import KIND_PAYROLL, purchase_type_shares
@@ -413,6 +495,8 @@ async def paid_drill(db: AsyncSession, subsidy_ids: list[int], metric: str, kind
         # (тот же collapse, что и у карточки — см. subsidy_paid_breakdown.py).
         by_subsidy: dict[int, list[tuple[dict, Decimal]]] = {}
         for r in rows:
+            if not r.get(field) or r[field] <= 0:
+                continue
             if r.get("is_payroll"):
                 share = Decimal(1) if kind == KIND_PAYROLL else Decimal(0)
             else:
@@ -432,6 +516,18 @@ async def paid_drill(db: AsyncSession, subsidy_ids: list[int], metric: str, kind
                     texts, purchases, contractor_names, subsidy_names, r["purchase_id"], float(amt_rounded),
                     category_paths,
                 ))
+
+    stmt_info = await _statement_info_by_purchase(
+        db, [r["purchase_id"] for r in rows_out], confirmed_only=(metric == "paid_confirmed"),
+    )
+    for r in rows_out:
+        info = stmt_info.get(r["purchase_id"], {})
+        r["statement_payments"] = info.get("statement_payments", [])
+        r["statement_expense_direction"] = info.get("statement_expense_direction")
+        r["statement_purpose"] = info.get("statement_purpose")
+        if not r.get("supplier") and info.get("statement_payee"):
+            r["supplier"] = info["statement_payee"]
+
     total = sum(r["amount"] for r in rows_out)
     return {"metric": metric, "total": total, "card_total": card_total, "rows": rows_out}
 

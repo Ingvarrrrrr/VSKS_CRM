@@ -88,6 +88,7 @@ export function textOfMetricDrillRow(r: any): string {
   return join(
     r.purchase_number, r.subject, r.supplier, r.status, r.subsidy_name, r.category_path, r.name,
     r.contract_number, r.contractor, r.parent_subject,
+    r.statement_expense_direction, r.statement_purpose,
     amountText(r.amount), amountText(r.contribution), amountText(r.committed),
     r.items_text,
   )

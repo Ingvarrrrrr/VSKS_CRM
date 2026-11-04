@@ -125,7 +125,7 @@ async def build_near_miss(
                 "probability": cs["probability"],
                 "probability_label": cs["probability_label"],
                 "coherence_reason": cs["coherence_reason"],
-                "can_fix_amount": False,
+                "can_fix_amount": bool(cs["count"] == 1 and not cs.get("is_sub_item_match") and 0.02 < abs(cs["delta"]) <= 1.0),
                 "can_merge": cs["can_merge"],
             })
         return fallback_hints[:limit]

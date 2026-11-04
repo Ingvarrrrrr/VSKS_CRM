@@ -183,26 +183,51 @@ async def _attached_bank_payment_ids_in_subsidy(
     return {r for r in rows if r is not None}
 
 
+def _contractor_names_match(name_a: Optional[str], name_b: Optional[str]) -> bool:
+    if not name_a or not name_b:
+        return False
+    import re
+    def _norm(s: str) -> str:
+        s = s.lower().replace("ё", "е").replace("«", '"').replace("»", '"')
+        s = re.sub(r'\b(общество с ограниченной ответственностью|индивидуальный предприниматель|акционерное общество|публичное акционерное общество|ооо|ип|ао|пао|зао)\b', ' ', s)
+        s = re.sub(r'[^а-яa-z0-9]+', ' ', s)
+        return " ".join(s.split())
+    na, nb = _norm(name_a), _norm(name_b)
+    if not na or not nb or len(na) < 3 or len(nb) < 3:
+        return False
+    return na == nb or (len(na) >= 5 and na in nb) or (len(nb) >= 5 and nb in na)
+
+
 async def _eligible_bank_payments(
     db: AsyncSession, group: PaymentGroup, target_amount: Decimal, target_kind: Optional[str],
 ) -> list[BankPayment]:
-    """Признаки 1-4 (субсидия/ИНН/сумма/код), кроме занятости — та проверяется
+    """Признаки 1-4 (субсидия/ИНН или наименование/сумма/код), кроме занятости — та проверяется
     отдельно после (см. find_candidates), т.к. занятые всё равно показываются
     (с причиной), а не молча выкидываются."""
-    if not target_amount or target_amount <= 0 or not group.contractor_inn or group.subsidy_id is None:
+    if not target_amount or target_amount <= 0 or (not group.contractor_inn and not group.contractor_name) or group.subsidy_id is None:
         return []
     subsidy = await db.get(Subsidy, group.subsidy_id)
     if subsidy is None:
         return []
     lo, hi = target_amount - AMOUNT_TOL, target_amount + AMOUNT_TOL
-    rows = (await db.execute(
-        select(BankPayment).where(
-            subsidy_scope_clause(subsidy),
-            BankPayment.payee_inn == group.contractor_inn,
-            BankPayment.amount >= lo,
-            BankPayment.amount <= hi,
-        )
-    )).scalars().all()
+    if group.contractor_inn:
+        rows = (await db.execute(
+            select(BankPayment).where(
+                subsidy_scope_clause(subsidy),
+                BankPayment.payee_inn == group.contractor_inn,
+                BankPayment.amount >= lo,
+                BankPayment.amount <= hi,
+            )
+        )).scalars().all()
+    else:
+        raw_rows = (await db.execute(
+            select(BankPayment).where(
+                subsidy_scope_clause(subsidy),
+                BankPayment.amount >= lo,
+                BankPayment.amount <= hi,
+            )
+        )).scalars().all()
+        rows = [bp for bp in raw_rows if _contractor_names_match(group.contractor_name, bp.payee_name)]
 
     # Код расхода — подсказка, а не запрет (15.10.2026, ФАДМ 2026_3): вид
     # позиций закупки из листа и код платежа расходятся («услуга» в листе,
@@ -248,7 +273,7 @@ async def find_candidates(
     'goods', вид не важен: закупка разбита на товары и услуги, а оплачена одним
     платежом (ЦЕНТРАВТО 89 360,02 = 28 652,50 + 60 707,52)."""
     result: dict[str, list[Candidate]] = {"goods": [], "services": []}
-    if group.subsidy_id is None or not group.contractor_inn:
+    if group.subsidy_id is None or (not group.contractor_inn and not group.contractor_name):
         return result
 
     monthly_purchase = await _monthly_purchase(db, group.purchase_ids)
@@ -279,7 +304,7 @@ async def find_candidates(
             code = _expense_code(bp)
             code_kind = await expense_kind(db, code)
 
-            checks = ["ИНН ✓", f"Сумма {_fmt_amount(bp.amount)} ✓"]
+            checks = ["ИНН ✓" if group.contractor_inn else "Контрагент ✓", f"Сумма {_fmt_amount(bp.amount)} ✓"]
             if code:
                 checks.append(f"Код {code} — {code_kind} ✓" if code_kind else f"Код {code} (нет в справочнике)")
             if basis.label:

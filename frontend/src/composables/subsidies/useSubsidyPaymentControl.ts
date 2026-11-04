@@ -160,11 +160,14 @@ export interface PaymentControlCodesResponse {
 export interface PaymentControlCandidate {
   purchase_id: number
   registry_number: string | null
+  sheet_ref?: string | null
   subject: string | null
   contractor_name: string | null
   contract_price: number | null
   paid_by_statement: number | null
   reason: string | null
+  match_score?: number
+  is_larger_parent?: boolean
 }
 
 export interface PaymentControlComboItem {
@@ -187,9 +190,10 @@ export interface PaymentControlComboSuggestion {
   delta: number
   count: number
   score: number
-  probability: 'high' | 'medium' | 'low'
+  probability: 'high' | 'medium' | 'needs_approval' | 'low'
   probability_label: string
   coherence_reason: string
+  needs_amount_approval?: boolean
   can_merge: boolean
 }
 
@@ -209,6 +213,7 @@ export interface PaymentControlCandidatesResponse {
   items: PaymentControlCandidate[]
   combo_suggestions?: PaymentControlComboSuggestion[]
   sign_error_hints?: PaymentControlSignErrorHint[]
+  all_unpaid_purchases?: PaymentControlCandidate[]
 }
 
 export interface PaymentControlDiscrepancyResponse {
@@ -328,10 +333,15 @@ export function useSubsidyPaymentControl() {
     bpId: number,
     purchaseIds: number[],
     mergePurchases = true,
+    approveAmountDiff = false,
   ): Promise<{ ok: boolean; merged: boolean; primary_purchase_id: number; registry_number: string | null; merged_count: number; warnings: string[] }> {
     return apiFetch(`/subsidies/${subsidyId}/payment-control/bank-payments/${bpId}/attach-combo`, {
       method: 'POST',
-      body: JSON.stringify({ purchase_ids: purchaseIds, merge_purchases: mergePurchases }),
+      body: JSON.stringify({
+        purchase_ids: purchaseIds,
+        merge_purchases: mergePurchases,
+        approve_amount_diff: approveAmountDiff,
+      }),
     })
   }
 
@@ -390,7 +400,7 @@ export function useSubsidyPaymentControl() {
 
   async function batchApplyCombos(
     subsidyId: number,
-    matches: { bank_payment_id: number; purchase_ids: number[]; merge_purchases: boolean }[],
+    matches: { bank_payment_id: number; purchase_ids: number[]; merge_purchases: boolean; approve_amount_diff?: boolean }[],
   ): Promise<{ applied: number; errors: { bank_payment_id: number; error: string }[] }> {
     return apiFetch(`/subsidies/${subsidyId}/payment-control/batch-apply-combos`, {
       method: 'POST',

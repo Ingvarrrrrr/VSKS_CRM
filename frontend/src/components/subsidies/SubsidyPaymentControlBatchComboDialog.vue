@@ -41,19 +41,21 @@
               <span class="text-medium-emphasis"> (из {{ unattachedCount }} непривязанных платежей)</span>
             </div>
             <div class="d-flex align-center gap-2">
-              <v-btn size="x-small" variant="text" @click="selectAll(true)">Выбрать все</v-btn>
+              <v-btn size="x-small" variant="text" @click="selectAllExact()">Выбрать все точные</v-btn>
               <v-btn size="x-small" variant="text" @click="selectAll(false)">Снять выбор</v-btn>
             </div>
           </div>
 
           <v-alert type="info" variant="tonal" density="compact" class="mb-3">
-            Перед применением проверьте состав каждой закупки. При подтверждении система объединит позиции в одну закупку,
-            проставит контрагента (ИНН) и назначение из платёжки, и зафиксирует оплату.
+            Алгоритм работает в 3 шага: 1) закупки с уже известным подрядчиком (строго тот же подрядчик и точная сумма);
+            2) единичные совпадения 1-к-1 по сумме среди закупок без подрядчика;
+            3) комбинаторика (от 2 до 100+ единичных закупок без подрядчика в одну общую закупку).
+            Расхождения даже в 1 копейку автоматически НЕ приравниваются и требуют ручного согласования.
           </v-alert>
 
           <div class="d-flex flex-column gap-3">
             <v-card
-              v-for="(m, idx) in matches"
+              v-for="m in matches"
               :key="m.bank_payment_id"
               variant="outlined"
               :class="{
@@ -65,7 +67,12 @@
               <!-- Шапка карточки платежа -->
               <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-2">
                 <div class="d-flex align-center gap-2">
-                  <v-checkbox-btn v-model="m.selected" density="compact" color="deep-purple" />
+                  <v-checkbox-btn
+                    v-model="m.selected"
+                    density="compact"
+                    color="deep-purple"
+                    @update:model-value="(val) => onToggleSelect(m, Boolean(val))"
+                  />
                   <span class="font-weight-bold text-subtitle-2 text-deep-purple-darken-2">
                     {{ formatCurrency(m.amount) }}
                   </span>
@@ -81,9 +88,34 @@
                   </v-chip>
                 </div>
                 <div class="text-caption text-medium-emphasis">
-                  {{ m.combo.count > 1 ? `Комбинация из ${m.combo.count} поз.` : 'Точное совпадение 1 поз.' }}
+                  {{ m.combo.count > 1 ? `Комбинация из ${m.combo.count} поз.` : (m.combo.needs_amount_approval ? `Расхождение суммы (${fmtDelta(m.combo.delta)})` : 'Точное совпадение 1 поз.') }}
                 </div>
               </div>
+
+              <!-- Предупреждение о расхождении суммы (копейки / рубли) -->
+              <v-alert
+                v-if="m.combo.needs_amount_approval || Math.abs(m.combo.delta) > 0.0001"
+                type="warning"
+                variant="tonal"
+                density="compact"
+                class="mb-2 text-caption"
+              >
+                <div class="font-weight-bold">
+                  Требуется согласование человека: расхождение суммы на {{ fmtDelta(m.combo.delta) }}
+                </div>
+                <div>
+                  В закупке указано <b>{{ formatCurrency(m.combo.total_amount) }}</b>, а в банковской выписке оплачено <b>{{ formatCurrency(m.amount) }}</b>.
+                </div>
+                <v-checkbox
+                  v-model="m.approve_amount_diff"
+                  density="compact"
+                  hide-details
+                  color="warning"
+                  label="Согласовать расхождение и скорректировать сумму закупки под выписку"
+                  class="mt-1"
+                  @update:model-value="(val) => { m.selected = Boolean(val) }"
+                />
+              </v-alert>
 
               <!-- Реквизиты платёжки -->
               <div class="bg-grey-lighten-4 pa-2 rounded mb-2 text-caption">
@@ -215,6 +247,7 @@ const unattachedCount = ref(0)
 interface SelectableMatch extends PaymentControlBatchComboMatch {
   selected: boolean
   merge_purchases: boolean
+  approve_amount_diff: boolean
 }
 
 const matches = ref<SelectableMatch[]>([])
@@ -226,15 +259,37 @@ function fmtDate(d: string | null): string {
   return new Date(d).toLocaleDateString('ru-RU')
 }
 
+function fmtDelta(delta: number): string {
+  const sign = delta > 0 ? '+' : ''
+  return `${sign}${delta.toFixed(2).replace('.', ',')} ₽`
+}
+
 function probColor(prob: string): string {
   if (prob === 'high') return 'success'
-  if (prob === 'medium') return 'warning'
+  if (prob === 'medium') return 'info'
+  if (prob === 'needs_approval') return 'warning'
   return 'grey'
+}
+
+function onToggleSelect(m: SelectableMatch, val: boolean) {
+  if (m.combo.needs_amount_approval || Math.abs(m.combo.delta) > 0.0001) {
+    m.approve_amount_diff = val
+  }
+}
+
+function selectAllExact() {
+  matches.value.forEach((m) => {
+    const needsApproval = Boolean(m.combo.needs_amount_approval || Math.abs(m.combo.delta) > 0.0001)
+    if (!needsApproval) {
+      m.selected = true
+    }
+  })
 }
 
 function selectAll(val: boolean) {
   matches.value.forEach((m) => {
     m.selected = val
+    if (!val) m.approve_amount_diff = false
   })
 }
 
@@ -243,6 +298,10 @@ function selectAlternative(m: SelectableMatch, idsKey: string) {
   const found = m.alternatives.find((a) => a.purchase_ids.join(',') === idsKey)
   if (found) {
     m.combo = found
+    if (found.needs_amount_approval || Math.abs(found.delta) > 0.0001) {
+      m.selected = false
+      m.approve_amount_diff = false
+    }
   }
 }
 
@@ -255,11 +314,15 @@ async function open() {
   try {
     const res = await control.getBatchCombos(props.subsidyId)
     unattachedCount.value = res.unattached_payments_count
-    matches.value = res.matches.map((m) => ({
-      ...m,
-      selected: m.combo.probability === 'high',
-      merge_purchases: true,
-    }))
+    matches.value = res.matches.map((m) => {
+      const needsApproval = Boolean(m.combo.needs_amount_approval || Math.abs(m.combo.delta) > 0.0001)
+      return {
+        ...m,
+        selected: !needsApproval && m.combo.probability === 'high',
+        merge_purchases: true,
+        approve_amount_diff: false,
+      }
+    })
   } catch (e: any) {
     error.value = e?.message || 'Не удалось выполнить поиск комбинаций'
   } finally {
@@ -279,6 +342,7 @@ async function applyMatches() {
       bank_payment_id: m.bank_payment_id,
       purchase_ids: m.combo.purchase_ids,
       merge_purchases: m.merge_purchases,
+      approve_amount_diff: Boolean(m.approve_amount_diff || m.combo.needs_amount_approval || Math.abs(m.combo.delta) > 0.0001),
     }))
     const res = await control.batchApplyCombos(props.subsidyId, payload)
     if (res.applied > 0) {

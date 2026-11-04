@@ -364,10 +364,10 @@
                 <span class="kpi-paid-dual-amount">{{ formatCurrency(isPayrollOnly ? (paidConfirmedByKind.payroll || 0) : paidConfirmedTotal) }}</span>
               </div>
               <div v-if="!isPayrollOnly" class="kpi-paid-dual-sub kpi-paid-dual-sub-dots">
-                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidConfirmedByKind.goods) }}</span>
-                <span class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidConfirmedByKind.services) }}</span>
-                <span v-if="Math.abs(paidConfirmedByKind.payroll || 0) > 0.5" class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-payroll" />ФОТ {{ formatCurrency(paidConfirmedByKind.payroll || 0) }}</span>
-                <span v-if="Math.abs(paidConfirmedByKind.unspecified || 0) > 0.5" class="kpi-paid-dual-chip"><span class="kpi-split-dot kpi-split-dot-unspecified" />без типа {{ formatCurrency(paidConfirmedByKind.unspecified || 0) }}</span>
+                <span class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_confirmed', 'goods')"><span class="kpi-split-dot kpi-split-dot-goods" />тов. {{ formatCurrency(paidConfirmedByKind.goods) }}</span>
+                <span class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_confirmed', 'services')"><span class="kpi-split-dot kpi-split-dot-services" />усл. {{ formatCurrency(paidConfirmedByKind.services) }}</span>
+                <span v-if="Math.abs(paidConfirmedByKind.payroll || 0) > 0.5" class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_confirmed', 'payroll')"><span class="kpi-split-dot kpi-split-dot-payroll" />ФОТ {{ formatCurrency(paidConfirmedByKind.payroll || 0) }}</span>
+                <span v-if="Math.abs(paidConfirmedByKind.unspecified || 0) > 0.5" class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_confirmed', 'unspecified')"><span class="kpi-split-dot kpi-split-dot-unspecified" />без типа {{ formatCurrency(paidConfirmedByKind.unspecified || 0) }}</span>
               </div>
               <div v-if="!isPayrollOnly && paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
                 <span class="kpi-paid-dual-label">расхождение:</span>

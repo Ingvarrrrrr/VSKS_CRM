@@ -64,13 +64,15 @@ def test_uaz_gaz_haval_three_separate_purchases():
 
 
 def test_group_by_purchase_no_only_without_supplier():
-    """Поставщика нет, но «№ Закупки» совпадает — строки всё равно одна
-    закупка (новая ветка default_group_key, не затронутая правкой п.4а)."""
+    """Правило владельца (04.11.2026): если поставщика/ИНН нет, каждая позиция
+    создаётся как ОТДЕЛЬНАЯ закупка с виртуальным номером даже при совпадающем
+    «№ Закупки», так как без известного контрагента позиции могли оплачиваться
+    разным поставщикам (у одной закупки не может быть нескольких контрагентов)."""
     rows = [_item(1, purchase_no="77"), _item(2, purchase_no="77"), _item(3, purchase_no="88")]
     groups = grouping_mod.build_groups(rows)
-    assert len(groups) == 2
+    assert len(groups) == 3
     sizes = sorted(len(g["rows"]) for g in groups)
-    assert sizes == [1, 2]
+    assert sizes == [1, 1, 1]
 
 
 def test_explicit_group_override():

@@ -315,9 +315,9 @@ async def get_batch_combos(
         find_subset_sum_combinations,
     )
 
-    # 1. Загружаем все строки выписки, относящиеся к субсидии
+    # 1. Загружаем все строки выписки, относящиеся к субсидии (строго в хронологическом порядке)
     bp_rows = (await db.execute(
-        select(BankPayment).where(subsidy_scope_clause(subsidy)).order_by(BankPayment.payment_date.desc(), BankPayment.id)
+        select(BankPayment).where(subsidy_scope_clause(subsidy)).order_by(BankPayment.payment_date.asc(), BankPayment.id.asc())
     )).scalars().all()
 
     def _is_procurement_payment(bp: BankPayment) -> bool:

@@ -113,7 +113,7 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
 
     # Исполненные строки выписки, видные субсидии (правило bank_payment_subsidy_scope).
     bp_rows = (await db.execute(
-        select(BankPayment).where(subsidy_scope_clause(subsidy))
+        select(BankPayment).where(subsidy_scope_clause(subsidy)).order_by(BankPayment.payment_date.asc(), BankPayment.id.asc())
     )).scalars().all()
     executed = [bp for bp in bp_rows if (bp.status or "").upper().strip() in EXECUTED_STATUSES]
     not_executed = [bp for bp in bp_rows if bp not in executed]

@@ -89,7 +89,21 @@ async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:
             subsidy_id=p.subsidy_id,
             status="active",
         )
+        if (p.purchase_contract_type or "single") == "single":
+            from app.services.purchase_amounts import contract_amount, purchase_amounts
+            amt = contract_amount(p)
+            if amt is None:
+                amt = purchase_amounts(p).plan
+            if amt:
+                contract.max_amount = amt
         db.add(contract)
         await db.flush()
+    elif contract.contract_type == "single" and contract.max_amount is None:
+        from app.services.purchase_amounts import contract_amount, purchase_amounts
+        amt = contract_amount(p)
+        if amt is None:
+            amt = purchase_amounts(p).plan
+        if amt:
+            contract.max_amount = amt
 
     p.contract_id = contract.id

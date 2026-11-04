@@ -431,6 +431,7 @@ async def commit_import(
             created_refs["purchase_ids"].append(head.id)
             _flag_missing_inn_comment(head.id)
 
+            framework_orders_total = Decimal(0)
             for order in contract_orders:
                 order_row_nums = set(order.get("rows") or [])
                 order_rows = [r for r in group_rows if r["row"] in order_row_nums]
@@ -440,6 +441,7 @@ async def commit_import(
                  order_category_ids, order_is_advance) = await _collect_items(order_rows)
                 if not order_items or not order_status:
                     continue
+                framework_orders_total += order_total
                 order_category_id = next(iter(order_category_ids)) if len(order_category_ids) == 1 else None
                 # Владелец (16.10.2026) — тот же приём, что и у обычной
                 # (не рамочной) закупки ниже: несколько категорий ФЭО среди
@@ -513,6 +515,12 @@ async def commit_import(
                 ))
                 purchases_created += 1
                 created_refs["purchase_ids"].append(child.id)
+
+            if not limit_amount and framework_orders_total > 0:
+                contract = await db.get(Contract, head.contract_id)
+                if contract and contract.max_amount is None:
+                    contract.max_amount = framework_orders_total
+                head.contract_price = framework_orders_total
 
         async def _resolve_group_contractor() -> Optional[int]:
             # Поставщик группы — explicit override (contractor_id) либо
@@ -653,6 +661,10 @@ async def commit_import(
                 real_number=group.get("contract_number"),
                 real_date=_parse_iso_date(group.get("contract_date")),
             )
+            if p.contract_id and total_amount > 0:
+                c = await db.get(Contract, p.contract_id)
+                if c and c.max_amount is None:
+                    c.max_amount = total_amount
         else:
             # «В работе» — договора ещё нет (владелец: «не отмечена → закупка
             # в работе БЕЗ суммы договора»). recalc_purchase_money внутри

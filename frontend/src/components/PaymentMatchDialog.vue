@@ -27,8 +27,8 @@
             <b>Распознанный договор:</b>
             <v-chip size="x-small" color="blue" variant="tonal" class="ml-1">{{ payment.parsed_contract_number }}</v-chip>
           </div>
-          <div v-if="payment?.purpose_text" class="mt-1 text-caption text-medium-emphasis text-truncate" :title="payment.purpose_text">
-            {{ payment.purpose_text }}
+          <div v-if="payment?.purpose_text" class="mt-2">
+            <PaymentPurposeCell :text="payment.purpose_text" />
           </div>
           <div v-if="!payment && loadingPayment" class="text-caption text-medium-emphasis">Загрузка...</div>
         </v-sheet>
@@ -226,6 +226,7 @@ import { ref, computed, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import ServicePeriodPickDialog from '@/components/payments/ServicePeriodPickDialog.vue'
+import PaymentPurposeCell from '@/components/subsidies/PaymentPurposeCell.vue'
 import { isServicePeriodConflict, extractConflictPurchaseId, extractConflictMessage } from '@/composables/payments/useServicePeriodConflict'
 
 const { mobile } = useDisplay()

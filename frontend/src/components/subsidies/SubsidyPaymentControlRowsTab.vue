@@ -16,13 +16,13 @@
       />
       <v-text-field
         v-model="search"
-        placeholder="Поиск по № / получателю"
+        placeholder="Поиск по № / получателю / назначению"
         prepend-inner-icon="mdi-magnify"
         density="compact"
         variant="outlined"
         hide-details
         clearable
-        style="max-width:260px"
+        style="max-width:320px"
       />
       <v-spacer />
       <span class="text-caption text-medium-emphasis">Показано: {{ filteredRows.length }} / {{ rows.length }}</span>
@@ -49,7 +49,7 @@
             <div v-if="r.payee_inn" class="text-caption text-medium-emphasis">ИНН {{ r.payee_inn }}</div>
           </td>
           <td class="text-right text-no-wrap">{{ formatCurrency(r.amount) }}</td>
-          <td style="max-width:260px">
+          <td style="max-width:340px; min-width:200px">
             <PaymentPurposeCell :text="r.purpose_text" />
           </td>
           <td class="text-caption">{{ r.expense_name || r.expense_code || '—' }}</td>
@@ -258,7 +258,9 @@ const filteredRows = computed(() => {
   if (q) {
     list = list.filter(r =>
       (r.payment_number || '').toLowerCase().includes(q) ||
-      (r.payee_name || '').toLowerCase().includes(q),
+      (r.payee_name || '').toLowerCase().includes(q) ||
+      (r.payee_inn || '').includes(q) ||
+      (r.purpose_text || '').toLowerCase().includes(q),
     )
   }
   return list

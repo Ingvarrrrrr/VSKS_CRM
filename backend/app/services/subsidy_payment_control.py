@@ -502,6 +502,7 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             "status": bp.status,
             "payee_name": bp.payee_name,
             "amount": float(bp.amount or 0),
+            "purpose_text": bp.purpose_text,
         }
         for bp in not_executed
     ]

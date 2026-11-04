@@ -130,6 +130,7 @@ export interface PaymentControlNotExecuted {
   status: string
   payee_name: string | null
   amount: number
+  purpose_text?: string | null
 }
 
 export interface PaymentControlData {

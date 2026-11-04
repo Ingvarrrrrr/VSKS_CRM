@@ -232,6 +232,7 @@
                     <th>Дата</th>
                     <th>Получатель</th>
                     <th class="text-right">Сумма</th>
+                    <th>Назначение</th>
                     <th>Статус</th>
                   </tr>
                 </thead>
@@ -241,6 +242,9 @@
                     <td>{{ fmtDate(ne.payment_date) }}</td>
                     <td>{{ ne.payee_name || '—' }}</td>
                     <td class="text-right">{{ formatCurrency(ne.amount) }}</td>
+                    <td style="max-width:320px; min-width:180px">
+                      <PaymentPurposeCell :text="ne.purpose_text ?? null" />
+                    </td>
                     <td>{{ ne.status }}</td>
                   </tr>
                 </tbody>
@@ -306,6 +310,7 @@ import SubsidyPaymentControlCandidatesDialog from '@/components/subsidies/Subsid
 import SubsidyPaymentControlCreatePurchaseDialog from '@/components/subsidies/SubsidyPaymentControlCreatePurchaseDialog.vue'
 import SubsidyPaymentControlBatchComboDialog from '@/components/subsidies/SubsidyPaymentControlBatchComboDialog.vue'
 import SubsidyStatementTab from '@/components/subsidies/SubsidyStatementTab.vue'
+import PaymentPurposeCell from '@/components/subsidies/PaymentPurposeCell.vue'
 
 const props = defineProps<{
   subsidyId: number | null | undefined

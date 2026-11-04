@@ -243,13 +243,12 @@ async def list_contracts(
         d.total_paid = total_paid
         d.total_payment = total_delivered  # legacy compat
         d.subsidy_is_sandbox = bool(c.subsidy.is_sandbox) if c.subsidy else None
-        # framework_cumulative — без предельной суммы: остаток не считается (нет лимита)
-        if c.contract_type == 'framework_cumulative' and not c.max_amount:
-            d.remaining_ordered = None   # нет лимита — нет отрицательного остатка
+        # Если предельная сумма не задана (нет лимита) — остаток не считается, чтобы не плодить ложные минусы
+        if not c.max_amount:
+            d.remaining_ordered = None
             d.remaining = None
         else:
-            max_amt = c.max_amount or Decimal("0")
-            d.remaining_ordered = max_amt - total_ordered              # сколько ещё можно заказать
+            d.remaining_ordered = c.max_amount - total_ordered          # сколько ещё можно заказать
             d.remaining = d.remaining_ordered  # legacy: now shows ordered remaining
         d.remaining_delivered = total_ordered - total_delivered         # заказано, но не поставлено
         d.remaining_paid = total_delivered - total_paid                 # поставлено, но не оплачено

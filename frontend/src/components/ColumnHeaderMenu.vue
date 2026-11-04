@@ -37,7 +37,7 @@
         </v-btn>
       </template>
 
-      <v-card min-width="260" @click.stop>
+      <v-card class="col-header-menu-card" @click.stop>
         <!-- Сортировка -->
         <v-list-subheader class="text-uppercase text-caption font-weight-bold px-3 pt-2">
           Сортировка
@@ -73,8 +73,65 @@
           Фильтр
         </v-list-subheader>
 
+        <!-- number -->
+        <template v-if="colType === 'number'">
+          <div class="px-3 pb-2 d-flex gap-2">
+            <v-text-field
+              :model-value="numberMin"
+              label="От"
+              type="number"
+              inputmode="decimal"
+              density="compact"
+              variant="outlined"
+              hide-details
+              @update:model-value="(v) => onNumberChange('min', v as string)"
+            />
+            <v-text-field
+              :model-value="numberMax"
+              label="До"
+              type="number"
+              inputmode="decimal"
+              density="compact"
+              variant="outlined"
+              hide-details
+              @update:model-value="(v) => onNumberChange('max', v as string)"
+            />
+          </div>
+
+          <!-- Если для числовой колонки переданы элементы — даём чекбоксы как в Excel -->
+          <template v-if="items && items.length > 0">
+            <v-divider class="my-1" />
+            <div class="px-3 pb-1 pt-1">
+              <v-text-field
+                v-model="enumSearch"
+                placeholder="Поиск значений…"
+                density="compact"
+                variant="outlined"
+                hide-details
+                clearable
+              />
+            </div>
+            <div class="d-flex gap-1 px-3 pb-1">
+              <v-btn size="x-small" variant="text" @click="enumSelectAll">Выбрать все</v-btn>
+              <v-btn size="x-small" variant="text" @click="enumClearAll">Снять все</v-btn>
+            </div>
+            <div style="max-height: 200px; overflow-y: auto">
+              <v-checkbox
+                v-for="item in filteredEnumItems"
+                :key="String(item)"
+                :model-value="enumSelected.includes(item)"
+                :label="enumLabel(item)"
+                density="compact"
+                hide-details
+                class="px-3 col-filter-checkbox"
+                @update:model-value="(v) => onEnumToggle(item, v as boolean)"
+              />
+            </div>
+          </template>
+        </template>
+
         <!-- enum or any column with items provided -->
-        <template v-if="colType === 'enum' || (items && items.length > 0 && colType !== 'number' && colType !== 'date')">
+        <template v-else-if="colType === 'enum' || (items && items.length > 0 && colType !== 'date')">
           <div class="px-3 pb-1">
             <v-text-field
               v-model="enumSearch"
@@ -97,7 +154,7 @@
               :label="enumLabel(item)"
               density="compact"
               hide-details
-              class="px-3"
+              class="px-3 col-filter-checkbox"
               @update:model-value="(v) => onEnumToggle(item, v as boolean)"
             />
           </div>
@@ -114,32 +171,6 @@
               hide-details
               clearable
               @update:model-value="onTextInput"
-            />
-          </div>
-        </template>
-
-        <!-- number -->
-        <template v-else-if="colType === 'number'">
-          <div class="px-3 pb-2 d-flex gap-2">
-            <v-text-field
-              :model-value="numberMin"
-              label="От"
-              type="number"
-              inputmode="decimal"
-              density="compact"
-              variant="outlined"
-              hide-details
-              @update:model-value="(v) => onNumberChange('min', v as string)"
-            />
-            <v-text-field
-              :model-value="numberMax"
-              label="До"
-              type="number"
-              inputmode="decimal"
-              density="compact"
-              variant="outlined"
-              hide-details
-              @update:model-value="(v) => onNumberChange('max', v as string)"
             />
           </div>
         </template>
@@ -428,5 +459,20 @@ function onBoolChange(v: boolean | null) {
   min-width: 24px !important;
   width: 24px;
   height: 24px;
+}
+
+.col-header-menu-card {
+  width: 320px !important;
+  max-width: min(340px, 92vw) !important;
+}
+
+:deep(.col-filter-checkbox .v-label) {
+  white-space: normal !important;
+  word-break: break-word !important;
+  line-height: 1.25 !important;
+  font-size: 0.8125rem !important;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  opacity: 0.95;
 }
 </style>

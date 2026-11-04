@@ -57,7 +57,7 @@
       v-if="effectiveView === 'table'"
       :headers="tableHeaders"
       :items="filteredWithRowNum"
-      :contracts="contracts"
+      :contracts="filtered"
       :loading="loading"
       v-model:expanded="expanded"
       :selected="selected"

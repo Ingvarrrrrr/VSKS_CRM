@@ -72,7 +72,7 @@ export function useOrdersData(options: {
     show: false, single: null as Purchase | null, bulk: false, deleting: false,
   })
 
-  const filteredOrders = computed(() => {
+  const scopedOrders = computed(() => {
     let r = orders.value
     if (filters.status) {
       const statuses = filters.status.split(',').map(s => s.trim()).filter(Boolean)
@@ -152,9 +152,12 @@ export function useOrdersData(options: {
         return true
       })
     }
-    // Column-header filters (поверх panel-фильтров)
-    r = r.filter(matchesColumnFilters)
     return r
+  })
+
+  const filteredOrders = computed(() => {
+    // Column-header filters (поверх panel-фильтров)
+    return scopedOrders.value.filter(matchesColumnFilters)
   })
 
   const filteredOrdersWithRowNum = computed(() => {
@@ -413,7 +416,7 @@ export function useOrdersData(options: {
   }
 
   return {
-    orders, ceilingBadges, duplicateGroupsMap, dupGroupFor, subsidies, contractors, loading, transitioning,
+    orders, scopedOrders, ceilingBadges, duplicateGroupsMap, dupGroupFor, subsidies, contractors, loading, transitioning,
     contractorsForFilter, expanded, selectedOrders, guardDialog, deleteDialog,
     filteredOrders, filteredOrdersWithRowNum,
     cardsPage, cardsPageSize, cardsSource, cardsTotalPages, pagedCards,

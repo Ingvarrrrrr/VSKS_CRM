@@ -160,6 +160,7 @@
     </template>
     <template #header.amount="{ column }">
       <ColumnHeaderMenu col-key="amount" :title="column.title" col-type="number"
+        :items="uniqValues(payments, 'amount')"
         :model-value="colFilters['amount'] ?? null"
         :sort-by="getSortBy('amount')"
         align="end"

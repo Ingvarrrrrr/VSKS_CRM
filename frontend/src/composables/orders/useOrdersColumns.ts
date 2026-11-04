@@ -213,11 +213,14 @@ export function useOrdersColumns() {
         if (!String(v ?? '').toLowerCase().includes(f.q.toLowerCase())) return false
       } else if (f.type === 'enum') {
         if (!f.values || f.values.length === 0) continue
-        if (!f.values.includes(v)) return false
+        if (!f.values.includes(v) && !f.values.some(val => String(val) === String(v))) return false
       } else if (f.type === 'number') {
         const n = typeof v === 'number' ? v : parseFloat(v)
         if (f.min != null && !(n >= f.min)) return false
         if (f.max != null && !(n <= f.max)) return false
+        if ((f as any).values && (f as any).values.length > 0) {
+          if (!(f as any).values.includes(n) && !(f as any).values.some((val: any) => String(val) === String(n))) return false
+        }
       } else if (f.type === 'date') {
         if (!v) { if (f.from || f.to) return false; continue }
         const d = String(v).slice(0, 10)

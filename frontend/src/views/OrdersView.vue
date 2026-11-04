@@ -109,7 +109,7 @@
       :headers="tableHeaders"
       :items="filteredOrdersWithRowNum"
       :filtered-orders="filteredOrders"
-      :all-orders="orders"
+      :all-orders="scopedOrders"
       :ceiling-badges="ceilingBadges"
       :loading="loading"
       v-model:selected-orders="selectedOrders"
@@ -257,7 +257,7 @@ const {
 } = useOrdersFilters({ route, router, globalSubsidyId, showSnack })
 
 const {
-  orders, ceilingBadges, dupGroupFor, subsidies, loading, transitioning,
+  orders, scopedOrders, ceilingBadges, dupGroupFor, subsidies, loading, transitioning,
   contractorsForFilter, expanded, selectedOrders, guardDialog, deleteDialog,
   filteredOrders, filteredOrdersWithRowNum,
   cardsPage, cardsTotalPages, pagedCards,

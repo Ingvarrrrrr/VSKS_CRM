@@ -82,6 +82,7 @@
     </template>
     <template #header.max_amount="{ column }">
       <ColumnHeaderMenu col-key="max_amount" :title="column.title" col-type="number" align="end"
+        :items="uniqValues(contracts, 'max_amount')"
         :model-value="colFilters['max_amount'] ?? null"
         :sort-by="getSortBy('max_amount')"
         @update:model-value="v => setFilter('max_amount', v)"
@@ -91,6 +92,7 @@
     </template>
     <template #header.total_ordered="{ column }">
       <ColumnHeaderMenu col-key="total_ordered" :title="column.title" col-type="number" align="end"
+        :items="uniqValues(contracts, 'total_ordered')"
         :model-value="colFilters['total_ordered'] ?? null"
         :sort-by="getSortBy('total_ordered')"
         @update:model-value="v => setFilter('total_ordered', v)"
@@ -100,6 +102,7 @@
     </template>
     <template #header.total_delivered="{ column }">
       <ColumnHeaderMenu col-key="total_delivered" :title="column.title" col-type="number" align="end"
+        :items="uniqValues(contracts, 'total_delivered')"
         :model-value="colFilters['total_delivered'] ?? null"
         :sort-by="getSortBy('total_delivered')"
         @update:model-value="v => setFilter('total_delivered', v)"
@@ -109,6 +112,7 @@
     </template>
     <template #header.total_paid="{ column }">
       <ColumnHeaderMenu col-key="total_paid" :title="column.title" col-type="number" align="end"
+        :items="uniqValues(contracts, 'total_paid')"
         :model-value="colFilters['total_paid'] ?? null"
         :sort-by="getSortBy('total_paid')"
         @update:model-value="v => setFilter('total_paid', v)"
@@ -118,6 +122,7 @@
     </template>
     <template #header.remaining_ordered="{ column }">
       <ColumnHeaderMenu col-key="remaining_ordered" :title="column.title" col-type="number" align="end"
+        :items="uniqValues(contracts, 'remaining_ordered')"
         :model-value="colFilters['remaining_ordered'] ?? null"
         :sort-by="getSortBy('remaining_ordered')"
         @update:model-value="v => setFilter('remaining_ordered', v)"
@@ -127,6 +132,7 @@
     </template>
     <template #header.remaining_delivered="{ column }">
       <ColumnHeaderMenu col-key="remaining_delivered" :title="column.title" col-type="number" align="end"
+        :items="uniqValues(contracts, 'remaining_delivered')"
         :model-value="colFilters['remaining_delivered'] ?? null"
         :sort-by="getSortBy('remaining_delivered')"
         @update:model-value="v => setFilter('remaining_delivered', v)"
@@ -136,6 +142,7 @@
     </template>
     <template #header.remaining_paid="{ column }">
       <ColumnHeaderMenu col-key="remaining_paid" :title="column.title" col-type="number" align="end"
+        :items="uniqValues(contracts, 'remaining_paid')"
         :model-value="colFilters['remaining_paid'] ?? null"
         :sort-by="getSortBy('remaining_paid')"
         @update:model-value="v => setFilter('remaining_paid', v)"
@@ -253,8 +260,15 @@
       </span>
     </template>
     <template #item.remaining_paid="{ item }">
-      <span :style="Number(item.remaining_paid) < 0 ? 'color:var(--color-loss);font-weight:700' : 'color:var(--color-profit)'">
-        {{ item.remaining_paid != null ? formatMoney(item.remaining_paid) : '—' }}
+      <span v-if="item.remaining_paid == null">—</span>
+      <span v-else-if="Number(item.remaining_paid) < 0" class="text-caption font-weight-medium" style="color: #1976d2;" title="Оплачено больше, чем поставлено (аванс поставщику)">
+        {{ formatMoney(Math.abs(item.remaining_paid)) }} (аванс)
+      </span>
+      <span v-else-if="Number(item.remaining_paid) === 0" style="color:var(--color-profit);">
+        0 ₽
+      </span>
+      <span v-else style="color:var(--color-loss);font-weight:700">
+        {{ formatMoney(item.remaining_paid) }}
       </span>
     </template>
     <template #item.subsidy_name="{ item }">

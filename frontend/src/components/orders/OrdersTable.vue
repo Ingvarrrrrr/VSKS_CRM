@@ -63,6 +63,7 @@
       <template #header.effective_price="{ column }">
         <ColumnHeaderMenu col-key="effective_price" :title="String(column.title)" col-type="number"
           align="end"
+          :items="uniqValues(baseOrders, 'effective_price')"
           :model-value="colFilters['effective_price'] ?? null"
           :sort-by="getSortBy('effective_price')"
           @update:model-value="v => setFilter('effective_price', v)"
@@ -154,6 +155,7 @@
       <!-- Phase 26-N: денежные показатели по закупке -->
       <template #header.ordered_amount="{ column }">
         <ColumnHeaderMenu col-key="ordered_amount" :title="String(column.title)" col-type="number"
+          :items="uniqValues(baseOrders, 'ordered_amount')"
           :model-value="colFilters['ordered_amount'] ?? null"
           :sort-by="getSortBy('ordered_amount')"
           @update:model-value="v => setFilter('ordered_amount', v)"
@@ -162,6 +164,7 @@
       </template>
       <template #header.delivered_amount="{ column }">
         <ColumnHeaderMenu col-key="delivered_amount" :title="String(column.title)" col-type="number"
+          :items="uniqValues(baseOrders, 'delivered_amount')"
           :model-value="colFilters['delivered_amount'] ?? null"
           :sort-by="getSortBy('delivered_amount')"
           @update:model-value="v => setFilter('delivered_amount', v)"
@@ -170,6 +173,7 @@
       </template>
       <template #header.paid_amount="{ column }">
         <ColumnHeaderMenu col-key="paid_amount" :title="String(column.title)" col-type="number"
+          :items="uniqValues(baseOrders, 'paid_amount')"
           :model-value="colFilters['paid_amount'] ?? null"
           :sort-by="getSortBy('paid_amount')"
           @update:model-value="v => setFilter('paid_amount', v)"
@@ -178,6 +182,7 @@
       </template>
       <template #header.diff_ordered_delivered="{ column }">
         <ColumnHeaderMenu col-key="diff_ordered_delivered" :title="String(column.title)" col-type="number"
+          :items="uniqValues(baseOrders, 'diff_ordered_delivered')"
           :model-value="colFilters['diff_ordered_delivered'] ?? null"
           :sort-by="getSortBy('diff_ordered_delivered')"
           @update:model-value="v => setFilter('diff_ordered_delivered', v)"
@@ -186,6 +191,7 @@
       </template>
       <template #header.diff_delivered_paid="{ column }">
         <ColumnHeaderMenu col-key="diff_delivered_paid" :title="String(column.title)" col-type="number"
+          :items="uniqValues(baseOrders, 'diff_delivered_paid')"
           :model-value="colFilters['diff_delivered_paid'] ?? null"
           :sort-by="getSortBy('diff_delivered_paid')"
           @update:model-value="v => setFilter('diff_delivered_paid', v)"
@@ -194,6 +200,7 @@
       </template>
       <template #header.diff_ordered_paid="{ column }">
         <ColumnHeaderMenu col-key="diff_ordered_paid" :title="String(column.title)" col-type="number"
+          :items="uniqValues(baseOrders, 'diff_ordered_paid')"
           :model-value="colFilters['diff_ordered_paid'] ?? null"
           :sort-by="getSortBy('diff_ordered_paid')"
           @update:model-value="v => setFilter('diff_ordered_paid', v)"

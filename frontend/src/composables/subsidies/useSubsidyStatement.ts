@@ -41,7 +41,8 @@ export function useSubsidyStatement() {
     loading.value = true
     loadError.value = null
     try {
-      rows.value = await apiFetch<StatementRow[]>(`/subsidies/${subsidyId}/statement`)
+      const res = await apiFetch<any>(`/subsidies/${subsidyId}/statement`)
+      rows.value = Array.isArray(res) ? res : (res?.rows ?? [])
       loaded = true
     } catch (e: any) {
       loadError.value = e?.payload?.message || e?.detail || e?.message || 'Не удалось загрузить выписку'

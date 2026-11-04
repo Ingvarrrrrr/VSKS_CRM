@@ -45,7 +45,7 @@ export function usePaymentsData(options: {
   async function loadPayments() {
     loading.value = true
     try {
-      const params = new URLSearchParams({ limit: '2000' })
+      const params = new URLSearchParams()
       if (filterSubsidyId.value) params.set('subsidy_id', String(filterSubsidyId.value))
       if (filters.fDateFrom.value) params.set('date_from', filters.fDateFrom.value)
       if (filters.fDateTo.value) params.set('date_to', filters.fDateTo.value)

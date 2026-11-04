@@ -67,7 +67,7 @@ async def list_bank_payment_registry(
         description="Этап 7в: 'free' — не разнесённые ни на одну закупку, "
                      "'attached' — уже разнесённые (есть Payment с matched_confirmed=true).",
     ),
-    limit: int = Query(1000, ge=1, le=5000),
+    limit: Optional[int] = Query(None, description="Лимит записей (если не передан — без ограничения, отдаются все записи)"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
     _=Depends(require_action("payment.registry_view")),
@@ -138,7 +138,9 @@ async def list_bank_payment_registry(
                 BankPayment.matched_subsidy_id.in_(vis),
             )
         )
-    q = q.order_by(BankPayment.payment_date.desc()).limit(limit)
+    q = q.order_by(BankPayment.payment_date.desc(), BankPayment.id.desc())
+    if limit is not None and limit > 0:
+        q = q.limit(limit)
 
     result = await db.execute(q)
     rows = result.scalars().all()

@@ -1,8 +1,9 @@
 <template>
   <div
     class="col-header-menu"
+    :class="{ 'justify-end': align === 'end' }"
   >
-    <span class="col-header-menu__title">{{ title }}</span>
+    <span class="col-header-menu__title" :class="{ 'text-right': align === 'end' }">{{ title }}</span>
 
     <v-chip
       v-if="modelValue !== null"

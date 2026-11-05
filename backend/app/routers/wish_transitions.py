@@ -438,7 +438,13 @@ async def patch_wish_execution(
     # этого эндпоинта (executor_id/execution_deadline/event_id/assigned_to) это
     # право не трогает — их разрешают проверки выше (цепочка/assignee/менеджер+).
     # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
-    _feo_fields_touched = body.feo_category_id is not None or body.items is not None or body.subsidy_id is not None
+    _is_advance_report = getattr(wish, "source", None) == "advance_report"
+    _feo_fields_touched = (
+        body.feo_category_id is not None
+        or body.feo_per_item is not None
+        or body.items is not None
+        or body.subsidy_id is not None
+    )
     if _feo_fields_touched and current_user.role not in OWNER_ROLES:
         if not await has_org_key(current_user, db, wish.org_id, "wish.edit_feo", subsidy_id=wish.subsidy_id):
             raise HTTPException(
@@ -452,6 +458,9 @@ async def patch_wish_execution(
         wish.execution_deadline = body.execution_deadline
     if body.event_id is not None:
         wish.event_id = body.event_id
+    _old_per_item = bool(getattr(wish, "feo_per_item", False))
+    if body.feo_per_item is not None:
+        wish.feo_per_item = body.feo_per_item
     # Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): согласующий
     # (wish.edit_feo) пересматривает субсидию заявки-компаньона авансового —
     # та же проверка «субсидия не черновик», что и в update_wish/create_purchase
@@ -487,31 +496,24 @@ async def patch_wish_execution(
     # app/routers/wishes.py::update_wish использует ТУ ЖЕ, не копию.
     _old_header_cat_id = wish.feo_category_id
     if body.feo_category_id is not None and body.feo_category_id != _old_header_cat_id:
-        # Владелец (22.10.2026, заявка №209): если у заявки ВСЕ позиции — по
-        # плану (feo_planned_item_id задан у каждой), категорию шапки менять
-        # нельзя вовсе (их категория всегда категория плана, менять шапку
-        # было бы бессмысленно — позиции за ней не последуют, см.
-        # sync_items_to_header_category). Смешанные заявки — шапку менять
-        # можно, позиции по плану просто останутся в своей категории. Тот же
-        # единственный гейт (ПРАВИЛО №6), код ответа как у остального гейта —
-        # app/services/wish_item_category_guard.py.
         from app.services.wish_item_category_guard import MSG_HEADER_LOCKED, wish_items_all_plan_linked
-        if wish_items_all_plan_linked(wish.items or []):
+        if wish_items_all_plan_linked(wish.items or [], is_advance_report=_is_advance_report):
             raise HTTPException(status_code=422, detail=MSG_HEADER_LOCKED)
-        # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — новая
-        # статья шапки против ВСЕХ позиций заявки (при feo_per_item=False
-        # позиции следуют за шапкой, см. sync_items_to_header_category ниже) —
-        # до любой мутации, отказ не меняет ничего.
         if not bool(getattr(wish, "feo_per_item", False)):
             from app.services.payroll_category_guard import assert_no_goods_in_payroll
             await assert_no_goods_in_payroll(db, body.feo_category_id, wish.items or [])
     if body.feo_category_id is not None:
         wish.feo_category_id = body.feo_category_id
-    if body.feo_category_id is not None and _old_header_cat_id != body.feo_category_id:
+    if (
+        (body.feo_category_id is not None and _old_header_cat_id != body.feo_category_id)
+        or (_old_per_item and not bool(getattr(wish, "feo_per_item", False)) and wish.feo_category_id is not None)
+    ):
         from app.services.feo_effective_category import sync_items_to_header_category
+        _effective_old_cat = None if (_old_per_item and not bool(getattr(wish, "feo_per_item", False))) else _old_header_cat_id
         _header_sync_warnings = await sync_items_to_header_category(
-            wish.items or [], _old_header_cat_id, body.feo_category_id,
+            wish.items or [], _effective_old_cat, wish.feo_category_id,
             bool(getattr(wish, "feo_per_item", False)), db,
+            is_advance_report=_is_advance_report,
         )
     else:
         _header_sync_warnings = []
@@ -568,8 +570,11 @@ async def patch_wish_execution(
     # закупки», применённым в обратную сторону (см. advance_wish_sync.py::
     # apply_wish_header_to_purchase). Построчная привязка ФЭО уже зеркалится
     # ниже (apply_wish_item_feo_link_to_purchase_item) — здесь только шапка.
-    if getattr(wish, "source", None) == "advance_report" and (
-        body.subsidy_id is not None or body.feo_category_id is not None or body.event_id is not None
+    if _is_advance_report and (
+        body.subsidy_id is not None
+        or body.feo_category_id is not None
+        or body.feo_per_item is not None
+        or body.event_id is not None
     ):
         from app.models.purchase import Purchase as _PurchaseHdr
         from app.services.advance_wish_sync import apply_wish_header_to_purchase
@@ -629,7 +634,9 @@ async def patch_wish_execution(
                                 "привязка к ней невозможна — выберите действующую или создайте новую."
                             ),
                         )
-                    if wi.feo_category_id is None or fpi.feo_category_id != wi.feo_category_id:
+                    if not (_is_advance_report and fpi.auto_created) and (
+                        wi.feo_category_id is None or fpi.feo_category_id != wi.feo_category_id
+                    ):
                         _chosen_cat_name = (await db.execute(
                             select(FeoCategory.name).where(FeoCategory.id == fpi.feo_category_id)
                         )).scalar_one_or_none() or f"#{fpi.feo_category_id}"
@@ -650,42 +657,56 @@ async def patch_wish_execution(
                     wi.feo_planned_item_id = item_patch.feo_planned_item_id
                     wi.over_plan = False
                 else:
-                    wi.feo_planned_item_id = None
+                    _keep_auto_fpi = False
+                    if _is_advance_report and _old_fpi_id is not None:
+                        _old_fpi_chk = await db.get(FeoPlannedItem, _old_fpi_id)
+                        if _old_fpi_chk is not None and _old_fpi_chk.auto_created:
+                            _keep_auto_fpi = True
+                    if not _keep_auto_fpi:
+                        wi.feo_planned_item_id = None
                     wi.over_plan = False
                 if _old_fpi_id is not None and _old_fpi_id != wi.feo_planned_item_id:
                     _old_fpi = await db.get(FeoPlannedItem, _old_fpi_id)
                     await _deactivate_if_orphaned(db, _old_fpi)
             elif _cat_changing and wi.feo_planned_item_id is not None:
-                # Владелец (22.10.2026, заявка №209): смена категории позиции
-                # по плану без переприсылки feo_planned_item_id — раньше здесь
-                # тихо переезжала/отвязывалась плановая позиция
-                # (move_or_detach_planned_item). Владелец это отменил:
-                # «категория позиции по плану не меняется» действует и для
-                # согласующего — тот же единственный гейт (422), что у
-                # wish_items.py::patch_wish_item/wishes.py::update_wish
-                # (черновик), не вторая копия правила. wi.feo_category_id уже
-                # присвоен новым значением выше — передаём его явно.
                 from app.services.wish_item_category_guard import assert_wish_item_category_from_plan
-                await assert_wish_item_category_from_plan(db, wi, wi.feo_category_id)
+                await assert_wish_item_category_from_plan(
+                    db, wi, wi.feo_category_id, is_advance_report=_is_advance_report,
+                )
             if _cat_changing:
-                # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 —
-                # построчная смена категории согласующим. ПОСЛЕ гейтов
-                # «категория из плана» выше (MSG_HEADER_LOCKED в начале
-                # функции, assert_wish_item_category_from_plan сразу над
-                # этой строкой) — по требованию координатора. wi.feo_category_id
-                # уже присвоен новым значением (см. 'feo_category_id' in
-                # _fields_set выше).
                 from app.services.payroll_category_guard import assert_no_goods_in_payroll
                 await assert_no_goods_in_payroll(db, wi.feo_category_id, [wi])
 
-    # W1: зеркалим привязку к ФЭО из затронутых позиций заявки в связанные
-    # строки закупки (см. комментарий у _touched_wish_item_ids выше) — сейчас
-    # это даёт эффект только для компаньона авансового отчёта (единственный
-    # источник purchase_items.wish_item_id на сегодня, см.
-    # app/services/advance_wish_sync.py); для обычной заявки на этой стадии
-    # (submitted/approved, ещё не converted) привязанных purchase_items нет —
-    # запрос просто ничего не найдёт.
-    if _touched_wish_item_ids:
+    if _is_advance_report and (
+        _touched_wish_item_ids
+        or body.feo_category_id is not None
+        or body.feo_per_item is not None
+    ):
+        from app.models.purchase_item import PurchaseItem
+        from app.services.advance_wish_sync import apply_wish_item_feo_link_to_purchase_item
+        from app.services.advance_auto_plan import sync_advance_auto_plan_items
+        _all_wi_by_id = {wi.id: wi for wi in (wish.items or []) if wi.id is not None}
+        if _all_wi_by_id:
+            _linked_pis = (await db.execute(
+                select(PurchaseItem).where(PurchaseItem.wish_item_id.in_(set(_all_wi_by_id.keys())))
+                .order_by(PurchaseItem.id)
+            )).scalars().all()
+            for _pi in _linked_pis:
+                _wi_ref = _all_wi_by_id.get(_pi.wish_item_id)
+                if _wi_ref is not None:
+                    apply_wish_item_feo_link_to_purchase_item(_pi, _wi_ref)
+            if _linked_pis:
+                await sync_advance_auto_plan_items(
+                    _linked_pis, wish.feo_category_id, db,
+                    note=f"авансовым отчётом (заявка №{wish.id})",
+                    per_item_mode=bool(getattr(wish, "feo_per_item", False)),
+                )
+                for _pi in _linked_pis:
+                    _wi_ref = _all_wi_by_id.get(_pi.wish_item_id)
+                    if _wi_ref is not None:
+                        _wi_ref.feo_planned_item_id = _pi.feo_planned_item_id
+                        _wi_ref.feo_category_id = _pi.feo_category_id
+    elif _touched_wish_item_ids:
         from app.models.purchase_item import PurchaseItem
         from app.services.advance_wish_sync import apply_wish_item_feo_link_to_purchase_item
         _linked_pis = (await db.execute(

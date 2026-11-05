@@ -475,11 +475,15 @@ export function useWishForm(deps: {
   // второй копии этой логики в проекте нет (ПРАВИЛО №6).
   function itemHasFinalFeoCategory(item: any, catId: number | null): boolean {
     if (catId == null) return false
-    if (item?.feo_planned_item_id != null) return true
+    const isAdv = editingWish.value?.source === 'advance_report'
+    if (!isAdv && item?.feo_planned_item_id != null) return true
     const node = wishFeoNodes.value.find(n => n.id === catId)
     if (!node) return true // узел не найден (устарел/удалён) — не считаем это «незаполненной категорией»
+    if (isAdv && editingWish.value?.status === 'submitted' && (node.name || '').trim().toLowerCase().startsWith('не определена')) {
+      return false
+    }
     if (node.is_leaf) return true
-    return wishPlannedByCategory.value.has(catId)
+    return !isAdv && wishPlannedByCategory.value.has(catId)
   }
 
   const wishItemsMissingFeoCategory = computed(() => {
@@ -719,7 +723,8 @@ export function useWishForm(deps: {
     () => {
       const items = wishForm.value.items as any[]
       if (!items.length) return
-      const hasPlan = items.some(i => i.feo_planned_item_id != null)
+      const isAdv = editingWish.value?.source === 'advance_report'
+      const hasPlan = !isAdv && items.some(i => i.feo_planned_item_id != null)
       const distinctCats = new Set(items.map(i => i.feo_category_id).filter(id => id != null))
       if (hasPlan || distinctCats.size > 1) {
         if (!wishForm.value.feo_per_item) {
@@ -1013,7 +1018,8 @@ export function useWishForm(deps: {
   const wishFormSavedSnapshot = ref<string>('')
 
   function buildWishPayload() {
-    const hasPlanLinked = (wishForm.value.items as any[]).some((i: any) => i.feo_planned_item_id != null)
+    const isAdv = editingWish.value?.source === 'advance_report'
+    const hasPlanLinked = !isAdv && (wishForm.value.items as any[]).some((i: any) => i.feo_planned_item_id != null)
     const distinctCats = new Set(
       (wishForm.value.items as any[]).map((i: any) => i.feo_category_id).filter((id: any) => id != null)
     )
@@ -1058,7 +1064,7 @@ export function useWishForm(deps: {
             quantity: numOrNull((rest as any).quantity),
             unit_price: numOrNull((rest as any).unit_price),
             total_price: numOrNull((rest as any).total_price),
-            feo_category_id: (effectiveFeoPerItem || (rest as any).feo_planned_item_id != null)
+            feo_category_id: (effectiveFeoPerItem || (!isAdv && (rest as any).feo_planned_item_id != null))
               ? (itemCatId ?? feo ?? null)
               : (feo ?? null),
             feo_planned_item_id: (rest as any).feo_planned_item_id ?? null,

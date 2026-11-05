@@ -63,7 +63,10 @@ async def patch_wish_item(
     # запроса (model_fields_set), иначе обычный drag-drop (без него) не
     # трогает уже сохранённую категорию позиции.
     if "feo_category_id" in body.model_fields_set:
-        await assert_wish_item_category_from_plan(db, item, body.feo_category_id)
+        _is_adv_item = getattr(wish, "source", None) == "advance_report"
+        await assert_wish_item_category_from_plan(
+            db, item, body.feo_category_id, is_advance_report=_is_adv_item,
+        )
         # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — товар/
         # услугу/работу нельзя переносить в статью ФОТ (см.
         # app.services.payroll_category_guard). После гейта «категория из
@@ -72,6 +75,23 @@ async def patch_wish_item(
             db, body.feo_category_id, [{"item_name": item.item_name, "item_type": item.item_type}],
         )
         item.feo_category_id = body.feo_category_id
+        if _is_adv_item:
+            from sqlalchemy import select as _sel_pi
+            from app.models.purchase_item import PurchaseItem as _AdvPi
+            from app.services.advance_wish_sync import apply_wish_item_feo_link_to_purchase_item
+            from app.services.advance_auto_plan import sync_advance_auto_plan_items
+            _pi_row = (await db.execute(
+                _sel_pi(_AdvPi).where(_AdvPi.wish_item_id == item.id).limit(1)
+            )).scalar_one_or_none()
+            if _pi_row is not None:
+                apply_wish_item_feo_link_to_purchase_item(_pi_row, item)
+                await sync_advance_auto_plan_items(
+                    [_pi_row], wish.feo_category_id, db,
+                    note=f"авансовым отчётом (заявка №{wish.id})",
+                    per_item_mode=True,
+                )
+                item.feo_planned_item_id = _pi_row.feo_planned_item_id
+                item.feo_category_id = _pi_row.feo_category_id
     await db.commit()
     await db.refresh(item)
     return {"id": item.id, "target_column_key": item.target_column_key, "feo_category_id": item.feo_category_id}

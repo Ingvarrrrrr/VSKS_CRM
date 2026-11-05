@@ -354,6 +354,11 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     # читает p.contract_form, не wish.contract_form).
     if getattr(wish, 'contract_form', None) and not p.contract_form:
         p.contract_form = wish.contract_form
+    p.vat_mode = getattr(wish, 'vat_mode', None) or 'uniform'
+    p.vat_applicable = getattr(wish, 'vat_applicable', None)
+    p.vat_rate = getattr(wish, 'vat_rate', None)
+    p.vat_exemption_article = getattr(wish, 'vat_exemption_article', None)
+    p.tz_vat_on_top = bool(getattr(wish, 'tz_vat_on_top', False))
 
     await db.flush()
 
@@ -415,17 +420,43 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         # применяем здесь напрямую к PurchaseItem закупки, иначе авансовые отчёты
         # остались бы вне плана навсегда.
         if getattr(wish, 'source', None) == 'advance_report':
+            wishes_items_res = await db.execute(
+                select(WishItem).where(WishItem.wish_id == wish.id).order_by(WishItem.id)
+            )
+            wishes_items_all = wishes_items_res.scalars().all()
+            items_for_gate = [it for it in wishes_items_all if _is_meaningful_item(it)]
+            await _ensure_feo_categories_assigned(wish, items_for_gate, db)
+
             adv_items_res = await db.execute(
                 select(PurchaseItem).where(PurchaseItem.purchase_id.in_([p.id for p in existing]))
                 .order_by(PurchaseItem.id)
             )
             adv_items = adv_items_res.scalars().all()
             if adv_items:
-                await _auto_assign_planned_items(
+                from app.services.advance_auto_plan import sync_advance_auto_plan_items
+                from app.services.advance_wish_sync import (
+                    apply_wish_header_to_purchase,
+                    apply_wish_item_feo_link_to_purchase_item,
+                )
+                for _adv_p in existing:
+                    apply_wish_header_to_purchase(_adv_p, wish)
+                _wi_by_id = {wi.id: wi for wi in wishes_items_all}
+                for _pi in adv_items:
+                    _wi = _wi_by_id.get(_pi.wish_item_id) if _pi.wish_item_id else None
+                    if _wi is not None:
+                        apply_wish_item_feo_link_to_purchase_item(_pi, _wi)
+                        _pi.vat_rate = getattr(_wi, 'vat_rate', None)
+                        _pi.vat_on_top = getattr(_wi, 'vat_on_top', None)
+                await sync_advance_auto_plan_items(
                     adv_items, wish.feo_category_id, db,
                     note=f"авансовым отчётом (заявка №{wish.id})",
                     per_item_mode=bool(getattr(wish, "feo_per_item", False)),
                 )
+                for _pi in adv_items:
+                    _wi = _wi_by_id.get(_pi.wish_item_id) if _pi.wish_item_id else None
+                    if _wi is not None:
+                        _wi.feo_planned_item_id = _pi.feo_planned_item_id
+                        _wi.feo_category_id = _pi.feo_category_id
                 await db.flush()
             # Владелец (02.10.2026, quick-план «Деньги субсидии», шаг 6,
             # авансовый вариант Б): «после ПОСЛЕДНЕГО согласования закупка
@@ -482,13 +513,15 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                         _adv_p, _adv_p.id, _target_status, current_user, db, _cur_idx, _adv_delivered_idx,
                     )
                 except HTTPException as _adv_exc:
+                    if _adv_p.status == 'wishes' and purchase_status != 'wishes':
+                        _adv_p.status = purchase_status
                     _detail = _adv_exc.detail
                     _reason = _detail if isinstance(_detail, str) else (
                         (_detail or {}).get('message') if isinstance(_detail, dict) else str(_detail)
                     )
                     wish._advance_purchase_transition_warning = (
-                        f"Возмещение согласовано, но закупка "
-                        f"{_adv_p.registry_number or f'№{_adv_p.id}'} не переведена в «Поставлено, "
+                        f"Возмещение согласовано, закупка "
+                        f"{_adv_p.registry_number or f'№{_adv_p.id}'} переведена в «План закупок», но не в «Поставлено, "
                         f"не оплачено» автоматически: {_reason} Нажмите кнопку перехода в карточке "
                         "закупки после устранения причины."
                     )
@@ -745,6 +778,9 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             payment_basis_type=_payment_basis_type,
             feo_per_item=bool(getattr(wish, 'feo_per_item', False)),
             vat_mode=(getattr(wish, 'vat_mode', None) or 'uniform'),
+            vat_applicable=getattr(wish, 'vat_applicable', None),
+            vat_rate=getattr(wish, 'vat_rate', None),
+            vat_exemption_article=getattr(wish, 'vat_exemption_article', None),
             tz_vat_on_top=bool(getattr(wish, 'tz_vat_on_top', False)),  # «НДС сверху» (02.10.2026)
             # Контрагент заявки (владелец, 2026-08-17) — переезжает в закупку,
             # если указан. Purchase свежесозданный (contractor_id ещё пуст) —
@@ -1064,6 +1100,7 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             pi.feo_planned_item_id = wi.feo_planned_item_id
             pi.over_plan = getattr(wi, 'over_plan', False)
             pi.vat_rate = getattr(wi, 'vat_rate', None)
+            pi.vat_on_top = getattr(wi, 'vat_on_top', None)
             changed = True
         if changed:
             # Признак «Товар/Услуга/Работа» (блок 1): наследуется от плановой
@@ -1072,6 +1109,10 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             await _backfill_item_type_from_plan(pitems, db)
             p.feo_per_item = bool(getattr(wish, 'feo_per_item', False))
             p.vat_mode = getattr(wish, 'vat_mode', None) or 'uniform'
+            p.vat_applicable = getattr(wish, 'vat_applicable', None)
+            p.vat_rate = getattr(wish, 'vat_rate', None)
+            p.vat_exemption_article = getattr(wish, 'vat_exemption_article', None)
+            p.tz_vat_on_top = bool(getattr(wish, 'tz_vat_on_top', False))
             await db.flush()
             # ПРАВИЛО №6 (2026-09-05): пересчёт сумм закупки — единственный
             # писатель денежных колонок (см. purchase_money_writer.py). p уже

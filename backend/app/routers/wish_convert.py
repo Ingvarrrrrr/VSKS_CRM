@@ -94,7 +94,7 @@ async def convert_wish(
         # W2-гейт: проверяем категорию ФЭО и даты ПЕРЕД продвижением скрытых закупок —
         # это тоже момент «попадания в План закупок» (владелец, 2026-08-11).
         wishes_existing = [ep for ep in existing if ep.status == "wishes"]
-        if wishes_existing and getattr(wish, 'source', None) != 'advance_report':
+        if wishes_existing:
             items_res = await db.execute(
                 select(WishItem).where(WishItem.wish_id == wish.id).order_by(WishItem.id)
             )
@@ -106,7 +106,8 @@ async def convert_wish(
             await wishes_core._ensure_planned_items_assigned(
                 wish, _meaningful_existing, db,
             )
-            await wishes_core._ensure_needed_dates(wish, db, _all_items_existing)
+            if getattr(wish, 'source', None) != 'advance_report':
+                await wishes_core._ensure_needed_dates(wish, db, _all_items_existing)
         # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): эта
         # ветка — ОТДЕЛЬНЫЙ путь движения закупки по стадиям (wishes → plan_schedule),
         # не проходящий через POST /api/purchases/{pid}/transition (см. её гейт в
@@ -170,6 +171,11 @@ async def convert_wish(
             # не проверяется отдельно здесь.
             if getattr(wish, 'contract_form', None) and not ep.contract_form:
                 ep.contract_form = wish.contract_form
+            ep.vat_mode = getattr(wish, 'vat_mode', None) or 'uniform'
+            ep.vat_applicable = getattr(wish, 'vat_applicable', None)
+            ep.vat_rate = getattr(wish, 'vat_rate', None)
+            ep.vat_exemption_article = getattr(wish, 'vat_exemption_article', None)
+            ep.tz_vat_on_top = bool(getattr(wish, 'tz_vat_on_top', False))
             # Договор заявки (владелец, 12.10.2026, план lazy-swimming-hollerith.md,
             # п.2) — тот же принцип «не перетирать уже заданное», что у
             # контрагента/формы договора выше. Переносим purchase_contract_type

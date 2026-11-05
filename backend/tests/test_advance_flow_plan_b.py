@@ -59,10 +59,39 @@ async def _ensure_role_permission(db_session, role: str, key: str, granted: bool
     await db_session.commit()
 
 
-async def _create_advance_purchase(client, auth_headers, price=500):
+async def _create_advance_purchase(client, auth_headers, price=500, db_session=None):
+    feo_category_id = None
+    subsidy_id = None
+    if db_session is not None:
+        import uuid
+        from decimal import Decimal
+        from app.models.subsidy import Subsidy
+        from app.models.feo_category import FeoCategory
+        sub = Subsidy(
+            name=f"AdvSub-{uuid.uuid4().hex[:6]}",
+            year=2026,
+            budget=Decimal("1000000"),
+            require_planned_dates=False,
+            status="approved",
+        )
+        db_session.add(sub)
+        await db_session.flush()
+        cat = FeoCategory(
+            subsidy_id=sub.id,
+            parent_id=None,
+            level=1,
+            name=f"AdvCat-{uuid.uuid4().hex[:6]}",
+            budget=Decimal("500000"),
+        )
+        db_session.add(cat)
+        await db_session.commit()
+        subsidy_id = sub.id
+        feo_category_id = cat.id
     payload = {
         "purchase_method": "advance",
         "subject": "Авансовый отчёт — quick-план 2026-10-02",
+        "subsidy_id": subsidy_id,
+        "feo_category_id": feo_category_id,
         "items": [
             {
                 "item_name": "Такси",
@@ -71,6 +100,7 @@ async def _create_advance_purchase(client, auth_headers, price=500):
                 "unit": "шт",
                 "unit_price": price,
                 "total_price": price,
+                "feo_category_id": feo_category_id,
             }
         ],
     }
@@ -105,7 +135,7 @@ async def test_two_approver_chain_jumps_to_delivered_only_after_last(
     dept_head_headers = {"Authorization": f"Bearer {create_access_token({'sub': dept_head.username, 'org_id': dept_head.org_id})}"}
     accountant_headers = {"Authorization": f"Bearer {create_access_token({'sub': accountant.username, 'org_id': accountant.org_id})}"}
 
-    data = await _create_advance_purchase(client, auth_headers)
+    data = await _create_advance_purchase(client, auth_headers, db_session=db_session)
     purchase_id = data["id"]
     wish_id = data["wish_id"]
     await _add_receipt(db_session, purchase_id)

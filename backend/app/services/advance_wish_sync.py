@@ -53,6 +53,8 @@ def wish_item_kwargs_from_purchase_item(d: dict) -> dict[str, Any]:
         over_plan=bool(d.get('over_plan', False)),
         extra_attrs=d.get('extra_attrs') or {},
         tz_description=d.get('tz_description'),
+        vat_rate=d.get('vat_rate'),
+        vat_on_top=d.get('vat_on_top'),
     )
 
 
@@ -102,9 +104,12 @@ def sync_wish_header_from_purchase(wish, purchase) -> list[str]:
     см. "wish_header_synced" в PATCH-ответе purchases.py).
     """
     changed: list[str] = []
-    for f in ("subsidy_id", "feo_category_id", "event_id"):
-        pv = getattr(purchase, f)
-        if getattr(wish, f) != pv:
+    for f in (
+        "subsidy_id", "feo_category_id", "feo_per_item", "event_id",
+        "vat_mode", "vat_applicable", "vat_rate", "vat_exemption_article", "tz_vat_on_top",
+    ):
+        pv = getattr(purchase, f, None)
+        if getattr(wish, f, None) != pv:
             setattr(wish, f, pv)
             changed.append(f)
     return changed
@@ -112,7 +117,7 @@ def sync_wish_header_from_purchase(wish, purchase) -> list[str]:
 
 def apply_wish_header_to_purchase(purchase, wish) -> list[str]:
     """Обратное направление относительно sync_wish_header_from_purchase:
-    subsidy_id/feo_category_id/event_id заявки-компаньона → закупка.
+    subsidy_id/feo_category_id/feo_per_item/event_id/НДС заявки-компаньона → закупка.
 
     Вызывается из wish_transitions.py::patch_wish_execution, когда
     согласующий (право wish.edit_feo) меняет субсидию/категорию ФЭО/
@@ -124,9 +129,12 @@ def apply_wish_header_to_purchase(purchase, wish) -> list[str]:
     Возвращает список реально изменённых полей закупки.
     """
     changed: list[str] = []
-    for f in ("subsidy_id", "feo_category_id", "event_id"):
-        wv = getattr(wish, f)
-        if getattr(purchase, f) != wv:
+    for f in (
+        "subsidy_id", "feo_category_id", "feo_per_item", "event_id",
+        "vat_mode", "vat_applicable", "vat_rate", "vat_exemption_article", "tz_vat_on_top",
+    ):
+        wv = getattr(wish, f, None)
+        if getattr(purchase, f, None) != wv:
             setattr(purchase, f, wv)
             changed.append(f)
     return changed

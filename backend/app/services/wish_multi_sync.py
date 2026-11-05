@@ -232,6 +232,8 @@ async def sync_multi_purchase_from_wish(wish, purchases: list, db: AsyncSession)
                     needed_date=_eff_date(wish, wi),
                     wish_item_id=wi.id,
                     vat_rate=getattr(wi, 'vat_rate', None),
+                    vat_on_top=getattr(wi, 'vat_on_top', None),
+                    item_form=getattr(wi, 'item_form', None),
                     # Владелец (14.10.2026): переносится из WishItem, не выставляется
                     # заново — см. app/services/feo_item_lock.py.
                     from_plan=getattr(wi, 'from_plan', False),
@@ -277,6 +279,11 @@ async def sync_multi_purchase_from_wish(wish, purchases: list, db: AsyncSession)
         from decimal import Decimal as _DecMulti
         _synced_pids = {pi.purchase_id for pi in synced_items}
         for p in active_purchases:
+            p.vat_mode = getattr(wish, 'vat_mode', None) or 'uniform'
+            p.vat_applicable = getattr(wish, 'vat_applicable', None)
+            p.vat_rate = getattr(wish, 'vat_rate', None)
+            p.vat_exemption_article = getattr(wish, 'vat_exemption_article', None)
+            p.tz_vat_on_top = bool(getattr(wish, 'tz_vat_on_top', False))
             _empty_after_remove = (
                 bool(items_removed[p.id])
                 and p.id not in _synced_pids

@@ -51,10 +51,15 @@ MSG_HEADER_LOCKED = (
 )
 
 
-def wish_items_all_plan_linked(items) -> bool:
+def wish_items_all_plan_linked(items, *, is_advance_report: bool = False) -> bool:
     """True — у заявки есть позиции И ВСЕ они по плану (feo_planned_item_id
     задан у каждой). Пустой список позиций — False (нет позиций, нечего
-    блокировать). См. MSG_HEADER_LOCKED выше."""
+    блокировать). См. MSG_HEADER_LOCKED выше.
+    Для авансовых отчётов (is_advance_report=True) всегда False: у них
+    плановые позиции создаются автоматически из чека и следуют за выбранной
+    категорией ФЭО."""
+    if is_advance_report:
+        return False
     items = list(items)
     if not items:
         return False
@@ -62,7 +67,7 @@ def wish_items_all_plan_linked(items) -> bool:
 
 
 async def assert_wish_item_category_from_plan(
-    db: AsyncSession, item: WishItem, new_feo_category_id: Optional[int],
+    db: AsyncSession, item: WishItem, new_feo_category_id: Optional[int], *, is_advance_report: bool = False,
 ) -> None:
     """422, если у `item` задан feo_planned_item_id, а `new_feo_category_id`
     отличается от текущей feo_category_id этой плановой позиции.
@@ -73,10 +78,12 @@ async def assert_wish_item_category_from_plan(
     только item.feo_planned_item_id, читать/писать сам item здесь не нужно.
 
     Ничего не проверяет (тихо возвращается), если позиция вообще не
-    привязана к плановой позиции, либо привязанная плановая позиция уже не
-    существует (её удаление/деактивация — забота другого механизма,
-    app.services.plan_autoassign.deactivate_if_orphaned, не этой проверки)."""
-    if item.feo_planned_item_id is None:
+    привязана к плановой позиции, либо это авансовый отчёт (где плановая
+    позиция создаётся автоматически в выбранной категории), либо привязанная
+    плановая позиция уже не существует (её удаление/деактивация — забота
+    другого механизма, app.services.plan_autoassign.deactivate_if_orphaned,
+    не этой проверки)."""
+    if is_advance_report or item.feo_planned_item_id is None:
         return
     planned = await db.get(FeoPlannedItem, item.feo_planned_item_id)
     if planned is None:

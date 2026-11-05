@@ -11,21 +11,29 @@
        Псевдо-вариант «Вне плана (новая позиция)» убран (сессия 2026-08-05) — владелец:
        позицию, которой нет в плане, заводят кнопкой «Создать в плане закупок» ниже. -->
   <div v-if="categoryId != null" class="feo-planned-select" :class="{ 'feo-planned-select--dense': dense }">
-    <!-- Авансовый отчёт (владелец, 30.09.2026) — см. докстринг isAdvance выше:
-         ни поиск, ни ручной выбор, ни «Создать в плане закупок» здесь не
-         нужны, позиция получает свою плановую позицию сама при сохранении. -->
-    <template v-if="isAdvance">
-      <div class="feo-tree-row feo-tree-row--pseudo feo-planned-disabled">
-        <v-icon size="16" :icon="modelValue ? 'mdi-robot-outline' : 'mdi-clipboard-list-outline'" class="mr-1" />
-        <span class="feo-tree-name">{{ modelValue ? 'План: авто (из чека)' : 'План появится автоматически после сохранения' }}</span>
-      </div>
-    </template>
-
     <!-- skipLast: заявка привязана к промежуточному уровню — плановые позиции недоступны -->
-    <template v-else-if="skipLast">
+    <template v-if="skipLast">
       <div class="feo-tree-row feo-tree-row--pseudo feo-planned-disabled">
         <v-icon size="16" icon="mdi-clipboard-list-outline" class="mr-1" />
         <span class="feo-tree-name">Заявка привязана к промежуточному уровню ФЭО — плановые позиции недоступны</span>
+      </div>
+    </template>
+
+    <!-- Авансовый отчёт (владелец, 30.09.2026): «Из авансового все позиции
+         АВТОМАТИЧЕСКИ привязываются к плану... Не сопоставляем» — сервер сам
+         заводит собственную плановую позицию при сохранении в выбранной
+         категории ФЭО (app/services/advance_auto_plan.py). -->
+    <template v-else-if="isAdvance">
+      <div
+        v-if="modelValue?.id != null && modelValue?.kind === 'planned_item'"
+        class="feo-tree-row feo-tree-row--pseudo"
+      >
+        <v-icon size="15" icon="mdi-check-circle-outline" color="success" class="mr-1" />
+        <span class="feo-tree-name text-caption">План: авто (из чека)</span>
+      </div>
+      <div v-else class="feo-tree-row feo-tree-row--pseudo text-medium-emphasis">
+        <v-icon size="15" icon="mdi-flash-outline" class="mr-1" />
+        <span class="feo-tree-name text-caption">План появится автоматически после сохранения</span>
       </div>
     </template>
 

@@ -671,6 +671,10 @@ async def update_wish(
     # ветку одной, не заводим отдельную только под null.
     if 'vat_applicable' in body.model_fields_set:
         wish.vat_applicable = body.vat_applicable
+    if 'vat_rate' in body.model_fields_set:
+        wish.vat_rate = body.vat_rate
+    if 'vat_exemption_article' in body.model_fields_set:
+        wish.vat_exemption_article = body.vat_exemption_article
 
     # Договор заявки — необязательное поле (владелец, 12.10.2026), тот же
     # нюанс частичного обновления, что у contractor_id/vat_applicable выше:
@@ -702,8 +706,9 @@ async def update_wish(
     # чего в запросе не было вовсе. Явный null (снятие субсидии) мирроим тоже —
     # buildWishPayload на фронте всегда шлёт subsidy_id ключом (спред
     # `...wishForm.value`), так что для формы заявки это не риск.
-    if getattr(wish, "source", None) == "advance_report" and (
-        body.model_fields_set & {"subsidy_id", "feo_category_id", "event_id"}
+    _is_advance_wish_put = getattr(wish, "source", None) == "advance_report"
+    if _is_advance_wish_put and (
+        body.model_fields_set & {"subsidy_id", "feo_category_id", "feo_per_item", "event_id"}
     ):
         from app.services.advance_wish_sync import apply_wish_header_to_purchase
         _companion_purchase_put = (await db.execute(
@@ -719,24 +724,7 @@ async def update_wish(
     # non-draft ниже) — возвращаются в ответе, не проглатываются молча.
     _plan_transfer_warnings: list[str] = []
 
-    # «Позиции следуют за шапкой» при feo_per_item=False (см. комментарий у
-    # _old_header_cat_id_for_sync выше) — ОБЩАЯ функция с wish_transitions.py
-    # (Правило №6, не вторая копия). Выполняется ДО построчных правок ниже
-    # (draft: delete+recreate из body.items; non-draft: body.items с явной
-    # feo_category_id по позиции), чтобы явные построчные значения из ЭТОГО
-    # же запроса побеждали массовый перенос — цикл ниже читает item_data,
-    # присланный пользователем, а не wi.feo_category_id, который этот вызов
-    # меняет, так что порядок вызова этой функции относительно цикла здесь не
-    # мешает явным построчным правкам (они просто применяются следом).
-    # draft пропускается: там ниже позиции ВСЕГДА полностью удаляются и
-    # создаются заново из body.items (см. ветку old_status == "draft" ниже) —
-    # старые WishItem, к которым мы бы здесь применили перенос, всё равно
-    # исчезнут, а move_or_detach_planned_item внутри зря бы отвязывал план от
-    # строк, которых через секунду не будет.
-    if old_status != "draft" and wish.feo_category_id != _old_header_cat_id_for_sync:
-        # Правило владельца (22.10.2026, заявка №209), ПРАВИЛО №6 — новая
-        # статья шапки против ВСЕХ позиций заявки, ДО sync_items_to_header_category
-        # (которая переносит их туда безусловно при feo_per_item=False).
+    if (old_status != "draft" or _is_advance_wish_put) and wish.feo_category_id != _old_header_cat_id_for_sync:
         if not bool(getattr(wish, "feo_per_item", False)):
             from app.services.payroll_category_guard import assert_no_goods_in_payroll
             await assert_no_goods_in_payroll(db, wish.feo_category_id, wish.items or [])
@@ -744,6 +732,7 @@ async def update_wish(
         _plan_transfer_warnings.extend(await sync_items_to_header_category(
             wish.items or [], _old_header_cat_id_for_sync, wish.feo_category_id,
             bool(getattr(wish, "feo_per_item", False)), db,
+            is_advance_report=_is_advance_wish_put,
         ))
 
     if body.items is not None:
@@ -824,7 +813,9 @@ async def update_wish(
                     from_plan=item_data.get('from_plan', False),
                     target_column_key=item_data.get('target_column_key'),
                 )
-                await assert_wish_item_category_from_plan(db, wi, item_data.get('feo_category_id'))
+                await assert_wish_item_category_from_plan(
+                    db, wi, item_data.get('feo_category_id'), is_advance_report=_is_advance_wish_put,
+                )
                 await assert_no_goods_in_payroll(db, wi.feo_category_id, [wi])
                 _row_item_form_wish_put_draft = item_form_for_wish_item(wish, wi)
                 if _row_item_form_wish_put_draft:
@@ -883,9 +874,17 @@ async def update_wish(
             if 'feo_category_id' in item_data:
                 wi.feo_category_id = item_data['feo_category_id']
             if 'feo_planned_item_id' in item_data:
-                wi.feo_planned_item_id = item_data['feo_planned_item_id']
+                _new_fpi_id_put = item_data['feo_planned_item_id']
+                if _is_advance_wish_put and _new_fpi_id_put is None and wi.feo_planned_item_id is not None:
+                    _existing_fpi_put = await db.get(FeoPlannedItem, wi.feo_planned_item_id)
+                    if _existing_fpi_put is None or not _existing_fpi_put.auto_created:
+                        wi.feo_planned_item_id = None
+                else:
+                    wi.feo_planned_item_id = _new_fpi_id_put
             if (_wi_cat_changing or old_status == "draft") and wi.feo_planned_item_id is not None:
-                await assert_wish_item_category_from_plan(db, wi, wi.feo_category_id)
+                await assert_wish_item_category_from_plan(
+                    db, wi, wi.feo_category_id, is_advance_report=_is_advance_wish_put,
+                )
             if _wi_cat_changing or old_status == "draft":
                 await assert_no_goods_in_payroll(db, wi.feo_category_id, [wi])
             if 'over_plan' in item_data:
@@ -943,6 +942,31 @@ async def update_wish(
                 if _rem_cnt == 0:
                     _ep.planned_quantity = 0
             await db.flush()
+
+    if _is_advance_wish_put and wish.items:
+        from app.services.advance_wish_sync import apply_wish_item_feo_link_to_purchase_item
+        from app.services.advance_auto_plan import sync_advance_auto_plan_items
+        _wi_map_put = {wi.id: wi for wi in (wish.items or []) if wi.id is not None}
+        if _wi_map_put:
+            _adv_pis_put = (await db.execute(
+                select(PurchaseItem).where(PurchaseItem.wish_item_id.in_(set(_wi_map_put.keys())))
+                .order_by(PurchaseItem.id)
+            )).scalars().all()
+            for _pi_put in _adv_pis_put:
+                _wi_put = _wi_map_put.get(_pi_put.wish_item_id)
+                if _wi_put is not None:
+                    apply_wish_item_feo_link_to_purchase_item(_pi_put, _wi_put)
+            if _adv_pis_put:
+                await sync_advance_auto_plan_items(
+                    _adv_pis_put, wish.feo_category_id, db,
+                    note=f"авансовым отчётом (заявка №{wish.id})",
+                    per_item_mode=bool(getattr(wish, "feo_per_item", False)),
+                )
+                for _pi_put in _adv_pis_put:
+                    _wi_put = _wi_map_put.get(_pi_put.wish_item_id)
+                    if _wi_put is not None:
+                        _wi_put.feo_planned_item_id = _pi_put.feo_planned_item_id
+                        _wi_put.feo_category_id = _pi_put.feo_category_id
 
     # W2: re-approval trigger for submitted/approved/converted wishes
     # A1 fix: сбрасываем согласование ТОЛЬКО при изменении существенных полей.

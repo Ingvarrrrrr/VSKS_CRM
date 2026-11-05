@@ -285,21 +285,50 @@ async def _ensure_feo_categories_assigned(wish, items, db: AsyncSession) -> None
     """
     from app.models.feo_category import FeoCategory
 
+    is_advance = getattr(wish, "source", None) == "advance_report"
+    per_item = bool(getattr(wish, "feo_per_item", False))
     wish_cat_id = wish.feo_category_id
     ref_ids = {i for i in ({wish_cat_id} | {_item_field(it, 'feo_category_id') for it in items}) if i}
-    valid_ids: set[int] = set()
+    valid_cats: dict[int, FeoCategory] = {}
+    parent_ids: set[int] = set()
     if ref_ids:
-        valid_ids = set((await db.execute(
-            select(FeoCategory.id).where(FeoCategory.id.in_(ref_ids))
-        )).scalars().all())
+        cat_rows = (await db.execute(
+            select(FeoCategory).where(FeoCategory.id.in_(ref_ids))
+        )).scalars().all()
+        valid_cats = {c.id: c for c in cat_rows}
+        if is_advance:
+            parent_ids = set((await db.execute(
+                select(FeoCategory.parent_id).where(FeoCategory.parent_id.in_(ref_ids))
+            )).scalars().all())
 
+    valid_ids = set(valid_cats.keys())
     wish_cat_ok = wish_cat_id is None or wish_cat_id in valid_ids
     problem_names: list[str] = []
+    problem_ids: list[int] = []
+    undetermined_names: list[str] = []
+    non_leaf_names: list[str] = []
     for it in items:
         item_cat = _item_field(it, 'feo_category_id')
-        eff_cat = item_cat or wish_cat_id
+        eff_cat = (item_cat or wish_cat_id) if per_item else (wish_cat_id or item_cat)
+        item_name_str = str(_item_field(it, 'item_name') or 'без названия')
+        item_id_val = _item_field(it, 'id')
         if eff_cat is None or eff_cat not in valid_ids:
-            problem_names.append(str(_item_field(it, 'item_name') or 'без названия'))
+            problem_names.append(item_name_str)
+            if item_id_val is not None:
+                problem_ids.append(int(item_id_val))
+        elif is_advance:
+            cat_obj = valid_cats[eff_cat]
+            cat_name_norm = (cat_obj.name or "").strip().lower()
+            if cat_name_norm.startswith("не определена"):
+                problem_names.append(item_name_str)
+                undetermined_names.append(item_name_str)
+                if item_id_val is not None:
+                    problem_ids.append(int(item_id_val))
+            elif eff_cat in parent_ids:
+                problem_names.append(item_name_str)
+                non_leaf_names.append(item_name_str)
+                if item_id_val is not None:
+                    problem_ids.append(int(item_id_val))
 
     if not problem_names and wish_cat_ok:
         return
@@ -308,26 +337,41 @@ async def _ensure_feo_categories_assigned(wish, items, db: AsyncSession) -> None
     suffix = f" и ещё {len(problem_names) - 10} поз." if len(problem_names) > 10 else ""
     parts: list[str] = []
     if problem_names:
-        parts.append(
-            f"у следующих позиций нет категории ФЭО, либо она ссылается на удалённую "
-            f"из справочника категорию: {names_list}{suffix}"
-        )
+        if is_advance and (undetermined_names or non_leaf_names):
+            parts.append(
+                f"у следующих позиций авансового отчёта не выбрана конкретная конечная категория ФЭО "
+                f"(указана «Не определена» или промежуточная папка): {names_list}{suffix}"
+            )
+        else:
+            parts.append(
+                f"у следующих позиций нет категории ФЭО, либо она ссылается на удалённую "
+                f"из справочника категорию: {names_list}{suffix}"
+            )
     if not wish_cat_ok:
         parts.append(
             "категория ФЭО самой заявки была удалена из справочника "
             "(структуру ФЭО субсидии пересоздавали)"
         )
-    message = (
-        "Невозможно перенести заявку в План закупок: " + "; ".join(parts) + ". "
-        "Выберите категорию ФЭО для каждой позиции (или для заявки целиком в разделе "
-        "«Категория ФЭО»), а если категория неизвестна — выберите «Не определена». "
-        "Без категории закупка не попадёт ни в один план ФЭО и её сумма потеряется."
-    )
+    if is_advance:
+        message = (
+            "Невозможно согласовать авансовый отчёт: " + "; ".join(parts) + ". "
+            "Для авансового отчёта плановые позиции создаются автоматически, но необходимо выбрать "
+            "конечную категорию ФЭО, в которой они будут созданы — единую для всего отчёта или "
+            "отдельную для каждой позиции (переключатель «Разные категории ФЭО для каждого товара»)."
+        )
+    else:
+        message = (
+            "Невозможно перенести заявку в План закупок: " + "; ".join(parts) + ". "
+            "Выберите категорию ФЭО для каждой позиции (или для заявки целиком в разделе "
+            "«Категория ФЭО»), а если категория неизвестна — выберите «Не определена». "
+            "Без категории закупка не попадёт ни в один план ФЭО и её сумма потеряется."
+        )
     raise HTTPException(
         status_code=409,
         detail={
             "message": message,
             "error_code": "missing_feo_category",
+            "missing_item_ids": problem_ids,
             "missing_item_names": problem_names,
         },
     )
@@ -343,15 +387,15 @@ async def _ensure_planned_items_assigned(wish, items, db: AsyncSession) -> None:
     или созданных кнопкой «Создать в плане закупок») до финального согласования
     согласующий не может понять, превышает ли заявка план или всё в норме.
 
-    Авансовые отчёты (wish.source == 'advance_report') пропускаются — их плановые
-    позиции заводятся автоматически из позиций чека.
+    Авансовые отчёты (source == 'advance_report') освобождены от ручного выбора плановых
+    позиций — для них плановые позиции создаются автоматически в выбранных категориях ФЭО
+    (выбор самих конечных категорий ФЭО проверяет _ensure_feo_categories_assigned).
     Листовая категория ФЭО с собственным ручным планом (planned_quantity * planned_amount > 0)
     сама выступает плановой позицией в /feo-categories/plan-positions (kind='plan_position'
     или 'feo_article', feo_planned_item_id при её выборе остаётся None).
     """
     if getattr(wish, "source", None) == "advance_report":
         return
-
     from app.models.feo_planned_item import FeoPlannedItem
     from app.models.feo_category import FeoCategory
 

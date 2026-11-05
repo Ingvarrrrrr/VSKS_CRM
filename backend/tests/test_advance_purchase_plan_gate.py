@@ -16,10 +16,39 @@ import pytest
 from app.models.wish import Wish
 
 
-async def _create_advance_purchase(client, auth_headers, price=500):
+async def _create_advance_purchase(client, auth_headers, price=500, db_session=None):
+    feo_category_id = None
+    subsidy_id = None
+    if db_session is not None:
+        import uuid
+        from decimal import Decimal
+        from app.models.subsidy import Subsidy
+        from app.models.feo_category import FeoCategory
+        sub = Subsidy(
+            name=f"AdvSub-{uuid.uuid4().hex[:6]}",
+            year=2026,
+            budget=Decimal("1000000"),
+            require_planned_dates=False,
+            status="approved",
+        )
+        db_session.add(sub)
+        await db_session.flush()
+        cat = FeoCategory(
+            subsidy_id=sub.id,
+            parent_id=None,
+            level=1,
+            name=f"AdvCat-{uuid.uuid4().hex[:6]}",
+            budget=Decimal("500000"),
+        )
+        db_session.add(cat)
+        await db_session.commit()
+        subsidy_id = sub.id
+        feo_category_id = cat.id
     payload = {
         "purchase_method": "advance",
         "subject": "Авансовый отчёт — тест гейта",
+        "subsidy_id": subsidy_id,
+        "feo_category_id": feo_category_id,
         "items": [
             {
                 "item_name": "Такси",
@@ -28,6 +57,7 @@ async def _create_advance_purchase(client, auth_headers, price=500):
                 "unit": "шт",
                 "unit_price": price,
                 "total_price": price,
+                "feo_category_id": feo_category_id,
             }
         ],
     }
@@ -118,7 +148,7 @@ async def test_final_decide_moves_advance_purchase_to_delivered_automatically(
     # согласующего (владелец, 2026-09-29; см. test_wish_top_approver_subsidy_edit_gate.py).
     manager = await make_user(role="org_admin", last_name="Иванов")
 
-    data = await _create_advance_purchase(client, auth_headers)
+    data = await _create_advance_purchase(client, auth_headers, db_session=db_session)
     purchase_id = data["id"]
     wish_id = data["wish_id"]
 
@@ -161,7 +191,7 @@ async def test_final_decide_without_receipt_leaves_advance_in_wishes_with_warnin
     «→ План закупок»/повторный ручной прыжок остаётся доступна в карточке."""
     manager = await make_user(role="org_admin", last_name="Петров")
 
-    data = await _create_advance_purchase(client, auth_headers)
+    data = await _create_advance_purchase(client, auth_headers, db_session=db_session)
     purchase_id = data["id"]
     wish_id = data["wish_id"]
 
@@ -189,3 +219,145 @@ async def test_final_decide_without_receipt_leaves_advance_in_wishes_with_warnin
     purchase_get = await client.get(f"/api/purchases/{purchase_id}", headers=auth_headers)
     assert purchase_get.status_code == 200, purchase_get.text
     assert purchase_get.json()["status"] == "wishes"
+
+
+@pytest.mark.asyncio
+async def test_advance_approval_requires_final_feo_category_and_supports_per_item_categories(
+    client, auth_headers, admin_headers, db_session, test_org, make_user,
+):
+    """Для авансового отчёта плановые позиции создаются автоматически, но согласовать
+    его без выбранной конечной категории ФЭО (или с «Не определена» / промежуточной папкой)
+    нельзя (409 missing_feo_category). При выборе разных категорий ФЭО для каждой позиции
+    (feo_per_item=True) авто-плановые позиции создаются/переносятся каждая в свою категорию."""
+    import uuid
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.models.subsidy import Subsidy
+    from app.models.feo_category import FeoCategory
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.purchase_item import PurchaseItem
+    from app.models.wish_item import WishItem
+    from app.models.purchase_receipt import PurchaseReceipt
+
+    sub = Subsidy(
+        name=f"AdvPerItemSub-{uuid.uuid4().hex[:6]}",
+        year=2026,
+        budget=Decimal("2000000"),
+        require_planned_dates=False,
+        status="approved",
+    )
+    db_session.add(sub)
+    await db_session.flush()
+
+    cat_undetermined = FeoCategory(
+        subsidy_id=sub.id, parent_id=None, level=1, name="Не определена", budget=Decimal("0"),
+    )
+    cat_a = FeoCategory(
+        subsidy_id=sub.id, parent_id=None, level=1, name="Категория А (связь)", budget=Decimal("500000"),
+    )
+    cat_b = FeoCategory(
+        subsidy_id=sub.id, parent_id=None, level=1, name="Категория Б (канцтовары)", budget=Decimal("500000"),
+    )
+    db_session.add_all([cat_undetermined, cat_a, cat_b])
+    await db_session.commit()
+
+    manager = await make_user(role="org_admin", last_name="Сидоров")
+
+    # Создаём авансовый отчёт с двумя позициями в категории «Не определена»
+    payload = {
+        "purchase_method": "advance",
+        "subject": "Авансовый — разные категории по позициям",
+        "subsidy_id": sub.id,
+        "feo_category_id": cat_undetermined.id,
+        "items": [
+            {
+                "item_name": "Сим-карта",
+                "item_type": "услуга",
+                "quantity": 1,
+                "unit": "шт",
+                "unit_price": 400,
+                "total_price": 400,
+                "feo_category_id": cat_undetermined.id,
+            },
+            {
+                "item_name": "Бумага А4",
+                "item_type": "товар",
+                "quantity": 2,
+                "unit": "шт",
+                "unit_price": 300,
+                "total_price": 600,
+                "feo_category_id": cat_undetermined.id,
+            },
+        ],
+    }
+    resp = await client.post("/api/purchases/", json=payload, headers=auth_headers)
+    assert resp.status_code in (200, 201), resp.text
+    purchase_id = resp.json()["id"]
+    wish_id = resp.json()["wish_id"]
+
+    db_session.add(PurchaseReceipt(purchase_id=purchase_id, fiscal_document_number=999, source="manual"))
+    await db_session.commit()
+
+    cascade_resp = await client.post(
+        f"/api/wishes/{wish_id}/approvers/cascade",
+        json={"top_user_id": manager.id, "mode": "sequential"},
+        headers=auth_headers,
+    )
+    assert cascade_resp.status_code == 200, cascade_resp.text
+    approval_id = cascade_resp.json()["approvers"][0]["id"]
+
+    submit_resp = await client.post(f"/api/wishes/{wish_id}/submit", headers=auth_headers)
+    assert submit_resp.status_code == 200, submit_resp.text
+
+    # Попытка согласовать с категорией «Не определена» должна быть заблокирована (409 missing_feo_category)
+    decide_blocked = await client.post(
+        f"/api/wishes/{wish_id}/approvers/{approval_id}/decide",
+        json={"decision": "approved"},
+        headers=admin_headers,
+    )
+    assert decide_blocked.status_code == 409, decide_blocked.text
+    det = decide_blocked.json().get("details") or decide_blocked.json().get("detail") or decide_blocked.json()
+    assert (det.get("error_code") if isinstance(det, dict) else None) == "missing_feo_category", decide_blocked.text
+
+    # Согласующий включает feo_per_item=True и выбирает для каждой позиции свою категорию ФЭО
+    # (несмотря на то, что у позиций уже есть auto_created feo_planned_item_id!)
+    wish_items = (await db_session.execute(
+        select(WishItem).where(WishItem.wish_id == wish_id).order_by(WishItem.id)
+    )).scalars().all()
+    assert len(wish_items) == 2
+
+    exec_resp = await client.patch(
+        f"/api/wishes/{wish_id}/execution",
+        json={
+            "feo_per_item": True,
+            "items": [
+                {"id": wish_items[0].id, "feo_category_id": cat_a.id, "feo_planned_item_id": None},
+                {"id": wish_items[1].id, "feo_category_id": cat_b.id, "feo_planned_item_id": None},
+            ],
+        },
+        headers=admin_headers,
+    )
+    assert exec_resp.status_code == 200, exec_resp.text
+
+    # Теперь согласование проходит успешно, а авто-плановые позиции находятся в cat_a и cat_b
+    decide_ok = await client.post(
+        f"/api/wishes/{wish_id}/approvers/{approval_id}/decide",
+        json={"decision": "approved"},
+        headers=admin_headers,
+    )
+    assert decide_ok.status_code == 200, decide_ok.text
+    assert decide_ok.json()["status"] == "converted"
+
+    pis = (await db_session.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == purchase_id).order_by(PurchaseItem.id)
+    )).scalars().all()
+    assert len(pis) == 2
+    assert pis[0].feo_category_id == cat_a.id
+    assert pis[1].feo_category_id == cat_b.id
+    assert pis[0].feo_planned_item_id is not None
+    assert pis[1].feo_planned_item_id is not None
+
+    fpi0 = await db_session.get(FeoPlannedItem, pis[0].feo_planned_item_id)
+    fpi1 = await db_session.get(FeoPlannedItem, pis[1].feo_planned_item_id)
+    assert fpi0.auto_created is True and fpi0.feo_category_id == cat_a.id
+    assert fpi1.auto_created is True and fpi1.feo_category_id == cat_b.id

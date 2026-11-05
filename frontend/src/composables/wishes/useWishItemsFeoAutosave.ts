@@ -25,6 +25,7 @@ export function useWishItemsFeoAutosave(deps: {
   const { wishForm, editingWishId, editingWish, wishFeoSelected, wishFormSavedSnapshot, wishPayloadSnapshotJson } = form
 
   const wishItemsFeoSnapshot = ref<Map<number, { feo_category_id: number | null; feo_planned_item_id: number | null }>>(new Map())
+  const wishFeoPerItemSnapshot = ref<boolean>(false)
 
   function snapshotWishItemsFeo() {
     const m = new Map<number, { feo_category_id: number | null; feo_planned_item_id: number | null }>()
@@ -37,6 +38,7 @@ export function useWishItemsFeoAutosave(deps: {
       }
     }
     wishItemsFeoSnapshot.value = m
+    wishFeoPerItemSnapshot.value = !!wishForm.value.feo_per_item
   }
 
   const wishItemsFeoDirtyList = computed(() => {
@@ -65,23 +67,35 @@ export function useWishItemsFeoAutosave(deps: {
   )
 
   const wishFeoHeaderDirty = computed(() =>
-    !!editingWishId.value &&
-    !wishForm.value.feo_per_item &&
-    (wishFeoSelected.value ?? null) !== (wishForm.value.feo_category_id ?? null)
+    !!editingWishId.value && (
+      wishForm.value.feo_per_item !== wishFeoPerItemSnapshot.value ||
+      (!wishForm.value.feo_per_item && (wishFeoSelected.value ?? null) !== (wishForm.value.feo_category_id ?? null))
+    )
   )
 
   function feoExecutionItemsPayload(): { id: number; feo_category_id: number | null; feo_planned_item_id: number | null }[] {
-    const hasPlanLinked = (wishForm.value.items as any[]).some(i => i.feo_planned_item_id != null)
+    const isAdv = editingWish.value?.source === 'advance_report'
+    const hasPlanLinked = !isAdv && (wishForm.value.items as any[]).some(i => i.feo_planned_item_id != null)
     const effectivePerItem = wishForm.value.feo_per_item || hasPlanLinked
     return wishItemsFeoDirtyList.value.map(it => ({
       id: it.id,
-      feo_category_id: (effectivePerItem || it.feo_planned_item_id != null) ? it.feo_category_id : (wishFeoSelected.value ?? null),
+      feo_category_id: (effectivePerItem || (!isAdv && it.feo_planned_item_id != null)) ? it.feo_category_id : (wishFeoSelected.value ?? null),
       feo_planned_item_id: it.feo_planned_item_id,
     }))
   }
 
-  function applyFeoExecutionSuccess(sentFeoCategoryId: number | null | undefined) {
+  function applyFeoExecutionSuccess(sentFeoCategoryId: number | null | undefined, serverWish?: any) {
     if (sentFeoCategoryId != null) wishForm.value.feo_category_id = sentFeoCategoryId
+    if (Array.isArray(serverWish?.items)) {
+      const serverById = new Map<number, any>(serverWish.items.map((si: any) => [si.id, si]))
+      for (const it of wishForm.value.items as any[]) {
+        if (it.id != null && serverById.has(it.id)) {
+          const si = serverById.get(it.id)
+          it.feo_category_id = si.feo_category_id ?? null
+          it.feo_planned_item_id = si.feo_planned_item_id ?? null
+        }
+      }
+    }
     snapshotWishItemsFeo()
     wishFormSavedSnapshot.value = wishPayloadSnapshotJson()
   }
@@ -110,6 +124,9 @@ export function useWishItemsFeoAutosave(deps: {
   watch(() => wishItemsFeoDirtyList.value, (list) => {
     if (list.length > 0 && feoAutosaveApplicable.value) scheduleFeoAutosave()
   })
+  watch(wishFeoHeaderDirty, (dirty) => {
+    if (dirty && feoAutosaveApplicable.value) scheduleFeoAutosave()
+  })
   // Если пока тикал debounce статус заявки перестал быть submitted/approved — гасим
   // таймер без отправки: сработавший PATCH всё равно был бы отклонён backend'ом 400-й.
   watch(feoAutosaveApplicable, (applicable) => {
@@ -132,16 +149,21 @@ export function useWishItemsFeoAutosave(deps: {
     if (wishItemsFeoDirtyList.value.length === 0 && !headerDirty) return true
     const items = feoExecutionItemsPayload()
     const body: any = { items }
-    if (headerDirty) body.feo_category_id = wishFeoSelected.value
+    if (headerDirty) {
+      body.feo_per_item = wishForm.value.feo_per_item
+      if (!wishForm.value.feo_per_item && wishFeoSelected.value != null) {
+        body.feo_category_id = wishFeoSelected.value
+      }
+    }
     feoAutosaveSaving.value = true
     const p = (async (): Promise<boolean> => {
       try {
-        await apiFetch(`/wishes/${editingWishId.value}/execution`, {
+        const res = await apiFetch<any>(`/wishes/${editingWishId.value}/execution`, {
           method: 'PATCH',
           body: JSON.stringify(body),
           suppressErrorDialog: true,
         })
-        applyFeoExecutionSuccess(headerDirty ? body.feo_category_id : undefined)
+        applyFeoExecutionSuccess(headerDirty ? body.feo_category_id : undefined, res)
         showSnack(headerDirty ? 'ФЭО заявки и позиций сохранено' : 'ФЭО сохранено', 'success', { duration: 2000 })
         return true
       } catch (e: any) {
@@ -186,17 +208,18 @@ export function useWishItemsFeoAutosave(deps: {
         execution_deadline: wishForm.value.execution_deadline || null,
         event_id: wishForm.value.event_id,
         feo_category_id: wishFeoSelected.value || wishForm.value.feo_category_id,
+        feo_per_item: wishForm.value.feo_per_item,
         assigned_to: wishForm.value.assigned_to,
       }
       if (wishItemsFeoDirtyList.value.length > 0) {
         body.items = feoExecutionItemsPayload()
       }
-      await apiFetch(`/wishes/${editingWishId.value}/execution`, {
+      const res = await apiFetch<any>(`/wishes/${editingWishId.value}/execution`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       })
       showSnack('Сохранено: исполнитель / срок / мероприятие / ФЭО / получатель')
-      applyFeoExecutionSuccess(body.feo_category_id)
+      applyFeoExecutionSuccess(body.feo_category_id, res)
       await reloadActiveTab()
     } catch (e: any) {
       showSnack(`Ошибка: ${describeFeoExecutionError(e, wishFeoHeaderDirty.value)}`, 'error')

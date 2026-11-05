@@ -31,7 +31,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def sync_advance_auto_plan_items(
-    items, fallback_category_id: Optional[int], db: AsyncSession, *, note: str = "авансовым отчётом",
+    items,
+    fallback_category_id: Optional[int],
+    db: AsyncSession,
+    *,
+    note: str = "авансовым отчётом",
+    per_item_mode: bool = True,
 ) -> None:
     """Синхронизирует привязку к плану ФЭО для позиций авансового отчёта.
 
@@ -90,7 +95,12 @@ async def sync_advance_auto_plan_items(
         if getattr(it, "over_plan", False):
             continue
 
-        eff_cat_id = getattr(it, "feo_category_id", None) or fallback_category_id
+        if not per_item_mode and fallback_category_id is not None:
+            eff_cat_id = fallback_category_id
+            if hasattr(it, "feo_category_id"):
+                it.feo_category_id = fallback_category_id
+        else:
+            eff_cat_id = getattr(it, "feo_category_id", None) or fallback_category_id
         fpi_id = getattr(it, "feo_planned_item_id", None)
         fpi = _fpi_by_id.get(fpi_id) if fpi_id else None
 

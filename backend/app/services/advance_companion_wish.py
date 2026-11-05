@@ -50,6 +50,8 @@ def _purchase_item_to_dict(pi: PurchaseItem) -> dict:
         over_plan=bool(pi.over_plan),
         extra_attrs=pi.extra_attrs or {},
         tz_description=getattr(pi, 'tz_description', None),
+        vat_rate=getattr(pi, 'vat_rate', None),
+        vat_on_top=getattr(pi, 'vat_on_top', None),
     )
 
 
@@ -97,9 +99,15 @@ async def create_advance_companion_wish(
         org_id=resolved_org_id,
         subsidy_id=purchase.subsidy_id,
         feo_category_id=purchase.feo_category_id,
+        feo_per_item=bool(getattr(purchase, "feo_per_item", False)),
         event_id=purchase.event_id,
         justification=purchase.service_note_text,
         estimated_price=estimated_price,
+        vat_mode=getattr(purchase, "vat_mode", None) or "uniform",
+        vat_applicable=getattr(purchase, "vat_applicable", None),
+        vat_rate=getattr(purchase, "vat_rate", None),
+        vat_exemption_article=getattr(purchase, "vat_exemption_article", None),
+        tz_vat_on_top=bool(getattr(purchase, "tz_vat_on_top", False)),
     )
     # Форма договора/контрагент компаньона — тот же единственный хелпер, что и
     # при последующей правке авансового в update_purchase (ПРАВИЛО №6).

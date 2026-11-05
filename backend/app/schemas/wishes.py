@@ -328,6 +328,7 @@ class WishExecutionPatch(BaseModel):
     execution_deadline: Optional[date] = None
     event_id: Optional[int] = None
     feo_category_id: Optional[int] = None
+    feo_per_item: Optional[bool] = None
     # Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): согласующий
     # с правом wish.edit_feo может пересмотреть не только категорию ФЭО, но и
     # субсидию заявки-компаньона авансового отчёта целиком (WishFormDialog.vue,

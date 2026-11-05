@@ -944,6 +944,7 @@ async def create_purchase(
         await sync_advance_auto_plan_items(
             items_data, data.feo_category_id, db,
             note="авансовым отчётом (создание)",
+            per_item_mode=bool(data.feo_per_item),
         )
 
     # Compute total_nmck from items.
@@ -1372,8 +1373,9 @@ async def update_purchase(
         await sync_advance_auto_plan_items(
             items_data, p.feo_category_id, db,
             note=f"авансовым отчётом №{p.purchase_number or p.id} (правка)",
+            per_item_mode=bool(p.feo_per_item),
         )
-    else:
+    elif p.status != "wishes":
         await auto_assign_planned_items(
             items_data, p.feo_category_id, db,
             note=f"закупкой №{p.purchase_number or p.id} (правка вне заявки)",
@@ -1746,6 +1748,7 @@ async def update_purchase(
         from app.models.wish_item import WishItem as WishItemModel
         from app.services.advance_wish_sync import (
             sync_wish_contract_and_contractor,
+            sync_wish_header_from_purchase,
             wish_item_kwargs_from_purchase_item,
         )
         _wish = await db.get(Wish, p.wish_id)
@@ -1753,6 +1756,7 @@ async def update_purchase(
             _wish.estimated_price = items_sum or p.planned_total_price
             _wish.justification = p.service_note_text
             _wish.title = f"Возмещение по авансовому отчёту {p.registry_number or f'#{p.id}'}"[:499]
+            sync_wish_header_from_purchase(_wish, p)
             # Владелец (жалоба по заявке №88, РЕЕ-2026-00962, 2026-09-30): та же
             # синхронизация contract_form/контрагента, что при создании
             # компаньона (см. app/services/advance_wish_sync.py, ПРАВИЛО №6) —

@@ -460,7 +460,7 @@
                 color="primary"
                 hide-details
                 class="mb-3"
-                :disabled="!isWishEditable || hasPlanLinkedItems"
+                :disabled="(!isWishEditable && !canEditWishFeo) || hasPlanLinkedItems"
                 :hint="hasPlanLinkedItems ? 'Включено автоматически: позиции привязаны к плану закупок' : undefined"
                 :persistent-hint="hasPlanLinkedItems"
                 @update:model-value="onWishFeoPerItemChange"
@@ -581,7 +581,7 @@
                   item-shape="purchase"
                   :purchase-id="null"
                   :wish-id="editingWishId"
-                  :is-wish-stage="true"
+                  :is-wish-stage="editingWish?.source !== 'advance_report'"
                   :form-mode="editingWish?.source === 'advance_report' ? 'advance_report' : 'default'"
                   :contract-form="wishForm.contract_form"
                   :default-unit="'шт.'"
@@ -674,6 +674,18 @@
               <v-icon v-if="mobileCollapseActive">{{ isMobileSectionOpen('feo-approver') ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
             </v-card-title>
             <v-card-text v-show="isMobileSectionOpen('feo-approver')" class="pa-4 pt-2">
+              <v-switch
+                v-model="wishForm.feo_per_item"
+                label="Разные категории ФЭО для каждого товара"
+                density="compact"
+                color="primary"
+                hide-details
+                class="mb-3"
+                :disabled="hasPlanLinkedItems"
+                :hint="hasPlanLinkedItems ? 'Включено автоматически: позиции привязаны к плану закупок' : undefined"
+                :persistent-hint="hasPlanLinkedItems"
+                @update:model-value="onWishFeoPerItemChange"
+              />
               <v-alert v-if="hasPlanLinkedItems" type="info" density="compact" variant="tonal" class="mb-2">
                 Категория задана планом закупок: у позиций по плану она не меняется. Категорию
                 дополнительной позиции выбирают в её строке.
@@ -2147,6 +2159,7 @@ const wishContractNoDataText = computed(() => {
 // (сервер держит это тем же правилом, см. app/services/wish_item_category_guard.py,
 // этот computed — только UI-подсказка/замок ДО отправки запроса).
 const hasPlanLinkedItems = computed(() =>
+  editingWish.value?.source !== 'advance_report' &&
   (wishForm.value.items as any[]).some(i => i.feo_planned_item_id != null)
 )
 

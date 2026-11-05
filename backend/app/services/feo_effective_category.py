@@ -48,6 +48,8 @@ async def sync_items_to_header_category(
     new_header_cat_id: Optional[int],
     per_item_mode: bool,
     db,
+    *,
+    is_advance_report: bool = False,
 ) -> list[str]:
     """«Позиции следуют за шапкой» (владелец, прод-баг заявки №206, 20.10.2026):
     при ВЫКЛЮЧЕННОМ per_item (`per_item_mode=False`) смена категории ФЭО шапки
@@ -97,7 +99,7 @@ async def sync_items_to_header_category(
     for it in items:
         if not hasattr(it, "feo_category_id"):
             continue
-        if getattr(it, "feo_planned_item_id", None) is not None:
+        if not is_advance_report and getattr(it, "feo_planned_item_id", None) is not None:
             continue
         if it.feo_category_id == new_header_cat_id:
             continue

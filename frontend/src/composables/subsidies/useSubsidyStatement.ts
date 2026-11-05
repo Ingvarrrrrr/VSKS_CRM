@@ -10,6 +10,9 @@ export interface StatementRowAttachment {
   purchase_id: number
   registry_number: string | null
   sheet_ref: string | null
+  subject?: string | null
+  item_type?: string | null
+  amount?: number
 }
 
 export interface StatementRow {
@@ -30,6 +33,7 @@ export interface StatementRow {
   basis_doc_date?: string | null
   is_procurement: boolean
   attached: StatementRowAttachment[]
+  matched_kind?: 'goods' | 'services' | null
   import_file_name: string | null
 }
 

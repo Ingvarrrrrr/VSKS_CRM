@@ -221,7 +221,12 @@
             </v-window-item>
 
             <v-window-item value="statement">
-              <SubsidyStatementTab :subsidy-id="props.subsidyId" :highlight-number="highlightStatementNumber" />
+              <SubsidyStatementTab
+                ref="statementTabRef"
+                :subsidy-id="props.subsidyId"
+                :highlight-number="highlightStatementNumber"
+                @match="onMatchStatementBp"
+              />
             </v-window-item>
 
             <v-window-item value="not_executed">
@@ -270,7 +275,7 @@
     :subsidy-id="props.subsidyId"
     :bank-payment-id="candidatesBpId"
     :control="control"
-    @attached="control.reload()"
+    @attached="onAllReload"
   />
 
   <SubsidyPaymentControlCreatePurchaseDialog
@@ -279,13 +284,13 @@
     :subsidy-id="props.subsidyId"
     :row="createRow"
     :control="control"
-    @created="control.reload()"
+    @created="onAllReload"
   />
 
   <SubsidyPaymentControlBatchComboDialog
     ref="batchDialogRef"
     :subsidy-id="props.subsidyId"
-    @applied="control.reload()"
+    @applied="onAllReload"
   />
 </template>
 
@@ -390,9 +395,21 @@ async function onExport() {
 
 const candidatesDialog = ref(false)
 const candidatesBpId = ref<number | null>(null)
+const statementTabRef = ref<{ reload?: () => void } | null>(null)
+
 function onFind(row: PaymentControlRow) {
   candidatesBpId.value = row.bank_payment_ids[0] ?? null
   candidatesDialog.value = true
+}
+
+function onMatchStatementBp(bpId: number) {
+  candidatesBpId.value = bpId
+  candidatesDialog.value = true
+}
+
+async function onAllReload() {
+  await control.reload()
+  statementTabRef.value?.reload?.()
 }
 
 const createDialog = ref(false)

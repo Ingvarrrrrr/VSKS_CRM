@@ -11,6 +11,7 @@ app/services/subsidy_payment_control.py, который смотрит толь�
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 from typing import Optional
 
 from sqlalchemy import select
@@ -25,6 +26,56 @@ from app.services.bank_payment_subsidy_scope import subsidy_scope_clause
 from app.services.purchase_sheet_ref import resolve_sheet_ref
 
 
+def resolve_payment_matched_kind(
+    item_types: list[Optional[str]],
+    expense_code: Optional[str],
+    purpose_text: Optional[str],
+    expense_kind: Optional[str] = None,
+) -> str:
+    """Определяет вид оплаченной закупки для цветовой подсветки строк выписки:
+    'goods' — товары (зелёный цвет),
+    'services' — услуги/работы (песочный цвет).
+    """
+    for it in item_types:
+        low = (it or "").lower().strip()
+        if low in ("товар", "товары", "goods"):
+            return "goods"
+        if low in ("услуга", "услуги", "работа", "работы", "services"):
+            return "services"
+
+    ek = (expense_kind or "").lower().strip()
+    if ek in ("товар", "товары", "goods"):
+        return "goods"
+    if ek in ("услуга", "услуги", "работа", "работы", "services"):
+        return "services"
+
+    ec = str(expense_code or "").strip()
+    if not ec and purpose_text:
+        m = re.search(r";\s*(\d{4,})", purpose_text)
+        if m:
+            ec = m.group(1)
+    if ec.startswith("03") or ec.startswith("300"):
+        return "goods"
+    if ec.startswith("02") or ec.startswith("200"):
+        return "services"
+
+    p_low = (purpose_text or "").lower()
+    if any(
+        w in p_low
+        for w in (
+            "закупка товаров",
+            "поставка товар",
+            "закупка мат",
+            "основных средств",
+            "запчаст",
+            "шин",
+            "оборудован",
+        )
+    ):
+        return "goods"
+    return "services"
+
+
 async def build_statement_sheet(db: AsyncSession, subsidy: Subsidy) -> dict:
     bp_rows = (await db.execute(
         select(BankPayment).where(subsidy_scope_clause(subsidy))
@@ -36,7 +87,12 @@ async def build_statement_sheet(db: AsyncSession, subsidy: Subsidy) -> dict:
     pay_rows = []
     if bp_rows:
         pay_rows = (await db.execute(
-            select(Payment).where(Payment.bank_payment_id.in_([bp.id for bp in bp_rows]))
+            select(Payment)
+            .join(Purchase, Purchase.id == Payment.purchase_id)
+            .where(
+                Purchase.subsidy_id == subsidy.id,
+                Payment.bank_payment_id.in_([bp.id for bp in bp_rows]),
+            )
         )).scalars().all()
     payments_by_bp: dict[int, list[Payment]] = defaultdict(list)
     for pay in pay_rows:
@@ -64,15 +120,30 @@ async def build_statement_sheet(db: AsyncSession, subsidy: Subsidy) -> dict:
         raw_code = (bp.raw_json or {}).get("КОД РАСХОДОВ") or (bp.raw_json or {}).get("Код расходов")
         short_code = str(raw_code).strip() if raw_code else (str(bp.expense_code)[:4] if bp.expense_code else None)
         attached = []
+        attached_item_types: list[Optional[str]] = []
         for pay in payments_by_bp.get(bp.id, []):
             p = purchase_map.get(pay.purchase_id)
-            if p is None:
+            if p is None or p.subsidy_id != subsidy.id:
                 continue
+            attached_item_types.append(p.item_type)
             attached.append({
                 "purchase_id": p.id,
                 "registry_number": p.registry_number,
                 "sheet_ref": resolve_sheet_ref(p),
+                "subject": p.subject or p.item_name,
+                "item_type": p.item_type,
+                "amount": float(pay.amount or 0),
             })
+        matched_kind = (
+            resolve_payment_matched_kind(
+                attached_item_types,
+                bp.expense_code,
+                bp.purpose_text,
+                meta.kind if meta else None,
+            )
+            if attached
+            else None
+        )
         out_rows.append({
             "id": bp.id,
             "payment_number": bp.payment_number,
@@ -90,6 +161,7 @@ async def build_statement_sheet(db: AsyncSession, subsidy: Subsidy) -> dict:
             "basis_doc_number": bp.basis_doc_number,
             "basis_doc_date": bp.basis_doc_date.isoformat() if bp.basis_doc_date else None,
             "attached": attached,
+            "matched_kind": matched_kind,
             "import_file_name": import_map.get(bp.import_id) if bp.import_id else None,
         })
 

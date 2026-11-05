@@ -173,6 +173,133 @@ def _word_stems(text: str) -> set[str]:
     return {w[:5] if len(w) >= 6 else w for w in words if len(w) >= 3}
 
 
+_PURPOSE_STOP_STEMS = {
+    "согла", "догов", "контр", "реест", "закуп", "оплат", "постав", "товар",
+    "услуг", "работ", "матер", "запас", "средс", "обесп", "расхо", "прочи",
+    "проче", "иных", "други", "анало", "выпла", "счет", "счёт", "акт", "упд",
+    "накла", "ндс", "без", "руб", "коп", "год", "месяц", "числ", "том",
+}
+
+_PURPOSE_SYNONYM_GROUPS: list[tuple[tuple[str, ...], set[str]]] = [
+    (("шин", "автошин", "резин", "ikon", "nokian", "cordiant"), {"шин", "резин", "колес", "автош", "ikon"}),
+    (("бочк",), {"бочк", "емкос", "канис", "тара", "тары"}),
+    (("насос", "помп"), {"насос", "перек", "помп", "мотоп"}),
+    (("перевоз", "гр.люд", "пассаж", "проезд", "билет", "трансфер"), {"перев", "проез", "пасса", "билет", "транс", "автоб", "маршр"}),
+    (("техобсл", "обслуж", "ремонт", "тормоз", "диагност"), {"техоб", "обслу", "ремон", "тормо", "диагн", "уаз", "патри", "haval", "dargo", "lada", "junfe", "газел", "собол", "нива", "то"}),
+    (("шиномонт", "бортиров", "баланс", "переобув"), {"шином", "борти", "балан", "перео", "колес", "шин", "уаз", "патри", "haval", "dargo", "lada", "junfe", "газел", "нива"}),
+    (("мойк", "химчист"), {"мойк", "мойка", "химчи", "чистк", "атриб", "уаз", "патри", "haval", "lada", "junfe"}),
+    (("страхован", "автогражд", "осаго", "каско"), {"страх", "осаго", "каско", "полис", "автог", "уаз", "патри", "haval", "lada", "junfe"}),
+    (("медосмотр", "предрейс", "предр", "техосмотр"), {"медос", "предр", "медиц", "техос", "осмот", "водит"}),
+    (("питан", "орг пит", "обед", "завтрак", "ужин", "кофе"), {"питан", "обед", "завтр", "ужин", "кофе", "вода", "проду", "сухпа"}),
+    (("проживан", "гостин", "отел", "хостел"), {"прожи", "гости", "отел", "хосте", "ночле"}),
+    (("брендир", "дизайн", "грав", "руч", "блокн", "кален", "ежед", "пак", "пресс", "стат", "сувенир", "наград"), {
+        "бренд", "дизай", "грави", "ручк", "ручек", "блокн", "кален", "ежедн", "пакет", "пресс", "стату", "награ", "сувен", "полиг", "флаг", "банне", "атриб", "печат"
+    }),
+    (("футб", "комбин", "шапк", "куртк", "костюм", "жилет", "кепк", "бейсбол", "форм", "одежд", "обув", "берц"), {
+        "футбо", "комби", "шапк", "шапка", "куртк", "костю", "жилет", "кепк", "кепи", "бейсб", "форм", "одежд", "обув", "берц", "ботин", "шевск", "нашив"
+    }),
+    (("saby", "сбис", "1с", "консультант", "астрал", "калуг"), {"сбис", "saby", "1с", "консу", "автом", "прогр", "лицен", "астра", "калуг", "систе"}),
+    (("аренд", "помещ", "коммунал"), {"аренд", "помещ", "комму", "здани"}),
+]
+
+
+def extract_payment_subject_info(purpose_text: Optional[str]) -> dict:
+    """Извлекает из назначения платежа выписки конкретный предмет оплаты
+    (после двоеточия `Закупка ...: <предмет>`, без дат, номеров документов и НДС)
+    и возвращает нормализованные корни/синонимы для строгой проверки позиций."""
+    if not purpose_text:
+        return {"core_subject": "", "core_stems": set(), "expanded_stems": set()}
+
+    txt = purpose_text.strip()
+    if ":" in txt:
+        core = txt.rsplit(":", 1)[-1]
+    else:
+        core = re.sub(r"^\([^)]*\)\s*", "", txt)
+        core = re.sub(r"Соглашение\s+\S+\s+от\s+\d{2}\.\d{2}\.\d{4}\s*", "", core, flags=re.IGNORECASE)
+        core = re.sub(r"(Договор|Контракт|Реестр\s+док\.-осн\.|УПД|Счет|Счёт|Акт)\s+\S+\s+от\s+\d{2}\.\d{2}\.\d{4}[,\s]*", "", core, flags=re.IGNORECASE)
+
+    # Убираем хвост: месяц.год (05.2026), НДС..., Без НДС
+    core = re.sub(r"\b(за\s+)?\d{2}\.\d{4}(г\.?)?\b", " ", core, flags=re.IGNORECASE)
+    core = re.sub(r"\b(в\s+т\.?\s*ч\.?\s*)?ндс\s*[\d.,]*", " ", core, flags=re.IGNORECASE)
+    core = re.sub(r"\bбез\s+ндс\b", " ", core, flags=re.IGNORECASE)
+    core_clean = re.sub(r"\s+", " ", core).strip(" .,;:-")
+
+    raw_words = re.findall(r"[а-яёa-z0-9]{2,}", core_clean.lower().replace("ё", "е"))
+    core_stems: set[str] = set()
+    for w in raw_words:
+        if w.isdigit():
+            continue
+        if w in ("то", "гсм", "сиз", "боп", "осаго", "каско", "сбис", "упд"):
+            core_stems.add(w)
+            continue
+        if len(w) < 3:
+            continue
+        st = w[:5] if len(w) >= 6 else w
+        if st not in _PURPOSE_STOP_STEMS:
+            core_stems.add(st)
+
+    expanded = set(core_stems)
+    core_low = core_clean.lower().replace("ё", "е")
+    for triggers, syns in _PURPOSE_SYNONYM_GROUPS:
+        if any(tr in core_low for tr in triggers):
+            expanded |= syns
+
+    return {
+        "core_subject": core_clean,
+        "core_stems": core_stems,
+        "expanded_stems": expanded,
+    }
+
+
+def unit_matches_payment_subject(u: CandidateUnit, subj_info: dict, purpose_text: Optional[str] = None) -> bool:
+    """Проверяет, соответствует ли позиция закупки `u` предмету платежа из выписки.
+    Учитывает собственное название позиции и конечную (листовую) подкатегорию ФЭО
+    (но НЕ гигантскую корневую категорию «Прочие расходы › Расходы закупка товаров...»,
+    чтобы общие слова корневой категории не давали ложных совпадений)."""
+    expanded: set[str] = subj_info.get("expanded_stems") or set()
+    core_low = (subj_info.get("core_subject") or "").lower().replace("ё", "е")
+    p_low = (purpose_text or "").lower().replace("ё", "е")
+
+    own_text = " ".join([u.subject or ""] + (u.item_names or [])).lower().replace("ё", "е")
+    # Листовая категория ФЭО (последние 1–2 сегмента пути, только если они короче 90 символов — не общий абзац)
+    leaf_feo_text = ""
+    if u.feo_category_name:
+        parts = [seg.strip() for seg in u.feo_category_name.split(" › ") if seg.strip()]
+        short_leafs = [seg for seg in parts[-2:] if len(seg) <= 95 and not seg.lower().startswith("прочие расходы") and not seg.lower().startswith("расходы закупка")]
+        leaf_feo_text = " ".join(short_leafs).lower().replace("ё", "е")
+
+    combined_u_text = f"{own_text} {leaf_feo_text}".strip()
+
+    # 1. Защита от сопоставления налогов («Расходы на транспортный налог») с коммерческими закупками
+    if "налог" in combined_u_text and "налог" not in p_low:
+        return False
+
+    # 2. Защита от путаницы медицинских иммобилизационных шин с автомобильными шинами
+    if ("иммобил" in own_text or "кровоостан" in own_text or "жгут" in own_text) and (
+        "автомоб" in core_low or "ikon" in core_low or "шиномонт" in core_low or "колес" in core_low
+    ):
+        return False
+
+    if not expanded:
+        return True
+
+    u_words = re.findall(r"[а-яёa-z0-9]{2,}", combined_u_text)
+    u_stems: set[str] = set()
+    for w in u_words:
+        if w in ("то", "тс", "гсм", "сиз", "боп", "осаго", "каско", "сбис"):
+            u_stems.add(w)
+        elif len(w) >= 3:
+            st = w[:5] if len(w) >= 6 else w
+            if st not in _PURPOSE_STOP_STEMS:
+                u_stems.add(st)
+
+    for triggers, syns in _PURPOSE_SYNONYM_GROUPS:
+        if any(tr in combined_u_text for tr in triggers):
+            u_stems |= syns
+
+    return bool(expanded & u_stems)
+
+
 def _unit_category_signature(u: CandidateUnit) -> dict:
     combined_text = " ".join([u.subject or ""] + (u.item_names or []))
     semantic = detect_semantic_cluster(combined_text)
@@ -318,34 +445,46 @@ def evaluate_combo_coherence(
         elif u.subject:
             reasons.append(f"позиция: «{u.subject}»")
 
+        has_subject_conflict = False
         if purpose_text:
-            p_stems = _word_stems(purpose_text)
-            if p_stems & sig["stems"]:
-                score += 10
-                reasons.append("совпадает с назначением платежа")
+            subj_info = extract_payment_subject_info(purpose_text)
+            core_subj = subj_info["core_subject"]
+            has_contractor_match = _unit_payee_priority(u, payee_name, payee_inn) == 0
 
+            u_own_low = f"{u.subject or ''} {' '.join(u.item_names or [])} {real_feo_path or ''}".lower()
             p_low = purpose_text.lower()
+            if "налог" in u_own_low and "налог" not in p_low:
+                score -= 70
+                has_subject_conflict = True
+                penalties.append("налог не соответствует закупке товаров/услуг в платеже")
+            elif subj_info["expanded_stems"]:
+                if unit_matches_payment_subject(u, subj_info, purpose_text):
+                    score += 12
+                    reasons.append("совпадает с назначением платежа")
+                elif not has_contractor_match:
+                    score -= 55
+                    has_subject_conflict = True
+                    penalties.append(
+                        f"предмет платежа («{core_subj[:60]}») не совпадает с позицией"
+                        if core_subj
+                        else "предмет позиции не совпадает с назначением платежа"
+                    )
+
             is_payment_service = any(
                 w in p_low for w in ("услуг", "работ", "перевозк", "медосмотр", "техосмотр", "обслуживан", "страхован", "шиномонтаж", "бортировк", "мойк", "ремонт")
             )
-            is_payment_goods = "закупка товаров" in p_low or "поставка товар" in p_low
+            is_payment_goods = "закупка товаров" in p_low or "поставка товар" in p_low or "закупка мат" in p_low
             if is_payment_service and sig["item_type"] == "товар":
-                score -= 40
+                score -= 45
+                has_subject_conflict = True
                 penalties.append("товар не соответствует услуге в назначении платежа")
             elif is_payment_goods and sig["item_type"] in ("услуга", "работа"):
-                score -= 30
+                score -= 40
+                has_subject_conflict = True
                 penalties.append("услуга не соответствует закупке товаров в платеже")
 
-            p_sem = detect_semantic_cluster(purpose_text)
-            if p_sem and sig["semantic"]:
-                if p_sem == sig["semantic"]:
-                    score += 8
-                elif not (p_stems & sig["stems"]) and _unit_payee_priority(u, payee_name, payee_inn) != 0:
-                    score -= 30
-                    penalties.append("предмет позиции не совпадает с назначением платежа")
-
         score = max(10, min(99, score))
-        if penalties and score < 60:
+        if has_subject_conflict or (penalties and score < 60):
             prob, plabel = "low", "Маловероятно"
             rtext = "; ".join(penalties + reasons)
         elif needs_approval:
@@ -448,31 +587,51 @@ def evaluate_combo_coherence(
 
     is_payment_service = False
     has_goods = False
+    has_subject_conflict = False
     if purpose_text:
-        p_stems = _word_stems(purpose_text)
-        all_unit_stems = set().union(*(s["stems"] for s in sigs))
-        p_sem = detect_semantic_cluster(purpose_text)
+        subj_info = extract_payment_subject_info(purpose_text)
+        core_subj = subj_info["core_subject"]
         has_contractor_match = any(_unit_payee_priority(u, payee_name, payee_inn) == 0 for u in units)
 
-        if p_stems & all_unit_stems:
-            score += 15
-            reasons.append("совпадает с назначением платежа")
-        elif p_sem and p_sem in distinct_semantics:
-            score += 12
-            reasons.append("предмет совпадает с назначением платежа")
-        elif not has_contractor_match:
-            if p_sem and distinct_semantics and p_sem not in distinct_semantics:
-                score -= 35
-                penalties.append("назначение платежа не совпадает с позициями")
-            elif ":" in purpose_text and not same_feo:
-                score -= 25
-                penalties.append("предмет в назначении платежа не пересекается с позициями")
-
         p_low = purpose_text.lower()
+        has_tax_unit = any(
+            "налог" in f"{u.subject or ''} {' '.join(u.item_names or '')} {u.feo_category_name or ''}".lower()
+            for u in units
+        )
+        if has_tax_unit and "налог" not in p_low:
+            score -= 70
+            has_subject_conflict = True
+            penalties.append("налог не соответствует закупке товаров/услуг в платеже")
+        elif subj_info["expanded_stems"]:
+            matched_units = [u for u in units if unit_matches_payment_subject(u, subj_info, purpose_text)]
+            if len(matched_units) == len(units):
+                score += 18
+                reasons.append("все позиции соответствуют назначению платежа")
+            elif len(matched_units) > 0:
+                # Часть позиций совпала с назначением платежа: допустимо только если ВСЕ позиции имеют одну и ту же конкретную тематику и категорию ФЭО (без подмешивания случайных позиций ради суммы)
+                if same_feo and len(semantics) == len(units) and len(distinct_semantics) == 1:
+                    score += 8
+                    reasons.append("совпадает с назначением платежа")
+                elif not has_contractor_match:
+                    score -= 50
+                    has_subject_conflict = True
+                    penalties.append(
+                        f"в комбинацию подмешаны посторонние позиции, не относящиеся к «{core_subj[:50]}»"
+                    )
+            elif not has_contractor_match:
+                score -= 65
+                has_subject_conflict = True
+                penalties.append(
+                    f"предмет платежа («{core_subj[:60]}») не совпадает с позициями"
+                    if core_subj
+                    else "назначение платежа не совпадает с позициями"
+                )
+
         is_payment_service = any(w in p_low for w in ("услуг", "работ", "перевозк", "медосмотр", "техосмотр", "обслуживан", "страхован"))
         has_goods = any(s["item_type"] == "товар" or (s["semantic"] and s["semantic"] in ("Продукты питания и вода", "ИТ, связь и оргтехника", "Канцелярия и хозтовары")) for s in sigs)
         if is_payment_service and has_goods:
             score -= 60
+            has_subject_conflict = True
             penalties.append("товары не соответствуют запрашиваемым услугам в платеже")
 
     if payee_inn or payee_name:
@@ -488,7 +647,7 @@ def evaluate_combo_coherence(
     score = max(5, min(99, score))
 
     has_service_goods_conflict = bool(purpose_text and is_payment_service and has_goods)
-    if has_service_goods_conflict or (penalties and score < 55):
+    if has_subject_conflict or has_service_goods_conflict or (penalties and score < 55):
         probability = "low"
         probability_label = "Маловероятно"
         reason_text = "; ".join(penalties + reasons)
@@ -500,7 +659,7 @@ def evaluate_combo_coherence(
         probability = "high"
         probability_label = "Очень вероятно"
         reason_text = "; ".join(reasons) if reasons else "совпадает сумма и категория"
-    elif score >= 55:
+    elif score >= 55 and not penalties:
         probability = "medium"
         probability_label = "Вероятно"
         reason_text = "; ".join(reasons + penalties) if (reasons or penalties) else "совпадает по сумме"
@@ -855,13 +1014,32 @@ async def split_uncontracted_multi_item_purchases(
     )).all()
     confirmed_pids = {r[0] for r in confirmed_pids_rows if r[0]}
 
+    from sqlalchemy import or_
+
+    # Закупки со статусом split (разделённые родительские оболочки): их дочерние
+    # многопозиционные закупки без контрагента тоже должны разделяться на единичные позиции,
+    # а пустые оболочки без позиций (вроде «Спорт и туризм», откуда позицию уже перенесли) — удаляться.
+    split_parent_rows = (await db.execute(
+        select(Purchase.id).where(
+            Purchase.subsidy_id == subsidy_id,
+            Purchase.status == "split",
+        )
+    )).all()
+    split_parent_ids = [r[0] for r in split_parent_rows if r[0]]
+
+    parent_cond = (
+        or_(Purchase.parent_purchase_id.is_(None), Purchase.parent_purchase_id.in_(split_parent_ids))
+        if split_parent_ids
+        else Purchase.parent_purchase_id.is_(None)
+    )
+
     purchases = (await db.execute(
         select(Purchase).where(
             Purchase.subsidy_id == subsidy_id,
             Purchase.contractor_id.is_(None),
-            Purchase.parent_purchase_id.is_(None),
+            parent_cond,
             Purchase.stopped_at.is_(None),
-            Purchase.status != "cancelled",
+            Purchase.status.notin_(("cancelled", "split")),
         ).order_by(Purchase.id)
     )).scalars().all()
 
@@ -879,17 +1057,39 @@ async def split_uncontracted_multi_item_purchases(
     for pi in pitems:
         items_by_pid.setdefault(pi.purchase_id, []).append(pi)
 
+    created_count = 0
+
+    # 1. Удаляем пустые дочерние оболочки split-закупок (0 позиций, нет цены договора, нет платежей)
+    # и синхронизируем предмет однопозиционных дочерних закупок с реальным наименованием позиции
+    for p in purchases:
+        if p.id in confirmed_pids:
+            continue
+        pis = items_by_pid.get(p.id, [])
+        if p.parent_purchase_id in split_parent_ids and len(pis) == 0 and p.contract_price is None and p.planned_total_price is None:
+            has_pay = (await db.execute(select(Payment.id).where(Payment.purchase_id == p.id).limit(1))).scalar_one_or_none()
+            if not has_pay:
+                await db.execute(delete(PurchaseSubsidyAllocation).where(PurchaseSubsidyAllocation.purchase_id == p.id))
+                await db.delete(p)
+                created_count += 1
+        elif len(pis) == 1 and pis[0].item_name and p.parent_purchase_id in split_parent_ids:
+            real_name = pis[0].item_name.strip()[:500]
+            if real_name and p.subject != real_name:
+                p.subject = real_name
+                p.item_name = real_name
+                if pis[0].feo_category_id:
+                    p.feo_category_id = pis[0].feo_category_id
+                created_count += 1
+
     multi_purchases = [
         p for p in purchases
         if p.id in items_by_pid and len(items_by_pid[p.id]) > 1
     ]
     if not multi_purchases:
-        return 0
+        return created_count
 
     max_pnum_res = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
     next_pnum = int(max_pnum_res.scalar() or 0) + 1
     year = _date.today().year
-    created_count = 0
 
     for p in multi_purchases:
         pis = items_by_pid[p.id]
@@ -1180,7 +1380,7 @@ async def load_unpaid_candidate_units(
         select(Purchase).where(
             Purchase.subsidy_id == subsidy_id,
             Purchase.stopped_at.is_(None),
-            Purchase.status != "cancelled",
+            Purchase.status.notin_(("cancelled", "split")),
         ).order_by(Purchase.id)
     )).scalars().all()
 
@@ -1235,6 +1435,9 @@ async def load_unpaid_candidate_units(
     units: list[CandidateUnit] = []
     for p in purchases:
         pis = items_by_pid.get(p.id, [])
+        # Игнорируем пустые оболочки без позиций и без цены договора/плана (остатки от разделения закупок)
+        if not pis and p.contract_price is None and p.planned_total_price is None:
+            continue
         pis_sum = sum((Decimal(str(pi.total_price)) for pi in pis if pi.total_price is not None), Decimal(0))
 
         raw_amt = p.contract_price if p.contract_price is not None else (
@@ -1249,7 +1452,10 @@ async def load_unpaid_candidate_units(
         rem_amt = full_amt - already_paid
 
         item_names = [pi.item_name for pi in pis if pi.item_name]
-        subject = (p.subject or p.item_name or (", ".join(item_names[:2]) if item_names else f"Закупка #{p.id}")).strip()
+        if len(pis) == 1 and pis[0].item_name and not p.contractor_id and not (p.subject or "").startswith("Заказ "):
+            subject = pis[0].item_name.strip()
+        else:
+            subject = (p.subject or p.item_name or (", ".join(item_names[:2]) if item_names else f"Закупка #{p.id}")).strip()
         if not any(pi.feo_planned_item_id for pi in pis):
             sig_key = (_norm_subj(subject), full_amt.quantize(Decimal("0.01")))
             unbound_purchase_sigs[sig_key] = unbound_purchase_sigs.get(sig_key, 0) + 1
@@ -1597,6 +1803,23 @@ async def merge_and_attach_combo(
     warnings: list[str] = []
     bp_amt = Decimal(str(bp.amount or 0))
 
+    # Если платёж уже был привязан к каким-то закупкам этой субсидии — сначала отвязываем старые Payment
+    old_pays = (await db.execute(
+        select(Payment)
+        .join(Purchase, Purchase.id == Payment.purchase_id)
+        .where(Payment.bank_payment_id == bp.id, Purchase.subsidy_id == subsidy_id)
+    )).scalars().all()
+    if old_pays:
+        old_pids = {op.purchase_id for op in old_pays if op.purchase_id}
+        for op in old_pays:
+            await db.delete(op)
+        await db.flush()
+        for opid in old_pids:
+            if opid not in {p.id for p in purchases}:
+                old_p = await db.get(Purchase, opid)
+                if old_p:
+                    await recalc_purchase_money(db, old_p)
+
     if merge_purchases and len(purchases) > 1:
         main_p = purchases[0]
         other_ps = purchases[1:]
@@ -1720,13 +1943,16 @@ async def merge_and_attach_combo(
             p0_amt = Decimal(str(p0.contract_price or p0.planned_total_price or p0.total_nmck or 0))
             diff = abs(bp_amt - p0_amt)
             if diff > AMOUNT_TOL:
-                if not approve_amount_diff:
+                if p0_amt > bp_amt and not approve_amount_diff:
+                    # Частичная оплата (транш) по более крупной закупке — разрешаем без изменения суммы договора
+                    pass
+                elif not approve_amount_diff:
                     raise HTTPException(
                         422,
                         f"Сумма закупки ({p0_amt:,.2f} ₽) отличается от суммы выписки ({bp_amt:,.2f} ₽) на {bp_amt - p0_amt:+.2f} ₽. "
                         "Для привязки необходимо подтвердить согласование изменения суммы.".replace(",", " "),
                     )
-                if diff <= APPROVAL_TOL:
+                elif diff <= APPROVAL_TOL:
                     from app.services.payment_control_fix_amount import fix_purchase_amount
                     await fix_purchase_amount(db, p0, bp_amt)
         for p in purchases:

@@ -1,7 +1,7 @@
 <template>
   <div>
-    <div class="d-flex flex-wrap align-center gap-2 mb-3">
-      <v-checkbox-btn v-model="onlyProblem" density="compact" label="Только проблемные" />
+    <div class="d-flex flex-wrap align-center gap-2 mb-2">
+      <v-checkbox-btn v-model="onlyProblem" density="compact" label="Только несопоставленные / проблемные" />
       <v-select
         v-model="articleFilter"
         :items="articleOptions"
@@ -28,6 +28,12 @@
       <span class="text-caption text-medium-emphasis">Показано: {{ filteredRows.length }} / {{ rows.length }}</span>
     </div>
 
+    <div class="d-flex flex-wrap align-center gap-2 mb-3 text-caption">
+      <span class="text-medium-emphasis">Цвета сопоставленных платежей (нажмите на строку для ручного подбора 1 или нескольких закупок):</span>
+      <span class="legend-badge legend-badge-goods">Зелёный — Товары</span>
+      <span class="legend-badge legend-badge-services">Песочный — Услуги</span>
+    </div>
+
     <v-table density="compact">
       <thead>
         <tr>
@@ -41,7 +47,13 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="r in filteredRows" :key="r.key" :class="rowClass(r)">
+        <tr
+          v-for="r in filteredRows"
+          :key="r.key"
+          :class="[rowClass(r), r.bank_payment_ids?.length ? 'clickable-payment-row' : '']"
+          :title="r.bank_payment_ids?.length ? 'Нажмите, чтобы выбрать 1 или несколько закупок для этого платежа' : ''"
+          @click="r.bank_payment_ids?.length ? emit('find', r) : undefined"
+        >
           <td class="text-no-wrap">{{ r.payment_number || '—' }}</td>
           <td class="text-no-wrap">{{ fmtDate(r.payment_date) }}</td>
           <td style="max-width:180px">
@@ -49,15 +61,33 @@
             <div v-if="r.payee_inn" class="text-caption text-medium-emphasis">ИНН {{ r.payee_inn }}</div>
           </td>
           <td class="text-right text-no-wrap">{{ formatCurrency(r.amount) }}</td>
-          <td style="max-width:340px; min-width:200px">
+          <td style="max-width:340px; min-width:200px" @click.stop>
             <PaymentPurposeCell :text="r.purpose_text" />
           </td>
           <td class="text-caption">{{ r.expense_name || r.expense_code || '—' }}</td>
-          <td style="min-width:260px">
+          <td style="min-width:260px" @click.stop>
             <template v-if="r.status === 'match'">
-              <v-icon color="success" size="16">mdi-check-circle</v-icon>
+              <div class="d-flex align-center gap-1 flex-wrap">
+                <v-icon color="success" size="16">mdi-check-circle</v-icon>
+                <span
+                  class="kind-pill"
+                  :class="rowMatchedKind(r) === 'goods' ? 'kind-pill-goods' : 'kind-pill-services'"
+                >
+                  {{ rowMatchedKind(r) === 'goods' ? 'Товар' : 'Услуга' }}
+                </span>
+                <v-btn
+                  size="x-small"
+                  variant="text"
+                  color="primary"
+                  density="compact"
+                  prepend-icon="mdi-link-edit"
+                  @click.stop="emit('find', r)"
+                >
+                  Изменить
+                </v-btn>
+              </div>
               <div v-for="p in r.purchases" :key="p.id" class="d-flex align-center gap-1 flex-wrap ml-1 mt-1">
-                <a :href="`/orders/${p.id}/edit`" target="_blank">
+                <a :href="`/orders/${p.id}/edit`" target="_blank" @click.stop>
                   <v-chip size="x-small" color="success" variant="tonal">{{ p.registry_number || '#' + p.id }}</v-chip>
                 </a>
                 <span v-if="p.sheet_ref" class="text-caption text-medium-emphasis">{{ p.sheet_ref }}</span>
@@ -238,7 +268,7 @@ async function onAttachNearMiss(r: PaymentControlRow, nm: PaymentControlNearMiss
   }
 }
 
-const onlyProblem = ref(true)
+const onlyProblem = ref(false)
 const articleFilter = ref<string | null>(null)
 const search = ref('')
 
@@ -266,7 +296,22 @@ const filteredRows = computed(() => {
   return list
 })
 
+function rowMatchedKind(r: PaymentControlRow): 'goods' | 'services' {
+  if (r.matched_kind === 'goods' || r.matched_kind === 'services') return r.matched_kind
+  for (const p of r.purchases || []) {
+    const it = (p.item_type || '').toLowerCase().trim()
+    if (it === 'товар' || it === 'товары' || it === 'goods') return 'goods'
+    if (it === 'услуга' || it === 'услуги' || it === 'работа' || it === 'services') return 'services'
+  }
+  const ec = String(r.expense_code || '').trim()
+  if (ec.startsWith('03') || ec.startsWith('300')) return 'goods'
+  return 'services'
+}
+
 function rowClass(r: PaymentControlRow): string {
+  if (r.status === 'match') {
+    return rowMatchedKind(r) === 'goods' ? 'row-matched-goods' : 'row-matched-services'
+  }
   if (r.status === 'registry_only' || r.status === 'duplicate') return 'bg-red-lighten-5'
   if (r.status === 'amount_mismatch') return 'bg-orange-lighten-5'
   if (r.status === 'purchases_only' || r.status === 'declared_unconfirmed') return 'bg-amber-lighten-5'
@@ -283,5 +328,56 @@ function fmtDate(d: string | null): string {
 .near-miss-block {
   border-left: 2px solid rgba(251, 146, 60, 0.5);
   padding-left: 6px;
+}
+.clickable-payment-row {
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.clickable-payment-row:hover {
+  filter: brightness(0.96);
+}
+.row-matched-goods,
+.row-matched-goods > td {
+  background-color: #dcfce7 !important;
+}
+.row-matched-goods > td:first-child {
+  border-left: 4px solid #16a34a !important;
+}
+.row-matched-services,
+.row-matched-services > td {
+  background-color: #f9ecc9 !important;
+}
+.row-matched-services > td:first-child {
+  border-left: 4px solid #d97706 !important;
+}
+.kind-pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.kind-pill-goods {
+  background-color: #16a34a;
+  color: #fff;
+}
+.kind-pill-services {
+  background-color: #b45309;
+  color: #fff;
+}
+.legend-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.legend-badge-goods {
+  background-color: #dcfce7;
+  color: #14532d;
+  border: 1px solid #86efac;
+}
+.legend-badge-services {
+  background-color: #f9ecc9;
+  color: #78350f;
+  border: 1px solid #fcd34d;
 }
 </style>

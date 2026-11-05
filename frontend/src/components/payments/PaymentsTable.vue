@@ -1,21 +1,32 @@
 <template>
-  <v-data-table
-    v-resizable-columns="'payment-registry'"
-    :headers="headers"
-    :items="items"
-    :loading="loading"
-    density="compact"
-    show-expand
-    v-model:expanded="expanded"
-    item-value="id"
-    class="elevation-1"
-    fixed-header
-    height="calc(100vh - 320px)"
-    :items-per-page="50"
-    :items-per-page-options="[25, 50, 100]"
-    :page="page"
-    @update:page="page = $event"
-  >
+  <div>
+    <!-- Цветовая легенда для таблицы выгрузок из банка -->
+    <div class="d-flex flex-wrap align-center gap-2 mb-2 px-1 text-caption">
+      <span class="text-medium-emphasis">Подсветка строк (нажмите на платёж, чтобы сматчить с 1 или несколькими закупками):</span>
+      <span class="registry-legend-badge registry-legend-goods">Зелёный — Товары (сопоставлено)</span>
+      <span class="registry-legend-badge registry-legend-services">Песочный — Услуги (сопоставлено)</span>
+      <span class="registry-legend-badge registry-legend-unmatched">Белый — Не сопоставлено</span>
+    </div>
+
+    <v-data-table
+      v-resizable-columns="'payment-registry'"
+      :headers="headers"
+      :items="items"
+      :loading="loading"
+      density="compact"
+      show-expand
+      v-model:expanded="expanded"
+      item-value="id"
+      class="elevation-1 registry-colored-table"
+      fixed-header
+      height="calc(100vh - 350px)"
+      :items-per-page="50"
+      :items-per-page-options="[25, 50, 100]"
+      :page="page"
+      :row-props="getRowProps"
+      @update:page="page = $event"
+      @click:row="onRowClick"
+    >
     <!-- ColumnHeaderMenu slots — только типизированные core-колонки -->
     <template #header.payment_number="{ column }">
       <ColumnHeaderMenu col-key="payment_number" :title="column.title" col-type="enum"
@@ -443,7 +454,8 @@
         <div class="text-caption">Измените параметры фильтра</div>
       </div>
     </template>
-  </v-data-table>
+    </v-data-table>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -481,6 +493,34 @@ const emit = defineEmits<{
   match: [item: BankPayment]
   unbind: [item: BankPayment]
 }>()
+
+function resolveItemMatchedKind(item: any): 'goods' | 'services' | null {
+  const isMatched = Boolean(
+    item?.matched_contract_id ||
+      item?.matched_purchase_id ||
+      (item?.attached_purchases && item.attached_purchases.length > 0),
+  )
+  if (!isMatched) return null
+  if (item.matched_kind === 'goods' || item.matched_kind === 'services') {
+    return item.matched_kind
+  }
+  const ec = String(item.expense_code || item.expense_code_short || '').trim()
+  if (ec.startsWith('03') || ec.startsWith('300')) return 'goods'
+  return 'services'
+}
+
+function getRowProps({ item }: { item: any }) {
+  const kind = resolveItemMatchedKind(item)
+  if (kind === 'goods') return { class: 'row-matched-goods clickable-registry-row' }
+  if (kind === 'services') return { class: 'row-matched-services clickable-registry-row' }
+  return { class: 'clickable-registry-row' }
+}
+
+function onRowClick(event: Event, { item }: { item: any }) {
+  const target = event?.target as HTMLElement | null
+  if (target && target.closest('a, button, input, .v-btn, .v-chip')) return
+  emit('match', item)
+}
 </script>
 
 <style scoped>
@@ -491,5 +531,47 @@ const emit = defineEmits<{
   vertical-align: top;
   padding-top: 8px;
   padding-bottom: 8px;
+}
+:deep(.clickable-registry-row) {
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+:deep(.clickable-registry-row:hover) {
+  filter: brightness(0.96);
+}
+:deep(.row-matched-goods),
+:deep(.row-matched-goods > td) {
+  background-color: #dcfce7 !important;
+}
+:deep(.row-matched-goods > td:first-child) {
+  border-left: 4px solid #16a34a !important;
+}
+:deep(.row-matched-services),
+:deep(.row-matched-services > td) {
+  background-color: #f9ecc9 !important;
+}
+:deep(.row-matched-services > td:first-child) {
+  border-left: 4px solid #d97706 !important;
+}
+.registry-legend-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.registry-legend-goods {
+  background-color: #dcfce7;
+  color: #14532d;
+  border: 1px solid #86efac;
+}
+.registry-legend-services {
+  background-color: #f9ecc9;
+  color: #78350f;
+  border: 1px solid #fcd34d;
+}
+.registry-legend-unmatched {
+  background-color: #ffffff;
+  color: #4b5563;
+  border: 1px solid #d1d5db;
 }
 </style>

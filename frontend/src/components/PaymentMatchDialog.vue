@@ -33,6 +33,139 @@
           <div v-if="!payment && loadingPayment" class="text-caption text-medium-emphasis">Загрузка...</div>
         </v-sheet>
 
+        <v-tabs v-model="matchMode" density="compact" color="primary" class="mb-3">
+          <v-tab value="subsidy">По закупкам субсидии (1 или несколько)</v-tab>
+          <v-tab value="contract">По договору</v-tab>
+        </v-tabs>
+
+        <div v-if="matchMode === 'subsidy'">
+          <v-autocomplete
+            v-model="selectedSubsidyId"
+            :items="subsidyOptions"
+            item-title="name"
+            item-value="id"
+            label="Субсидия"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="mb-3"
+          />
+
+          <div v-if="loadingSubsidyCandidates" class="d-flex justify-center py-4">
+            <v-progress-circular indeterminate size="28" color="primary" />
+          </div>
+          <template v-else-if="selectedSubsidyId">
+            <!-- Сводка выбранных закупок -->
+            <v-sheet
+              v-if="subSelectedIds.length > 0"
+              rounded="lg"
+              border
+              class="pa-3 mb-3"
+              :class="Math.abs(subDelta) <= 0.02 ? 'bg-green-lighten-5' : 'bg-amber-lighten-5'"
+            >
+              <div class="d-flex align-center justify-space-between flex-wrap gap-2 text-body-2">
+                <div>
+                  <b>Выбрано закупок: {{ subSelectedIds.length }} шт.</b>
+                  · Сумма: <b>{{ formatMoney(subSelectedTotal) }}</b>
+                  · Разница (Δ):
+                  <b :class="Math.abs(subDelta) <= 0.02 ? 'text-success' : 'text-warning'">
+                    {{ subDelta > 0 ? '+' : '' }}{{ formatMoney(subDelta) }}
+                  </b>
+                </div>
+                <v-btn size="x-small" variant="text" @click="subSelectedIds = []">Сбросить</v-btn>
+              </div>
+              <v-checkbox
+                v-if="subSelectedIds.length > 1"
+                v-model="subMergePurchases"
+                density="compact"
+                hide-details
+                color="primary"
+                class="mt-1"
+                label="Объединить выбранные позиции в одну общую закупку и проставить контрагента"
+              />
+              <v-checkbox
+                v-if="Math.abs(subDelta) > 0.02"
+                v-model="subApproveDiff"
+                density="compact"
+                hide-details
+                color="warning"
+                class="mt-1"
+                label="Согласовать расхождение суммы для привязки"
+              />
+            </v-sheet>
+
+            <!-- Найденные комбинации по сумме -->
+            <div v-if="subCombos.length" class="mb-3">
+              <div class="text-caption font-weight-bold mb-1">Автоматически найденные комбинации по сумме:</div>
+              <v-list density="compact" class="border rounded pa-1">
+                <v-list-item
+                  v-for="(cs, cIdx) in subCombos"
+                  :key="'sc-' + cIdx"
+                  class="mb-1 rounded border"
+                  @click="selectSubCombo(cs.purchase_ids)"
+                >
+                  <template #prepend>
+                    <v-checkbox-btn
+                      :model-value="isSubComboSelected(cs.purchase_ids)"
+                      color="primary"
+                      density="compact"
+                      @click.stop="selectSubCombo(cs.purchase_ids)"
+                    />
+                  </template>
+                  <v-list-item-title class="text-body-2 font-weight-medium">
+                    {{ cs.probability_label }} · {{ cs.count }} поз. = {{ formatMoney(cs.total_amount) }}
+                  </v-list-item-title>
+                  <v-list-item-subtitle class="text-caption">
+                    {{ (cs.items || []).map((i: any) => `${i.registry_number || '#' + i.purchase_id} ${i.subject || ''} (${formatMoney(i.amount)})`).join(' + ') }}
+                  </v-list-item-subtitle>
+                </v-list-item>
+              </v-list>
+            </div>
+
+            <!-- Поиск и мультивыбор из всех закупок субсидии -->
+            <v-text-field
+              v-model="subPurchaseSearch"
+              density="compact"
+              variant="outlined"
+              prepend-inner-icon="mdi-magnify"
+              placeholder="Поиск закупок по номеру, сумме, предмету или категории ФЭО..."
+              clearable
+              hide-details
+              class="mb-2"
+            />
+            <v-list density="compact" style="max-height: 280px; overflow-y: auto;" class="border rounded pa-1">
+              <v-list-item
+                v-for="p in filteredSubPurchases"
+                :key="'sp-' + p.purchase_id"
+                class="mb-1 rounded border"
+                :active="subSelectedIds.includes(p.purchase_id)"
+                @click="toggleSubPurchase(p.purchase_id)"
+              >
+                <template #prepend>
+                  <v-checkbox-btn
+                    :model-value="subSelectedIds.includes(p.purchase_id)"
+                    color="primary"
+                    density="compact"
+                    @click.stop="toggleSubPurchase(p.purchase_id)"
+                  />
+                </template>
+                <v-list-item-title class="text-body-2 font-weight-medium">
+                  {{ p.registry_number || `#${p.purchase_id}` }}
+                  <span v-if="p.is_temp_plan" class="text-caption text-deep-purple">(План закупок «Да»)</span>
+                  — {{ p.subject || '—' }}
+                </v-list-item-title>
+                <v-list-item-subtitle class="text-caption">
+                  {{ p.contractor_name || 'Без контрагента' }} · <b>{{ formatMoney(p.contract_price || 0) }}</b>
+                </v-list-item-subtitle>
+                <div v-if="p.feo_category_path" class="text-caption text-medium-emphasis">
+                  {{ p.feo_category_path }} › {{ p.subject || '—' }}
+                </div>
+              </v-list-item>
+            </v-list>
+          </template>
+        </div>
+
+        <div v-else>
         <!-- 27.4-20: Suggested matches block -->
         <div v-if="suggestions.length" class="mb-4">
           <div class="text-subtitle-2 mb-2 d-flex align-center">
@@ -182,6 +315,7 @@
             по {{ payment ? formatMoney(payment.amount / selectedPurchases.length) : '—' }} каждый
           </v-alert>
         </div>
+        </div>
       </v-card-text>
 
       <v-divider />
@@ -189,6 +323,18 @@
       <v-card-actions class="pa-4 gap-2">
         <v-btn variant="text" @click="dialog = false">Отмена</v-btn>
         <v-spacer />
+        <template v-if="matchMode === 'subsidy'">
+          <v-btn
+            color="primary"
+            variant="elevated"
+            :loading="attachingSubCombo"
+            :disabled="!selectedSubsidyId || subSelectedIds.length === 0"
+            @click="confirmSubsidyCombo"
+          >
+            {{ subSelectedIds.length > 1 && subMergePurchases ? `Объединить (${subSelectedIds.length} поз.) и привязать` : `Привязать (${subSelectedIds.length} шт.)` }}
+          </v-btn>
+        </template>
+        <template v-else>
         <v-btn
           variant="outlined"
           color="primary"
@@ -207,6 +353,7 @@
         >
           Подтвердить и создать платежи
         </v-btn>
+        </template>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -293,6 +440,126 @@ const selectedPurchases = ref<number[]>([])
 // Actions
 const savingMatch = ref(false)
 const confirming = ref(false)
+
+// ── Режим сопоставления по закупкам субсидии (1 или несколько сразу) ──────
+const matchMode = ref<'subsidy' | 'contract'>('subsidy')
+const subsidyOptions = ref<{ id: number; name: string }[]>([])
+const selectedSubsidyId = ref<number | null>(null)
+const loadingSubsidyCandidates = ref(false)
+const subCombos = ref<any[]>([])
+const subAllPurchases = ref<any[]>([])
+const subPurchaseSearch = ref('')
+const subSelectedIds = ref<number[]>([])
+const subMergePurchases = ref(true)
+const subApproveDiff = ref(false)
+const attachingSubCombo = ref(false)
+
+const filteredSubPurchases = computed(() => {
+  const q = (subPurchaseSearch.value || '').trim().toLowerCase()
+  if (!q) return subAllPurchases.value
+  return subAllPurchases.value.filter((p: any) => {
+    const t = `${p.registry_number || ''} ${p.subject || ''} ${p.feo_category_path || ''} ${p.contractor_name || ''} ${p.contract_price || ''}`.toLowerCase()
+    return t.includes(q)
+  })
+})
+
+const subSelectedTotal = computed(() => {
+  const map = new Map<number, number>()
+  for (const cs of subCombos.value) {
+    for (const it of cs.items || []) map.set(it.purchase_id, Number(it.amount || 0))
+  }
+  for (const p of subAllPurchases.value) {
+    map.set(p.purchase_id, Number(p.contract_price || 0))
+  }
+  return subSelectedIds.value.reduce((s, id) => s + (map.get(id) || 0), 0)
+})
+
+const subDelta = computed(() => {
+  const bpAmt = Number(payment.value?.amount || 0)
+  return Math.round((bpAmt - subSelectedTotal.value) * 100) / 100
+})
+
+function toggleSubPurchase(pid: number) {
+  const idx = subSelectedIds.value.indexOf(pid)
+  if (idx >= 0) subSelectedIds.value.splice(idx, 1)
+  else subSelectedIds.value.push(pid)
+}
+
+function isSubComboSelected(pids: number[]): boolean {
+  if (!pids?.length || subSelectedIds.value.length !== pids.length) return false
+  const set = new Set(subSelectedIds.value)
+  return pids.every(id => set.has(id))
+}
+
+function selectSubCombo(pids: number[]) {
+  if (isSubComboSelected(pids)) subSelectedIds.value = []
+  else subSelectedIds.value = [...pids]
+}
+
+async function loadSubsidyList() {
+  if (subsidyOptions.value.length) return
+  try {
+    const res = await apiFetch<any>('/subsidies/')
+    const list = Array.isArray(res) ? res : (res?.items || [])
+    subsidyOptions.value = list.map((s: any) => ({ id: s.id, name: s.name || s.title || `Субсидия #${s.id}` }))
+  } catch {
+    subsidyOptions.value = []
+  }
+}
+
+async function loadSubsidyCandidates(sid: number | null) {
+  if (!sid || !props.bankPaymentId) return
+  loadingSubsidyCandidates.value = true
+  subCombos.value = []
+  subAllPurchases.value = []
+  subSelectedIds.value = []
+  try {
+    const res = await apiFetch<any>(`/subsidies/${sid}/payment-control/bank-payments/${props.bankPaymentId}/candidates`)
+    subCombos.value = res.combo_suggestions || []
+    subAllPurchases.value = res.all_unpaid_purchases || []
+    if (subCombos.value.length > 0 && !subCombos.value[0].needs_amount_approval) {
+      subSelectedIds.value = [...subCombos.value[0].purchase_ids]
+    }
+  } catch {
+    subCombos.value = []
+    subAllPurchases.value = []
+  } finally {
+    loadingSubsidyCandidates.value = false
+  }
+}
+
+watch(selectedSubsidyId, (sid) => {
+  if (sid && dialog.value) loadSubsidyCandidates(sid)
+})
+
+async function confirmSubsidyCombo() {
+  if (!selectedSubsidyId.value || !props.bankPaymentId || !subSelectedIds.value.length) return
+  attachingSubCombo.value = true
+  try {
+    const res = await apiFetch<any>(
+      `/subsidies/${selectedSubsidyId.value}/payment-control/bank-payments/${props.bankPaymentId}/attach-combo`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          purchase_ids: subSelectedIds.value,
+          merge_purchases: subMergePurchases.value && subSelectedIds.value.length > 1,
+          approve_amount_diff: subApproveDiff.value,
+        }),
+      },
+    )
+    success(
+      res.merged
+        ? `Позиции (${res.merged_count} шт.) объединены в закупку ${res.registry_number || '#' + res.primary_purchase_id} и привязаны к платёжке`
+        : 'Выбранные закупки привязаны к платёжке',
+    )
+    dialog.value = false
+    emit('updated')
+  } catch (e: any) {
+    error('Не удалось привязать закупки: ' + (e?.payload?.message || e?.detail || e?.message || ''))
+  } finally {
+    attachingSubCombo.value = false
+  }
+}
 
 // 27.4-20: Match suggestions
 interface MatchSuggestion {
@@ -385,6 +652,15 @@ async function loadPayment() {
   loadingPayment.value = true
   try {
     payment.value = await apiFetch<BankPayment>(`/payments/registry/${props.bankPaymentId}`)
+    await loadSubsidyList()
+    const anyPay = payment.value as any
+    if (anyPay?.matched_subsidy_id) {
+      selectedSubsidyId.value = anyPay.matched_subsidy_id
+    } else if (!selectedSubsidyId.value && subsidyOptions.value.length > 0) {
+      selectedSubsidyId.value = subsidyOptions.value[0].id
+    } else if (selectedSubsidyId.value) {
+      await loadSubsidyCandidates(selectedSubsidyId.value)
+    }
     // Pre-load contract suggestions using payee_inn
     if (payment.value.payee_inn) {
       await searchContracts(payment.value.payee_inn)

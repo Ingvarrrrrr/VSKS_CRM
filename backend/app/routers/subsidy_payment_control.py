@@ -327,6 +327,25 @@ async def get_bank_payment_candidates(
         ec_name = ec_row
     bp_dir_str = f"{ec} — {ec_name}" if (ec and ec_name) else (ec_name or ec or None)
 
+    from app.models.payment import Payment as _Payment
+    from app.services.purchase_sheet_ref import resolve_sheet_ref
+    attached_rows = (await db.execute(
+        select(_Payment, _Purchase)
+        .join(_Purchase, _Purchase.id == _Payment.purchase_id)
+        .where(_Payment.bank_payment_id == bp.id, _Purchase.subsidy_id == sid)
+    )).all()
+    currently_attached = [
+        {
+            "purchase_id": p_obj.id,
+            "registry_number": p_obj.registry_number,
+            "sheet_ref": resolve_sheet_ref(p_obj),
+            "subject": p_obj.subject or p_obj.item_name,
+            "item_type": p_obj.item_type,
+            "amount": float(pay_obj.amount or 0),
+        }
+        for pay_obj, p_obj in attached_rows
+    ]
+
     return {
         "bank_payment": {
             "id": bp.id,
@@ -337,12 +356,62 @@ async def get_bank_payment_candidates(
             "payee_inn": bp.payee_inn,
             "expense_direction": bp_dir_str,
             "purpose_text": bp.purpose_text,
+            "currently_attached": currently_attached,
         },
         "items": items,
         "combo_suggestions": combo_suggestions,
         "sign_error_hints": sign_error_hints,
         "all_unpaid_purchases": partial_purchases,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /payment-control/bank-payments/{bp_id}/detach
+# ---------------------------------------------------------------------------
+
+@router.post("/{sid}/payment-control/bank-payments/{bp_id}/detach")
+async def detach_bank_payment_in_subsidy(
+    sid: int,
+    bp_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Отвязывает платёж выписки от закупок этой субсидии, чтобы перепривязать
+    его вручную к другой закупке или комбинации закупок."""
+    await _get_subsidy_for_write(sid, db, current_user)
+    bp = await _get_bank_payment_or_404(bp_id, db)
+
+    from sqlalchemy import select
+    from app.models.payment import Payment
+    from app.models.purchase import Purchase
+    from app.services.purchase_money_writer import recalc_purchase_money
+
+    pay_rows = (await db.execute(
+        select(Payment)
+        .join(Purchase, Purchase.id == Payment.purchase_id)
+        .where(Payment.bank_payment_id == bp.id, Purchase.subsidy_id == sid)
+    )).scalars().all()
+
+    affected_purchase_ids = {pay.purchase_id for pay in pay_rows if pay.purchase_id}
+    for pay in pay_rows:
+        await db.delete(pay)
+    await db.flush()
+
+    for pid in affected_purchase_ids:
+        p = await db.get(Purchase, pid)
+        if p:
+            await recalc_purchase_money(db, p)
+
+    # Проверяем, остались ли ещё привязки в других субсидиях
+    remaining = (await db.execute(
+        select(Payment.id).where(Payment.bank_payment_id == bp.id)
+    )).scalars().first()
+    if not remaining:
+        bp.matched_confirmed = False
+        bp.matched_purchase_id = None
+
+    await db.commit()
+    return {"ok": True, "detached_count": len(pay_rows)}
 
 
 # ---------------------------------------------------------------------------

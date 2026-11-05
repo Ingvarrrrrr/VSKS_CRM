@@ -159,6 +159,7 @@ class BankPaymentOut(BaseModel):
     # Этап 7в: «Куда отнесён» — закупки, на которые платёж РЕАЛЬНО разнесён через
     # Payment(matched_confirmed=true); может быть несколько при allocations-сплите.
     attached_purchases: Optional[List[Dict]] = None
+    matched_kind: Optional[str] = None
     matched_contractor_id: Optional[int] = None
     matched_contract_id: Optional[int] = None
     matched_purchase_id: Optional[int] = None

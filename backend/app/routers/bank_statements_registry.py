@@ -208,6 +208,7 @@ async def list_bank_payment_registry(
                 PurchaseModel.item_name,
                 PurchaseModel.contract_price,
                 PurchaseModel.planned_total_price,
+                PurchaseModel.item_type,
             ).where(PurchaseModel.id.in_(purchase_ids))
         )
         for row in r.all():
@@ -216,16 +217,20 @@ async def list_bank_payment_registry(
                 "purchase_number": row[1],
                 "item_name": row[2],
                 "amount": float(amt) if amt is not None else None,
+                "item_type": row[5],
             }
 
     # Этап 7в: расшифровка кода расходов из справочника.
     expense_codes_present = {bp.expense_code for bp in rows if bp.expense_code}
     expense_code_names: dict[str, str] = {}
+    expense_code_kinds: dict[str, Optional[str]] = {}
     if expense_codes_present:
         r = await db.execute(
-            select(ExpenseCode.code, ExpenseCode.name).where(ExpenseCode.code.in_(expense_codes_present))
+            select(ExpenseCode.code, ExpenseCode.name, ExpenseCode.kind).where(ExpenseCode.code.in_(expense_codes_present))
         )
-        expense_code_names = {row[0]: row[1] for row in r.all()}
+        for row in r.all():
+            expense_code_names[row[0]] = row[1]
+            expense_code_kinds[row[0]] = row[2]
 
     # Этап 7в: «Куда отнесён» — Payment-записи (matched_confirmed=true), созданные
     # групповым разнесением (app/services/payment_lookup.py::attach) ИЛИ ручным
@@ -243,8 +248,13 @@ async def list_bank_payment_registry(
         attach_purchase_info: dict[int, dict] = {}
         if attach_purchase_ids:
             apr = await db.execute(
-                select(PurchaseModel.id, PurchaseModel.purchase_number, PurchaseModel.item_name, PurchaseModel.subject)
-                .where(PurchaseModel.id.in_(attach_purchase_ids))
+                select(
+                    PurchaseModel.id,
+                    PurchaseModel.purchase_number,
+                    PurchaseModel.item_name,
+                    PurchaseModel.subject,
+                    PurchaseModel.item_type,
+                ).where(PurchaseModel.id.in_(attach_purchase_ids))
             )
             attach_purchase_info = {row[0]: row for row in apr.all()}
         for bp_id, purchase_id, amount, basis_label in pay_rows:
@@ -255,9 +265,12 @@ async def list_bank_payment_registry(
                 "purchase_id": purchase_id,
                 "purchase_number": info[1] if info else None,
                 "item_name": (info[2] or info[3]) if info else None,
+                "item_type": info[4] if info else None,
                 "amount": float(amount) if amount is not None else None,
                 "basis_label": basis_label,
             })
+
+    from app.services.subsidy_statement_sheet import resolve_payment_matched_kind
 
     out = []
     for bp in rows:
@@ -284,7 +297,22 @@ async def list_bank_payment_registry(
         else:
             d["expense_code_short"] = None
         d["expense_code_name"] = expense_code_names.get(bp.expense_code) if bp.expense_code else None
-        d["attached_purchases"] = attached_by_bp.get(bp.id, [])
+        attached_list = attached_by_bp.get(bp.id, [])
+        d["attached_purchases"] = attached_list
+        is_matched = bool(attached_list or bp.matched_purchase_id or bp.matched_contract_id)
+        item_types = [ap.get("item_type") for ap in attached_list if ap.get("item_type")]
+        if p and p.get("item_type"):
+            item_types.append(p["item_type"])
+        d["matched_kind"] = (
+            resolve_payment_matched_kind(
+                item_types,
+                bp.expense_code,
+                bp.purpose_text,
+                expense_code_kinds.get(bp.expense_code) if bp.expense_code else None,
+            )
+            if is_matched
+            else None
+        )
         out.append(d)
     return out
 

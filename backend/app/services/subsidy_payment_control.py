@@ -31,6 +31,7 @@ from app.services.bank_payment_subsidy_scope import subsidy_scope_clause
 from app.services.bank_statement_parser import EXECUTED_STATUSES
 from app.services.payment_control_near_miss import build_near_miss
 from app.services.purchase_sheet_ref import resolve_sheet_ref
+from app.services.subsidy_statement_sheet import resolve_payment_matched_kind
 
 AMOUNT_TOL = Decimal("0.02")
 _NO_CODE = "__NO_CODE__"
@@ -88,6 +89,7 @@ class _Row:
     duplicate_with: list
     near_miss: list
     other_subsidy: Optional[dict] = None
+    matched_kind: Optional[str] = None
 
 
 def _purchase_brief(p: Purchase, amount: Decimal) -> dict:
@@ -95,6 +97,7 @@ def _purchase_brief(p: Purchase, amount: Decimal) -> dict:
         "id": p.id,
         "registry_number": p.registry_number,
         "subject": p.subject or p.item_name,
+        "item_type": p.item_type,
         "amount": float(amount),
         # План 2026-10-06-statement-control, контракт API: номер закупки/
         # заказа из таблицы владельца, если есть (ПРАВИЛО №6 — один резолв,
@@ -252,10 +255,23 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
         counts[status] += 1
 
         purchases_out = []
+        item_types_out: list[Optional[str]] = []
         for pay in linked:
             p = purchase_map.get(pay.purchase_id)
             if p is not None:
                 purchases_out.append(_purchase_brief(p, Decimal(str(pay.amount or 0))))
+                item_types_out.append(p.item_type)
+
+        matched_kind = (
+            resolve_payment_matched_kind(
+                item_types_out,
+                code,
+                bp.purpose_text,
+                bucket["kind"],
+            )
+            if purchases_out
+            else None
+        )
 
         rows.append(_Row(
             key=f"bp-{bp.id}",
@@ -275,6 +291,7 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             duplicate_with=[],
             near_miss=[],
             other_subsidy=other_subsidy_info if status == "in_other_subsidy" else None,
+            matched_kind=matched_kind,
         ))
 
     # ------------------------------------------------------------------
@@ -486,6 +503,7 @@ async def build_payment_control(db: AsyncSession, subsidy: Subsidy) -> dict:
             "duplicate_with": r.duplicate_with,
             "near_miss": r.near_miss,
             "other_subsidy": r.other_subsidy,
+            "matched_kind": r.matched_kind,
         }
 
     status_order = {

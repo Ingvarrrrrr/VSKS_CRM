@@ -81,6 +81,7 @@ export interface PaymentControlRowPurchase {
   id: number
   registry_number: string | null
   subject: string | null
+  item_type?: string | null
   amount: number
   sheet_ref?: string | null
 }
@@ -121,6 +122,7 @@ export interface PaymentControlRow {
   duplicate_with: string[]
   near_miss?: PaymentControlNearMiss[]
   other_subsidy?: PaymentControlRowOtherSubsidy | null
+  matched_kind?: 'goods' | 'services' | null
 }
 
 export interface PaymentControlNotExecuted {
@@ -212,6 +214,15 @@ export interface PaymentControlSignErrorHint {
   reason: string
 }
 
+export interface PaymentControlCurrentlyAttachedItem {
+  purchase_id: number
+  registry_number: string | null
+  sheet_ref: string | null
+  subject: string | null
+  item_type?: string | null
+  amount: number
+}
+
 export interface PaymentControlCandidatesBankPaymentInfo {
   id: number
   payment_number: string | null
@@ -221,6 +232,7 @@ export interface PaymentControlCandidatesBankPaymentInfo {
   payee_inn: string | null
   expense_direction: string | null
   purpose_text: string | null
+  currently_attached?: PaymentControlCurrentlyAttachedItem[]
 }
 
 export interface PaymentControlCandidatesResponse {
@@ -424,10 +436,19 @@ export function useSubsidyPaymentControl() {
     })
   }
 
+  async function detachPurchase(
+    subsidyId: number,
+    bpId: number,
+  ): Promise<{ ok: boolean; detached_count: number }> {
+    return apiFetch(`/subsidies/${subsidyId}/payment-control/bank-payments/${bpId}/detach`, {
+      method: 'POST',
+    })
+  }
+
   return {
     data, loading, loadError, load, reload,
     codesData, codesLoading, codesSaving, loadCodes, saveCodes,
-    fetchCandidates, fetchCandidatesFull, attachPurchase, attachCombo, findDiscrepancy, createPurchaseFromPayment,
+    fetchCandidates, fetchCandidatesFull, attachPurchase, attachCombo, detachPurchase, findDiscrepancy, createPurchaseFromPayment,
     exporting, exportXlsx,
     getBatchCombos, batchApplyCombos,
   }

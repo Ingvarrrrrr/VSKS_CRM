@@ -1,7 +1,7 @@
 <template>
   <div>
-    <!-- Панель управления над таблицей -->
-    <div class="d-flex flex-wrap align-center gap-2 mb-3">
+    <!-- Панель управления над таблицей + цветовая легенда -->
+    <div class="d-flex flex-wrap align-center gap-2 mb-2">
       <v-text-field
         v-model="search"
         placeholder="Поиск по № / контрагенту / ИНН / назначению…"
@@ -10,7 +10,7 @@
         variant="outlined"
         hide-details
         clearable
-        style="max-width: 380px"
+        style="max-width: 360px"
       />
       <v-btn
         v-if="activeFilterCount > 0"
@@ -28,6 +28,47 @@
         <v-divider vertical class="my-1" />
         <span>Итог: <b class="text-body-2 text-high-emphasis">{{ formatCurrency(filteredTotal) }}</b></span>
       </div>
+    </div>
+
+    <!-- Интерактивная легенда цветов (клик фильтрует строки) -->
+    <div class="d-flex flex-wrap align-center gap-2 mb-3 text-caption">
+      <span class="text-medium-emphasis mr-1">Подсветка строк (кликните на платёж, чтобы сматчить с 1 или несколькими закупками):</span>
+      <v-chip
+        size="small"
+        :variant="colorFilter === 'all' ? 'flat' : 'outlined'"
+        color="primary"
+        class="cursor-pointer"
+        @click="colorFilter = 'all'"
+      >
+        Все ({{ rows.length }})
+      </v-chip>
+      <v-chip
+        size="small"
+        :variant="colorFilter === 'goods' ? 'flat' : 'tonal'"
+        class="cursor-pointer legend-chip-goods"
+        @click="colorFilter = colorFilter === 'goods' ? 'all' : 'goods'"
+      >
+        <span class="legend-dot legend-dot-goods mr-1" />
+        Зелёный — Товары ({{ goodsMatchedCount }})
+      </v-chip>
+      <v-chip
+        size="small"
+        :variant="colorFilter === 'services' ? 'flat' : 'tonal'"
+        class="cursor-pointer legend-chip-services"
+        @click="colorFilter = colorFilter === 'services' ? 'all' : 'services'"
+      >
+        <span class="legend-dot legend-dot-services mr-1" />
+        Песочный — Услуги ({{ servicesMatchedCount }})
+      </v-chip>
+      <v-chip
+        size="small"
+        :variant="colorFilter === 'unmatched' ? 'flat' : 'outlined'"
+        color="error"
+        class="cursor-pointer"
+        @click="colorFilter = colorFilter === 'unmatched' ? 'all' : 'unmatched'"
+      >
+        Без закупки ({{ unmatchedProcurementCount }})
+      </v-chip>
     </div>
 
     <div v-if="loading" class="d-flex justify-center py-8">
@@ -197,7 +238,15 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="r in filteredRows" :key="r.id" :id="`statement-row-${r.payment_number}`">
+            <tr
+              v-for="r in filteredRows"
+              :key="r.id"
+              :id="`statement-row-${r.payment_number}`"
+              :class="statementRowClass(r)"
+              class="statement-clickable-row"
+              title="Нажмите, чтобы сопоставить платёж с одной или несколькими закупками"
+              @click="emit('match', r.id)"
+            >
               <td class="text-no-wrap font-weight-medium">{{ r.payment_number || '—' }}</td>
               <td class="text-no-wrap">{{ fmtDate(r.payment_date) }}</td>
               <td class="text-caption">{{ statusLabel(r.status) }}</td>
@@ -205,22 +254,49 @@
               <td class="text-no-wrap font-mono">{{ r.payee_inn || '—' }}</td>
               <td style="max-width:220px" class="text-truncate" :title="getRowValue(r, 'basis_doc_display') || ''">{{ getRowValue(r, 'basis_doc_display') || '—' }}</td>
               <td class="text-right text-no-wrap font-weight-medium">{{ formatCurrency(r.amount) }}</td>
-              <td style="max-width:280px">
+              <td style="max-width:280px" @click.stop>
                 <PaymentPurposeCell :text="r.purpose_text" />
               </td>
               <td class="text-caption" style="max-width:180px">{{ r.expense_name || r.expense_code || '—' }}</td>
               <td class="text-caption font-weight-medium font-mono">{{ getRowValue(r, 'expense_code_short') || '—' }}</td>
-              <td style="min-width:160px">
+              <td style="min-width:190px" @click.stop>
                 <template v-if="r.attached && r.attached.length">
+                  <div class="d-flex align-center gap-1 flex-wrap mb-1">
+                    <span
+                      class="matched-kind-badge"
+                      :class="rowMatchedKind(r) === 'goods' ? 'badge-goods' : 'badge-services'"
+                    >
+                      {{ rowMatchedKind(r) === 'goods' ? 'Товар' : 'Услуга' }}
+                    </span>
+                    <v-btn
+                      size="x-small"
+                      variant="text"
+                      color="primary"
+                      density="compact"
+                      prepend-icon="mdi-link-edit"
+                      @click.stop="emit('match', r.id)"
+                    >
+                      Изменить
+                    </v-btn>
+                  </div>
                   <div v-for="a in r.attached" :key="a.purchase_id" class="d-flex align-center gap-1 flex-wrap">
-                    <a :href="`/orders/${a.purchase_id}/edit`" target="_blank">
+                    <a :href="`/orders/${a.purchase_id}/edit`" target="_blank" @click.stop>
                       <v-chip size="x-small" color="success" variant="tonal">{{ a.registry_number || '#' + a.purchase_id }}</v-chip>
                     </a>
                     <span v-if="a.sheet_ref" class="text-caption text-medium-emphasis">{{ a.sheet_ref }}</span>
                   </div>
                 </template>
-                <span v-else-if="r.is_procurement" class="text-error text-caption">—</span>
-                <span v-else class="text-caption text-medium-emphasis">—</span>
+                <div v-else class="d-flex align-center gap-1">
+                  <v-btn
+                    size="x-small"
+                    variant="tonal"
+                    :color="r.is_procurement ? 'primary' : 'grey'"
+                    prepend-icon="mdi-link-plus"
+                    @click.stop="emit('match', r.id)"
+                  >
+                    Сматчить
+                  </v-btn>
+                </div>
               </td>
               <td class="text-caption text-medium-emphasis text-truncate" style="max-width:160px" :title="r.import_file_name || ''">{{ r.import_file_name || '—' }}</td>
             </tr>
@@ -253,14 +329,47 @@ const props = defineProps<{
   highlightNumber?: string | null
 }>()
 
+const emit = defineEmits<{
+  (e: 'match', bankPaymentId: number): void
+}>()
+
 const statement = useSubsidyStatement()
 const rows = computed(() => statement.rows.value)
 const loading = statement.loading
 const loadError = statement.loadError
 
 const search = ref('')
+const colorFilter = ref<'all' | 'goods' | 'services' | 'unmatched'>('all')
 const colFilters = ref<Record<string, FilterValue>>({})
 const localSort = ref<{ key: string; order: 'asc' | 'desc' } | null>(null)
+
+function rowMatchedKind(r: StatementRow): 'goods' | 'services' | null {
+  if (!r.attached || !r.attached.length) return null
+  if (r.matched_kind === 'goods' || r.matched_kind === 'services') return r.matched_kind
+  for (const a of r.attached) {
+    const it = (a.item_type || '').toLowerCase().trim()
+    if (it === 'товар' || it === 'товары' || it === 'goods') return 'goods'
+    if (it === 'услуга' || it === 'услуги' || it === 'работа' || it === 'services') return 'services'
+  }
+  const ec = String(r.expense_code || r.expense_code_short || '').trim()
+  if (ec.startsWith('03') || ec.startsWith('300')) return 'goods'
+  return 'services'
+}
+
+function statementRowClass(r: StatementRow): string {
+  const kind = rowMatchedKind(r)
+  if (kind === 'goods') return 'row-matched-goods'
+  if (kind === 'services') return 'row-matched-services'
+  return ''
+}
+
+const goodsMatchedCount = computed(() => rows.value.filter(r => rowMatchedKind(r) === 'goods').length)
+const servicesMatchedCount = computed(() => rows.value.filter(r => rowMatchedKind(r) === 'services').length)
+const unmatchedProcurementCount = computed(() => rows.value.filter(r => (!r.attached || !r.attached.length) && r.is_procurement).length)
+
+defineExpose({
+  reload: () => statement.load(props.subsidyId),
+})
 
 function setFilter(key: string, val: FilterValue | null) {
   if (!val) {
@@ -275,12 +384,14 @@ function setFilter(key: string, val: FilterValue | null) {
 function clearAllFilters() {
   colFilters.value = {}
   search.value = ''
+  colorFilter.value = 'all'
   localSort.value = null
 }
 
 const activeFilterCount = computed(() => {
   let count = Object.keys(colFilters.value).length
   if (search.value?.trim()) count++
+  if (colorFilter.value !== 'all') count++
   return count
 })
 
@@ -360,6 +471,13 @@ function matchesColumnFilters(r: StatementRow): boolean {
 
 const filteredRows = computed(() => {
   let list = rows.value.filter(matchesColumnFilters)
+  if (colorFilter.value === 'goods') {
+    list = list.filter(r => rowMatchedKind(r) === 'goods')
+  } else if (colorFilter.value === 'services') {
+    list = list.filter(r => rowMatchedKind(r) === 'services')
+  } else if (colorFilter.value === 'unmatched') {
+    list = list.filter(r => (!r.attached || !r.attached.length) && r.is_procurement)
+  }
   const q = search.value?.trim().toLowerCase()
   if (q) {
     const tokens = q.split(/[,;\s|]+/).map(t => t.trim()).filter(Boolean)
@@ -425,5 +543,65 @@ watch(() => props.highlightNumber, async (num) => {
 }
 .font-mono {
   font-family: monospace;
+}
+.statement-clickable-row {
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.statement-clickable-row:hover {
+  filter: brightness(0.96);
+}
+/* Зелёная заливка для сопоставленных товаров */
+.row-matched-goods,
+.row-matched-goods > td {
+  background-color: #dcfce7 !important;
+}
+.row-matched-goods > td:first-child {
+  border-left: 4px solid #16a34a !important;
+}
+/* Песочная заливка для сопоставленных услуг */
+.row-matched-services,
+.row-matched-services > td {
+  background-color: #f9ecc9 !important;
+}
+.row-matched-services > td:first-child {
+  border-left: 4px solid #d97706 !important;
+}
+.matched-kind-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.badge-goods {
+  background-color: #16a34a;
+  color: #fff;
+}
+.badge-services {
+  background-color: #b45309;
+  color: #fff;
+}
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.legend-dot-goods {
+  background-color: #16a34a;
+}
+.legend-dot-services {
+  background-color: #d97706;
+}
+.legend-chip-goods {
+  background-color: #dcfce7 !important;
+  color: #14532d !important;
+  border: 1px solid #86efac !important;
+}
+.legend-chip-services {
+  background-color: #f9ecc9 !important;
+  color: #78350f !important;
+  border: 1px solid #fcd34d !important;
 }
 </style>

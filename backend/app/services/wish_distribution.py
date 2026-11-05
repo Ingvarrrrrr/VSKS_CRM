@@ -155,6 +155,7 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     from app.routers.wishes import (
         _is_meaningful_item,
         _ensure_feo_categories_assigned,
+        _ensure_planned_items_assigned,
         _ensure_needed_dates,
         _eff_date,
     )
@@ -194,6 +195,7 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     # новая/изменившаяся позиция обязана иметь категорию ФЭО и дату потребности
     # прежде чем попасть в закупку.
     await _ensure_feo_categories_assigned(wish, wish_items, db)
+    await _ensure_planned_items_assigned(wish, wish_items, db)
     await _ensure_needed_dates(wish, db, wish_items)
     await _auto_assign_planned_items(
         wish_items, wish.feo_category_id, db, note=f"повторным согласованием заявки №{wish.id}",
@@ -395,6 +397,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     from app.routers.wishes import (
         _is_meaningful_item,
         _ensure_feo_categories_assigned,
+        _ensure_planned_items_assigned,
         _ensure_needed_dates,
         _eff_date,
     )
@@ -511,6 +514,8 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             )
             items_for_gate = [it for it in items_res.scalars().all() if _is_meaningful_item(it)]
             await _ensure_feo_categories_assigned(wish, items_for_gate, db)
+            if purchase_status != "wishes":
+                await _ensure_planned_items_assigned(wish, items_for_gate, db)
             await _ensure_needed_dates(wish, db, items_for_gate)
         for p in existing:
             if p.status == "wishes":
@@ -565,6 +570,8 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     # «Приобретение Пикапов» лишилась категории, а созданная из неё закупка
     # осталась сиротой вне всех планов ФЭО. См. docstring _ensure_feo_categories_assigned.
     await _ensure_feo_categories_assigned(wish, items_full, db)
+    if purchase_status != "wishes":
+        await _ensure_planned_items_assigned(wish, items_full, db)
 
     # Backfill product_id + category by item_name for legacy wish_items
     # (created before product_id was persisted on wish_items). Точное

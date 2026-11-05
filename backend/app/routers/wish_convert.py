@@ -99,8 +99,12 @@ async def convert_wish(
                 select(WishItem).where(WishItem.wish_id == wish.id).order_by(WishItem.id)
             )
             _all_items_existing = items_res.scalars().all()
+            _meaningful_existing = [it for it in _all_items_existing if wishes_core._is_meaningful_item(it)]
             await wishes_core._ensure_feo_categories_assigned(
-                wish, [it for it in _all_items_existing if wishes_core._is_meaningful_item(it)], db,
+                wish, _meaningful_existing, db,
+            )
+            await wishes_core._ensure_planned_items_assigned(
+                wish, _meaningful_existing, db,
             )
             await wishes_core._ensure_needed_dates(wish, db, _all_items_existing)
         # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): эта
@@ -228,7 +232,9 @@ async def convert_wish(
     # мимо _distribute_wish_to_purchases (см. комментарий про «Дефект» ниже про
     # тот же паразитный дубль для «ТЗ не выше плана»/превышения ФЭО) — тем же
     # общим хелпером закрываем и его. См. docstring _ensure_feo_categories_assigned.
-    await wishes_core._ensure_feo_categories_assigned(wish, [it for it in items_full if wishes_core._is_meaningful_item(it)], db)
+    _meaningful_items_full = [it for it in items_full if wishes_core._is_meaningful_item(it)]
+    await wishes_core._ensure_feo_categories_assigned(wish, _meaningful_items_full, db)
+    await wishes_core._ensure_planned_items_assigned(wish, _meaningful_items_full, db)
 
     # W2-гейт в основном пути /convert
     await wishes_core._ensure_needed_dates(wish, db, items_full)

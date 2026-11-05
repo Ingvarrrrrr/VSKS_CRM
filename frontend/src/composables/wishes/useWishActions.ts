@@ -100,7 +100,7 @@ export function useWishActions(deps: {
   const {
     editingWishId, editingWish, wishDialog, isWishEditable,
     wishPayloadSnapshotJson, wishFormSavedSnapshot, saveWish,
-    handleMissingDatesError, handleMissingFeoCategoryError,
+    handleMissingDatesError, handleMissingFeoCategoryError, handleMissingPlannedItemsError,
   } = form
 
   // Submit
@@ -213,7 +213,9 @@ export function useWishActions(deps: {
       form.wishConvertError.value = null
       await reloadActiveTab()
     } catch (e: any) {
-      const handled = (await handleMissingDatesError(e, wish)) || (await handleMissingFeoCategoryError(e, wish))
+      const handled = (await handleMissingDatesError(e, wish))
+        || (await handleMissingFeoCategoryError(e, wish))
+        || (await handleMissingPlannedItemsError(e, wish))
       if (!handled) {
         showSnack(`Ошибка при одобрении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
       }
@@ -532,7 +534,10 @@ export function useWishActions(deps: {
       ctx.router.push(`/orders/${result.purchase_id}/edit`)
     } catch (e: any) {
       const handled = convertingWish.value
-        ? await handleMissingFeoCategoryError(e, convertingWish.value)
+        ? (
+          (await handleMissingFeoCategoryError(e, convertingWish.value))
+          || (await handleMissingPlannedItemsError(e, convertingWish.value))
+        )
         : false
       if (handled) {
         convertDialog.value = false

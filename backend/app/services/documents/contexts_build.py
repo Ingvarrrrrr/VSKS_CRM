@@ -134,7 +134,7 @@ def build_base_context_part1(
         "price_increase": _fmt_money(p.price_increase),
         # Договор
         "contract_number": p.contract_number or "",
-        "contract_date": _fmt_date(p.contract_date) or "__.__._____ г.",
+        "contract_date": _fmt_date(p.contract_date),
         "execution_term": _fmt_date(p.execution_term),
         "execution_term_changed": _fmt_date(p.execution_term_changed),
         "delivery_date": _fmt_date(p.delivery_date),

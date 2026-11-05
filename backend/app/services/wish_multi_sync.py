@@ -78,6 +78,7 @@ async def sync_multi_purchase_from_wish(wish, purchases: list, db: AsyncSession)
     from app.routers.wishes import (
         _is_meaningful_item,
         _ensure_feo_categories_assigned,
+        _ensure_planned_items_assigned,
         _ensure_needed_dates,
         _eff_date,
     )
@@ -105,6 +106,7 @@ async def sync_multi_purchase_from_wish(wish, purchases: list, db: AsyncSession)
     _wish_item_by_id = {it.id: it for it in _all_wish_items}
 
     await _ensure_feo_categories_assigned(wish, wish_items, db)
+    await _ensure_planned_items_assigned(wish, wish_items, db)
     await _ensure_needed_dates(wish, db, wish_items)
     await _auto_assign_planned_items(
         wish_items, wish.feo_category_id, db, note=f"повторным согласованием заявки №{wish.id}",

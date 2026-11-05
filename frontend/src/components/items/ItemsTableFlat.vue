@@ -422,25 +422,29 @@
                    defaultFeoCategoryId — категорию, выбранную один раз в шапке заявки/закупки.
                    Владелец (29.10.2026): видна всегда при hasFeoBinding(item), даже вне режима —
                    readonly дополнительно форсируется ниже, когда показана только из-за привязки. -->
-              <FeoPlannedItemsSelect
+              <div
                 v-if="feoPlannedPerItem || allowPerItemPlan || hasFeoBinding(item)"
-                :readonly="feoReadonly || !(feoPlannedPerItem || allowPerItemPlan)"
-                :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
-                :category-id="effectiveCategoryId(item)"
-                :nodes="feoNodes" :items="plannedItems || []"
-                :subsidy-id="subsidyId"
-                :amount="item.total_price" dense
-                :pending-by-planned-item="pendingByPlannedItem"
-                :pending-items-by-planned-item="pendingItemsByPlannedItem"
-                :purchase-id="purchaseId"
-                :wish-id="wishId"
-                :candidates="itemCandidates ? itemCandidates(item) : undefined"
+                :data-field="`item-feo-planned-select-${item._uid ?? idx}`"
                 style="flex:1 1 320px;min-width:260px"
-                :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price, unitPrice: item.unit_price, itemType: item.item_type, productId: item.product_id }"
-                :is-advance="isAdvance"
-                @update:model-value="(v) => emit('item-planned-change', idx, v)"
-                @planned-item-created="emit('planned-item-created')"
-                @planned-item-deleted="emit('planned-item-deleted')" />
+              >
+                <FeoPlannedItemsSelect
+                  :readonly="feoReadonly || !(feoPlannedPerItem || allowPerItemPlan)"
+                  :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
+                  :category-id="effectiveCategoryId(item)"
+                  :nodes="feoNodes" :items="plannedItems || []"
+                  :subsidy-id="subsidyId"
+                  :amount="item.total_price" dense
+                  :pending-by-planned-item="pendingByPlannedItem"
+                  :pending-items-by-planned-item="pendingItemsByPlannedItem"
+                  :purchase-id="purchaseId"
+                  :wish-id="wishId"
+                  :candidates="itemCandidates ? itemCandidates(item) : undefined"
+                  :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price, unitPrice: item.unit_price, itemType: item.item_type, productId: item.product_id }"
+                  :is-advance="isAdvance"
+                  @update:model-value="(v) => emit('item-planned-change', idx, v)"
+                  @planned-item-created="emit('planned-item-created')"
+                  @planned-item-deleted="emit('planned-item-deleted')" />
+              </div>
             </div>
           </td>
         </tr>

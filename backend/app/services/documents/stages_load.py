@@ -116,6 +116,46 @@ async def framework_contract_guard(p: Purchase, doc_type: str, db: AsyncSession)
     _require_vat_rate_for_doc(p, doc_type)
 
 
-def resolve_final_template(doc_type: str, subsidy_id):
+_CONTRACT_FORM_TO_DOC_TYPE = {
+    "services": "contract_services",
+    "services_food": "contract_services_food",
+    "services_accommodation": "contract_services_accommodation",
+    "services_accommodation_food": "contract_services_accommodation_food",
+    "services_transport": "contract_services_transport",
+    "services_flight": "contract_services_flight",
+    "services_train": "contract_services_train",
+    "goods_single": "contract_goods_single",
+    "gph_individual": "contract_gph_individual",
+    "gph_individual_rid": "contract_gph_individual_rid",
+    "repair_vehicle": "contract_repair_vehicle",
+    "repair_framework": "contract_repair_framework",
+}
+
+
+def resolve_effective_contract_doc_type(doc_type: str, p=None) -> str:
+    """Если запрошен устаревший общий 'contract' или 'contract_tz',
+    перенаправляем на типовой шаблон договора (contract_services /
+    contract_goods_single / по contract_form) и ТЗ для договора
+    (tech_spec_contract)."""
+    if doc_type == "contract" and p is not None:
+        cf = getattr(p, "contract_form", None)
+        if cf and cf in _CONTRACT_FORM_TO_DOC_TYPE:
+            return _CONTRACT_FORM_TO_DOC_TYPE[cf]
+        raw_items = [
+            it for it in (getattr(p, "contract_items", None) or getattr(p, "items", None) or [])
+            if (getattr(it, "item_name", None) or "").strip()
+        ]
+        if raw_items:
+            all_services = all((getattr(it, "item_type", None) or "товар") == "услуга" for it in raw_items)
+        else:
+            all_services = getattr(p, "item_type", None) == "услуга"
+        return "contract_services" if all_services else "contract_goods_single"
+    if doc_type == "contract_tz" and p is not None:
+        return "tech_spec_contract"
+    return doc_type
+
+
+def resolve_final_template(doc_type: str, subsidy_id, p=None):
     """Re-resolve template path now that subsidy_id is known (subsidy override)."""
-    return _resolve_doc_template_path(doc_type, subsidy_id)
+    effective_doc_type = resolve_effective_contract_doc_type(doc_type, p)
+    return _resolve_doc_template_path(effective_doc_type, subsidy_id)

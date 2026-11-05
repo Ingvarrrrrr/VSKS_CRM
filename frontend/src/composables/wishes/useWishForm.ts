@@ -1264,6 +1264,69 @@ export function useWishForm(deps: {
     return true
   }
 
+  // Гейт выбора плановой позиции (владелец, 05.11.2026): финальное согласование /
+  // перевод в План закупок блокируется 409 missing_planned_items, если хотя бы у одной
+  // позиции не выбрана плановая позиция.
+  async function handleMissingPlannedItemsError(e: any, wish: Wish): Promise<boolean> {
+    const det = e?.payload?.details
+    if (e?.status !== 409 || det?.error_code !== 'missing_planned_items') return false
+    const missingIds: number[] = det.missing_item_ids || []
+    const missingNames: string[] = det.missing_item_names || []
+    showSnack(det.message || e.message || 'Выберите плановые позиции перед согласованием', 'error')
+    if (!wishDialog.value) {
+      await openEditDialog(wish)
+    }
+    await nextTick()
+    highlightMissingPlannedItems(missingIds, missingNames)
+    return true
+  }
+
+  function highlightMissingPlannedItems(missingItemIds: number[] = [], missingItemNames: string[] = []) {
+    const items = ((wishForm.value as any).items || []) as any[]
+    let missingIndexes = new Set(
+      items.map((it: any, idx: number) => (it?.id && missingItemIds.includes(it.id)) ? idx : -1).filter((i: number) => i !== -1)
+    )
+    if (!missingIndexes.size && missingItemNames.length) {
+      const namesNorm = new Set(missingItemNames.map(n => String(n).trim().toLowerCase()).filter(Boolean))
+      missingIndexes = new Set(
+        items
+          .map((it: any, idx: number) => namesNorm.has(String(it?.item_name || '').trim().toLowerCase()) ? idx : -1)
+          .filter((i: number) => i !== -1)
+      )
+    }
+    if (!missingIndexes.size) {
+      missingIndexes = new Set(
+        items
+          .map((it: any, idx: number) => {
+            const nonEmpty = (it?.item_name || '').toString().trim() || Number(it?.total_price) || Number(it?.quantity)
+            return (nonEmpty && !it?.feo_planned_item_id) ? idx : -1
+          })
+          .filter((i: number) => i !== -1)
+      )
+    }
+    const highlighted: HTMLElement[] = []
+    missingIndexes.forEach(idx => {
+      const item = items[idx]
+      const uid = item?._uid ?? idx
+      const target = (
+        document.querySelector(`[data-field="item-feo-planned-select-${uid}"]`)
+        || document.querySelector(`[data-field="item-feo-category-select-${uid}"]`)
+        || document.getElementById(`item-row-${uid}`)
+      ) as HTMLElement | null
+      if (target) highlighted.push(target)
+    })
+    if (!highlighted.length) {
+      highlightMissingFeoCategory()
+      return
+    }
+    highlighted[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    highlighted.forEach(el => {
+      el.classList.add('plan-bulk-row-pulse')
+      setTimeout(() => el.classList.remove('plan-bulk-row-pulse'), 3000)
+    })
+    pointArrowsTo(highlighted)
+  }
+
   // ── T3: highlight items without needed_date ──────────────────────────────
   function highlightMissingDateItems(missingItemIds: number[], missingItemNames: string[] = []) {
     if (!missingItemIds.length) return
@@ -1401,8 +1464,8 @@ export function useWishForm(deps: {
     canEditWishFeo, canEditAssignee, canDecideWish, canWaiveTz, canManageWaitingFunds,
     resetForm, openCreateDialog, openEditDialog,
     wishFormSavedSnapshot, buildWishPayload, wishPayloadSnapshotJson, saveWish,
-    handleMissingDatesError, handleMissingFeoCategoryError,
-    highlightMissingDateItems, highlightCommonDateField,
+    handleMissingDatesError, handleMissingFeoCategoryError, handleMissingPlannedItemsError,
+    highlightMissingDateItems, highlightCommonDateField, highlightMissingPlannedItems,
     WISH_FORCE_STATUS_OPTIONS, forceStatusValue, forcingStatus, forceStatus,
     rowForceStatusWish, openRowForceStatus, applyRowForceStatus,
   }

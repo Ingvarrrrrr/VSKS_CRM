@@ -333,6 +333,98 @@ async def _ensure_feo_categories_assigned(wish, items, db: AsyncSession) -> None
     )
 
 
+async def _ensure_planned_items_assigned(wish, items, db: AsyncSession) -> None:
+    """Жёсткий гейт «без выбора плановых позиций заявку нельзя окончательно согласовать» (владелец, 2026-11-05).
+
+    Реальный случай с прода: заявка №247 «Стенды с брендирование ВСКС» была согласована
+    без выбранных плановых позиций у товаров (feo_planned_item_id = None), после чего
+    автозаведение создало плановые позиции из самих же строк заявки, и сравнение плана
+    с ТЗ показало 0 ₽ превышения. Без явного выбора плановых позиций (существующих
+    или созданных кнопкой «Создать в плане закупок») до финального согласования
+    согласующий не может понять, превышает ли заявка план или всё в норме.
+
+    Авансовые отчёты (wish.source == 'advance_report') пропускаются — их плановые
+    позиции заводятся автоматически из позиций чека.
+    Листовая категория ФЭО с собственным ручным планом (planned_quantity * planned_amount > 0)
+    сама выступает плановой позицией в /feo-categories/plan-positions (kind='plan_position'
+    или 'feo_article', feo_planned_item_id при её выборе остаётся None).
+    """
+    if getattr(wish, "source", None) == "advance_report":
+        return
+
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.feo_category import FeoCategory
+
+    wish_cat_id = wish.feo_category_id
+    planned_ids = {
+        i for i in (_item_field(it, "feo_planned_item_id") for it in items) if i is not None
+    }
+    valid_planned_ids: set[int] = set()
+    if planned_ids:
+        valid_planned_ids = set((await db.execute(
+            select(FeoPlannedItem.id).where(
+                FeoPlannedItem.id.in_(planned_ids),
+                FeoPlannedItem.is_active == True,
+            )
+        )).scalars().all())
+
+    cat_ids = {
+        i for i in ({wish_cat_id} | {_item_field(it, "feo_category_id") for it in items}) if i is not None
+    }
+    leaf_plan_cat_ids: set[int] = set()
+    if cat_ids:
+        cats = (await db.execute(
+            select(FeoCategory).where(FeoCategory.id.in_(cat_ids))
+        )).scalars().all()
+        children_parents = set((await db.execute(
+            select(FeoCategory.parent_id).where(FeoCategory.parent_id.in_(cat_ids))
+        )).scalars().all())
+        for c in cats:
+            if c.id not in children_parents:
+                qty = float(c.planned_quantity) if c.planned_quantity is not None else 0.0
+                amt = float(c.planned_amount) if c.planned_amount is not None else 0.0
+                if qty * amt > 0:
+                    leaf_plan_cat_ids.add(c.id)
+
+    problem_ids: list[int] = []
+    problem_names: list[str] = []
+    for it in items:
+        if not _is_meaningful_item(it):
+            continue
+        pid = _item_field(it, "feo_planned_item_id")
+        if pid is not None and pid in valid_planned_ids:
+            continue
+        eff_cat = _item_field(it, "feo_category_id") or wish_cat_id
+        if pid is None and eff_cat is not None and eff_cat in leaf_plan_cat_ids:
+            continue
+        item_id = _item_field(it, "id")
+        if item_id is not None:
+            problem_ids.append(int(item_id))
+        problem_names.append(str(_item_field(it, "item_name") or "без названия"))
+
+    if not problem_names:
+        return
+
+    names_list = ", ".join(f"«{n}»" for n in problem_names[:10])
+    suffix = f" и ещё {len(problem_names) - 10} поз." if len(problem_names) > 10 else ""
+    message = (
+        f"Невозможно согласовать заявку и перенести её в План закупок: "
+        f"у следующих позиций не выбрана плановая позиция плана закупок: {names_list}{suffix}. "
+        f"Без выбора плановых позиций нельзя определить, превышает ли заявка план или всё в норме. "
+        f"Выберите существующую плановую позицию в строке товара (или кнопкой «Привязать к плану»), "
+        f"либо создайте новую кнопкой «Создать в плане закупок»."
+    )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": message,
+            "error_code": "missing_planned_items",
+            "missing_item_ids": problem_ids,
+            "missing_item_names": problem_names,
+        },
+    )
+
+
 def _item_field(it, name: str, default=None):
     """Универсальный доступ к полю позиции: и pydantic/dict-payload (body.items —
     список dict), и ORM WishItem (атрибуты) должны обрабатываться одним предикатом."""

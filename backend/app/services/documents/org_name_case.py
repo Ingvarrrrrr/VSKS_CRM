@@ -27,7 +27,11 @@
 import re
 from typing import List, Optional, Sequence
 
-BUILTIN_EXCEPTIONS: List[str] = ["РФ", "ИНН", "ОГРН"]
+BUILTIN_EXCEPTIONS: List[str] = [
+    "РФ", "ИНН", "ОГРН", "ОГРНИП", "КПП", "БИК", "ОКПО", "ОКВЭД", "НДС",
+    "ООО", "АО", "ПАО", "ЗАО", "АНО", "ИП", "ФГБОУ", "ФГАОУ", "ФГУП", "ГБУ", "МБУ", "УФК",
+    "ДНР", "ЛНР", "ХРО", "ЗРО",
+]
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 _ROMAN_TOKEN_RE = re.compile(r"^[IVXLCDMivxlcdm]+$")

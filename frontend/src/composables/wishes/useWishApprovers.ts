@@ -26,7 +26,12 @@ export function useWishApprovers(deps: {
 }) {
   const { ctx, apiFetch, form, flushFeoAutosave, notifyLocalUpdate, loadWishes, reloadActiveTab } = deps
   const { showSnack, currentUserId, isAdmin, requiresConsent, showExcessWarnings, showPurchaseSync } = ctx
-  const { editingWishId, editingWish, wishForm, isWishEditable, wishPayloadSnapshotJson, wishFormSavedSnapshot, saveWish, handleMissingFeoCategoryError, orgUsers, setIsChainApprover } = form
+  const {
+    editingWishId, editingWish, wishForm, isWishEditable,
+    wishPayloadSnapshotJson, wishFormSavedSnapshot, saveWish,
+    handleMissingFeoCategoryError, handleMissingPlannedItemsError, handleMissingDatesError,
+    orgUsers, setIsChainApprover,
+  } = form
 
   const wishMembers = ref<WishMember[]>([])
   const participantToAdd = ref<number | null>(null)
@@ -309,7 +314,13 @@ export function useWishApprovers(deps: {
       await reloadActiveTab()
       refreshMyPendingApprovals()  // бейдж «мои согласования» в сайдбаре
     } catch (e: any) {
-      const handled = editingWish.value ? await handleMissingFeoCategoryError(e, editingWish.value) : false
+      const handled = editingWish.value
+        ? (
+          (await handleMissingFeoCategoryError(e, editingWish.value))
+          || (await handleMissingPlannedItemsError(e, editingWish.value))
+          || (await handleMissingDatesError(e, editingWish.value))
+        )
+        : false
       if (!handled) {
         showSnack(e?.payload?.message ?? e?.detail ?? e?.message ?? 'Не удалось сохранить решение', 'error')
       }
@@ -324,6 +335,36 @@ export function useWishApprovers(deps: {
       editingWish.value = fresh
       ;(wishForm.value as any).status = fresh.status
       if ((fresh as any).approval_mode) approvalMode.value = (fresh as any).approval_mode
+      // Синхронизируем feo_planned_item_id/feo_category_id/over_plan из свежего ответа сервера,
+      // чтобы открытая карточка после согласования не хранила устаревшие null и последующее
+      // сохранение (PUT /wishes/{id}) не перетирало привязку к плановым позициям (кейс заявки №247).
+      const freshById = new Map<number, any>()
+      for (const fi of (fresh.items || []) as any[]) {
+        if (fi?.id != null) freshById.set(Number(fi.id), fi)
+      }
+      const formItems = ((wishForm.value as any).items || []) as any[]
+      let itemsSynced = false
+      for (const it of formItems) {
+        if (it?.id == null) continue
+        const fi = freshById.get(Number(it.id))
+        if (!fi) continue
+        if (fi.feo_planned_item_id !== undefined && it.feo_planned_item_id !== fi.feo_planned_item_id) {
+          it.feo_planned_item_id = fi.feo_planned_item_id
+          itemsSynced = true
+        }
+        if (fi.feo_category_id !== undefined && it.feo_category_id !== fi.feo_category_id) {
+          it.feo_category_id = fi.feo_category_id
+          it.feo_node_id = fi.feo_category_id
+          itemsSynced = true
+        }
+        if (fi.over_plan !== undefined && it.over_plan !== Boolean(fi.over_plan)) {
+          it.over_plan = Boolean(fi.over_plan)
+          itemsSynced = true
+        }
+      }
+      if (itemsSynced) {
+        wishFormSavedSnapshot.value = wishPayloadSnapshotJson()
+      }
     } catch { /* ignore */ }
   }
   const canDecideApprover = (a: WishApprover): boolean => {

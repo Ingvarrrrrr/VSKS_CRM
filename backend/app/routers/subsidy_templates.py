@@ -41,11 +41,11 @@ router = APIRouter(prefix="/api/subsidies", tags=["subsidies"])
 TEMPLATES_BASE = "/app/templates"
 SUBSIDY_TEMPLATES_BASE = "/app/uploads/templates"
 SUPPORTED_DOC_TYPES = {
-    "contract":                 "Договор",
-    "contract_tz":              "ТЗ (общий шаблон)",
-    # tech_spec slot removed from SubsidiesView UI 2026-04-21 — the endpoint
-    # still resolves to contract_tz.docx (see documents.py DOC_TYPES fallback)
-    # for any client that requests /documents/tech_spec directly.
+    # Слоты «Договор» (contract) и «ТЗ (общий шаблон)» (contract_tz) убраны из UI
+    # карточки субсидии — договоры выбираются по типу (contract_goods_single,
+    # contract_services и т.д.), а ТЗ к договору прикрепляется из tech_spec_contract.
+    # В DOC_TYPES (doc_types.py) ключи contract/contract_tz/tech_spec сохранены для
+    # обратной совместимости прямых API-запросов.
     "service_note_delivery":    "СЗ на выдачу",
     "service_note_payment":     "СЗ на оплату",
     # Phase 19.05: split ТЗ and dedicated SZ на закупку

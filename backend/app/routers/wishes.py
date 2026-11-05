@@ -75,6 +75,7 @@ from app.services.wish_access import (
     _eff_date,
     _ensure_needed_dates,
     _ensure_feo_categories_assigned,
+    _ensure_planned_items_assigned,
     _item_field,
     _is_meaningful_item,
     _wish_locked_descr,

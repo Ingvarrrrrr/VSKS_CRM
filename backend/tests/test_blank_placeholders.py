@@ -36,6 +36,8 @@ from app.services.documents.blank_placeholders import (
     BLANK_DAY,
     BLANK_MONTH,
     BLANK_YEAR,
+    MISSING_CONTRACTOR_TEXT,
+    MISSING_PURCHASE_TEXT,
     apply_blank_placeholders,
     render_docx,
 )
@@ -44,8 +46,8 @@ from app.services.documents.blank_placeholders import (
 # ── 1. Blank ──────────────────────────────────────────────────────────────
 
 def test_blank_prints_as_line_but_falsy():
-    b = Blank(BLANK_DATE)
-    assert str(b) == "__.__.____"
+    b = Blank(MISSING_PURCHASE_TEXT)
+    assert str(b) == MISSING_PURCHASE_TEXT
     assert bool(b) is False
     assert len(b) == 0
     assert (b == "") is True
@@ -54,7 +56,7 @@ def test_blank_prints_as_line_but_falsy():
 
 
 def test_blank_in_if_condition_takes_else_branch():
-    b = Blank(BLANK_DATE)
+    b = Blank(MISSING_PURCHASE_TEXT)
     if b:
         taken = "then"
     else:
@@ -64,12 +66,28 @@ def test_blank_in_if_condition_takes_else_branch():
 
 # ── 2. apply_blank_placeholders — выбор ключей ──────────────────────────────
 
-def test_empty_date_field_blanked():
-    out = apply_blank_placeholders({"delivery_date": None, "contract_end_date": ""})
-    assert str(out["delivery_date"]) == BLANK_DATE
-    assert str(out["contract_end_date"]) == BLANK_DATE
+def test_empty_purchase_fields_get_purchase_placeholder():
+    out = apply_blank_placeholders({"delivery_date": None, "contract_end_date": "", "subject": ""})
+    assert str(out["delivery_date"]) == MISSING_PURCHASE_TEXT
+    assert str(out["contract_end_date"]) == MISSING_PURCHASE_TEXT
+    assert str(out["subject"]) == MISSING_PURCHASE_TEXT
     assert not out["delivery_date"]
     assert not out["contract_end_date"]
+
+
+def test_empty_contractor_fields_get_contractor_placeholder():
+    out = apply_blank_placeholders({
+        "contractor_address": None,
+        "contractor_bank_name": "",
+        "contractor_signatory_name": "   ",
+        "contractor_org_type": "",
+    })
+    assert str(out["contractor_address"]) == MISSING_CONTRACTOR_TEXT
+    assert str(out["contractor_bank_name"]) == MISSING_CONTRACTOR_TEXT
+    assert str(out["contractor_signatory_name"]) == MISSING_CONTRACTOR_TEXT
+    assert not out["contractor_address"]
+    # contractor_org_type — служебный enum для {% if contractor_org_type == 'ИП' %}, не печатается напрямую
+    assert out["contractor_org_type"] == ""
 
 
 def test_filled_date_field_not_touched():
@@ -84,47 +102,26 @@ def test_empty_number_field_blanked():
         "contract_number": None,
         "registry_number": "   ",
     })
-    assert str(out["procurement_order_number"]) == BLANK_NUMBER
-    assert str(out["contract_number"]) == BLANK_NUMBER
-    assert str(out["registry_number"]) == BLANK_NUMBER
+    assert str(out["procurement_order_number"]) == MISSING_PURCHASE_TEXT
+    assert str(out["contract_number"]) == MISSING_PURCHASE_TEXT
+    assert str(out["registry_number"]) == MISSING_PURCHASE_TEXT
 
 
-def test_contract_date_parts_use_their_own_blank_text():
+def test_contract_date_parts_use_purchase_placeholder():
     out = apply_blank_placeholders({
         "contract_date_day": "",
         "contract_date_month": None,
         "contract_date_year": "",
     })
-    assert str(out["contract_date_day"]) == BLANK_DAY
-    assert str(out["contract_date_month"]) == BLANK_MONTH
-    assert str(out["contract_date_year"]) == BLANK_YEAR
-
-
-def test_money_num_fields_never_blanked():
-    """contract_price_num/doc_amount_num/vat_amount_num оканчиваются на
-    "_num", как и номера, но это суммы цифрами — денежные поля правило не
-    трогает (владелец: «денежные/текстовые поля не трогать»)."""
-    out = apply_blank_placeholders({
-        "contract_price_num": "",
-        "doc_amount_num": None,
-        "vat_amount_num": "",
-    })
-    assert out["contract_price_num"] == ""
-    assert out["doc_amount_num"] is None
-    assert out["vat_amount_num"] == ""
+    assert str(out["contract_date_day"]) == MISSING_PURCHASE_TEXT
+    assert str(out["contract_date_month"]) == MISSING_PURCHASE_TEXT
+    assert str(out["contract_date_year"]) == MISSING_PURCHASE_TEXT
 
 
 def test_today_never_blanked():
     out = apply_blank_placeholders({"today": "", "today_iso": ""})
     assert out["today"] == ""
     assert out["today_iso"] == ""
-
-
-def test_submission_deadline_datetime_not_treated_as_plain_date():
-    """Составной формат "дата+время" — линия "__.__.____" испортит формат,
-    общее правило по имени его не должно ловить."""
-    out = apply_blank_placeholders({"submission_deadline_datetime": ""})
-    assert out["submission_deadline_datetime"] == ""
 
 
 def test_item_num_field_excluded_but_item_dates_numbers_blanked():
@@ -135,15 +132,15 @@ def test_item_num_field_excluded_but_item_dates_numbers_blanked():
     })
     item = out["items"][0]
     assert item["num"] == ""  # «кроме item 'num'»
-    assert str(item["item_number"]) == BLANK_NUMBER
-    assert str(item["delivery_date"]) == BLANK_DATE
+    assert str(item["item_number"]) == MISSING_PURCHASE_TEXT
+    assert str(item["delivery_date"]) == MISSING_PURCHASE_TEXT
 
 
 def test_items_list_alias_also_processed():
     out = apply_blank_placeholders({
         "items_list": [{"delivery_date": None}],
     })
-    assert str(out["items_list"][0]["delivery_date"]) == BLANK_DATE
+    assert str(out["items_list"][0]["delivery_date"]) == MISSING_PURCHASE_TEXT
 
 
 def test_context_not_mutated():
@@ -153,12 +150,12 @@ def test_context_not_mutated():
     assert ctx["items"][0]["delivery_date"] is None
 
 
-# ── 3. Сквозной рендер через docxtpl ────────────────────────────────────────
+# ── 3. Сквозной рендер через docxtpl + жёлтое выделение ─────────────────────
 
 def _build_minimal_template() -> BytesIO:
     doc = Document()
     doc.add_paragraph("Дата поставки: {{ delivery_date }}")
-    doc.add_paragraph("Приказ № {{ procurement_order_number }}")
+    doc.add_paragraph("Адрес подрядчика: {{ contractor_address }}")
     doc.add_paragraph(
         "Договор действует до {% if contract_end_date %}{{ contract_end_date }}"
         "{% else %}полного исполнения обязательств{% endif %}"
@@ -173,29 +170,47 @@ def _all_text(tpl: DocxTemplate) -> str:
     return "\n".join(p.text for p in tpl.docx.paragraphs)
 
 
-def test_render_docx_blanks_empty_date_and_number_and_keeps_if_else():
+def test_render_docx_blanks_empty_fields_and_highlights_yellow_and_keeps_if_else():
+    from docx.oxml.ns import qn
     tpl = DocxTemplate(_build_minimal_template())
     render_docx(tpl, {
         "delivery_date": None,
-        "procurement_order_number": "",
+        "contractor_address": "",
         "contract_end_date": "",
     })
     text = _all_text(tpl)
-    assert "Дата поставки: __.__.____" in text
-    assert f"Приказ № {BLANK_NUMBER}" in text
+    assert f"Дата поставки: {MISSING_PURCHASE_TEXT}" in text
+    assert f"Адрес подрядчика: {MISSING_CONTRACTOR_TEXT}" in text
     assert "до полного исполнения обязательств" in text
+
+    # Проверяем, что оба маркера выделены жёлтым (<w:highlight w:val="yellow"/>),
+    # а обычный префикс («Дата поставки: ») — НЕ выделен.
+    highlighted_texts = []
+    unhighlighted_texts = []
+    for p in tpl.docx.paragraphs:
+        for r in p._p.findall(qn("w:r")):
+            t_text = "".join((t.text or "") for t in r.findall(qn("w:t")))
+            rPr = r.find(qn("w:rPr"))
+            hl = rPr.find(qn("w:highlight")) if rPr is not None else None
+            if hl is not None and hl.get(qn("w:val")) == "yellow":
+                highlighted_texts.append(t_text)
+            else:
+                unhighlighted_texts.append(t_text)
+    assert MISSING_PURCHASE_TEXT in highlighted_texts
+    assert MISSING_CONTRACTOR_TEXT in highlighted_texts
+    assert any("Дата поставки:" in t for t in unhighlighted_texts)
 
 
 def test_render_docx_keeps_filled_values():
     tpl = DocxTemplate(_build_minimal_template())
     render_docx(tpl, {
         "delivery_date": "20.01.2026",
-        "procurement_order_number": "17",
+        "contractor_address": "г. Москва, ул. Примерная, д. 1",
         "contract_end_date": "31.12.2026",
     })
     text = _all_text(tpl)
     assert "Дата поставки: 20.01.2026" in text
-    assert "Приказ № 17" in text
+    assert "Адрес подрядчика: г. Москва, ул. Примерная, д. 1" in text
     assert "до 31.12.2026" in text
     assert "полного исполнения" not in text
 

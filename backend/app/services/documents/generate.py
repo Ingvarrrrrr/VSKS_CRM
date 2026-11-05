@@ -115,7 +115,7 @@ async def generate_document_bytes(
     await assign_procurement_order_number_if_missing(db, p)
 
     # Re-resolve template now subsidy_id is known.
-    template_path, template_file, filename_base = resolve_final_template(doc_type, p.subsidy_id)
+    template_path, template_file, filename_base = resolve_final_template(doc_type, p.subsidy_id, p)
 
     # Subsidy / customer / event / approvers / initiator / FEO path / responsible.
     subsidy = await load_subsidy(db, p)
@@ -219,11 +219,11 @@ async def generate_document_bytes(
     # см. build_base_context_part1 выше) никуда не девается — это ДРУГОЙ,
     # более лёгкий список, не формальное приложение ТЗ. Единый источник —
     # app.services.tz_items.tz_required (ПРАВИЛО №6).
-    # Если передан ?merge=... (кнопка «Договор + ТЗ») или используется кастомный
-    # шаблон субсидии, ТЗ хранится отдельно в tech_spec_contract / contract_tz и
-    # приклеивается только по запросу через merge_secondary_doc ниже.
-    _is_custom_subsidy_tpl = bool(template_path and template_path.startswith(SUBSIDY_TEMPLATES_DIR))
-    if tz_required(p) and not merge and not _is_custom_subsidy_tpl:
+    # Если передан ?merge=... (кнопка «Договор + ТЗ») или используется типовой /
+    # кастомный шаблон договора (не устаревший contract.docx), ТЗ хранится отдельно
+    # в tech_spec_contract и приклеивается по запросу через merge_secondary_doc ниже.
+    _is_legacy_contract_tpl = bool(template_path and template_path.endswith("contract.docx") and not template_path.startswith(SUBSIDY_TEMPLATES_DIR))
+    if tz_required(p) and not merge and _is_legacy_contract_tpl:
         buf = append_tz_table_for_contract(buf, doc_type, items_list, p, photo_map=_photo_map)
     buf = attach_methodology(buf, doc_type, p, pid)
     buf, filename_base = merge_secondary_doc(buf, merge, doc_type, context, p, filename_base)

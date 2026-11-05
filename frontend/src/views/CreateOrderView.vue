@@ -1554,16 +1554,16 @@
                 </v-list-item>
               </v-list>
             </v-menu>
-            <!-- Phase 28: «Договор» — doc_type определяется по form.contract_form, fallback → 'contract' -->
+            <!-- Phase 28: «Договор» — doc_type определяется по form.contract_form или автоматически по типу позиций (contract_services / contract_goods_single) -->
             <v-btn v-if="isSectionVisible('contractor')"
               prepend-icon="mdi-file-document-outline"
               variant="tonal"
               color="indigo"
               size="small"
-              :loading="docLoading === (form.contract_form ? contractDocTypeMap[form.contract_form] || 'contract' : 'contract')"
+              :loading="docLoading === effectiveContractDocType"
               :disabled="tzHasUnresolved"
-              @click="downloadDoc(form.contract_form ? contractDocTypeMap[form.contract_form] || 'contract' : 'contract')"
-              :title="tzHasUnresolved ? tzDisabledTooltip : (form.contract_form ? 'Форма: ' + (contractFormOptions.find(o => o.value === form.contract_form)?.title || form.contract_form) : 'Договор (универсальный) — тип определяется автоматически по позициям закупки')"
+              @click="downloadDoc(effectiveContractDocType)"
+              :title="tzHasUnresolved ? tzDisabledTooltip : (form.contract_form ? 'Форма: ' + (contractFormOptions.find(o => o.value === form.contract_form)?.title || form.contract_form) : 'Договор — тип определяется автоматически по позициям закупки')"
             >
               {{ contractWord }}
             </v-btn>
@@ -1587,7 +1587,7 @@
               size="small"
               :loading="docLoading === 'contract_merge'"
               :disabled="tzHasUnresolved"
-              @click="downloadDoc(form.contract_form ? contractDocTypeMap[form.contract_form] || 'contract' : 'contract', '?merge=tech_spec_contract', 'contract_merge')"
+              @click="downloadDoc(effectiveContractDocType, '?merge=tech_spec_contract', 'contract_merge')"
               :title="tzHasUnresolved ? tzDisabledTooltip : 'Скачать Договор и ТЗ одним файлом'"
             >
               {{ contractWord }} + ТЗ
@@ -3722,6 +3722,20 @@ const contractDocTypeMap: Record<string, string> = {
   repair_vehicle:             'contract_repair_vehicle',
   repair_framework:           'contract_repair_framework',
 }
+
+// Если форма договора не выбрана явно, определяем типовой шаблон по позициям:
+// все позиции «услуга» (или пустой список при form.item_type === 'услуга') →
+// contract_services, иначе → contract_goods_single (вместо устаревшего 'contract').
+const effectiveContractDocType = computed(() => {
+  if (form.contract_form && contractDocTypeMap[form.contract_form]) {
+    return contractDocTypeMap[form.contract_form]
+  }
+  const namedItems = items.value.filter(i => i.item_name && i.item_name.trim())
+  const allServices = namedItems.length > 0
+    ? namedItems.every(i => i.item_type === 'услуга')
+    : form.item_type === 'услуга'
+  return allServices ? 'contract_services' : 'contract_goods_single'
+})
 
 // Методичка, приклеиваемая к договору при генерации (docxcompose) — выбирается
 // ОТДЕЛЬНО от формы договора, владелец запретил автовыбор. 'none' — не приклеивать.

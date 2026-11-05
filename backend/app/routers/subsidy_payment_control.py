@@ -23,6 +23,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -313,7 +314,8 @@ async def get_bank_payment_candidates(
             reverse=True,
         )
 
-    from app.models.bank_statement import ExpenseCode
+    import re
+    from app.models.expense_code import ExpenseCode
     ec = str(bp.expense_code or "").strip()
     if not ec and bp.purpose_text:
         m_ec = re.search(r';\s*(\d{4,})', bp.purpose_text)
@@ -480,7 +482,7 @@ async def get_batch_combos(
     # 3. Загружаем все неоплаченные закупки субсидии + временные закупки из «План закупок» («Да»)
     units = await load_unpaid_candidate_units(db, sid, include_planned_items=True)
 
-    from app.models.bank_statement import ExpenseCode
+    from app.models.expense_code import ExpenseCode
     code_rows = (await db.execute(select(ExpenseCode.code, ExpenseCode.name))).all()
     code_names = {r.code: r.name for r in code_rows}
 
@@ -703,9 +705,11 @@ async def get_discrepancy_workspace(
     import datetime
     import re
     from decimal import Decimal
-    from app.models.bank_statement import BankPayment, ExpenseCode
+    from app.models.bank_statement import BankPayment
+    from app.models.expense_code import ExpenseCode
     from app.models.purchase import Purchase
     from app.services.bank_payment_subsidy_scope import subsidy_scope_clause
+    from app.services.payment_lookup import _attached_bank_payment_ids_in_subsidy
     from app.services.subsidy_payment_control import EXECUTED_STATUSES
     from app.services.subsidy_paid_breakdown import paid_breakdown_rows, paid_breakdown_by_subsidy
     from app.services.payment_smart_combo_matcher import (

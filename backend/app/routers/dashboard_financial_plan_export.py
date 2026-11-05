@@ -30,7 +30,13 @@ async def export_financial_plan_xlsx(
 ):
     """Полная выгрузка всех закупок с группировкой по периоду и категории plan/committed."""
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
     from io import BytesIO
     from fastapi.responses import StreamingResponse
     from datetime import datetime as dt
@@ -87,6 +93,7 @@ async def export_financial_plan_xlsx(
     wb = Workbook()
     ws = wb.active
     ws.title = "Финплан"
+    ws.sheet_view.showGridLines = True
 
     ws['A1'] = f"Финансовый план — {'по месяцам' if granularity == 'month' else 'по кварталам'}"
     ws['A1'].font = Font(size=14, bold=True)
@@ -98,6 +105,7 @@ async def export_financial_plan_xlsx(
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill(start_color="1E40AF", end_color="1E40AF", fill_type="solid")
         cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
 
     row_idx = 4
     period_totals: dict = {}
@@ -117,9 +125,11 @@ async def export_financial_plan_xlsx(
             ws.cell(row=row_idx, column=7, value=item["status"])
             ws.cell(row=row_idx, column=8, value=item["amount"])
             for col in range(1, 9):
-                ws.cell(row=row_idx, column=col).fill = PatternFill(
+                cell_item = ws.cell(row=row_idx, column=col)
+                cell_item.fill = PatternFill(
                     start_color=cat_color, end_color=cat_color, fill_type="solid"
                 )
+                cell_item.border = thin_border
             ws.cell(row=row_idx, column=8).number_format = '#,##0.00 ₽'
             row_idx += 1
 
@@ -130,21 +140,24 @@ async def export_financial_plan_xlsx(
     totals_title = ws.cell(row=row_idx, column=1, value="ИТОГО ПО ПЕРИОДАМ")
     totals_title.font = Font(bold=True, size=12)
     row_idx += 1
-    ws.cell(row=row_idx, column=1, value="Период").font = Font(bold=True)
-    ws.cell(row=row_idx, column=2, value="Плановые").font = Font(bold=True)
-    ws.cell(row=row_idx, column=3, value="Принятые").font = Font(bold=True)
-    ws.cell(row=row_idx, column=4, value="Всего").font = Font(bold=True)
+    for col_i, h in enumerate(["Период", "Плановые", "Принятые", "Всего"], 1):
+        c = ws.cell(row=row_idx, column=col_i, value=h)
+        c.font = Font(bold=True)
+        c.border = thin_border
     row_idx += 1
 
     for pk in sorted(period_totals.keys()):
         t = period_totals[pk]
-        ws.cell(row=row_idx, column=1, value=pk)
+        ws.cell(row=row_idx, column=1, value=pk).border = thin_border
         plan_cell = ws.cell(row=row_idx, column=2, value=t["plan"])
         plan_cell.number_format = '#,##0.00 ₽'
+        plan_cell.border = thin_border
         committed_cell = ws.cell(row=row_idx, column=3, value=t["committed"])
         committed_cell.number_format = '#,##0.00 ₽'
+        committed_cell.border = thin_border
         total_cell = ws.cell(row=row_idx, column=4, value=t["plan"] + t["committed"])
         total_cell.number_format = '#,##0.00 ₽'
+        total_cell.border = thin_border
         row_idx += 1
 
     for col_letter, width in [('A', 12), ('B', 22), ('C', 12), ('D', 50), ('E', 30), ('F', 12), ('G', 18), ('H', 16)]:
@@ -175,7 +188,13 @@ async def export_financial_plan_details_xlsx(
 ):
     """Excel выгрузка одной группы (период+категория) — содержимое drill-down диалога."""
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
     from io import BytesIO
     from fastapi.responses import StreamingResponse
 
@@ -234,6 +253,7 @@ async def export_financial_plan_details_xlsx(
 
     wb = Workbook()
     ws = wb.active
+    ws.sheet_view.showGridLines = True
     cat_label = "Плановые" if category == "plan" else "Принятые обязательства"
     ws.title = f"{cat_label[:20]} {period}"
 
@@ -247,6 +267,7 @@ async def export_financial_plan_details_xlsx(
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill(start_color="1E40AF", end_color="1E40AF", fill_type="solid")
         cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
 
     total = 0.0
     for i, item in enumerate(items, start=4):
@@ -258,6 +279,8 @@ async def export_financial_plan_details_xlsx(
         ws.cell(row=i, column=6, value=item["contract_number"])
         amt_cell = ws.cell(row=i, column=7, value=item["amount"])
         amt_cell.number_format = '#,##0.00 ₽'
+        for col_i in range(1, 8):
+            ws.cell(row=i, column=col_i).border = thin_border
         total += item["amount"]
 
     total_row = 4 + len(items) + 1
@@ -267,6 +290,8 @@ async def export_financial_plan_details_xlsx(
     total_cell.number_format = '#,##0.00 ₽'
     total_color = "FEF3C7" if category == "plan" else "D1FAE5"
     total_cell.fill = PatternFill(start_color=total_color, end_color=total_color, fill_type="solid")
+    for col_i in range(1, 8):
+        ws.cell(row=total_row, column=col_i).border = thin_border
 
     for col_letter, width in [('A', 12), ('B', 50), ('C', 30), ('D', 12), ('E', 18), ('F', 16), ('G', 16)]:
         ws.column_dimensions[col_letter].width = width

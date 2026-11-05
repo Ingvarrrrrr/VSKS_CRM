@@ -91,19 +91,28 @@ async def export_tasks_zip(
         # Заголовок
         hcell = ws.cell(row=3, column=files_col_idx, value='Файлы')
         hcell.font = Font(color='FFFFFF', bold=True, size=11)
-        from openpyxl.styles import PatternFill, Alignment
+        from openpyxl.styles import PatternFill, Alignment, Border, Side
+        files_border = Border(
+            left=Side(style='thin', color='BFBFBF'),
+            right=Side(style='thin', color='BFBFBF'),
+            top=Side(style='thin', color='BFBFBF'),
+            bottom=Side(style='thin', color='BFBFBF'),
+        )
         hcell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
         hcell.alignment = Alignment(horizontal='center', vertical='center')
+        hcell.border = files_border
         ws.column_dimensions[files_col_letter].width = 40
 
         for r_idx, row in enumerate(rows, start=4):
             row_id = row.get('id')
             pf_list = files_map.get(row_id, [])
+            cell = ws.cell(row=r_idx, column=files_col_idx)
+            cell.border = files_border
             if pf_list:
                 # Записываем первое имя, гиперссылку на папку
                 first_name = pf_list[0].filename
                 zip_path = f'files/{row_id}/{first_name}'
-                cell = ws.cell(row=r_idx, column=files_col_idx, value=first_name)
+                cell.value = first_name
                 cell.hyperlink = zip_path
                 cell.font = Font(color='0563C1', underline='single')
                 if len(pf_list) > 1:

@@ -60,7 +60,7 @@ async def users_import_template(_=Depends(require_action('user.manage'))):
     """Download xlsx template for bulk user import."""
     try:
         from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         from openpyxl.worksheet.datavalidation import DataValidation
     except ImportError:
         raise HTTPException(500, "openpyxl не установлен")
@@ -68,6 +68,8 @@ async def users_import_template(_=Depends(require_action('user.manage'))):
     wb = Workbook()
     ws = wb.active
     ws.title = "Пользователи"
+    ws.sheet_view.showGridLines = True
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
 
     headers = ["ФИО", "Email", "Логин", "Пароль", "Роль", "Город"]
     required = {"ФИО", "Email", "Логин", "Пароль"}
@@ -81,6 +83,7 @@ async def users_import_template(_=Depends(require_action('user.manage'))):
         cell.font = header_font
         cell.fill = req_fill if h in required else header_fill
         cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
 
     # Example row. Роль в примере — русским названием (как ждёт выпадающий
     # список ниже), а не кодом 'employee': владелец попросил писать словами
@@ -90,7 +93,8 @@ async def users_import_template(_=Depends(require_action('user.manage'))):
         "Password123", ROLE_LABELS_RU["employee"], "Москва",
     ]
     for ci, val in enumerate(example, 1):
-        ws.cell(row=2, column=ci, value=val)
+        cell = ws.cell(row=2, column=ci, value=val)
+        cell.border = thin_border
 
     # Допустимые роли — русские названия (Правило №6: подписи только из
     # ROLE_LABELS_RU, тот же порядок, что и в getCreateRoleItems на фронте).

@@ -11,10 +11,16 @@ from __future__ import annotations
 from io import BytesIO
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 _HEADER_FILL = PatternFill(start_color="1E40AF", end_color="1E40AF", fill_type="solid")
 _HEADER_FONT = Font(bold=True, color="FFFFFF")
+_THIN_BORDER = Border(
+    left=Side(style="thin"),
+    right=Side(style="thin"),
+    top=Side(style="thin"),
+    bottom=Side(style="thin"),
+)
 
 _STATUS_LABELS = {
     "match": "Совпало",
@@ -33,6 +39,7 @@ def _header_row(ws, row: int, headers: list[str]) -> None:
         cell.font = _HEADER_FONT
         cell.fill = _HEADER_FILL
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = _THIN_BORDER
 
 
 def build_payment_control_xlsx(data: dict, subsidy_name: str) -> BytesIO:
@@ -41,6 +48,7 @@ def build_payment_control_xlsx(data: dict, subsidy_name: str) -> BytesIO:
     # --- Лист 1: контрольный лист ------------------------------------
     ws = wb.active
     ws.title = "Контрольный лист"
+    ws.sheet_view.showGridLines = True
 
     totals = data.get("totals", {})
     ws["A1"] = f"Сверка по выписке — {subsidy_name}"
@@ -74,6 +82,8 @@ def build_payment_control_xlsx(data: dict, subsidy_name: str) -> BytesIO:
         ws.cell(row=row_idx, column=10, value=r.get("amount_diff") or 0)
         ws.cell(row=row_idx, column=5).number_format = "#,##0.00"
         ws.cell(row=row_idx, column=10).number_format = "#,##0.00"
+        for col_i in range(1, len(headers) + 1):
+            ws.cell(row=row_idx, column=col_i).border = _THIN_BORDER
         row_idx += 1
 
     for col, width in enumerate([12, 12, 28, 14, 14, 20, 20, 16, 26, 12], 1):
@@ -81,7 +91,9 @@ def build_payment_control_xlsx(data: dict, subsidy_name: str) -> BytesIO:
 
     # --- Лист 2: Не привязаны -----------------------------------------
     ws2 = wb.create_sheet("Не привязаны")
-    _header_row(ws2, 1, ["№ п/п", "Дата", "Получатель", "ИНН", "Сумма, ₽", "Статья", "Подсказки"])
+    ws2.sheet_view.showGridLines = True
+    headers2 = ["№ п/п", "Дата", "Получатель", "ИНН", "Сумма, ₽", "Статья", "Подсказки"]
+    _header_row(ws2, 1, headers2)
     row_idx = 2
     for r in data.get("rows", []):
         if r.get("status") != "registry_only":
@@ -98,13 +110,17 @@ def build_payment_control_xlsx(data: dict, subsidy_name: str) -> BytesIO:
         ws2.cell(row=row_idx, column=5, value=r.get("amount") or 0)
         ws2.cell(row=row_idx, column=6, value=r.get("expense_name") or r.get("expense_code") or "—")
         ws2.cell(row=row_idx, column=7, value=hint_text)
+        for col_i in range(1, len(headers2) + 1):
+            ws2.cell(row=row_idx, column=col_i).border = _THIN_BORDER
         row_idx += 1
     for col, width in enumerate([12, 12, 28, 14, 14, 20, 50], 1):
         ws2.column_dimensions[chr(64 + col)].width = width
 
     # --- Лист 3: Отмечено, не подтверждено выпиской ---------------------
     ws3 = wb.create_sheet("Отмечено, не подтверждено")
-    _header_row(ws3, 1, ["Документ", "Дата", "Сумма, ₽", "Закупка"])
+    ws3.sheet_view.showGridLines = True
+    headers3 = ["Документ", "Дата", "Сумма, ₽", "Закупка"]
+    _header_row(ws3, 1, headers3)
     row_idx = 2
     for r in data.get("rows", []):
         if r.get("status") != "declared_unconfirmed":
@@ -115,6 +131,8 @@ def build_payment_control_xlsx(data: dict, subsidy_name: str) -> BytesIO:
         ws3.cell(row=row_idx, column=2, value=r.get("payment_date") or "—")
         ws3.cell(row=row_idx, column=3, value=r.get("amount") or 0)
         ws3.cell(row=row_idx, column=4, value=registry)
+        for col_i in range(1, len(headers3) + 1):
+            ws3.cell(row=row_idx, column=col_i).border = _THIN_BORDER
         row_idx += 1
     for col, width in enumerate([18, 12, 14, 28], 1):
         ws3.column_dimensions[chr(64 + col)].width = width

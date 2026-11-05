@@ -60,9 +60,16 @@ from app.services.purchase_export_cells import (
 
 try:
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    THIN_BORDER = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
 except ImportError:
     Workbook = None
+    THIN_BORDER = None
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-export"])
 
@@ -179,6 +186,7 @@ async def export_purchases_to_excel(
     wb = Workbook()
     ws = wb.active
     ws.title = "Закупки"
+    ws.sheet_view.showGridLines = True
 
     col_headers = [ALL_EXPORT_COLUMNS[k]["label"] for k in col_keys] + [c[1] for c in extra_col_defs]
     ws.append(col_headers)
@@ -187,6 +195,8 @@ async def export_purchases_to_excel(
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", wrap_text=True)
+        if THIN_BORDER:
+            cell.border = THIN_BORDER
 
     empty_counts = {k: 0 for k in col_keys}
     for p in purchases:
@@ -207,6 +217,11 @@ async def export_purchases_to_excel(
                 else:
                     row.append("")
         ws.append(row)
+
+    if THIN_BORDER:
+        for r in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=len(col_headers)):
+            for cell in r:
+                cell.border = THIN_BORDER
 
     for i, header in enumerate(col_headers, 1):
         col_letter = ws.cell(1, i).column_letter

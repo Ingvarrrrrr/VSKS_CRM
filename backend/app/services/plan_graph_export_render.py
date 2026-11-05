@@ -68,6 +68,7 @@ def render_plan_graph_workbook(tree: list, items: list, meta: dict):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "План закупок"
+    ws.sheet_view.showGridLines = True
 
     # ── Title row ─────────────────────────────────────────────────────────────
     subsidy_name = meta.get("subsidy_name", "")
@@ -78,6 +79,8 @@ def render_plan_graph_workbook(tree: list, items: list, meta: dict):
     ws.append([title_text] + [""] * (n_cols - 1))
     title_cell = ws.cell(row=1, column=1)
     title_cell.font = Font(bold=True, size=12, color="1E3A5F")
+    for c in range(1, n_cols + 1):
+        ws.cell(row=1, column=c).border = THIN_BORDER
     ws.merge_cells(f"A1:{last_col_letter}1")
     title_cell.alignment = CENTER_ALIGN
     ws.row_dimensions[1].height = 28

@@ -113,13 +113,15 @@ async def contractors_import_template(_=Depends(require_tab('contractors'))):
     """Download xlsx template for bulk contractor import."""
     try:
         from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     except ImportError:
         raise HTTPException(500, "openpyxl не установлен")
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Контрагенты"
+    ws.sheet_view.showGridLines = True
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
 
     headers = [
         "Наименование", "ИНН", "КПП", "ОГРН",
@@ -140,6 +142,7 @@ async def contractors_import_template(_=Depends(require_tab('contractors'))):
         cell.font = header_font
         cell.fill = req_fill if h in required else header_fill
         cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
 
     # Example row
     example = [
@@ -151,7 +154,8 @@ async def contractors_import_template(_=Depends(require_tab('contractors'))):
         "",
     ]
     for ci, val in enumerate(example, 1):
-        ws.cell(row=2, column=ci, value=val)
+        cell = ws.cell(row=2, column=ci, value=val)
+        cell.border = thin_border
 
     col_widths = [35, 14, 12, 16, 40, 40, 45, 20, 30, 20, 25, 24, 30, 12, 24, 35]
     for ci, w in enumerate(col_widths, 1):

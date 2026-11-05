@@ -244,6 +244,7 @@ def build_live_plan_graph_xlsx(
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "План закупок (по направлениям)"
+    ws.sheet_view.showGridLines = True
 
     n_cols = len(HEADERS)
     last_col_letter = ws.cell(row=1, column=n_cols).column_letter
@@ -264,6 +265,9 @@ def build_live_plan_graph_xlsx(
     label_font = Font(bold=True, size=9, color="1E3A5F")
     ws.cell(row=1, column=1, value=f"{sub.name} ({sub.year}) — итого всего").font = label_font
     ws.cell(row=2, column=1, value="Итого по фильтру").font = label_font
+    for c in range(1, n_cols + 1):
+        ws.cell(row=1, column=c).border = THIN_BORDER
+        ws.cell(row=2, column=c).border = THIN_BORDER
     for ci, key in enumerate(selected_keys, 1):
         if key not in MONEY_COL_KEYS or key in TOP_SUMMARY_EXCLUDED_KEYS:
             continue

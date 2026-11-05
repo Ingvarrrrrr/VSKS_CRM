@@ -64,6 +64,7 @@ def _setup_header_cell(cell, value):
 
 def _make_params_sheet(wb: Workbook, config: Dict, meta: Dict):
     ws = wb.create_sheet('Параметры', 0 if 'Sheet' in wb.sheetnames else None)
+    ws.sheet_view.showGridLines = True
     if 'Sheet' in wb.sheetnames:
         del wb['Sheet']
     ws['A1'] = 'Параметры отчёта'
@@ -151,6 +152,7 @@ def export_list(rows: List[Dict], config: Dict, meta: Dict) -> bytes:
 
     ws = wb.active
     ws.title = 'Реестр'
+    ws.sheet_view.showGridLines = True
 
     # Title row
     ws.cell(row=1, column=1, value=meta.get('report_name', 'Реестр'))
@@ -213,6 +215,7 @@ def export_pivot(result: Dict, config: Dict, meta: Dict) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = 'Сводная'
+    ws.sheet_view.showGridLines = True
 
     rows_dims = config.get('rows', [])
     cols_dims = config.get('cols', [])
@@ -315,6 +318,7 @@ def export_table(title: str, columns: list, rows: list, meta: dict) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = 'Реестр'
+    ws.sheet_view.showGridLines = True
 
     n_cols = len(columns) or 1
 
@@ -368,6 +372,7 @@ async def export_dashboard(widget_results: List[Dict], config: Dict, meta: Dict)
         # Sanitize sheet name (Excel max 31 chars, no special)
         sheet_name = title[:30].replace('/', '-').replace('\\', '-').replace('[', '(').replace(']', ')')
         ws = wb.create_sheet(sheet_name)
+        ws.sheet_view.showGridLines = True
 
         rows = result.get('rows', [])
         if not rows:

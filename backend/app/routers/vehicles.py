@@ -438,10 +438,17 @@ async def export_excel(
     """
     from io import BytesIO
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
     from fastapi.responses import StreamingResponse
     from app.services.vehicle_fields import FIELD_GROUPS, get_hidden_field_keys
+
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
 
     q = select(Vehicle).options(
         selectinload(Vehicle.owner_org),
@@ -486,6 +493,7 @@ async def export_excel(
     wb = Workbook()
     ws = wb.active
     ws.title = "Автотранспорт"
+    ws.sheet_view.showGridLines = True
     headers = ['№'] + [f["label"] for f in visible_fields]
 
     bold = Font(bold=True, color="FFFFFF")
@@ -495,11 +503,13 @@ async def export_excel(
         cell.font = bold
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
 
     for r, v in enumerate(vehicles, 2):
         row = [r - 1] + [_export_field_value(f, v, org_map, org_inn_map) for f in visible_fields]
         for c, val in enumerate(row, 1):
-            ws.cell(r, c, val)
+            cell = ws.cell(r, c, val)
+            cell.border = thin_border
 
     for idx, header in enumerate(headers, 1):
         ws.column_dimensions[get_column_letter(idx)].width = max(12, min(len(header) + 2, 30))

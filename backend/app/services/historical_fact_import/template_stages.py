@@ -75,14 +75,19 @@ _YES_NO_COLS = (15, 16, 17, 18, 19, 21)
 async def build_stages_template_workbook(db: AsyncSession, subsidy_id: int) -> bytes:
     from io import BytesIO
     from openpyxl import Workbook
+    from openpyxl.styles import Border, Side
     from openpyxl.worksheet.datavalidation import DataValidation
 
     catalog = await load_plan_catalog(db, subsidy_id)
 
     wb = Workbook()
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
     ws = wb.active
     ws.title = "Импорт факта"
+    ws.sheet_view.showGridLines = True
     ws.append(_HEADER)
+    for cell in ws[1]:
+        cell.border = thin_border
 
     for entry in catalog:
         plan_item_name, levels = entry_name_and_levels(entry, depth=4)  # l2/l3/l4/l5
@@ -95,11 +100,14 @@ async def build_stages_template_workbook(db: AsyncSession, subsidy_id: int) -> b
         row[_COL_PLAN_AMOUNT] = entry.get("amount")
         row[_COL_PATH_L2:_COL_PATH_L5 + 1] = levels
         ws.append(row)
+        for cell in ws[ws.max_row]:
+            cell.border = thin_border
 
     # «Справочники» — один список Да/Нет, на который ссылаются ВСЕ колонки
     # стадий + «Аванс» (ПРАВИЛО №6 — одна строка-источник, не копия текста
     # «Да»/«Нет» в каждом DataValidation).
     ref = wb.create_sheet("Справочники")
+    ref.sheet_view.showGridLines = True
     ref.append(["Да/Нет"])
     ref.append(["Да"])
     ref.append(["Нет"])

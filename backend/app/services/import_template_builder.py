@@ -40,7 +40,7 @@ from app.services.import_template_dropdowns import (
 
 try:
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.worksheet.datavalidation import DataValidation
     from openpyxl.workbook.defined_name import DefinedName
 except ImportError:
@@ -114,6 +114,7 @@ async def build_purchase_import_template_workbook(
         )
 
     wb = Workbook()
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
 
     fill_req  = PatternFill(start_color="DC2626", end_color="DC2626", fill_type="solid")
     fill_opt  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
@@ -146,6 +147,7 @@ async def build_purchase_import_template_workbook(
     # Добавляем лист «Справочники» как второй (будет Sheet2)
     # Сначала создаём активный лист, потом переименуем
     wb_ref_ws = wb.create_sheet(title="Справочники")
+    wb_ref_ws.sheet_view.showGridLines = True
 
     ref_hdr_font  = Font(bold=True, size=10)
     ref_hdr_fill  = PatternFill(start_color="F3F4F6", end_color="F3F4F6", fill_type="solid")
@@ -202,6 +204,7 @@ async def build_purchase_import_template_workbook(
     # =========================================================================
     ws = wb.active
     ws.title = "Закупки"
+    ws.sheet_view.showGridLines = True
 
     headers = [s["header"] for s in _COL_SPEC]
     ws.append(headers)
@@ -211,9 +214,13 @@ async def build_purchase_import_template_workbook(
         c.fill = fill_req if spec["required"] else fill_opt
         c.font = font_hdr
         c.alignment = align_c
+        c.border = thin_border
 
     ws.append(_TEMPLATE_EXAMPLE_ROW)
     ws.append(_TEMPLATE_EXAMPLE_ROW_2)
+    for r_i in (2, 3):
+        for c in ws[r_i]:
+            c.border = thin_border
 
     for i, spec in enumerate(_COL_SPEC, 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = spec["width"]
@@ -267,6 +274,7 @@ async def build_purchase_import_template_workbook(
     # Sheet «Справочник колонок»
     # =========================================================================
     ref_ws = wb.create_sheet(title="Справочник колонок")
+    ref_ws.sheet_view.showGridLines = True
 
     ref_headers = ["Колонка", "Обязательная", "Формат/пример", "На что влияет", "Что будет, если не заполнить"]
     ref_ws.append(ref_headers)
@@ -276,6 +284,7 @@ async def build_purchase_import_template_workbook(
         cell.font = Font(color="FFFFFF", bold=True, size=11)
         cell.fill = ref_hdr_fill2
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
 
     fill_req_row = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
     align_wrap = Alignment(wrap_text=True, vertical="top")
@@ -298,6 +307,8 @@ async def build_purchase_import_template_workbook(
             spec["if_empty"],
         ]
         ref_ws.append(row_vals)
+        for cell in ref_ws[ref_ws.max_row]:
+            cell.border = thin_border
         row_idx = ref_ws.max_row
         if spec["header"] in _feo_headers_set:
             _feo_fmt_rows[int(spec["header"][-1])] = row_idx

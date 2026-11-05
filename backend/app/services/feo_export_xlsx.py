@@ -24,7 +24,7 @@ from typing import Optional
 
 try:
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Protection
+    from openpyxl.styles import Font, PatternFill, Alignment, Protection, Border, Side
     from openpyxl.worksheet.datavalidation import DataValidation
     from openpyxl.formatting.rule import FormulaRule
 except ImportError:  # pragma: no cover
@@ -578,6 +578,12 @@ def render_feo_tree_sheet(
     ws = wb.active
     ws.title = sheet_title
     ws.sheet_properties.outlinePr.summaryBelow = False
+    ws.sheet_view.showGridLines = True
+
+    THIN_BORDER = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
 
     HEADER_FILL = PatternFill(start_color="1D4ED8", end_color="1D4ED8", fill_type="solid")
     HEADER_FONT = Font(color="FFFFFF", bold=True, size=11)
@@ -604,12 +610,16 @@ def render_feo_tree_sheet(
 
     ws.cell(row=1, column=1, value=totals_label).font = TOTAL_FONT
     ws.cell(row=2, column=1, value="Итого по фильтру").font = TOTAL_FONT
+    for c in range(1, n_cols + 1):
+        ws.cell(row=1, column=c).border = THIN_BORDER
+        ws.cell(row=2, column=c).border = THIN_BORDER
 
     for col_idx, (header, width) in enumerate(zip(headers, widths), 1):
         cell = ws.cell(row=HEADER_ROW, column=col_idx, value=header)
         cell.fill = HEADER_FILL
         cell.font = HEADER_FONT
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = THIN_BORDER
         ws.column_dimensions[cell.column_letter].width = width
     ws.row_dimensions[HEADER_ROW].height = 36
     ws.freeze_panes = f"A{DATA_FIRST_ROW}"
@@ -628,6 +638,7 @@ def render_feo_tree_sheet(
             if fill:
                 cell.fill = fill
             cell.font = font
+            cell.border = THIN_BORDER
             cell.protection = Protection(locked=(key == "row_id"))
             if key in MONEY_KEYS and isinstance(val, (int, float)):
                 cell.number_format = NUM_FMT
@@ -799,6 +810,7 @@ def render_feo_tree_sheet(
             refs = ",".join(f"{col_letter}{cr}" for cr in child_rows)
             cell = ws.cell(row_idx, ci, value=f"=SUM({refs})")
             cell.number_format = NUM_FMT
+            cell.border = THIN_BORDER
 
     def write_node(node, depth=0, ancestors=None):
         ancestors = ancestors or []
@@ -897,6 +909,7 @@ def render_feo_tree_sheet(
                     feo_val = float(c.budget) if c.budget is not None else 0.0
                     ws.cell(row_idx, ci_residual, value=round(feo_val - stage_vals.get("ordered", 0.0) - stage_vals.get("to_order", 0.0), 2))
                 ws.cell(row_idx, ci_residual).number_format = NUM_FMT
+                ws.cell(row_idx, ci_residual).border = THIN_BORDER
 
         return row_idx
 
@@ -972,6 +985,7 @@ def render_feo_tree_sheet(
                 rules.append(FormulaRule(
                     formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_pc}{DATA_FIRST_ROW}="Да")'],
                     fill=FILL_CONFIRMED,
+                    border=THIN_BORDER,
                     stopIfTrue=True,
                 ))
             if ci_pm:
@@ -979,6 +993,7 @@ def render_feo_tree_sheet(
                 rules.append(FormulaRule(
                     formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_pm}{DATA_FIRST_ROW}="Да")'],
                     fill=FILL_MARKED,
+                    border=THIN_BORDER,
                     stopIfTrue=True,
                 ))
             if ci_of or ci_ord:
@@ -993,6 +1008,7 @@ def render_feo_tree_sheet(
                 rules.append(FormulaRule(
                     formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", {or_cond})'],
                     fill=FILL_ORDERED,
+                    border=THIN_BORDER,
                     stopIfTrue=True,
                 ))
             if ci_iw:
@@ -1000,6 +1016,7 @@ def render_feo_tree_sheet(
                 rules.append(FormulaRule(
                     formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_iw}{DATA_FIRST_ROW}="Да")'],
                     fill=FILL_IN_WORK,
+                    border=THIN_BORDER,
                     stopIfTrue=True,
                 ))
             if ci_plan:
@@ -1007,6 +1024,7 @@ def render_feo_tree_sheet(
                 rules.append(FormulaRule(
                     formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_plan}{DATA_FIRST_ROW}>0)'],
                     fill=FILL_PLAN,
+                    border=THIN_BORDER,
                     stopIfTrue=True,
                 ))
 
@@ -1051,9 +1069,12 @@ def render_feo_tree_sheet(
         for spare_r in range(last_row + 1, last_row + 51):
             c_spare = ws.cell(row=spare_r, column=ci_row_id, value=f'=IF(${col_name_letter}{spare_r}<>"","NEW-"&ROW(),"")')
             c_spare.protection = Protection(locked=True)
+            c_spare.border = THIN_BORDER
             for ci_other in range(1, n_cols + 1):
+                cell_other = ws.cell(row=spare_r, column=ci_other)
+                cell_other.border = THIN_BORDER
                 if ci_other != ci_row_id:
-                    ws.cell(row=spare_r, column=ci_other).protection = Protection(locked=False)
+                    cell_other.protection = Protection(locked=False)
 
     # Защита листа от случайного изменения заблокированных ячеек (столбец row_id),
     # без пароля, разрешая сортировку, фильтрацию, форматирование, добавление и удаление строк:

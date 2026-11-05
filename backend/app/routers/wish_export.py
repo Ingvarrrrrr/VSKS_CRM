@@ -110,6 +110,7 @@ async def export_wish_xlsx(
     from openpyxl.styles import Border, Side
     from openpyxl.utils import get_column_letter
     wb = Workbook(); ws = wb.active; ws.title = "Заявка"
+    ws.sheet_view.showGridLines = True
     thin = Side(style="thin", color="C0C0C0")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     header_fill = PatternFill("solid", fgColor="FB923C")

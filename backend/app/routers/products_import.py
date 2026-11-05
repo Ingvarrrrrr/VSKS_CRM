@@ -23,7 +23,7 @@ from app.services.product_catalog_guard import can_edit_catalog
 
 try:
     from openpyxl import Workbook, load_workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 except ImportError:
     Workbook = None
     load_workbook = None
@@ -71,6 +71,8 @@ async def download_products_template(
     wb = Workbook()
     ws = wb.active
     ws.title = "Товары"
+    ws.sheet_view.showGridLines = True
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
     headers = [
         "Наименование", "Описание", "Категория", "Вид", "Ед. изм.",
         "Кол-во в упаковке", "Ед. изм. в упаковке",
@@ -83,6 +85,7 @@ async def download_products_template(
     for cell in ws[1]:
         cell.fill = fill; cell.font = font
         cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
     ws.append([
         "Компьютер Dell", "Core i5, 16GB RAM", "Оргтехника", "Рабочая станция", "шт",
         "", "",
@@ -95,6 +98,9 @@ async def download_products_template(
         "450", "01.09.2026", "", "", "", "", "", "",
         "", "да", "да", "",
     ])
+    for row_r in (2, 3):
+        for cell in ws[row_r]:
+            cell.border = thin_border
     for i, w in enumerate([30, 30, 20, 20, 10, 16, 16, 12, 14, 35, 14, 35, 14, 35, 14, 30, 12, 10, 30], 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"

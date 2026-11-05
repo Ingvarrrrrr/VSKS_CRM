@@ -42,13 +42,15 @@ router = APIRouter(prefix="/api/departments", tags=["departments"])
 async def dept_import_template(_=Depends(require_tab('staff'))):
     try:
         from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     except ImportError:
         raise HTTPException(500, "openpyxl не установлен")
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Отделы и сотрудники"
+    ws.sheet_view.showGridLines = True
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
 
     headers = ["Отдел", "Родительский отдел", "ФИО сотрудника", "Должность", "Начальник (да/нет)", "Субсидия"]
     hdr_fill = PatternFill("solid", fgColor="1E40AF")
@@ -58,6 +60,7 @@ async def dept_import_template(_=Depends(require_tab('staff'))):
         cell.font = hdr_font
         cell.fill = hdr_fill
         cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
 
     examples = [
         ["Отдел закупок", "", "Иванов Иван", "Начальник отдела", "да", ""],
@@ -68,7 +71,8 @@ async def dept_import_template(_=Depends(require_tab('staff'))):
     ]
     for ri, row in enumerate(examples, 2):
         for ci, val in enumerate(row, 1):
-            ws.cell(row=ri, column=ci, value=val)
+            c = ws.cell(row=ri, column=ci, value=val)
+            c.border = thin_border
 
     for ci, w in enumerate([30, 25, 30, 25, 18, 20], 1):
         ws.column_dimensions[ws.cell(row=1, column=ci).column_letter].width = w

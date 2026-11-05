@@ -583,13 +583,15 @@ async def download_tasks_import_template(
     """Скачать шаблон Excel для импорта задач."""
     try:
         from openpyxl import Workbook as _WB
-        from openpyxl.styles import PatternFill as _PF, Font as _Fnt, Alignment as _Aln
+        from openpyxl.styles import PatternFill as _PF, Font as _Fnt, Alignment as _Aln, Border as _Brd, Side as _Sd
     except ImportError:
         raise HTTPException(500, "openpyxl не установлен")
 
     wb = _WB()
     ws = wb.active
     ws.title = "Задачи"
+    ws.sheet_view.showGridLines = True
+    thin_b = _Brd(left=_Sd(style="thin"), right=_Sd(style="thin"), top=_Sd(style="thin"), bottom=_Sd(style="thin"))
     headers = ["Название", "Описание", "Приоритет", "Срок (YYYY-MM-DD)", "Категория"]
     ws.append(headers)
     hfill = _PF(start_color="2563EB", end_color="2563EB", fill_type="solid")
@@ -598,7 +600,10 @@ async def download_tasks_import_template(
         cell.fill = hfill
         cell.font = hfont
         cell.alignment = _Aln(horizontal="center", vertical="center")
+        cell.border = thin_b
     ws.append(["Починить принтер", "Сломался принтер в офисе 3", "medium", "2026-07-01", "Техника"])
+    for cell in ws[2]:
+        cell.border = thin_b
     for i, w in enumerate([40, 50, 12, 18, 20], 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"

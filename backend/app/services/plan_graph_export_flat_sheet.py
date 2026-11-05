@@ -53,6 +53,7 @@ def write_flat_plan_graph_sheet(wb, data: dict, selected_keys: list, base_url: s
     NUM_FMT = "#,##0.00"
 
     ws = wb.create_sheet(SHEET_NAME)
+    ws.sheet_view.showGridLines = True
     HEADERS, COL_WIDTHS = headers_and_widths(selected_keys)
 
     # "Бюджет ФЭО" тоже без верхних формул на этом листе (владелец 09.10.2026):

@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 try:
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.worksheet.datavalidation import DataValidation
 except ImportError:
     Workbook = None
@@ -128,8 +128,10 @@ async def download_feo_template(
                 cats_by_level[c.level].append(c)
 
     wb = Workbook()
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
     ws = wb.active
     ws.title = "Категории ФЭО"
+    ws.sheet_view.showGridLines = True
     headers = [
         "Субсидия",                                          # A   1
         "Уровень 2 (Направление расходов по ФЭО)",           # B   2
@@ -201,6 +203,7 @@ async def download_feo_template(
             cell.fill = fill_attr
         cell.font = font_w
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
     ws.row_dimensions[1].height = 40
 
     # Примеры (строки 2..N), 18 элементов каждая:
@@ -319,9 +322,14 @@ async def download_feo_template(
         "← Название поставщика (необязательно)",                                                           # AB 28
         "← Номер закупки, если уже заведена (необязательно)",                                               # AC 29
     ]
+    for r_idx in range(2, 7):
+        for cell in ws[r_idx]:
+            cell.border = thin_border
     for col, hint in enumerate(hints, start=1):
-        ws.cell(7, col).value = hint
-        ws.cell(7, col).font = Font(italic=True, color="888888", size=8)
+        c_hint = ws.cell(7, col)
+        c_hint.value = hint
+        c_hint.font = Font(italic=True, color="888888", size=8)
+        c_hint.border = thin_border
 
     # Ширины колонок (29 штук — добавлен необязательный блок «Факт» + «Аванс»)
     col_widths = [18, 42, 42, 42, 42, 14, 16, 14, 16, 16, 16, 14, 16, 16, 10, 12, 10, 22, 32, 30, 22, 14, 14, 16, 16, 14, 16, 24, 16]
@@ -358,6 +366,7 @@ async def download_feo_template(
     # шаблон, парсер и экспорт берут подписи оттуда же, а не из копии строкой).
     if DataValidation is not None:
         ws3 = wb.create_sheet("Справочники")
+        ws3.sheet_view.showGridLines = True
 
         # Колонка E — полный список подписей «Нужности» (NEED_LEVEL_LABELS),
         # дропдаун на колонку T («Нужность») листа «Категории ФЭО».
@@ -461,6 +470,7 @@ async def download_feo_template(
 
     # Второй лист — текстовые правила заполнения.
     ws2 = wb.create_sheet("Как заполнять")
+    ws2.sheet_view.showGridLines = True
     ws2.column_dimensions["A"].width = 110
     rules = [
         "Как заполнять шаблон импорта направлений ФЭО",

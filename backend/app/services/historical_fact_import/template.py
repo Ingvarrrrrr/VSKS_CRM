@@ -26,6 +26,7 @@ from app.services.plan_catalog import load_plan_catalog
 async def build_template_workbook(db: AsyncSession, subsidy_id: int) -> bytes:
     from io import BytesIO
     from openpyxl import Workbook
+    from openpyxl.styles import Border, Side
     from openpyxl.worksheet.datavalidation import DataValidation
 
     catalog = await load_plan_catalog(db, subsidy_id)
@@ -35,9 +36,13 @@ async def build_template_workbook(db: AsyncSession, subsidy_id: int) -> bytes:
     subsidy_name = subsidy.name if subsidy else None
 
     wb = Workbook()
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
     ws = wb.active
     ws.title = "Импорт факта"
+    ws.sheet_view.showGridLines = True
     ws.append(columns_mod.TEMPLATE_HEADER)
+    for cell in ws[1]:
+        cell.border = thin_border
 
     for entry in catalog:
         plan_item_name, levels = entry_name_and_levels(entry, depth=3)  # l2/l3/l4
@@ -50,11 +55,14 @@ async def build_template_workbook(db: AsyncSession, subsidy_id: int) -> bytes:
         row[16] = entry.get("unit_price")
         row[17] = entry.get("amount")
         ws.append(row)
+        for cell in ws[ws.max_row]:
+            cell.border = thin_border
 
     # «Справочники» — РОВНО 6 статусов GALA (owner: enum → dropdown + лист
     # справочника, не блокирующая валидация — lesson feedback_excel_template_
     # dropdowns).
     ref = wb.create_sheet("Справочники")
+    ref.sheet_view.showGridLines = True
     ref.append(["Правильный статус"])
     for choice in statuses_mod.STATUS_CHOICES:
         ref.append([choice["label"]])

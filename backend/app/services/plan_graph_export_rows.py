@@ -196,14 +196,19 @@ def write_flat_top_summary_rows(ws, money_col_indices, *, title: str, data_first
     что у данных столбца, см. _write_row в plan_graph_export_contracts_sheet.
     py и аналогичные хелперы соседних листов) и выравнивание вправо, а не
     только жирный синий шрифт."""
-    from openpyxl.styles import Alignment, Font
+    from openpyxl.styles import Alignment, Font, Border, Side
     from openpyxl.utils import get_column_letter
 
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
     label_font = Font(bold=True, size=9, color="1E3A5F")
     money_align = Alignment(horizontal="right", vertical="center")
     NUM_FMT = "#,##0.00"
     ws.cell(row=1, column=1, value=title).font = label_font
     ws.cell(row=2, column=1, value="Итого по фильтру").font = label_font
+    max_c = max(money_col_indices) if money_col_indices else 1
+    for c in range(1, max_c + 1):
+        ws.cell(row=1, column=c).border = thin_border
+        ws.cell(row=2, column=c).border = thin_border
     for ci in money_col_indices:
         col_letter = get_column_letter(ci)
         rng = f"{col_letter}{data_first_row}:{col_letter}{MAX_DATA_ROW}"

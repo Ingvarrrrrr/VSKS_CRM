@@ -169,6 +169,7 @@ def write_contracts_sheet(wb, groups: list, title: str = "") -> None:
     NUM_FMT = "#,##0.00"
 
     ws = wb.create_sheet(SHEET_NAME)
+    ws.sheet_view.showGridLines = True
     # Владелец 09.10.2026, замечание 1 — строка-итог группы сверху (договор/
     # заявка выше своих детей); всё развёрнуто по умолчанию (outline_level
     # пишется на строки, не здесь — см. _write_row).

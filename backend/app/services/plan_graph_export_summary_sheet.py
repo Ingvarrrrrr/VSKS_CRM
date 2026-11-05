@@ -97,11 +97,14 @@ def write_summary_sheet(
     )
 
     sm = wb.create_sheet("Сводная", 0)
+    sm.sheet_view.showGridLines = True
     n_cols = len(HEADERS)
     last_col_letter = get_column_letter(n_cols)
 
     # Строка 1 — титул.
-    title = sm.cell(row=1, column=1, value=f"СВОДНАЯ — {sub.name} ({sub.year})")
+    for ci in range(1, n_cols + 1):
+        sm.cell(row=1, column=ci).border = THIN_BORDER
+    title = sm.cell(row=1, column=1, value=f"СВОДНАЯ — {sub.name} ({sub.year})" )
     title.font = Font(bold=True, size=12, color="1E3A5F")
     sm.merge_cells(f"A1:{last_col_letter}1")
     title.alignment = CENTER_ALIGN

@@ -11,59 +11,86 @@
         <div v-if="loading" class="d-flex justify-center py-6">
           <v-progress-circular indeterminate color="primary" />
         </div>
-        <div v-else-if="!items.length && !combos.length && !signHints.length && !allPurchases.length" class="text-caption text-medium-emphasis py-4">
-          Подходящих закупок или комбинаций сумм не найдено
-        </div>
         <template v-else>
-          <!-- 1. Составные варианты (Subset Sum) с ранжированием по категориям -->
-          <div v-if="combos.length" class="mb-4">
-            <div class="text-subtitle-2 font-weight-bold mb-2">
-              Варианты по сумме и близости категорий (в т.ч. закупки без исполнителя):
+          <!-- Информация о платёжке из выписки (включая назначение платежа и направление расходов) -->
+          <v-sheet v-if="bankPayment" rounded="lg" border class="pa-3 mb-4 bg-grey-lighten-4 text-body-2">
+            <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-1">
+              <div>
+                <v-chip size="x-small" color="deep-purple" variant="flat" class="mr-2">
+                  ПП №{{ bankPayment.payment_number || bankPayment.id }}
+                  {{ bankPayment.payment_date ? 'от ' + new Date(bankPayment.payment_date).toLocaleDateString('ru-RU') : '' }}
+                </v-chip>
+                <b>{{ bankPayment.payee_name || 'Получатель не указан' }}</b>
+                <span v-if="bankPayment.payee_inn" class="text-caption text-medium-emphasis ml-1">(ИНН {{ bankPayment.payee_inn }})</span>
+              </div>
+              <div class="text-subtitle-1 font-weight-bold text-primary">
+                {{ formatCurrency(bankPayment.amount) }}
+              </div>
             </div>
-            <v-list density="compact">
-              <v-list-item
-                v-for="(cs, idx) in combos"
-                :key="'combo-' + idx"
-                class="mb-2 rounded border"
-                :active="selectedComboIdx === idx"
-                @click="selectCombo(idx)"
-              >
-                <template #prepend>
-                  <v-radio :model-value="selectedComboIdx === idx" density="compact" />
-                </template>
-                <div class="d-flex align-center flex-wrap gap-2 mb-1">
-                  <v-chip
-                    size="x-small"
-                    :color="probColor(cs.probability)"
-                    variant="flat"
-                  >
-                    {{ cs.probability_label }}
-                  </v-chip>
-                  <span class="font-weight-medium text-body-2">
-                    {{ cs.count > 1 ? `Комбинация из ${cs.count} поз. = ${formatCurrency(cs.total_amount)}` : `Сумма закупки = ${formatCurrency(cs.total_amount)}` }}
-                  </span>
-                </div>
-                <div class="text-body-2 mb-1">
-                  <div v-for="it in cs.items" :key="it.purchase_id" class="d-flex align-center flex-wrap gap-1">
-                    <v-chip size="x-small" variant="tonal" color="primary">
-                      {{ it.registry_number || `#${it.purchase_id}` }}
+            <div v-if="bankPayment.expense_direction" class="text-caption text-primary mt-1" style="line-height: 1.3;">
+              <b>Направление расходов (выписка):</b> {{ bankPayment.expense_direction }}
+            </div>
+            <div class="mt-1" style="white-space: normal; word-break: break-word; line-height: 1.35;">
+              <b>Назначение платежа:</b> {{ bankPayment.purpose_text || '—' }}
+            </div>
+          </v-sheet>
+
+          <div v-if="!items.length && !combos.length && !signHints.length && !allPurchases.length" class="text-caption text-medium-emphasis py-4">
+            Подходящих закупок или комбинаций сумм не найдено
+          </div>
+          <template v-else>
+            <!-- 1. Составные варианты (Subset Sum) с ранжированием по категориям -->
+            <div v-if="combos.length" class="mb-4">
+              <div class="text-subtitle-2 font-weight-bold mb-2">
+                Варианты по сумме и близости категорий (в т.ч. закупки без исполнителя и временные из «План закупок»):
+              </div>
+              <v-list density="compact">
+                <v-list-item
+                  v-for="(cs, idx) in combos"
+                  :key="'combo-' + idx"
+                  class="mb-2 rounded border"
+                  :active="selectedComboIdx === idx"
+                  @click="selectCombo(idx)"
+                >
+                  <template #prepend>
+                    <v-radio :model-value="selectedComboIdx === idx" density="compact" />
+                  </template>
+                  <div class="d-flex align-center flex-wrap gap-2 mb-1">
+                    <v-chip
+                      size="x-small"
+                      :color="probColor(cs.probability)"
+                      variant="flat"
+                    >
+                      {{ cs.probability_label }}
                     </v-chip>
-                    <span v-if="it.sheet_ref" class="text-caption text-medium-emphasis">({{ it.sheet_ref }})</span>
-                    <span>{{ it.subject || '—' }}</span>
-                    <span class="font-weight-bold">({{ formatCurrency(it.amount) }})</span>
-                    <span v-if="it.semantic_cluster || it.feo_category_name" class="text-caption text-medium-emphasis">
-                      · {{ it.semantic_cluster || it.feo_category_name }}
-                    </span>
-                    <span v-if="!it.contractor_name" class="text-caption text-warning">
-                      · без контрагента
+                    <span class="font-weight-medium text-body-2">
+                      {{ cs.count > 1 ? `Комбинация из ${cs.count} поз. = ${formatCurrency(cs.total_amount)}` : `Сумма закупки = ${formatCurrency(cs.total_amount)}` }}
                     </span>
                   </div>
-                </div>
-                <div class="text-caption text-medium-emphasis">
-                  {{ cs.coherence_reason }}
-                </div>
-              </v-list-item>
-            </v-list>
+                  <div class="text-body-2 mb-1">
+                    <div v-for="it in cs.items" :key="it.purchase_id" class="d-flex align-center flex-wrap gap-1">
+                      <v-chip size="x-small" variant="tonal" :color="it.is_temp_plan ? 'deep-purple' : 'primary'">
+                        {{ it.registry_number || `#${it.purchase_id}` }}
+                      </v-chip>
+                      <v-chip v-if="it.is_temp_plan" size="x-small" color="deep-purple" variant="flat">
+                        План закупок («Да») · временная
+                      </v-chip>
+                      <span v-if="it.sheet_ref" class="text-caption text-medium-emphasis">({{ it.sheet_ref }})</span>
+                      <span>{{ it.subject || '—' }}</span>
+                      <span class="font-weight-bold">({{ formatCurrency(it.amount) }})</span>
+                      <span v-if="!it.contractor_name" class="text-caption text-warning">
+                        · без контрагента
+                      </span>
+                      <div v-if="it.feo_category_name" class="text-caption text-medium-emphasis w-100" style="line-height: 1.25;">
+                        <v-icon icon="mdi-folder-outline" size="12" class="mr-1" />{{ it.feo_category_name }} › {{ it.subject || '—' }}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="text-caption text-medium-emphasis">
+                    {{ cs.coherence_reason }}
+                  </div>
+                </v-list-item>
+              </v-list>
 
             <v-alert
               v-if="selectedCombo && (selectedCombo.needs_amount_approval || Math.abs(selectedCombo.delta) > 0.0001)"
@@ -172,6 +199,7 @@
               {{ sh.registry_number || `#${sh.purchase_id}` }} «{{ sh.subject }}» — {{ sh.reason }}
             </div>
           </v-alert>
+          </template>
         </template>
       </v-card-text>
       <v-card-actions class="pa-4 pt-0">
@@ -196,6 +224,7 @@ import { computed, ref, watch } from 'vue'
 import {
   useSubsidyPaymentControl,
   type PaymentControlCandidate,
+  type PaymentControlCandidatesBankPaymentInfo,
   type PaymentControlComboSuggestion,
   type PaymentControlSignErrorHint,
 } from '@/composables/subsidies/useSubsidyPaymentControl'
@@ -213,6 +242,7 @@ const emit = defineEmits<{ (e: 'attached'): void }>()
 const dialog = defineModel<boolean>({ default: false })
 const toast = useToast()
 
+const bankPayment = ref<PaymentControlCandidatesBankPaymentInfo | null>(null)
 const items = ref<PaymentControlCandidate[]>([])
 const combos = ref<PaymentControlComboSuggestion[]>([])
 const signHints = ref<PaymentControlSignErrorHint[]>([])
@@ -258,6 +288,7 @@ function selectSingle(pid: number) {
 async function load() {
   if (!props.bankPaymentId) return
   loading.value = true
+  bankPayment.value = null
   items.value = []
   combos.value = []
   signHints.value = []
@@ -268,6 +299,7 @@ async function load() {
   approveAmountDiff.value = false
   try {
     const res = await props.control.fetchCandidatesFull(props.subsidyId, props.bankPaymentId)
+    bankPayment.value = res.bank_payment || null
     items.value = res.items || []
     combos.value = res.combo_suggestions || []
     signHints.value = res.sign_error_hints || []

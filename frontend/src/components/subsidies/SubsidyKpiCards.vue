@@ -369,7 +369,12 @@
                 <span v-if="Math.abs(paidConfirmedByKind.payroll || 0) > 0.5" class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_confirmed', 'payroll')"><span class="kpi-split-dot kpi-split-dot-payroll" />ФОТ {{ formatCurrency(paidConfirmedByKind.payroll || 0) }}</span>
                 <span v-if="Math.abs(paidConfirmedByKind.unspecified || 0) > 0.5" class="kpi-paid-dual-chip" @click.stop="cardDrills.openMetric('paid_confirmed', 'unspecified')"><span class="kpi-split-dot kpi-split-dot-unspecified" />без типа {{ formatCurrency(paidConfirmedByKind.unspecified || 0) }}</span>
               </div>
-              <div v-if="!isPayrollOnly && paidHasDiscrepancy" class="kpi-paid-dual-row kpi-paid-dual-warn">
+              <div
+                v-if="!isPayrollOnly && paidHasDiscrepancy"
+                class="kpi-paid-dual-row kpi-paid-dual-warn kpi-paid-dual-row-clickable"
+                title="Нажмите, чтобы увидеть позиции расхождения и сопоставить их с банковской выпиской"
+                @click.stop="paidDiscrepancyDialogVisible = true"
+              >
                 <span class="kpi-paid-dual-label">расхождение:</span>
                 <span class="kpi-paid-dual-amount">{{ paidDiff >= 0 ? '+' : '−' }}{{ formatCurrency(Math.abs(paidDiff)) }}</span>
               </div>
@@ -636,6 +641,13 @@
     @row-click="(id) => { paidOverDeliveredDrillVisible = false; ctx.router.push(`/orders/${id}/edit`) }"
   />
 
+  <PaidDiscrepancyReconcileDialog
+    :visible="paidDiscrepancyDialogVisible"
+    :subsidy-id="ctx.selectedId.value"
+    @close="paidDiscrepancyDialogVisible = false"
+    @reconciled="onPaidDiscrepancyReconciled"
+  />
+
   <!-- Задача владельца (13.10.2026, строки «экономия»/«превышение (согласовано)»
        раскладки карточки «Запланировано» — шаг 1 плана humble-stirring-
        emerson.md, 23.10.2026) — окно «Перерасход/экономия по заказам» по
@@ -773,6 +785,7 @@ import SubsidyMoneyCards from '@/components/subsidies/SubsidyMoneyCards.vue'
 import ContractsDrillDialog from '@/components/subsidies/ContractsDrillDialog.vue'
 import FeoCardDrillDialog from '@/components/subsidies/FeoCardDrillDialog.vue'
 import PaidOverDeliveredDrillDialog from '@/components/subsidies/PaidOverDeliveredDrillDialog.vue'
+import PaidDiscrepancyReconcileDialog from '@/components/subsidies/PaidDiscrepancyReconcileDialog.vue'
 import OrderSubstitutionDialog from '@/components/subsidies/OrderSubstitutionDialog.vue'
 import MetricDrillDialog from '@/components/subsidies/MetricDrillDialog.vue'
 import MonthlyFutureTreeDialog from '@/components/subsidies/MonthlyFutureTreeDialog.vue'
@@ -912,6 +925,14 @@ const paidHasDiscrepancy = computed(() => Math.abs(paidDiff.value) > 0.5)
 const paidOverDeliveredTotal = computed(() => Number(ctx.selectedSubsidy.value?.paid_over_delivered ?? 0))
 const paidOverDeliveredPrepayment = computed(() => Number(ctx.selectedSubsidy.value?.paid_over_delivered_prepayment ?? 0))
 const paidOverDeliveredDrillVisible = ref(false)
+const paidDiscrepancyDialogVisible = ref(false)
+
+async function onPaidDiscrepancyReconciled() {
+  await ctx.silentRefreshSubsidies()
+  if (ctx.selectedId.value) {
+    await ctx.loadFeo(ctx.selectedId.value)
+  }
+}
 // Счётчик закупок в тексте плашки (07.10.2026, второй заход) — тот же
 // /dashboard/paid-over-delivered-drill, что и PaidOverDeliveredDrillDialog.vue
 // ниже (Правило №6, purchases_count не пересчитывается локально, только

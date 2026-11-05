@@ -117,14 +117,17 @@
                 />
               </v-alert>
 
-              <!-- Реквизиты платёжки -->
-              <div class="bg-grey-lighten-4 pa-2 rounded mb-2 text-caption">
+              <!-- Реквизиты платёжки (получатель, направление расходов и назначение платежа) -->
+              <div class="bg-grey-lighten-4 pa-2 rounded mb-2 text-body-2">
                 <div>
                   <b>Получатель:</b> {{ m.payee_name || 'Не указан' }}
-                  <span v-if="m.payee_inn" class="text-medium-emphasis">(ИНН: {{ m.payee_inn }})</span>
+                  <span v-if="m.payee_inn" class="text-caption text-medium-emphasis">(ИНН: {{ m.payee_inn }})</span>
                 </div>
-                <div v-if="m.purpose_text" class="text-medium-emphasis mt-1" style="white-space: normal; word-break: break-word; line-height: 1.35;">
-                  <b>Назначение:</b> {{ m.purpose_text }}
+                <div v-if="m.expense_direction" class="text-caption text-primary mt-1" style="line-height: 1.3;">
+                  <b>Направление расходов (выписка):</b> {{ m.expense_direction }}
+                </div>
+                <div class="mt-1" style="white-space: normal; word-break: break-word; line-height: 1.35;">
+                  <b>Назначение платежа:</b> {{ m.purpose_text || '—' }}
                 </div>
               </div>
 
@@ -161,16 +164,19 @@
                   class="d-flex align-center justify-space-between flex-wrap gap-1 text-body-2 py-1 border-b"
                 >
                   <div class="d-flex align-center flex-wrap gap-1">
-                    <v-chip size="x-small" variant="outlined" color="primary">
+                    <v-chip size="x-small" variant="outlined" :color="it.is_temp_plan ? 'deep-purple' : 'primary'">
                       {{ it.registry_number || `#${it.purchase_id}` }}
                     </v-chip>
-                    <span class="font-weight-medium">{{ it.subject || '—' }}</span>
-                    <v-chip v-if="it.feo_category_name || it.semantic_cluster" size="x-small" variant="tonal" color="grey">
-                      {{ it.feo_category_name || it.semantic_cluster }}
+                    <v-chip v-if="it.is_temp_plan" size="x-small" color="deep-purple" variant="flat">
+                      План закупок («Да») · временная закупка
                     </v-chip>
+                    <span class="font-weight-medium">{{ it.subject || '—' }}</span>
                     <v-chip v-if="!it.contractor_name" size="x-small" color="orange" variant="tonal">
                       без контрагента → подставится {{ m.payee_name || m.payee_inn }}
                     </v-chip>
+                    <div v-if="it.feo_category_name" class="text-caption text-medium-emphasis w-100 mt-1" style="line-height: 1.3;">
+                      <v-icon icon="mdi-folder-outline" size="13" class="mr-1" />{{ it.feo_category_name }} › <b>{{ it.subject || '—' }}</b>
+                    </div>
                   </div>
                   <span class="font-weight-bold ml-auto">{{ formatCurrency(it.amount) }}</span>
                 </div>

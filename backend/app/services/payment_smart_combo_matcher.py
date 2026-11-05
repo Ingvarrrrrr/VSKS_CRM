@@ -34,12 +34,31 @@ from app.models.contract import Contract
 from app.models.contract_item import ContractItem
 from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
+from app.models.feo_planned_item import FeoPlannedItem
 from app.models.payment import Payment
 from app.models.product import Product
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.services.purchase_sheet_ref import resolve_sheet_ref
+
+
+def build_feo_category_path(cat_id: Optional[int], feo_map: dict[int, FeoCategory]) -> Optional[str]:
+    """Строит полный путь категории ФЭО в субсидии от корня до узла:
+    «Направление › Тип расходов › Подкатегория» (точно так, как категории
+    называются в дереве субсидии)."""
+    if cat_id is None or cat_id not in feo_map:
+        return None
+    names: list[str] = []
+    seen: set[int] = set()
+    cur: Optional[int] = cat_id
+    while cur is not None and cur in feo_map and cur not in seen:
+        seen.add(cur)
+        n = (feo_map[cur].name or "").strip()
+        if n:
+            names.append(n)
+        cur = feo_map[cur].parent_id
+    return " › ".join(reversed(names)) if names else None
 
 # Правило владельца (04.11.2026): допуск для автоматического совпадения ЖЁСТКИЙ (0.00 ₽).
 # Любое расхождение даже в 1 копейку или несколько рублей (0 < |Δ| <= APPROVAL_TOL)
@@ -129,6 +148,9 @@ class CandidateUnit:
     is_declared_paid: bool = False
     is_sub_item: bool = False
     purchase_item_id: Optional[int] = None
+    is_temp_plan: bool = False
+    feo_planned_item_id: Optional[int] = None
+    feo_plan_part_key: Optional[str] = None
 
 
 def detect_semantic_cluster(text: str) -> Optional[str]:
@@ -263,7 +285,7 @@ def evaluate_combo_coherence(
     if len(units) == 1:
         u = units[0]
         sig = _unit_category_signature(u)
-        cat_label = sig["semantic"] or sig["product_category"] or sig["feo_category_name"]
+        real_feo_path = sig["feo_category_name"]
         score = 84
         reasons: list[str] = []
         penalties: list[str] = []
@@ -281,11 +303,20 @@ def evaluate_combo_coherence(
         if u.is_declared_paid:
             score += 8
             reasons.append("отмечена оплаченной в факте")
+        elif u.is_temp_plan:
+            score += 5
+            reasons.append("позиция из «План закупок» («Да») — временная закупка")
         if _unit_payee_priority(u, payee_name, payee_inn) == 0:
             score += 12
             reasons.append(f"совпадает контрагент «{payee_name or u.contractor_name}»")
-        if cat_label:
-            reasons.append(f"категория «{cat_label}»")
+        if real_feo_path:
+            subj_clean = (u.subject or "").strip()
+            if subj_clean and not real_feo_path.endswith(subj_clean):
+                reasons.append(f"путь в субсидии: «{real_feo_path} › {subj_clean}»")
+            else:
+                reasons.append(f"путь в субсидии: «{real_feo_path}»")
+        elif u.subject:
+            reasons.append(f"позиция: «{u.subject}»")
 
         if purpose_text:
             p_stems = _word_stems(purpose_text)
@@ -311,7 +342,7 @@ def evaluate_combo_coherence(
                     score += 8
                 elif not (p_stems & sig["stems"]) and _unit_payee_priority(u, payee_name, payee_inn) != 0:
                     score -= 30
-                    penalties.append(f"расхождение тематики («{sig['semantic']}» vs «{p_sem}»)")
+                    penalties.append("предмет позиции не совпадает с назначением платежа")
 
         score = max(10, min(99, score))
         if penalties and score < 60:
@@ -339,7 +370,7 @@ def evaluate_combo_coherence(
     reasons = []
     penalties = []
 
-    # 1. Смысловые кластеры и каталожные категории
+    # 1. Смысловые кластеры (только для внутреннего скоринга) и реальные категории субсидии
     semantics = [s["semantic"] for s in sigs if s["semantic"]]
     prod_cats = [s["product_category"] for s in sigs if s["product_category"]]
     feo_cats = [s["feo_category_id"] for s in sigs if s["feo_category_id"] is not None]
@@ -350,33 +381,39 @@ def evaluate_combo_coherence(
     same_feo = len(feo_cats) == len(units) and len(set(feo_cats)) == 1
 
     if len(distinct_semantics) == 1 and (len(semantics) == len(units) or (len(semantics) >= 2 and same_feo)):
-        cluster_name = next(iter(distinct_semantics))
         score += 30
-        reasons.append(f"одна тематическая группа «{cluster_name}»")
+        if not same_feo:
+            reasons.append("однородные позиции по предмету закупки")
     elif len(distinct_semantics) >= 2 and not same_feo:
         score -= 38
-        penalties.append(f"разные тематические категории ({' + '.join(sorted(distinct_semantics))})")
+        penalties.append("разнородные предметы позиций")
 
     if len(prod_cats) >= 2 and len(distinct_prod_cats) == 1:
         pcat = next(iter(distinct_prod_cats))
         if pcat.strip().lower() not in ("прочее", "прочие", "разное", "не указано"):
             score += 25
-            if not reasons:
-                reasons.append(f"одна категория каталога «{pcat}»")
     elif len(distinct_prod_cats) >= 2 and len(distinct_semantics) < 2 and not same_feo:
         score -= 25
-        penalties.append(f"разные категории товаров ({' + '.join(sorted(distinct_prod_cats))})")
+        penalties.append("разные категории товаров")
 
     if same_feo:
         feo_name = next((s["feo_category_name"] for s in sigs if s["feo_category_name"]), None)
         score += 18
-        reasons.append(f"одна категория ФЭО{f' «{feo_name}»' if feo_name else ''}")
+        reasons.append(f"путь в субсидии: «{feo_name}»" if feo_name else "одна категория в субсидии")
     elif len(feo_parents) == len(units) and len(set(feo_parents)) == 1:
         score += 8
-        reasons.append("одна ветка ФЭО")
+        unique_paths = list(dict.fromkeys(s["feo_category_name"] for s in sigs if s["feo_category_name"]))
+        if unique_paths:
+            reasons.append(f"одна ветка в субсидии: «{'»; «'.join(unique_paths[:3])}»")
+        else:
+            reasons.append("одна ветка в субсидии")
     elif len(set(feo_cats)) >= 2:
         score -= 15
-        penalties.append("разные категории ФЭО")
+        unique_paths = list(dict.fromkeys(s["feo_category_name"] for s in sigs if s["feo_category_name"]))
+        if unique_paths:
+            penalties.append(f"разные категории в субсидии («{'» vs «'.join(unique_paths[:2])}»)")
+        else:
+            penalties.append("разные категории в субсидии")
 
     common_stems = set.intersection(*(s["stems"] for s in sigs)) if all(s["stems"] for s in sigs) else set()
     if common_stems:
@@ -396,7 +433,7 @@ def evaluate_combo_coherence(
         score -= 25
         penalties.append("указаны разные контрагенты")
 
-    ids_sorted = sorted(u.purchase_id for u in units)
+    ids_sorted = sorted(abs(u.purchase_id) for u in units)
     max_gap = max(ids_sorted[i + 1] - ids_sorted[i] for i in range(len(ids_sorted) - 1))
     if max_gap <= 3:
         score += 8
@@ -405,6 +442,9 @@ def evaluate_combo_coherence(
     if all(u.is_declared_paid for u in units):
         score += 10
         reasons.append("отмечены оплаченными в факте")
+    elif any(u.is_temp_plan for u in units):
+        score += 5
+        reasons.append("включает позиции из «План закупок» («Да», временные закупки)")
 
     is_payment_service = False
     has_goods = False
@@ -419,11 +459,11 @@ def evaluate_combo_coherence(
             reasons.append("совпадает с назначением платежа")
         elif p_sem and p_sem in distinct_semantics:
             score += 12
-            reasons.append(f"тематика совпадает с назначением («{p_sem}»)")
+            reasons.append("предмет совпадает с назначением платежа")
         elif not has_contractor_match:
             if p_sem and distinct_semantics and p_sem not in distinct_semantics:
                 score -= 35
-                penalties.append(f"назначение платежа («{p_sem}») не совпадает с позициями")
+                penalties.append("назначение платежа не совпадает с позициями")
             elif ":" in purpose_text and not same_feo:
                 score -= 25
                 penalties.append("предмет в назначении платежа не пересекается с позициями")
@@ -513,9 +553,10 @@ def find_subset_sum_combinations(
     valid_units.sort(
         key=lambda u: (
             _unit_payee_priority(u, payee_name, payee_inn),
-            0 if u.is_declared_paid else 1,
+            0 if u.is_declared_paid else (1 if not u.is_temp_plan else 2),
             1 if u.is_sub_item else 0,
-            u.purchase_id,
+            u.row_hint or abs(u.purchase_id),
+            abs(u.purchase_id),
             u.purchase_item_id or 0,
         )
     )
@@ -544,6 +585,7 @@ def find_subset_sum_combinations(
                             "purchase_id": u.purchase_id,
                             "purchase_item_id": u.purchase_item_id,
                             "is_sub_item": u.is_sub_item,
+                            "is_temp_plan": u.is_temp_plan,
                             "registry_number": u.registry_number,
                             "subject": u.subject,
                             "amount": float(u.amount),
@@ -605,6 +647,7 @@ def find_subset_sum_combinations(
                         "purchase_id": u.purchase_id,
                         "purchase_item_id": None,
                         "is_sub_item": False,
+                        "is_temp_plan": u.is_temp_plan,
                         "registry_number": u.registry_number,
                         "subject": u.subject,
                         "amount": float(u.amount),
@@ -715,7 +758,10 @@ def find_subset_sum_combinations(
             _dfs(0, 0)
 
         # 2а. Скользящее окно по порядку строк/ID в реестре и внутри каждой категории ФЭО
-        by_id_order = sorted(whole_units, key=lambda u: u.purchase_id)
+        by_id_order = sorted(
+            whole_units,
+            key=lambda u: (1 if u.is_temp_plan else 0, u.row_hint or abs(u.purchase_id), abs(u.purchase_id)),
+        )
         _sliding_window_scan(by_id_order)
 
         by_feo: dict[Optional[int], list[CandidateUnit]] = {}
@@ -1093,9 +1139,29 @@ async def load_unpaid_candidate_units(
     subsidy_id: int,
     *,
     preferred_contractor_inn: Optional[str] = None,
+    include_planned_items: bool = True,
 ) -> list[CandidateUnit]:
     """Загружает из БД закупки субсидии, ещё не закрытые подтверждёнными
-    платежами выписки, и обогащает их категориями ФЭО и каталога товаров."""
+    платежами выписки, а также (при include_planned_items=True) позиции из
+    «План закупок» («Да», FeoPlannedItem.is_active=True), по которым ещё не
+    создана закупка, в виде временных кандидатов (is_temp_plan=True, purchase_id < 0).
+    Если человек утвердит подбор — временная закупка материализуется в реальную;
+    если не утвердит — она не сохраняется в реестре закупок."""
+    frows = (await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+    )).scalars().all()
+    feo_map = {f.id: f for f in frows}
+
+    def _is_payroll_cat(cid: Optional[int]) -> bool:
+        cur = cid
+        seen: set[int] = set()
+        while cur is not None and cur in feo_map and cur not in seen:
+            seen.add(cur)
+            if getattr(feo_map[cur], "is_payroll", False):
+                return True
+            cur = feo_map[cur].parent_id
+        return False
+
     # Закупки субсидии, у которых уже есть подтверждённый выпиской платёж
     paid_rows = (await db.execute(
         select(Payment.purchase_id, Payment.amount)
@@ -1118,9 +1184,6 @@ async def load_unpaid_candidate_units(
         ).order_by(Purchase.id)
     )).scalars().all()
 
-    if not purchases:
-        return []
-
     pids = [p.id for p in purchases]
     cids = {p.contractor_id for p in purchases if p.contractor_id}
     contractors_map: dict[int, Contractor] = {}
@@ -1128,25 +1191,46 @@ async def load_unpaid_candidate_units(
         crows = (await db.execute(select(Contractor).where(Contractor.id.in_(cids)))).scalars().all()
         contractors_map = {c.id: c for c in crows}
 
-    frows = (await db.execute(
-        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
-    )).scalars().all()
-    feo_map = {f.id: f for f in frows}
-
-    pitems = (await db.execute(
-        select(PurchaseItem).where(PurchaseItem.purchase_id.in_(pids)).order_by(PurchaseItem.id)
-    )).scalars().all()
+    pitems = (
+        (await db.execute(select(PurchaseItem).where(PurchaseItem.purchase_id.in_(pids)).order_by(PurchaseItem.id))).scalars().all()
+        if pids
+        else []
+    )
     items_by_pid: dict[int, list[PurchaseItem]] = {}
     prod_ids: set[int] = set()
+    plan_ids: set[int] = set()
+    bound_fpi_whole: set[int] = set()
+    bound_fpi_parts: dict[int, set[str]] = {}
+    bound_fpi_amount: dict[int, Decimal] = {}
+
     for pi in pitems:
         items_by_pid.setdefault(pi.purchase_id, []).append(pi)
         if pi.product_id:
             prod_ids.add(pi.product_id)
+        if pi.feo_planned_item_id:
+            plan_ids.add(pi.feo_planned_item_id)
+            pi_amt = Decimal(str(pi.total_price or 0))
+            bound_fpi_amount[pi.feo_planned_item_id] = bound_fpi_amount.get(pi.feo_planned_item_id, Decimal(0)) + pi_amt
+            pkey = str(getattr(pi, "feo_plan_part_key", None) or "").strip()
+            if pkey:
+                bound_fpi_parts.setdefault(pi.feo_planned_item_id, set()).add(pkey)
+            else:
+                bound_fpi_whole.add(pi.feo_planned_item_id)
 
     prod_map: dict[int, Product] = {}
     if prod_ids:
         prows = (await db.execute(select(Product).where(Product.id.in_(prod_ids)))).scalars().all()
         prod_map = {pr.id: pr for pr in prows}
+
+    plan_map: dict[int, FeoPlannedItem] = {}
+    if plan_ids:
+        pl_rows = (await db.execute(select(FeoPlannedItem).where(FeoPlannedItem.id.in_(plan_ids)))).scalars().all()
+        plan_map = {pl.id: pl for pl in pl_rows}
+
+    def _norm_subj(s: Optional[str]) -> str:
+        return re.sub(r"\s+", " ", (s or "").strip().lower().replace("ё", "е")).strip(" .,;:-")
+
+    unbound_purchase_sigs: dict[tuple[str, Decimal], int] = {}
 
     units: list[CandidateUnit] = []
     for p in purchases:
@@ -1163,6 +1247,17 @@ async def load_unpaid_candidate_units(
         full_amt = Decimal(str(raw_amt))
         already_paid = paid_by_purchase.get(p.id, Decimal(0))
         rem_amt = full_amt - already_paid
+
+        item_names = [pi.item_name for pi in pis if pi.item_name]
+        subject = (p.subject or p.item_name or (", ".join(item_names[:2]) if item_names else f"Закупка #{p.id}")).strip()
+        if not any(pi.feo_planned_item_id for pi in pis):
+            sig_key = (_norm_subj(subject), full_amt.quantize(Decimal("0.01")))
+            unbound_purchase_sigs[sig_key] = unbound_purchase_sigs.get(sig_key, 0) + 1
+            for pi in pis:
+                if pi.item_name and pi.total_price is not None:
+                    pi_sig = (_norm_subj(pi.item_name), Decimal(str(pi.total_price)).quantize(Decimal("0.01")))
+                    unbound_purchase_sigs[pi_sig] = unbound_purchase_sigs.get(pi_sig, 0) + 1
+
         if rem_amt <= AMOUNT_TOL:
             continue
 
@@ -1172,7 +1267,30 @@ async def load_unpaid_candidate_units(
         if preferred_contractor_inn and c_obj and c_obj.inn and c_obj.inn != preferred_contractor_inn:
             continue
 
-        feo_id = p.feo_category_id or next((pi.feo_category_id for pi in pis if pi.feo_category_id), None)
+        # Выбираем самую глубокую (конкретную) категорию ФЭО среди позиций, плановых позиций и самой закупки
+        candidate_feo_ids: list[int] = []
+        for pi in pis:
+            if pi.feo_category_id:
+                candidate_feo_ids.append(pi.feo_category_id)
+            if pi.feo_planned_item_id and pi.feo_planned_item_id in plan_map:
+                pl_cat_id = plan_map[pi.feo_planned_item_id].feo_category_id
+                if pl_cat_id:
+                    candidate_feo_ids.append(pl_cat_id)
+        if p.feo_category_id:
+            candidate_feo_ids.append(p.feo_category_id)
+
+        feo_id: Optional[int] = None
+        feo_path_str: Optional[str] = None
+        best_depth = -1
+        for cid in dict.fromkeys(candidate_feo_ids):
+            path_s = build_feo_category_path(cid, feo_map)
+            if path_s:
+                depth = path_s.count(" › ")
+                if depth > best_depth:
+                    best_depth = depth
+                    feo_id = cid
+                    feo_path_str = path_s
+
         feo_obj = feo_map.get(feo_id) if feo_id else None
 
         prod_cat = None
@@ -1182,11 +1300,10 @@ async def load_unpaid_candidate_units(
                 break
 
         item_type = p.item_type or next((pi.item_type for pi in pis if pi.item_type), None)
-        item_names = [pi.item_name for pi in pis if pi.item_name]
-        subject = (p.subject or p.item_name or (", ".join(item_names[:2]) if item_names else f"Закупка #{p.id}")).strip()
         is_declared_paid = bool(
             p.status == "paid"
             or (p.payment_amount is not None and Decimal(str(p.payment_amount)) > Decimal(0))
+            or (p.payment_amount_declared is not None and Decimal(str(p.payment_amount_declared)) > Decimal(0))
         )
 
         units.append(CandidateUnit(
@@ -1198,18 +1315,223 @@ async def load_unpaid_candidate_units(
             contractor_name=c_obj.name if c_obj else None,
             contractor_inn=c_obj.inn if c_obj else None,
             feo_category_id=feo_id,
-            feo_category_name=feo_obj.name if feo_obj else None,
+            feo_category_name=feo_path_str,
             feo_parent_id=feo_obj.parent_id if feo_obj else None,
             product_category=prod_cat,
             item_type=item_type,
             item_names=item_names,
             sheet_ref=resolve_sheet_ref(p),
+            row_hint=p.purchase_number or p.id,
             is_declared_paid=is_declared_paid,
             is_sub_item=False,
             purchase_item_id=None,
+            is_temp_plan=False,
         ))
 
+    # 2. Добавляем временные закупки для позиций из «План закупок» («Да»),
+    # по которым ещё не была создана закупка в реестре
+    if include_planned_items and feo_map:
+        all_plan_rows = (await db.execute(
+            select(FeoPlannedItem)
+            .where(
+                FeoPlannedItem.feo_category_id.in_(list(feo_map.keys())),
+                FeoPlannedItem.is_active.is_(True),
+            )
+            .order_by(FeoPlannedItem.source_row.asc().nulls_last(), FeoPlannedItem.id.asc())
+        )).scalars().all()
+
+        for fpi in all_plan_rows:
+            if _is_payroll_cat(fpi.feo_category_id):
+                continue
+            if hasattr(fpi, "is_internal_plan") and fpi.is_internal_plan is False and not fpi.amount:
+                continue
+
+            feo_path_str = build_feo_category_path(fpi.feo_category_id, feo_map)
+            feo_obj = feo_map.get(fpi.feo_category_id)
+            fpi_name = (fpi.name or f"Плановая позиция #{fpi.id}").strip()
+            parts_list = list(getattr(fpi, "parts", None) or [])
+
+            if parts_list:
+                if fpi.id in bound_fpi_whole:
+                    continue
+                used_part_keys = bound_fpi_parts.get(fpi.id, set())
+                for idx, part in enumerate(parts_list):
+                    if not isinstance(part, dict):
+                        continue
+                    pkey = str(part.get("key") or part.get("row") or (idx + 1)).strip()
+                    if pkey in used_part_keys:
+                        continue
+                    raw_pamt = part.get("amount")
+                    if raw_pamt is None:
+                        continue
+                    pamt = Decimal(str(raw_pamt)).quantize(Decimal("0.01"))
+                    if pamt <= AMOUNT_TOL:
+                        continue
+                    sig_key = (_norm_subj(fpi_name), pamt)
+                    if unbound_purchase_sigs.get(sig_key, 0) > 0:
+                        unbound_purchase_sigs[sig_key] -= 1
+                        continue
+                    prow = int(part.get("row") or (idx + 1))
+                    temp_id = -(int(fpi.id) * 100000 + prow)
+                    units.append(CandidateUnit(
+                        purchase_id=temp_id,
+                        registry_number=f"ВРЕМ-ПЛАН-{prow}",
+                        subject=fpi_name,
+                        amount=pamt,
+                        contractor_id=None,
+                        contractor_name=None,
+                        contractor_inn=None,
+                        feo_category_id=fpi.feo_category_id,
+                        feo_category_name=feo_path_str,
+                        feo_parent_id=feo_obj.parent_id if feo_obj else None,
+                        product_category=None,
+                        item_type=fpi.item_type,
+                        item_names=[fpi_name],
+                        sheet_ref=f"Стр. {prow} (План закупок)",
+                        row_hint=prow,
+                        is_declared_paid=False,
+                        is_sub_item=False,
+                        purchase_item_id=None,
+                        is_temp_plan=True,
+                        feo_planned_item_id=fpi.id,
+                        feo_plan_part_key=pkey,
+                    ))
+            else:
+                if fpi.id in bound_fpi_whole:
+                    continue
+                if fpi.amount is None:
+                    continue
+                fpi_amt = Decimal(str(fpi.amount)) - bound_fpi_amount.get(fpi.id, Decimal(0))
+                fpi_amt = fpi_amt.quantize(Decimal("0.01"))
+                if fpi_amt <= AMOUNT_TOL:
+                    continue
+                sig_key = (_norm_subj(fpi_name), fpi_amt)
+                if unbound_purchase_sigs.get(sig_key, 0) > 0:
+                    unbound_purchase_sigs[sig_key] -= 1
+                    continue
+                srow = fpi.source_row or fpi.id
+                temp_id = -int(fpi.id)
+                units.append(CandidateUnit(
+                    purchase_id=temp_id,
+                    registry_number=f"ВРЕМ-ПЛАН-{srow}",
+                    subject=fpi_name,
+                    amount=fpi_amt,
+                    contractor_id=None,
+                    contractor_name=None,
+                    contractor_inn=None,
+                    feo_category_id=fpi.feo_category_id,
+                    feo_category_name=feo_path_str,
+                    feo_parent_id=feo_obj.parent_id if feo_obj else None,
+                    product_category=None,
+                    item_type=fpi.item_type,
+                    item_names=[fpi_name],
+                    sheet_ref=f"Стр. {fpi.source_row} (План закупок)" if fpi.source_row else "План закупок",
+                    row_hint=int(srow),
+                    is_declared_paid=False,
+                    is_sub_item=False,
+                    purchase_item_id=None,
+                    is_temp_plan=True,
+                    feo_planned_item_id=fpi.id,
+                    feo_plan_part_key=None,
+                ))
+
     return units
+
+
+async def materialize_temp_plan_purchase(
+    db: AsyncSession,
+    subsidy_id: int,
+    temp_id: int,
+) -> Purchase:
+    """Материализует временную закупку из «План закупок» (temp_id < 0) в реальную
+    запись Purchase + PurchaseItem в момент утверждения подбора человеком.
+    Если человек не утвердил подбор, эта функция не вызывается и временная
+    закупка не остаётся в БД."""
+    from fastapi import HTTPException
+    from app.services.historical_fact_import.existing_update import materialize_contract
+
+    raw_abs = abs(int(temp_id))
+    if raw_abs >= 100000:
+        fpi_id = raw_abs // 100000
+        part_row = raw_abs % 100000
+    else:
+        fpi_id = raw_abs
+        part_row = None
+
+    fpi = await db.get(FeoPlannedItem, fpi_id)
+    if not fpi:
+        raise HTTPException(404, f"Плановая позиция #{fpi_id} не найдена")
+    fcat = await db.get(FeoCategory, fpi.feo_category_id)
+    if not fcat or fcat.subsidy_id != subsidy_id:
+        raise HTTPException(404, f"Плановая позиция #{fpi_id} не принадлежит субсидии #{subsidy_id}")
+
+    amt = Decimal(str(fpi.amount or 0))
+    qty = fpi.quantity
+    unit = fpi.unit
+    uprice = fpi.unit_price
+    part_key: Optional[str] = None
+
+    parts_list = list(getattr(fpi, "parts", None) or [])
+    if part_row is not None and parts_list:
+        for idx, pt in enumerate(parts_list):
+            if isinstance(pt, dict) and int(pt.get("row") or (idx + 1)) == part_row:
+                if pt.get("amount") is not None:
+                    amt = Decimal(str(pt["amount"]))
+                qty = Decimal(str(pt["qty"])) if pt.get("qty") is not None else qty
+                unit = pt.get("unit") or unit
+                uprice = Decimal(str(pt["unit_price"])) if pt.get("unit_price") is not None else uprice
+                part_key = str(pt.get("key") or pt.get("row") or part_row)
+                break
+
+    max_pnum_res = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
+    next_pnum = int(max_pnum_res.scalar() or 0) + 1
+    year = _date.today().year
+    subj = (fpi.name or f"Позиция плана #{fpi.id}").strip()[:500]
+    itype = fpi.item_type or "товар"
+
+    new_p = Purchase(
+        purchase_number=next_pnum,
+        subsidy_id=subsidy_id,
+        status="paid",
+        contractor_id=None,
+        purchase_method="single",
+        purchase_contract_type="single",
+        feo_category_id=fpi.feo_category_id,
+        feo_per_item=False,
+        subject=subj,
+        item_name=subj,
+        item_type=itype,
+        planned_total_price=amt,
+        total_nmck=amt,
+        nmck=amt,
+        contract_price=amt,
+    )
+    db.add(new_p)
+    await db.flush()
+    new_p.registry_number = f"РЕЕ-{year}-{new_p.id:05d}"
+
+    pi_kwargs = dict(
+        purchase_id=new_p.id,
+        feo_planned_item_id=fpi.id,
+        feo_category_id=fpi.feo_category_id,
+        item_name=subj,
+        item_type=itype,
+        quantity=qty,
+        unit=unit,
+        unit_price=uprice,
+        total_price=amt,
+    )
+    if hasattr(PurchaseItem, "feo_plan_part_key") and part_key:
+        pi_kwargs["feo_plan_part_key"] = part_key
+    db.add(PurchaseItem(**pi_kwargs))
+    db.add(PurchaseSubsidyAllocation(
+        purchase_id=new_p.id,
+        subsidy_id=subsidy_id,
+        amount=amt,
+    ))
+    await db.flush()
+    await materialize_contract(db, new_p, force_temp_number=True)
+    return new_p
 
 
 async def merge_and_attach_combo(
@@ -1241,13 +1563,17 @@ async def merge_and_attach_combo(
     if not purchase_ids:
         raise HTTPException(400, "Не выбрано ни одной закупки")
 
-    # Убираем дубликаты ID с сохранением порядка
+    # Убираем дубликаты ID с сохранением порядка; если pid < 0 — материализуем
+    # временную закупку из «План закупок» в реальную Purchase в момент утверждения
     unique_pids = list(dict.fromkeys(purchase_ids))
     purchases: list[Purchase] = []
     for pid in unique_pids:
-        p = await db.get(Purchase, pid)
-        if not p or p.subsidy_id != subsidy_id:
-            raise HTTPException(404, f"Закупка #{pid} не найдена в этой субсидии")
+        if pid < 0:
+            p = await materialize_temp_plan_purchase(db, subsidy_id, pid)
+        else:
+            p = await db.get(Purchase, pid)
+            if not p or p.subsidy_id != subsidy_id:
+                raise HTTPException(404, f"Закупка #{pid} не найдена в этой субсидии")
         purchases.append(p)
 
     # Правило владельца: у одной закупки не может быть нескольких разных контрагентов

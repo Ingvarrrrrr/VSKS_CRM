@@ -162,6 +162,8 @@ export interface PaymentControlCandidate {
   registry_number: string | null
   sheet_ref?: string | null
   subject: string | null
+  feo_category_path?: string | null
+  is_temp_plan?: boolean
   contractor_name: string | null
   contract_price: number | null
   paid_by_statement: number | null
@@ -172,6 +174,7 @@ export interface PaymentControlCandidate {
 
 export interface PaymentControlComboItem {
   purchase_id: number
+  is_temp_plan?: boolean
   registry_number: string | null
   subject: string | null
   amount: number
@@ -209,7 +212,19 @@ export interface PaymentControlSignErrorHint {
   reason: string
 }
 
+export interface PaymentControlCandidatesBankPaymentInfo {
+  id: number
+  payment_number: string | null
+  payment_date: string | null
+  amount: number
+  payee_name: string | null
+  payee_inn: string | null
+  expense_direction: string | null
+  purpose_text: string | null
+}
+
 export interface PaymentControlCandidatesResponse {
+  bank_payment?: PaymentControlCandidatesBankPaymentInfo
   items: PaymentControlCandidate[]
   combo_suggestions?: PaymentControlComboSuggestion[]
   sign_error_hints?: PaymentControlSignErrorHint[]
@@ -229,6 +244,7 @@ export interface PaymentControlBatchComboMatch {
   amount: number
   payee_name: string | null
   payee_inn: string | null
+  expense_direction?: string | null
   purpose_text: string | null
   combo: PaymentControlComboSuggestion
   alternatives?: PaymentControlComboSuggestion[]

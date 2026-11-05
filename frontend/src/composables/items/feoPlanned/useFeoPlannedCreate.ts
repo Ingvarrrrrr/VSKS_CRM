@@ -43,7 +43,10 @@ export interface DuplicateInfo {
 // вместо копии полей по отдельности (Правило №6 — один источник истины).
 // Поведение не менялось — дословно то, что раньше лежало прямо в catch ниже.
 export function parseDuplicateHttpError(e: any): DuplicateInfo | null {
-  const det = e?.payload?.details
+  let det = e?.payload?.details
+  if (typeof det === 'string') {
+    try { det = JSON.parse(det) } catch { det = null }
+  }
   if (e?.status !== 409 || det?.error_code !== 'planned_item_duplicate_name') return null
   return {
     message: det.message || e.message,

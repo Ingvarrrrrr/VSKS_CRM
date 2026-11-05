@@ -325,7 +325,8 @@ export function usePurchasePublications(
       if (e?.payload?.code === 'TZ_MISSING') {
         let missingIds: number[] = []
         try {
-          const parsedDetail = JSON.parse(e.payload.details || '{}')
+          const rawDet = e.payload.details
+          const parsedDetail = typeof rawDet === 'string' ? JSON.parse(rawDet || '{}') : (rawDet || {})
           if (Array.isArray(parsedDetail.item_ids)) missingIds = parsedDetail.item_ids
         } catch {}
         const firstMatch = missingIds.length

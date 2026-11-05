@@ -258,14 +258,14 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     const payload = {
       code: structuredDetail?.code || parsed?.code || `HTTP_${res.status}`,
       message: detailMsg,
-      details: detailsStr,
+      details: rawDetails || text || '',
       correlation_id: parsed?.correlation_id || res.headers.get('X-Correlation-ID') || '',
     }
     // 409 Conflict = expected business logic error; handled locally by callers, no global dialog
     // INN_NOT_FOUND = user-facing "not found", handled locally with friendly snackbar
     const suppressGlobal = res.status === 409 || payload.code === 'INN_NOT_FOUND' || options.suppressErrorDialog === true
     if (!suppressGlobal) {
-      window.dispatchEvent(new CustomEvent('api-error', { detail: payload }))
+      window.dispatchEvent(new CustomEvent('api-error', { detail: { ...payload, details: detailsStr } }))
     }
     const err: any = new Error(payload.message)
     err.status = res.status

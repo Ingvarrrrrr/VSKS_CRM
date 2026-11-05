@@ -18,6 +18,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.documents.doc_types import SUBSIDY_TEMPLATES_DIR
 from app.services.documents.stages_load import (
     validate_doc_type,
     load_purchase_and_relations,

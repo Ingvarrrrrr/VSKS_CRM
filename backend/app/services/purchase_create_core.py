@@ -39,7 +39,7 @@ from app.models.user import User
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.schemas.schemas import PurchaseCreate
 from app.auth.jwt import get_single_org_id
-from app.product_matcher import find_matching_product
+from app.services.product_catalog_match import find_exact_product
 from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_amounts import apply_item_amounts
 from app.services.item_types import normalize_item_type
@@ -160,7 +160,9 @@ async def insert_purchase_with_items(
     for d in _item_dumps:
         if not d.get("product_id") and d.get("item_name"):
             org_id_for_match = get_single_org_id(current_user) or current_user.org_id
-            existing = await find_matching_product(db, d["item_name"], org_id=org_id_for_match)
+            existing = await find_exact_product(
+                db, d["item_name"], org_id=org_id_for_match, include_org_null=False,
+            )
             if existing:
                 d["product_id"] = existing.id
             else:

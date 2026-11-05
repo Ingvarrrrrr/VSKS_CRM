@@ -50,7 +50,7 @@ from app.services import acceptance_docs as _acc_docs
 # в app/services/contract_item_link.py — там же полный диагноз.
 from app.services.contract_item_link import relink_contract_items, build_purchase_item_id_map
 from app.services.feo_item_lock import assert_item_price_not_locked
-from app.product_matcher import find_matching_product
+from app.services.product_catalog_match import find_exact_product
 from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_amounts import apply_item_amounts
 from app.services.item_types import normalize_item_type
@@ -1550,7 +1550,9 @@ async def update_purchase(
     for d in _item_dumps_put:
         if not d.get("product_id") and d.get("item_name"):
             org_id_for_match = get_single_org_id(current_user) or current_user.org_id
-            existing = await find_matching_product(db, d["item_name"], org_id=org_id_for_match)
+            existing = await find_exact_product(
+                db, d["item_name"], org_id=org_id_for_match, include_org_null=False,
+            )
             if existing:
                 d["product_id"] = existing.id
             else:
@@ -2085,7 +2087,7 @@ _PATCH_SILENTLY_IGNORED_LEGACY_FIELDS = {
 # Принимает произвольный частичный JSON; обновляет только переданные поля.
 # Не пересчитывает items/НМЦК/contract_price (этим занимается PUT при явном Save).
 PATCHABLE_FIELDS = {
-    "subject", "description", "contractor_id", "feo_category_id",
+    "subject", "item_name", "description", "contractor_id", "feo_category_id",
     "purchase_method", "competitive_form", "purchase_contract_type",
     "contract_number", "contract_date", "contract_price", "contract_end_date",
     "contract_number_is_temporary",

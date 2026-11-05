@@ -1054,13 +1054,57 @@ async def split_uncontracted_multi_item_purchases(
         select(PurchaseItem).where(PurchaseItem.purchase_id.in_(pids)).order_by(PurchaseItem.id)
     )).scalars().all()
     items_by_pid: dict[int, list[PurchaseItem]] = {}
+    fpi_ids: set[int] = set()
+    prod_ids_split: set[int] = set()
     for pi in pitems:
         items_by_pid.setdefault(pi.purchase_id, []).append(pi)
+        if pi.feo_planned_item_id:
+            fpi_ids.add(pi.feo_planned_item_id)
+        if pi.product_id:
+            prod_ids_split.add(pi.product_id)
+
+    fpi_map: dict[int, FeoPlannedItem] = {}
+    if fpi_ids:
+        fpi_rows = (await db.execute(
+            select(FeoPlannedItem).where(FeoPlannedItem.id.in_(fpi_ids))
+        )).scalars().all()
+        fpi_map = {f.id: f for f in fpi_rows}
+
+    prod_map_split: dict[int, Product] = {}
+    if prod_ids_split:
+        prod_rows_split = (await db.execute(
+            select(Product).where(Product.id.in_(prod_ids_split))
+        )).scalars().all()
+        prod_map_split = {pr.id: pr for pr in prod_rows_split}
+
+    def _norm_item_str(s: Optional[str]) -> str:
+        return re.sub(r"\s+", " ", (s or "").strip().lower().replace("ё", "е")).strip()
 
     created_count = 0
 
+    # Правило владельца (05.11.2026): при создании/разделении закупок из плана не должны
+    # подставляться случайные товары из каталога БД — в закупках и позициях должно быть
+    # ровно то наименование, которое указано в Плановых позициях (например, «Ручка»,
+    # а не «Ручка шариковая неавтоматическая Pensan My Tech...»).
+    for pi in pitems:
+        if pi.feo_planned_item_id and pi.feo_planned_item_id in fpi_map:
+            plan_name = (fpi_map[pi.feo_planned_item_id].name or "").strip()
+            if plan_name:
+                if (pi.item_name or "").strip() != plan_name[:500]:
+                    pi.item_name = plan_name[:500]
+                    pi.product_id = None
+                    created_count += 1
+                elif pi.product_id and pi.product_id in prod_map_split:
+                    if _norm_item_str(prod_map_split[pi.product_id].name) != _norm_item_str(plan_name):
+                        pi.product_id = None
+                        created_count += 1
+        elif pi.product_id and pi.product_id in prod_map_split and pi.item_name:
+            if _norm_item_str(prod_map_split[pi.product_id].name) != _norm_item_str(pi.item_name):
+                pi.product_id = None
+                created_count += 1
+
     # 1. Удаляем пустые дочерние оболочки split-закупок (0 позиций, нет цены договора, нет платежей)
-    # и синхронизируем предмет однопозиционных дочерних закупок с реальным наименованием позиции
+    # и синхронизируем предмет однопозиционных закупок без контрагента с наименованием плановой позиции / позиции
     for p in purchases:
         if p.id in confirmed_pids:
             continue
@@ -1071,13 +1115,26 @@ async def split_uncontracted_multi_item_purchases(
                 await db.execute(delete(PurchaseSubsidyAllocation).where(PurchaseSubsidyAllocation.purchase_id == p.id))
                 await db.delete(p)
                 created_count += 1
-        elif len(pis) == 1 and pis[0].item_name and p.parent_purchase_id in split_parent_ids:
+        elif len(pis) == 1 and pis[0].item_name and (
+            p.parent_purchase_id in split_parent_ids
+            or (pis[0].feo_planned_item_id and pis[0].feo_planned_item_id in fpi_map)
+        ):
             real_name = pis[0].item_name.strip()[:500]
-            if real_name and p.subject != real_name:
+            if real_name and (p.subject != real_name or p.item_name != real_name):
                 p.subject = real_name
                 p.item_name = real_name
                 if pis[0].feo_category_id:
                     p.feo_category_id = pis[0].feo_category_id
+                if p.contract_id:
+                    c_single = await db.get(Contract, p.contract_id)
+                    if c_single and c_single.subject != real_name:
+                        c_single.subject = real_name
+                ci_rows = (await db.execute(
+                    select(ContractItem).where(ContractItem.purchase_id == p.id)
+                )).scalars().all()
+                if len(ci_rows) == 1:
+                    ci_rows[0].name = real_name
+                    ci_rows[0].product_id = pis[0].product_id
                 created_count += 1
 
     multi_purchases = [
@@ -1451,9 +1508,16 @@ async def load_unpaid_candidate_units(
         already_paid = paid_by_purchase.get(p.id, Decimal(0))
         rem_amt = full_amt - already_paid
 
-        item_names = [pi.item_name for pi in pis if pi.item_name]
-        if len(pis) == 1 and pis[0].item_name and not p.contractor_id and not (p.subject or "").startswith("Заказ "):
-            subject = pis[0].item_name.strip()
+        def _effective_pi_name(pi: PurchaseItem) -> str:
+            if not p.contractor_id and pi.feo_planned_item_id and pi.feo_planned_item_id in plan_map:
+                pl_name = (plan_map[pi.feo_planned_item_id].name or "").strip()
+                if pl_name:
+                    return pl_name
+            return (pi.item_name or "").strip()
+
+        item_names = [_effective_pi_name(pi) for pi in pis if _effective_pi_name(pi)]
+        if len(pis) == 1 and item_names and not p.contractor_id and not (p.subject or "").startswith("Заказ "):
+            subject = item_names[0]
         else:
             subject = (p.subject or p.item_name or (", ".join(item_names[:2]) if item_names else f"Закупка #{p.id}")).strip()
         if not any(pi.feo_planned_item_id for pi in pis):
@@ -1718,6 +1782,7 @@ async def materialize_temp_plan_purchase(
 
     pi_kwargs = dict(
         purchase_id=new_p.id,
+        product_id=None,
         feo_planned_item_id=fpi.id,
         feo_category_id=fpi.feo_category_id,
         item_name=subj,

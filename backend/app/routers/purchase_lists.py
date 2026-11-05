@@ -161,7 +161,7 @@ async def get_purchase_kp_items(pid: int, db: AsyncSession = Depends(get_db), cu
     return [
         {
             "id": r.id,
-            "item_name": r.product_name or r.item_name,
+            "item_name": r.item_name or r.product_name,
             "quantity": float(r.quantity or 0),
             "unit": r.unit or "шт.",
             "unit_price": float(r.unit_price or 0),

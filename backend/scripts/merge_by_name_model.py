@@ -94,8 +94,12 @@ from app.database import async_session
 from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
 from app.models.user import User
+from app.services.catalog_gala.stores import domain_from_url
 from app.services.product_merge import merge_products
-from app.services.product_name_signature import build_signature, grouping_key, match
+from app.services.product_name_signature import (
+    _brands_match, build_signature, grouping_key, match,
+)
+from app.services.product_query_parse import get_manufacturer_brand_dictionary
 
 BATCH_SIZE = 200  # порция слияния (--apply)
 
@@ -115,7 +119,20 @@ async def _get_user(email: str):
         return user
 
 
-async def _load_candidate_groups(db) -> dict:
+def _effective_source_id(contractor_id, price_source_ref: str | None = None):
+    """Идентификатор источника карточки: contractor_id (если задан), иначе
+    домен/строка price_source_ref (например, 'ref:market.yandex.ru' или
+    'ref:тз для апи (4).xlsx'), иначе None (ручная/старая карточка без
+    источника)."""
+    if contractor_id is not None:
+        return contractor_id
+    if price_source_ref and price_source_ref.strip():
+        dom = domain_from_url(price_source_ref)
+        return f"ref:{dom or price_source_ref.strip().lower()}"
+    return None
+
+
+async def _load_candidate_groups(db, brand_dictionary=None) -> dict:
     """Фаза 1 — потоково, Core select (НЕ ORM Product — иначе срабатывают
     lazy='selectin'-связи и грузится весь каталог в объекты, см. докстринг
     модуля). Берёт ТОЛЬКО узкие колонки, порциями по id (keyset-
@@ -147,6 +164,7 @@ async def _load_candidate_groups(db) -> dict:
                 Product.id, Product.name, Product.manufacturer,
                 Product.product_type, Product.category,
                 Product.price_source_contractor_id,
+                Product.price_source_ref,
             )
             .where(Product.is_active == True, Product.id > last_id)  # noqa: E712
             .order_by(Product.id)
@@ -154,14 +172,14 @@ async def _load_candidate_groups(db) -> dict:
         )).all()
         if not rows:
             break
-        for pid, name, manufacturer, product_type, category, contractor_id in rows:
+        for pid, name, manufacturer, product_type, category, contractor_id, price_source_ref in rows:
             sig = build_signature({
                 "name": name, "manufacturer": manufacturer,
                 "product_type": product_type, "category": category,
-            })
+            }, brand_dictionary=brand_dictionary)
             key = grouping_key(sig)
             if key is not None:
-                groups[key].append((pid, contractor_id))
+                groups[key].append((pid, _effective_source_id(contractor_id, price_source_ref)))
         total_rows += len(rows)
         last_id = rows[-1][0]
         print(f"  фаза 1: обработано строк каталога: {total_rows}", file=sys.stderr)
@@ -195,9 +213,13 @@ async def _apply_history_contractors(db, groups: dict) -> dict:
     for key, ids in groups.items():
         stores = set()
         for pid, contractor_id in ids:
+            h_cids = history_contractors.get(pid, ())
             if contractor_id is not None:
                 stores.add(contractor_id)
-            stores.update(history_contractors.get(pid, ()))
+            if h_cids:
+                stores.update(h_cids)
+            if contractor_id is None and not h_cids:
+                stores.add("__no_store__")
         if len(stores) >= 2:
             filtered[key] = [pid for pid, _contractor in ids]
     return filtered
@@ -273,7 +295,78 @@ def _is_group_unique(ids: list, signatures_by_id: dict) -> bool:
     return True
 
 
-async def _plan_batch(db, batch_groups: list) -> list:
+def _split_unrelated_subgroups(
+    ids: list,
+    signatures_by_id: dict,
+    price_source_by_id=None,
+    history_pairs_by_id=None,
+) -> list[list[int]]:
+    """Разбивает грубую корзину grouping_key = (type_prefix, model_code_tokens)
+    на компоненты связности карточек. Карточки с decision == "no" (разные бренды,
+    разные размеры/амперажи/модификации под одним базовым кодом модели) и карточки
+    без бренда при наличии в корзине нескольких разных брендов не склеивают
+    разные бренды в одну компоненту."""
+    if len(ids) <= 2 or len(ids) > 80:
+        return [ids]
+    branded_pids = [pid for pid in ids if signatures_by_id[pid].brand_fold]
+    multi_brand_bucket = any(
+        not _brands_match(signatures_by_id[p1], signatures_by_id[p2])
+        for idx, p1 in enumerate(branded_pids)
+        for p2 in branded_pids[idx + 1:]
+    )
+    store_key_by_id = {}
+    if price_source_by_id is not None and history_pairs_by_id is not None:
+        for pid in ids:
+            store_key_by_id[pid] = _store_key(
+                pid, price_source_by_id.get(pid), tuple(history_pairs_by_id.get(pid, ()))
+            )
+    adj: dict[int, set[int]] = {pid: set() for pid in ids}
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            a_id, b_id = ids[i], ids[j]
+            sig_a, sig_b = signatures_by_id[a_id], signatures_by_id[b_id]
+            if multi_brand_bucket:
+                if sig_a.brand_fold and sig_b.brand_fold and not _brands_match(sig_a, sig_b):
+                    continue
+                if bool(sig_a.brand_fold) != bool(sig_b.brand_fold):
+                    continue
+            peers_a = tuple(
+                signatures_by_id[pid] for pid in ids
+                if pid != a_id and (not multi_brand_bucket or (sig_a.brand_fold and _brands_match(signatures_by_id[pid], sig_a)))
+            )
+            peers_b = tuple(
+                signatures_by_id[pid] for pid in ids
+                if pid != b_id and (not multi_brand_bucket or (sig_b.brand_fold and _brands_match(signatures_by_id[pid], sig_b)))
+            )
+            res = match(sig_a, sig_b, peers_a=peers_a, peers_b=peers_b)
+            same_store = (
+                bool(store_key_by_id)
+                and store_key_by_id.get(a_id) == store_key_by_id.get(b_id)
+            )
+            if res["decision"] == "auto" or (same_store and res["decision"] != "no"):
+                adj[a_id].add(b_id)
+                adj[b_id].add(a_id)
+    visited: set[int] = set()
+    components: list[list[int]] = []
+    for pid in ids:
+        if pid in visited:
+            continue
+        comp = []
+        queue = [pid]
+        visited.add(pid)
+        while queue:
+            cur = queue.pop()
+            comp.append(cur)
+            for nxt in adj[cur]:
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+        if len(comp) >= 2:
+            components.append(sorted(comp))
+    return components
+
+
+async def _plan_batch(db, batch_groups: list, brand_dictionary=None) -> list:
     """Фаза 2 для ОДНОЙ порции (суммарно ≤PHASE2_CHUNK_IDS id) — дозагружает
     полные поля (name/manufacturer/characteristics; country_origin тоже
     читаем — дешёвая скалярная колонка в том же Core select, вдруг
@@ -292,16 +385,18 @@ async def _plan_batch(db, batch_groups: list) -> list:
             Product.country_origin, Product.characteristics,
             Product.product_type, Product.category,
             Product.price_source_contractor_id,
+            Product.price_source_ref,
+            Product.description,
         ).where(Product.id.in_(batch_ids))
     )).all()
     products_by_id = {}
     price_source_by_id = {}
-    for pid, name, manufacturer, _country, characteristics, product_type, category, price_source_contractor_id in rows:
+    for pid, name, manufacturer, _country, characteristics, product_type, category, price_source_contractor_id, price_source_ref, description in rows:
         products_by_id[pid] = {
             "name": name, "manufacturer": manufacturer, "characteristics": characteristics or [],
-            "product_type": product_type, "category": category,
+            "product_type": product_type, "category": category, "description": description,
         }
-        price_source_by_id[pid] = price_source_contractor_id
+        price_source_by_id[pid] = _effective_source_id(price_source_contractor_id, price_source_ref)
 
     hist_rows = (await db.execute(
         select(
@@ -321,33 +416,37 @@ async def _plan_batch(db, batch_groups: list) -> list:
         ids = [pid for pid in ids if pid in products_by_id]
         if len(ids) < 2:
             continue
-        if _has_duplicate_store_cards(ids, price_source_by_id, history_pairs_by_id):
-            # «Один магазин не продаёт товар дважды» (владелец, доп. дефект
-            # пробного прогона, см. докстринг модуля) — ПЕРЕД проверкой
-            # store_article и ПЕРЕД попарным match(): несколько карточек
-            # одного магазина под общим индексом названия всегда
-            # неоднозначны, даже если каждая пара прошла бы match() как
-            # "auto" (пример ОУ-50 — 3 варианта магазина Спасатель).
-            result.append({"key": key, "conflict": True, "reason": "один магазин — несколько карточек", "product_ids": ids})
-            continue
-        if _has_store_conflict(ids, history_pairs_by_id):
-            result.append({"key": key, "conflict": True, "reason": "store_article", "product_ids": ids})
-            continue
-        signatures_by_id = {pid: build_signature(products_by_id[pid]) for pid in ids}
-        if not _is_group_unique(ids, signatures_by_id):
-            # Неоднозначно (владелец, 27.10.2026) — автоматически НЕ сводим,
-            # это повод для человека посмотреть в «Похожие товары»
-            # (app/services/product_similar.py, тот же match() уже решает
-            # её группы «уверенно»/«проверить»).
-            result.append({"key": key, "conflict": True, "reason": "неоднозначно", "product_ids": ids})
-            continue
-        winner_id = _pick_winner_simple(ids, history_count_by_id)
-        loser_ids = [pid for pid in ids if pid != winner_id]
-        result.append({
-            "key": key, "conflict": False,
-            "winner_id": winner_id, "loser_ids": loser_ids,
-            "names": {pid: products_by_id[pid]["name"] for pid in ids},
-        })
+        signatures_by_id = {
+            pid: build_signature(products_by_id[pid], brand_dictionary=brand_dictionary)
+            for pid in ids
+        }
+        for sub_ids in _split_unrelated_subgroups(
+            ids, signatures_by_id, price_source_by_id, history_pairs_by_id
+        ):
+            distinct_store_keys = {
+                _store_key(pid, price_source_by_id.get(pid), tuple(history_pairs_by_id.get(pid, ())))
+                for pid in sub_ids
+            }
+            if len(distinct_store_keys) < 2:
+                continue
+            brands = {signatures_by_id[pid].brand_fold for pid in sub_ids}
+            same_confirmed_brand = len(brands) == 1 and bool(next(iter(brands))) and len(distinct_store_keys) >= 2
+            if not _is_group_unique(sub_ids, signatures_by_id):
+                result.append({"key": key, "conflict": True, "reason": "неоднозначно", "product_ids": sub_ids})
+                continue
+            if _has_store_conflict(sub_ids, history_pairs_by_id) and not same_confirmed_brand:
+                result.append({"key": key, "conflict": True, "reason": "store_article", "product_ids": sub_ids})
+                continue
+            if _has_duplicate_store_cards(sub_ids, price_source_by_id, history_pairs_by_id) and not same_confirmed_brand:
+                result.append({"key": key, "conflict": True, "reason": "один магазин — несколько карточек", "product_ids": sub_ids})
+                continue
+            winner_id = _pick_winner_simple(sub_ids, history_count_by_id)
+            loser_ids = [pid for pid in sub_ids if pid != winner_id]
+            result.append({
+                "key": key, "conflict": False,
+                "winner_id": winner_id, "loser_ids": loser_ids,
+                "names": {pid: products_by_id[pid]["name"] for pid in sub_ids},
+            })
     return result
 
 
@@ -356,7 +455,8 @@ async def _plan(db) -> list:
     слиянию (без конфликтов, ≥2 разных магазина, 1-к-1 по match()). Не меняет
     БД. Фаза 1 → отбор по магазинам → фаза 2 порциями (см. докстринги
     _load_candidate_groups/_apply_history_contractors/_plan_batch)."""
-    groups = await _load_candidate_groups(db)
+    brand_dictionary = await get_manufacturer_brand_dictionary(db)
+    groups = await _load_candidate_groups(db, brand_dictionary=brand_dictionary)
     print(f"  фаза 1: групп-кандидатов (общий цифровой ключ, ≥2 карточки): {len(groups)}", file=sys.stderr)
     if not groups:
         return []
@@ -365,7 +465,6 @@ async def _plan(db) -> list:
     print(f"  после проверки «≥2 разных магазина»: {len(groups)} групп", file=sys.stderr)
     if not groups:
         return []
-
     plan: list = []
     group_items = list(groups.items())
     total_groups = len(group_items)
@@ -379,14 +478,14 @@ async def _plan(db) -> list:
         batch_id_count += len(ids)
         if batch_id_count >= PHASE2_CHUNK_IDS:
             batch_no += 1
-            plan.extend(await _plan_batch(db, batch_groups))
+            plan.extend(await _plan_batch(db, batch_groups, brand_dictionary=brand_dictionary))
             processed_groups += len(batch_groups)
             print(f"  фаза 2: порция {batch_no}, групп обработано {processed_groups}/{total_groups}", file=sys.stderr)
             batch_groups = []
             batch_id_count = 0
     if batch_groups:
         batch_no += 1
-        plan.extend(await _plan_batch(db, batch_groups))
+        plan.extend(await _plan_batch(db, batch_groups, brand_dictionary=brand_dictionary))
         processed_groups += len(batch_groups)
         print(f"  фаза 2: порция {batch_no}, групп обработано {processed_groups}/{total_groups}", file=sys.stderr)
 

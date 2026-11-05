@@ -57,6 +57,7 @@ from app.services.catalog_gala.stores import resolve_seller_inn, split_legacy_ar
 from app.services.product_catalog_guard import can_edit_catalog
 from app.services.product_photo_download import download_and_save_photo, pick_external_url
 from app.services.products_import_apply import apply_products_import
+from app.utils.chunking import chunked
 
 _MAX_LINKS = 9
 
@@ -65,7 +66,7 @@ FIXED_COLUMNS = [
     "unit", "pack_quantity", "pack_unit", "photo_link", "is_reusable",
     "is_active", "characteristics", "manufacturer", "manufacturer_article",
     "store_article", "region", "country_origin",
-    "seller_inn", "source_url", "barcodes",
+    "seller_inn", "source_url", "barcodes", "price_links",
 ] + [f"link_url_{n}" for n in range(1, _MAX_LINKS + 1)] + [
     f"link_price_{n}" for n in range(1, _MAX_LINKS + 1)
 ]
@@ -150,7 +151,9 @@ def item_to_row(item: dict) -> tuple:
     # нормализация/проверка контрольной цифры — ЕДИНСТВЕННО в
     # apply_products_import (app.services.barcodes.normalize_barcode).
     row[COL_IDX["barcodes"]] = item.get("barcodes") or []
-    for i, link in enumerate((item.get("links") or [])[:_MAX_LINKS], start=1):
+    raw_links = item.get("links") or []
+    row[COL_IDX["price_links"]] = raw_links
+    for i, link in enumerate(raw_links[:_MAX_LINKS], start=1):
         row[COL_IDX[f"link_url_{i}"]] = link.get("url")
         row[COL_IDX[f"link_price_{i}"]] = _num_to_cell(link.get("price"))
     return tuple(row)
@@ -169,18 +172,19 @@ async def _fill_clarification_link(db, items: list) -> None:
     by_name_url = {i["name"]: i.get("source_url") for i in items if i.get("name") and i.get("source_url")}
     if not by_name_url:
         return
-    rows = (await db.execute(select(Product).where(Product.name.in_(by_name_url.keys())))).scalars().all()
     touched = False
-    for p in rows:
-        url = by_name_url.get(p.name)
-        if url and not p.clarification_link:
-            p.clarification_link = url
-            touched = True
+    for name_chunk in chunked(list(by_name_url.keys()), 1000):
+        rows = (await db.execute(select(Product).where(Product.name.in_(name_chunk)))).scalars().all()
+        for p in rows:
+            url = by_name_url.get(p.name)
+            if url and not p.clarification_link:
+                p.clarification_link = url
+                touched = True
     if touched:
         await db.commit()
 
 
-async def _load_one_file(path: str, user_id: int, dry_run: bool) -> dict:
+async def _load_one_file(path: str, user_id: int, dry_run: bool, batch_size: int = 10000) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         envelope = json.load(f)
 
@@ -213,20 +217,48 @@ async def _load_one_file(path: str, user_id: int, dry_run: bool) -> dict:
         1 for r in _seller_inn_reasons if r == "ИНН невалиден, магазин не определён"
     )
 
-    async with async_session() as db:
-        user = await db.get(User, user_id)
-        editor_can_edit_catalog = await can_edit_catalog(user, db)
-        result = await apply_products_import(
-            db, data_rows, COL_IDX,
-            filename=envelope.get("source_file") or Path(path).name,
-            current_user=user,
-            dry_run=dry_run,
-            editor_can_edit_catalog=editor_can_edit_catalog,
-            replace_descriptions=True,
-            supplier_description=True,
-        )
-        if not dry_run:
-            await _fill_clarification_link(db, items)
+    effective_batch = len(items) if (dry_run or not batch_size or batch_size <= 0) else batch_size
+    effective_batch = max(effective_batch, 1)
+    agg = {
+        "created": 0, "updated": 0, "skipped": 0, "errors": [], "rows": [],
+        "barcodes_accepted": 0, "barcodes_rejected": 0,
+    }
+    filename = envelope.get("source_file") or Path(path).name
+
+    for start in range(0, len(items), effective_batch):
+        batch_items = items[start:start + effective_batch]
+        batch_rows = data_rows[start:start + effective_batch]
+        async with async_session() as db:
+            user = await db.get(User, user_id)
+            editor_can_edit_catalog = await can_edit_catalog(user, db)
+            part = await apply_products_import(
+                db, batch_rows, COL_IDX,
+                filename=filename,
+                current_user=user,
+                dry_run=dry_run,
+                first_row_num=2 + start,
+                editor_can_edit_catalog=editor_can_edit_catalog,
+                replace_descriptions=True,
+                supplier_description=True,
+            )
+            if not dry_run:
+                await _fill_clarification_link(db, batch_items)
+        agg["created"] += part["created"]
+        agg["updated"] += part["updated"]
+        agg["skipped"] += part["skipped"]
+        agg["errors"].extend(part["errors"])
+        agg["rows"].extend(part["rows"])
+        agg["barcodes_accepted"] += part["barcodes_accepted"]
+        agg["barcodes_rejected"] += part["barcodes_rejected"]
+        if len(items) > effective_batch:
+            done = min(start + effective_batch, len(items))
+            print(
+                f"  [{filename}] обработано {done}/{len(items)} "
+                f"(created={agg['created']} updated={agg['updated']})",
+                file=sys.stderr,
+            )
+
+    result = agg
 
     # Текст причины — из products_import_match.py (ЕДИНСТВЕННЫЙ источник
     # формулировки многозначности, ПРАВИЛО №6): «в БД несколько товаров с
@@ -307,12 +339,12 @@ async def _download_photos(limit) -> dict:
     return {"attempted": len(targets), "updated": updated, "errors": errors}
 
 
-async def main_async(files, user_email, dry_run, photos, photos_limit):
+async def main_async(files, user_email, dry_run, photos, photos_limit, batch_size: int = 10000):
     user_id = await _get_user(user_email)
 
     total = {"created": 0, "updated": 0, "skipped": 0, "errors": 0}
     for path in files:
-        report = await _load_one_file(path, user_id, dry_run)
+        report = await _load_one_file(path, user_id, dry_run, batch_size=batch_size)
         if report.get("skipped_file"):
             continue
         print(f"\n=== {path} ===")
@@ -351,9 +383,10 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="прогон без записи (flush без commit)")
     parser.add_argument("--photos", action="store_true", help="после загрузки скачать фото по внешним ссылкам")
     parser.add_argument("--photos-limit", type=int, default=None, help="ограничить число попыток скачивания фото")
+    parser.add_argument("--batch-size", type=int, default=10000, help="размер батча импорта (по умолчанию 10000)")
     args = parser.parse_args()
 
-    asyncio.run(main_async(args.files, args.user_email, args.dry_run, args.photos, args.photos_limit))
+    asyncio.run(main_async(args.files, args.user_email, args.dry_run, args.photos, args.photos_limit, args.batch_size))
 
 
 if __name__ == "__main__":

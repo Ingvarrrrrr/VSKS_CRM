@@ -74,8 +74,14 @@ from app.services.catalog_gala.stores import store_for_domain
 from app.services.contractor_resolve import find_or_create_contractor
 from app.services.price_actualization import actualize_product_price, record_price_point
 from app.services.product_characteristics_parse import _separate_unit
+from app.services.product_name_signature import build_signature, grouping_key, match
 from app.services.product_photo_autofetch import schedule_photo_fetch
-from app.services.products_import_match import load_candidates_by_store_article
+from app.services.product_query_parse import get_manufacturer_brand_dictionary
+from app.services.products_import_match import (
+    load_candidates_by_brand_article,
+    load_candidates_by_store_article,
+)
+from app.services.products_import_match_name_model import load_name_model_candidates
 from app.services.store_pages import get_parser as get_store_page_parser
 from app.services.store_pages import product_page_fetch_url as get_store_page_fetch_url
 from app.services.store_search.base import StoreOffer
@@ -212,7 +218,13 @@ async def _resolve_store_contractor_id(db: AsyncSession, domain: str) -> Optiona
 
 
 async def _find_existing_product(
-    db: AsyncSession, offer: StoreOffer, contractor_id: Optional[int],
+    db: AsyncSession,
+    offer: StoreOffer,
+    contractor_id: Optional[int],
+    *,
+    manufacturer: Optional[str] = None,
+    article: Optional[str] = None,
+    characteristics: Optional[list] = None,
 ) -> Optional[Product]:
     # 1) та же страница товара уже когда-то попадала в историю цены.
     existing_id = (await db.execute(
@@ -226,11 +238,52 @@ async def _find_existing_product(
 
     # 2) тот же магазин + тот же номер товара магазина (ПРАВИЛО №6 — тот же
     # критерий, что использует импорт каталога).
-    if contractor_id is not None and offer.store_article:
-        candidates = await load_candidates_by_store_article(db, [(contractor_id, offer.store_article)])
-        product = candidates.get((contractor_id, offer.store_article))
+    store_art = article or offer.store_article
+    if contractor_id is not None and store_art:
+        candidates = await load_candidates_by_store_article(db, [(contractor_id, store_art)])
+        product = candidates.get((contractor_id, store_art))
         if product is not None:
             return product
+
+    # 3) тот же бренд + артикул производителя в другом магазине (критерий 0.5
+    # products_import_match.py, ПРАВИЛО №6 — одна карточка на товар).
+    eff_mfg = manufacturer or offer.manufacturer
+    if eff_mfg and store_art:
+        ba_map = await load_candidates_by_brand_article(db, [(eff_mfg, store_art)])
+        for cands in ba_map.values():
+            valid = [c for c in cands if not c.conflicts_with_row_store(contractor_id, store_art)]
+            if valid:
+                valid.sort(key=lambda c: (-c.history_count, c.product.id))
+                return valid[0].product
+
+    # 4) совпадение сигнатуры названия + индекса модели в другом магазине
+    # (критерий 0.75 products_import_match_name_model.py, ПРАВИЛО №6):
+    # когда у разных магазинов разные внутренние SKU (например, ChipDip
+    # 8040965460 и AvtoAll 307792), но название, бренд, числа и модель
+    # ('140SPEA041') совпадают с decision == 'auto' — сводим в одну карточку
+    # с ценами двух магазинов.
+    brand_dictionary = await get_manufacturer_brand_dictionary(db)
+    offer_sig = build_signature(
+        {
+            "name": offer.name,
+            "manufacturer": eff_mfg,
+            "characteristics": characteristics or [],
+        },
+        brand_dictionary=brand_dictionary,
+    )
+    if offer_sig.digit_tokens:
+        nm_map = await load_name_model_candidates(
+            db, [offer_sig], brand_dictionary=brand_dictionary,
+        )
+        key = grouping_key(offer_sig)
+        cands = nm_map.get(key) or [] if key is not None else []
+        matched = [
+            c for c in cands
+            if not c.conflicts_with_row_store(contractor_id, store_art)
+            and match(offer_sig, c.signature).get("decision") == "auto"
+        ]
+        if len(matched) == 1:
+            return matched[0].product
     return None
 
 
@@ -272,7 +325,14 @@ async def take_offer(
     characteristics = details.get("characteristics") or []
 
     contractor_id = await _resolve_store_contractor_id(db, adapter.domain)
-    product = await _find_existing_product(db, offer, contractor_id)
+    product = await _find_existing_product(
+        db,
+        offer,
+        contractor_id,
+        manufacturer=manufacturer,
+        article=article,
+        characteristics=characteristics,
+    )
     created = product is None
     if created:
         product = Product(

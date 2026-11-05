@@ -49,7 +49,7 @@ from app.models.user import User
 from app.services.brand_code_fold import fold_brand_or_code
 from app.services.notify_after_commit import queue_after_commit
 from app.services.price_actualization import record_price_point
-from app.services.product_name_signature import build_signature, match
+from app.services.product_name_signature import _split_words, build_signature, match
 from app.services.product_query_parse import get_manufacturer_brand_dictionary
 from app.services.store_search.registry import ADAPTERS
 from app.services.store_search.service import search_stores
@@ -130,6 +130,11 @@ def _offer_matches(
     offer_brand = offer.manufacturer
     if not offer_brand and brand_dictionary is not None:
         offer_brand = brand_dictionary.find_in_name(offer.name or "")
+    if not offer_brand and own_brand_norm:
+        for w in _split_words(offer.name or ""):
+            if _norm_code(w) == own_brand_norm:
+                offer_brand = own_sig.brand or w
+                break
     offer_brand_norm = _norm_code(offer_brand)
     brand_confirmed = bool(own_brand_norm) and bool(offer_brand_norm) and own_brand_norm == offer_brand_norm
     if not brand_confirmed:

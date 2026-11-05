@@ -14,7 +14,10 @@ app/routers/products.py (PUT/PATCH) перед записью Product.characteri
 """
 from fastapi import HTTPException
 
-from app.services.product_characteristics_parse import _separate_unit
+from app.services.product_characteristics_parse import (
+    _separate_unit,
+    clean_characteristic_name,
+)
 
 MAX_ITEMS = 200
 MAX_NAME_LEN = 200
@@ -52,6 +55,9 @@ def normalize_characteristics(raw_items) -> list:
         if not name or not value:
             continue
         unit = str(data.get("unit") or "").strip() or None
+        name, unit = clean_characteristic_name(name, unit)
+        if not name:
+            continue
         if not unit:
             val_part, unit_part = _separate_unit(value)
             value = str(val_part or "").strip()

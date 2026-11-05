@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
+from app.services.product_code_normalize import code_literal_regex
 from app.services.product_name_signature import (
     ProductSignature, build_signature, grouping_key, match,
 )
@@ -60,32 +61,49 @@ def _escape_ilike(token: str) -> str:
 
 
 _DIGIT_RUN_RE = re.compile(r"\d+")
+_SHORT_MODEL_CODE_RE = re.compile(r"^([a-zа-яё]{2,})(\d+)")
 
 
 def _search_token(sig: ProductSignature) -> Optional[str]:
     """Ключ ILIKE-предвыборки — САМАЯ ДЛИННАЯ последовательность ЦИФР среди
     digit_tokens сигнатуры (не весь буквенно-цифровой токен целиком).
 
-    Почему именно цифры, а не весь токен: digit_tokens построены из
-    fold_brand_or_code()-свёрнутого названия (см. product_name_signature.
-    _split_words), а свёртка гомоглифов МЕНЯЕТ буквы (например, латинское
-    "M8701B" сворачивается в "м8701в" — кириллица) — значит, folded-токен
-    почти никогда не встречается КАК ПОДСТРОКА в исходном Product.name,
-    хранящемся в БД как есть (латиница). Цифры свёртка НЕ трогает (см.
-    докстринг product_type_keys.py/brand_code_fold.py — 0/3/4 и остальные
-    цифры исключены из таблицы гомоглифов именно поэтому), так что числовая
-    часть токена ("8701" из "м8701в") гарантированно совпадает с исходным
-    текстом независимо от регистра/гомоглифов букв вокруг неё. Короткие
-    цифровые пробеги (1-2 цифры) слишком неселективны — сигнатура без хотя
-    бы одного пробега ≥3 цифр в этом критерии не участвует (см. докстринг
-    модуля — предвыборка имеет смысл только для достаточно редкого ключа)."""
+    Если все числовые части короче 3 цифр (короткие модели: «ОП-2», «ОУ-5»,
+    «РСК-50», «СПИ-20»), возвращает дефисный вариант «оп-2» / «рск-50», а
+    `_search_tokens` ниже добавляет слитный и раздельный варианты («оп2»,
+    «оп 2») для полной выборки без скана по одной цифре."""
     if not sig.digit_tokens:
         return None
     runs = [m for tok in sig.digit_tokens for m in _DIGIT_RUN_RE.findall(tok)]
     runs = [r for r in runs if len(r) >= 3]
-    if not runs:
-        return None
-    return max(runs, key=len)
+    if runs:
+        return max(runs, key=len)
+    if sig.model_code_tokens:
+        best_code = max(sig.model_code_tokens, key=len)
+        m = _SHORT_MODEL_CODE_RE.match(best_code)
+        if m:
+            return f"{m.group(1)}-{m.group(2)}"
+    return None
+
+
+def _search_tokens(sig: ProductSignature) -> tuple[str, ...]:
+    """Набор подстрок для ILIKE-предвыборки сигнатуры: для длинных чисел (≥3
+    цифр) — один токен (_search_token); для коротких кодов модели (1-2 цифры:
+    «ОП-2», «ОУ-5», «РСК-50») — три варианта написания («оп-2», «оп2», «оп 2»),
+    чтобы найти карточку в БД при любом разделителе между буквами и цифрой."""
+    if not sig.digit_tokens:
+        return ()
+    runs = [m for tok in sig.digit_tokens for m in _DIGIT_RUN_RE.findall(tok)]
+    runs = [r for r in runs if len(r) >= 3]
+    if runs:
+        return (max(runs, key=len),)
+    if sig.model_code_tokens:
+        best_code = max(sig.model_code_tokens, key=len)
+        m = _SHORT_MODEL_CODE_RE.match(best_code)
+        if m:
+            prefix, digits = m.group(1), m.group(2)
+            return (f"{prefix}-{digits}", f"{prefix}{digits}", f"{prefix} {digits}")
+    return ()
 
 
 @dataclass
@@ -110,6 +128,7 @@ class NameModelCandidate:
 
 async def load_name_model_candidates(
     db: AsyncSession, row_signatures: Iterable[ProductSignature],
+    brand_dictionary=None,
 ) -> dict:
     """{grouping_key: [NameModelCandidate, ...]} — ОДИН проход на весь файл
     (см. докстринг модуля). `row_signatures` — ProductSignature КАЖДОЙ
@@ -117,8 +136,7 @@ async def load_name_model_candidates(
     разбор названия). Ключ группы — app.services.product_name_signature.
     grouping_key() (вид товара + код модели, владелец, 28.10.2026, п.1) —
     та же функция, что и у scripts/merge_by_name_model.py (ПРАВИЛО №6)."""
-    tokens = {_search_token(sig) for sig in row_signatures}
-    tokens.discard(None)
+    tokens = {tok for sig in row_signatures for tok in _search_tokens(sig) if tok}
     if not tokens:
         return {}
 
@@ -126,7 +144,16 @@ async def load_name_model_candidates(
     token_list = list(tokens)
     for i in range(0, len(token_list), NAME_ILIKE_CHUNK):
         chunk = token_list[i:i + NAME_ILIKE_CHUNK]
-        conditions = [Product.name.ilike(f"%{_escape_ilike(t)}%") for t in chunk]
+        conditions = []
+        for t in chunk:
+            if t.isdigit():
+                conditions.append(Product.name.ilike(f"%{_escape_ilike(t)}%"))
+            else:
+                norm_code = re.sub(r"[-\s]+", "", t)
+                body = code_literal_regex(norm_code)
+                conditions.append(
+                    Product.name.op("~*")(rf"(?<![0-9a-zа-яё])(?:{body})(?![0-9a-zа-яё])")
+                )
         rows = (await db.execute(select(Product).where(or_(*conditions)))).scalars().all()
         for p in rows:
             candidates_by_id[p.id] = p
@@ -155,7 +182,7 @@ async def load_name_model_candidates(
             "name": p.name, "manufacturer": p.manufacturer,
             "characteristics": p.characteristics or [],
             "product_type": p.product_type, "category": p.category,
-        })
+        }, brand_dictionary=brand_dictionary)
         key = grouping_key(sig)
         if key is None:
             continue

@@ -406,3 +406,12 @@ def test_parse_query_preserves_latin_script_in_optional_and_digit_tokens():
     assert "hr2470" in p_makita.required
     assert "нr2470" not in p_makita.required
 
+
+def test_parse_query_does_not_hyphenate_alphanumeric_article_as_viscosity():
+    """Артикул вида '140SPEA041' не должен приниматься за вязкость масла
+    ('5W-40') и превращаться в '140SPEA-041'."""
+    parsed = parse_query('Шина для бензопилы 14" 3/8" 1.3мм 52 звена CHAMPION 140SPEA041')
+    assert "140spea041" in parsed.required
+    assert "140SPEA-041" not in parsed.required
+
+

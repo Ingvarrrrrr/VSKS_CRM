@@ -58,7 +58,7 @@ def parse_search_html(html: str) -> list[StoreOffer]:
         if not link_m:
             continue
         rel_url = link_m.group(1)
-        name = _TAG_RE.sub("", link_m.group(2)).strip()
+        name = _html_unescape(_TAG_RE.sub("", link_m.group(2))).strip()
         if not name:
             continue
         brand_m = _BRAND_RE.search(row)

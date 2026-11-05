@@ -20,7 +20,10 @@ from fastapi import HTTPException
 
 from app.services.catalog_gala.clean import clean_text
 from app.services.catalog_gala.stores import STORES
-from app.services.product_characteristics_parse import _separate_unit
+from app.services.product_characteristics_parse import (
+    _separate_unit,
+    clean_characteristics_list,
+)
 from app.services.store_pages import get_parser, product_page_fetch_url
 from app.services.store_search.price_from_product_page import extract_product_details
 from app.services.store_search.registry import ADAPTERS
@@ -169,4 +172,4 @@ async def fetch_characteristics_from_url(url: str) -> list[dict]:
             "in_description": True,
         })
 
-    return out
+    return clean_characteristics_list(out)

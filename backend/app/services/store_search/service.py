@@ -146,6 +146,23 @@ def _rate_limited(store_key: str) -> bool:
 
 
 _LATIN_WORD_RE = re.compile(r"[a-zA-Z]")
+_DECIMAL_MM_RE = re.compile(r"^(\d+)[.,](\d+)\s+мм$", re.IGNORECASE)
+_DECIMAL_COMMA_QTY_RE = re.compile(r"^(\d+),(\d+)(\s+\S+)$")
+
+
+def _normalize_store_query_token(tok: str) -> str:
+    """Приводит дробную величину из parse_query().required ('1,3 мм') к виду,
+    который принимают поисковые движки внешних магазинов ('1.3мм'): в карточках
+    магазинов (avtoall, chipdip и др.) дробные миллиметры пишутся через точку
+    слитно ('1.3мм'), и запрос с запятой и отдельным словом 'мм' ('1,3 мм')
+    даёт 0 результатов даже при копировании названия прямо со страницы товара."""
+    m_mm = _DECIMAL_MM_RE.match(tok)
+    if m_mm:
+        return f"{m_mm.group(1)}.{m_mm.group(2)}мм"
+    m_dec = _DECIMAL_COMMA_QTY_RE.match(tok)
+    if m_dec:
+        return f"{m_dec.group(1)}.{m_dec.group(2)}{m_dec.group(3)}"
+    return tok
 
 
 def clean_query(query: str, brand_dictionary=None) -> str:
@@ -180,7 +197,7 @@ def clean_query(query: str, brand_dictionary=None) -> str:
         return raw
     parsed = parse_query(raw, brand_dictionary=brand_dictionary)
     if parsed.product_type is not None:
-        tokens = list(parsed.required)
+        tokens = [_normalize_store_query_token(t) for t in parsed.required]
         for w in parsed.optional:
             if (not parsed.specific or _LATIN_WORD_RE.search(w)) and w not in tokens:
                 tokens.append(w)

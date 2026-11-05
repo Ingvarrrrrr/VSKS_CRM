@@ -69,12 +69,14 @@ CLI: разовый мерж дублей каталога товаров (`prod
 """
 import argparse
 import asyncio
+import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa: E402
 
 from app.database import async_session  # noqa: E402
+from app.services.product_name_signature import merge_characteristics, merge_price_links  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 # Простые поля, которые донаполняются из удаляемой записи, если у оставшейся
@@ -82,7 +84,10 @@ from sqlalchemy import text  # noqa: E402
 # потому что состоит из нескольких колонок, которые должны переезжать
 # согласованно (данные+mime+size), цена — потому что тянет за собой
 # метаданные актуализации (см. app/services/price_actualization.py).
-SIMPLE_BACKFILL_FIELDS = ["description", "description_44fz", "category", "unit", "photo_url", "photo_link"]
+SIMPLE_BACKFILL_FIELDS = [
+    "description", "description_44fz", "category", "unit", "photo_url", "photo_link",
+    "manufacturer", "article", "country_origin",
+]
 PRICE_FIELDS = ["price", "price_source", "price_source_ref", "price_source_contractor_id",
                 "price_updated_at", "price_ttl_days"]
 # Байты фото теперь в отдельной таблице product_photos, keyed by product_id
@@ -196,6 +201,7 @@ async def find_duplicate_groups(db, name_substr: str | None) -> list[dict]:
 async def load_products(db, ids: list[int]) -> dict[int, dict]:
     result = await db.execute(text("""
         SELECT id, name, description, description_44fz, category, unit,
+               manufacturer, article, country_origin, characteristics, price_links,
                photo_url, photo_link, photo_mime, photo_size,
                price, price_source, price_source_ref, price_source_contractor_id,
                price_updated_at, price_ttl_days
@@ -245,6 +251,16 @@ def plan_backfill(keep_row: dict, remove_rows: list[dict]) -> dict:
                 for f in PRICE_FIELDS:
                     plan[f] = rrow[f]
                 break
+    merged_chars = keep_row.get("characteristics") or []
+    for rrow in remove_rows:
+        merged_chars = merge_characteristics(merged_chars, rrow.get("characteristics") or [])
+    if merged_chars and merged_chars != (keep_row.get("characteristics") or []):
+        plan["characteristics"] = json.dumps(merged_chars, ensure_ascii=False)
+    merged_links = keep_row.get("price_links") or []
+    for rrow in remove_rows:
+        merged_links = merge_price_links(merged_links, rrow.get("price_links") or [])
+    if merged_links and merged_links != (keep_row.get("price_links") or []):
+        plan["price_links"] = json.dumps(merged_links, ensure_ascii=False)
     return plan
 
 
@@ -279,7 +295,12 @@ async def apply_merge(
     photo_source_id = backfill.pop("_photo_source_id", None) if backfill else None
 
     if backfill:
-        set_clause = ", ".join(f"{f} = :{f}" for f in backfill)
+        jsonb_cols = {"characteristics", "price_links"}
+        set_parts = [
+            f"{f} = CAST(:{f} AS jsonb)" if f in jsonb_cols else f"{f} = :{f}"
+            for f in backfill
+        ]
+        set_clause = ", ".join(set_parts)
         params = dict(backfill)
         params["keep_id"] = keep_id
         await db.execute(text(f"UPDATE products SET {set_clause} WHERE id = :keep_id"), params)

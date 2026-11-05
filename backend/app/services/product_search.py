@@ -640,7 +640,8 @@ def _numeric_token_regex(token: str) -> str:
     m = _QUANTITY_NORM_RE.match(token)
     if m:
         num, unit = m.groups()
-        return rf"(?<!\d){re.escape(num)}\s*{re.escape(unit)}(?!\w)"
+        num_re = "[.,]".join(re.escape(p) for p in re.split(r"[.,]", num))
+        return rf"(?<!\d){num_re}\s*{re.escape(unit)}(?!\w)"
     core = token.replace("·", "")
     # Буквенно-цифровой код (владелец, 29.10.2026, «оп2»/«оп 2»/«ОП-2»/«op-2»
     # должны находить «ОП-2» ТОЧНЫМ совпадением марки, не ослаблением) —

@@ -58,6 +58,7 @@ from app.models.wish_item import WishItem
 from app.services.price_actualization import actualize_product_price
 from app.services.product_description_merge import merge_missing_lines
 from app.services.product_description_history import set_product_description
+from app.services.product_name_signature import merge_characteristics, merge_price_links
 
 MAX_LOSER_IDS = 50
 
@@ -298,11 +299,13 @@ async def merge_products(
         if await _merge_description_field(db, winner, loser, "description_44fz", user):
             filled_fields.append(f"description_44fz (от №{loser_id})")
 
-        # --- характеристики (JSONB-список) — заполняем, если у winner пусто ---
-        if not (winner.characteristics or []) and (loser.characteristics or []):
-            winner.characteristics = loser.characteristics
-            flag_modified(winner, "characteristics")
-            filled_fields.append(f"characteristics (от №{loser_id})")
+        # --- характеристики (JSONB-список) — объединяем без потерь (winner + недостающие от loser) ---
+        if loser.characteristics:
+            merged_chars = merge_characteristics(winner.characteristics, loser.characteristics)
+            if merged_chars != (winner.characteristics or []):
+                winner.characteristics = merged_chars
+                flag_modified(winner, "characteristics")
+                filled_fields.append(f"characteristics (от №{loser_id})")
 
         # --- простые скалярные поля ---
         for field in _FILL_SCALAR_FIELDS:
@@ -316,12 +319,9 @@ async def merge_products(
 
         # --- price_links: объединение по url, winner в приоритете ---
         if loser.price_links:
-            existing_urls = {pl.get("url") for pl in (winner.price_links or []) if pl.get("url")}
-            merged_links = list(winner.price_links or [])
-            for pl in loser.price_links:
-                if pl.get("url") and pl["url"] not in existing_urls:
-                    merged_links.append(pl)
-                    existing_urls.add(pl["url"])
+            merged_links = merge_price_links(
+                winner.price_links, loser.price_links, update_existing_prices=False,
+            )
             if merged_links != (winner.price_links or []):
                 winner.price_links = merged_links
                 flag_modified(winner, "price_links")

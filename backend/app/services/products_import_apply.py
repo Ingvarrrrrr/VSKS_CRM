@@ -54,7 +54,12 @@ from app.services.products_import_match import (
 )
 from app.services.products_import_match_barcode import load_candidates_by_barcode
 from app.services.products_import_match_name_model import load_name_model_candidates
-from app.services.product_name_signature import build_signature as _build_name_signature
+from app.services.product_name_signature import (
+    build_signature as _build_name_signature,
+    merge_characteristics,
+    merge_price_links,
+)
+from app.services.product_query_parse import get_manufacturer_brand_dictionary
 from app.utils.chunking import chunked
 from app.services.text_case import capitalize_first
 from app.services.units import is_pack_unit
@@ -398,7 +403,9 @@ async def apply_products_import(
     # однозначности внутри match() нужен ПОЛНЫЙ список строк файла с тем же
     # ключом, не одна строка. Кандидаты каталога — один запрос на весь файл
     # (load_name_model_candidates).
+    brand_dictionary = await get_manufacturer_brand_dictionary(db)
     file_name_signatures_by_key: dict = {}
+    unmatched_signatures_for_db: list = []
     for row in data_rows:
         _name_for_sig = _cell(row, col_idx, "name")
         if not _name_for_sig:
@@ -407,11 +414,19 @@ async def apply_products_import(
             "name": _name_for_sig,
             "manufacturer": _cell(row, col_idx, "manufacturer"),
             "characteristics": _row_characteristics_raw(row, col_idx) or [],
-        })
+            "product_type": _cell(row, col_idx, "product_type"),
+            "category": _cell(row, col_idx, "category"),
+        }, brand_dictionary=brand_dictionary)
         if _sig.digit_tokens:
             file_name_signatures_by_key.setdefault(_sig.digit_tokens, []).append(_sig)
+            _inn = _cell(row, col_idx, "seller_inn")
+            _sa = _cell(row, col_idx, "store_article")
+            _cid = _contractor_cache.get(_inn) if _inn else None
+            if not (_cid is not None and _sa and (_cid, _sa) in store_article_candidates):
+                unmatched_signatures_for_db.append(_sig)
     name_model_candidates = await load_name_model_candidates(
-        db, [s for group in file_name_signatures_by_key.values() for s in group],
+        db, unmatched_signatures_for_db,
+        brand_dictionary=brand_dictionary,
     )
 
     # Единственный индекс сопоставления строки импорта с товаром каталога
@@ -532,12 +547,28 @@ async def apply_products_import(
                 effective_replace_descriptions = replace_descriptions or supplier_description
 
                 price_links = []
-                for n in range(1, 10):
-                    url = _cell(row, col_idx, f"link_url_{n}")
-                    if not url:
-                        break
-                    price_val = _to_dec(_cell(row, col_idx, f"link_price_{n}"))
-                    price_links.append({"url": url, "price": float(price_val) if price_val else None})
+                _raw_links_idx = col_idx.get("price_links")
+                _raw_links = (
+                    row[_raw_links_idx]
+                    if _raw_links_idx is not None and _raw_links_idx < len(row)
+                    else None
+                )
+                if isinstance(_raw_links, list) and _raw_links:
+                    for link_item in _raw_links:
+                        if not isinstance(link_item, dict):
+                            continue
+                        url = (link_item.get("url") or "").strip()
+                        if not url:
+                            continue
+                        price_val = _to_dec(link_item.get("price"))
+                        price_links.append({"url": url, "price": float(price_val) if price_val else None})
+                else:
+                    for n in range(1, 10):
+                        url = _cell(row, col_idx, f"link_url_{n}")
+                        if not url:
+                            break
+                        price_val = _to_dec(_cell(row, col_idx, f"link_price_{n}"))
+                        price_links.append({"url": url, "price": float(price_val) if price_val else None})
 
                 feo_name = _cell(row, col_idx, "feo_category_name")
                 feo_id = feo_by_name.get(feo_name.lower().strip()) if feo_name else None
@@ -601,7 +632,9 @@ async def apply_products_import(
                     "name": name,
                     "manufacturer": row_manufacturer_for_match,
                     "characteristics": _row_characteristics_raw(row, col_idx) or [],
-                })
+                    "product_type": _cell(row, col_idx, "product_type"),
+                    "category": _cell(row, col_idx, "category"),
+                }, brand_dictionary=brand_dictionary)
 
                 match = match_index.find(
                     name, desc_val,
@@ -724,9 +757,12 @@ async def apply_products_import(
                     # режим supplier_description) ---
                     if supplier_description:
                         if characteristics_val:
-                            ep.characteristics = characteristics_val
-                            flag_modified(ep, "characteristics")
-                            changed = True
+                            merged_chars = merge_characteristics(characteristics_val, ep.characteristics)
+                            if merged_chars != (ep.characteristics or []):
+                                ep.characteristics = merged_chars
+                                flag_modified(ep, "characteristics")
+                                changed = True
+                            desc_val = build_tech_description(ep.characteristics, _cell(row, col_idx, "description"))
                         _fill("manufacturer", manufacturer_val)
                         _fill("article", manufacturer_article_val)
                         # "Страна производства" (Задача baucenter, 2026-10-26)
@@ -802,10 +838,14 @@ async def apply_products_import(
                         ep.feo_category_id = feo_id
                         changed = True
 
-                    if price_links and not ep.price_links:
-                        ep.price_links = price_links
-                        flag_modified(ep, "price_links")
-                        changed = True
+                    if price_links:
+                        merged_links = merge_price_links(
+                            ep.price_links, price_links, update_existing_prices=True,
+                        )
+                        if merged_links != (ep.price_links or []):
+                            ep.price_links = merged_links
+                            flag_modified(ep, "price_links")
+                            changed = True
 
                     # Единица измерения (владелец, 2026-09-01): не трогаем уже
                     # заполненную; иначе — из самого импорта, иначе — из истории

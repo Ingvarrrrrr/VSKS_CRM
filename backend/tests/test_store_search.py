@@ -596,10 +596,23 @@ def test_avtoall_parses_ssr_search_html():
     offers = avtoall.parse_search_html(html)
     assert len(offers) == 1
     o = offers[0]
-    assert o.name == "Покрышка NOKIAN TYRES Hakkapeliitta R3 SUV 235/65 R17"
+    assert o.name == "Покрышка NOKIAN TYRES Hakkapeliitta R3 SUV 235/65 R17 T430654"
     assert o.price == Decimal("11010")
     assert o.url == "https://www.avtoall.ru/pokryshka_nokian_tyres_hakkapeliitta_r3_suv_235_65_r17-487771/"
     assert o.image_url == "https://www.avtoall.ru/upload/iblock/195/487766.jpg"
     assert o.store_article == "487771"
     assert o.manufacturer == "NOKIAN"
+
+
+def test_clean_query_normalizes_decimal_mm_and_preserves_article():
+    for q in (
+        'Шина для бензопилы 14" 3/8" 1.3мм 52 звена CHAMPION 140SPEA041',
+        'Шина для бензопилы 14" 3/8" 1,3 мм 52 звена CHAMPION 140SPEA041',
+        'Шина для бензопилы 14" 3/8" 1,3мм 52 звена CHAMPION 140SPEA-041',
+    ):
+        cleaned = store_search_service.clean_query(q)
+        assert "140spea041" in cleaned
+        assert "140SPEA-041" not in cleaned
+        assert "1.3мм" in cleaned
+        assert "1,3" not in cleaned
 

@@ -67,15 +67,19 @@ from typing import Optional
 
 from app.services.brand_code_fold import fold_brand_or_code, fold_text_preserving_script
 from app.services.catalog_gala.manufacturer_quality import is_bogus_manufacturer
+from app.services.product_characteristics_parse import (
+    clean_characteristics_list,
+    normalize_characteristic_unit,
+)
 from app.services.product_tz_44fz_rules import STOP_BRAND_WORDS
 from app.services.product_name_signature_props import (
-    CARRY_CASE_PHRASES, CHARGER_PHRASES, COATING_PHRASES, COATING_WORDS,
-    COLOR_WORDS, COUNTRY_WORDS, EXECUTION_PHRASES, EXECUTION_WORDS,
-    EXTRA_PACKAGING_PHRASES, FIRE_CLASS_RE, FUSED_CODE_SUFFIX,
-    HOSE_TYPE_WORDS, INSTALL_MODE_WORDS, MATERIAL_WORDS, NOZZLE_TYPE_WORDS,
-    ORDER_REFERENCE_RE, PACKAGING_PHRASES, PRODUCT_TYPE_PHRASES,
-    PRODUCT_TYPE_WORDS, SHUTOFF_WORDS, SIDEDNESS_WORDS, UNIT_WORDS,
-    _BATTERY_CAPACITY_RE, _BATTERY_COUNT_RE, _PACKAGING_SET_RE,
+    ACCESSORY_MARKERS, CARRY_CASE_PHRASES, CHARGER_PHRASES, COATING_PHRASES,
+    COATING_WORDS, COLOR_WORDS, COUNTRY_WORDS, EXECUTION_PHRASES,
+    EXECUTION_WORDS, EXTINGUISHER_SUBTYPE_WORDS, EXTRA_PACKAGING_PHRASES,
+    FIRE_CLASS_RE, FUSED_CODE_SUFFIX, HOSE_TYPE_WORDS, INSTALL_MODE_WORDS,
+    MATERIAL_WORDS, NOZZLE_TYPE_WORDS, ORDER_REFERENCE_RE, PACKAGING_PHRASES,
+    PRODUCT_TYPE_PHRASES, PRODUCT_TYPE_WORDS, SHUTOFF_WORDS, SIDEDNESS_WORDS,
+    UNIT_WORDS, _BATTERY_CAPACITY_RE, _BATTERY_COUNT_RE, _PACKAGING_SET_RE,
 )
 
 # ---------------------------------------------------------------------------
@@ -122,6 +126,112 @@ _STOPWORDS = {
     "и", "с", "со", "для", "от", "до", "на", "в", "во", "без", "не", "по",
     "из", "а", "но", "или", "к", "у", "о", "об", "при", "за",
 }
+
+# ---------------------------------------------------------------------------
+# Фонетическое сопоставление брендов и слов (кириллица ↔ латиница + удвоенные
+# буквы) и фильтрация коротких/размерных ложных брендов (ПРАВИЛО №6 — единое
+# место, переиспользуется в product_query_parse.py и store_search/relevance.py).
+# ---------------------------------------------------------------------------
+
+_PHONETIC_MIN_WORD_LEN = 4
+_PHONETIC_MIN_KEY_LEN = 4
+
+_CYR_TO_LAT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "i", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sh", "ъ": "",
+    "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+_DOUBLE_LETTER_RE = re.compile(r"(.)\1+")
+_H_AFTER_VOWEL_RE = re.compile(r"(?<=[aeiou])h")
+
+
+def _phonetic_fold(latin: str) -> str:
+    """Сворачивает транслитерированную или латинскую строку в фонетический
+    ключ («макита»→«makita» и «Makita»→«makita», «Hakkapeliitta»→«hakapelita»)."""
+    s = latin.lower()
+    s = s.replace("ä", "e").replace("ae", "e")
+    s = s.replace("sch", "sh")
+    s = s.replace("ph", "f")
+    s = s.replace("ch", "k")
+    s = s.replace("ck", "k")
+    s = s.replace("q", "k").replace("c", "k")
+    s = s.replace("w", "v")
+    s = s.replace("x", "ks")
+    s = s.replace("y", "i")
+    s = _DOUBLE_LETTER_RE.sub(r"\1", s)
+    s = _H_AFTER_VOWEL_RE.sub("", s)
+    if s.endswith("h"):
+        s = s[:-1]
+    return s
+
+
+def _brand_phonetic_key(text: str) -> str:
+    if not text:
+        return ""
+    translit = "".join(_CYR_TO_LAT.get(ch, ch) for ch in text.lower())
+    return _phonetic_fold(translit)
+
+
+def _phonetic_key_variants(text: str) -> frozenset:
+    base = _brand_phonetic_key(text)
+    variants = {base}
+    if base[:2] in ("st", "sp"):
+        variants.add("sh" + base[1:])
+    return frozenset(v for v in variants if v)
+
+
+_MANUAL_BRAND_PHONETIC_ALIASES = {
+    "бош": ("Bosch",),
+    "керхер": ("Karcher", "Kärcher"),
+    "кархер": ("Karcher", "Kärcher"),
+    "деволт": ("DeWalt",),
+    "девольт": ("DeWalt",),
+}
+
+
+def _brand_phonetic_keys_for(brand: Optional[str]) -> frozenset:
+    """Множество фонетических ключей бренда (с учётом ручных алиасов «бош»↔«Bosch»,
+    «керхер»↔«Karcher», «деволт»↔«DeWalt») для сравнения брендов в кириллице и
+    латинице."""
+    if not brand:
+        return frozenset()
+    cleaned = _NON_ALNUM_RE.sub("", str(brand).lower())
+    if not cleaned:
+        return frozenset()
+    keys = set(_phonetic_key_variants(cleaned))
+    folded = fold_brand_or_code(brand).strip()
+    if folded in _MANUAL_BRAND_PHONETIC_ALIASES:
+        for alias in _MANUAL_BRAND_PHONETIC_ALIASES[folded]:
+            keys.update(_phonetic_key_variants(_NON_ALNUM_RE.sub("", alias.lower())))
+    return frozenset(k for k in keys if len(k) >= 3)
+
+
+_SHORT_BRAND_MAX_KEY_LEN = 3
+
+_SHORT_BRAND_WHITELIST = frozenset({
+    "HP", "LG", "WD", "ABB", "IEK", "EKF", "DKC", "TDM", "DDE", "AMD", "MSI", "TCL",
+    "РИФ", "МИГ", "3M", "AEG", "JBL", "ZTE", "BBK", "CBR", "DLT", "ADA", "ПТС", "ВСВ",
+})
+_SHORT_BRAND_WHITELIST_KEYS = frozenset(_brand_compare_key(b) for b in _SHORT_BRAND_WHITELIST)
+
+_SIZE_TOKEN_LITERALS = (
+    "XS", "S", "M", "L", "XL", "XXL", "XXXL", "XXXXL",
+    "А0", "А1", "А2", "А3", "А4", "А5", "А6",
+)
+_SIZE_TOKENS = frozenset(fold_brand_or_code(t) for t in _SIZE_TOKEN_LITERALS)
+
+
+def _is_recognizable_brand_word(word: str) -> bool:
+    """Слово НЕ предлог/союз (_STOPWORDS), НЕ вид товара (PRODUCT_TYPE_WORDS)
+    и НЕ размерное обозначение (_SIZE_TOKENS)."""
+    return (
+        word not in _STOPWORDS
+        and word not in PRODUCT_TYPE_WORDS
+        and word not in _SIZE_TOKENS
+    )
 
 
 _UNIT_SUFFIX_RE = re.compile(r"^(\d+)([a-zа-яё]{1,2})$")
@@ -213,7 +323,7 @@ _SINGLE_LETTER_UNIT_WORDS_ALT = "|".join(re.escape(u) for u in _SINGLE_LETTER_UN
 # в реальных названиях ВСЕГДА отделены пробелом/скобкой от предыдущего слова
 # ("18 В", "(12В 40Ач)") — слитные с кодом модели через дефис/точку больше не
 # считаются количеством.
-_UNIT_QUANTITY_NUM_RE = r"(?:(?<=^)|(?<=[\s([«]))\d+(?:[.,]\d+)?(?:\s*[xXхХ]\s*\d+(?:[.,]\d+)?)*"
+_UNIT_QUANTITY_NUM_RE = r"(?:(?<=^)|(?<=[\s([«]))\d+(?:[.,]\d+)?(?:\s*[xXхХ×*]\s*\d+(?:[.,]\d+)?)*"
 
 # Однобуквенная единица ("с"/"м"/"г"/"л"/"т"/"в"/"а"/"н"/"c") — ОТДЕЛЬНАЯ
 # ветка регэкспа (дефект найден при разработке 29.10.2026 на «болгарка макита 125
@@ -301,12 +411,65 @@ def _extract_inch_diagonal(name: Optional[str]) -> set:
     return vals
 
 
+# Раздельное написание кириллической аббревиатуры модели и цифры через пробел
+# («Огнетушитель ОП 2» = «Огнетушитель ОП-2», «ОУ 5» = «ОУ-5», «РСК 50» = «РСК-50»):
+# склеиваем дефисом ТОЛЬКО 2-4 заглавные кириллические буквы перед цифрой, если
+# это не предлог, не словарный вид товара и не общая аббревиатура/стоп-слово.
+# Латинские слова перед числом ("Delta DT 1240", "Dell 24") НЕ трогаем, чтобы
+# не задеть гейт латинских слов-кандидатов в бренд (_extract_brand_like_words).
+_CYR_CODE_PREFIX_SPLIT_RE = re.compile(
+    r"(?<![0-9a-zA-Zа-яёА-ЯЁ])([А-ЯЁ]{2,4}|(?:оп|оу|овэ|овп|рск|спрут|спи))\s+(?=\d)"
+)
+_CYR_NON_MODEL_PREFIXES = frozenset({
+    "ГОСТ", "ТУ", "РФ", "УХЛ", "АКБ", "ЗУ", "СИЗ", "МЧС", "МВД", "ДНР", "ЛНР",
+    "ВСЕ", "АВСЕ",
+})
+
+
+def _merge_cyr_code_prefix(name: str) -> str:
+    def _repl(m: re.Match) -> str:
+        prefix = m.group(1)
+        if prefix.upper() in _CYR_NON_MODEL_PREFIXES:
+            return m.group(0)
+        folded = fold_brand_or_code(prefix)
+        if (
+            not _is_recognizable_brand_word(folded)
+            or folded in UNIT_WORDS
+            or _brand_compare_key(prefix) in _BRAND_STOPWORD_KEYS
+        ):
+            return m.group(0)
+        return f"{prefix}-"
+    return _CYR_CODE_PREFIX_SPLIT_RE.sub(_repl, name or "")
+
+
+_IS_EXTINGUISHER_RE = re.compile(r"огнетушител|\b(?:оп|оу|овэ|овп)[-\s]?\d", re.IGNORECASE)
+_EXT_ZPU_AND_CITY_RE = re.compile(
+    r"\(\s*зпу\s*[^)]*\)|\bзпу\s*(?:китай|россия|рф|латунь)\b|\(\s*г\.?\s*[а-яё\-]+\s*\)",
+    re.IGNORECASE,
+)
+_EXT_TYPO_Z3_RE = re.compile(r"(\b(?:оп|оу|овэ|овп)[-\s]?\d+)\s*\(3\)", re.IGNORECASE)
+
+
+def _strip_extinguisher_notes(name: str) -> str:
+    """Для огнетушителей: исправляет опечатку '(3)' вместо '(з)' после кода
+    модели ('ОП-2(3)' → 'ОП-2(з)') и убирает уточнения по запорно-пусковому
+    устройству ('ЗПУ Китай', 'ЗПУ Россия', '(ЗПУ латунь)') и городу
+    производителя ('(г. Ярославль)'), которые не делают сам огнетушитель
+    другим товаром. Самостоятельные товары 'ЗПУ Китай' / 'ЗПУ Россия' (без
+    слова 'огнетушитель' и кода ОП/ОУ) не затрагиваются."""
+    if not name or not _IS_EXTINGUISHER_RE.search(name):
+        return name or ""
+    s = _EXT_TYPO_Z3_RE.sub(r"\1(з)", name)
+    return _EXT_ZPU_AND_CITY_RE.sub(" ", s)
+
+
 def _pre_clean(name: Optional[str]) -> str:
     """Общая чистка названия ПЕРЕД любой токенизацией (индекс/вид/бренд-
-    слова/размеры) — порядок: номер приказа/ГОСТ/"аналог X" → диагональ в
-    дюймах → класс пожара → число-с-единицей."""
-    return _strip_unit_quantities(_strip_fire_class_spans(
-        _strip_inch_spans(_strip_reference_and_analog(name or ""))))
+    слова/размеры) — порядок: уточнения ЗПУ/города у огнетушителей → номер
+    приказа/ГОСТ/"аналог X" → диагональ в дюймах → класс пожара →
+    число-с-единицей → склейка кириллической марки через пробел («ОП 2» → «ОП-2»)."""
+    return _merge_cyr_code_prefix(_strip_unit_quantities(_strip_fire_class_spans(
+        _strip_inch_spans(_strip_reference_and_analog(_strip_extinguisher_notes(name or ""))))))
 
 
 def _split_words(name: Optional[str], *, fold_homoglyphs: bool = True) -> list[str]:
@@ -328,6 +491,7 @@ def _split_words(name: Optional[str], *, fold_homoglyphs: bool = True) -> list[s
     for raw in folded.split():
         w = _EDGE_PUNCT_RE.sub("", raw)
         if w:
+            w = EXTINGUISHER_SUBTYPE_WORDS.get(w, w)
             words.append(w)
     return words
 
@@ -387,30 +551,51 @@ def _digit_tokens(words: list[str]) -> tuple:
                 if (_MODEL_MODIFIER_LETTER_RE.match(nxt)
                         and not _HAS_DIGIT_RE.search(nxt)
                         and nxt not in _STOPWORDS):
-                    out.add(f"{norm}·{nxt}")
+                    if nxt == "з" and "з" in FUSED_CODE_SUFFIX:
+                        # «ОП-2 (з)» через пробел — то же свойство «закачной»,
+                        # что и слитное «ОП-2(з)» (см. FUSED_CODE_SUFFIX["з"]),
+                        # не модификатор индекса модели.
+                        group, value = FUSED_CODE_SUFFIX["з"]
+                        fused_props.setdefault(group, set()).add(value)
+                    else:
+                        out.add(f"{norm}·{nxt}")
     return frozenset(out), fused_props
 
 
 def _word_set(words: list[str]) -> frozenset:
-    return frozenset(w for w in words if not _HAS_DIGIT_RE.search(w) and w not in _STOPWORDS)
+    return frozenset(
+        w for i, w in enumerate(words)
+        if not _HAS_DIGIT_RE.search(w)
+        and w not in _STOPWORDS
+        and not (w == "з" and i > 0 and _HAS_DIGIT_RE.search(words[i - 1]))
+    )
 
 
 _HAS_LETTER_RE = re.compile(r"[a-zа-яё]")
+_DIM_LIKE_TOKEN_RE = re.compile(r"^\d+(?:[хx]\d+)+$")
+_PAPER_FORMAT_TOKENS = frozenset({"а0", "а1", "а2", "а3", "а4", "а5", "а6"})
 
 
 def _model_code_tokens(digit_tokens: frozenset) -> frozenset:
     """Подмножество digit_tokens, где ХОТЬ ОДНА буква есть в токене — это
     настоящий код/индекс модели (РС-50, ОУ-5, СЛК-П20). "Голые" числа без
-    единой буквы (43, 6005, 3247) сюда не входят (владелец, 28.10.2026,
-    п.1 — "голые числа без букв сами по себе пары не образуют"): такие
-    токены остаются в digit_tokens (match() всё равно требует их точного
-    совпадения как и раньше — жёсткий гейт не ослабляем), но для ПОИСКА
-    кандидатов на сведение (group_key ниже) они недостаточны сами по
-    себе."""
-    return frozenset(t for t in digit_tokens if _HAS_LETTER_RE.search(t))
+    единой буквы (43, 6005, 3247), чисто размерные токены вида NхM (5х10,
+    20х20) и форматы бумаги (А4, А3) сюда не входят (владелец, 28.10.2026,
+    п.1 — "голые числа без букв сами по себе пары не образуют"): такие токены
+    остаются в digit_tokens (match() всё равно требует их точного совпадения),
+    но для ПОИСКА кандидатов на сведение (group_key ниже) они недостаточны."""
+    return frozenset(
+        t for t in digit_tokens
+        if _HAS_LETTER_RE.search(t)
+        and not _DIM_LIKE_TOKEN_RE.match(t)
+        and t not in _PAPER_FORMAT_TOKENS
+    )
 
 
 _PRODUCT_TYPE_WINDOW = 5
+
+
+_PRODUCT_TYPE_STOP_PREPOSITIONS = frozenset({"для", "под", "к", "от"})
 
 
 def _extract_product_type(name: Optional[str]) -> Optional[str]:
@@ -426,7 +611,12 @@ def _extract_product_type(name: Optional[str]) -> Optional[str]:
     нашлось ни в одной из первых 5 слов НИ У ОДНОЙ стороны — вид не
     участвует в сравнении (не противоречие, п.4 исходной постановки), а не
     "вид = само слово" (второй словарь-угадайку сверх PRODUCT_TYPE_WORDS не
-    заводим)."""
+    заводим).
+
+    Ограничение по предлогам назначения ("для", "под", "к", "от") и
+    ACCESSORY_MARKERS: у принадлежностей ("Подставка под огнетушитель ОП-2",
+    "Держатель для рации", "Чехол для болгарки") существительное ПОСЛЕ
+    предлога — это целевой предмет, а не вид самого товара."""
     if not name:
         return None
     # Та же чистка, что и перед токенизацией индекса (см. _split_words) —
@@ -437,7 +627,15 @@ def _extract_product_type(name: Optional[str]) -> Optional[str]:
     cleaned = _pre_clean(name)
     folded = fold_brand_or_code(cleaned)
     words = [w for w in (_EDGE_PUNCT_RE.sub("", w) for w in folded.split()) if w]
-    window = words[:_PRODUCT_TYPE_WINDOW]
+    raw_window = words[:_PRODUCT_TYPE_WINDOW]
+    if not raw_window:
+        return None
+    window = []
+    for idx, w in enumerate(raw_window):
+        w_clean = w.strip("-")
+        if idx > 0 and w_clean in _PRODUCT_TYPE_STOP_PREPOSITIONS:
+            break
+        window.append(w)
     if not window:
         return None
     window_text = " ".join(window)
@@ -474,8 +672,22 @@ def _first_raw_word(name: str) -> Optional[str]:
 def _overlap_coefficient(a: frozenset, b: frozenset) -> float:
     if not a or not b:
         return 0.0 if (a or b) else 1.0
-    inter = len(a & b)
-    return inter / min(len(a), len(b))
+    exact = a & b
+    inter = len(exact)
+    small, large = (a, b) if len(a) <= len(b) else (b, a)
+    rem_small = small - exact
+    rem_large = large - exact
+    if rem_small and rem_large:
+        large_phonetic: set = set()
+        for w in rem_large:
+            if len(w) >= _PHONETIC_MIN_WORD_LEN or w in _MANUAL_BRAND_PHONETIC_ALIASES:
+                large_phonetic.update(_brand_phonetic_keys_for(w))
+        if large_phonetic:
+            for w in rem_small:
+                if len(w) >= _PHONETIC_MIN_WORD_LEN or w in _MANUAL_BRAND_PHONETIC_ALIASES:
+                    if _brand_phonetic_keys_for(w) & large_phonetic:
+                        inter += 1
+    return min(1.0, inter / min(len(a), len(b)))
 
 
 # ---------------------------------------------------------------------------
@@ -522,22 +734,43 @@ def _extract_brand_like_words(name: Optional[str]) -> frozenset:
 # исполнение) — группы и словари см. product_name_signature_props.py.
 # ---------------------------------------------------------------------------
 
+_FIRE_CLASS_LATIN_TO_CYR = str.maketrans("ABCED", "АВСЕД")
+_POWDER_EXT_RE = re.compile(r"\bоп[-\s]?\d|порошков|поршков", re.IGNORECASE)
+
+
 def _extract_name_properties(name: Optional[str]) -> dict:
     if not name:
         return {}
     props: dict = {}
+    cleaned_for_props = _strip_extinguisher_notes(name)
+    is_powder_ext = bool(_POWDER_EXT_RE.search(cleaned_for_props))
 
     # Класс пожара — ТОЛЬКО по оригинальному тексту (регистр важен, см.
     # product_name_signature_props.FIRE_CLASS_RE): буквы класса пишутся
     # заглавными, строчные совпадения (обычные слова) не должны считаться.
-    fire_classes = {m.group(1) for m in FIRE_CLASS_RE.finditer(name)}
+    fire_classes = set()
+    for m in FIRE_CLASS_RE.finditer(cleaned_for_props):
+        raw_fc = m.group(1) or m.group(2)
+        if not raw_fc:
+            continue
+        fc = raw_fc.upper().translate(_FIRE_CLASS_LATIN_TO_CYR)
+        if is_powder_ext and fc == "ВСЕ":
+            fc = "АВСЕ"
+        fire_classes.add(fc)
     if fire_classes:
         props["класс пожара"] = fire_classes
 
-    folded = fold_brand_or_code(name)
+    folded = fold_brand_or_code(cleaned_for_props)
     words = [w for w in (_EDGE_PUNCT_RE.sub("", w) for w in folded.split()) if w]
+    raw_color_tokens = [
+        _EDGE_PUNCT_RE.sub("", w)
+        for w in re.split(r"[\s\-/]+", cleaned_for_props.lower())
+        if w
+    ]
 
-    colors = {COLOR_WORDS[w] for w in words if w in COLOR_WORDS}
+    colors = {COLOR_WORDS[w] for w in words if w in COLOR_WORDS} | {
+        COLOR_WORDS[w] for w in raw_color_tokens if w in COLOR_WORDS
+    }
     if colors:
         props["цвет"] = colors
 
@@ -555,6 +788,10 @@ def _extract_name_properties(name: Optional[str]) -> dict:
             executions.add(canon)
     if executions:
         props["исполнение"] = executions
+
+    ext_subtypes = {EXTINGUISHER_SUBTYPE_WORDS[w] for w in words if w in EXTINGUISHER_SUBTYPE_WORDS}
+    if ext_subtypes:
+        props["тип огнетушителя"] = ext_subtypes
 
     packaging = set()
     for phrase, canon in PACKAGING_PHRASES.items():
@@ -603,7 +840,8 @@ def _extract_check_properties(name: Optional[str]) -> dict:
     if not name:
         return {}
     props: dict = {}
-    folded = fold_brand_or_code(name)
+    cleaned = _strip_extinguisher_notes(name)
+    folded = fold_brand_or_code(cleaned)
     words = [w for w in (_EDGE_PUNCT_RE.sub("", w) for w in folded.split()) if w]
 
     for group, word_dict in _CHECK_WORD_GROUPS:
@@ -626,10 +864,19 @@ def _extract_check_properties(name: Optional[str]) -> dict:
 # (вес-приоритет и общая проверка) читают из неё — ПРАВИЛО №6.
 # ---------------------------------------------------------------------------
 
-_MASS_TO_GRAMS = {"мг": 0.001, "г": 1.0, "кг": 1000.0, "т": 1_000_000.0}
-_LENGTH_TO_MM = {"мм": 1.0, "см": 10.0, "дм": 100.0, "м": 1000.0, "км": 1_000_000.0}
+_MASS_TO_GRAMS = {
+    "мг": 0.001, "г": 1.0, "гр": 1.0, "грамм": 1.0,
+    "кг": 1000.0, "килограмм": 1000.0, "т": 1_000_000.0, "тонна": 1_000_000.0,
+}
+_LENGTH_TO_MM = {
+    "мм": 1.0, "миллиметр": 1.0, "см": 10.0, "сантиметр": 10.0,
+    "дм": 100.0, "м": 1000.0, "метр": 1000.0, "км": 1_000_000.0,
+}
 
 _MASS_NAME_RE = re.compile(r"масс|вес")
+_NON_TOTAL_MASS_NAME_RE = re.compile(
+    r"состав|заряд|отв\b|веществ|порошк|пуст|человек|пользовател|нагрузк|бель|подставк"
+)
 _NUMERIC_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
 # "(не более)", "(до)" и т.п. — уточнение способа измерения, не другая
 # характеристика; срезается ПЕРЕД сравнением нормализованных имён.
@@ -637,15 +884,87 @@ _QUALIFIER_PAREN_RE = re.compile(r"\([^)]*\)")
 _TRAILING_UNIT_RE = re.compile(r",\s*[a-zа-яё°²³/]+\.?$", re.IGNORECASE)
 
 # Характеристики, не относящиеся к самому товару (логистика магазина,
-# номера строки) — общая проверка их игнорирует, см. docstring
-# from_store_nomenclature.py ("Магазин-источник"/"Артикул*" — то же решение).
-_IGNORED_CHAR_NAME_SUBSTRINGS = ("магазин-источник", "артикул", "параметр ")
+# номера строки) или дублирующие поля бренда/габаритов упаковки — общая
+# проверка их игнорирует, см. docstring from_store_nomenclature.py.
+_IGNORED_CHAR_NAME_SUBSTRINGS = (
+    "магазин-источник", "артикул", "параметр ", "раздел", "категория",
+    "модель производителя", "торговая марка", "бренд", "производитель",
+    "габарит", "высота", "длина", "ширина", "глубина", "диаметр",
+    "сроки, заявленные", "при активации",
+)
 
 
 def _normalize_char_name(name: str) -> str:
     name = _QUALIFIER_PAREN_RE.sub("", name or "")
     name = _TRAILING_UNIT_RE.sub("", name)
     return fold_brand_or_code(name).strip()
+
+
+def merge_characteristics(primary: Optional[list], secondary: Optional[list]) -> list:
+    """ЕДИНСТВЕННАЯ функция слияния списков характеристик без потери данных
+    (ПРАВИЛО №6 — переиспользует _normalize_char_name и clean_characteristics_list,
+    вызывается из product_merge.py, products_import_apply.py и офлайн-консолидатора
+    JSON). Все характеристики primary сохраняются (с очисткой единиц и квалификаторов);
+    из secondary дописываются те, чьего нормализованного имени ещё нет в primary."""
+    if not primary and not secondary:
+        return []
+    combined = list(primary or []) + list(secondary or [])
+    cleaned = clean_characteristics_list(combined)
+    out: list[dict] = []
+    seen_keys: set[str] = set()
+    for c in cleaned:
+        k = _normalize_char_name(c.get("name") or "")
+        if not k or k in seen_keys:
+            continue
+        seen_keys.add(k)
+        out.append(c)
+    return out
+
+
+def merge_price_links(
+    primary: Optional[list],
+    secondary: Optional[list],
+    *,
+    update_existing_prices: bool = False,
+) -> list:
+    """ЕДИНСТВЕННАЯ функция объединения массивов ссылок и цен [{url, price, ...}]
+    по URL (ПРАВИЛО №6 — используется в product_merge.py, products_import_apply.py
+    и офлайн-консолидаторе JSON). Новые URL добавляются в конец; для уже
+    существующего URL цена обновляется, если update_existing_prices=True (импорт
+    свежей строки) или если у существующей записи price пуст."""
+    if not primary and not secondary:
+        return []
+    out: list[dict] = []
+    by_url: dict[str, dict] = {}
+    for item in (primary or []):
+        if not isinstance(item, dict):
+            continue
+        url = (item.get("url") or "").strip()
+        if not url or url in by_url:
+            continue
+        entry = dict(item)
+        by_url[url] = entry
+        out.append(entry)
+
+    for item in (secondary or []):
+        if not isinstance(item, dict):
+            continue
+        url = (item.get("url") or "").strip()
+        if not url:
+            continue
+        new_price = item.get("price")
+        if url in by_url:
+            existing = by_url[url]
+            if new_price is not None and (update_existing_prices or existing.get("price") is None):
+                existing["price"] = new_price
+            for k, v in item.items():
+                if k not in ("url", "price") and v is not None and not existing.get(k):
+                    existing[k] = v
+        else:
+            entry = dict(item)
+            by_url[url] = entry
+            out.append(entry)
+    return out
 
 
 def _parse_number(value: Optional[str]) -> Optional[float]:
@@ -675,12 +994,14 @@ def _characteristic_values(characteristics: list) -> dict:
         if norm in out:
             continue
         value = (c or {}).get("value")
-        unit = ((c or {}).get("unit") or "").strip().lower()
+        raw_unit = ((c or {}).get("unit") or "").strip()
+        unit = (normalize_characteristic_unit(raw_unit) or raw_unit).lower()
         if not unit:
             # единица может быть внутри значения ("2 г", "5,8 кг")
-            m = re.search(r"([a-zа-яё]+)\s*$", (value or "").strip().lower())
+            m = re.search(r"([a-zа-яё]+)\.?\s*$", (value or "").strip().lower())
             if m:
-                unit = m.group(1)
+                u_cand = m.group(1)
+                unit = (normalize_characteristic_unit(u_cand) or u_cand).lower()
         number = _parse_number(value)
         if number is not None and unit in _MASS_TO_GRAMS:
             out[norm] = (raw_name, "mass", number * _MASS_TO_GRAMS[unit])
@@ -692,14 +1013,22 @@ def _characteristic_values(characteristics: list) -> dict:
     return out
 
 
-def _mass_conflict(a_chars: dict, b_chars: dict) -> Optional[str]:
-    a_mass = next(((k, v) for k, v in a_chars.items() if _MASS_NAME_RE.search(k) and v[1] == "mass"), None)
-    b_mass = next(((k, v) for k, v in b_chars.items() if _MASS_NAME_RE.search(k) and v[1] == "mass"), None)
+def _is_total_mass_key(k: str) -> bool:
+    return bool(_MASS_NAME_RE.search(k)) and not bool(_NON_TOTAL_MASS_NAME_RE.search(k))
+
+
+def _mass_conflict(a_chars: dict, b_chars: dict, *, has_model_code: bool = False) -> Optional[str]:
+    a_mass = next(((k, v) for k, v in a_chars.items() if _is_total_mass_key(k) and v[1] == "mass"), None)
+    b_mass = next(((k, v) for k, v in b_chars.items() if _is_total_mass_key(k) and v[1] == "mass"), None)
     if not a_mass or not b_mass:
         return None
     _, (a_disp, _, a_grams) = a_mass
     _, (b_disp, _, b_grams) = b_mass
-    if abs(a_grams - b_grams) > 0.5:  # 0.5 г — защита от округления ввода
+    # При совпавшем коде модели (например, ОП-2) разные магазины указывают вес
+    # нетто/брутто/паспортный предел с разбросом до ~15% (2,79 кг vs 2,9 кг vs 3,2 кг);
+    # расхождение ≥20% (4 кг vs 5 кг) по-прежнему блокирует слияние.
+    tol = max(50.0, 0.15 * max(abs(a_grams), abs(b_grams))) if has_model_code else 0.5
+    if abs(a_grams - b_grams) > tol:
         return (f"масса различается: «{a_disp}»={a_grams / 1000:g} кг "
                 f"≠ «{b_disp}»={b_grams / 1000:g} кг")
     return None
@@ -712,7 +1041,7 @@ def _other_characteristics_diff(a_chars: dict, b_chars: dict) -> Optional[str]:
     уверен — не сравнивай", вторую словарь синонимов характеристик здесь не
     заводим)."""
     for key, (a_disp, a_tag, a_val) in a_chars.items():
-        if _MASS_NAME_RE.search(key):
+        if _is_total_mass_key(key):
             continue
         b_entry = b_chars.get(key)
         if not b_entry:
@@ -747,6 +1076,8 @@ _VA_TO_VA = {"ва": 1.0, "ква": 1000.0}
 _CAPACITY_TO_MAH = {"мач": 1.0, "ач": 1000.0}
 _ENERGY_TO_J = {"дж": 1.0}
 _POWER_TO_W = {"вт": 1.0, "квт": 1000.0, "мвт": 1_000_000.0}
+_COUNT_TO_PCS = {"шт": 1.0, "компл": 1.0}
+_VOLTAGE_TO_V = {"в": 1.0, "кв": 1000.0}
 
 
 def _build_name_quantity_unit_re(unit_table: dict) -> re.Pattern:
@@ -754,7 +1085,7 @@ def _build_name_quantity_unit_re(unit_table: dict) -> re.Pattern:
     # узнать, КАКАЯ единица сработала, и перевести по таблице.
     alt = "|".join(sorted((re.escape(u) for u in unit_table), key=len, reverse=True))
     return re.compile(
-        rf"(?<![0-9a-zA-Zа-яёА-ЯЁ])(\d+(?:[.,]\d+)?)\s*({alt})"
+        rf"(?<![0-9a-zA-Zа-яёА-ЯЁ\-])(\d+(?:[.,]\d+)?)\s*({alt})"
         rf"(?![0-9a-zA-Zа-яёА-ЯЁ])",
         re.IGNORECASE,
     )
@@ -768,6 +1099,8 @@ _NAME_QUANTITY_GROUPS = (
     ("полная мощность", _build_name_quantity_unit_re(_VA_TO_VA), _VA_TO_VA),
     ("ёмкость АКБ", _build_name_quantity_unit_re(_CAPACITY_TO_MAH), _CAPACITY_TO_MAH),
     ("энергия удара", _build_name_quantity_unit_re(_ENERGY_TO_J), _ENERGY_TO_J),
+    ("количество", _build_name_quantity_unit_re(_COUNT_TO_PCS), _COUNT_TO_PCS),
+    ("напряжение", _build_name_quantity_unit_re(_VOLTAGE_TO_V), _VOLTAGE_TO_V),
 )
 
 
@@ -806,7 +1139,11 @@ def _name_quantity_conflict(a_qty: dict, b_qty: dict) -> Optional[str]:
         if not b_vals:
             continue
         tol = lambda v: max(0.5, 0.01 * abs(v))  # noqa: E731
-        if not any(abs(av - bv) <= max(tol(av), tol(bv)) for av in a_vals for bv in b_vals):
+        if len(a_vals) == len(b_vals) and len(a_vals) > 1:
+            sa, sb = sorted(a_vals), sorted(b_vals)
+            if not all(abs(av - bv) <= max(tol(av), tol(bv)) for av, bv in zip(sa, sb)):
+                return f"{group} в названии {sa} ≠ {sb}"
+        elif not any(abs(av - bv) <= max(tol(av), tol(bv)) for av in a_vals for bv in b_vals):
             return f"{group} в названии {sorted(a_vals)} ≠ {sorted(b_vals)}"
     return None
 
@@ -825,7 +1162,7 @@ def _name_quantity_conflict(a_qty: dict, b_qty: dict) -> Optional[str]:
 # второй список единиц длины не заводим).
 _DIM_LENGTH_UNIT_ALT = "|".join(sorted((re.escape(u) for u in _LENGTH_TO_MM), key=len, reverse=True))
 _NAME_DIMENSIONS_RE = re.compile(
-    rf"(?<![0-9a-zA-Zа-яёА-ЯЁ])(\d+(?:[.,]\d+)?(?:\s*[xXхХ]\s*\d+(?:[.,]\d+)?)+)"
+    rf"(?<![0-9a-zA-Zа-яёА-ЯЁ])(\d+(?:[.,]\d+)?(?:\s*[xXхХ×*]\s*\d+(?:[.,]\d+)?)+)"
     rf"\s*({_DIM_LENGTH_UNIT_ALT})(?![0-9a-zA-Zа-яёА-ЯЁ])",
     re.IGNORECASE,
 )
@@ -844,7 +1181,7 @@ _NAME_DIMENSIONS_RE = re.compile(
 _DIM_PAIR_RE = re.compile(rf"(\d+(?:[.,]\d+)?)\s*({_DIM_LENGTH_UNIT_ALT})", re.IGNORECASE)
 _NAME_DIMENSIONS_SPACED_SPAN_RE = re.compile(
     rf"(?<![0-9a-zA-Zа-яёА-ЯЁ])\d+(?:[.,]\d+)?\s*(?:{_DIM_LENGTH_UNIT_ALT})"
-    rf"(?:\s*[xXхХ]\s*\d+(?:[.,]\d+)?\s*(?:{_DIM_LENGTH_UNIT_ALT}))+"
+    rf"(?:\s*[xXхХ×*]\s*\d+(?:[.,]\d+)?\s*(?:{_DIM_LENGTH_UNIT_ALT}))+"
     rf"(?![0-9a-zA-Zа-яёА-ЯЁ])",
     re.IGNORECASE,
 )
@@ -864,7 +1201,7 @@ def _extract_name_dimensions(name: Optional[str]) -> frozenset:
         if factor is None:
             continue
         nums = []
-        for part in re.split(r"[xXхХ]", m.group(1)):
+        for part in re.split(r"[xXхХ×*]", m.group(1)):
             n = _parse_number(part)
             if n is None:
                 nums = None
@@ -887,21 +1224,39 @@ def _extract_name_dimensions(name: Optional[str]) -> frozenset:
     return frozenset(out)
 
 
-def _name_dimensions_conflict(a_dims: frozenset, b_dims: frozenset) -> Optional[str]:
+def _name_dimensions_conflict(
+    a_dims: frozenset,
+    b_dims: frozenset,
+    a_qty: Optional[dict] = None,
+    b_qty: Optional[dict] = None,
+) -> Optional[str]:
     """Указано у ОБЕИХ сторон (хотя бы один габарит с каждой) и НИ ОДНА пара
     одинаковой длины (кол-ва осей) не совпадает по ВСЕМ осям разом (с
     допуском на округление) → противоречие; указано только у одной — не
-    противоречие (п.4)."""
-    if not a_dims or not b_dims:
-        return None
+    противоречие (п.4), КРОМЕ случая, когда у одной стороны задан многоосевой
+    размер Д×Ш (например, электроды «3,0x350 мм»), а у другой — одиночный
+    размер в мм («2,5 мм») и ни одно значение одиночного размера не совпадает
+    ни с одной осью многоосевого габарита."""
     tol = lambda v: max(0.5, 0.01 * abs(v))  # noqa: E731
-    for a_tuple in a_dims:
-        for b_tuple in b_dims:
-            if len(a_tuple) == len(b_tuple) and all(
-                abs(x - y) <= max(tol(x), tol(y)) for x, y in zip(a_tuple, b_tuple)
-            ):
-                return None
-    return f"размеры в названии {sorted(a_dims)} ≠ {sorted(b_dims)}"
+    if a_dims and b_dims:
+        for a_tuple in a_dims:
+            for b_tuple in b_dims:
+                if len(a_tuple) == len(b_tuple) and all(
+                    abs(x - y) <= max(tol(x), tol(y)) for x, y in zip(a_tuple, b_tuple)
+                ):
+                    return None
+        return f"размеры в названии {sorted(a_dims)} ≠ {sorted(b_dims)}"
+    a_len = (a_qty or {}).get("длина")
+    b_len = (b_qty or {}).get("длина")
+    if a_dims and not b_dims and b_len and not a_len:
+        axes = {axis for tup in a_dims for axis in tup}
+        if not any(abs(lv - ax) <= min(0.2, 0.01 * max(abs(lv), abs(ax))) for lv in b_len for ax in axes):
+            return f"размеры в названии {sorted(a_dims)} ≠ {sorted(b_len)}"
+    if b_dims and not a_dims and a_len and not b_len:
+        axes = {axis for tup in b_dims for axis in tup}
+        if not any(abs(lv - ax) <= min(0.2, 0.01 * max(abs(lv), abs(ax))) for lv in a_len for ax in axes):
+            return f"размеры в названии {sorted(a_len)} ≠ {sorted(b_dims)}"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -926,6 +1281,7 @@ class ProductSignature:
     # _model_code_tokens) — используется ТОЛЬКО для поиска кандидатов
     # (grouping_key), match() как и раньше сравнивает ПОЛНЫЙ digit_tokens.
     model_code_tokens: frozenset = field(default_factory=frozenset)
+    brand_phonetic_keys: frozenset = field(default_factory=frozenset)
     raw_item: dict = field(default_factory=dict)
 
 
@@ -990,8 +1346,20 @@ def build_signature(item: dict, brand_dictionary=None) -> ProductSignature:
     brand = None
     if manufacturer and not is_bogus_manufacturer(manufacturer, name):
         brand = manufacturer
-    elif brand_dictionary is not None:
+    if not brand:
+        for ch in item.get("characteristics") or []:
+            if not isinstance(ch, dict):
+                continue
+            cname = (ch.get("name") or "").strip().lower()
+            cval = (ch.get("value") or "").strip()
+            if cname in ("бренд", "торговая марка", "производитель", "марка") and cval:
+                if not is_bogus_manufacturer(cval, name):
+                    brand = cval
+                    break
+    if not brand and brand_dictionary is not None:
         brand = brand_dictionary.find_in_name(name)
+        if not brand and item.get("description"):
+            brand = brand_dictionary.find_in_name(str(item.get("description"))[:160])
 
     # Бренд из одних цифр ("200") или стоп-слово (цвет/материал/страна/
     # общее слово по ошибке попавшее в manufacturer, "ОПС" и т.п. — тот же
@@ -1000,7 +1368,13 @@ def build_signature(item: dict, brand_dictionary=None) -> ProductSignature:
     # определённым (не participates в гейте сравнения брендов).
     if brand:
         key = _brand_compare_key(brand)
-        if not key or key.isdigit() or key in _BRAND_STOPWORD_KEYS:
+        folded_brand = fold_brand_or_code(brand).strip()
+        if (
+            not key
+            or key.isdigit()
+            or key in _BRAND_STOPWORD_KEYS
+            or not _is_recognizable_brand_word(folded_brand)
+        ):
             brand = None
 
     words = _split_words(name)
@@ -1009,6 +1383,7 @@ def build_signature(item: dict, brand_dictionary=None) -> ProductSignature:
     # "Tech-KREP" = "Techkrep" (владелец, 27.10.2026, найден дефект — см.
     # docstring _fold выше).
     brand_fold = _brand_compare_key(brand) if brand else ""
+    brand_phonetic_keys = _brand_phonetic_keys_for(brand) if brand else frozenset()
 
     # Вид товара — явное поле выгрузки, если содержательное (см.
     # _resolve_product_type), иначе по словарю PRODUCT_TYPE_WORDS/PHRASES,
@@ -1024,11 +1399,10 @@ def build_signature(item: dict, brand_dictionary=None) -> ProductSignature:
     name_props = _extract_name_properties(name)
     check_props = _extract_check_properties(name)
     # Суффиксы, слитные с кодом модели (см. FUSED_CODE_SUFFIX) — "материал"
-    # сливается в ту же жёсткую группу name_props (ПРАВИЛО №6, тот же ключ,
-    # что у MATERIAL_WORDS); "закачной" — в check_props (нет антонима,
-    # мягкое "указано у одного ⇒ check", см. _ONE_SIDED_CHECK_GROUP_ORDER).
+    # и "закачной" сливаются в name_props (если указано только у одного — не
+    # блокирует auto по п.4).
     for group, values in fused_props.items():
-        if group == "материал":
+        if group in ("материал", "закачной"):
             name_props.setdefault(group, set()).update(values)
         else:
             check_props.setdefault(group, set()).update(values)
@@ -1047,6 +1421,7 @@ def build_signature(item: dict, brand_dictionary=None) -> ProductSignature:
         name_dims=_extract_name_dimensions(name),
         brand_like_words=_extract_brand_like_words(name),
         model_code_tokens=_model_code_tokens(digit_tokens),
+        brand_phonetic_keys=brand_phonetic_keys,
         raw_item=item,
     )
 
@@ -1071,7 +1446,7 @@ def grouping_key(sig: ProductSignature) -> Optional[tuple]:
     return (sig.product_type, sig.model_code_tokens)
 
 
-_PROPERTY_CHECK_ORDER = ("класс пожара", "комплектация", "исполнение", "материал")
+_PROPERTY_CHECK_ORDER = ("класс пожара", "тип огнетушителя", "комплектация", "исполнение", "материал")
 
 
 def _name_property_conflict(group: str, a: ProductSignature, b: ProductSignature) -> Optional[str]:
@@ -1084,7 +1459,7 @@ def _name_property_conflict(group: str, a: ProductSignature, b: ProductSignature
 
 _ONE_SIDED_CHECK_GROUP_ORDER = (
     "сторонность", "перекрывной", "тип рукава", "комплектация(доп)",
-    "покрытие", "зарядное устройство", "упаковка", "установка", "закачной",
+    "покрытие", "зарядное устройство", "упаковка", "установка",
     "тип ствола",
 )
 
@@ -1126,13 +1501,36 @@ def _one_sided_property_result(a: ProductSignature, b: ProductSignature) -> Opti
     return None
 
 
+def _brands_match(a: ProductSignature, b: ProductSignature) -> bool:
+    """Точное (через _brand_compare_key) ИЛИ фонетическое (кириллица↔латиница,
+    двойные согласные: «Макита»=«Makita», «Бош»=«Bosch», «Штиль»=«Stihl»)
+    совпадение бренда."""
+    if not a.brand_fold or not b.brand_fold:
+        return False
+    if a.brand_fold == b.brand_fold:
+        return True
+    keys_a = a.brand_phonetic_keys or _brand_phonetic_keys_for(a.brand)
+    keys_b = b.brand_phonetic_keys or _brand_phonetic_keys_for(b.brand)
+    return bool(keys_a and keys_b and (keys_a & keys_b))
+
+
+def _brand_like_words_match(words_a: frozenset, words_b: frozenset) -> bool:
+    if not words_a or not words_b:
+        return False
+    if words_a & words_b:
+        return True
+    keys_a = {k for w in words_a for k in _brand_phonetic_keys_for(w)}
+    keys_b = {k for w in words_b for k in _brand_phonetic_keys_for(w)}
+    return bool(keys_a and keys_b and (keys_a & keys_b))
+
+
 def match(a: ProductSignature, b: ProductSignature, peers_a: tuple = (), peers_b: tuple = ()) -> dict:
     """Решение «тот же товар» для двух строк РАЗНЫХ магазинов (п.6 —
     пары только между разными магазинами, этим занимается вызывающий код,
     здесь — только сама проверка). peers_a/peers_b — другие строки СВОЕГО
     магазина под тем же ключом (бренд+цифровые токены), для проверки
     однозначности (п.5)."""
-    if a.brand_fold and b.brand_fold and a.brand_fold != b.brand_fold:
+    if a.brand_fold and b.brand_fold and not _brands_match(a, b):
         return {"decision": "no", "reason": f"бренд «{a.brand}» ≠ «{b.brand}»"}
 
     if a.product_type and b.product_type and a.product_type != b.product_type:
@@ -1171,9 +1569,9 @@ def match(a: ProductSignature, b: ProductSignature, peers_a: tuple = (), peers_b
     # иначе лишнее латинское слово у одной стороны при уже подтверждённом
     # общем бренде (manufacturer) не должно ложно давать "no" (тест ИБП CBR/
     # HP — там manufacturer совпадает, эта проверка не должна срабатывать).
-    confirmed_same_brand = bool(a.brand_fold) and bool(b.brand_fold) and a.brand_fold == b.brand_fold
+    confirmed_same_brand = _brands_match(a, b)
     if (not confirmed_same_brand and a.brand_like_words and b.brand_like_words
-            and not (a.brand_like_words & b.brand_like_words)):
+            and not _brand_like_words_match(a.brand_like_words, b.brand_like_words)):
         return {
             "decision": "no",
             "reason": f"вероятно разные бренды: {sorted(a.brand_like_words)} ≠ {sorted(b.brand_like_words)}",
@@ -1185,7 +1583,10 @@ def match(a: ProductSignature, b: ProductSignature, peers_a: tuple = (), peers_b
     if color_conflict:
         return {"decision": "no", "reason": color_conflict}
 
-    mass_conflict = _mass_conflict(a.char_values, b.char_values)
+    mass_conflict = _mass_conflict(
+        a.char_values, b.char_values,
+        has_model_code=bool(a.model_code_tokens and b.model_code_tokens),
+    )
     if mass_conflict:
         return {"decision": "no", "reason": mass_conflict}
 
@@ -1193,7 +1594,7 @@ def match(a: ProductSignature, b: ProductSignature, peers_a: tuple = (), peers_b
     if name_qty_conflict:
         return {"decision": "no", "reason": name_qty_conflict}
 
-    name_dims_conflict = _name_dimensions_conflict(a.name_dims, b.name_dims)
+    name_dims_conflict = _name_dimensions_conflict(a.name_dims, b.name_dims, a.name_qty, b.name_qty)
     if name_dims_conflict:
         return {"decision": "no", "reason": name_dims_conflict}
 
@@ -1239,7 +1640,7 @@ def match(a: ProductSignature, b: ProductSignature, peers_a: tuple = (), peers_b
     # обходит порог похожести слов (ровно так ложно сошлись Delta/Security
     # Force/BT — общие слова "аккумуляторная батарея" держали overlap выше
     # порога).
-    brand_confirmed_match = confirmed_same_brand or bool(a.brand_like_words & b.brand_like_words)
+    brand_confirmed_match = confirmed_same_brand or _brand_like_words_match(a.brand_like_words, b.brand_like_words)
     if not (a.product_type and b.product_type and brand_confirmed_match):
         overlap = _overlap_coefficient(a.word_set, b.word_set)
         if overlap < NAME_OVERLAP_CHECK_THRESHOLD:
@@ -1258,27 +1659,34 @@ def _group_compatible(sig: ProductSignature, group: tuple) -> bool:
     """Все товары группы (один магазин, один ключ) совместимы друг с другом
     и не различаются ни одним свойством (п.5, rule 5) — иначе однозначности
     нет."""
-    for other in group:
-        if other is sig:
-            continue
-        res = match(sig, other)
-        if res["decision"] != "auto":
-            return False
-        if sig.product_type != other.product_type:
-            return False
-        # "не различаются ни одним свойством" — даже при decision=auto
-        # (конфликтов нет) проверяем ТОЧНОЕ совпадение обнаруженных свойств,
-        # а не только отсутствие противоречий.
-        for grp in ("цвет", "страна", *_PROPERTY_CHECK_ORDER):
-            if sig.name_props.get(grp) != other.name_props.get(grp):
+    for i, item_a in enumerate(group):
+        for item_b in group[i + 1:]:
+            res = match(item_a, item_b)
+            if res["decision"] != "auto":
                 return False
+            if item_a.product_type and item_b.product_type and item_a.product_type != item_b.product_type:
+                return False
+            for grp in ("цвет", "страна", "комплектация", "исполнение", "материал"):
+                if item_a.name_props.get(grp) != item_b.name_props.get(grp):
+                    return False
     return True
+
+
+def _relevant_peers(sig: ProductSignature, peers: tuple) -> tuple:
+    """Оставляет среди peers своего магазина только те карточки, которые
+    относятся к тому же бренду (или не имеют распознанного бренда). Карточка
+    другого явно указанного бренда в том же магазине (например, ОП-2 Меланти
+    рядом с ОП-2 Ярпожинвест) — это товар другого производителя, а не
+    вторая неоднозначная карточка того же бренда."""
+    if not sig.brand_fold:
+        return peers
+    return tuple(p for p in peers if not p.brand_fold or _brands_match(sig, p))
 
 
 def _ambiguity_reason(a: ProductSignature, b: ProductSignature,
                        peers_a: tuple, peers_b: tuple) -> Optional[str]:
-    group_a = (a, *peers_a)
-    group_b = (b, *peers_b)
+    group_a = (a, *_relevant_peers(a, peers_a))
+    group_b = (b, *_relevant_peers(b, peers_b))
     if len(group_a) > 1 and not _group_compatible(a, group_a):
         return (f"в магазине A под этим брендом+числами {len(group_a)} разных товара, "
                 f"не сведённых в один (различаются свойствами)")

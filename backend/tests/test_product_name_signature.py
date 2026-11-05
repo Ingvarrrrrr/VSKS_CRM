@@ -620,3 +620,195 @@ def test_grouping_key_requires_same_product_type():
         "product_type": "Рукав", "category": "Другая категория",
     })
     assert grouping_key(a) != grouping_key(b)
+
+
+def test_spaced_model_code_and_parenthesized_brand_matches():
+    from app.services.product_name_signature import (
+        build_signature, grouping_key, match, merge_characteristics, merge_price_links,
+    )
+    from app.services.product_query_parse import ManufacturerBrandDictionary
+
+    bdict = ManufacturerBrandDictionary(["Ярпожинвест", "Меланти", "РИФ"])
+    a = build_signature(
+        {"name": "Огнетушитель ОП 2 (ярпожинвест)", "manufacturer": None, "characteristics": []},
+        brand_dictionary=bdict,
+    )
+    b = build_signature(
+        {"name": "Огнетушитель порошковый ОП-2 АВСЕ", "manufacturer": "Ярпожинвест", "characteristics": []},
+        brand_dictionary=bdict,
+    )
+    c = build_signature(
+        {"name": "Огнетушитель ОП-2 (Меланти)", "manufacturer": None, "characteristics": []},
+        brand_dictionary=bdict,
+    )
+    assert grouping_key(a) == grouping_key(b)
+    assert match(a, b)["decision"] == "auto"
+    assert match(a, c)["decision"] == "no"
+
+
+def test_spaced_vs_fused_zakachnoy_suffix_matches():
+    res = _decision(
+        "Огнетушитель порошковый ОП-2 (з) АВСЕ",
+        "Огнетушитель порошковый ОП-2(з) АВСЕ",
+        a_manufacturer="Ярпожинвест", b_manufacturer="Ярпожинвест",
+    )
+    assert res["decision"] == "auto", res
+
+
+def test_custom_vsks_vest_has_no_grouping_key_and_does_not_auto_merge():
+    from app.services.product_name_signature import build_signature, grouping_key
+    sig = build_signature({
+        "name": "Спасательный жилет с нанесением ВСКС",
+        "manufacturer": None,
+        "characteristics": [],
+    })
+    assert grouping_key(sig) is None
+
+
+def test_merge_characteristics_and_price_links():
+    from app.services.product_name_signature import merge_characteristics, merge_price_links
+
+    c1 = [{"name": "Вес брутто", "value": "3.1", "unit": "Килограмм"}]
+    c2 = [
+        {"name": "Вес брутто (не более)", "value": "3.2", "unit": "Килограмм"},
+        {"name": "Габариты брутто", "value": "450x150x150", "unit": "мм"},
+    ]
+    merged_c = merge_characteristics(c1, c2)
+    assert len(merged_c) == 2
+    assert merged_c[0]["value"] == "3.1"
+    assert merged_c[1]["name"] == "Габариты брутто"
+
+    l1 = [{"url": "https://store1.ru/item/1", "price": 500.0}]
+    l2 = [
+        {"url": "https://store1.ru/item/1", "price": 520.0},
+        {"url": "https://store2.ru/item/2", "price": 490.0},
+    ]
+    merged_l_keep = merge_price_links(l1, l2, update_existing_prices=False)
+    assert len(merged_l_keep) == 2
+    assert merged_l_keep[0]["price"] == 500.0
+    assert merged_l_keep[1]["url"] == "https://store2.ru/item/2"
+
+    merged_l_upd = merge_price_links(l1, l2, update_existing_prices=True)
+    assert len(merged_l_upd) == 2
+    assert merged_l_upd[0]["price"] == 520.0
+
+
+def test_unicode_multiply_dimensions_and_1d_vs_2d_mm_conflict():
+    # Unicode × (\u00d7) в габаритах: 1250x620х9 мм != 2500×1250×12 мм
+    osp1 = build_signature({"name": "Плита ОСП-3 1250x620х9 мм"})
+    osp2 = build_signature({"name": "Плита ОСП-3 2500×1250×12 мм"})
+    assert match(osp1, osp2)["decision"] == "no"
+
+    # Одиночный диаметр 2,5 мм против 3,0x350 мм (2.5 не входит в {3.0, 350.0})
+    el1 = build_signature({"name": "Сварочные электроды АНО-21, 2,5 мм 2,5 кг ESAB", "manufacturer": "ESAB"})
+    el2 = build_signature({"name": "Электроды ESAB АНО-21 3,0x350 мм (2,5 кг)", "manufacturer": "ESAB"})
+    assert match(el1, el2)["decision"] == "no"
+
+    # Одиночный диаметр 3,0 мм против 3,0x350 мм — 3.0 совпадает с первой осью
+    el3 = build_signature({"name": "Сварочные электроды АНО-21, 3,0 мм 2,5 кг ESAB", "manufacturer": "ESAB"})
+    assert match(el3, el2)["decision"] == "auto"
+
+
+def test_clean_characteristics_list_and_separate_unit():
+    from app.services.product_characteristics_parse import clean_characteristics_list
+
+    raw = [
+        {"name": "Защищаемая площадь (до), м²", "value": "20", "unit": None},
+        {"name": "Масса огнетушителя полная (не более)", "value": "2,9", "unit": "Килограмм"},
+        {"name": "Срок службы до перезарядки (не более), лет", "value": "5", "unit": None},
+        {"name": "Продолжительность разового залпа ОТВ", "value": "от 6 секунд.", "unit": None},
+        {"name": "Общая масса баллона с наполнением", "value": "не больше 3,2кг.", "unit": None},
+        {"name": "Протяжённость направленной тушащей струи ОТВ", "value": "от 2 метров.", "unit": None},
+        {"name": "Охватываемая площадь возгорания", "value": "не больше 20м2.", "unit": None},
+        {"name": "Рабочее давление в баллоне", "value": "1,4МПа.", "unit": None},
+        {"name": "Допустимый температурный режим хранения", "value": "от -40 до +50°С.", "unit": None},
+        {"name": "Габариты", "value": "высота-38см, диаметр-11см.", "unit": None},
+        {"name": "Габариты упаковки", "value": "31.5 x 11.5 x 11 см", "unit": None},
+        {"name": "Вес брутто", "value": "2786 г", "unit": None},
+        {"name": "Магазин-источник", "value": "К-Спасатель (k-spasatel.ru)", "unit": None},
+        {"name": "Артикул Сима-ленд", "value": "5182898", "unit": None},
+        {"name": "Модель производителя", "value": "00-00002791", "unit": None},
+    ]
+    cleaned = clean_characteristics_list(raw)
+    by_name = {c["name"]: c for c in cleaned}
+
+    assert by_name["Защищаемая площадь"] == {"name": "Защищаемая площадь", "value": "20", "unit": "м²"}
+    assert by_name["Масса огнетушителя полная"] == {"name": "Масса огнетушителя полная", "value": "2,9", "unit": "кг"}
+    assert by_name["Срок службы до перезарядки"] == {"name": "Срок службы до перезарядки", "value": "5", "unit": "лет"}
+    assert by_name["Продолжительность разового залпа ОТВ"] == {"name": "Продолжительность разового залпа ОТВ", "value": "6", "unit": "с"}
+    assert by_name["Общая масса баллона с наполнением"] == {"name": "Общая масса баллона с наполнением", "value": "3,2", "unit": "кг"}
+    assert by_name["Протяжённость направленной тушащей струи ОТВ"] == {"name": "Протяжённость направленной тушащей струи ОТВ", "value": "2", "unit": "м"}
+    assert by_name["Охватываемая площадь возгорания"] == {"name": "Охватываемая площадь возгорания", "value": "20", "unit": "м²"}
+    assert by_name["Рабочее давление в баллоне"] == {"name": "Рабочее давление в баллоне", "value": "1,4", "unit": "МПа"}
+    assert by_name["Допустимый температурный режим хранения"] == {"name": "Допустимый температурный режим хранения", "value": "-40...+50", "unit": "°C"}
+    assert by_name["Высота"] == {"name": "Высота", "value": "38", "unit": "см", "in_description": None}
+    assert by_name["Диаметр"] == {"name": "Диаметр", "value": "11", "unit": "см", "in_description": None}
+    assert by_name["Габариты упаковки"] == {"name": "Габариты упаковки", "value": "31.5x11.5x11", "unit": "см"}
+    assert by_name["Вес брутто"] == {"name": "Вес брутто", "value": "2786", "unit": "г"}
+    assert "Магазин-источник" not in by_name
+    assert "Артикул Сима-ленд" not in by_name
+    assert "Модель производителя" not in by_name
+
+
+def test_op2_yarpozhinvest_all_real_variants_auto_match():
+    from app.services.product_query_parse import ManufacturerBrandDictionary
+    from scripts.merge_by_name_model import _is_group_unique
+
+    bdict = ManufacturerBrandDictionary(["Ярпожинвест", "РИФ", "Меланти"])
+    cards = [
+        {"id": 2415, "name": "Огнетушитель порошковый ОП-2 (ЗПУ латунь) Ярпожинвест (г. Ярославль)", "manufacturer": None, "characteristics": []},
+        {"id": 29503, "name": "Огнетушитель Ярпожинвест ОП-2 з АВСЕ", "manufacturer": None, "characteristics": [{"name": "Вес", "value": "3.1", "unit": "кг"}]},
+        {"id": 812302, "name": "Огнетушитель порошковый ОП-2 Ярпожинвест (г. Ярославль)", "manufacturer": "Ярпожинвест", "characteristics": [{"name": "Вес", "value": "2,9", "unit": "кг"}]},
+        {"id": 812306, "name": "Огнетушитель порошковый Ярпожинвест ОП-2 (з) АВСЕ ЗПУ Китай", "manufacturer": "Ярпожинвест", "characteristics": [{"name": "Общая масса баллона с наполнением", "value": "3,2", "unit": "кг"}]},
+        {"id": 812307, "name": "Огнетушитель поршковый Ярпожинвест ОП-2 (з) ВСЕ ЗПУ Китай", "manufacturer": "Ярпожинвест", "characteristics": []},
+        {"id": 812308, "name": "Огнетушитель поршковый Ярпожинвест ОП-2 (з) ВСЕ ЗПУ Россия", "manufacturer": "Ярпожинвест", "characteristics": []},
+        {"id": 812312, "name": "Огнетушитель порошковый «Ярпожинвест» ОП-2(3), ABCE-01(А)", "manufacturer": "Ярпожинвест", "characteristics": [{"name": "Вес брутто", "value": "2786", "unit": "г"}]},
+        {"id": 1315441, "name": "Огнетушитель порошковый ОП-2 (з) ABCE", "manufacturer": None, "description": "Описание Огнетушитель порошковый Ярпожинвест ОП-2 (з) АВСЕ ЗПУ Россия", "characteristics": []},
+        {"id": 1318365, "name": "Огнетушитель порошковый Ярпожинвест ОП-2 (з) АВСЕ 00-00002791", "manufacturer": "Ярпожинвест", "characteristics": []},
+    ]
+    sigs = {c["id"]: build_signature(c, brand_dictionary=bdict) for c in cards}
+    ids = [c["id"] for c in cards]
+    assert all(sigs[cid].brand_fold == "ярпожинвест" for cid in ids)
+    assert _is_group_unique(ids, sigs) is True
+
+
+def test_phonetic_brand_match_cyrillic_and_latin():
+    """Кириллическое и латинское написание бренда ('Макита'↔'Makita',
+    'Бош'↔'Bosch', 'Штиль'↔'Stihl', 'Керхер'↔'Karcher', 'Деволт'↔'DeWalt')
+    сопоставляется через общую фонетику в build_signature/match()."""
+    a = build_signature({"name": "Перфоратор Макита HR2470", "manufacturer": "Макита"})
+    b = build_signature({"name": "Перфоратор Makita HR-2470", "manufacturer": "Makita"})
+    assert match(a, b)["decision"] == "auto"
+
+    c = build_signature({"name": "Перфоратор Бош GBH 2-26", "manufacturer": "Бош"})
+    d = build_signature({"name": "Перфоратор Bosch GBH 2-26", "manufacturer": "Bosch"})
+    assert match(c, d)["decision"] == "auto"
+
+    e = build_signature({"name": "Бензопила Штиль MS-180", "manufacturer": "Штиль"})
+    f = build_signature({"name": "Бензопила Stihl MS-180", "manufacturer": "Stihl"})
+    assert match(e, f)["decision"] == "auto"
+
+
+def test_accessory_preposition_does_not_steal_target_product_type():
+    """Принадлежность ('Подставка под огнетушитель ОП-2', 'Держатель под
+    огнетушитель ОП-2') не должна получать вид товара 'огнетушитель' по слову
+    после предлога 'под'/'для'."""
+    stand = build_signature({"name": "Подставка под огнетушитель ОП-2"})
+    holder = build_signature({"name": "Держатель под огнетушитель ОП-2"})
+    ext = build_signature({"name": "Огнетушитель порошковый ОП-2"})
+    assert stand.product_type == "подставка"
+    assert holder.product_type is None
+    assert ext.product_type == "огнетушитель"
+    assert match(stand, ext)["decision"] == "no"
+
+
+def test_size_or_preposition_in_manufacturer_rejected_as_brand():
+    """Размерные обозначения ('XL', 'А4') и предлоги ('для'), попавшие в
+    manufacturer, не считаются брендом карточки в build_signature."""
+    sig_xl = build_signature({"name": "Костюм рабочий КР-1", "manufacturer": "XL"})
+    sig_a4 = build_signature({"name": "Бумага офисная Снегурочка", "manufacturer": "А4"})
+    sig_prep = build_signature({"name": "Кронштейн КР-1", "manufacturer": "для"})
+    assert sig_xl.brand is None
+    assert sig_a4.brand is None
+    assert sig_prep.brand is None
+

@@ -101,14 +101,63 @@ def _insert_receipts_table_if_marker(
     return True
 
 
+def _subsidy_candidate_filenames(doc_type: str, template_file: str) -> list[str]:
+    """Упорядоченный список имён файлов, которые ищутся в папке субсидии
+    (uploads/templates/subsidies/<id>/) до отката на глобальные шаблоны:
+
+      1) точное совпадение {doc_type}.docx (например, contract_goods_single.docx),
+      2) базовый файл из DOC_TYPES[doc_type] (например, contract_tz.docx для tech_spec),
+      3) цепочка фолбэков DOC_TYPE_FALLBACK_FILES внутри ТОЙ ЖЕ субсидии
+         (например, contract_goods_single → contract.docx,
+          contract_services_accommodation → contract_services.docx → contract.docx,
+          tech_spec_contract → contract_tz.docx),
+      4) симметричный подхват для общего слота субсидии: если запрошен общий
+         'contract', а в субсидии загружен только contract_goods_single.docx
+         или contract_services.docx (либо запрошен contract_tz/tech_spec, а
+         загружен tech_spec_contract.docx) — берём загруженный шаблон субсидии,
+         а не чужой глобальный.
+    """
+    candidates: list[str] = []
+
+    def _add(fname: Optional[str]) -> None:
+        if fname and fname not in candidates:
+            candidates.append(fname)
+
+    _add(f"{doc_type}.docx")
+    _add(template_file)
+
+    cur_key = doc_type
+    for _ in range(4):
+        fb_file = DOC_TYPE_FALLBACK_FILES.get(cur_key)
+        if not fb_file:
+            break
+        _add(fb_file)
+        next_key = fb_file[:-5] if fb_file.endswith(".docx") else fb_file
+        if next_key == cur_key:
+            break
+        cur_key = next_key
+
+    if doc_type == "contract":
+        _add("contract_goods_single.docx")
+        _add("contract_services.docx")
+    elif doc_type in ("contract_tz", "tech_spec"):
+        _add("tech_spec_contract.docx")
+
+    return candidates
+
+
 def _resolve_doc_template_path(doc_type: str, subsidy_id: Optional[int]) -> tuple[str, str, str]:
     """Резолвит путь к файлу шаблона doc_type с единым приоритетом:
 
       1) субсидийный override (uploads/templates/subsidies/<id>/<doc_type>.docx),
-      2) глобальный файл backend/templates/<doc_type>.docx,
-      3) DOC_TYPE_FALLBACK_FILES[doc_type], если глобальный файл отсутствует.
+      2) субсидийный fallback внутри той же субсидии (например, загруженный в
+         слот «Договор» contract.docx используется для contract_goods_single /
+         contract_services, если для них нет отдельного файла в субсидии;
+         contract_tz.docx ↔ tech_spec_contract.docx),
+      3) глобальный файл backend/templates/<doc_type>.docx,
+      4) глобальный DOC_TYPE_FALLBACK_FILES[doc_type], если глобальный файл отсутствует.
 
-    Используется и для основного документа, и для приклеиваемой методички —
+    Используется и для основного документа, и для приклеиваемой методички / ТЗ —
     единственное место с этой логикой, чтобы приоритет «сначала субсидия,
     иначе глобальный» не разъезжался между местами вызова.
 
@@ -127,11 +176,12 @@ def _resolve_doc_template_path(doc_type: str, subsidy_id: Optional[int]) -> tupl
                 template_file = fallback
 
     if subsidy_id:
-        subsidy_template = os.path.join(
-            SUBSIDY_TEMPLATES_DIR, "subsidies", str(subsidy_id), f"{doc_type}.docx"
-        )
-        if os.path.exists(subsidy_template):
-            template_path = subsidy_template
+        subsidy_dir = os.path.join(SUBSIDY_TEMPLATES_DIR, "subsidies", str(subsidy_id))
+        for cand_file in _subsidy_candidate_filenames(doc_type, DOC_TYPES[doc_type][0]):
+            subsidy_template = os.path.join(subsidy_dir, cand_file)
+            if os.path.exists(subsidy_template):
+                template_path = subsidy_template
+                break
 
     return template_path, template_file, filename_base
 

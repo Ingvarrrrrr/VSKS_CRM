@@ -9,6 +9,7 @@ from docxtpl import DocxTemplate
 
 from app.services.documents.doc_types import TEMPLATES_DIR, SUBSIDY_TEMPLATES_DIR
 from app.services.documents.blank_placeholders import render_docx
+from app.services.documents.templates import _resolve_doc_template_path
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ def render_template(tpl: DocxTemplate, context: dict, template_path: str, doc_ty
         # Безопаснее упасть на базовый из репо и предупредить.
         is_custom_template = bool(template_path and template_path.startswith(SUBSIDY_TEMPLATES_DIR))
         if is_custom_template:
-            base_path = os.path.join(TEMPLATES_DIR, f"{doc_type}.docx")
+            base_path, _, _ = _resolve_doc_template_path(doc_type, None)
             if os.path.exists(base_path) and base_path != template_path:
                 _fallback_reason = f"{type(render_err).__name__}: {str(render_err)[:300]}"
                 logging.getLogger(__name__).warning(

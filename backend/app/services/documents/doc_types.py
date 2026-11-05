@@ -160,8 +160,12 @@ DOC_TYPE_FALLBACK_FILES = {
     "service_note_advance":     "service_note.docx",
     "tech_spec_request":        "contract_tz.docx",
     "tech_spec_contract":       "contract_tz.docx",
+    "tech_spec":                "contract_tz.docx",
     # Phase 28: new typed contract forms fall back to universal contract.docx
-    # until per-subsidy templates are uploaded. Prevents 404 for old purchases.
+    # until per-subsidy templates are uploaded. Prevents 404 for old purchases
+    # and lets a single per-subsidy contract.docx serve all contract forms
+    # when form-specific overrides are not uploaded.
+    "contract_services":           "contract.docx",
     "contract_services_large":     "contract.docx",
     "contract_services_small":     "contract.docx",
     "contract_services_food":      "contract.docx",

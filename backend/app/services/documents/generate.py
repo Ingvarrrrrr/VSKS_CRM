@@ -218,7 +218,11 @@ async def generate_document_bytes(
     # см. build_base_context_part1 выше) никуда не девается — это ДРУГОЙ,
     # более лёгкий список, не формальное приложение ТЗ. Единый источник —
     # app.services.tz_items.tz_required (ПРАВИЛО №6).
-    if tz_required(p):
+    # Если передан ?merge=... (кнопка «Договор + ТЗ») или используется кастомный
+    # шаблон субсидии, ТЗ хранится отдельно в tech_spec_contract / contract_tz и
+    # приклеивается только по запросу через merge_secondary_doc ниже.
+    _is_custom_subsidy_tpl = bool(template_path and template_path.startswith(SUBSIDY_TEMPLATES_DIR))
+    if tz_required(p) and not merge and not _is_custom_subsidy_tpl:
         buf = append_tz_table_for_contract(buf, doc_type, items_list, p, photo_map=_photo_map)
     buf = attach_methodology(buf, doc_type, p, pid)
     buf, filename_base = merge_secondary_doc(buf, merge, doc_type, context, p, filename_base)

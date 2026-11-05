@@ -230,3 +230,65 @@ async def test_wish_tech_spec_falls_back_to_global_without_override(client, db_s
     assert resp.status_code == 200, resp.text
     text = _extract_text(resp.content)
     assert "МАРКЕР-ТЗ-" not in text
+
+
+# ---------------------------------------------------------------------------
+# 3) Приоритет внутри субсидии: общий слот «Договор» (contract.docx) и «ТЗ»
+#    (contract_tz.docx) перекрывают глобальные типовые формы, если в субсидии
+#    нет более узкого файла (и наоборот — узкий файл субсидии выигрывает).
+# ---------------------------------------------------------------------------
+
+def test_resolve_subsidy_contract_fallback_chain(tmp_path, monkeypatch):
+    from app.services.documents import templates as tpl_mod
+
+    global_dir = tmp_path / "global_templates"
+    subsidy_base = tmp_path / "uploads_templates"
+    global_dir.mkdir()
+    (subsidy_base / "subsidies" / "42").mkdir(parents=True)
+
+    for name in ("contract.docx", "contract_goods_single.docx", "contract_services.docx",
+                 "contract_tz.docx", "tech_spec_contract.docx", "tech_spec_request.docx"):
+        (global_dir / name).write_bytes(b"global-" + name.encode())
+
+    monkeypatch.setattr(tpl_mod, "TEMPLATES_DIR", str(global_dir))
+    monkeypatch.setattr(tpl_mod, "SUBSIDY_TEMPLATES_DIR", str(subsidy_base))
+
+    sub_dir = subsidy_base / "subsidies" / "42"
+
+    # Сценарий А: в субсидии загружен только общий «Договор» (contract.docx) ->
+    # запросы contract_goods_single, contract_services, contract_services_accommodation
+    # должны брать contract.docx субсидии, а не глобальный шаблон.
+    sub_contract = sub_dir / "contract.docx"
+    sub_contract.write_bytes(b"sub-universal-contract")
+
+    for dt in ("contract", "contract_goods_single", "contract_services", "contract_services_accommodation"):
+        resolved_path, _, _ = tpl_mod._resolve_doc_template_path(dt, 42)
+        assert os.path.normpath(resolved_path) == os.path.normpath(str(sub_contract)), (
+            f"Для {dt} ожидался шаблон субсидии {sub_contract}, получен {resolved_path}"
+        )
+
+    # Сценарий Б: если для contract_goods_single в субсидии загружен СВОЙ отдельный
+    # шаблон — он выигрывает у общего contract.docx субсидии, а contract_services
+    # продолжает брать общий contract.docx субсидии.
+    sub_goods = sub_dir / "contract_goods_single.docx"
+    sub_goods.write_bytes(b"sub-goods-specific")
+
+    resolved_goods, _, _ = tpl_mod._resolve_doc_template_path("contract_goods_single", 42)
+    assert os.path.normpath(resolved_goods) == os.path.normpath(str(sub_goods))
+    resolved_services, _, _ = tpl_mod._resolve_doc_template_path("contract_services", 42)
+    assert os.path.normpath(resolved_services) == os.path.normpath(str(sub_contract))
+
+    # Сценарий В: если в субсидии удалён contract.docx, но остался contract_goods_single.docx,
+    # то запрос общего 'contract' подхватывает contract_goods_single.docx субсидии.
+    sub_contract.unlink()
+    resolved_generic, _, _ = tpl_mod._resolve_doc_template_path("contract", 42)
+    assert os.path.normpath(resolved_generic) == os.path.normpath(str(sub_goods))
+
+    # Сценарий Г: аналогично для ТЗ — загруженный в субсидию contract_tz.docx
+    # обслуживает tech_spec_contract и tech_spec_request, пока нет отдельных.
+    sub_tz = sub_dir / "contract_tz.docx"
+    sub_tz.write_bytes(b"sub-tz-general")
+    for dt in ("contract_tz", "tech_spec", "tech_spec_contract", "tech_spec_request"):
+        resolved_tz, _, _ = tpl_mod._resolve_doc_template_path(dt, 42)
+        assert os.path.normpath(resolved_tz) == os.path.normpath(str(sub_tz))
+

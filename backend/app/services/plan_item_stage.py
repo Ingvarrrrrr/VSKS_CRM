@@ -82,6 +82,28 @@ _PAYMENT_EPS = 0.01
 # подмножество PLANNED_STATUSES (_active_statuses), а не новая шкала.
 _DELIVERED_STATUSES: set = {"delivered", "paid"}
 
+_PURCHASE_DONE_STATUSES: set = {"contracted", "ordered", "delivered", "paid"}
+
+
+def _is_purchase_done(
+    status: Optional[str],
+    purchase_number: Optional[object] = None,
+    order_number: Optional[str] = None,
+    contract_number: Optional[str] = None,
+    protocol_number: Optional[str] = None,
+) -> bool:
+    """Закупка проведена (purchase_done):
+    1. Статус закупки in ('contracted', 'ordered', 'delivered', 'paid')
+    2. ЛИБО присвоен хотя бы один официальный реквизит проведения/заказа/договора:
+       purchase_number, order_number, contract_number, procurement_protocol_number.
+    Внутренний registry_number НЕ учитывается."""
+    if (status or "") in _PURCHASE_DONE_STATUSES:
+        return True
+    for val in (purchase_number, order_number, contract_number, protocol_number):
+        if val is not None and str(val).strip():
+            return True
+    return False
+
 
 def _active_statuses() -> set:
     # Локальный импорт — избегаем цикла роутер↔сервис (тот же приём, что и в
@@ -130,6 +152,7 @@ def _build_segments(groups: dict[tuple, dict], denom_qty: float, denom_amount: f
             # статусу закупки «поставлено и дальше» (delivered, paid — тот же
             # порядок статусов, что и PLANNED_STATUSES выше по шкале ordered).
             "delivered": bool(agg.get("delivered")),
+            "purchase_done": bool(agg.get("purchase_done", False)),
         })
     total_share = sum(s["share"] for s in segments)
     overflow = total_share > 1 + 1e-6
@@ -182,6 +205,10 @@ async def planned_item_stage_segments(
             PurchaseItem.total_price.label("amount"),
             Purchase.status.label("status"),
             Purchase.registry_number.label("registry_number"),
+            Purchase.purchase_number.label("purchase_number"),
+            Purchase.order_number.label("order_number"),
+            Purchase.contract_number.label("contract_number"),
+            Purchase.procurement_protocol_number.label("procurement_protocol_number"),
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(PurchaseItem.feo_planned_item_id.in_(planned_item_ids))
@@ -215,6 +242,16 @@ async def planned_item_stage_segments(
         bucket["_marked"] += pm["paid_marked"]
         bucket["_confirmed"] += pm["paid_confirmed"]
         bucket.setdefault("_status", r.status)
+        bucket.setdefault("_purchase_done", False)
+        is_done = _is_purchase_done(
+            r.status,
+            getattr(r, "purchase_number", None),
+            getattr(r, "order_number", None),
+            getattr(r, "contract_number", None),
+            getattr(r, "procurement_protocol_number", None),
+        )
+        if is_done:
+            bucket["_purchase_done"] = True
 
     for planned_item_id, by_key in grouped.items():
         final_groups: dict[tuple, dict] = {}
@@ -223,6 +260,7 @@ async def planned_item_stage_segments(
             final_groups[(purchase_id, registry_number, stage)] = {
                 "quantity": agg["quantity"], "amount": agg["amount"],
                 "delivered": agg.get("_status") in _DELIVERED_STATUSES,
+                "purchase_done": bool(agg.get("_purchase_done")),
             }
         dq, da = denom.get(planned_item_id, (0.0, 0.0))
         result[planned_item_id] = _build_segments(final_groups, dq, da)
@@ -258,6 +296,10 @@ async def category_plan_stage_segments(
             PurchaseItem.total_price.label("amount"),
             Purchase.status.label("status"),
             Purchase.registry_number.label("registry_number"),
+            Purchase.purchase_number.label("purchase_number"),
+            Purchase.order_number.label("order_number"),
+            Purchase.contract_number.label("contract_number"),
+            Purchase.procurement_protocol_number.label("procurement_protocol_number"),
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .join(FeoCategory, FeoCategory.id == cat_col)
@@ -294,6 +336,16 @@ async def category_plan_stage_segments(
         bucket["_marked"] += pm["paid_marked"]
         bucket["_confirmed"] += pm["paid_confirmed"]
         bucket.setdefault("_status", r.status)
+        bucket.setdefault("_purchase_done", False)
+        is_done = _is_purchase_done(
+            r.status,
+            getattr(r, "purchase_number", None),
+            getattr(r, "order_number", None),
+            getattr(r, "contract_number", None),
+            getattr(r, "procurement_protocol_number", None),
+        )
+        if is_done:
+            bucket["_purchase_done"] = True
 
     for category_id, by_key in grouped.items():
         final_groups: dict[tuple, dict] = {}
@@ -302,6 +354,7 @@ async def category_plan_stage_segments(
             final_groups[(purchase_id, registry_number, stage)] = {
                 "quantity": agg["quantity"], "amount": agg["amount"],
                 "delivered": agg.get("_status") in _DELIVERED_STATUSES,
+                "purchase_done": bool(agg.get("_purchase_done")),
             }
         dq, da = denom.get(category_id, (0.0, 0.0))
         result[category_id] = _build_segments(final_groups, dq, da)

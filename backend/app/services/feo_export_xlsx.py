@@ -61,8 +61,8 @@ def _stage_amounts(segments: list) -> dict:
             amt = sum(s["amount"] for s in segments if s.get("delivered"))
             share = sum(s["share"] for s in segments if s.get("delivered"))
         elif key == "purchase_done":
-            amt = sum(s["amount"] for s in segments if _STAGE_RANK.get(s["stage"], 0) >= _STAGE_RANK["in_work"])
-            share = sum(s["share"] for s in segments if _STAGE_RANK.get(s["stage"], 0) >= _STAGE_RANK["in_work"])
+            amt = sum(s["amount"] for s in segments if s.get("purchase_done"))
+            share = sum(s["share"] for s in segments if s.get("purchase_done"))
         else:
             rank = _STAGE_RANK[key if key != "ordered_flag" else "ordered"]
             amt = sum(s["amount"] for s in segments if _STAGE_RANK.get(s["stage"], 0) >= rank)
@@ -140,6 +140,7 @@ async def load_item_procurement_and_payments(
                 Purchase.purchase_number,
                 Purchase.order_number.label("p_order_number"),
                 Purchase.registry_number,
+                Purchase.procurement_protocol_number.label("p_protocol_num"),
                 Purchase.contract_id,
                 Purchase.contract_number.label("p_contract_num"),
                 Purchase.contract_price.label("p_contract_price"),
@@ -173,6 +174,7 @@ async def load_item_procurement_and_payments(
                 Purchase.purchase_number,
                 Purchase.order_number.label("p_order_number"),
                 Purchase.registry_number,
+                Purchase.procurement_protocol_number.label("p_protocol_num"),
                 Purchase.contract_id,
                 Purchase.contract_number.label("p_contract_num"),
                 Purchase.contract_price.label("p_contract_price"),
@@ -250,6 +252,7 @@ async def load_item_procurement_and_payments(
             "purchase_totals_by_pid": {},
             "seen_p_ids": set(),
             "fact_quantities": [], "fact_unit_prices": [], "order_numbers": set(),
+            "protocol_numbers": set(),
             "docs": set(), "dates": set(), "total_paid": 0.0,
             "purposes": set(), "kbk": set(), "expense_groups": set(), "statuses": set(),
         }
@@ -272,6 +275,7 @@ async def load_item_procurement_and_payments(
         fact_q = sum(b["fact_quantities"]) if b["fact_quantities"] else ""
         fact_up = round(b["fact_unit_prices"][0], 2) if b["fact_unit_prices"] else ""
         order_no = ", ".join(sorted(b["order_numbers"])) if b["order_numbers"] else ""
+        proto_no = ", ".join(sorted(b["protocol_numbers"])) if b["protocol_numbers"] else ""
         return {
             "contract_number": c_doc,
             "contract_amount": round(c_amt, 2) if c_amt > 0 else "",
@@ -279,6 +283,7 @@ async def load_item_procurement_and_payments(
             "order_amount": round(b["order_amount"], 2) if b["order_amount"] > 0 else "",
             "purchase_number": p_num,
             "order_number": order_no,
+            "procurement_protocol_number": proto_no,
             "purchase_amount": round(p_amt, 2) if p_amt > 0 else "",
             "contractor_name": c_name,
             "contractor_inn": c_inn,
@@ -317,6 +322,9 @@ async def load_item_procurement_and_payments(
 
         if r.p_order_number:
             b["order_numbers"].add(str(r.p_order_number))
+
+        if getattr(r, "p_protocol_num", None):
+            b["protocol_numbers"].add(str(r.p_protocol_num))
 
         if r.pi_qty is not None and float(r.pi_qty) > 0:
             b["fact_quantities"].append(float(r.pi_qty))
@@ -404,6 +412,9 @@ async def load_item_procurement_and_payments(
 
         if r.p_order_number:
             b["order_numbers"].add(str(r.p_order_number))
+
+        if getattr(r, "p_protocol_num", None):
+            b["protocol_numbers"].add(str(r.p_protocol_num))
 
         item_amt = float(r.p_final_amt or r.p_contract_price or 0.0)
         b["order_amount"] += item_amt
@@ -669,8 +680,8 @@ def render_feo_tree_sheet(
         deliv = stage_vals.get("delivered", "Нет")
         paid_m = stage_vals.get("paid_marked", "Нет")
         paid_c = stage_vals.get("paid_confirmed", "Нет")
-        is_done = "Да" if (cont == "Да" or ord_f == "Да" or deliv == "Да" or paid_m == "Да" or paid_c == "Да") else in_w
-        prot = "Да" if cont == "Да" else "Нет"
+        is_done = stage_vals.get("purchase_done", "Нет")
+        prot = "Да" if (cont == "Да" or proc.get("procurement_protocol_number")) else "Нет"
 
         if paid_c == "Да" or paid_m == "Да":
             st_name = "Оплачено"
@@ -680,6 +691,8 @@ def render_feo_tree_sheet(
             st_name = "Товар заказан"
         elif cont == "Да":
             st_name = "Договор заключен"
+        elif is_done == "Да":
+            st_name = "Закупка проведена"
         elif in_w == "Да":
             st_name = "Ведётся работа"
         else:

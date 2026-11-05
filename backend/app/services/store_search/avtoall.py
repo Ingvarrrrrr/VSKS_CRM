@@ -34,8 +34,20 @@ STORE_NAME_FALLBACK = "AvtoAll"
 BASE_URL = "https://www.avtoall.ru"
 
 SEARCH_URL = "https://www.avtoall.ru/search/global/?term={q}"
+SSR_SEARCH_URL = "https://www.avtoall.ru/search/?GlobalFilterForm%5Bnamearticle%5D={q}"
 
 _PRICE_DIGITS_RE = re.compile(r"[\d\s]+")
+_SSR_ITEM_BLOCK_RE = re.compile(
+    r'<div class="item item-elem product-item"[\s\S]*?'
+    r'(?=<div class="item item-elem product-item"|<div class="notes"|<div class="pagination"|$)'
+)
+_SSR_NAME_RE = re.compile(r'<strong class="item-name">\s*<a href="([^"]+)">([\s\S]*?)</a>', re.IGNORECASE)
+_SSR_PRICE_RE = re.compile(r'<b class="price-internet">([\s\S]*?)</b>', re.IGNORECASE)
+_SSR_CODE_RE = re.compile(r'data-good-code="(\d+)"|Код для заказа:\s*(\d+)', re.IGNORECASE)
+_SSR_MFG_RE = re.compile(r'Производитель:\s*([^<\n•]+)', re.IGNORECASE)
+_SSR_DATA_SRC_RE = re.compile(r'<img[^>]+data-src="([^"]+)"', re.IGNORECASE)
+_SSR_SRC_RE = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _decimal_from_price_text(text: Optional[str]) -> Optional[Decimal]:
@@ -51,6 +63,62 @@ def _decimal_from_price_text(text: Optional[str]) -> Optional[Decimal]:
         return Decimal(digits)
     except Exception:
         return None
+
+
+def parse_search_html(html: str) -> list[StoreOffer]:
+    """Разбор полнотекстовой SSR-страницы поиска avtoall.ru
+    (`/search/?GlobalFilterForm[namearticle]=<q>`). Возвращает карточки с
+    прямыми ссылками на товар, полными названиями, интернет-ценой, кодом
+    магазина и производителем. В отличие от быстрых подсказок `/search/global/`,
+    SSR-поиск ищет по полным названиям моделей ('Hakkapeliitta', 'Nordman') и
+    сам исправляет опечатки ('hakkapelitta' → 'hakkapeliitta')."""
+    offers: list[StoreOffer] = []
+    if not html:
+        return offers
+    store_name = store_display_name(DOMAIN, STORE_NAME_FALLBACK)
+    seller_inn = seller_inn_for_domain(DOMAIN)
+    seen_urls: set[str] = set()
+    for block in _SSR_ITEM_BLOCK_RE.findall(html):
+        name_m = _SSR_NAME_RE.search(block)
+        if not name_m:
+            continue
+        rel_url = name_m.group(1).strip()
+        name = _TAG_RE.sub("", name_m.group(2)).strip()
+        if not name or not rel_url:
+            continue
+        full_url = f"{BASE_URL}{rel_url}" if rel_url.startswith("/") else rel_url
+        if full_url in seen_urls:
+            continue
+        seen_urls.add(full_url)
+
+        price_m = _SSR_PRICE_RE.search(block)
+        price = _decimal_from_price_text(_TAG_RE.sub("", price_m.group(1)) if price_m else None)
+
+        code_m = _SSR_CODE_RE.search(block)
+        store_article = (code_m.group(1) or code_m.group(2)) if code_m else None
+
+        mfg_m = _SSR_MFG_RE.search(block)
+        manufacturer = mfg_m.group(1).strip() if mfg_m else None
+
+        img_url = None
+        img_m = _SSR_DATA_SRC_RE.search(block) or _SSR_SRC_RE.search(block)
+        if img_m:
+            raw_img = img_m.group(1).strip()
+            if raw_img and "loader-vue" not in raw_img:
+                img_url = f"{BASE_URL}{raw_img}" if raw_img.startswith("/") else raw_img
+
+        offers.append(StoreOffer(
+            store_key=STORE_KEY,
+            store_name=store_name,
+            seller_inn=seller_inn,
+            name=name,
+            price=price,
+            url=full_url,
+            image_url=img_url,
+            manufacturer=manufacturer,
+            store_article=store_article,
+        ))
+    return offers
 
 
 def parse_search_json(raw: str, query: str) -> list[StoreOffer]:
@@ -92,6 +160,12 @@ class AvtoallAdapter:
     display_name = STORE_NAME_FALLBACK
 
     async def search(self, client, query: str, limit: int) -> list[StoreOffer]:
+        ssr_url = SSR_SEARCH_URL.format(q=quote(query))
+        ssr_html = await client.get_text(ssr_url)
+        if ssr_html:
+            ssr_offers = parse_search_html(ssr_html)
+            if ssr_offers:
+                return ssr_offers[:limit]
         url = SEARCH_URL.format(q=quote(query))
         raw = await client.get_text(url, headers={
             "Accept": "application/json",

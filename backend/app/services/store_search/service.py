@@ -145,6 +145,9 @@ def _rate_limited(store_key: str) -> bool:
     return False
 
 
+_LATIN_WORD_RE = re.compile(r"[a-zA-Z]")
+
+
 def clean_query(query: str, brand_dictionary=None) -> str:
     """Очищенный запрос для магазина — вид товара (как написал человек) +
     бренд + модель/коды + величины, без стоп-слов (правка 29.10.2026 —
@@ -163,24 +166,27 @@ def clean_query(query: str, brand_dictionary=None) -> str:
 
     Правило: если вид распознан (parsed.product_type не None — словарь
     нашёл его, required уже несёт type_literal/бренд/модель/величины целиком,
-    см. parse_query) — required и есть очищенный запрос. Если вид НЕ
-    распознан — required может растерять обычные слова (как «монитор»,
-    «магнитный» у «пускатель магнитный», если фраза не в словаре целиком) —
-    тогда берём ВСЕ значимые слова исходной фразы по порядку (та же
-    токенизация _split_words, что и внутри parse_query, ПРАВИЛО №6 — второй
-    разбор не пишем), выбросив только предлоги/союзы (parsed.dropped_
-    stopwords). Два исхода ("" или только цифры) всё равно уходят в
-    исходную строку целиком — запрос из одних цифр магазину ничего не
-    говорит лучше, чем вообще не чистить."""
+    см. parse_query) — берём required, а если specific=False (ни бренд, ни
+    индекс с цифрой, ни величина не распознаны — в required один только вид
+    товара, как у «шины nokian hakkapelitta» или «костюм горка») или в
+    optional есть латинские слова-бренды/модели без цифр ('nokian',
+    'hakkapelitta', 'zenbook') — сохраняем их из optional, чтобы запрос не
+    схлопывался до голого вида «шины»/«костюм». Если вид НЕ распознан —
+    берём ВСЕ значимые слова исходной фразы по порядку (_split_words с
+    fold_homoglyphs=False, без порчи латиницы в смешанный алфавит), выбросив
+    только предлоги/союзы (parsed.dropped_stopwords)."""
     raw = (query or "").strip()
     if not raw:
         return raw
     parsed = parse_query(raw, brand_dictionary=brand_dictionary)
     if parsed.product_type is not None:
         tokens = list(parsed.required)
+        for w in parsed.optional:
+            if (not parsed.specific or _LATIN_WORD_RE.search(w)) and w not in tokens:
+                tokens.append(w)
     else:
         dropped = set(parsed.dropped_stopwords)
-        tokens = [w for w in _split_words(raw) if w not in dropped]
+        tokens = [w for w in _split_words(raw, fold_homoglyphs=False) if w not in dropped]
     cleaned = " ".join(tokens).strip()
     if not cleaned or all(tok.isdigit() for tok in cleaned.split()):
         return raw

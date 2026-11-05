@@ -40,6 +40,29 @@ _SEGMENT_RE = re.compile(r"[a-zа-яё]+|\d+", re.IGNORECASE)
 # один пробел/таб. Необязательный — слитная запись («ОП2») матчится тоже.
 _SEPARATOR = r"[-\s]?"
 
+# Те же пары гомоглифов латиница↔кириллица, что в brand_code_fold.py — чтобы
+# буквенно-цифровой код («c16»/«с16», «e27»/«е27», «op-2»/«оп-2», «hr2470»)
+# находился в Product.name/article независимо от раскладки, в которой написана
+# буква у поставщика или в запросе.
+_HOMOGLYPH_CHAR_CLASSES = {
+    "a": "[aа]", "а": "[aа]",
+    "b": "[bв]", "в": "[bв]",
+    "c": "[cс]", "с": "[cс]",
+    "e": "[eе]", "е": "[eе]",
+    "h": "[hн]", "н": "[hн]",
+    "k": "[kк]", "к": "[kк]",
+    "m": "[mм]", "м": "[mм]",
+    "o": "[oо]", "о": "[oо]",
+    "p": "[pр]", "р": "[pр]",
+    "t": "[tт]", "т": "[tт]",
+    "x": "[xх]", "х": "[xх]",
+    "y": "[yу]", "у": "[yу]",
+}
+
+
+def _escape_code_segment(seg: str) -> str:
+    return "".join(_HOMOGLYPH_CHAR_CLASSES.get(ch.lower(), re.escape(ch)) for ch in seg)
+
 
 def code_literal_regex(norm_token: str) -> str:
     """norm_token — нормализованный alnum-код (без разделителей). Возвращает
@@ -50,4 +73,4 @@ def code_literal_regex(norm_token: str) -> str:
     segments = _SEGMENT_RE.findall(norm_token)
     if len(segments) <= 1:
         return re.escape(norm_token)
-    return _SEPARATOR.join(re.escape(seg) for seg in segments)
+    return _SEPARATOR.join(_escape_code_segment(seg) for seg in segments)

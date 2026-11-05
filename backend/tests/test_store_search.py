@@ -552,3 +552,54 @@ async def test_filter_relevant_offers_without_db_degrades_to_literal_words():
     names = [o.name for o in kept]
     assert "Пускатель магнитный ПМЛ-1100" in names
     assert "Браслет магнитный медный" not in names
+
+
+def test_clean_query_preserves_latin_and_optional_brand_model():
+    assert store_search_service.clean_query("nokian") == "nokian"
+    assert store_search_service.clean_query("nokian hakkapelitta") == "nokian hakkapelitta"
+    assert store_search_service.clean_query("шина nokian hakkapelitta") == "шина nokian hakkapelitta"
+
+
+@pytest.mark.asyncio
+async def test_filter_relevant_offers_matches_nokian_hakkapelitta_typo_and_tire_synonym():
+    offer = _offer("Покрышка NOKIAN TYRES Hakkapeliitta R3 SUV 235/65 R17")
+    for q in ("nokian", "nokian hakkapelitta", "шина nokian hakkapelitta"):
+        parsed = parse_query(q)
+        kept = await filter_relevant_offers([offer], parsed, None)
+        assert len(kept) == 1, f"offer dropped for query {q!r}"
+
+
+def test_avtoall_parses_ssr_search_html():
+    html = """
+    <div class="list-compact">
+    <div class="item item-elem product-item" >
+        <div class="image">
+            <a href="/pokryshka_nokian_tyres_hakkapeliitta_r3_suv_235_65_r17-487771/">
+                <img data-src="https://www.avtoall.ru/upload/iblock/195/487766.jpg" src="https://www.avtoall.ru/pic/loader-vue.gif" />
+            </a>
+            <div class="bookmark hiding" data-good-code="487771"></div>
+        </div>
+        <div class="decr">
+            <strong class="item-name"><a href="/pokryshka_nokian_tyres_hakkapeliitta_r3_suv_235_65_r17-487771/">Покрышка NOKIAN TYRES Hakkapeliitta R3 SUV 235/65 R17</a></strong>
+            <div class="info">
+                <b>Артикул: T430654</b>
+                <small>Код для заказа: 487771</small>
+                <span class="text">Сезонность: Зима &#8226; Производитель: NOKIAN</span>
+            </div>
+        </div>
+        <div class="right-block">
+            <div class="price"><b class="price-internet">11 010 ₽</b></div>
+        </div>
+    </div>
+    </div>
+    """
+    offers = avtoall.parse_search_html(html)
+    assert len(offers) == 1
+    o = offers[0]
+    assert o.name == "Покрышка NOKIAN TYRES Hakkapeliitta R3 SUV 235/65 R17"
+    assert o.price == Decimal("11010")
+    assert o.url == "https://www.avtoall.ru/pokryshka_nokian_tyres_hakkapeliitta_r3_suv_235_65_r17-487771/"
+    assert o.image_url == "https://www.avtoall.ru/upload/iblock/195/487766.jpg"
+    assert o.store_article == "487771"
+    assert o.manufacturer == "NOKIAN"
+

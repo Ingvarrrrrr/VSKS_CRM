@@ -45,6 +45,7 @@ from app.services.catalog_gala.manufacturer_quality import is_bogus_manufacturer
 from app.services.brand_code_fold import fold_brand_or_code
 from app.services.product_name_signature import (
     _brand_compare_key,
+    _digit_tokens,
     _HAS_DIGIT_RE,
     _PRODUCT_TYPE_WINDOW,
     _split_words,
@@ -233,7 +234,8 @@ def parse_query(q: Optional[str], brand_dictionary=None) -> ParsedQuery:
             seen_required.add(val)
             required.append(val)
 
-    words = _split_words(merged_raw)
+    words = _split_words(merged_raw, fold_homoglyphs=False)
+    query_digit_tokens, _ = _digit_tokens(words)
     folded_text = fold_brand_or_code(merged_raw)
 
     # Вид товара — required несёт ЛИТЕРАЛЬНОЕ слово(а) ИЗ ФРАЗЫ, НЕ
@@ -252,16 +254,19 @@ def parse_query(q: Optional[str], brand_dictionary=None) -> ParsedQuery:
     if sig.product_type:
         phrase_words = _product_type_phrase_words(sig.product_type, folded_text)
         if phrase_words:
-            type_literal = " ".join(w for w in words if w in phrase_words)
+            type_literal = " ".join(w for w in words if fold_brand_or_code(w) in phrase_words)
         else:
             for w in words:
-                if PRODUCT_TYPE_WORDS.get(w) == sig.product_type:
+                if (
+                    PRODUCT_TYPE_WORDS.get(w) == sig.product_type
+                    or PRODUCT_TYPE_WORDS.get(fold_brand_or_code(w)) == sig.product_type
+                ):
                     type_literal = w
                     break
 
     add_required(sig.brand)
     add_required(type_literal)
-    for tok in sorted(sig.digit_tokens):
+    for tok in sorted(query_digit_tokens):
         add_required(_normalize_model_token(tok))
     for group, values in sig.name_qty.items():
         for v in sorted(values):
@@ -280,7 +285,12 @@ def parse_query(q: Optional[str], brand_dictionary=None) -> ParsedQuery:
             continue
         if sig.brand_fold and _brand_compare_key(w) == sig.brand_fold:
             continue
-        if sig.product_type and (PRODUCT_TYPE_WORDS.get(w) == sig.product_type or w in phrase_words):
+        w_folded = fold_brand_or_code(w)
+        if sig.product_type and (
+            PRODUCT_TYPE_WORDS.get(w) == sig.product_type
+            or PRODUCT_TYPE_WORDS.get(w_folded) == sig.product_type
+            or w_folded in phrase_words
+        ):
             continue
         optional.append(w)
 
@@ -389,7 +399,7 @@ async def resolve_type_by_stem(db: AsyncSession, parsed: ParsedQuery) -> ParsedQ
     if parsed.product_type is not None:
         return parsed
 
-    words = _split_words(parsed.raw)[:_PRODUCT_TYPE_WINDOW]
+    words = _split_words(parsed.raw, fold_homoglyphs=False)[:_PRODUCT_TYPE_WINDOW]
     # Только слова, которые parse_query() оставила в optional (не бренд, не
     # цифра, не стоп-слово) — кандидаты на вид товара.
     candidates = [w for w in words if w in parsed.optional]

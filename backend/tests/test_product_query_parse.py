@@ -385,3 +385,24 @@ def test_product_type_word_matching_manufacturer_value_is_not_a_brand():
     # manufacturer, — не должен мешать фразе "лопата штыковая".
     dictionary = ManufacturerBrandDictionary(["лопата", "Makita"])
     assert dictionary.find_in_name("лопата штыковая") is None
+
+
+def test_parse_query_preserves_latin_script_in_optional_and_digit_tokens():
+    """Латинские слова и коды моделей в запросе ('nokian', 'hakkapelitta',
+    'hr2470') НЕ должны превращаться в смесь кириллицы и латиницы
+    ('nокiаn', 'наккареliтта', 'нr2470') через fold_brand_or_code — иначе
+    полнотекстовый поиск Postgres и живой поиск в магазинах ничего не находят."""
+    p_nokian = parse_query("nokian hakkapelitta")
+    assert p_nokian.optional == ["nokian", "hakkapelitta"]
+
+    p_tire = parse_query("шина nokian hakkapelitta")
+    assert p_tire.product_type == "шины"
+    assert p_tire.required == ["шина"]
+    assert p_tire.optional == ["nokian", "hakkapelitta"]
+
+    dictionary = ManufacturerBrandDictionary(["Makita"])
+    p_makita = parse_query("перфоратор makita hr2470", dictionary)
+    assert p_makita.brand == "Makita"
+    assert "hr2470" in p_makita.required
+    assert "нr2470" not in p_makita.required
+

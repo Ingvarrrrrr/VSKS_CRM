@@ -65,7 +65,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.services.brand_code_fold import fold_brand_or_code
+from app.services.brand_code_fold import fold_brand_or_code, fold_text_preserving_script
 from app.services.catalog_gala.manufacturer_quality import is_bogus_manufacturer
 from app.services.product_tz_44fz_rules import STOP_BRAND_WORDS
 from app.services.product_name_signature_props import (
@@ -151,7 +151,7 @@ _MARKET_SUFFIXES = ("se00", "se01", "xj", "xe", "ks", "qw", "gb", "ru", "eu")
 # которые их сворачивает fold_brand_or_code (баг найден на тесте
 # «RH1183SE00»: «e» в «SE00» после фолда — кириллическая «е»).
 _MARKET_SUFFIXES_SORTED = tuple(
-    sorted((fold_brand_or_code(s) for s in _MARKET_SUFFIXES), key=len, reverse=True)
+    sorted({*(_MARKET_SUFFIXES), *(fold_brand_or_code(s) for s in _MARKET_SUFFIXES)}, key=len, reverse=True)
 )
 
 
@@ -309,16 +309,21 @@ def _pre_clean(name: Optional[str]) -> str:
         _strip_inch_spans(_strip_reference_and_analog(name or ""))))
 
 
-def _split_words(name: Optional[str]) -> list[str]:
+def _split_words(name: Optional[str], *, fold_homoglyphs: bool = True) -> list[str]:
     """Название → нормализованные слова (класс пожара вырезан, гомоглифы/
     регистр свёрнуты через fold_brand_or_code, пробелы схлопнуты, крайняя
     пунктуация у каждого слова срезана). Дефисы ВНУТРИ слова сохраняются на
     этом шаге — они срезаются только при вычислении digit_tokens (там код
-    без дефисов)."""
+    без дефисов).
+
+    fold_homoglyphs=False — для разбора поискового запроса (product_query_parse,
+    store_search): сохраняет исходный алфавит букв (латиница остаётся латиницей),
+    чтобы слова вроде 'nokian', 'hakkapeliitta', 'hr2470' не превращались в
+    смешанный кириллическо-латинский 'nокiаn', 'нr2470'."""
     if not name:
         return []
     cleaned = _pre_clean(name)
-    folded = fold_brand_or_code(cleaned)
+    folded = fold_brand_or_code(cleaned) if fold_homoglyphs else fold_text_preserving_script(cleaned)
     words = []
     for raw in folded.split():
         w = _EDGE_PUNCT_RE.sub("", raw)
@@ -359,15 +364,16 @@ def _digit_tokens(words: list[str]) -> tuple:
             if not norm:
                 continue
             m = _UNIT_SUFFIX_RE.match(norm)
-            if m and m.group(2) in UNIT_WORDS:
+            if m and (m.group(2) in UNIT_WORDS or fold_brand_or_code(m.group(2)) in UNIT_WORDS):
                 continue
             norm = _strip_known_market_suffix(norm)
             # Суффикс материала/свойства, слитный с кодом (см. docstring
             # FUSED_CODE_SUFFIX) — снимается ТОЛЬКО если перед ним стоит
             # цифра (иначе это не суффикс кода модели, а обычная буква
             # внутри слова, например часть аббревиатуры).
-            if len(norm) > 3 and norm[-1] in FUSED_CODE_SUFFIX and norm[-2].isdigit():
-                group, value = FUSED_CODE_SUFFIX[norm[-1]]
+            last_folded = fold_brand_or_code(norm[-1]) if norm else ""
+            if len(norm) > 3 and last_folded in FUSED_CODE_SUFFIX and norm[-2].isdigit():
+                group, value = FUSED_CODE_SUFFIX[last_folded]
                 fused_props.setdefault(group, set()).add(value)
                 norm = norm[:-1]
             out.add(norm)

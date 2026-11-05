@@ -48,7 +48,13 @@ from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.product_name_signature import _split_words
-from app.services.product_query_parse import ParsedQuery, product_type_synonyms
+from app.services.product_query_parse import (
+    _PHONETIC_MIN_KEY_LEN,
+    _PHONETIC_MIN_WORD_LEN,
+    _phonetic_key_variants,
+    ParsedQuery,
+    product_type_synonyms,
+)
 from app.services.product_search import _tsquery_token, _tsquery_type_group
 from app.services.store_search.base import StoreOffer
 
@@ -59,25 +65,51 @@ def _required_signal_words(parsed: ParsedQuery) -> list[str]:
     return [t for t in parsed.required if t != parsed.type_literal]
 
 
+def _word_matches_name(word: str, name_words: set[str], name_phonetic_keys: set[str]) -> bool:
+    parts = word.lower().split()
+    if not parts:
+        return False
+    if set(parts) <= name_words:
+        return True
+    for part in parts:
+        if part in name_words:
+            continue
+        if len(part) >= _PHONETIC_MIN_WORD_LEN and (
+            _phonetic_key_variants(part) & name_phonetic_keys
+        ):
+            continue
+        return False
+    return True
+
+
 def _without_db_relevant(
     name: str, parsed: ParsedQuery, required_signals: list[str], ordinary_words: list[str],
 ) -> bool:
     """Деградация без БД (см. docstring модуля) — литеральное совпадение
-    слов (без стемминга), ТА ЖЕ структура условий (вид / любой required-
+    слов + фонетический ключ (_phonetic_key_variants из product_query_parse,
+    ПРАВИЛО №6 — сглаживает удвоенные согласные/гласные в латинских моделях
+    вроде 'hakkapelitta'↔'Hakkapeliitta' и кириллическую запись латинских
+    брендов 'нокиан'↔'NOKIAN'), ТА ЖЕ структура условий (вид / любой required-
     сигнал / большинство ordinary_words), что и DB-путь ниже."""
-    name_words = set(_split_words(name))
+    name_words = set(_split_words(name, fold_homoglyphs=False))
+    name_phonetic_keys: set[str] = set()
+    for nw in name_words:
+        if len(nw) >= _PHONETIC_MIN_WORD_LEN:
+            for v in _phonetic_key_variants(nw):
+                if len(v) >= _PHONETIC_MIN_KEY_LEN:
+                    name_phonetic_keys.add(v)
     if parsed.product_type:
         for syn in product_type_synonyms(parsed.product_type):
             if set(syn.lower().split()) <= name_words:
                 return True
     for sig in required_signals:
-        if set(sig.lower().split()) <= name_words:
+        if _word_matches_name(sig, name_words, name_phonetic_keys):
             return True
     if not ordinary_words:
         # Нет ни вида, ни required-сигналов, ни обычных слов (запрос был
         # пуст/целиком стоп-словами) — нет базы для решения, не отбрасываем.
         return not parsed.product_type and not required_signals
-    hits = sum(1 for w in ordinary_words if set(w.lower().split()) <= name_words)
+    hits = sum(1 for w in ordinary_words if _word_matches_name(w, name_words, name_phonetic_keys))
     threshold_k = len(ordinary_words) // 2 + 1
     return hits >= threshold_k
 
@@ -130,4 +162,7 @@ async def filter_relevant_offers(
         "FROM unnest(:names_w) WITH ORDINALITY AS t(val, idx) ORDER BY idx"
     ).bindparams(bindparam("names_w", type_=PG_ARRAY(String)))
     rows = (await db.execute(stmt, {"names_w": names, "tsquery_w": combined_tsquery})).scalars().all()
-    return [o for o, matched in zip(offers, rows) if matched]
+    return [
+        o for o, matched in zip(offers, rows)
+        if matched or _without_db_relevant(o.name or "", parsed, required_signals, ordinary_words)
+    ]

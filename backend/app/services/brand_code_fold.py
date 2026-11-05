@@ -45,6 +45,18 @@ _BRAND_CODE_FOLD_MAP = {k: v for k, v in _CHAR_FOLD_MAP.items() if k not in ("0"
 _BRAND_CODE_FOLD_MAP.update({"b": "в", "k": "к", "m": "м", "h": "н", "t": "т"})
 _BRAND_CODE_FOLD_TABLE = str.maketrans(_BRAND_CODE_FOLD_MAP)
 
+# Та же чистка пробелов/дефисов/кавычек/ё/невидимых символов из _CHAR_FOLD_MAP,
+# НО без замены латинских букв кириллическими гомоглифами — для токенизации
+# поисковых запросов (product_query_parse.py, store_search/service.py), где
+# слова отправляются в полнотекстовый поиск Postgres и внешние интернет-магазины,
+# и порча латинских слов в смешанный алфавит ('nokian' → 'nокiаn',
+# 'hr2470' → 'нr2470') ломает поиск.
+_SCRIPT_PRESERVING_FOLD_MAP = {
+    k: v for k, v in _CHAR_FOLD_MAP.items()
+    if k not in ("0", "3", "4") and not ("A" <= k <= "Z" or "a" <= k <= "z")
+}
+_SCRIPT_PRESERVING_FOLD_TABLE = str.maketrans(_SCRIPT_PRESERVING_FOLD_MAP)
+
 
 def fold_brand_or_code(text) -> str:
     """Нормализует строку бренда или артикула производителя для сравнения
@@ -56,4 +68,14 @@ def fold_brand_or_code(text) -> str:
     if not text:
         return ""
     folded = str(text).lower().translate(_BRAND_CODE_FOLD_TABLE)
+    return _WS_RE.sub(" ", folded.strip())
+
+
+def fold_text_preserving_script(text) -> str:
+    """Нормализует регистр, пробелы, дефисы, кавычки и ё→е по той же таблице
+    _CHAR_FOLD_MAP (Правило №6), но сохраняет исходный алфавит букв (латиница
+    остаётся латиницей, кириллица — кириллицей)."""
+    if not text:
+        return ""
+    folded = str(text).lower().translate(_SCRIPT_PRESERVING_FOLD_TABLE)
     return _WS_RE.sub(" ", folded.strip())

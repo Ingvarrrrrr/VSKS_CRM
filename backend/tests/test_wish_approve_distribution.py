@@ -38,7 +38,7 @@ async def _seed_wish_with_mixed_items(db_session, test_org, test_user):
     subsidy = Subsidy(name=f"TestSubsidy-{id(db_session)}", year=2026, budget=0, require_planned_dates=False)
     db_session.add(subsidy)
     await db_session.flush()
-    feo_cat = FeoCategory(subsidy_id=subsidy.id, level=1, name="Прочее")
+    feo_cat = FeoCategory(subsidy_id=subsidy.id, level=1, name="Прочее", planned_quantity=100, planned_amount=100000)
     db_session.add(feo_cat)
     await db_session.flush()
 
@@ -96,15 +96,15 @@ async def test_approve_distribution_creates_n_purchases(client, db_session, admi
     assert body["status"] == "converted"
     assert len(body["purchase_ids"]) == 3
 
-    # Verify DB state: 3 purchases with status='plan_schedule' committed by the
+    # Verify DB state: 3 purchases with status='work_in_progress' committed by the
     # endpoint (_distribute_wish_to_purchases default purchase_status; "wishes"
-    # was a stale status name — see wish_distribution.py "«План закупок»").
+    # was a stale status name — see wish_distribution.py "«Ведётся работа»").
     purchases = (await db_session.execute(
         select(Purchase).where(Purchase.id.in_(body["purchase_ids"]))
     )).scalars().all()
     assert len(purchases) == 3, f"DB has {len(purchases)} purchases, expected 3"
-    assert all(p.status == "plan_schedule" for p in purchases), (
-        f"Not all purchases have status='plan_schedule': {[p.status for p in purchases]}"
+    assert all(p.status == "work_in_progress" for p in purchases), (
+        f"Not all purchases have status='work_in_progress': {[p.status for p in purchases]}"
     )
 
     # Verify wish is now converted (locked terminal status)

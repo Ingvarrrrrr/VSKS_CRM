@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 # страниц — не «все» буквально (upload лимит 50 МБ, см. purchase_files.py, не
 # спасает от PDF с сотнями пустых страниц) — 20 страниц с запасом покрывает
 # любой реальный чек/письмо, не давая обработке одного файла подвесить запрос.
-_PDF_QR_DPI = 300
-_PDF_QR_MAX_PAGES = 20
+_PDF_QR_DPI = 150
+_PDF_QR_MAX_PAGES = 5
 
 
 def extract_qr_from_pdf_bytes(pdf_bytes: bytes) -> str | None:
@@ -55,26 +55,24 @@ def extract_qr_from_pdf_bytes(pdf_bytes: bytes) -> str | None:
         logger.warning("extract_qr_from_pdf_bytes: pdf2image недоступен")
         return None
 
-    try:
-        pages = convert_from_bytes(
-            pdf_bytes, dpi=_PDF_QR_DPI, first_page=1, last_page=_PDF_QR_MAX_PAGES,
-        )
-    except Exception as e:
-        logger.warning("extract_qr_from_pdf_bytes: convert_from_bytes failed: %s", e)
-        return None
-
     from app.services.items_import_parsing import _try_decode_qr
 
-    for page in pages:
+    for page_num in range(1, _PDF_QR_MAX_PAGES + 1):
         try:
+            pages = convert_from_bytes(
+                pdf_bytes, dpi=_PDF_QR_DPI, first_page=page_num, last_page=page_num
+            )
+            if not pages:
+                break
+            page = pages[0]
             buf = io.BytesIO()
             page.save(buf, format="PNG")
             qr = _try_decode_qr(buf.getvalue())
             if qr:
                 return qr
         except Exception as e:
-            logger.warning("extract_qr_from_pdf_bytes: страница пропущена: %s", e)
-            continue
+            logger.warning("extract_qr_from_pdf_bytes: страница %s ошибка: %s", page_num, e)
+            break
     return None
 
 
@@ -87,7 +85,7 @@ def extract_qr_from_pdf_bytes(pdf_bytes: bytes) -> str | None:
 # системных зависимостей». TIFF/HEIC уже открываются Pillow (HEIC — через
 # pillow-heif, см. _try_decode_qr) — сервер может декодировать их напрямую,
 # не рендеря через pdf2image (это только для PDF).
-NO_CLIENT_QR_EXTS = (".pdf", ".tif", ".tiff", ".heic", ".heif")
+NO_CLIENT_QR_EXTS = (".pdf", ".tif", ".tiff", ".jtif", ".jfif", ".heic", ".heif")
 
 
 def extract_qr_from_receipt_upload(filename: str, content: bytes) -> str | None:

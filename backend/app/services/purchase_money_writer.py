@@ -122,6 +122,7 @@ async def recalc_purchase_money(
     *,
     items_total: Optional[Decimal] = None,
     contract_items_total: Optional[Decimal] = None,
+    force_plan: bool = False,
 ) -> None:
     """Пересчитывает planned_total_price/total_nmck/nmck и contract_price по
     правилам из докстринга модуля. Мутирует `purchase` in-place — не коммитит
@@ -146,7 +147,7 @@ async def recalc_purchase_money(
         # значения (какими бы они ни были) не трогаем.
         return
 
-    frozen = purchase.status in TZ_FROZEN_STATUSES
+    frozen = (purchase.status in TZ_FROZEN_STATUSES) and not force_plan
     is_head = _is_framework_head(purchase)
 
     # План (planned_total_price/total_nmck/nmck) пересчитывается ТОЛЬКО пока

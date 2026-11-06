@@ -10,6 +10,7 @@
           <v-icon size="15" color="#0D9488" class="mr-1">{{ ctx.expandedPurchases.value.has(f.purchase_id) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}</v-icon>
           <span>{{ ctx.purchaseFolderTitle(f) }}</span>
           <v-chip size="x-small" variant="tonal" color="blue" class="ml-2" :prepend-icon="purchaseStatusIcon(f.purchase_status)">{{ purchaseStatusLabel(f.purchase_status) }}</v-chip>
+          <span v-if="f.purchase_substatus" class="text-caption text-teal-darken-2 font-weight-medium ms-1">({{ purchaseSubstatusLabel(f.purchase_substatus) || f.purchase_substatus }})</span>
           <span class="feo-code ml-2">{{ f.items.length }} поз.</span>
           <a v-if="f.wish_id" href="javascript:void(0)" class="feo-purchase-link ml-2"
             title="Перейти к заявкам"
@@ -51,8 +52,9 @@
               @click.stop="ctx.photoPreview.value = { src: it.product_photo!, title: it.item_name }">
               <v-img :src="it.product_photo" cover />
             </v-avatar>
-            <v-icon :icon="purchaseStatusIcon(it.purchase_status)" :color="purchaseStatusColor(it.purchase_status)" size="14" class="mr-1" :title="purchaseStatusLabel(it.purchase_status)" />
+            <v-icon :icon="purchaseStatusIcon(it.purchase_status)" :color="purchaseStatusColor(it.purchase_status)" size="14" class="mr-1" :title="it.purchase_substatus ? `${purchaseStatusLabel(it.purchase_status)} (${purchaseSubstatusLabel(it.purchase_substatus)})` : purchaseStatusLabel(it.purchase_status)" />
             <span class="feo-name feo-name--l3">{{ it.item_name }}</span>
+            <span v-if="it.purchase_substatus" class="text-caption text-teal-darken-2 font-weight-medium ms-1">({{ purchaseSubstatusLabel(it.purchase_substatus) || it.purchase_substatus }})</span>
           </div>
         </td>
         <td class="feo-td feo-td-num"><span class="feo-amount-empty">—</span></td>
@@ -96,7 +98,7 @@
 // composables/subsidies/useFeoReqItems.ts (Правило №6).
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { formatCurrency } from '@/composables/subsidies/format'
-import { purchaseStatusIcon, purchaseStatusColor, purchaseStatusLabel } from '@/constants/purchaseStatus'
+import { purchaseStatusIcon, purchaseStatusColor, purchaseStatusLabel, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 import type { FeoNode } from '@/composables/subsidies/types'
 
 const props = defineProps<{ owner: FeoNode }>()

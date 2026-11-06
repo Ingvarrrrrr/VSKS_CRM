@@ -107,7 +107,8 @@ async def get_wish_purchases_board(
             "subject": p.subject or p.item_name,
             "status": p.status,
             "status_label": _STATUS_LABELS.get(p.status, p.status),
-            "frozen": p.status in TZ_FROZEN_STATUSES or p.status == "split",
+            # Заморозка на канбане заявок — только когда закупка ушла в договор или разбита
+            "frozen": p.status in ("contracted", "ordered", "delivered", "paid", "split"),
             "items": [
                 {
                     "id": it.id,

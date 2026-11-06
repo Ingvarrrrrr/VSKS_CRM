@@ -323,7 +323,7 @@ async def approve_wish(
 
     wish.status = "approved"
     wish.approved_by = current_user.id
-    # Согласованная заявка автоматически уходит в «План закупок» ОДНОЙ закупкой
+    # Согласованная заявка автоматически уходит в «Ведётся работа» ОДНОЙ закупкой
     # (быстрое одобрение — без разбиения по категориям), сумма попадает в план ФЭО.
     created_ids: list[int] = []
     if wish.items:
@@ -375,7 +375,7 @@ async def reject_wish(
     # SaaS может отклонить заявку в любом статусе (в т.ч. converted) — если по ней уже
     # есть закупка в Плане закупок, убираем её из плана; закупка дальше стадии
     # «План закупок» отклонение блокирует явным 409 (владелец, 2026-08-07).
-    await wishes_core._withdraw_wish_from_plan(wish.id, db, action_text="отклонить")
+    await wishes_core._withdraw_wish_from_plan(wish.id, db, action_text="отклонить", current_user=current_user)
 
     wish.status = "rejected"
     wish.rejection_reason = body.rejection_reason
@@ -790,7 +790,7 @@ async def force_wish_status(
             "submitted": "вернуть на повторное согласование",
             "rejected": "отклонить",
         }.get(body.status, "сменить статус")
-        await wishes_core._withdraw_wish_from_plan(wish.id, db, action_text=_force_action_text)
+        await wishes_core._withdraw_wish_from_plan(wish.id, db, action_text=_force_action_text, current_user=current_user)
         wish.status = body.status
         if body.status in ("draft", "submitted"):
             # Возврат в черновик / на повторное согласование форс-рычагом —

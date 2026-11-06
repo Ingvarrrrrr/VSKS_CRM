@@ -560,7 +560,7 @@ async def decide_wish_approval(
         # (см. wishes.py::_withdraw_wish_from_plan), без него вызов падал с
         # TypeError на КАЖДОМ отклонении через эту цепочку. Значение — как в
         # аналогичном вызове reject_wish (wishes.py, строка ~2094).
-        _plan_warning = await _withdraw_wish_from_plan(wish.id, db, action_text="отклонить")
+        _plan_warning = await _withdraw_wish_from_plan(wish.id, db, action_text="отклонить", current_user=current_user)
         # Владелец (2026-08-19): «если заявка отклоняется одним из согласующих, она
         # отклоняется у всех, потому что заявку могут изменить именно так, с чем
         # остальные согласующие могут не согласиться. И надо будет повторить заново» —
@@ -609,7 +609,7 @@ async def decide_wish_approval(
         if remaining == 0:
             wish.status = "approved"
             wish.approved_by = current_user.id
-            # A2: автоконвертация в план закупок при полном согласовании
+            # A2: автоконвертация в закупку («Ведётся работа») при полном согласовании
             # (аналогично кнопке /approve в wishes.py)
             if wish.items:
                 try:

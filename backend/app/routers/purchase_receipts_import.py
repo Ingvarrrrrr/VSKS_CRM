@@ -6,6 +6,7 @@ import json
 import os
 from typing import List
 
+import anyio
 import httpx
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
@@ -358,7 +359,7 @@ async def import_receipt_from_file_qr(
         raise HTTPException(400, "Пустой файл")
 
     from app.services.receipt_pdf_qr import extract_qr_from_receipt_upload
-    qr = extract_qr_from_receipt_upload(filename, content)
+    qr = await anyio.to_thread.run_sync(extract_qr_from_receipt_upload, filename, content)
     if not qr:
         is_pdf = filename.lower().endswith(".pdf")
         raise HTTPException(422, detail={

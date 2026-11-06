@@ -112,7 +112,7 @@ export function useWishBulkActions(options: {
       return canSubmitWish(w) ? null : 'отправить на согласование можно только черновик'
     }
     if (!ctx.isManagerOrAdmin.value) return 'нужны права руководителя'
-    return canConvertWish(w, ctx) ? null : 'в план передаётся только согласованная заявка'
+    return canConvertWish(w, ctx) ? null : 'в закупку передаётся только согласованная заявка'
   }
 
   async function runBulkAction() {

@@ -48,7 +48,7 @@
                   <v-list-item
                     v-if="item.status === 'approved' && ctx.isManagerOrAdmin.value"
                     prepend-icon="mdi-cart-arrow-right"
-                    title="Передать в план закупок"
+                    title="Передать в закупку"
                     @click="$emit('convert', item)"
                   />
                   <!-- Корзина у владельца аккаунта (29.10.2026): account_owner/

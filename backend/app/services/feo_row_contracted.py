@@ -108,6 +108,7 @@ async def feo_row_contract_totals(db: AsyncSession, subsidy_id: int) -> dict[Opt
 _ROW_FIELDS = (
     Purchase.id, Purchase.registry_number, Purchase.purchase_number, Purchase.contractor_id,
     Purchase.reimbursement_user_id, Purchase.purchase_contract_type, Purchase.status,
+    Purchase.substatus,
     Purchase.subject, Purchase.feo_category_id,
 )
 
@@ -120,6 +121,7 @@ def _row_base(r) -> dict:
         "reimbursement_user": None,  # то же для reimbursement_user_id
         "contract_type": r.purchase_contract_type,
         "status": r.status,
+        "substatus": getattr(r, "substatus", None),
         "subject": r.subject,
         "feo_category_id": r.feo_category_id,
         "feo_category_name": None,  # заполняется вызывающим кодом
@@ -183,6 +185,7 @@ async def feo_row_drill(
             select(
                 Purchase.id, Purchase.registry_number, Purchase.purchase_number, Purchase.contractor_id,
                 Purchase.reimbursement_user_id, Purchase.purchase_contract_type, Purchase.status,
+                Purchase.substatus,
                 Purchase.subject, cat_col.label("feo_category_id"),
                 func.coalesce(func.sum(PurchaseItem.total_price), 0).label("amt"),
             )
@@ -195,6 +198,7 @@ async def feo_row_drill(
             .group_by(
                 Purchase.id, Purchase.registry_number, Purchase.purchase_number, Purchase.contractor_id,
                 Purchase.reimbursement_user_id, Purchase.purchase_contract_type, Purchase.status,
+                Purchase.substatus,
                 Purchase.subject, cat_col,
             )
         )

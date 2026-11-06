@@ -522,6 +522,7 @@
                           @click.stop="ctx.router.push(`/orders/${p.purchase_id}`)"
                         >{{ p.registry_number || (p.purchase_number != null ? `№ ${p.purchase_number}` : `#${p.purchase_id}`) }}</a>
                         <span class="feo-stage-list-row__status" :style="{ color: purchaseStatusColor(p.purchase_status) }">{{ purchaseStatusLabel(p.purchase_status) }}</span>
+                        <span v-if="p.purchase_substatus" class="feo-stage-list-row__substatus text-caption text-teal-darken-2 font-weight-medium ms-1">({{ purchaseSubstatusLabel(p.purchase_substatus) || p.purchase_substatus }})</span>
                       </div>
                     </template>
                   </template>
@@ -748,12 +749,18 @@
                                 title="Сумма по договору — закрывающими документами (актом приёмки) ещё не подтверждена"
                               >по договору</v-chip>
                             </template>
-                            <span v-else class="text-medium-emphasis" style="font-style:italic;font-weight:400">{{ purchaseStatusLabel(actual.purchase_status) }}</span>
+                            <span v-else class="text-medium-emphasis" style="font-style:italic;font-weight:400">
+                              {{ purchaseStatusLabel(actual.purchase_status) }}
+                              <span v-if="actual.purchase_substatus" class="text-caption text-teal-darken-2 font-weight-medium ms-1">({{ purchaseSubstatusLabel(actual.purchase_substatus) || actual.purchase_substatus }})</span>
+                            </span>
                           </td>
                           <td style="padding:4px 8px"></td>
                           <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
                           <td style="padding:4px 8px;text-align:center;color:#94a3b8;font-size:10px">
-                            {{ purchaseStatusLabel(actual.purchase_status) }}
+                            <div>{{ purchaseStatusLabel(actual.purchase_status) }}</div>
+                            <div v-if="actual.purchase_substatus" class="text-teal-darken-2 font-weight-medium" style="font-size:9px;line-height:1.2">
+                              ({{ purchaseSubstatusLabel(actual.purchase_substatus) || actual.purchase_substatus }})
+                            </div>
                           </td>
                           <td style="padding:2px;text-align:center;white-space:nowrap">
                             <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
@@ -893,7 +900,7 @@ import { formatCurrency } from '@/composables/subsidies/format'
 import { leftGroupInfo, withNameColumnFloor } from '@/composables/subsidies/feoCategoryUtils'
 import { buildPlannedGroupEntries, type FeoPlannedGroupEntry } from '@/composables/subsidies/useFeoPlannedItemGroups'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
-import { purchaseStatusLabel, purchaseStatusColor, PURCHASE_STATUS_ORDER } from '@/constants/purchaseStatus'
+import { purchaseStatusLabel, purchaseSubstatusLabel, purchaseStatusColor, PURCHASE_STATUS_ORDER } from '@/constants/purchaseStatus'
 import { planStageBackground, planStageTooltip, type PlanStageStyle } from '@/utils/planStageBackground'
 import { planStageLabel } from '@/constants/planStageScale'
 import type { FeoNode, FeoPlannedItem } from '@/composables/subsidies/types'

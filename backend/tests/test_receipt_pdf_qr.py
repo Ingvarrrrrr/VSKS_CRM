@@ -90,9 +90,20 @@ def test_dispatcher_routes_non_pdf_extension_to_direct_decoder():
     assert qr == QR_STRING
 
 
+def test_dispatcher_routes_jtif_extension_to_direct_decoder():
+    """Файл .jtif направляется напрямую в прямой декодер (не в pdf2image)."""
+    import qrcode
+
+    img = qrcode.make(QR_STRING)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr = extract_qr_from_receipt_upload("chek.jtif", buf.getvalue())
+    assert qr == QR_STRING
+
+
 def test_no_client_qr_exts_matches_frontend_list():
     """Один источник списка форматов «браузер сам не декодирует» — сверка с
     комментарием isServerQrFile в usePurchaseReceipts.ts (текст, не импорт —
     TS и Python не делят модуль, но обе стороны обязаны перечислять одно и то
     же ПРАВИЛО №6 подмножество)."""
-    assert set(NO_CLIENT_QR_EXTS) == {".pdf", ".tif", ".tiff", ".heic", ".heif"}
+    assert set(NO_CLIENT_QR_EXTS) == {".pdf", ".tif", ".tiff", ".jtif", ".jfif", ".heic", ".heif"}

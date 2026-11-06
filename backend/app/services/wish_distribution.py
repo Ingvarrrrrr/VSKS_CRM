@@ -388,8 +388,8 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     }
 
 
-async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule", split: bool = True) -> list[int]:
-    """Создаёт закупки (status='plan_schedule' — «План закупок») из позиций заявки по группам колонок,
+async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "work_in_progress", split: bool = True) -> list[int]:
+    """Создаёт закупки (status='work_in_progress' — «Ведётся работа») из позиций заявки по группам колонок,
     копирует позиции, добавляет участников и чаты, ставит purchase.wish_id.
     split=False (быстрое одобрение / полное согласование цепочкой): одна закупка со ВСЕМИ позициями,
     без разбиения по категориям — разбиение только при явном распределении через канбан.
@@ -521,7 +521,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                     )
                     wish._advance_purchase_transition_warning = (
                         f"Возмещение согласовано, закупка "
-                        f"{_adv_p.registry_number or f'№{_adv_p.id}'} переведена в «План закупок», но не в «Поставлено, "
+                        f"{_adv_p.registry_number or f'№{_adv_p.id}'} переведена в «Ведётся работа», но не в «Поставлено, "
                         f"не оплачено» автоматически: {_reason} Нажмите кнопку перехода в карточке "
                         "закупки после устранения причины."
                     )
@@ -550,23 +550,12 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             if purchase_status != "wishes":
                 await _ensure_planned_items_assigned(wish, items_for_gate, db)
             await _ensure_needed_dates(wish, db, items_for_gate)
+        # Синхронизируем состав ДО перевода из 'wishes' в purchase_status,
+        # иначе _sync_purchase_from_wish сочтёт закупку уже замороженной (TZ_FROZEN_STATUSES).
+        wish._purchase_sync = await _sync_purchase_from_wish(wish, existing, db)
         for p in existing:
             if p.status == "wishes":
                 p.status = purchase_status
-        # Владелец (план crystalline-soaring-heron.md, п.2, 2026-08-21): «после
-        # согласования заявку правят в закупке, а не в заявке» — верно, ПОКА
-        # заявка остаётся converted (правка wish.items на этом статусе заблокирована,
-        # см. гейт в update_wish). Но владелец наблюдал ОБРАТНОЕ на проде: заявку
-        # ВОЗВРАЩАЛИ в черновик (там правка снова разрешена), меняли предмет и
-        # состав, согласовывали ЗАНОВО — а закупка (РЕЕ-2026-00898) осталась со
-        # старым предметом, потому что раньше эта ветка (существующая закупка —
-        # "защита от дублей" сработала) молчала: только продвигала статус, ничего
-        # не сверяла. Единственный путь СЮДА с изменившимися items — именно
-        # «вернули в черновик → поправили → согласовали заново» (иначе items не
-        # изменить), так что синхронизация здесь НЕ нарушает правило «после
-        # согласования — только в закупке»: она реагирует именно на легитимную
-        # правку, сделанную, пока заявка была НЕ converted.
-        wish._purchase_sync = await _sync_purchase_from_wish(wish, existing, db)
         wish._tz_excess_approvals = await register_tz_excess_approvals(
             db, getattr(wish, "_tz_excess_violations_sync", []) or [],
             subsidy_id=wish.subsidy_id, current_user=current_user,
@@ -1124,7 +1113,7 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             await db.flush()
 
 
-async def _withdraw_wish_from_plan(wish_id: int, db: AsyncSession, *, action_text: str) -> None:
+async def _withdraw_wish_from_plan(wish_id: int, db: AsyncSession, *, action_text: str, current_user=None) -> None:
     """Убирает закупки заявки из плана закупок — обратная операция к
     _distribute_wish_to_purchases.
 
@@ -1163,7 +1152,7 @@ async def _withdraw_wish_from_plan(wish_id: int, db: AsyncSession, *, action_tex
     for p in purchases:
         if p.status in RETURNABLE_TO_WISH_STATUSES:
             if p.status == "work_in_progress" or p.approval_status is not None:
-                await reset_purchase_approvals(p, db)
+                await reset_purchase_approvals(p, db, current_user)
             p.status = "wishes"
             changed = True
         # status == 'wishes' и прочие (например 'cancelled') — не трогаем

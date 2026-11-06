@@ -59,7 +59,7 @@ APPEND_FORGOTTEN_SUFFIX = "Добавляем забытое"
 # 'split') закупки, откуда можно подсмотреть статус — тот же дефолт, что
 # app.services.wish_distribution._distribute_wish_to_purchases(purchase_status
 # по умолчанию) ставит при первом распределении заявки на закупки.
-_FALLBACK_PURCHASE_STATUS = "plan_schedule"
+_FALLBACK_PURCHASE_STATUS = "work_in_progress"
 
 
 def _is_append_forgotten_purchase(p: Purchase) -> bool:

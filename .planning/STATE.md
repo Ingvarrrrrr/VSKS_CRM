@@ -14,6 +14,24 @@ progress:
 
 # STATE.md — VSKS_CRM
 
+## 2026-11-06 — Починка 502 Bad Gateway (OOM при загрузке чеков), CI и подстатусы закупок ✅
+- **Инцидент 502 Bad Gateway (/advance-reports/4880/edit):**
+  - Причина: оба контейнера бэкенда (`vsks-crm-backend_a-1` и `vsks-crm-backend_b-1`) на сервере (3.8 ГБ RAM) были убиты ядром по OOM (Exit 137, ~2.85 ГБ RSS) при рендеринге PDF в 300 DPI / 20 страниц и декодировании изображений без ресайза в главном потоке. Из-за отсутствия `restart: unless-stopped` в `docker-compose.yml` контейнеры не перезапустились автоматически.
+  - Решение:
+    1. На сервере подняты все реплики бэкенда, применен `restart: unless-stopped` для `backend_a`, `backend_b`, `frontend_a`, `frontend_b`, `db`, `nginx`, `n8n`. Данные авансового отчёта 4880 (Любарец: чек №4300 на 3600 ₽ и приложенные файлы) полностью сохранены в БД.
+    2. В `receipt_pdf_qr.py`: DPI снижен с 300 до 150 (расход RAM в 4 раза ниже), лимит страниц 5, рендеринг переведён на постраничный с ранним выходом при нахождении QR.
+    3. В `items_import_parsing.py`: изображения свыше 2000px уменьшаются (`thumbnail(2000, 2000)`) перед передачей в `pyzbar`/`cv2`.
+    4. В `purchase_receipts_import.py`: распознавание QR вынесено в пул потоков через `anyio.to_thread.run_sync`, чтобы не блокировать event loop FastAPI (защита от `REQUEST_TIMEOUT`).
+- **Починка GitHub Actions CI (`CI / backend` и `CI / frontend`):**
+  - В `.github/workflows/ci.yml`: `npm ci` заменён на `npm ci --legacy-peer-deps` (устраняет конфликт `ERESOLVE` между `vue3-apexcharts` и `apexcharts`).
+  - Выстроена единая голова Alembic (`f7b8c9d0e1f2` → `c3e5f7a9b1d3` → `a8c0e2f4b6d8`), `check_alembic_single_head.py` проходит (171 ревизия).
+  - Устранены 5 ошибок `ruff` (`F821 Undefined name`) в `wishes.py`, `diff.py`, `commit.py`, `product_catalog_guard.py`.
+  - Синхронизирован `frontend/src/data/dictionaries.json` (`export_dictionaries.py --check` → OK).
+- **Атрибуция статусов закупок и отображение подстатусов в субсидиях:**
+  - При одобрении заявки создаваемая закупка сразу переходит в «Ведётся работа» (`work_in_progress`), проведён бэкфилл 30 закупок.
+  - Во вкладке «Субсидии» (`FeoLevel5Panel.vue`, `StageFeoDrillDialog.vue`, `FeoRowDrillDialog.vue`, `FeoByPurchasesRows.vue`, `FeoReqItemsRows.vue`) рядом со статусом отображается подстатус этапа (`(Формирование ТЗ)`, `(Сбор КП)`, и т.д.).
+- Независимый QA по всем блокам: **PASS (5/5 по всем метрикам)**.
+
 ## 2026-09-05/06 — Рефакторинг god-файлов + единый источник истины (в работе, НЕ запушено)
 
 План: `C:\Users\1\.claude\plans\dreamy-booping-piglet.md`. Все фазы ROADMAP закрыты ранее; это

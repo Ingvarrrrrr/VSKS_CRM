@@ -140,7 +140,7 @@ function buildFeoReqItems(ctx: FeoReqItemsCtx) {
       for (const it of items || []) {
         let f = byPid.get(it.purchase_id)
         if (!f) {
-          f = { purchase_id: it.purchase_id, purchase_number: it.purchase_number, registry_number: it.registry_number, purchase_status: it.purchase_status, wish_id: it.wish_id, qty: 0, unit: it.unit, total: 0, items: [], stopped_at: it.stopped_at, stopped_by_name: it.stopped_by_name }
+          f = { purchase_id: it.purchase_id, purchase_number: it.purchase_number, registry_number: it.registry_number, purchase_status: it.purchase_status, purchase_substatus: it.purchase_substatus, wish_id: it.wish_id, qty: 0, unit: it.unit, total: 0, items: [], stopped_at: it.stopped_at, stopped_by_name: it.stopped_by_name }
           byPid.set(it.purchase_id, f)
         }
         f.qty = Math.round((f.qty + Number(it.quantity || 0)) * 10000) / 10000

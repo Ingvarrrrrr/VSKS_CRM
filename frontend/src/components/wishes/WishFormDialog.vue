@@ -143,7 +143,7 @@
           closable
           @click:close="wishConvertError = null"
         >
-          <div class="font-weight-medium mb-1">Не удалось передать в план закупок</div>
+          <div class="font-weight-medium mb-1">Не удалось передать в закупку</div>
           <div style="white-space:pre-wrap">{{ wishConvertError.message }}</div>
           <div v-if="wishConvertError.missingItemNames.length" class="mt-2">
             <span class="font-weight-medium">Позиции без даты:</span>
@@ -194,7 +194,7 @@
             icon="mdi-clock-outline"
           >
             <div><strong>Заявка в Листе ожидания:</strong> потребность согласована, но средства в текущем бюджете ФЭО ещё не выделены.</div>
-            <div class="text-caption mt-1">При появлении экономии или корректировке плана нажмите кнопку «Выделить финансирование → В план закупок» ниже.</div>
+            <div class="text-caption mt-1">При появлении экономии или корректировке плана нажмите кнопку «Выделить финансирование → В закупку» ниже.</div>
           </v-alert>
 
           <!-- Баннер: редактирование одобренной/конвертированной заявки -->
@@ -323,7 +323,7 @@
                     prepend-inner-icon="mdi-truck-delivery-outline"
                     :readonly="!isWishEditable"
                     persistent-hint
-                    :hint="wishForm.execution_deadline ? 'Задан «Срок исполнения» — он перебивает эту дату при переносе в план закупок' : 'К этой дате нужна поставка/исполнение. Нужна для переноса в план закупок'"
+                    :hint="wishForm.execution_deadline ? 'Задан «Срок исполнения» — он перебивает эту дату при переносе в закупку' : 'К этой дате нужна поставка/исполнение. Нужна для переноса в закупку'"
                     :error-messages="serverFieldErrors.desired_date"
                     @update:model-value="serverFieldErrors.desired_date = ''"
                   />
@@ -1448,11 +1448,11 @@
           <v-btn v-if="form.canManageWaitingFunds.value && editingWish.status === 'waiting_funds'" color="amber-darken-3" variant="flat" prepend-icon="mdi-cash-plus"
                  :loading="actions.approvingId.value === editingWish.id"
                  @click="actions.approveWish(editingWish).then(() => wishDialog = false)">
-            Выделить финансирование → В план закупок
+            Выделить финансирование → В закупку
           </v-btn>
           <v-btn v-if="ctx.isManagerOrAdmin.value && editingWish.status === 'approved'" color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
                  @click="actions.openConvertDialog(editingWish); wishDialog = false">
-            Передать в План закупок
+            Передать в закупку
           </v-btn>
           <v-btn v-else-if="editingWish.status === 'converted' && editingWish.purchase_id" color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
                  @click="ctx.goToWishPurchases(editingWish); wishDialog = false">
@@ -1552,7 +1552,7 @@
           </v-btn>
           <v-btn v-if="ctx.isManagerOrAdmin.value && editingWish.status === 'approved'" color="primary" variant="flat" block prepend-icon="mdi-cart-arrow-right"
                  @click="actions.openConvertDialog(editingWish); wishDialog = false">
-            Передать в План закупок
+            Передать в закупку
           </v-btn>
           <v-btn v-else-if="editingWish.status === 'converted' && editingWish.purchase_id" color="primary" variant="flat" block prepend-icon="mdi-cart-arrow-right"
                  @click="ctx.goToWishPurchases(editingWish); wishDialog = false">

@@ -154,6 +154,9 @@
                   <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(it.purchase_status)">
                     {{ purchaseStatusLabel(it.purchase_status) }}
                   </v-chip>
+                  <div v-if="it.purchase_substatus" class="text-caption text-teal-darken-2 font-weight-medium mt-1">
+                    ({{ purchaseSubstatusLabel(it.purchase_substatus) || it.purchase_substatus }})
+                  </div>
                 </td>
                 <td style="padding:2px;text-align:center;white-space:nowrap">
                   <v-btn icon="mdi-cart-outline" size="x-small" variant="text" color="blue"
@@ -197,7 +200,7 @@
 // компонент FeoByPurchasesRows.vue.
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { formatCurrency } from '@/composables/subsidies/format'
-import { purchaseStatusIcon, purchaseStatusColor, purchaseStatusLabel } from '@/constants/purchaseStatus'
+import { purchaseStatusIcon, purchaseStatusColor, purchaseStatusLabel, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 import type { FeoNode } from '@/composables/subsidies/types'
 import '@/styles/feo-group-header.css'
 

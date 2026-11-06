@@ -71,7 +71,17 @@
                 <tr v-for="(r, idx) in g.rows" :key="r.purchase_id + '-' + r.item_id + '-' + idx"
                   style="cursor:pointer" @click="emit('row-click', r.purchase_id)">
                   <td class="px-4 text-medium-emphasis">{{ r.purchase_number || r.purchase_id }}</td>
-                  <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.subject || '—' }}</td>
+                  <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">
+                    <div>{{ r.subject || '—' }}</div>
+                    <div v-if="r.status" class="d-flex align-center flex-wrap mt-1" style="gap:4px">
+                      <v-chip size="x-small" variant="flat" :color="statusColorMap[r.status] || purchaseStatusColor(r.status)">
+                        {{ statusLabelMap[r.status] || purchaseStatusLabel(r.status) || r.status }}
+                      </v-chip>
+                      <span v-if="r.substatus" class="text-caption text-teal-darken-2 font-weight-medium">
+                        ({{ purchaseSubstatusLabel(r.substatus) }})
+                      </span>
+                    </div>
+                  </td>
                   <td class="px-4 text-caption">{{ r.subsidy_name }}</td>
                   <td class="px-4 text-caption">{{ r.feo_category_name || '—' }}</td>
                   <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.item_name || '—' }}</td>
@@ -98,7 +108,17 @@
                 <tr v-for="(r, idx) in filteredTypeDrillRows" :key="r.purchase_id + '-' + r.item_id + '-' + idx"
                   style="cursor:pointer" @click="emit('row-click', r.purchase_id)">
                   <td class="px-4 text-medium-emphasis">{{ r.purchase_number || r.purchase_id }}</td>
-                  <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.subject || '—' }}</td>
+                  <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">
+                    <div>{{ r.subject || '—' }}</div>
+                    <div v-if="r.status" class="d-flex align-center flex-wrap mt-1" style="gap:4px">
+                      <v-chip size="x-small" variant="flat" :color="statusColorMap[r.status] || purchaseStatusColor(r.status)">
+                        {{ statusLabelMap[r.status] || purchaseStatusLabel(r.status) || r.status }}
+                      </v-chip>
+                      <span v-if="r.substatus" class="text-caption text-teal-darken-2 font-weight-medium">
+                        ({{ purchaseSubstatusLabel(r.substatus) }})
+                      </span>
+                    </div>
+                  </td>
                   <td class="px-4 text-caption">{{ r.subsidy_name }}</td>
                   <td class="px-4 text-caption">{{ r.feo_category_name || '—' }}</td>
                   <td class="px-4 py-2" style="max-width:260px;white-space:normal;font-size:13px">{{ r.item_name || '—' }}</td>
@@ -177,9 +197,14 @@
               </td>
               <td class="px-4 text-caption text-medium-emphasis">{{ p.contractor_name || '—' }}</td>
               <td class="px-4">
-                <v-chip size="x-small" variant="flat" :color="statusColorMap[p.status] || 'grey'">
-                  {{ statusLabelMap[p.status] || p.status }}
-                </v-chip>
+                <div class="d-flex align-center flex-wrap" style="gap:4px">
+                  <v-chip size="x-small" variant="flat" :color="statusColorMap[p.status] || purchaseStatusColor(p.status)">
+                    {{ statusLabelMap[p.status] || purchaseStatusLabel(p.status) || p.status }}
+                  </v-chip>
+                  <span v-if="p.substatus" class="text-caption text-teal-darken-2 font-weight-medium">
+                    ({{ purchaseSubstatusLabel(p.substatus) }})
+                  </span>
+                </div>
               </td>
               <td class="px-4 text-caption">{{ p.contract_number || '—' }}</td>
             </tr>
@@ -220,6 +245,7 @@ import { useKpiPrefs } from '@/composables/useKpiPrefs'
 // же форматтером, что и карточки (Правило №6) — formatCurrency, не локальная
 // сокращённая fmtMoney (прежняя «19 тыс ₽» пряталась за округлением).
 import { formatCurrency } from '@/composables/subsidies/format'
+import { purchaseStatusLabel, purchaseStatusColor, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 import { searchWords, matchesAllWords } from '@/utils/textSearch'
 import { textOfStageCurrentRow, textOfStageLeafPurchase, textOfStageTypeDrillRow } from '@/components/drill/drillRowText'
 import DrillSearchField from '@/components/drill/DrillSearchField.vue'
@@ -376,6 +402,7 @@ interface TypeDrillRow {
   purchase_number: string | number | null
   subject: string | null
   status: string
+  substatus?: string | null
   subsidy_id: number
   subsidy_name: string
   feo_category_id: number | null

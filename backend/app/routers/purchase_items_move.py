@@ -35,11 +35,9 @@ from app.routers.purchases import _has_purchase_write_access
 
 router = APIRouter(tags=["purchases"])
 
-# Тот же набор статусов, что блокирует правку ТЗ позиции (заморозка «план ≠
-# факт», см. app.routers.purchases.TZ_FROZEN_STATUSES) — плюс 'split' (сама
-# закупка уже разбита на дочерние, её позиции больше не редактируются, тот же
-# принцип, что у PATCH split-column).
-_MOVE_LOCKED_STATUSES = {"work_in_progress", "contracted", "ordered", "delivered", "paid", "split"}
+# Статусы, блокирующие перенос позиций — когда закупка ушла в договор
+# (contracted/ordered/delivered/paid) или уже разбита ('split').
+_MOVE_LOCKED_STATUSES = {"contracted", "ordered", "delivered", "paid", "split"}
 
 
 class _MoveItemBody(BaseModel):
@@ -126,8 +124,8 @@ async def move_purchase_item(
     await db.flush()
 
     from app.services.purchase_money_writer import recalc_purchase_money
-    await recalc_purchase_money(db, source)
-    await recalc_purchase_money(db, target)
+    await recalc_purchase_money(db, source, force_plan=True)
+    await recalc_purchase_money(db, target, force_plan=True)
     await db.flush()
 
     source_items_count = (await db.execute(

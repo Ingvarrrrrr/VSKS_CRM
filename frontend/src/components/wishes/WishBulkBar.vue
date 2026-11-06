@@ -8,7 +8,7 @@
       Отправить на согласование
     </v-btn>
     <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-cart-arrow-right" @click="$emit('action', 'convert')">
-      Передать в план закупок
+      Передать в закупки
     </v-btn>
     <v-spacer />
     <v-btn size="small" variant="text" @click="$emit('clear')">Снять выделение</v-btn>
@@ -35,7 +35,7 @@
             из выбранных — остальные попадут в список «не обработано» с причиной.
           </div>
           <div v-else>
-            Передать {{ dialog.total }} заявок в план закупок? Действие применится только к одобренным
+            Передать {{ dialog.total }} заявок в закупки? Действие применится только к одобренным
             заявкам из выбранных.
           </div>
         </template>
@@ -101,7 +101,7 @@ defineEmits<{
 function titleFor(action: BulkWishAction | null) {
   if (action === 'delete') return 'Удалить заявки'
   if (action === 'submit') return 'Отправить на согласование'
-  if (action === 'convert') return 'Передать в план закупок'
+  if (action === 'convert') return 'Передать в закупки'
   return ''
 }
 </script>

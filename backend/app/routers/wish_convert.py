@@ -109,7 +109,7 @@ async def convert_wish(
             if getattr(wish, 'source', None) != 'advance_report':
                 await wishes_core._ensure_needed_dates(wish, db, _all_items_existing)
         # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): эта
-        # ветка — ОТДЕЛЬНЫЙ путь движения закупки по стадиям (wishes → plan_schedule),
+        # ветка — ОТДЕЛЬНЫЙ путь движения закупки по стадиям (wishes → work_in_progress),
         # не проходящий через POST /api/purchases/{pid}/transition (см. её гейт в
         # purchase_transitions.py) — идемпотентное повторное согласование заявки,
         # у которой уже есть скрытые закупки.
@@ -154,9 +154,13 @@ async def convert_wish(
                         "name": ep.item_name or ep.subject or f"Закупка №{ep.id}",
                         "amount": _ep_amount_val,
                     })
+        # Повторный перенос (владелец, план crystalline-soaring-heron.md, п.2) —
+        # тот же helper, что и в _distribute_wish_to_purchases: приводит предмет и
+        # состав уже существующей закупки к текущей заявке (ДО перевода в work_in_progress).
+        _purchase_sync = await wishes_core._sync_purchase_from_wish(wish, existing, db)
         for ep in existing:
             if ep.status == "wishes":
-                ep.status = "plan_schedule"
+                ep.status = "work_in_progress"
             # Контрагент заявки (владелец, 2026-08-17) — заполняем ТОЛЬКО пустое
             # поле закупки, не перетираем уже заданное (могло быть проставлено
             # вручную прямо в закупке).
@@ -194,10 +198,6 @@ async def convert_wish(
         wish.status = "converted"
         wish.approved_by = wish.approved_by or current_user.id
         wish.purchase_id = wish.purchase_id or existing[0].id
-        # Повторный перенос (владелец, план crystalline-soaring-heron.md, п.2) —
-        # тот же helper, что и в _distribute_wish_to_purchases: приводит предмет и
-        # состав уже существующей закупки к текущей заявке (см. её докстринг).
-        _purchase_sync = await wishes_core._sync_purchase_from_wish(wish, existing, db)
         await db.flush()
         _excess_warnings = await wishes_core._collect_excess_warnings(db, wish.subsidy_id, _cat_items)
         _tz_excess_approvals = await register_tz_excess_approvals(
@@ -363,7 +363,7 @@ async def convert_wish(
         planned_total_price=eff_price,
         total_nmck=eff_price,
         nmck=eff_price,
-        status="plan_schedule",
+        status="work_in_progress",
         service_note_text=wish.justification,
         service_note_by=wish.created_by,
         # B1: исполнитель = executor_id (без фолбэка на инициатора)
@@ -464,7 +464,7 @@ async def convert_wish(
 
     # ПРАВИЛО №6 (2026-09-06): единственный писатель денежных колонок — если у
     # закупки есть только что вставленные PurchaseItem, их фактическая Σ
-    # становится planned_total_price/total_nmck/nmck (status="plan_schedule" —
+    # становится planned_total_price/total_nmck/nmck (status="work_in_progress" —
     # не заморожена); если позиций нет (headless-заявка) — no-op, значения
     # выше (eff_price) остаются как есть. См. комментарий у конструктора
     # Purchase(...) выше про approved_price/body.approved_price.

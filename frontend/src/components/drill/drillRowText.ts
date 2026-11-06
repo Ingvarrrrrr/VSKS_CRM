@@ -18,6 +18,8 @@ function join(...parts: (string | number | null | undefined)[]): string {
   return parts.filter(p => p != null && p !== '').map(String).join(' ')
 }
 
+import { purchaseSubstatusLabel } from '@/constants/purchaseStatus'
+
 // ── StageFeoDrillDialog.vue ──────────────────────────────────────────────
 export function textOfStageCurrentRow(r: any): string {
   return join(r.name, amountText(r.amount))
@@ -25,12 +27,14 @@ export function textOfStageCurrentRow(r: any): string {
 export function textOfStageLeafPurchase(p: any): string {
   return join(
     p.purchase_number, p.id, p.subject, p.item_name, p.contractor_name, p.contract_number,
+    p.substatus, purchaseSubstatusLabel(p.substatus),
     amountText(typeof p.amount === 'number' ? p.amount : undefined),
   )
 }
 export function textOfStageTypeDrillRow(r: any): string {
   return join(
     r.purchase_number, r.subject, r.subsidy_name, r.feo_category_name, r.item_name, r.item_type,
+    r.substatus, purchaseSubstatusLabel(r.substatus),
     amountText(r.stage_amount), r.items_text,
   )
 }

@@ -20,12 +20,16 @@ _assert_can_decide (свой checker вместо Depends(require_action(...)), 
 нужен текст-с-объяснением, память проекта «Объяснять причину блокировки»).
 """
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.permissions import _has_key_in_any_org
 from app.models.user import User
+
+if TYPE_CHECKING:
+    from app.models.product import Product
 
 
 def prices_differ(old, new) -> bool:

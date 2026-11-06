@@ -27,6 +27,7 @@ name: vsks-crm
 
 x-backend-common: &backend-common
   image: vsks-crm-backend:latest
+  restart: unless-stopped
   environment:
     DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-vsks}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vsks_crm}
     SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
@@ -105,6 +106,7 @@ x-backend-common: &backend-common
 
 x-frontend-common: &frontend-common
   image: vsks-crm-frontend:latest
+  restart: unless-stopped
   # server.mjs всегда отдаёт 200 на "/" (index.html, в т.ч. SPA-фолбэк) —
   # значит node-процесс поднят и реально слушает порт.
   healthcheck:
@@ -117,6 +119,7 @@ x-frontend-common: &frontend-common
 services:
   db:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_DB: vsks_crm
       POSTGRES_USER: vsks
@@ -188,6 +191,7 @@ services:
 
   n8n:
     image: n8nio/n8n:latest
+    restart: unless-stopped
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=admin
@@ -214,6 +218,7 @@ services:
 
   nginx:
     image: nginx:alpine
+    restart: unless-stopped
     environment:
       # Basic-auth для adminer.gaaala.duckdns.org. НЕ бинд-маунт: абсолютный
       # хостовый путь ломал бы любую другую машину (docker создал бы там

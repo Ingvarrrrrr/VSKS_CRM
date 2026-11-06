@@ -541,21 +541,34 @@ def _try_decode_qr(image_bytes: bytes) -> str | None:
     except Exception:
         pass
 
-    # pyzbar
+    img = None
     try:
-        from pyzbar.pyzbar import decode as _pyzbar_decode
         from PIL import Image as _PILImage
         import io as _io
         img = _PILImage.open(_io.BytesIO(image_bytes))
-        decoded = _pyzbar_decode(img)
-        for d in decoded:
-            data = d.data
-            if isinstance(data, bytes):
-                data = data.decode("utf-8", errors="replace")
-            if data:
-                return data
+        if max(img.size) > 2000:
+            img.thumbnail((2000, 2000))
+            if img.mode not in ("RGB", "RGBA", "L"):
+                img = img.convert("RGB")
+            buf = _io.BytesIO()
+            img.save(buf, format="PNG")
+            image_bytes = buf.getvalue()
     except Exception:
         pass
+
+    # pyzbar
+    if img is not None:
+        try:
+            from pyzbar.pyzbar import decode as _pyzbar_decode
+            decoded = _pyzbar_decode(img)
+            for d in decoded:
+                data = d.data
+                if isinstance(data, bytes):
+                    data = data.decode("utf-8", errors="replace")
+                if data:
+                    return data
+        except Exception:
+            pass
 
     # cv2 fallback
     try:

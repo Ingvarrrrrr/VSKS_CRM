@@ -109,6 +109,7 @@ async def commit_import(
     from app.models.purchase import Purchase
     from app.models.purchase_event import PurchaseEvent
     from app.models.purchase_comment import PurchaseComment
+    from app.models.contract import Contract
     from app.schemas.purchases import PurchaseCreate, PurchaseItemCreate
     from app.services.contractor_resolve import find_or_create_contractor
     from app.services.vehicle_org_matching import normalize_inn as _normalize_inn_commit

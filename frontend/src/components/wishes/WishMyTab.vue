@@ -230,10 +230,10 @@
                 prepend-icon="mdi-cart-arrow-right"
                 @click="$emit('convert', item)"
               >
-                Передать в план закупок
+                Передать в закупку
               </v-btn>
               <v-chip v-else size="x-small" color="success" variant="tonal">
-                Согласована — ждёт передачи в план закупок
+                Согласована — ждёт передачи в закупку
               </v-chip>
             </template>
             <v-menu v-else-if="item.status === 'converted' && item.purchase_id && (item.purchases?.length || 0) > 1">
@@ -351,7 +351,7 @@
                     prepend-icon="mdi-cart-arrow-right"
                     @click.stop="$emit('convert', w)"
                   >
-                    В план закупок
+                    В закупку
                   </v-btn>
                   <v-chip v-else size="x-small" color="success" variant="tonal">
                     Согласована

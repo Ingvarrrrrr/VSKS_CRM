@@ -25,6 +25,7 @@ export interface FeoRowDrillRow {
   reimbursement_user: string | null
   contract_type: string | null
   status: string | null
+  substatus?: string | null
   subject: string | null
   feo_category_id: number | null
   feo_category_name: string | null

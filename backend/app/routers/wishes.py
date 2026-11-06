@@ -16,6 +16,7 @@ from app.schemas.wishes import WishCreate, WishUpdate, WishOut
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.contract import Contract
+from app.models.feo_planned_item import FeoPlannedItem
 from app.services.item_contractor import set_item_contractor
 from app.services.item_amounts import line_total, apply_item_amounts, effective_vat_on_top, effective_vat_rate
 from app.services.feo_item_lock import assert_item_price_not_locked
@@ -1022,7 +1023,7 @@ async def update_wish(
             # Заявка уходит на ПОВТОРНОЕ согласование — позиции могли измениться,
             # закупка в Плане закупок больше не актуальна, убираем её оттуда. Если что-то
             # уже в работе/договоре — откат запрещаем явно (не молчим, коммита ещё не было).
-            await _withdraw_wish_from_plan(wish.id, db, action_text="вернуть на повторное согласование")
+            await _withdraw_wish_from_plan(wish.id, db, action_text="вернуть на повторное согласование", current_user=current_user)
             requester_name = getattr(current_user, 'full_name', None) or current_user.username
             await _notify_pending_approvers(wish, db, requester_name)
 

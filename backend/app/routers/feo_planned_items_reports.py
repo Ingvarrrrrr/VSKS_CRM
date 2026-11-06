@@ -438,6 +438,7 @@ async def get_comparison(
             purchase_number=p.purchase_number,
             registry_number=p.registry_number,
             purchase_status=p.status,
+            purchase_substatus=getattr(p, 'substatus', None),
             wish_id=p.wish_id,
             contract_number=p.contract_number,
             contractor_name=contractors.get(p.contractor_id) if p.contractor_id else p.item_name,
@@ -663,6 +664,7 @@ async def get_planned_item_consumers(
             "purchase_subject": p.subject or p.item_name,
             "status": p.status,
             "status_label": _PURCHASE_STATUS_LABELS.get(p.status, p.status),
+            "substatus": getattr(p, "substatus", None),
             "wish_id": p.wish_id,
         })
 

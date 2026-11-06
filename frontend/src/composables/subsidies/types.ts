@@ -470,6 +470,7 @@ export interface FeoActualItem {
   purchase_number: number | null
   registry_number: string | null
   purchase_status: string | null
+  purchase_substatus?: string | null
   wish_id?: number | null
   contract_number: string | null
   contractor_name: string | null
@@ -526,6 +527,7 @@ export interface FeoReqItem {
   purchase_number: number | null
   registry_number: string | null
   purchase_status: string
+  purchase_substatus?: string | null
   wish_id: number | null
   category: string
   product_type: string
@@ -829,6 +831,7 @@ export interface FeoPurchaseFolder {
   purchase_number: number | null
   registry_number: string | null
   purchase_status: string
+  purchase_substatus?: string | null
   wish_id: number | null
   qty: number
   unit: string | null

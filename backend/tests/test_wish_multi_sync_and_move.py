@@ -28,7 +28,7 @@ async def _seed_wish_two_groups(db_session, test_org, test_user):
     subsidy = Subsidy(name=f"TestSubsidy-{id(db_session)}", year=2026, budget=0, require_planned_dates=False)
     db_session.add(subsidy)
     await db_session.flush()
-    feo_cat = FeoCategory(subsidy_id=subsidy.id, level=1, name="Прочее")
+    feo_cat = FeoCategory(subsidy_id=subsidy.id, level=1, name="Прочее", planned_quantity=100, planned_amount=100000)
     db_session.add(feo_cat)
     await db_session.flush()
 
@@ -93,7 +93,7 @@ async def test_multi_sync_edit_routes_change_to_correct_purchase(
 
     purchases_before = await _purchases_of(db_session, w.id)
     assert len(purchases_before) == 2
-    assert all(p.status == "plan_schedule" for p in purchases_before)
+    assert all(p.status == "work_in_progress" for p in purchases_before)
 
     # Откат: force draft прячет закупки в статус 'wishes'.
     back = await client.post(
@@ -127,7 +127,7 @@ async def test_multi_sync_edit_routes_change_to_correct_purchase(
     # Разбивка сохранена — по-прежнему 2 закупки заявки, не пересозданы (id совпадают).
     purchases_after = await _purchases_of(db_session, w.id)
     assert {p.id for p in purchases_after} == {p.id for p in purchases_before}
-    assert all(p.status == "plan_schedule" for p in purchases_after)
+    assert all(p.status == "work_in_progress" for p in purchases_after)
 
     # Изменение попало ИМЕННО в закупку группы "Электроника" (там лежит Laptop).
     elec_purchase = await _purchase_by_subject_substr(db_session, w.id, "Электроника")

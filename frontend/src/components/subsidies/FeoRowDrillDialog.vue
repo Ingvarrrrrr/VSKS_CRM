@@ -51,7 +51,12 @@
                   <div v-if="r.reimbursement_user" class="text-caption text-medium-emphasis">кому возмещать: {{ r.reimbursement_user }}</div>
                 </td>
                 <td class="px-4 text-caption">{{ contractTypeLabel(r.contract_type) || '—' }}</td>
-                <td class="px-4 text-caption">{{ purchaseStatusLabel(r.status) || '—' }}</td>
+                <td class="px-4 text-caption">
+                  <span>{{ purchaseStatusLabel(r.status) || '—' }}</span>
+                  <span v-if="r.substatus" class="text-caption text-teal-darken-2 font-weight-medium ms-1">
+                    ({{ purchaseSubstatusLabel(r.substatus) || r.substatus }})
+                  </span>
+                </td>
                 <td class="px-4 text-caption">
                   {{ r.feo_category_id != null && r.feo_category_id !== drill.categoryId.value ? (r.feo_category_name || '—') : '' }}
                 </td>
@@ -87,7 +92,7 @@ import { useDisplay } from 'vuetify'
 import { useRouter } from 'vue-router'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { useFeoRowDrill, FEO_ROW_DRILL_LABELS } from '@/composables/subsidies/useFeoRowDrill'
-import { contractTypeLabel, purchaseStatusLabel } from '@/constants/purchaseStatus'
+import { contractTypeLabel, purchaseStatusLabel, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 
 const { mobile } = useDisplay()
 const router = useRouter()

@@ -8,7 +8,10 @@ import os
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
-import fitz
+try:
+    import fitz
+except ImportError:
+    fitz = None  # type: ignore
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.documents.tkp_form_xlsx import load_standardized_tkp_rows

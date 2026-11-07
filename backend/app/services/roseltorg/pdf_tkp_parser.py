@@ -11,7 +11,10 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
-import fitz
+try:
+    import fitz
+except ImportError:
+    fitz = None  # type: ignore
 
 from .analog_matcher import clean_str, detect_alternative, parse_num
 from .results import format_vat_label

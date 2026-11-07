@@ -14,10 +14,24 @@ progress:
 
 # STATE.md — VSKS_CRM
 
+## 2026-11-07 — Правовая проверка и изоляция рабочих сообщений, комментариев и чатов по закупкам, задачам и ФЭО ✅
+- **Законодательство РФ и правовые документы (`legal/`):**
+  - Внутреннее рабочее обсуждение закупок/задач/ФЭО закрытым кругом авторизованных сотрудников организации не является распространением ПДн неопределённому кругу лиц (ст. 10.1 152-ФЗ) и не образует публичного сервиса обмена сообщениями (ОРИ, ст. 10.1 149-ФЗ).
+  - В `legal/operator.json`, `legal/sources/public/privacy.md`, `legal/sources/internal/04-perechen-pdn.md`, `legal/sources/internal/16-uvedomlenie-rkn.md` и `legal/sources/internal/09-model-ugroz.md` (v1.2, новый раздел 2.9) добавлено описание обработки рабочих сообщений, комментариев и файлов по закупкам/задачам/ФЭО и мер их изоляции; комплект пересобран (`python legal/build.py --check` → OK).
+- **Изоляция доступа в коде (Правило №6 и Правило №8):**
+  - `backend/app/routers/purchase_comments.py`, `purchase_events.py`, `purchase_members.py`: все ручки чтения/записи комментариев, истории событий, `task_comment` и участников обсуждения закупки защищены единым гейтом `ensure_purchase_visible(current_user, pid, db)`.
+  - `backend/app/routers/feo_comments.py`: чтение ветки, счётчиков и настроек видимости защищено через `ensure_subsidy_visible(current_user, subsidy_id, db)`.
+  - `backend/app/routers/chat.py`: `POST /api/chat/rooms/for-entity` проверяет `ensure_purchase_visible` / `ensure_task_visible`; `POST /api/chat/rooms/{room_id}/participants` проверяет `target.org_id == current_user.org_id` (403); `_parse_mention_ids` фильтрует по `org_id` и использует `.scalars().all()` (без падения `MultipleResultsFound` на однофамильцах).
+  - `purchase_comments.py` и `task_comments.py`: разбор `@упоминаний` для Telegram-уведомлений ограничен контуром аккаунта через `owner_scope_org_ids(current_user, db)`.
+- **Тесты и QA:** `pytest backend/tests/test_purchase_messages_visibility.py` (15/15 PASS), `npm run build --prefix frontend` (OK), независимый QA: **PASS (5/5 по всем метрикам)**.
+
 ## 2026-11-07 — Рассмотрение результатов закупки с ЭТП в GALA, состав комиссии в Субсидии и автоформирование Протокола ВСКС (.docx) ✅
-- **Состав закупочной комиссии на уровне субсидии (Правило №6 — единый источник истины):**
-  - В модель `Subsidy` (`backend/app/models/subsidy.py`), схемы (`backend/app/schemas/subsidies.py`), сервис записи (`backend/app/services/subsidy_write.py`) и `legacy_ddl.py` добавлены поля `commission_order_number`, `commission_order_date`, `commission_members` (JSON-список членов комиссии с ФИО и ролью: Председатель / Зам. председателя / Член / Секретарь Комиссии).
-  - В диалоге редактирования/создания субсидии (`frontend/src/components/subsidies/SubsidyEditDialog.vue`) добавлен блок настройки закупочной комиссии (реквизиты приказа и динамический список членов комиссии).
+- **Состав закупочной комиссии на уровне субсидии + индивидуальная настройка в каждой закупке с должностями (Правило №6 — единый источник истины):**
+  - В модель `Subsidy` (`backend/app/models/subsidy.py`), схемы (`backend/app/schemas/subsidies.py`), сервис записи (`backend/app/services/subsidy_write.py`) и `legacy_ddl.py` добавлены поля `commission_order_number`, `commission_order_date`, `commission_members` (JSON-список членов комиссии с ФИО, должностью `position`, ролью в комиссии `role` и отметкой присутствия `present`).
+  - В диалоге субсидии (`SubsidyEditDialog.vue`) и во вкладке комиссии конкретной закупки (`PurchaseResultsCommissionTab.vue`) подключён выбор сотрудников из `/api/staff-directory/` с автозаполнением ФИО и штатной должности (а также возможностью ручного ввода любого человека).
+  - В каждой закупке по умолчанию автоматически отображаются стандартные члены комиссии из её субсидии (`results_builder.py`), при этом можно отметить галочками присутствующих на конкретном заседании (`present`) и добавить дополнительных людей с их должностями именно в эту закупку.
+- **Индивидуальная шапка Протокола для каждой организации/субсидии (`procurement_protocol.docx`):**
+  - В `doc_types.py` и `subsidy_templates.py` добавлен слот шаблона `procurement_protocol` («Протокол закупочной комиссии»); для каждой субсидии автоматически создаётся базовый файл `procurement_protocol.docx` с копированием колонтитулов/шапки из загруженных шаблонов договоров/приказов этой субсидии (`resolve_or_build_subsidy_protocol_base_doc`), а реквизиты Заказчика подставляются через единый механизм `load_customer(db, subsidy)` + `add_customer_context`.
 - **Рассмотрение результатов закупки в GALA без перехода на площадку (Правило №5 — модульность):**
   - В `PlatformPublication` (`backend/app/models/platform_publication.py`) добавлены колонки `procedure_id`, `lot_id`, `results_data`.
   - Сервис `backend/app/services/roseltorg/results.py`: подгрузка результатов процедуры и поданных заявок с Росэлторг.Бизнес по REST API (`GET /notices/{id}/status`, `GET /procedures/{id}`, `GET /applications/lot/{lot_id}`), извлечение цен с НДС/без НДС, попозиционных цен, файлов участников, причин отклонения, слияние с решениями комиссии в GALA и автоматическое ранжирование (`recalculate_places`).

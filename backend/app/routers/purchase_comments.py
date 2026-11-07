@@ -22,6 +22,8 @@ async def list_purchase_comments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     from app.models.purchase_comment import PurchaseComment
     result = await db.execute(
         select(PurchaseComment)
@@ -38,6 +40,7 @@ async def add_purchase_comment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.auth.object_visibility import ensure_purchase_visible
     from app.models.purchase_comment import PurchaseComment
     import re as _re
 
@@ -45,9 +48,7 @@ async def add_purchase_comment(
     if not text:
         raise HTTPException(422, "Комментарий не может быть пустым")
 
-    p = await db.get(Purchase, pid)
-    if not p:
-        raise HTTPException(404, "Закупка не найдена")
+    p = await ensure_purchase_visible(current_user, pid, db)
 
     comment = PurchaseComment(
         purchase_id=pid,
@@ -62,9 +63,14 @@ async def add_purchase_comment(
     # Notify @mentioned users via Telegram
     try:
         from app.notifications import notify_user, _esc, _purchase_url
+        from app.auth.visibility import owner_scope_org_ids
         mentions = _re.findall(r'@(\S+)', text)
         if mentions:
-            all_users = (await db.execute(select(User))).scalars().all()  # superadmin-bypass-ok: @mention lookup for notifications
+            scope_orgs = await owner_scope_org_ids(current_user, db)
+            uq = select(User)
+            if scope_orgs is not None:
+                uq = uq.where(User.org_id.in_(scope_orgs))
+            all_users = (await db.execute(uq)).scalars().all()
             clean_text = _re.sub(r'@[A-Za-zА-Яа-яёЁ\s]{2,40}', '', text).strip()
             clean_text = _re.sub(r'\s{2,}', ' ', clean_text) or text
             preview = _esc(clean_text[:150])
@@ -98,6 +104,8 @@ async def delete_purchase_comment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     from app.models.purchase_comment import PurchaseComment
     c = await db.get(PurchaseComment, comment_id)
     if not c or c.purchase_id != pid:

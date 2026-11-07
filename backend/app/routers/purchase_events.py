@@ -91,8 +91,10 @@ def _event_out(e: PurchaseEvent) -> EventOut:
 async def list_members(
     pid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     rows = (await db.execute(
         select(PurchaseMember).where(PurchaseMember.purchase_id == pid)
     )).scalars().all()
@@ -104,11 +106,10 @@ async def add_member(
     pid: int,
     body: AddMemberBody,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_tab('purchases')),
+    current_user: User = Depends(require_tab('purchases')),
 ):
-    purchase = (await db.execute(select(Purchase).where(Purchase.id == pid))).scalar_one_or_none()
-    if not purchase:
-        raise HTTPException(404, "Закупка не найдена")
+    from app.auth.object_visibility import ensure_purchase_visible
+    purchase = await ensure_purchase_visible(current_user, pid, db)
     user = (await db.execute(select(User).where(User.id == body.user_id))).scalar_one_or_none()
     if not user:
         raise HTTPException(404, "Пользователь не найден")
@@ -140,8 +141,10 @@ async def remove_member(
     pid: int,
     uid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('purchases')),
+    current_user: User = Depends(require_tab('purchases')),
 ):
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     m = (await db.execute(
         select(PurchaseMember).where(
             PurchaseMember.purchase_id == pid,
@@ -159,8 +162,10 @@ async def remove_member(
 async def list_events(
     pid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     rows = (await db.execute(
         select(PurchaseEvent)
         .where(PurchaseEvent.purchase_id == pid)
@@ -174,11 +179,10 @@ async def add_event(
     pid: int,
     body: AddEventBody,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    purchase = (await db.execute(select(Purchase).where(Purchase.id == pid))).scalar_one_or_none()
-    if not purchase:
-        raise HTTPException(404, "Закупка не найдена")
+    from app.auth.object_visibility import ensure_purchase_visible
+    purchase = await ensure_purchase_visible(current_user, pid, db)
     event = PurchaseEvent(
         purchase_id=pid,
         user_id=getattr(current_user, "id", None),

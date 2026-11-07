@@ -84,6 +84,11 @@ ALLOWED_MIME = {
     "image/jpeg",
     "image/jpg",
     "image/png",
+    "image/tiff",
+    "image/x-tiff",
+    "image/jtif",
+    "image/jfif",
+    "image/webp",
 }
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -182,7 +187,7 @@ async def _get_participant_ids(room_id: int, db: AsyncSession) -> List[int]:
     return [row[0] for row in result.all()]
 
 
-async def _parse_mention_ids(content: Optional[str], db: AsyncSession) -> list:
+async def _parse_mention_ids(content: Optional[str], db: AsyncSession, org_id: Optional[int] = None) -> list:
     """Parse @Имя Фамилия mentions from message content and return list of user_ids."""
     if not content:
         return []
@@ -195,10 +200,13 @@ async def _parse_mention_ids(content: Optional[str], db: AsyncSession) -> list:
         name = name.strip()
         if not name:
             continue
-        result = await db.execute(select(User).where(User.full_name == name))
-        user = result.scalar_one_or_none()
-        if user:
-            ids.append(user.id)
+        q = select(User).where(User.full_name == name)
+        if org_id is not None:
+            q = q.where(User.org_id == org_id)
+        result = await db.execute(q)
+        for u in result.scalars().all():
+            if u.id not in ids:
+                ids.append(u.id)
     return ids
 
 
@@ -458,6 +466,12 @@ async def get_or_create_entity_room(
     current_user: User = Depends(get_current_user),
 ):
     """Get existing linked chat room for an entity (purchase/task) or create one."""
+    from app.auth.object_visibility import ensure_purchase_visible, ensure_task_visible
+    if body.entity_type == "purchase":
+        await ensure_purchase_visible(current_user, body.entity_id, db)
+    elif body.entity_type == "task":
+        await ensure_task_visible(current_user, body.entity_id, db)
+
     # Find existing room for this entity
     existing_q = select(ChatRoom).where(
         ChatRoom.entity_type == body.entity_type,
@@ -569,11 +583,28 @@ async def send_message(
     file_size = None
 
     if file:
+        filename_lower = (file.filename or "").lower()
+        content_type = (file.content_type or "").split(";")[0].strip().lower()
+        if filename_lower.endswith((".tif", ".tiff", ".jtif")):
+            if content_type in ("", "application/octet-stream", "image/jtif", "image/x-tiff"):
+                content_type = "image/tiff"
+        elif filename_lower.endswith((".jpg", ".jpeg", ".jfif")):
+            if content_type in ("", "application/octet-stream", "image/jfif", "image/pjpeg"):
+                content_type = "image/jpeg"
+        elif filename_lower.endswith(".png") and content_type in ("", "application/octet-stream"):
+            content_type = "image/png"
+        elif filename_lower.endswith(".pdf") and content_type in ("", "application/octet-stream"):
+            content_type = "application/pdf"
+        elif filename_lower.endswith(".webp") and content_type in ("", "application/octet-stream"):
+            content_type = "image/webp"
+        elif filename_lower.endswith((".heic", ".heif")) and content_type in ("", "application/octet-stream"):
+            content_type = "image/heic"
+
         # Validate MIME type
-        if file.content_type not in ALLOWED_MIME:
+        if content_type not in ALLOWED_MIME:
             raise HTTPException(
                 status_code=415,
-                detail=f"Недопустимый тип файла: {file.content_type}",
+                detail=f"Недопустимый тип файла: {content_type}",
             )
 
         # Read and validate size
@@ -582,7 +613,7 @@ async def send_message(
             raise HTTPException(status_code=413, detail="Файл превышает максимальный размер 50 МБ")
 
         # Compress images to max 1280px dimension
-        if file.content_type and file.content_type.startswith('image/'):
+        if content_type and content_type.startswith('image/'):
             try:
                 img = Image.open(io.BytesIO(data))
                 max_dim = 1280
@@ -590,7 +621,7 @@ async def send_message(
                     img.thumbnail((max_dim, max_dim), Image.LANCZOS)
                 # Re-encode
                 buf = io.BytesIO()
-                fmt = 'JPEG' if file.content_type in ('image/jpeg', 'image/jpg') else 'PNG'
+                fmt = 'JPEG' if content_type in ('image/jpeg', 'image/jpg') else 'PNG'
                 save_kwargs = {'quality': 85, 'optimize': True} if fmt == 'JPEG' else {}
                 img.save(buf, format=fmt, **save_kwargs)
                 data = buf.getvalue()
@@ -607,7 +638,7 @@ async def send_message(
             f_out.write(data)
 
         file_name = file.filename
-        file_mime = file.content_type
+        file_mime = content_type
         file_size = len(data)
 
     # Create message in DB
@@ -623,7 +654,7 @@ async def send_message(
     db.add(msg)
 
     # Parse mentions and store
-    mention_ids = await _parse_mention_ids(content, db)
+    mention_ids = await _parse_mention_ids(content, db, org_id=current_user.org_id)
     msg.mention_ids = mention_ids if mention_ids else None
 
     await db.commit()
@@ -729,6 +760,8 @@ async def add_participant(
     target = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if not target:
         raise HTTPException(404, "User not found")
+    if target.org_id != current_user.org_id:
+        raise HTTPException(status_code=403, detail="Пользователь из другой организации")
     # Check not already participant
     existing = (await db.execute(
         select(ChatParticipant).where(

@@ -98,7 +98,12 @@ async def add_comment(
         mentions = _re.findall(r'@(\S+)', body.text)
         mentioned_users = []
         if mentions:
-            all_users_r = await db.execute(select(User))  # superadmin-bypass-ok: @mention lookup for notifications, not a user-list endpoint
+            from app.auth.visibility import owner_scope_org_ids
+            scope_orgs = await owner_scope_org_ids(current_user, db)
+            uq = select(User)
+            if scope_orgs is not None:
+                uq = uq.where(User.org_id.in_(scope_orgs))
+            all_users_r = await db.execute(uq)
             all_users = all_users_r.scalars().all()
             for u in all_users:
                 for m in mentions:

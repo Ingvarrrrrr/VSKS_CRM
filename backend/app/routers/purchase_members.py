@@ -362,10 +362,8 @@ async def update_task_comment(
     current_user: User = Depends(get_current_user),
 ):
     """Update task comment for kanban card."""
-    result = await db.execute(select(Purchase).where(Purchase.id == pid))
-    p = result.scalar_one_or_none()
-    if not p:
-        raise HTTPException(404, "Закупка не найдена")
+    from app.auth.object_visibility import ensure_purchase_visible
+    p = await ensure_purchase_visible(current_user, pid, db)
     p.task_comment = comment
     await db.commit()
     return {"ok": True}
@@ -396,6 +394,8 @@ async def list_purchase_members(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     from app.models.purchase_event import PurchaseMember
     result = await db.execute(
         select(PurchaseMember).where(PurchaseMember.purchase_id == pid)
@@ -410,6 +410,8 @@ async def add_purchase_member(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.auth.object_visibility import ensure_purchase_visible
+    p = await ensure_purchase_visible(current_user, pid, db)
     from app.models.purchase_event import PurchaseMember, PurchaseEvent
     user_id = int(body.get("user_id", 0))
     role = body.get("role", "viewer")
@@ -447,7 +449,7 @@ async def add_purchase_member(
     # Часть Б; ПРАВИЛО №6 — единый предикат app.services.sandbox_guard).
     if u and u.id != current_user.id and is_new:
         try:
-            purchase = await db.get(Purchase, pid)
+            purchase = p
             from app.services.sandbox_guard import purchase_is_sandbox
             if purchase and await purchase_is_sandbox(db, purchase):
                 purchase = None
@@ -475,6 +477,8 @@ async def remove_purchase_member(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.auth.object_visibility import ensure_purchase_visible
+    await ensure_purchase_visible(current_user, pid, db)
     from app.models.purchase_event import PurchaseMember, PurchaseEvent
     result = await db.execute(
         select(PurchaseMember).where(

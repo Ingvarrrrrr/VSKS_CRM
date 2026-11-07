@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user
 from app.database import get_db
+from app.models.user import User
 from app.models.feo_category import FeoCategory
 from app.models.feo_comment import FeoComment, FeoCommentsVisibility
 from app.models.feo_planned_item import FeoPlannedItem
@@ -73,8 +74,10 @@ async def _load_category(db: AsyncSession, category_id: int) -> FeoCategory:
 async def get_comments_visibility(
     subsidy_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(current_user, subsidy_id, db)
     row = (await db.execute(
         select(FeoCommentsVisibility).where(FeoCommentsVisibility.subsidy_id == subsidy_id)
     )).scalar_one_or_none()
@@ -126,13 +129,10 @@ async def set_comments_visibility(
 async def get_comment_counts(
     subsidy_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Права — ТЕ ЖЕ, что и у list_comments/get_comments_visibility ниже
-    (только аутентификация, без require_tab/org-scoping) — см. докстринг
-    модуля про «ЧТЕНИЕ... только get_current_user, по аналогии с
-    list_planned_items». Новый, более строгий гейт для чтения здесь не
-    заводится."""
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(current_user, subsidy_id, db)
     cat_ids = (await db.execute(
         select(FeoCategory.id).where(FeoCategory.subsidy_id == subsidy_id)
     )).scalars().all()
@@ -170,14 +170,18 @@ async def list_comments(
     feo_planned_item_id: Optional[int] = Query(None),
     feo_category_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     if (feo_planned_item_id is None) == (feo_category_id is None):
         raise HTTPException(400, "Нужно указать ровно один из параметров: feo_planned_item_id или feo_category_id")
     if feo_planned_item_id is not None:
+        cat = await _load_category_for_planned_item(db, feo_planned_item_id)
         cond = FeoComment.feo_planned_item_id == feo_planned_item_id
     else:
+        cat = await _load_category(db, feo_category_id)  # type: ignore[arg-type]
         cond = FeoComment.feo_category_id == feo_category_id
+    from app.auth.object_visibility import ensure_subsidy_visible
+    await ensure_subsidy_visible(current_user, cat.subsidy_id, db)
     rows = (await db.execute(
         select(FeoComment).where(cond).order_by(FeoComment.created_at, FeoComment.id)
     )).scalars().all()

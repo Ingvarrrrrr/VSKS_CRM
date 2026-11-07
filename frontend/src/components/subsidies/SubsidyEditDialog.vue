@@ -92,9 +92,39 @@
           Члены комиссии ещё не добавлены (будут использованы дефолтные для протокола)
         </div>
         <div v-for="(m, mIdx) in form.commission_members" :key="mIdx" class="d-flex align-center gap-2 mb-2">
-          <v-text-field v-model="m.full_name" placeholder="ФИО полностью" density="compact" variant="outlined" hide-details style="flex:2" />
-          <v-combobox v-model="m.role" :items="COMMISSION_ROLE_OPTIONS" density="compact" variant="outlined" hide-details style="flex:1.5" />
-          <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="removeMember(form.commission_members, mIdx)" />
+          <v-combobox
+            :model-value="m.full_name"
+            :items="staffNames"
+            placeholder="ФИО сотрудника"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="flex: 2"
+            @update:model-value="val => onMemberNameChange(m, val)"
+          />
+          <v-text-field
+            v-model="m.position"
+            placeholder="Должность"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="flex: 1.8"
+          />
+          <v-combobox
+            v-model="m.role"
+            :items="COMMISSION_ROLE_OPTIONS"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="flex: 1.5"
+          />
+          <v-btn
+            icon="mdi-delete-outline"
+            size="small"
+            variant="text"
+            color="error"
+            @click="removeMember(form.commission_members, mIdx)"
+          />
         </div>
       </v-card-text>
       <v-card-actions class="px-4 pb-4">
@@ -210,9 +240,39 @@
           Члены комиссии ещё не добавлены (будут использованы дефолтные для протокола)
         </div>
         <div v-for="(m, mIdx) in editForm.commission_members" :key="mIdx" class="d-flex align-center gap-2 mb-2">
-          <v-text-field v-model="m.full_name" placeholder="ФИО полностью" density="compact" variant="outlined" hide-details style="flex:2" />
-          <v-combobox v-model="m.role" :items="COMMISSION_ROLE_OPTIONS" density="compact" variant="outlined" hide-details style="flex:1.5" />
-          <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="removeMember(editForm.commission_members, mIdx)" />
+          <v-combobox
+            :model-value="m.full_name"
+            :items="staffNames"
+            placeholder="ФИО сотрудника"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="flex: 2"
+            @update:model-value="val => onMemberNameChange(m, val)"
+          />
+          <v-text-field
+            v-model="m.position"
+            placeholder="Должность"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="flex: 1.8"
+          />
+          <v-combobox
+            v-model="m.role"
+            :items="COMMISSION_ROLE_OPTIONS"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="flex: 1.5"
+          />
+          <v-btn
+            icon="mdi-delete-outline"
+            size="small"
+            variant="text"
+            color="error"
+            @click="removeMember(editForm.commission_members, mIdx)"
+          />
         </div>
         <v-divider class="mt-4 mb-3" />
         <div class="text-caption text-medium-emphasis mb-2">Реквизиты для шаблонов договоров</div>
@@ -299,7 +359,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
@@ -322,28 +382,48 @@ function showSnack(text: string, color: ToastType = 'success', opts?: { actionTe
 }
 
 const ctx = useSubsidyDetailCtx()
-// Год списка (карточки/таблица фильтруются по нему, useSubsidyList.ts —
-// единственный источник, Правило №6). Баг владельца (2026-09-15): «добавил
-// субсидию Абхазия_2 — не появилась, пока не перезагрузил». Причина —
-// filteredSubsidies фильтрует allSubsidies по selectedYear, а addSubsidy()
-// пушит новую субсидию оптимистично, не трогая selectedYear; если пользователь
-// в этот момент смотрит вкладку другого года (или дефолтный год формы
-// New Date().getFullYear() разошёлся с тем годом, на который loadAll() в
-// прошлый раз переключил вкладку — «самый свежий год среди СУЩЕСТВУЮЩИХ
-// субсидий», см. SubsidiesView.vue:444), карточка молча проваливается в
-// невидимый фильтр. Только перезагрузка (loadAll → selectedYear = новый max)
-// её показывала. Подтверждено Playwright на стенде (создание на вкладке 2025
-// при форме с годом 2026 — карточка не видна до reload). Фикс: переключать
-// вкладку на год только что созданной субсидии, чтобы она была видна сразу.
 const { selectedYear } = useSubsidyList(ctx)
 
-// Тот же гейт, что и в остальных местах SubsidiesView.vue (canSaveVersion) —
-// вычисляется независимо здесь же, т.к. используется ещё в двух местах вне
-// этого диалога (панель версий плана-графика), которые остаются в родителе.
 const userRoleRaw = localStorage.getItem('user_role') || ''
 const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'account_owner'].includes(userRoleRaw))
 
 const saving = ref(false)
+
+const staffDirectory = ref<Array<{ id: number; full_name: string; position?: string }>>([])
+const staffNames = computed(() => staffDirectory.value.map(s => s.full_name).filter(Boolean))
+
+async function loadStaffDirectory() {
+  if (staffDirectory.value.length) return
+  try {
+    const list = await apiFetch<any[]>('/staff-directory/')
+    if (Array.isArray(list)) {
+      staffDirectory.value = list.map(u => ({
+        id: u.id,
+        full_name: u.full_name || '',
+        position: u.position || '',
+      }))
+    }
+  } catch {}
+}
+
+watch([addOpen, editOpen], ([a, e]) => {
+  if (a || e) void loadStaffDirectory()
+})
+
+function onMemberNameChange(m: any, val: any) {
+  if (typeof val === 'string') {
+    m.full_name = val
+    const found = staffDirectory.value.find(s => s.full_name.toLowerCase() === val.trim().toLowerCase())
+    if (found) {
+      if (!m.position) m.position = found.position || ''
+      m.user_id = found.id
+    }
+  } else if (val && typeof val === 'object') {
+    m.full_name = val.full_name || ''
+    if (val.position && !m.position) m.position = val.position
+    if (val.id) m.user_id = val.id
+  }
+}
 
 const COMMISSION_ROLE_OPTIONS = [
   'Председатель Комиссии',
@@ -353,7 +433,12 @@ const COMMISSION_ROLE_OPTIONS = [
 ]
 
 function addMember(list: any[]) {
-  list.push({ full_name: '', role: list.length === 0 ? 'Председатель Комиссии' : 'Член Комиссии' })
+  list.push({
+    user_id: null,
+    full_name: '',
+    position: '',
+    role: list.length === 0 ? 'Председатель Комиссии' : 'Член Комиссии',
+  })
 }
 
 function removeMember(list: any[], idx: number) {
@@ -376,7 +461,7 @@ const form = ref({
   procurement_regulation_order_number: '' as string,
   commission_order_number: '' as string,
   commission_order_date: '' as string,
-  commission_members: [] as Array<{ full_name: string; role: string }>,
+  commission_members: [] as Array<{ user_id?: number | null; full_name: string; position?: string; role: string }>,
 })
 
 const editForm = ref({
@@ -399,7 +484,7 @@ const editForm = ref({
   ceiling_warn_percent: 90 as number | null,
   commission_order_number: '' as string,
   commission_order_date: '' as string,
-  commission_members: [] as Array<{ full_name: string; role: string }>,
+  commission_members: [] as Array<{ user_id?: number | null; full_name: string; position?: string; role: string }>,
 })
 // Снимок «до» (волна 3B, корректировка субсидии через проверку) — ПОЛНЫЙ, не
 // только бюджет: координатор, доп. пробел «SubsidyEditDialog теряет правки» —
@@ -445,7 +530,12 @@ async function startEdit(s: SubsidyRow) {
     commission_order_number: full.commission_order_number || '',
     commission_order_date: full.commission_order_date || '',
     commission_members: Array.isArray(full.commission_members)
-      ? JSON.parse(JSON.stringify(full.commission_members))
+      ? JSON.parse(JSON.stringify(full.commission_members)).map((m: any) => ({
+          user_id: m.user_id || null,
+          full_name: m.full_name || m.name || '',
+          position: m.position || '',
+          role: m.role || 'Член Комиссии',
+        }))
       : [],
   }
   editFullBefore = { ...editForm.value }
@@ -455,7 +545,14 @@ async function startEdit(s: SubsidyRow) {
 async function addSubsidy() {
   saving.value = true
   try {
-    const validMembers = form.value.commission_members.filter((m: any) => m.full_name && m.full_name.trim())
+    const validMembers = form.value.commission_members
+      .filter((m: any) => m.full_name && m.full_name.trim())
+      .map((m: any) => ({
+        user_id: m.user_id || null,
+        full_name: m.full_name.trim(),
+        position: (m.position || '').trim(),
+        role: (m.role || 'Член Комиссии').trim(),
+      }))
     const res = await apiFetch<any>('/subsidies/', {
       method: 'POST',
       body: JSON.stringify({
@@ -513,7 +610,14 @@ async function updateSubsidy() {
   saving.value = true
   try {
     const newBudget = numOrNull(editForm.value.budget)
-    const validMembers = editForm.value.commission_members.filter((m: any) => m.full_name && m.full_name.trim())
+    const validMembers = editForm.value.commission_members
+      .filter((m: any) => m.full_name && m.full_name.trim())
+      .map((m: any) => ({
+        user_id: m.user_id || null,
+        full_name: m.full_name.trim(),
+        position: (m.position || '').trim(),
+        role: (m.role || 'Член Комиссии').trim(),
+      }))
     const fullBody = {
       name: editForm.value.name,
       year: editForm.value.year,

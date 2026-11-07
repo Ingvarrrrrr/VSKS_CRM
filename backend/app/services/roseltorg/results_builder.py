@@ -17,33 +17,77 @@ from app.models.subsidy import Subsidy
 from app.services.documents.formatting import _fmt_date
 
 
+def _normalize_commission_members(raw_list: Any, *, from_subsidy: bool = True) -> list[Dict[str, Any]]:
+    norm: list[Dict[str, Any]] = []
+    for m in (raw_list or []):
+        if isinstance(m, dict):
+            norm.append({
+                "user_id": m.get("user_id"),
+                "full_name": (m.get("full_name") or m.get("name") or "").strip(),
+                "position": (m.get("position") or "").strip(),
+                "role": (m.get("role") or "Член Комиссии").strip(),
+                "present": m.get("present", True) is not False,
+                "from_subsidy": m.get("from_subsidy", from_subsidy),
+            })
+        elif isinstance(m, str) and m.strip():
+            norm.append({
+                "user_id": None,
+                "full_name": m.strip(),
+                "position": "",
+                "role": "Член Комиссии",
+                "present": True,
+                "from_subsidy": from_subsidy,
+            })
+    return norm
+
+
 async def get_or_build_default_results(
     db: AsyncSession,
     purchase: Purchase,
     pub: Optional[PlatformPublication],
 ) -> Dict[str, Any]:
     """Возвращает сохранённый results_data или строит дефолтный объект из данных закупки и субсидии."""
+    subsidy = await db.get(Subsidy, purchase.subsidy_id) if purchase.subsidy_id else None
+
     if pub and pub.results_data:
         try:
             stored = json.loads(pub.results_data) if isinstance(pub.results_data, str) else pub.results_data
             if isinstance(stored, dict) and stored.get("applications") is not None:
+                # Автоподтягивание стандартной комиссии из субсидии, если в stored список пуст
+                cur_members = stored.get("commission_members")
+                if (not cur_members or len(cur_members) == 0) and subsidy:
+                    raw_sub = subsidy.commission_members
+                    if isinstance(raw_sub, str):
+                        try:
+                            raw_sub = json.loads(raw_sub)
+                        except Exception:
+                            raw_sub = []
+                    if raw_sub:
+                        stored["commission_members"] = _normalize_commission_members(raw_sub, from_subsidy=True)
+                # Автоподтягивание реквизитов приказа из субсидии, если в stored они пустые
+                if subsidy:
+                    if not stored.get("commission_order_number") and subsidy.commission_order_number:
+                        stored["commission_order_number"] = subsidy.commission_order_number
+                    if not stored.get("commission_order_date") and subsidy.commission_order_date:
+                        stored["commission_order_date"] = subsidy.commission_order_date.isoformat()
                 return stored
         except Exception:
             pass
 
-    subsidy = await db.get(Subsidy, purchase.subsidy_id) if purchase.subsidy_id else None
-    customer_org = await db.get(Organization, purchase.org_id) if purchase.org_id else None
-    customer_ctr = (
-        await db.get(Contractor, purchase.customer_contractor_id)
-        if getattr(purchase, "customer_contractor_id", None)
-        else None
-    )
+    from app.services.documents.stages_relations import load_customer
+    from app.services.documents.contexts_extra import add_customer_context
 
-    cust_addr = ""
-    if customer_ctr:
-        cust_addr = getattr(customer_ctr, "address", "") or getattr(customer_ctr, "legal_address", "")
-    elif customer_org:
-        cust_addr = getattr(customer_org, "address", "") or getattr(customer_org, "contract_address", "")
+    customer_org, customer_ctr = await load_customer(db, subsidy)
+    cust_ctx: dict[str, Any] = {}
+    if customer_org or customer_ctr:
+        add_customer_context(cust_ctx, customer_org, customer_ctr)
+
+    cust_addr = cust_ctx.get("customer_address") or ""
+    if not cust_addr:
+        if customer_ctr:
+            cust_addr = getattr(customer_ctr, "address", "") or getattr(customer_ctr, "legal_address", "")
+        elif customer_org:
+            cust_addr = getattr(customer_org, "address", "") or getattr(customer_org, "contract_address", "")
 
     reg_num = (
         (pub.platform_number if pub else None)
@@ -57,7 +101,7 @@ async def get_or_build_default_results(
             raw_members = json.loads(raw_members)
         except Exception:
             raw_members = []
-    commission_members = list(raw_members) if isinstance(raw_members, list) else []
+    commission_members = _normalize_commission_members(raw_members, from_subsidy=True)
 
     defaults = {
         "procedure_id": (pub.procedure_id if pub else "") or "",

@@ -42,35 +42,37 @@ def build_vsks_protocol_docx(
     results: Dict[str, Any],
 ) -> bytes:
     """Генерирует итоговый протокол закупки ВСКС в формате .docx."""
-    doc = docx.Document()
+    from app.services.documents.protocol_docx_helpers import resolve_or_build_subsidy_protocol_base_doc
+    subsidy_id = subsidy.id if subsidy else getattr(purchase, "subsidy_id", None)
+    doc = resolve_or_build_subsidy_protocol_base_doc(subsidy_id)
 
-    # Поля страницы: 2 см слева, 1.5 см сверху/снизу/справа
-    for sec in doc.sections:
-        sec.top_margin = Cm(1.5)
-        sec.bottom_margin = Cm(1.5)
-        sec.left_margin = Cm(2.0)
-        sec.right_margin = Cm(1.5)
+    # Реквизиты Заказчика (единый источник через add_customer_context, ПРАВИЛО №6)
+    from app.services.documents.contexts_extra import add_customer_context
+    cust_ctx: dict[str, Any] = {}
+    if customer_org or customer_ctr:
+        add_customer_context(cust_ctx, customer_org, customer_ctr)
 
-    # Реквизиты Заказчика
-    customer_full_name = ""
-    customer_short_name = ""
-    customer_address = ""
-    if customer_ctr:
-        customer_full_name = getattr(customer_ctr, "full_name", None) or getattr(customer_ctr, "name", "")
-        customer_short_name = getattr(customer_ctr, "name", "")
-        customer_address = getattr(customer_ctr, "address", "") or getattr(customer_ctr, "legal_address", "")
-    elif customer_org:
-        customer_full_name = getattr(customer_org, "name", "")
-        customer_short_name = getattr(customer_org, "short_name", "") or getattr(customer_org, "name", "")
-        customer_address = getattr(customer_org, "address", "") or getattr(customer_org, "contract_address", "")
+    customer_full_name = cust_ctx.get("customer_full_name") or ""
+    customer_short_name = cust_ctx.get("customer_short_name") or ""
+    customer_address = cust_ctx.get("customer_address") or ""
 
     if not customer_full_name:
-        customer_full_name = "ВСЕРОССИЙСКАЯ ОБЩЕСТВЕННАЯ МОЛОДЕЖНАЯ ОРГАНИЗАЦИЯ «ВСЕРОССИЙСКИЙ СТУДЕНЧЕСКИЙ КОРПУС СПАСАТЕЛЕЙ»"
+        if customer_ctr:
+            customer_full_name = getattr(customer_ctr, "full_name", None) or getattr(customer_ctr, "name", "")
+            customer_short_name = getattr(customer_ctr, "name", "")
+            customer_address = getattr(customer_ctr, "address", "") or getattr(customer_ctr, "legal_address", "")
+        elif customer_org:
+            customer_full_name = getattr(customer_org, "name", "")
+            customer_short_name = getattr(customer_org, "short_name", "") or getattr(customer_org, "name", "")
+            customer_address = getattr(customer_org, "address", "") or getattr(customer_org, "contract_address", "")
+
+    if not customer_full_name:
+        customer_full_name = results.get("customer_full_name") or "ВСЕРОССИЙСКАЯ ОБЩЕСТВЕННАЯ МОЛОДЕЖНАЯ ОРГАНИЗАЦИЯ «ВСЕРОССИЙСКИЙ СТУДЕНЧЕСКИЙ КОРПУС СПАСАТЕЛЕЙ»"
     if not customer_short_name:
-        customer_short_name = "ВОМО «ВСКС»"
+        customer_short_name = results.get("customer_short_name") or "ВОМО «ВСКС»"
 
     # Город проведения
-    city = results.get("city") or _extract_city_from_address(customer_address) or "Москва"
+    city = results.get("city") or cust_ctx.get("customer_city") or _extract_city_from_address(customer_address) or "Москва"
 
     # Извещение и протокол
     notice_number = (
@@ -142,6 +144,20 @@ def build_vsks_protocol_docx(
             raw_members = []
     commission_members = list(raw_members) if isinstance(raw_members, list) else []
     total_commission_count = len(commission_members) if commission_members else 4
+
+    # Присутствующие члены комиссии для Таблицы 0 (в присутствии:) и блока подписей
+    present_members = [
+        m for m in commission_members
+        if (m.get("present") is not False if isinstance(m, dict) else True)
+    ] if commission_members else []
+
+    members_to_show = present_members if present_members else (
+        commission_members if commission_members else [
+            {"full_name": "Цыганов Игорь Александрович", "role": "Председатель Комиссии"},
+            {"full_name": "Иванова Ирина Владиславовна", "role": "Член Комиссии"},
+            {"full_name": "Любарец Евгения Дмитриевна", "role": "Член Комиссии"},
+        ]
+    )
 
     # Заявки
     applications = list(results.get("applications", []))
@@ -222,19 +238,20 @@ def build_vsks_protocol_docx(
     hdr0 = t0.rows[0].cells
     hdr0[0].paragraphs[0].text = "ФИО"
     _style_run(hdr0[0].paragraphs[0].runs[0], bold=True)
-    hdr0[1].paragraphs[0].text = "Роль в Комиссии"
+    hdr0[1].paragraphs[0].text = "Роль в Комиссии / Должность"
     _style_run(hdr0[1].paragraphs[0].runs[0], bold=True)
 
-    members_to_show = commission_members if commission_members else [
-        {"full_name": "Цыганов Игорь Александрович", "role": "Председатель Комиссии"},
-        {"full_name": "Иванова Ирина Владиславовна", "role": "Член Комиссии"},
-        {"full_name": "Любарец Евгения Дмитриевна", "role": "Член Комиссии"},
-    ]
     for m in members_to_show:
         row = t0.add_row().cells
         row[0].paragraphs[0].text = m.get("full_name") or ""
         _style_run(row[0].paragraphs[0].runs[0] if row[0].paragraphs[0].runs else row[0].paragraphs[0].add_run(""))
-        row[1].paragraphs[0].text = m.get("role") or "Член Комиссии"
+        role = (m.get("role") or "Член Комиссии").strip()
+        pos = (m.get("position") or "").strip()
+        if pos and pos.lower() != role.lower():
+            role_text = f"{role} ({pos})"
+        else:
+            role_text = role
+        row[1].paragraphs[0].text = role_text
         _style_run(row[1].paragraphs[0].runs[0] if row[1].paragraphs[0].runs else row[1].paragraphs[0].add_run(""))
 
     _add_styled_p(doc, "", space_after=3)

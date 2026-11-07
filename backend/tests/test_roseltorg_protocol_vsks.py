@@ -1128,6 +1128,130 @@ async def test_apply_winner_creates_contract_items_with_per_item_vat_and_offered
     assert item2.contractor_inn == "7705998877"
 
 
+@pytest.mark.asyncio
+async def test_commission_members_auto_pull_from_subsidy_and_purchase_overrides():
+    """Тест автоподстановки членов комиссии из субсидии, добавления людей в закупку и фильтрации отсутствующих в протоколе."""
+    from app.services.roseltorg.results_builder import get_or_build_default_results
+    from app.services.documents.protocol_vsks import build_vsks_protocol_docx
+    import docx
+
+    subsidy = Subsidy(
+        id=77,
+        name="Субсидия 2026",
+        org_id=1,
+        commission_order_number="Приказ-102",
+        commission_order_date=date(2026, 3, 15),
+        commission_members=json.dumps([
+            {"full_name": "Петров Пётр Петрович", "position": "Руководитель службы", "role": "Председатель Комиссии"},
+            {"full_name": "Сидоров Сидор Сидорович", "position": "Ведущий юрист", "role": "Член Комиссии"},
+            {"full_name": "Козлова Анна Ивановна", "position": "Бухгалтер", "role": "Секретарь Комиссии"},
+        ], ensure_ascii=False),
+    )
+
+    purchase = Purchase(
+        id=101,
+        subsidy_id=77,
+        subject="Поставка офисной мебели",
+    )
+
+    # 1. Сценарий: pub.results_data существует, но в нём пустой commission_members
+    pub = PlatformPublication(
+        id=1,
+        purchase_id=101,
+        results_data=json.dumps({"applications": [], "commission_members": []}, ensure_ascii=False),
+    )
+
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=subsidy)
+
+    res = await get_or_build_default_results(db, purchase, pub)
+    assert len(res["commission_members"]) == 3
+    assert res["commission_members"][0]["full_name"] == "Петров Пётр Петрович"
+    assert res["commission_members"][0]["from_subsidy"] is True
+    assert res["commission_members"][0]["present"] is True
+    assert res["commission_order_number"] == "Приказ-102"
+    assert res["commission_order_date"] == "2026-03-15"
+
+    # 2. Пользователь в закупке:
+    # - Отмечает Сидорова как отсутствующего (present: False)
+    # - Добавляет нового человека именно в закупку (from_subsidy: False)
+    custom_members = list(res["commission_members"])
+    custom_members[1]["present"] = False  # Сидоров в отпуске
+    custom_members.append({
+        "full_name": "Михайлов Михаил Михайлович",
+        "position": "Внешний эксперт",
+        "role": "Член Комиссии",
+        "present": True,
+        "from_subsidy": False,
+    })
+
+    res["commission_members"] = custom_members
+
+    # 3. Генерируем протокол ВСКС
+    docx_bytes = build_vsks_protocol_docx(purchase, subsidy, None, None, res)
+    doc = docx.Document(io.BytesIO(docx_bytes))
+
+    full_text = "\n".join(p.text for p in doc.paragraphs)
+    # В п. 1.3 указано общее число 4 человека (по приказу)
+    assert "в составе 4-х человек" in full_text
+
+    # В Таблице 0 (в присутствии:) только присутствующие (3 человека)
+    t0 = doc.tables[0]
+    t0_names = [row.cells[0].text for row in t0.rows[1:]]
+    assert "Петров Пётр Петрович" in t0_names
+    assert "Михайлов Михаил Михайлович" in t0_names
+    assert "Сидоров Сидор Сидорович" not in t0_names  # Отсутствовал!
+
+    # Проверяем роль и должность во 2-й колонке: f"{role} ({position})"
+    t0_roles = [row.cells[1].text for row in t0.rows[1:]]
+    assert any("Председатель Комиссии (Руководитель службы)" in r for r in t0_roles)
+    assert any("Член Комиссии (Внешний эксперт)" in r for r in t0_roles)
+
+    # В блоке подписей в конце отсутствующего Сидорова также нет
+    assert "Сидоров С.С." not in full_text
+    assert "Петров П.П." in full_text or "Петров П." in full_text
+
+
+def test_subsidy_protocol_base_doc_copies_header_from_contract(tmp_path):
+    """Тест автоматического извлечения колонтитулов и шапки из шаблона договора субсидии."""
+    import docx
+    from app.services.documents.protocol_docx_helpers import resolve_or_build_subsidy_protocol_base_doc
+
+    sub_dir = tmp_path / "subsidies" / "88"
+    sub_dir.mkdir(parents=True)
+
+    # Создаём файл contract_goods_single.docx с уникальным колонтитулом организации
+    contract_path = sub_dir / "contract_goods_single.docx"
+    doc_src = docx.Document()
+    hdr = doc_src.sections[0].header
+    hdr.paragraphs[0].text = "РЕГИОНАЛЬНОЕ ОТДЕЛЕНИЕ ВОМО ВСКС РЕСПУБЛИКИ КРЫМ"
+
+    # Добавляем таблицу-шапку организации в начале тела
+    tbl = doc_src.add_table(rows=1, cols=2)
+    tbl.rows[0].cells[0].text = "ЛОГОТИП"
+    tbl.rows[0].cells[1].text = "ОТДЕЛЕНИЕ КРЫМ"
+    doc_src.add_paragraph("ДОГОВОР ПОСТАВКИ № 123")
+    doc_src.add_paragraph("Текст договора поставки...")
+    doc_src.save(str(contract_path))
+
+    # Вызываем resolve_or_build_subsidy_protocol_base_doc
+    base_doc = resolve_or_build_subsidy_protocol_base_doc(88, custom_dir=str(sub_dir))
+
+    # 1. Проверяем, что создался файл procurement_protocol.docx в папке субсидии
+    proto_file = sub_dir / "procurement_protocol.docx"
+    assert proto_file.exists()
+
+    # 2. Проверяем, что колонтитул организации сохранился
+    assert "РЕГИОНАЛЬНОЕ ОТДЕЛЕНИЕ" in base_doc.sections[0].header.paragraphs[0].text
+
+    # 3. Проверяем, что текст договора удалён, а таблица-шапка организации сохранена
+    body_text = "\n".join(p.text for p in base_doc.paragraphs)
+    assert "Текст договора поставки" not in body_text
+    assert len(base_doc.tables) == 1
+    assert "ОТДЕЛЕНИЕ КРЫМ" in base_doc.tables[0].rows[0].cells[1].text
+
+
+
 
 
 

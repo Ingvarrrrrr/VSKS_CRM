@@ -471,12 +471,8 @@ async def download_protocol_docx(
     purchase = await ensure_purchase_visible(pub.purchase_id, current_user, db)
 
     subsidy = await db.get(Subsidy, purchase.subsidy_id) if purchase.subsidy_id else None
-    customer_org = await db.get(Organization, purchase.org_id) if purchase.org_id else None
-    customer_ctr = (
-        await db.get(Contractor, purchase.customer_contractor_id)
-        if getattr(purchase, "customer_contractor_id", None)
-        else None
-    )
+    from app.services.documents.stages_relations import load_customer
+    customer_org, customer_ctr = await load_customer(db, subsidy)
 
     results = await get_or_build_default_results(db, purchase, pub)
     docx_bytes = build_vsks_protocol_docx(purchase, subsidy, customer_org, customer_ctr, results)

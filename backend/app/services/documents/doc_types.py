@@ -86,6 +86,8 @@ DOC_TYPES = {
     "fabrikant_application_form":   ("fabrikant_application_form.docx",   "Фабрикант_форма_заявки"),
     "fabrikant_documentation":      ("fabrikant_documentation.docx",      "Фабрикант_документация"),
     "fabrikant_contract_project":   ("fabrikant_contract_project.docx",   "Фабрикант_проект_договора"),
+    # Протокол закупочной комиссии
+    "procurement_protocol":         ("procurement_protocol.docx",         "Протокол_закупки"),
 }
 
 

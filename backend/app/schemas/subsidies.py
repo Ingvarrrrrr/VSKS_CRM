@@ -1,4 +1,5 @@
 """Subsidies, responsible persons, approvers, and FEO categories schemas (extracted from schemas.py)."""
+import json
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from typing import Optional, List, Any
 from datetime import date, datetime
@@ -42,15 +43,19 @@ class SubsidyCreate(BaseModel):
     agreement_number: Optional[str] = None
     # Владелец (2026-08-30): порог предупреждения о подходе к потолку субсидии (%)
     ceiling_warn_percent: Optional[float] = None
+    # Закупочная комиссия (для протоколов закупки)
+    commission_order_number: Optional[str] = None
+    commission_order_date: Optional[_Date] = None
+    commission_members: Optional[List[dict]] = None
 
-    @field_validator('basis_doc_date', 'procurement_regulation_date', mode='before')
+    @field_validator('basis_doc_date', 'procurement_regulation_date', 'commission_order_date', mode='before')
     @classmethod
     def empty_str_to_none_date(cls, v):
         if v == '' or v is None:
             return None
         return v
 
-    @field_validator('basis_doc_number', 'procurement_regulation_order_number', mode='before')
+    @field_validator('basis_doc_number', 'procurement_regulation_order_number', 'commission_order_number', mode='before')
     @classmethod
     def empty_str_to_none_number(cls, v):
         if v == '' or v is None:
@@ -94,15 +99,19 @@ class SubsidyUpdate(BaseModel):
     agreement_number: Optional[str] = None
     # Владелец (2026-08-30): порог предупреждения о подходе к потолку субсидии (%)
     ceiling_warn_percent: Optional[float] = None
+    # Закупочная комиссия (для протоколов закупки)
+    commission_order_number: Optional[str] = None
+    commission_order_date: Optional[_Date] = None
+    commission_members: Optional[List[dict]] = None
 
-    @field_validator('basis_doc_date', 'procurement_regulation_date', mode='before')
+    @field_validator('basis_doc_date', 'procurement_regulation_date', 'commission_order_date', mode='before')
     @classmethod
     def empty_str_to_none_date(cls, v):
         if v == '' or v is None:
             return None
         return v
 
-    @field_validator('basis_doc_number', 'procurement_regulation_order_number', mode='before')
+    @field_validator('basis_doc_number', 'procurement_regulation_order_number', 'commission_order_number', mode='before')
     @classmethod
     def empty_str_to_none_number(cls, v):
         if v == '' or v is None:
@@ -180,6 +189,26 @@ class SubsidyOut(BaseModel):
     # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б)
     is_sandbox: bool = False
     copied_from_id: Optional[int] = None
+    # Закупочная комиссия (для протоколов закупки)
+    commission_order_number: Optional[str] = None
+    commission_order_date: Optional[_Date] = None
+    commission_members: Optional[List[dict]] = None
+
+    @field_validator('commission_members', mode='before')
+    @classmethod
+    def parse_commission_members(cls, v):
+        if v is None or v == '' or v == []:
+            return []
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else []
+            except Exception:
+                return []
+        if isinstance(v, list):
+            return v
+        return []
+
     model_config = {"from_attributes": True}
 
 

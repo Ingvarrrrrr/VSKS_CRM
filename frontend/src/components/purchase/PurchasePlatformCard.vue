@@ -6,7 +6,23 @@
         <v-icon icon="mdi-broadcast" color="deep-purple" size="20" />
         Публикация на площадках
       </span>
-      <div class="d-flex gap-2">
+      <div class="d-flex flex-wrap gap-2">
+        <v-btn color="deep-purple" variant="flat" size="small" prepend-icon="mdi-gavel"
+          @click="openResultsDialog(null)">
+          Рассмотрение заявок / Протокол
+        </v-btn>
+        <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-file-excel-outline"
+          :href="`/api/publications/purchases/${purchaseId}/tkp-template.xlsx`"
+          target="_blank"
+          title="Скачать стандартизированную форму ТКП (Приложение № 2) в формате Excel">
+          Бланк ТКП (.xlsx)
+        </v-btn>
+        <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-file-pdf-box"
+          :href="`/api/publications/purchases/${purchaseId}/tkp-template.pdf`"
+          target="_blank"
+          title="Скачать интерактивную заполняемую форму ТКП (Приложение № 2) в формате PDF">
+          Бланк ТКП (.pdf)
+        </v-btn>
         <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-folder-zip"
           :loading="docLoading === 'fabrikant_package'"
           @click="downloadFabrikantPackage">
@@ -89,7 +105,16 @@
                 <span v-else class="text-medium-emphasis">—</span>
               </template>
             </td>
-            <td style="width:72px" class="text-right">
+            <td style="width:108px" class="text-right">
+              <!-- Итоги и протокол закупки -->
+              <v-btn
+                icon="mdi-gavel"
+                size="x-small"
+                variant="text"
+                color="deep-purple"
+                title="Рассмотрение заявок / Итоговый протокол"
+                @click="openResultsDialog(pub)"
+              />
               <!-- Обновить статус: для черновика и опубликованного (состояние может меняться) -->
               <v-btn
                 v-if="(pub.platform === 'fabrikant' || pub.platform === 'roseltorg_rb') && (pub.status === 'draft' || pub.status === 'published')"
@@ -156,10 +181,20 @@
         </v-list-item>
       </v-list>
     </v-card-text>
+
+    <!-- Диалог рассмотрения заявок и формирования протокола ВСКС -->
+    <PurchaseResultsReviewDialog
+      ref="resultsDialogRef"
+      :purchase-id="purchaseId"
+      @winner-applied="emit('winner-applied', $event)"
+    />
   </v-card>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
+import PurchaseResultsReviewDialog from './PurchaseResultsReviewDialog.vue'
+
 // Карточка «Публикация на площадках». Вынесено из CreateOrderView.vue
 // (рефакторинг без изменения поведения, часть 3). Все данные/функции — из
 // composables/purchase/usePurchasePublications.ts и useFabrikantPackage.ts,
@@ -171,7 +206,8 @@
 // что раньше стояло прямо в @click (publishErrors/publishDialog/pendingPlatform/
 // fabrikantNoNmcd мутируются идентично, просто вызовом функции, а не инлайном,
 // т.к. дочерний компонент не может писать в чужие refs напрямую).
-defineProps<{
+const props = defineProps<{
+  purchaseId: number
   docLoading: string | null
   downloadFabrikantPackage: () => void
   downloadRoseltorgPackage: () => void
@@ -200,11 +236,16 @@ defineProps<{
 
 const emit = defineEmits<{
   'update:noNmcd': [value: boolean]
+  'winner-applied': [payload: { contractor_id: number; contractor_name: string; contract_price: number | null }]
 }>()
+
+const resultsDialogRef = ref<any>(null)
+function openResultsDialog(pub?: any) {
+  resultsDialogRef.value?.openDialog(pub)
+}
 
 // Подтверждение «Опубликовать черновик» прямо в карточке (confirm() запрещён
 // в артефактах/UI-правилах проекта) — id публикации, для которой сейчас
 // показана кнопка-подтверждение, вместо второй кнопки.
-import { ref } from 'vue'
 const publishDraftConfirmId = ref<number | null>(null)
 </script>

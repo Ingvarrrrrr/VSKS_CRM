@@ -365,6 +365,20 @@ async def _ensure_game_tables():
         logging.getLogger(__name__).warning(f"game tables setup skipped (non-fatal): {e}")
 
 
+async def _subsidy_commission_and_pub_results_columns():
+    try:
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE subsidies ADD COLUMN IF NOT EXISTS commission_order_number VARCHAR(100);"))
+            await conn.execute(text("ALTER TABLE subsidies ADD COLUMN IF NOT EXISTS commission_order_date DATE;"))
+            await conn.execute(text("ALTER TABLE subsidies ADD COLUMN IF NOT EXISTS commission_members TEXT;"))
+            await conn.execute(text("ALTER TABLE platform_publications ADD COLUMN IF NOT EXISTS procedure_id VARCHAR(100);"))
+            await conn.execute(text("ALTER TABLE platform_publications ADD COLUMN IF NOT EXISTS lot_id VARCHAR(100);"))
+            await conn.execute(text("ALTER TABLE platform_publications ADD COLUMN IF NOT EXISTS results_data TEXT;"))
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"_subsidy_commission_and_pub_results_columns skipped (non-fatal): {e}")
+
+
 async def run():
     """Вызывает все idempotent DDL-блоки в исходном порядке (см. app/__init__.py.lifespan до разрезания)."""
     await _phase22_bank_payments_hash_migration()
@@ -386,3 +400,4 @@ async def run():
     await _b_exec_wishes_execution_columns()
     await _contractor_card_columns()
     await _ensure_game_tables()
+    await _subsidy_commission_and_pub_results_columns()

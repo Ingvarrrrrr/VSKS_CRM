@@ -46,7 +46,10 @@ async def apply_subsidy_update(
 
     old_budget = db_subsidy.budget  # capture BEFORE setattr loop
 
+    import json
     for key, value in payload.items():
+        if key == 'commission_members' and isinstance(value, (list, dict)):
+            value = json.dumps(value, ensure_ascii=False)
         setattr(db_subsidy, key, value)
     # calculated_budget — deprecated колонка (Правило №6), НЕ пишется — см.
     # app.services.subsidy_budget, считается на чтении.

@@ -58,6 +58,10 @@ class Subsidy(Base):
     approved_at = Column(DateTime(timezone=True), nullable=True)
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
+    # Закупочная комиссия (для итоговых протоколов закупки ВСКС)
+    commission_order_number = Column(String(100), nullable=True)
+    commission_order_date = Column(Date, nullable=True)
+    commission_members = Column(Text, nullable=True)
     # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б,
     # 03.10.2026): is_sandbox=true — копия, исключается из итогов дашборда/аккаунта
     # (routers/dashboard.py, routers/subsidies.py list), не шлёт уведомления/задачи

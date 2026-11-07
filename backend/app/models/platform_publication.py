@@ -23,6 +23,9 @@ class PlatformPublication(Base):
     attachments_result = Column(Text, nullable=True)        # JSON: [{file, ok, error?}] — результат прикрепления документов
     platform_number = Column(String(50), nullable=True)     # номер процедуры на ЭТП (например, 5560334)
     platform_state = Column(String(100), nullable=True)     # состояние процедуры словами площадки: «Черновик», «Размещена» и т.п.
+    procedure_id = Column(String(100), nullable=True)       # ID процедуры на ЭТП
+    lot_id = Column(String(100), nullable=True)             # ID лота на ЭТП
+    results_data = Column(Text, nullable=True)              # JSON с результатами процедуры и рассмотрения заявок
 
     # Phase 17.1-07 hotfix: cascade delete + passive_deletes so SQLAlchemy does not
     # try to NULL-out purchase_id on Purchase deletion (FK is NOT NULL).

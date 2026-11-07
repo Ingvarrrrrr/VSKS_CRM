@@ -544,6 +544,9 @@ async def create_subsidy(
         )).first()
         if _dup:
             raise HTTPException(status_code=409, detail=f"Субсидия с названием «{_new_name}» уже существует")
+    if isinstance(data.get('commission_members'), (list, dict)):
+        import json
+        data['commission_members'] = json.dumps(data['commission_members'], ensure_ascii=False)
     db_subsidy = Subsidy(**data)
     db.add(db_subsidy)
     await db.commit()

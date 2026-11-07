@@ -45,6 +45,12 @@ from .doc_types import TEMPLATES_DIR
 # путь относительно __file__ (образ бэкенда не видит остальной репозиторий,
 # см. project_backend_image_cannot_read_repo_root.md).
 ROSELTORG_TEMPLATE_PATH = os.path.join(TEMPLATES_DIR, "roseltorg", "lot_items_template.xlsx")
+if not os.path.exists(ROSELTORG_TEMPLATE_PATH):
+    _local_tpl = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "templates", "roseltorg", "lot_items_template.xlsx")
+    )
+    if os.path.exists(_local_tpl):
+        ROSELTORG_TEMPLATE_PATH = _local_tpl
 
 ROSELTORG_SHEET_NAME_INDEX = 0  # "Список позиций" — первый лист шаблона
 ROSELTORG_FIRST_DATA_ROW = 4
@@ -117,53 +123,38 @@ async def render_roseltorg_package_files(
     purchase_id: int,
     current_user=None,
 ) -> tuple[list[tuple[str, bytes]], list[str]]:
-    """Собирает «Позиции_по_лоту.xlsx» для покупки *purchase_id*.
+    """Собирает «Позиции_по_лоту.xlsx» и бланки ТКП (xlsx, pdf) для покупки *purchase_id*.
 
     Returns:
-        files:  list of (file_name, bytes) — пока ровно один файл при успехе.
+        files:  list of (file_name, bytes) — 3 файла: позиции по лоту + ТКП (xlsx + pdf).
         errors: list of human-readable error strings.
     """
-    result = await db.execute(
-        select(Purchase)
-        .options(selectinload(Purchase.items).selectinload(PurchaseItem.product))
-        .where(Purchase.id == purchase_id)
+    from .tkp_form_xlsx import (
+        load_standardized_tkp_rows,
+        build_standardized_tkp_xlsx,
+        TKP_FORM_ZIP_FILE_NAME,
     )
-    p = result.scalar_one_or_none()
+    from .tkp_form_pdf import (
+        build_standardized_tkp_pdf,
+        TKP_PDF_ZIP_FILE_NAME,
+    )
+
+    p, rows, errors = await load_standardized_tkp_rows(db, purchase_id)
     if not p:
-        return [], [f"Закупка {purchase_id} не найдена"]
-
-    # Тот же гейт, что у пакета Фабрикант (ПРАВИЛО №6: единственная проверка
-    # нерешённых дублей строк ТЗ, app.services.documents.contexts) — пакет
-    # Росэлторга тоже печатает purchase_items (план), до выбора поставщика.
-    _require_tz_duplicates_resolved_for_doc(p)
-
-    _tz = build_tz_rows(getattr(p, "items", None) or [], getattr(p, "tz_duplicate_decisions", None))
-
-    rows: list[dict] = []
-    errors: list[str] = []
-    for row in _tz["rows"]:
-        item = row["item"]
-        try:
-            raw = _purchase_item_doc_values(p, item, row)
-        except Exception as e:
-            errors.append(f"Позиция «{getattr(item, 'item_name', '') or item.id}»: {type(e).__name__}: {e}")
-            continue
-        rows.append({
-            # ОКПД2 у позиции не хранится (см. докстринг модуля) — пустая
-            # строка, не придуманное значение.
-            "okpd2": "",
-            "name": raw["name"],
-            "quantity": raw["quantity"],
-            "unit": raw["unit"],
-            "unit_price": raw["unit_price"],
-            "description": raw["description"],
-        })
-
+        return [], errors or [f"Закупка {purchase_id} не найдена"]
     if not rows:
         return [], errors or [f"У закупки {purchase_id} нет позиций для пакета Росэлторг"]
 
     xlsx_bytes = build_roseltorg_lot_items_xlsx(rows)
-    return [(ROSELTORG_ZIP_FILE_NAME, xlsx_bytes)], errors
+    subj = str(getattr(p, "subject", "") or getattr(p, "registry_number", "") or f"Закупка #{p.id}")
+    tkp_bytes = build_standardized_tkp_xlsx(rows, purchase_id=p.id, purchase_subject=subj, customer_name="ВСКС")
+    tkp_pdf_bytes = build_standardized_tkp_pdf(rows, purchase_id=p.id, purchase_subject=subj, customer_name="ВСКС")
+
+    return [
+        (ROSELTORG_ZIP_FILE_NAME, xlsx_bytes),
+        (TKP_FORM_ZIP_FILE_NAME, tkp_bytes),
+        (TKP_PDF_ZIP_FILE_NAME, tkp_pdf_bytes),
+    ], errors
 
 
 def build_roseltorg_zip_bytes(

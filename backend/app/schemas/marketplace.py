@@ -55,6 +55,9 @@ class PublicationOut(BaseModel):
     created_at: Optional[datetime] = None
     platform_number: Optional[str] = None
     platform_state: Optional[str] = None
+    procedure_id: Optional[str] = None
+    lot_id: Optional[str] = None
+    results_data: Optional[str] = None
 
     class Config:
         from_attributes = True

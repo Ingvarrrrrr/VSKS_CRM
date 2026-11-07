@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from app.routers import (
     auth, users, contractors, contracts, purchases, payments,
     feo_categories, dashboard, subsidies, products, purchase_files,
-    documents, publications, subsidy_approvers, responsible_persons,
+    documents, publications, publication_results, subsidy_approvers, responsible_persons,
     commercial_requests, suppliers, purchase_events, user_hierarchy,
     system_incidents, organizations, reports, events, purchase_approvals,
     tasks, departments, delivery_addresses, hierarchy, billing,
@@ -482,6 +482,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(purchase_files.router)
     app.include_router(documents.router)
     app.include_router(documents_guide_router)
+    app.include_router(publication_results.router)
     app.include_router(publications.router)
     app.include_router(subsidy_approvers.router)
     app.include_router(responsible_persons.router)

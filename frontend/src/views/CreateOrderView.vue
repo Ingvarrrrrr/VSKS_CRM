@@ -1456,9 +1456,9 @@
       />
       <!-- Скрытые file-input'ы читаемых секций (см. PurchaseDocumentsCard.vue —
            ref-биндинг не переносится в дочерний компонент без forwarding'а). -->
-      <input v-if="canSeePurchaseDocs" ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+      <input v-if="canSeePurchaseDocs" ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.tif,.tiff,.jtif,.jfif"
         style="display:none" @change="uploadSectionFile" />
-      <input v-if="canSeePurchaseDocs" ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+      <input v-if="canSeePurchaseDocs" ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.tif,.tiff,.jtif,.jfif"
         style="display:none" @change="uploadFile" />
 
       <!-- Диалоги файлов (загрузка / смена типа / предпросмотр) -->
@@ -1676,6 +1676,7 @@
 
       <PurchasePlatformCard
         v-if="isEdit && isSectionVisible('platform_publication') && canPublish"
+        :purchase-id="purchaseId!"
         :doc-loading="docLoading"
         :download-fabrikant-package="downloadFabrikantPackage"
         :download-roseltorg-package="downloadRoseltorgPackage"
@@ -1696,6 +1697,7 @@
         v-model:no-nmcd="form.fabrikant_no_nmcd"
         :publishing-draft-pub-id="publishingDraftPubId"
         :publish-draft="publishDraft"
+        @winner-applied="onPlatformWinnerApplied"
       />
       <!-- Скрытый file-input оверрайда пакета Фабрикант (см. PurchasePlatformCard.vue
            — ref-биндинг не переносится в дочерний компонент без forwarding'а). -->
@@ -3941,6 +3943,28 @@ function openPublishDialog() {
   // purchase.fabrikant_no_nmcd (ПРАВИЛО №6, см. usePurchasePublications.ts) и
   // должен показывать ПРОШЛЫЙ сохранённый выбор, а не затирать его при
   // каждом открытии диалога.
+}
+
+async function onPlatformWinnerApplied(payload: { contractor_id: number; contractor_name: string; contract_price: number | null }) {
+  if (payload.contractor_id) {
+    form.contractor_id = payload.contractor_id
+  }
+  if (payload.contract_price) {
+    form.contract_price = payload.contract_price
+    contractPriceMode.value = 'manual'
+  }
+  showSnack(`Товары, цены и НДС победителя «${payload.contractor_name}» вставлены в договор`, 'success')
+  await loadPurchase()
+  if (purchaseId.value) {
+    try {
+      contractItemsState.value = await listContractItems(purchaseId.value)
+    } catch {
+      // ignore
+    }
+  }
+  if (typeof performAutosave === 'function') {
+    performAutosave()
+  }
 }
 
 // Auto-sync contract_price when mode is auto

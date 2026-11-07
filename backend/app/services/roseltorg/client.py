@@ -137,6 +137,33 @@ async def _attach_roseltorg_documents(jwt: str, notice_id: int, purchase_id: int
     return results
 
 
+async def _attach_roseltorg_purchase_questions(jwt: str, notice_id: int) -> None:
+    """Отправляет стандартные вопросы анкеты участника в процедуру Росэлторг (purchase-questions)."""
+    base = ROSELTORG_BASE_URL
+    questions = [
+        {
+            "question": "Срок действия заявки (ТКП) составляет не менее 30 рабочих дней со дня окончания срока подачи заявок",
+            "type": "boolean",
+            "required": True,
+        },
+        {
+            "question": "Наличие заполненного технико-коммерческого предложения по форме Приложения № 2 в формате .xlsx и подписанной скан-копии в .pdf",
+            "type": "boolean",
+            "required": True,
+        },
+        {
+            "question": "Предложение товара в строгом соответствии с ТЗ Заказчика либо эквивалента с подробным описанием характеристик",
+            "type": "text",
+            "required": True,
+        },
+    ]
+    for q in questions:
+        try:
+            await rb_call(jwt, f"{base}/notices/{notice_id}/purchase-questions", {"data": q}, method="POST")
+        except Exception as e:
+            logger.warning("Roseltorg purchase-question attach error notice_id=%s: %s", notice_id, e)
+
+
 async def _call_roseltorg(
     pub_id: int,
     payload: dict,
@@ -299,6 +326,12 @@ async def _call_roseltorg(
 
         if attachments_results:
             await _set_pub_attachments_result(pub_id, attachments_results)
+
+        # Шаг 6: стандартные вопросы анкеты участника (срок действия, форма ТКП, эквивалент)
+        try:
+            await _attach_roseltorg_purchase_questions(jwt, notice_id)
+        except Exception as q_exc:
+            logger.warning("Roseltorg purchase questions error pub=%s: %s", pub_id, q_exc)
 
         # Результат — ЧЕРНОВИК (владелец: не публиковать автоматически).
         # Ссылка — кабинет площадки (точный адрес страницы черновика

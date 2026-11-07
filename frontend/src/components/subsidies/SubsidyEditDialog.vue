@@ -1,6 +1,6 @@
 <template>
   <!-- ── Add Subsidy Dialog ── -->
-  <v-dialog v-model="addOpen" max-width="520" :fullscreen="mobile">
+  <v-dialog v-model="addOpen" max-width="680" :fullscreen="mobile">
     <v-card class="dialog-card">
       <v-card-title class="dialog-title">
         <v-icon icon="mdi-plus-circle-outline" color="primary" class="mr-2" />
@@ -60,6 +60,42 @@
             />
           </v-col>
         </v-row>
+        <v-divider class="mt-4 mb-3" />
+        <div class="text-caption text-medium-emphasis mb-2 font-weight-medium">Закупочная комиссия (для протоколов закупки)</div>
+        <v-row dense>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.commission_order_number"
+              label="Номер приказа о создании комиссии"
+              placeholder="Напр. 86"
+              hint="Используется в п. 1.3 протокола закупки"
+              persistent-hint
+              variant="outlined" density="compact"
+            />
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.commission_order_date"
+              label="Дата приказа о создании комиссии"
+              type="date"
+              variant="outlined" density="compact"
+            />
+          </v-col>
+        </v-row>
+        <div class="d-flex align-center justify-space-between mt-2 mb-1">
+          <span class="text-caption text-medium-emphasis">Состав комиссии</span>
+          <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" @click="addMember(form.commission_members)">
+            Добавить члена комиссии
+          </v-btn>
+        </div>
+        <div v-if="!form.commission_members.length" class="text-caption text-medium-emphasis mb-3">
+          Члены комиссии ещё не добавлены (будут использованы дефолтные для протокола)
+        </div>
+        <div v-for="(m, mIdx) in form.commission_members" :key="mIdx" class="d-flex align-center gap-2 mb-2">
+          <v-text-field v-model="m.full_name" placeholder="ФИО полностью" density="compact" variant="outlined" hide-details style="flex:2" />
+          <v-combobox v-model="m.role" :items="COMMISSION_ROLE_OPTIONS" density="compact" variant="outlined" hide-details style="flex:1.5" />
+          <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="removeMember(form.commission_members, mIdx)" />
+        </div>
       </v-card-text>
       <v-card-actions class="px-4 pb-4">
         <v-spacer />
@@ -72,7 +108,7 @@
   </v-dialog>
 
   <!-- ── Edit Subsidy Dialog ── -->
-  <v-dialog v-model="editOpen" max-width="520" :fullscreen="mobile">
+  <v-dialog v-model="editOpen" max-width="680" :fullscreen="mobile">
     <v-card class="dialog-card">
       <v-card-title class="dialog-title">
         <v-icon icon="mdi-pencil-outline" color="primary" class="mr-2" />
@@ -142,6 +178,42 @@
             />
           </v-col>
         </v-row>
+        <v-divider class="mt-4 mb-3" />
+        <div class="text-caption text-medium-emphasis mb-2 font-weight-medium">Закупочная комиссия (для протоколов закупки)</div>
+        <v-row dense>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="editForm.commission_order_number"
+              label="Номер приказа о создании комиссии"
+              placeholder="Напр. 86"
+              hint="Используется в п. 1.3 протокола закупки"
+              persistent-hint
+              variant="outlined" density="compact"
+            />
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="editForm.commission_order_date"
+              label="Дата приказа о создании комиссии"
+              type="date"
+              variant="outlined" density="compact"
+            />
+          </v-col>
+        </v-row>
+        <div class="d-flex align-center justify-space-between mt-2 mb-1">
+          <span class="text-caption text-medium-emphasis">Состав комиссии</span>
+          <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" @click="addMember(editForm.commission_members)">
+            Добавить члена комиссии
+          </v-btn>
+        </div>
+        <div v-if="!editForm.commission_members.length" class="text-caption text-medium-emphasis mb-3">
+          Члены комиссии ещё не добавлены (будут использованы дефолтные для протокола)
+        </div>
+        <div v-for="(m, mIdx) in editForm.commission_members" :key="mIdx" class="d-flex align-center gap-2 mb-2">
+          <v-text-field v-model="m.full_name" placeholder="ФИО полностью" density="compact" variant="outlined" hide-details style="flex:2" />
+          <v-combobox v-model="m.role" :items="COMMISSION_ROLE_OPTIONS" density="compact" variant="outlined" hide-details style="flex:1.5" />
+          <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="removeMember(editForm.commission_members, mIdx)" />
+        </div>
         <v-divider class="mt-4 mb-3" />
         <div class="text-caption text-medium-emphasis mb-2">Реквизиты для шаблонов договоров</div>
         <v-text-field
@@ -273,11 +345,62 @@ const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'acco
 
 const saving = ref(false)
 
+const COMMISSION_ROLE_OPTIONS = [
+  'Председатель Комиссии',
+  'Заместитель председателя Комиссии',
+  'Член Комиссии',
+  'Секретарь Комиссии',
+]
+
+function addMember(list: any[]) {
+  list.push({ full_name: '', role: list.length === 0 ? 'Председатель Комиссии' : 'Член Комиссии' })
+}
+
+function removeMember(list: any[], idx: number) {
+  list.splice(idx, 1)
+}
+
 // budget: null (не 0) — «ещё не определено» отличается от «определён и равен
 // нулю» (владелец, 2026-09-15). Пустое поле формы даёт null через numOrNull
 // при сборке payload ниже (тот же паттерн, что ceiling_warn_percent).
-const form = ref({ name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, procurement_regulation_date: '' as string, procurement_regulation_order_number: '' as string })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, procurement_regulation_date: '' as string, procurement_regulation_order_number: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean, ceiling_warn_percent: 90 as number | null })
+const form = ref({
+  name: '',
+  year: new Date().getFullYear(),
+  budget: null as number | null,
+  description: '',
+  contractor_id: null as number | null,
+  agreement_text: '' as string,
+  basis_doc_number: '' as string,
+  basis_doc_date: '' as string,
+  procurement_regulation_date: '' as string,
+  procurement_regulation_order_number: '' as string,
+  commission_order_number: '' as string,
+  commission_order_date: '' as string,
+  commission_members: [] as Array<{ full_name: string; role: string }>,
+})
+
+const editForm = ref({
+  id: 0,
+  name: '',
+  year: new Date().getFullYear(),
+  budget: null as number | null,
+  description: '',
+  contractor_id: null as number | null,
+  agreement_text: '' as string,
+  basis_doc_number: '' as string,
+  basis_doc_date: '' as string,
+  procurement_regulation_date: '' as string,
+  procurement_regulation_order_number: '' as string,
+  grantor_name: '' as string,
+  ministry_name: '' as string,
+  extra_contract_clause_1: null as string | null,
+  extra_contract_clause_2: null as string | null,
+  require_planned_dates: true as boolean,
+  ceiling_warn_percent: 90 as number | null,
+  commission_order_number: '' as string,
+  commission_order_date: '' as string,
+  commission_members: [] as Array<{ full_name: string; role: string }>,
+})
 // Снимок «до» (волна 3B, корректировка субсидии через проверку) — ПОЛНЫЙ, не
 // только бюджет: координатор, доп. пробел «SubsidyEditDialog теряет правки» —
 // в корректировку по решению владельца входят И бюджет, И реквизиты, одним
@@ -319,6 +442,11 @@ async function startEdit(s: SubsidyRow) {
     extra_contract_clause_2: full.extra_contract_clause_2 ?? null,
     require_planned_dates: full.require_planned_dates ?? true,
     ceiling_warn_percent: full.ceiling_warn_percent ?? 90,
+    commission_order_number: full.commission_order_number || '',
+    commission_order_date: full.commission_order_date || '',
+    commission_members: Array.isArray(full.commission_members)
+      ? JSON.parse(JSON.stringify(full.commission_members))
+      : [],
   }
   editFullBefore = { ...editForm.value }
   editOpen.value = true
@@ -327,16 +455,45 @@ async function startEdit(s: SubsidyRow) {
 async function addSubsidy() {
   saving.value = true
   try {
+    const validMembers = form.value.commission_members.filter((m: any) => m.full_name && m.full_name.trim())
     const res = await apiFetch<any>('/subsidies/', {
       method: 'POST',
-      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: numOrNull(form.value.budget), description: form.value.description || null, contractor_id: form.value.contractor_id, agreement_text: form.value.agreement_text || null, basis_doc_number: form.value.basis_doc_number || null, basis_doc_date: form.value.basis_doc_date || null, procurement_regulation_date: form.value.procurement_regulation_date || null, procurement_regulation_order_number: form.value.procurement_regulation_order_number || null })
+      body: JSON.stringify({
+        name: form.value.name,
+        year: form.value.year,
+        budget: numOrNull(form.value.budget),
+        description: form.value.description || null,
+        contractor_id: form.value.contractor_id,
+        agreement_text: form.value.agreement_text || null,
+        basis_doc_number: form.value.basis_doc_number || null,
+        basis_doc_date: form.value.basis_doc_date || null,
+        procurement_regulation_date: form.value.procurement_regulation_date || null,
+        procurement_regulation_order_number: form.value.procurement_regulation_order_number || null,
+        commission_order_number: form.value.commission_order_number || null,
+        commission_order_date: form.value.commission_order_date || null,
+        commission_members: validMembers.length ? validMembers : null,
+      })
     })
     ctx.allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0, plan_schedule: 0, ordered: 0, work: 0, contracts: 0, delivered: 0, delivered_unpaid: 0 })
     // Показать созданную карточку сразу, даже если она попала в другой год,
     // чем сейчас открытая вкладка (см. докстринг у selectedYear выше).
     if (res.year !== selectedYear.value) selectedYear.value = res.year
     addOpen.value = false
-    form.value = { name: '', year: new Date().getFullYear(), budget: null, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '', procurement_regulation_date: '', procurement_regulation_order_number: '' }
+    form.value = {
+      name: '',
+      year: new Date().getFullYear(),
+      budget: null,
+      description: '',
+      contractor_id: null,
+      agreement_text: '',
+      basis_doc_number: '',
+      basis_doc_date: '',
+      procurement_regulation_date: '',
+      procurement_regulation_order_number: '',
+      commission_order_number: '',
+      commission_order_date: '',
+      commission_members: [],
+    }
     showSnack('Субсидия добавлена')
     emit('saved')
     // Тихий фон досчитает поля, которых POST не возвращает (contractor_name/
@@ -356,7 +513,28 @@ async function updateSubsidy() {
   saving.value = true
   try {
     const newBudget = numOrNull(editForm.value.budget)
-    const fullBody = { name: editForm.value.name, year: editForm.value.year, budget: newBudget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, procurement_regulation_date: editForm.value.procurement_regulation_date || null, procurement_regulation_order_number: editForm.value.procurement_regulation_order_number || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) }
+    const validMembers = editForm.value.commission_members.filter((m: any) => m.full_name && m.full_name.trim())
+    const fullBody = {
+      name: editForm.value.name,
+      year: editForm.value.year,
+      budget: newBudget,
+      description: editForm.value.description || null,
+      contractor_id: editForm.value.contractor_id,
+      agreement_text: editForm.value.agreement_text || null,
+      basis_doc_number: editForm.value.basis_doc_number || null,
+      basis_doc_date: editForm.value.basis_doc_date || null,
+      procurement_regulation_date: editForm.value.procurement_regulation_date || null,
+      procurement_regulation_order_number: editForm.value.procurement_regulation_order_number || null,
+      grantor_name: editForm.value.grantor_name || null,
+      ministry_name: editForm.value.ministry_name || null,
+      extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null,
+      extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null,
+      require_planned_dates: editForm.value.require_planned_dates,
+      ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent),
+      commission_order_number: editForm.value.commission_order_number || null,
+      commission_order_date: editForm.value.commission_order_date || null,
+      commission_members: validMembers.length ? validMembers : null,
+    }
     const putDirect = () => apiFetch<any>(`/subsidies/${editForm.value.id}`, { method: 'PUT', body: JSON.stringify(fullBody) })
 
     if (isRevisionMode(editForm.value.id)) {
@@ -414,6 +592,9 @@ async function updateSubsidy() {
         procurement_regulation_order_number: res.procurement_regulation_order_number ?? (editForm.value.procurement_regulation_order_number || null),
         require_planned_dates: res.require_planned_dates ?? editForm.value.require_planned_dates,
         ceiling_warn_percent: res.ceiling_warn_percent ?? numOrNull(editForm.value.ceiling_warn_percent),
+        commission_order_number: res.commission_order_number ?? (editForm.value.commission_order_number || null),
+        commission_order_date: res.commission_order_date ?? (editForm.value.commission_order_date || null),
+        commission_members: res.commission_members ?? editForm.value.commission_members,
       })
     }
     editOpen.value = false

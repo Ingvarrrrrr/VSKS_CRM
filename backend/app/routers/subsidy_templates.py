@@ -109,10 +109,13 @@ async def list_subsidy_templates(
     result = []
     subsidy_dir = os.path.join(SUBSIDY_TEMPLATES_BASE, "subsidies", str(subsidy_id))
     proto_path = os.path.join(subsidy_dir, "procurement_protocol.docx")
-    if not os.path.exists(proto_path) and os.path.exists(subsidy_dir):
+    from app.services.documents.protocol_docx_helpers import (
+        resolve_or_build_subsidy_protocol_base_doc,
+        is_valid_full_protocol_template,
+    )
+    if os.path.exists(subsidy_dir) and (not os.path.exists(proto_path) or not is_valid_full_protocol_template(proto_path)):
         try:
-            from app.services.documents.protocol_docx_helpers import resolve_or_build_subsidy_protocol_base_doc
-            resolve_or_build_subsidy_protocol_base_doc(subsidy_id, custom_dir=subsidy_dir)
+            resolve_or_build_subsidy_protocol_base_doc(subsidy_id, custom_dir=subsidy_dir, for_rendering=False)
         except Exception as e:
             logger.debug("Failed auto-generating protocol template for %s: %s", subsidy_id, e)
 
@@ -196,8 +199,20 @@ async def download_subsidy_template(
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, f"Неизвестный тип документа: {doc_type}")
 
-    subsidy_path = os.path.join(SUBSIDY_TEMPLATES_BASE, "subsidies", str(subsidy_id), f"{doc_type}.docx")
+    subsidy_dir = os.path.join(SUBSIDY_TEMPLATES_BASE, "subsidies", str(subsidy_id))
+    subsidy_path = os.path.join(subsidy_dir, f"{doc_type}.docx")
     global_path = os.path.join(TEMPLATES_BASE, f"{doc_type}.docx")
+
+    if doc_type == "procurement_protocol":
+        from app.services.documents.protocol_docx_helpers import (
+            resolve_or_build_subsidy_protocol_base_doc,
+            is_valid_full_protocol_template,
+        )
+        if not os.path.exists(subsidy_path) or not is_valid_full_protocol_template(subsidy_path):
+            try:
+                resolve_or_build_subsidy_protocol_base_doc(subsidy_id, custom_dir=subsidy_dir, for_rendering=False)
+            except Exception as e:
+                logger.debug("Failed re-generating protocol template on download for %s: %s", subsidy_id, e)
 
     if os.path.exists(subsidy_path):
         path = subsidy_path

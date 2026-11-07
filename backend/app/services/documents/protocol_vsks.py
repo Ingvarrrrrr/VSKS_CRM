@@ -44,7 +44,7 @@ def build_vsks_protocol_docx(
     """Генерирует итоговый протокол закупки ВСКС в формате .docx."""
     from app.services.documents.protocol_docx_helpers import resolve_or_build_subsidy_protocol_base_doc
     subsidy_id = subsidy.id if subsidy else getattr(purchase, "subsidy_id", None)
-    doc = resolve_or_build_subsidy_protocol_base_doc(subsidy_id)
+    doc = resolve_or_build_subsidy_protocol_base_doc(subsidy_id, for_rendering=True)
 
     # Реквизиты Заказчика (единый источник через add_customer_context, ПРАВИЛО №6)
     from app.services.documents.contexts_extra import add_customer_context

@@ -1234,8 +1234,11 @@ def test_subsidy_protocol_base_doc_copies_header_from_contract(tmp_path):
     doc_src.add_paragraph("Текст договора поставки...")
     doc_src.save(str(contract_path))
 
-    # Вызываем resolve_or_build_subsidy_protocol_base_doc
-    base_doc = resolve_or_build_subsidy_protocol_base_doc(88, custom_dir=str(sub_dir))
+    # Вызываем resolve_or_build_subsidy_protocol_base_doc (для шаблона / скачивания)
+    from app.services.documents.protocol_docx_helpers import is_valid_full_protocol_template
+    from docxtpl import DocxTemplate
+
+    base_doc = resolve_or_build_subsidy_protocol_base_doc(88, custom_dir=str(sub_dir), for_rendering=False)
 
     # 1. Проверяем, что создался файл procurement_protocol.docx в папке субсидии
     proto_file = sub_dir / "procurement_protocol.docx"
@@ -1244,11 +1247,20 @@ def test_subsidy_protocol_base_doc_copies_header_from_contract(tmp_path):
     # 2. Проверяем, что колонтитул организации сохранился
     assert "РЕГИОНАЛЬНОЕ ОТДЕЛЕНИЕ" in base_doc.sections[0].header.paragraphs[0].text
 
-    # 3. Проверяем, что текст договора удалён, а таблица-шапка организации сохранена
+    # 3. Проверяем, что текст договора удалён, а файл на диске — полноценный docxtpl-шаблон
     body_text = "\n".join(p.text for p in base_doc.paragraphs)
     assert "Текст договора поставки" not in body_text
-    assert len(base_doc.tables) == 1
-    assert "ОТДЕЛЕНИЕ КРЫМ" in base_doc.tables[0].rows[0].cells[1].text
+    assert is_valid_full_protocol_template(str(proto_file))
+
+    # 4. Проверяем, что docxtpl компилирует и рендерит пустой и заполненный контекст без ошибок
+    tpl = DocxTemplate(str(proto_file))
+    tpl.render({})
+    tpl.render({"commission_members": [{"full_name": "Тестов Т.Т.", "role": "Член"}]})
+
+    # 5. Проверяем режим for_rendering=True: тело очищено для python-docx, но логотип сохранён
+    render_doc = resolve_or_build_subsidy_protocol_base_doc(88, custom_dir=str(sub_dir), for_rendering=True)
+    assert len(render_doc.tables) == 1
+    assert "ОТДЕЛЕНИЕ КРЫМ" in render_doc.tables[0].rows[0].cells[1].text
 
 
 

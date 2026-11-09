@@ -259,7 +259,7 @@ async def get_publication_file(
 async def import_protocol_file(
     pub_id: int,
     file: Optional[UploadFile] = File(default=None),
-    files: Optional[List[UploadFile]] = File(default=None),
+    files: List[UploadFile] = File(default=[]),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -272,8 +272,8 @@ async def import_protocol_file(
 
     file_list: List[UploadFile] = []
     if isinstance(files, list):
-        file_list.extend([f for f in files if isinstance(f, UploadFile)])
-    if isinstance(file, UploadFile) and file not in file_list:
+        file_list.extend([f for f in files if hasattr(f, "read") and getattr(f, "filename", None)])
+    if file is not None and hasattr(file, "read") and getattr(file, "filename", None) and file not in file_list:
         file_list.append(file)
 
     if not file_list:
@@ -337,6 +337,9 @@ async def upload_application_document(
             target_app["price_without_vat"] = s_app["price_without_vat"]
         if s_app.get("positions"):
             target_app["positions"] = s_app["positions"]
+        for _k in ("kpp", "vat_label", "compliance_status", "has_tz_correction", "tz_corrections_count", "tz_warning_notes", "analog_notes"):
+            if _k in s_app and s_app[_k] is not None:
+                target_app[_k] = s_app[_k]
     docs = target_app.get("documents", [])
     if not any(d.get("name") == doc_entry["name"] for d in docs):
         docs.append(doc_entry)

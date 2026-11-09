@@ -35,6 +35,7 @@ from app.services.documents.formatting import _fmt_date, _extract_city_from_addr
 from app.services.documents.protocol_vsks import build_vsks_protocol_docx
 from app.services.documents.tkp_form_xlsx import render_standardized_tkp_xlsx
 from app.services.documents.tkp_form_pdf import render_standardized_tkp_pdf
+from app.services.roseltorg.analog_matcher import extract_item_structured_chars
 from app.services.roseltorg.protocol_parser import parse_protocol_file
 from app.services.roseltorg.results_builder import get_or_build_default_results
 from app.services.roseltorg.results_import_service import (
@@ -396,6 +397,7 @@ async def init_purchase_positions(
             "is_alternative": False,
             "compliance_status": "compliant",
             "compliance_note": "",
+            "characteristics": extract_item_structured_chars(pi, pi.tz_description or ""),
         }
         for idx, pi in enumerate(p_items, start=1)
     ]
@@ -424,34 +426,24 @@ async def apply_winner_to_purchase(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Переносит реквизиты победителя (контрагент, цена, попозиционные цены и согласованные аналоги) в закупку."""
+    """Переносит реквизиты победителя в закупку."""
     pub = await db.get(PlatformPublication, pub_id)
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
-
     purchase = await ensure_purchase_visible(pub.purchase_id, current_user, db)
-
     if not pub.results_data:
         raise HTTPException(status_code=422, detail="Нет данных рассмотрения заявок")
-
     try:
         results = json.loads(pub.results_data)
     except Exception:
         raise HTTPException(status_code=422, detail="Некорректный формат результатов закупки")
-
-    applications = results.get("applications", [])
-    winner = next((a for a in applications if a.get("admitted") and a.get("place") == 1), None)
+    winner = next((a for a in results.get("applications", []) if a.get("admitted") and a.get("place") == 1), None)
     if not winner:
         raise HTTPException(status_code=422, detail="Среди допущенных заявок не определён победитель (1 место)")
-
-    proto_num = results.get("protocol_number") or pub.platform_number
     apply_cfg = body or ApplyWinnerRequest()
-
     return await apply_winner_full(
-        db=db,
-        purchase=purchase,
-        winner=winner,
-        protocol_number=proto_num,
+        db=db, purchase=purchase, winner=winner,
+        protocol_number=results.get("protocol_number") or pub.platform_number,
         apply_positions_prices=apply_cfg.apply_positions_prices,
         apply_accepted_alternatives=apply_cfg.apply_accepted_alternatives,
     )
@@ -467,23 +459,38 @@ async def download_protocol_docx(
     pub = await db.get(PlatformPublication, pub_id)
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
-
     purchase = await ensure_purchase_visible(pub.purchase_id, current_user, db)
-
     subsidy = await db.get(Subsidy, purchase.subsidy_id) if purchase.subsidy_id else None
     from app.services.documents.stages_relations import load_customer
     customer_org, customer_ctr = await load_customer(db, subsidy)
-
     results = await get_or_build_default_results(db, purchase, pub)
     docx_bytes = build_vsks_protocol_docx(purchase, subsidy, customer_org, customer_ctr, results)
-
     reg_num = results.get("registration_number") or pub.platform_number or purchase.id
     filename = f"Протокол_{reg_num}.docx"
-
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
-        },
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.get("/{pub_id}/results/comparison.xlsx")
+async def download_comparison_matrix_xlsx(
+    pub_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Формирует и отдаёт сводную таблицу сравнения предложений всех участников в формате .xlsx."""
+    pub = await db.get(PlatformPublication, pub_id)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Публикация не найдена")
+    await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    from app.services.roseltorg.comparison_xlsx_builder import build_comparison_matrix_for_publication
+    xlsx_bytes, filename, errors = await build_comparison_matrix_for_publication(db, pub_id)
+    if not xlsx_bytes:
+        raise HTTPException(status_code=422, detail="; ".join(errors) or "Не удалось сформировать сводную таблицу")
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )

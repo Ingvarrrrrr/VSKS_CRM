@@ -83,6 +83,18 @@
                 Бланк ТКП (.pdf)
               </v-btn>
               <v-btn
+                v-if="pubId"
+                color="deep-purple"
+                variant="outlined"
+                size="small"
+                prepend-icon="mdi-table-pivot"
+                title="Скачать сводную таблицу сравнения характеристик ТКП всех участников в Excel"
+                :href="`/api/publications/${pubId}/results/comparison.xlsx`"
+                target="_blank"
+              >
+                Сводная таблица (.xlsx)
+              </v-btn>
+              <v-btn
                 color="deep-purple"
                 variant="outlined"
                 size="small"
@@ -134,6 +146,10 @@
           <v-tab value="apps">
             <v-icon icon="mdi-format-list-numbered" class="mr-1" />
             Заявки и рассмотрение ({{ results.applications?.length || 0 }})
+          </v-tab>
+          <v-tab value="comparison">
+            <v-icon icon="mdi-table-pivot" class="mr-1" />
+            Сводная таблица ТКП
           </v-tab>
           <v-tab value="commission">
             <v-icon icon="mdi-account-group" class="mr-1" />
@@ -345,7 +361,15 @@
             </div>
           </v-window-item>
 
-          <!-- ВКЛАДКА 2: КОМИССИЯ И РЕКВИЗИТЫ ПРОТОКОЛА -->
+          <!-- ВКЛАДКА 2: СВОДНАЯ ТАБЛИЦА СРАВНЕНИЯ ТКП -->
+          <v-window-item value="comparison">
+            <PurchaseResultsComparisonTab
+              :results="results"
+              :publication-id="pubId"
+            />
+          </v-window-item>
+
+          <!-- ВКЛАДКА 3: КОМИССИЯ И РЕКВИЗИТЫ ПРОТОКОЛА -->
           <v-window-item value="commission">
             <PurchaseResultsCommissionTab
               :results="results"
@@ -422,6 +446,7 @@ import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { formatMoney } from '@/utils/formatMoney'
 import PurchaseApplicationPositionsPanel from './PurchaseApplicationPositionsPanel.vue'
+import PurchaseResultsComparisonTab from './PurchaseResultsComparisonTab.vue'
 import PurchaseResultsCommissionTab from './PurchaseResultsCommissionTab.vue'
 
 const props = defineProps<{
@@ -433,7 +458,7 @@ const emit = defineEmits<{
 }>()
 
 const open = ref(false)
-const tab = ref<'apps' | 'commission'>('apps')
+const tab = ref<'apps' | 'comparison' | 'commission'>('apps')
 const { mobile } = useDisplay()
 const toast = useToast()
 

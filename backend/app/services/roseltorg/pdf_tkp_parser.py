@@ -16,7 +16,13 @@ try:
 except ImportError:
     fitz = None  # type: ignore
 
-from .analog_matcher import clean_str, detect_alternative, parse_num
+from .analog_matcher import (
+    clean_str,
+    detect_alternative,
+    evaluate_position_characteristics,
+    extract_item_structured_chars,
+    parse_num,
+)
 from .results import format_vat_label
 from .winner_apply_service import normalize_item_vat_rate
 
@@ -69,6 +75,7 @@ def _build_protocol_dict(
     rejection_reason: str,
     positions: List[Dict[str, Any]],
     explicit_total: Optional[float] = None,
+    warnings: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     total = explicit_total or round(sum((p.get("total_price") or 0.0) for p in positions), 2)
     dec_text = (
@@ -96,6 +103,9 @@ def _build_protocol_dict(
         "rejection_reason": rejection_reason,
         "decision_text": dec_text,
         "place": 1 if admitted else None,
+        "warnings": warnings or [],
+        "has_tz_correction": any(p.get("has_tz_correction") for p in positions),
+        "tz_correction_notes": [n for p in positions for n in p.get("tz_correction_notes", [])],
         "positions": positions,
         "documents": [],
     }
@@ -138,6 +148,7 @@ def _parse_from_widgets(
         )
 
     positions: List[Dict[str, Any]] = []
+    warnings: List[str] = []
     idx = 0
     while True:
         meta_k = f"item_{idx}_meta"
@@ -174,13 +185,66 @@ def _parse_from_widgets(
             t_price = round(qty * u_price, 2)
 
         offer_lower = (offer_type or "").lower()
+        is_exact_model_offer = ("заказчика" in offer_lower or "по тз" in offer_lower or not offer_lower)
         is_alt = ("аналог" in offer_lower or "эквивалент" in offer_lower)
-        if not is_alt and offered_specs:
+        if is_exact_model_offer:
+            is_alt = False
+        elif not is_alt and offered_specs:
             alt_res, _ = detect_alternative(req_name, req_specs, offered_specs, offered_specs)
             if alt_res:
                 is_alt = True
 
-        offered_name = offered_specs.split("\n")[0].strip()[:250] if (is_alt and offered_specs) else req_name
+        # Извлекаем и проверяем построчные характеристики
+        chars: List[Dict[str, Any]] = []
+        if meta and isinstance(meta, dict) and "characteristics" in meta:
+            chars = [dict(c) for c in (meta.get("characteristics") or [])]
+        elif purchase_items and idx < len(purchase_items) and "characteristics" in purchase_items[idx]:
+            chars = [dict(c) for c in (purchase_items[idx].get("characteristics") or [])]
+
+        for c_idx, ch in enumerate(chars):
+            w_val = widgets.get(f"item_{idx}_char_{c_idx}_val")
+            if w_val is not None and w_val.strip():
+                ch["offered_value"] = w_val.strip()
+
+        eval_chars, has_changes, all_compliant, rej_notes, has_tz_corr, tz_corr_notes = evaluate_position_characteristics(chars, chars, is_exact_model_offer=is_exact_model_offer)
+        if has_changes and not is_exact_model_offer:
+            is_alt = True
+
+        if has_tz_corr:
+            warn_msg = f"Позиция {idx + 1}: ⚠️ ВНИМАНИЕ ЗАКАЗЧИКУ: Участник подтвердил модель Заказчика, но скорректировал ТЗ: {'; '.join(tz_corr_notes)}"
+            warnings.append(warn_msg)
+
+        if not all_compliant:
+            if is_exact_model_offer and has_tz_corr:
+                pos_status = "tz_warning"
+                pos_decision = "tz_warning"
+                pos_note = "; ".join(tz_corr_notes)
+            else:
+                is_alt = True
+                pos_status = "analog_rejected"
+                pos_decision = "rejected"
+                pos_note = rej_notes
+                admitted = False
+                rejection_reason = (f"{rejection_reason}; {rej_notes}").strip("; ")
+        elif is_alt:
+            pos_status = "analog_pending"
+            pos_decision = "analog_pending"
+            pos_note = "Указан эквивалент / аналог"
+        else:
+            pos_status = "compliant"
+            pos_decision = "accepted"
+            pos_note = "; ".join(tz_corr_notes) if has_tz_corr else ""
+
+        if u_price > 0 and not bool(offered_specs and offered_specs.strip()):
+            warnings.append(f"Позиция {idx + 1}: Не указана конкретная марка / модель товара")
+            pos_note = (f"{pos_note}; Не указана конкретная марка / модель товара").strip("; ")
+
+        if is_alt and not offered_specs and eval_chars:
+            ch_diffs = [f"{c['name']}: {c['offered_value']} {c['unit']}".strip() for c in eval_chars if c.get("is_changed")]
+            if ch_diffs:
+                offered_specs = "; ".join(ch_diffs)
+
+        offered_name = offered_specs.split("\n")[0].strip()[:250] if (is_alt and offered_specs) else (offered_specs or req_name)
         positions.append({
             "item_num": idx + 1,
             "purchase_item_id": p_item_id,
@@ -194,9 +258,13 @@ def _parse_from_widgets(
             "total_price": t_price,
             "vat_rate": vat_pos,
             "is_alternative": is_alt,
-            "compliance_status": "analog_pending" if is_alt else "compliant",
-            "compliance_note": ("Указан эквивалент / аналог" if is_alt else ""),
-            "decision": "analog_pending" if is_alt else "accepted",
+            "is_exact_model_offer": is_exact_model_offer,
+            "has_tz_correction": has_tz_corr,
+            "tz_correction_notes": tz_corr_notes,
+            "compliance_status": pos_status,
+            "compliance_note": pos_note,
+            "decision": pos_decision,
+            "characteristics": eval_chars,
         })
         idx += 1
 
@@ -213,6 +281,7 @@ def _parse_from_widgets(
         rejection_reason=rejection_reason,
         positions=positions,
         explicit_total=explicit_tot,
+        warnings=warnings,
     )
 
 
@@ -287,6 +356,7 @@ def _parse_from_flat_pdf(
             "compliance_status": "analog_pending" if is_alt else "compliant",
             "compliance_note": ("Указан эквивалент / аналог" if is_alt else ""),
             "decision": "analog_pending" if is_alt else "accepted",
+            "characteristics": extract_item_structured_chars(None, req_specs),
         })
 
     return _build_protocol_dict(

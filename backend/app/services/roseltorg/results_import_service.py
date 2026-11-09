@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.platform_publication import PlatformPublication
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.services.roseltorg.analog_matcher import extract_item_structured_chars
 from app.services.roseltorg.protocol_parser import parse_protocol_file
 from app.services.roseltorg.results import recalculate_places
 from app.services.roseltorg.winner_apply_service import save_publication_file
@@ -30,7 +31,15 @@ async def get_purchase_items_brief(db: AsyncSession, purchase_id: int) -> List[D
             sc = p_items_res.scalars()
             items = sc.all() if hasattr(sc, "all") and callable(sc.all) else []
             return [
-                {"id": getattr(pi, "id", None), "item_name": getattr(pi, "item_name", ""), "quantity": float(getattr(pi, "quantity", 1) or 1), "unit": getattr(pi, "unit", "шт.") or "шт."}
+                {
+                    "id": getattr(pi, "id", None),
+                    "name": getattr(pi, "item_name", ""),
+                    "item_name": getattr(pi, "item_name", ""),
+                    "description": getattr(pi, "tz_description", "") or "",
+                    "quantity": float(getattr(pi, "quantity", 1) or 1),
+                    "unit": getattr(pi, "unit", "шт.") or "шт.",
+                    "characteristics": extract_item_structured_chars(pi, getattr(pi, "tz_description", "") or ""),
+                }
                 for pi in items if hasattr(pi, "item_name")
             ]
     except Exception:

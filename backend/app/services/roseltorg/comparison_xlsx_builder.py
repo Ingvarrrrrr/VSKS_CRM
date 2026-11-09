@@ -4,6 +4,7 @@
 ПРАВИЛО №6: единый источник строк ТЗ load_standardized_tkp_rows.
 """
 from io import BytesIO
+import json
 from typing import Any, Dict, List, Optional, Tuple
 
 import openpyxl
@@ -327,13 +328,28 @@ async def build_comparison_matrix_for_publication(
     if not p:
         return None, "", errors or [f"Закупка {purchase_id} не найдена"]
 
-    results_data = getattr(pub, "results_data", None) or {}
+    raw_results = getattr(pub, "results_data", None)
+    if isinstance(raw_results, str):
+        try:
+            results_data = json.loads(raw_results) if raw_results.strip() else {}
+        except Exception:
+            results_data = {}
+    elif isinstance(raw_results, dict):
+        results_data = raw_results
+    else:
+        results_data = {}
     applications = results_data.get("applications") or []
     if not applications and results_data.get("application"):
         applications = [results_data["application"]]
 
     subject = str(getattr(p, "subject", "") or getattr(p, "registry_number", "") or f"Закупка #{p.id}")
-    nmck = float(getattr(p, "initial_price", 0.0) or 0.0)
+    nmck = float(
+        getattr(p, "total_nmck", None)
+        or getattr(p, "nmck", None)
+        or getattr(p, "planned_total_price", None)
+        or getattr(p, "initial_price", None)
+        or 0.0
+    )
 
     xlsx_bytes = build_comparison_matrix_xlsx(
         purchase_subject=subject,
@@ -343,5 +359,6 @@ async def build_comparison_matrix_for_publication(
         applications=applications,
         purchase_id=p.id,
     )
-    filename = f"Сводная_таблица_ТКП_{pub.registry_number or pub.id}.xlsx"
+    reg_num = getattr(pub, "platform_number", None) or getattr(pub, "registry_number", None) or pub.id
+    filename = f"Сводная_таблица_ТКП_{reg_num}.xlsx"
     return xlsx_bytes, filename, errors

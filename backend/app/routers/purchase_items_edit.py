@@ -205,6 +205,11 @@ async def patch_purchase_item(
     p = await db.get(Purchase, pid)
     if not p:
         raise HTTPException(404, "Закупка не найдена")
+    # Владелец 09.11.2026, ложный 409 на закупке 4882: снимок потолка субсидии ДО изменений
+    _ceiling_before: dict | None = None
+    if p.subsidy_id and not (body.admin_override and current_user.role in ADMIN_ROLES):
+        from app.services.subsidy_ceiling import ceiling_snapshot
+        _ceiling_before = await ceiling_snapshot(db, p.subsidy_id)
     # W3 (сужено — принцип владельца, 2026-08-18): «когда перевели в Закупку,
     # редактироваться должно в Закупке — зачем перебрасывает в заявку?». Пока
     # закупка ещё на стадии `wishes` (скрытая закупка-заготовка, которую видно
@@ -572,7 +577,7 @@ async def patch_purchase_item(
             if _new_item_cat_id == _old_item_cat_id:
                 if _item_delta > 0:
                     _excess_warnings.extend(
-                        await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
+                        await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta, check_ceiling=False)
                     )
             else:
                 # Владелец (2026-08-12): «Когда заявка идёт с превышением ... должна
@@ -588,7 +593,7 @@ async def patch_purchase_item(
                 # позиции целиком.
                 if _item_delta > 0:
                     _excess_warnings.extend(
-                        await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
+                        await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta, check_ceiling=False)
                     )
     if body.item_name is not None:
         name = body.item_name.strip()
@@ -724,6 +729,12 @@ async def patch_purchase_item(
         except Exception as _exc:
             import logging as _log
             _log.getLogger(__name__).warning("entity_change record failed for purchase_item admin_override: %s", _exc)
+    # Владелец 09.11.2026, ложный 409 на закупке 4882: контроль жёсткого потолка
+    # субсидии по итогам изменения позиции закупки.
+    if _ceiling_before is not None and p.subsidy_id:
+        from app.services.subsidy_ceiling import assert_ceiling_not_worsened
+        await assert_ceiling_not_worsened(db, p.subsidy_id, _ceiling_before)
+
     await db.commit()
     return {
         "ok": True, "item_id": it.id, "item_name": it.item_name,

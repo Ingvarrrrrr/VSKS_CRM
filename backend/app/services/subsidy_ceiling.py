@@ -94,6 +94,8 @@ async def assert_subsidy_ceiling(
     модуля и subsidy_ceiling_state. Текст и код ответа — дословно те же, что
     были раньше внутри app.services.feo_plan_excess.assert_no_unapproved_excess
     (эта функция вызывается оттуда и ничего в её поведении не меняет)."""
+    if tree is None:
+        tree = await compute_feo_plan_tree(db, [subsidy_id])
     state = await subsidy_ceiling_state(
         db, subsidy_id, tree=tree, feo_category_id=feo_category_id, adding_amount=adding_amount,
     )
@@ -102,6 +104,10 @@ async def assert_subsidy_ceiling(
 
     from app.models.subsidy import Subsidy
     from app.services.documents.formatting import _fmt_money as _fmt_rub_num
+    from app.services.subsidy_budget import feo_entered_ceiling_and_plan
+
+    ceiling_val, total_plan_now, _ = await feo_entered_ceiling_and_plan(db, subsidy_id, tree)
+    free_before = max(Decimal("0"), Decimal(str(ceiling_val or 0)) - Decimal(str(total_plan_now or 0)))
 
     subsidy_row = await db.get(Subsidy, subsidy_id)
     subsidy_name = subsidy_row.name if subsidy_row else f"#{subsidy_id}"
@@ -117,7 +123,8 @@ async def assert_subsidy_ceiling(
                 f"{_fmt_rub_num(total_plan_after_d)} ₽, финансирование по ФЭО (потолок) "
                 f"{_fmt_rub_num(ceiling_d)} ₽, превышение {_fmt_rub_num(over_d)} ₽. Это "
                 f"ограничение НЕ согласуется ни при каких обстоятельствах — уменьшите план "
-                f"по какой-либо подкатегории минимум на {_fmt_rub_num(over_d)} ₽."
+                f"по какой-либо подкатегории минимум на {_fmt_rub_num(over_d)} ₽. "
+                f"Свободно до потолка до этого действия: {_fmt_rub_num(free_before)} ₽."
             ),
             "subsidy_id": subsidy_id,
             "total_plan": float(total_plan_after_d),
@@ -125,3 +132,11 @@ async def assert_subsidy_ceiling(
             "over_amount": float(over_d),
         },
     )
+
+
+# Re-export снимка и контроля ухудшения (Правило №5 — вынесено в subsidy_ceiling_diff.py,
+# владелец 09.11.2026, ложный 409 на закупке 4882)
+from app.services.subsidy_ceiling_diff import (  # noqa: F401, E402
+    ceiling_snapshot,
+    assert_ceiling_not_worsened,
+)

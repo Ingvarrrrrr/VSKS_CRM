@@ -623,7 +623,7 @@ async def find_excess_culprit(
 
 
 async def assert_no_unapproved_excess(
-    db: AsyncSession, feo_category_id: int, adding_amount: Decimal = Decimal("0")
+    db: AsyncSession, feo_category_id: int, adding_amount: Decimal = Decimal("0"), check_ceiling: bool = True
 ) -> list[dict]:
     """Бросает HTTPException 409 ТОЛЬКО в ДВУХ случаях теперь (см. правку
     владельца 2026-09-03 ниже) — ЛИБО жёсткий потолок субсидии в целом
@@ -632,6 +632,10 @@ async def assert_no_unapproved_excess(
     «план ≠ факт», шаг C, сессия 2026-08-06), ЛИБО Σ плановых позиций дороже
     вручную заданного плана узла (excess_plan_over_manual, задача владельца
     п.2, 2026-08-12). См. compute_feo_plan_tree и app.models.plan_excess_approval.
+    check_ceiling — если False, потолок субсидии не проверяется здесь (используется
+    при пакетных правках позиций закупки, где потолок проверяется целиком через
+    assert_ceiling_not_worsened после применения всех изменений, владелец 09.11.2026,
+    ложный 409 на закупке 4882).
 
     ═══ Владелец продукта (2026-09-03), дословно: «я просил не с отдельной
     категорией жёсткий предел делать, который требовал перераспределения, а со
@@ -738,7 +742,8 @@ async def assert_no_unapproved_excess(
     # №6, задача владельца 15.10.2026: тот же потолок обязана проверять и
     # ручная ручка согласования превышения app.routers.plan_excess — второй
     # источник счёта не заводить, см. докстринг того модуля).
-    await assert_subsidy_ceiling(db, cat.subsidy_id, tree=tree, feo_category_id=feo_category_id, adding_amount=adding_amount)
+    if check_ceiling:
+        await assert_subsidy_ceiling(db, cat.subsidy_id, tree=tree, feo_category_id=feo_category_id, adding_amount=adding_amount)
 
     # Цепочка «узел → предки» через parent_id (снизу вверх)
     chain_ids: list[int] = []

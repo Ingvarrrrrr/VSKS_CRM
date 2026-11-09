@@ -120,6 +120,22 @@ async def generate_document_bytes(
     # Subsidy / customer / event / approvers / initiator / FEO path / responsible.
     subsidy = await load_subsidy(db, p)
     customer_org, customer_ctr = await load_customer(db, subsidy)
+    if doc_type == "procurement_protocol":
+        import io as _io
+        from sqlalchemy import select as _select
+        from app.models.platform_publication import PlatformPublication
+        from app.services.roseltorg.results_builder import get_or_build_default_results
+        from app.services.documents.protocol_vsks import build_vsks_protocol_docx
+        _pub_res = await db.execute(
+            _select(PlatformPublication)
+            .where(PlatformPublication.purchase_id == p.id)
+            .order_by(PlatformPublication.id.desc())
+            .limit(1)
+        )
+        _pub = _pub_res.scalar_one_or_none()
+        _results = await get_or_build_default_results(db, p, _pub)
+        _docx_bytes = build_vsks_protocol_docx(p, subsidy, customer_org, customer_ctr, _results)
+        return finalize_response(_io.BytesIO(_docx_bytes), p, pid, filename_base, None)
     event = await load_event(db, p)
     selected_approvers, fh_pa_by_synth_id = await resolve_approvers(db, p, pid, doc_type, approver_ids)
     initiator = await resolve_initiator(db, current_user, initiator_id, subsidy, customer_org)

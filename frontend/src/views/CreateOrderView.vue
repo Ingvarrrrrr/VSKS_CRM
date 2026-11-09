@@ -1614,6 +1614,18 @@
             >
               Приказ
             </v-btn>
+            <v-btn
+              v-if="formMode !== 'advance_report' && form.purchase_method !== 'advance'"
+              prepend-icon="mdi-file-certificate-outline"
+              variant="tonal"
+              color="deep-purple"
+              size="small"
+              :loading="docLoading === 'procurement_protocol'"
+              @click="downloadDoc('procurement_protocol')"
+              title="Протокол работы закупочной комиссии (.docx)"
+            >
+              Протокол
+            </v-btn>
             <!-- Владелец (п.9, 2026-09-17): «Пакет для Фабриканта» на авансовый
                  отчёт не выставляется — скрыт по тому же признаку formMode/
                  purchase_method==='advance', которым весь файл уже отличает

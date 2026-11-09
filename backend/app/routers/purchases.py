@@ -1131,6 +1131,14 @@ async def update_purchase(
     if not p:
         raise HTTPException(404, "Not found")
     old_planned_total_price = p.planned_total_price  # capture BEFORE setattr loop
+    # Владелец 09.11.2026, ложный 409 на закупке 4882: снимок потолка субсидии
+    # ДО изменений (при смене субсидии в PUT смотрим на новую субсидию).
+    _target_subsidy_id = data.subsidy_id if getattr(data, "subsidy_id", None) is not None else p.subsidy_id
+    _ceiling_before: dict | None = None
+    if _target_subsidy_id and not admin_override:
+        from app.services.subsidy_ceiling import ceiling_snapshot
+        _ceiling_before = await ceiling_snapshot(db, _target_subsidy_id)
+
     # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): PUT
     # заменяет ВСЕ позиции закупки (delete+recreate ниже), у каждой может быть
     # СВОЯ feo_category_id, отличная от p.feo_category_id. Старая проверка ниже
@@ -1429,7 +1437,7 @@ async def update_purchase(
                     _new_item_unplanned_cat_amounts.get(_cid, Decimal("0")) - old_item_unplanned_cat_amounts.get(_cid, Decimal("0")),
                 )
                 _excess_warnings.extend(
-                    await assert_no_unapproved_excess(db, _cid, adding_amount=_unplanned_delta)
+                    await assert_no_unapproved_excess(db, _cid, adding_amount=_unplanned_delta, check_ceiling=False)
                 )
         # Задача владельца (раздел E, 2026-09-21): мягкий контроль превышения
         # ПО ТИПУ — по всем ЗАТРОНУТЫМ категориям этого PUT (тот же набор, что
@@ -1855,6 +1863,13 @@ async def update_purchase(
             db, _type_violations_put, subsidy_id=(data.subsidy_id or p.subsidy_id), current_user=current_user,
             context_label=f"сохранение закупки №{p.purchase_number or p.id}",
         ))
+
+    # Владелец 09.11.2026, ложный 409 на закупке 4882: контроль жёсткого потолка
+    # субсидии по итогам всех сохранённых позиций закупки (после flush и
+    # деактивации осиротевших плановых позиций).
+    if _ceiling_before is not None and p.subsidy_id:
+        from app.services.subsidy_ceiling import assert_ceiling_not_worsened
+        await assert_ceiling_not_worsened(db, p.subsidy_id, _ceiling_before)
 
     await db.commit()
     await db.refresh(p)

@@ -47,7 +47,7 @@ import functools
 from collections import OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Optional
+from typing import Optional, Iterable
 
 _cache_var: ContextVar[Optional[dict]] = ContextVar("feo_plan_tree_cache", default=None)
 
@@ -126,6 +126,21 @@ def clear_global_cache() -> None:
     (иначе тест B может увидеть запись, оставленную тестом A на том же
     процессе pytest)."""
     _global_cache.clear()
+
+
+def invalidate_tree_cache(subsidy_ids: Optional[Iterable[int]] = None) -> None:
+    """Сброс кэша дерева ФЭО (request-scope и глобального LRU) после изменений в БД.
+    Владелец 09.11.2026, ложный 409 на закупке 4882."""
+    cache = _cache_var.get()
+    if cache is not None:
+        if subsidy_ids is None:
+            cache.clear()
+        else:
+            sids = frozenset(int(x) for x in subsidy_ids)
+            keys_to_del = [k for k in list(cache.keys()) if k & sids]
+            for k in keys_to_del:
+                cache.pop(k, None)
+    clear_global_cache()
 
 
 def with_feo_plan_tree_cache(fn):

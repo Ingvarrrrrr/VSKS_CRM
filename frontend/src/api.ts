@@ -57,6 +57,8 @@ export interface ApiFetchOptions extends RequestInit {
   retryOnNetworkError?: boolean
   /** Кастомный таймаут запроса в миллисекундах (по умолчанию REQUEST_TIMEOUT_MS = 60_000). */
   timeoutMs?: number
+  /** Формат ответа ('blob' для скачивания .docx/.xlsx через apiFetch — напр. protocol.docx). */
+  responseType?: 'json' | 'text' | 'blob'
 }
 
 // Сетевая ошибка (сервер недоступен/DNS/CORS/обрыв соединения — браузерный
@@ -289,6 +291,9 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   // Раньше падало с "Failed to execute 'json' on 'Response': Unexpected end of JSON input"
   // при успешном DELETE /api/organizations/{id} → status_code=204.
   if (res.status === 204) return undefined as unknown as T
+  if (options.responseType === 'blob') {
+    return (await res.blob()) as unknown as T
+  }
   const ct = res.headers.get('content-type') || ''
   if (!ct.includes('application/json')) {
     const txt = await res.text()

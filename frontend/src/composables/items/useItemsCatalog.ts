@@ -247,12 +247,40 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     emitUpdate()
   }
 
+  function onInlineMatchSearchText(idx: number, text: string) {
+    const it = localItems.value[idx]
+    if (!it) return
+    if (text && text.trim()) {
+      if (it.product_id != null && text.trim() !== (it.item_name || '').trim()) {
+        it.product_id = null
+        it.match_confirmed = false
+      }
+      it.item_name = text
+      emitUpdate()
+    }
+  }
+
   // ── BUG #5: inline per-row catalog matching ──────────────────────────────────
   // InlineProductMatch emits a chosen candidate; apply it without opening a dialog.
   function onInlineMatchPick(idx: number, candidate: MatchCandidate) {
     const item = localItems.value[idx]
     if (!item) return
+    const prevUnitPrice = item.unit_price
+    const prevTotalPrice = item.total_price
+    const prevPriceFromCatalog = item.price_from_catalog
+    const preservePrice = item.feo_planned_item_id != null &&
+      prevUnitPrice != null &&
+      Number(prevUnitPrice) > 0 &&
+      candidate.price != null &&
+      Number(candidate.price) > Number(prevUnitPrice)
+
     applyMatchCandidate(item as any, candidate)
+
+    if (preservePrice) {
+      item.unit_price = prevUnitPrice
+      item.total_price = prevTotalPrice
+      item.price_from_catalog = prevPriceFromCatalog
+    }
     emitUpdate()
   }
 
@@ -427,6 +455,7 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     hasUncatalogedSelected, uncatalogedSelectedCount,
     productFilter, hasProducts, onItemProductSelect,
     onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew, onInlineMatchStoreSearch,
+    onInlineMatchSearchText,
     productPickerDialog, productPickerSearch, productPickerIdx, productPickerResults,
     productPickerQuerySpecific, productPickerAutoStoreSearch,
     pickerMode, pickerTitle, bindProductToItem,

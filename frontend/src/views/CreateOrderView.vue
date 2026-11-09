@@ -2678,6 +2678,7 @@ const {
   // «не хватает»; при создании purchaseId=null, исключать нечего.
   excludePurchaseId: computed(() => purchaseId.value),
 })
+const feoPlannedItems = purchasePlannedResiduals
 
 // Phase 29: Vehicle selector — ключевые слова для автопоказа селекта ТС
 const VEHICLE_KEYWORDS = [
@@ -5330,6 +5331,14 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
   duplicateConfirmed = false
   saving.value = true
   try {
+    for (const it of items.value) {
+      if (!it.item_name?.trim() && it.feo_planned_item_id != null) {
+        const pName = feoPlannedItems.value.find(p => p.kind === 'planned_item' && p.id === it.feo_planned_item_id)?.name
+        if (pName) {
+          it.item_name = pName
+        }
+      }
+    }
     const validItems = items.value
       .filter(i => i.item_name?.trim())
       .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, feo_node_id: _feoNodeId, price_from_catalog, ...rest }) => ({
@@ -5352,6 +5361,9 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
           ? (rest.feo_category_id ?? null)
           : (rest.feo_category_id ?? form.feo_category_id ?? null),
       }))
+    if (items.value.length !== validItems.length) {
+      items.value = items.value.filter(i => i.item_name?.trim())
+    }
     const payload = {
       ...form,
       // contract_price/vat_rate/payment_amount/payment_federal/price_increase/

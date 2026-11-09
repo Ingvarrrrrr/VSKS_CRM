@@ -426,11 +426,28 @@ export function useItemsFeo(deps: UseItemsFeoDeps) {
         // (тот же приём, что и в ветке plan_position/feo_article ниже), иначе на
         // сохранении category_id позиции и category_id плановой позиции разъедутся
         // (см. check_planned_item_category_link на бэке — 409 обычному пользователю).
-        const plannedCategoryId = (props.plannedItems || [])
-          .find(p => p.kind === 'planned_item' && p.id === val.id)?.category_id
-        if (plannedCategoryId != null) {
-          it.feo_node_id = plannedCategoryId
-          it.feo_category_id = plannedCategoryId
+        const plannedRow = (props.plannedItems || [])
+          .find(p => p.kind === 'planned_item' && p.id === val.id)
+        if (plannedRow?.category_id != null) {
+          it.feo_node_id = plannedRow.category_id
+          it.feo_category_id = plannedRow.category_id
+        }
+        if (plannedRow) {
+          if (!(it.item_name || '').trim() && plannedRow.name) {
+            it.item_name = plannedRow.name
+          }
+          if ((it.quantity == null || Number(it.quantity) === 0) && plannedRow.planned_quantity != null) {
+            it.quantity = plannedRow.planned_quantity
+          }
+          if ((it.unit_price == null || Number(it.unit_price) === 0) && plannedRow.unit_price != null) {
+            it.unit_price = plannedRow.unit_price
+          }
+          if ((!it.unit || it.unit === 'шт.') && plannedRow.unit) {
+            it.unit = plannedRow.unit
+          }
+          if (it.quantity != null && it.unit_price != null) {
+            it.total_price = Math.round(Number(it.quantity) * Number(it.unit_price) * 100) / 100
+          }
         }
       } else {
         it.feo_planned_item_id = null

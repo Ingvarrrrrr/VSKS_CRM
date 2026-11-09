@@ -173,7 +173,7 @@ async def _check_budget(
             from sqlalchemy import func as _func
             spent_q = select(_func.coalesce(_func.sum(Purchase.planned_total_price), 0)).where(
                 Purchase.subsidy_id == subsidy_id,
-                Purchase.status.notin_(("cancelled",)),
+                Purchase.status.notin_(("cancelled", "split")),
                 Purchase.stopped_at.is_(None),
             )
             if exclude_pid:

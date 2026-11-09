@@ -421,6 +421,9 @@ async def split_purchase_core(
         # Исходная: позиции удаляются, статус 'split', договор/деньги чистим.
         await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
         purchase.status = "split"
+        purchase.planned_total_price = Decimal(0)
+        purchase.total_nmck = Decimal(0)
+        purchase.nmck = Decimal(0)
         await db.flush()
         if stage_status:
             await cleanup_source_contract(db, purchase)

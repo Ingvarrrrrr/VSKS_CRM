@@ -438,6 +438,7 @@
           @inline-match-create-new="onInlineMatchCreateNew"
           @inline-match-clear="onInlineMatchClear"
           @inline-match-store-search="onInlineMatchStoreSearch"
+          @inline-match-search-text="onInlineMatchSearchText"
           @open-quick-product-edit="openQuickProductEdit"
           @confirm-match="confirmMatch"
           @calc-item-total="calcItemTotal"
@@ -522,6 +523,7 @@
           @inline-match-create-new="onInlineMatchCreateNew"
           @inline-match-clear="onInlineMatchClear"
           @inline-match-store-search="onInlineMatchStoreSearch"
+          @inline-match-search-text="onInlineMatchSearchText"
           @open-quick-product-edit="openQuickProductEdit"
           @confirm-match="confirmMatch"
           @calc-item-total="calcItemTotal"
@@ -581,6 +583,7 @@
         @inline-match-create-new="onInlineMatchCreateNew"
         @inline-match-clear="onInlineMatchClear"
         @inline-match-store-search="onInlineMatchStoreSearch"
+        @inline-match-search-text="onInlineMatchSearchText"
         @open-quick-product-edit="openQuickProductEdit"
         @confirm-match="confirmMatch"
         @calc-item-total="calcItemTotal"
@@ -617,6 +620,7 @@
         @inline-match-create-new="onInlineMatchCreateNew"
         @inline-match-clear="onInlineMatchClear"
         @inline-match-store-search="onInlineMatchStoreSearch"
+        @inline-match-search-text="onInlineMatchSearchText"
         @open-quick-product-edit="openQuickProductEdit"
         @calc-item-total="calcItemTotal"
         @remove-item="removeItem"
@@ -2089,6 +2093,7 @@ const {
   itemCategoryOptions, itemTypeOptions, itemsFilterActive, itemsDisplayRows, visibleItemsCount,
   hasUncatalogedSelected, uncatalogedSelectedCount, bulkAddCatalogLoading, bulkAddToCatalog,
   onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew, onInlineMatchStoreSearch,
+  onInlineMatchSearchText,
   productPickerDialog, productPickerSearch, productPickerResults,
   productPickerQuerySpecific, productPickerAutoStoreSearch,
   pickerTitle, bindProductToItem,

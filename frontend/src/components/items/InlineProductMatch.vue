@@ -60,6 +60,7 @@
       placeholder="Начните вводить наименование..."
       class="flex-grow-1"
       style="min-width:200px"
+      @click:clear="onClear"
       @update:search="onSearch"
       @update:model-value="onSelect"
     >
@@ -306,6 +307,14 @@ const selectedModel = computed<MatchCandidate | null>(() => {
       score: 1,
     }
   }
+  if ((props.itemName || '').trim()) {
+    return {
+      product_id: 0,
+      name: props.itemName,
+      price: null,
+      score: 1,
+    } as MatchCandidate
+  }
   return null
 })
 
@@ -407,16 +416,30 @@ async function runMatch(query: string) {
 // name wiped on every blur/focus/pick. Only forwarding NON-EMPTY text sidesteps
 // all three reset paths at once — the explicit `clear` event (X button) is
 // what a parent should use to actually blank the name.
-function onSearch(text: string) {
-  searchText.value = text
-  if (text) emit('update:search-text', text)
+function onSearch(val: string) {
+  if (val === '' && (props.itemName || '').trim()) {
+    // Vuetify resets search to '' on blur / selection slot activation.
+    // Preserve existing itemName and do not wipe it unless onClear() is called.
+    searchText.value = props.itemName || ''
+    return
+  }
+  searchText.value = val
+  if (val && val !== props.itemName) {
+    emit('update:search-text', val)
+  }
   if (timer) clearTimeout(timer)
-  timer = setTimeout(() => runMatch(text), props.debounce)
+  timer = setTimeout(() => runMatch(val), props.debounce)
+}
+
+function onClear() {
+  searchText.value = ''
+  emit('clear')
+  emit('update:search-text', '')
 }
 
 function onSelect(val: MatchCandidate | null) {
   if (!val) {
-    emit('clear')
+    onClear()
     return
   }
   emit('pick', val)

@@ -990,14 +990,20 @@ async def create_purchase(
 
     if not admin_override:
         _cat_amounts: dict[int, Decimal] = {}
+        _cat_unplanned_amounts: dict[int, Decimal] = {}
         for _i in items_data:
             _cid = _i.feo_category_id or data.feo_category_id
             if _cid:
                 _cat_amounts[_cid] = _cat_amounts.get(_cid, Decimal("0")) + (_i.total_price or Decimal("0"))
+                if getattr(_i, "over_plan", False) or getattr(_i, "feo_planned_item_id", None) is None:
+                    _cat_unplanned_amounts[_cid] = _cat_unplanned_amounts.get(_cid, Decimal("0")) + (_i.total_price or Decimal("0"))
         if not _cat_amounts and data.feo_category_id:
             _cat_amounts[data.feo_category_id] = total_nmck if total_nmck is not None else Decimal("0")
-        for _cid, _amt in _cat_amounts.items():
-            _excess_warnings.extend(await assert_no_unapproved_excess(db, _cid, adding_amount=_amt))
+            _cat_unplanned_amounts[data.feo_category_id] = _cat_amounts[data.feo_category_id]
+        for _cid in _cat_amounts:
+            _excess_warnings.extend(
+                await assert_no_unapproved_excess(db, _cid, adding_amount=_cat_unplanned_amounts.get(_cid, Decimal("0")))
+            )
         # Задача владельца (раздел E, 2026-09-21): мягкий контроль превышения
         # ПО ТИПУ — collect здесь (те же затронутые категории, что и выше),
         # register ПОСЛЕ создания закупки (см. ниже, покрывает и уровень
@@ -1133,10 +1139,13 @@ async def update_purchase(
     # мимо гейта, пока «нетто» по закупке не рос. Снимок «сколько СЕЙЧАС числится
     # по каждой категории» — ДО удаления старых позиций — нужен для сравнения.
     old_item_cat_amounts: dict[int, Decimal] = {}
+    old_item_unplanned_cat_amounts: dict[int, Decimal] = {}
     for _oi in p.items:
         _ocid = _oi.feo_category_id or p.feo_category_id
         if _ocid:
             old_item_cat_amounts[_ocid] = old_item_cat_amounts.get(_ocid, Decimal("0")) + Decimal(str(_oi.total_price or 0))
+            if getattr(_oi, "over_plan", False) or getattr(_oi, "feo_planned_item_id", None) is None:
+                old_item_unplanned_cat_amounts[_ocid] = old_item_unplanned_cat_amounts.get(_ocid, Decimal("0")) + Decimal(str(_oi.total_price or 0))
     # Владелец (30.09.2026 — авансовый; расширено 14.10.2026, задача 3, «уборка
     # фантомов в ЛЮБОЙ закупке»): PUT удаляет и пересоздаёт ВСЕ PurchaseItem
     # (см. delete(PurchaseItem) ниже) — снимок плановых позиций, на которые
@@ -1400,19 +1409,27 @@ async def update_purchase(
     # у бюджетной проверки) — здесь не переобъявляем (ПРАВИЛО №6, один список).
     if not admin_override:
         _new_item_cat_amounts: dict[int, Decimal] = {}
+        _new_item_unplanned_cat_amounts: dict[int, Decimal] = {}
         for _i in items_data:
             _ncid = _i.feo_category_id or p.feo_category_id
             if _ncid:
                 _new_item_cat_amounts[_ncid] = _new_item_cat_amounts.get(_ncid, Decimal("0")) + (_i.total_price or Decimal("0"))
+                if getattr(_i, "over_plan", False) or getattr(_i, "feo_planned_item_id", None) is None:
+                    _new_item_unplanned_cat_amounts[_ncid] = _new_item_unplanned_cat_amounts.get(_ncid, Decimal("0")) + (_i.total_price or Decimal("0"))
         if not _new_item_cat_amounts and p.feo_category_id:
             _new_item_cat_amounts[p.feo_category_id] = Decimal(str(_total_nmck_for_checks or 0))
+            _new_item_unplanned_cat_amounts[p.feo_category_id] = _new_item_cat_amounts[p.feo_category_id]
         _touched_cat_ids = set(_new_item_cat_amounts) | set(old_item_cat_amounts)
         for _cid in _touched_cat_ids:
             _new_amt = _new_item_cat_amounts.get(_cid, Decimal("0"))
             _old_amt = old_item_cat_amounts.get(_cid, Decimal("0"))
             if _new_amt > _old_amt:
+                _unplanned_delta = max(
+                    Decimal("0"),
+                    _new_item_unplanned_cat_amounts.get(_cid, Decimal("0")) - old_item_unplanned_cat_amounts.get(_cid, Decimal("0")),
+                )
                 _excess_warnings.extend(
-                    await assert_no_unapproved_excess(db, _cid, adding_amount=_new_amt - _old_amt)
+                    await assert_no_unapproved_excess(db, _cid, adding_amount=_unplanned_delta)
                 )
         # Задача владельца (раздел E, 2026-09-21): мягкий контроль превышения
         # ПО ТИПУ — по всем ЗАТРОНУТЫМ категориям этого PUT (тот же набор, что

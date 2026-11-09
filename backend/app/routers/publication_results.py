@@ -60,7 +60,7 @@ async def get_purchase_results(
     current_user: User = Depends(get_current_user),
 ):
     """Возвращает результаты рассмотрения заявок по закупке (из активной публикации или дефолты)."""
-    purchase = await ensure_purchase_visible(purchase_id, current_user, db)
+    purchase = await ensure_purchase_visible(current_user, purchase_id, db)
 
     pub_res = await db.execute(
         select(PlatformPublication)
@@ -87,7 +87,7 @@ async def download_tkp_template_xlsx(
     current_user: User = Depends(get_current_user),
 ):
     """Отдаёт стандартизированный файл-бланк ТКП «Приложение № 2» в формате .xlsx."""
-    await ensure_purchase_visible(purchase_id, current_user, db)
+    await ensure_purchase_visible(current_user, purchase_id, db)
     xlsx_bytes, errors = await render_standardized_tkp_xlsx(db, purchase_id)
     if not xlsx_bytes:
         raise HTTPException(status_code=400, detail="; ".join(errors) or "Не удалось сформировать бланк ТКП")
@@ -105,7 +105,7 @@ async def download_tkp_template_pdf(
     current_user: User = Depends(get_current_user),
 ):
     """Отдаёт стандартизированный интерактивный PDF-бланк ТКП «Приложение № 2»."""
-    await ensure_purchase_visible(purchase_id, current_user, db)
+    await ensure_purchase_visible(current_user, purchase_id, db)
     pdf_bytes, errors = await render_standardized_tkp_pdf(db, purchase_id)
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="; ".join(errors) or "Не удалось сформировать PDF-бланк ТКП")
@@ -124,7 +124,7 @@ async def ensure_publication_for_results(
     current_user: User = Depends(get_current_user),
 ):
     """Гарантирует существование записи публикации для закупки (например, при ручном вводе извещения с ЭТП)."""
-    purchase = await ensure_purchase_visible(purchase_id, current_user, db)
+    purchase = await ensure_purchase_visible(current_user, purchase_id, db)
 
     pub_res = await db.execute(
         select(PlatformPublication)
@@ -171,7 +171,7 @@ async def sync_publication_results(
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
 
-    await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    await ensure_purchase_visible(current_user, pub.purchase_id, db)
 
     results = await fetch_roseltorg_procedure_results(
         pub,
@@ -211,7 +211,7 @@ async def save_publication_results(
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
 
-    await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    await ensure_purchase_visible(current_user, pub.purchase_id, db)
 
     recalculated_apps = recalculate_places(body.applications)
     total_apps = len(recalculated_apps)
@@ -250,7 +250,7 @@ async def get_publication_file(
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
 
-    await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    await ensure_purchase_visible(current_user, pub.purchase_id, db)
     file_path = get_publication_file_path(pub_id, filename)
     return FileResponse(file_path, filename=filename)
 
@@ -268,7 +268,7 @@ async def import_protocol_file(
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
 
-    purchase = await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    purchase = await ensure_purchase_visible(current_user, pub.purchase_id, db)
 
     file_list: List[UploadFile] = []
     if isinstance(files, list):
@@ -301,7 +301,7 @@ async def upload_application_document(
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
 
-    purchase = await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    purchase = await ensure_purchase_visible(current_user, pub.purchase_id, db)
 
     existing: Dict[str, Any] = {}
     if pub.results_data:
@@ -366,7 +366,7 @@ async def init_purchase_positions(
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
 
-    purchase = await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    purchase = await ensure_purchase_visible(current_user, pub.purchase_id, db)
 
     existing: Dict[str, Any] = {}
     if pub.results_data:
@@ -430,7 +430,7 @@ async def apply_winner_to_purchase(
     pub = await db.get(PlatformPublication, pub_id)
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
-    purchase = await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    purchase = await ensure_purchase_visible(current_user, pub.purchase_id, db)
     if not pub.results_data:
         raise HTTPException(status_code=422, detail="Нет данных рассмотрения заявок")
     try:
@@ -459,7 +459,7 @@ async def download_protocol_docx(
     pub = await db.get(PlatformPublication, pub_id)
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
-    purchase = await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    purchase = await ensure_purchase_visible(current_user, pub.purchase_id, db)
     subsidy = await db.get(Subsidy, purchase.subsidy_id) if purchase.subsidy_id else None
     from app.services.documents.stages_relations import load_customer
     customer_org, customer_ctr = await load_customer(db, subsidy)
@@ -484,7 +484,7 @@ async def download_comparison_matrix_xlsx(
     pub = await db.get(PlatformPublication, pub_id)
     if not pub:
         raise HTTPException(status_code=404, detail="Публикация не найдена")
-    await ensure_purchase_visible(pub.purchase_id, current_user, db)
+    await ensure_purchase_visible(current_user, pub.purchase_id, db)
     from app.services.roseltorg.comparison_xlsx_builder import build_comparison_matrix_for_publication
     xlsx_bytes, filename, errors = await build_comparison_matrix_for_publication(db, pub_id)
     if not xlsx_bytes:

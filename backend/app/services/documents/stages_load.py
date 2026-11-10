@@ -58,7 +58,7 @@ async def load_purchase_and_relations(db: AsyncSession, pid: int) -> Purchase:
             selectinload(Purchase.items).selectinload(PurchaseItem.product),
             selectinload(Purchase.contractor),
             selectinload(Purchase.feo_category),
-            selectinload(Purchase.contract_items),  # Phase 27.1 CD-5: eager-load for docxtpl context
+            selectinload(Purchase.contract_items).selectinload(_ContractItem.product),  # Phase 27.1 CD-5: eager-load for docxtpl context (including ci.product)
             selectinload(Purchase.assigned_user),  # B-dedup: для авто-инициалов responsible_person
             selectinload(Purchase.service_note_author),  # fallback «Ответственный исполнитель» = автор СЗ
         )

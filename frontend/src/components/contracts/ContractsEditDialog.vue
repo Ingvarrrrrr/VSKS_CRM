@@ -5,6 +5,15 @@
         {{ dialog.id ? 'Редактировать документ' : 'Новый документ' }}
       </v-card-title>
       <v-card-text class="px-4 pb-2">
+        <v-alert
+          v-if="dialog.id && (dialog.form.contract_type === 'framework_cumulative' || dialog.form.contract_type === 'framework_with_amount')"
+          type="warning"
+          variant="tonal"
+          density="compact"
+          class="mb-3 text-caption"
+        >
+          Внимание: это рамочный договор. При изменении контрагента, номера, даты, срока действия или других общих позиций изменения автоматически применятся во всех связанных с ним закупках.
+        </v-alert>
         <v-row dense>
           <v-col cols="12" md="6">
             <v-text-field v-model="dialog.form.number" label="Номер *" variant="outlined" density="compact" />

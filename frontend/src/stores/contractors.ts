@@ -47,7 +47,8 @@ export const useContractorsStore = defineStore('contractors', {
       this._searchAbort = ctrl
       this.searching = true
       try {
-        const qParam = q ? `&search=${encodeURIComponent(q)}` : ''
+        const qClean = (q || '').trim()
+        const qParam = qClean ? `&search=${encodeURIComponent(qClean)}` : ''
         const data = await apiFetch<Contractor[]>(
           `/contractors/?limit=${limit}${qParam}`,
           { signal: ctrl.signal }

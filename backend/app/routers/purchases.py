@@ -67,7 +67,11 @@ from datetime import datetime, date
 # routers/purchase_*.py их переиспользуют, а не считают заново.
 from app.services.purchase_serializers import _item_to_out, _purchase_to_full, items_out_with_contractor_map
 from app.services.item_contractor import set_item_contractor
-from app.services.purchase_contract_header import CONTRACT_HEADER_FIELDS
+from app.services.purchase_contract_header import (
+    CONTRACT_HEADER_FIELDS,
+    is_framework_contract,
+    sync_single_contract_from_purchase,
+)
 from app.services.purchase_ceiling_block import compute_purchase_ceiling_block, PRE_CONTRACT_STATUSES as _CEILING_PRE_CONTRACT_STATUSES
 from app.services.purchase_feo_checks import (
     _compute_purchase_feo_excess, _compute_purchase_feo_mismatch, _item_feo_mismatch,
@@ -127,10 +131,10 @@ async def _sync_purchase_from_contract(p: Purchase, db: AsyncSession):
         p.contract_date = c.date
     if c.contract_type:
         p.purchase_contract_type = c.contract_type
-    if c.contractor_id and not p.contractor_id:
-        # Не перетираем уже установленного контрагента (multi-contractor сценарии),
-        # только заполняем NULL.
+    if c.contractor_id is not None and getattr(p, "purchase_method", None) != 'advance':
         p.contractor_id = c.contractor_id
+    if c.end_date is not None:
+        p.contract_end_date = c.end_date
 
 
 async def _has_purchase_write_access(user: User, db: AsyncSession) -> bool:
@@ -1308,12 +1312,16 @@ async def update_purchase(
     # Входящие значения из payload молча отбрасываются (без 422 — старые
     # клиенты не ломаем), но перечисляются в ответе contract_fields_ignored.
     _resolved_contract_id_put = payload_dict.get('contract_id', p.contract_id)
+    _linked_contract_put = await db.get(Contract, _resolved_contract_id_put) if _resolved_contract_id_put else None
     _contract_fields_ignored: list[str] = []
-    if _resolved_contract_id_put:
+    if _resolved_contract_id_put and is_framework_contract(_linked_contract_put):
         for _f in CONTRACT_HEADER_FIELDS:
             if _f in payload_dict:
                 payload_dict.pop(_f)
                 _contract_fields_ignored.append(_f)
+        if _linked_contract_put and _linked_contract_put.end_date is not None and "contract_end_date" in payload_dict:
+            payload_dict.pop("contract_end_date")
+            _contract_fields_ignored.append("contract_end_date")
 
     # Phase 27.1.4: race-defence — если payload приходит с contractor_id=None,
     # а в БД он был установлен И contract_id не меняется → игнорируем stale null.
@@ -1345,6 +1353,11 @@ async def update_purchase(
         setattr(p, k, v)
     if "acceptance_docs" in payload_dict:
         _acc_docs.replace_docs(p, payload_dict["acceptance_docs"])
+
+    if _linked_contract_put and not is_framework_contract(_linked_contract_put):
+        if p.contract_number and not p.contract_number.startswith("ВРЕМ-"):
+            p.contract_number_is_temporary = False
+        sync_single_contract_from_purchase(p, _linked_contract_put)
 
     # Правило владельца (22.10.2026, заявка №209): товары/услуги/работы
     # нельзя ставить в статью ФОТ (ПРАВИЛО №6, одна проверка — см.
@@ -2275,8 +2288,9 @@ async def patch_purchase(
     old_contract_id_patch = p.contract_id
 
     # ПРАВИЛО №6 (2026-09-07, группа D7): та же логика, что в PUT выше — при
-    # заданном contract_id шапка договора приходит ТОЛЬКО из Contract.
+    # заданном contract_id шапка договора приходит ТОЛЬКО из Contract (для рамочных договоров).
     _resolved_contract_id_patch = (body or {}).get('contract_id', p.contract_id)
+    _linked_contract_patch = await db.get(Contract, _resolved_contract_id_patch) if _resolved_contract_id_patch else None
     _contract_fields_ignored_patch: list[str] = []
 
     changed: list[str] = []
@@ -2352,9 +2366,13 @@ async def patch_purchase(
             continue
         if not hasattr(p, k):
             continue
-        if _resolved_contract_id_patch and k in CONTRACT_HEADER_FIELDS:
-            _contract_fields_ignored_patch.append(k)
-            continue
+        if _resolved_contract_id_patch and is_framework_contract(_linked_contract_patch):
+            if k in CONTRACT_HEADER_FIELDS:
+                _contract_fields_ignored_patch.append(k)
+                continue
+            if k == "contract_end_date" and _linked_contract_patch.end_date is not None:
+                _contract_fields_ignored_patch.append(k)
+                continue
         v = _coerce_patch_value(k, v)
         if getattr(p, k) != v:
             # ПРАВИЛО №6: acceptance_docs — единственный писатель
@@ -2364,6 +2382,11 @@ async def patch_purchase(
             else:
                 setattr(p, k, v)
             changed.append(k)
+
+    if _linked_contract_patch and not is_framework_contract(_linked_contract_patch):
+        if p.contract_number and not p.contract_number.startswith("ВРЕМ-"):
+            p.contract_number_is_temporary = False
+        sync_single_contract_from_purchase(p, _linked_contract_patch)
     # phase26-j-1 (fix): sync только при ИЗМЕНЕНИИ contract_id, иначе ручные правки
     # contract_number перетираются на каждом autosave (Phase 26 patches шлют contract_id вместе с другими полями).
     if p.contract_id and p.contract_id != old_contract_id_patch:

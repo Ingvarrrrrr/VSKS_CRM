@@ -370,11 +370,19 @@ onMounted(async () => {
   } catch (_) {
     // 403 для не-admin — игнорируем, не критично
   }
-  loadContracts(); loadSubsidies()
+  await Promise.all([loadContracts(), loadSubsidies()])
   // База контрагентов ~51k — bulk-load первых 5000 не покрывал всю базу
   // (поиск промахивался по 46k). Грузим только первые 50 для начального
   // показа; полноценный поиск — server-side через onContractorSearch (вся база).
   await loadContractors()
+
+  const qEdit = route.query.edit || route.query.contract_id
+  if (qEdit) {
+    const target = contracts.value.find(c => c.id === Number(qEdit))
+    if (target) {
+      openEdit(target)
+    }
+  }
 })
 </script>
 

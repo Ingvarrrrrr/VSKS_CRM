@@ -96,9 +96,10 @@ const toast = useToast()
 function showSnack(text: string, color: ToastType = 'success') { toast.addToast(text, color) }
 
 const contractorFilter = (value: string, query: string, item?: any): boolean => {
-  const q = query.toLowerCase()
+  const q = (query || '').trim().toLowerCase()
+  if (!q) return true
   const name = (item?.raw?.name || '').toLowerCase()
-  const inn = (item?.raw?.inn || '').toLowerCase()
+  const inn = (item?.raw?.inn || '').trim().toLowerCase()
   return name.includes(q) || inn.includes(q)
 }
 
@@ -134,8 +135,9 @@ const noDataText = computed(() => {
 })
 
 let _searchTimeout: any = null
-function onContractorSearch(query: string) {
+function onContractorSearch(val: string) {
   clearTimeout(_searchTimeout)
+  const query = (val || '').trim()
   if (!query || query.length < 2) return
   _searchTimeout = setTimeout(async () => {
     const list = await contractorsStore.search(query, 50)

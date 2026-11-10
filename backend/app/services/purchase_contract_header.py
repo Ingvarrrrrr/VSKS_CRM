@@ -90,3 +90,33 @@ def contract_header(p, contract=None) -> PurchaseContractHeader:
     return PurchaseContractHeader(
         p.contract_number, p.contract_date, p.purchase_contract_type, p.contractor_id, "purchase",
     )
+
+
+def is_framework_contract(contract) -> bool:
+    """True if contract is a framework contract (framework_cumulative or framework_with_amount)."""
+    return bool(contract and getattr(contract, "contract_type", None) in ("framework_cumulative", "framework_with_amount"))
+
+
+def sync_single_contract_from_purchase(p, contract) -> None:
+    """Синхронизирует поля разового договора (single, 1-к-1) из закупки в Contract."""
+    if not contract or not p:
+        return
+    if is_framework_contract(contract):
+        return
+    if getattr(p, "purchase_contract_type", "single") != "single":
+        return
+    if getattr(p, "contract_id", None) != contract.id:
+        return
+
+    if getattr(p, "contract_number", None):
+        contract.number = p.contract_number.strip()
+    contract.date = getattr(p, "contract_date", None)
+    contract.contractor_id = getattr(p, "contractor_id", None)
+    if getattr(p, "contract_end_date", None) is not None:
+        contract.end_date = p.contract_end_date
+    if getattr(p, "subject", None):
+        contract.subject = p.subject
+    if getattr(p, "purchase_method", None) in ("single", "competitive"):
+        contract.purchase_method = p.purchase_method
+    if getattr(p, "item_type", None):
+        contract.item_type = p.item_type

@@ -88,16 +88,17 @@ async def list_contractors(
         (Contractor.inn.op('~')(r'^[0-9]{12}$'), 0),
         else_=1,
     )
-    if search:
-        term = f"%{search}%"
-        prefix = f"{search}%"
+    search_clean = search.strip() if search else ""
+    if search_clean:
+        term = f"%{search_clean}%"
+        prefix = f"{search_clean}%"
         relevance = case(
             (Contractor.name.ilike(prefix), 0),
-            (Contractor.inn.ilike(prefix), 1),
+            (func.trim(Contractor.inn).ilike(prefix), 1),
             (Contractor.name.ilike(term), 2),
             else_=3,
         )
-        q = q.where(or_(Contractor.name.ilike(term), Contractor.inn.ilike(term)))
+        q = q.where(or_(Contractor.name.ilike(term), func.trim(Contractor.inn).ilike(term)))
         q = q.order_by(ru_inn_priority, relevance, Contractor.name)
     else:
         q = q.order_by(ru_inn_priority, Contractor.name)

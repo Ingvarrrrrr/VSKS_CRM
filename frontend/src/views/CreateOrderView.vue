@@ -204,7 +204,7 @@
             </v-col>
             <v-col v-if="isSectionVisible('contractor')" cols="12" md="3">
               <div :class="entityChanges.isFieldUnseen('contractor_id') ? 'field-changed' : ''"
-                @click="entityChanges.dismissField('contractor_id')">
+                @click="contractHeaderLocked ? onLockedFrameworkFieldClick() : entityChanges.dismissField('contractor_id')">
                 <v-autocomplete
                   v-model="form.contractor_id"
                   :items="contractors"
@@ -213,13 +213,14 @@
                   label="Контрагент"
                   variant="outlined"
                   density="compact"
-                  clearable
+                  :clearable="!contractHeaderLocked"
                   auto-select-first
                   :custom-filter="contractorFilter"
                   :loading="contractorSearchLoading || contractorsInitialLoading"
                   :no-data-text="contractorsNoDataText"
                   :menu-props="{ maxWidth: 500 }"
                   :readonly="contractHeaderLocked"
+                  :style="contractHeaderLocked ? 'pointer-events: none' : undefined"
                   :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
                   :hint="contractHeaderLocked ? contractHeaderLockedHint : 'Поставщик/исполнитель. Поиск по названию или ИНН'"
                   persistent-hint
@@ -243,6 +244,10 @@
                       title="Добавить контрагента" @click.stop="openAddContractor" />
                   </template>
                 </v-autocomplete>
+                <div v-if="contractHeaderLocked" class="text-caption mt-1" style="line-height:1.3">
+                  <span class="text-medium-emphasis">Рамочный договор (изменение обновит все связанные закупки). </span>
+                  <a href="#" class="text-primary font-weight-medium" @click.prevent.stop="goToLinkedContract">Отредактировать в договоре →</a>
+                </div>
               </div>
             </v-col>
             <!-- Contract type choice after selecting contractor -->
@@ -262,19 +267,24 @@
               </v-alert>
             </v-col>
             <v-col v-if="isSectionVisible('contractor')" cols="12" md="2">
-              <v-text-field
-                v-model="contractorInn"
-                label="ИНН"
-                variant="outlined"
-                density="compact"
-                maxlength="12"
-                hint="Введите ИНН — если контрагент найден, он подставится. Если нет — добавьте нового." persistent-hint
-                @update:model-value="onInnInput"
-              >
-                <template #prepend-inner>
-                  <v-icon size="18" color="grey">mdi-domain</v-icon>
-                </template>
-              </v-text-field>
+              <div @click="contractHeaderLocked ? onLockedFrameworkFieldClick() : undefined">
+                <v-text-field
+                  v-model="contractorInn"
+                  label="ИНН"
+                  variant="outlined"
+                  density="compact"
+                  maxlength="12"
+                  :readonly="contractHeaderLocked"
+                  :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
+                  :hint="contractHeaderLocked ? 'Общий ИНН рамочного договора' : 'Введите ИНН — если контрагент найден, он подставится. Если нет — добавьте нового.'"
+                  persistent-hint
+                  @update:model-value="onInnInput"
+                >
+                  <template #prepend-inner>
+                    <v-icon size="18" color="grey">mdi-domain</v-icon>
+                  </template>
+                </v-text-field>
+              </div>
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery' && formMode !== 'advance_report'" cols="12" md="2">
               <v-select v-model="form.purchase_method"
@@ -624,13 +634,18 @@
           <!-- Тип договора: определяет предельную сумму (Разовый/Рамочный) -->
           <v-row v-if="isSectionVisible('contract_type')" class="mt-2">
             <v-col cols="12" md="3">
-              <v-select v-model="form.purchase_contract_type" :items="CONTRACT_TYPES"
-                item-title="title" item-value="value" label="Тип договора" variant="outlined" density="compact"
-                :readonly="contractHeaderLocked"
-                :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
-                :hint="contractHeaderLocked ? contractHeaderLockedHint : undefined"
-                :persistent-hint="contractHeaderLocked"
-                @update:model-value="onContractTypeChange" />
+              <div @click="contractHeaderLocked ? onLockedFrameworkFieldClick() : undefined">
+                <v-select v-model="form.purchase_contract_type" :items="CONTRACT_TYPES"
+                  item-title="title" item-value="value" label="Тип договора" variant="outlined" density="compact"
+                  :readonly="contractHeaderLocked"
+                  :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
+                  :hint="contractHeaderLocked ? contractHeaderLockedHint : undefined"
+                  :persistent-hint="contractHeaderLocked"
+                  @update:model-value="onContractTypeChange" />
+                <div v-if="contractHeaderLocked" class="text-caption mt-1">
+                  <a href="#" class="text-primary font-weight-medium" @click.prevent.stop="goToLinkedContract">Отредактировать в договоре →</a>
+                </div>
+              </div>
             </v-col>
             <v-col v-if="isFramework" cols="12" md="9">
               <div class="d-flex align-center gap-3 pt-1">
@@ -1027,7 +1042,7 @@
           <v-row class="mt-1">
             <v-col cols="12" md="3" data-field-name="contract_number">
               <div :class="entityChanges.isFieldUnseen('contract_number') ? 'field-changed' : ''"
-                @click="entityChanges.dismissField('contract_number')">
+                @click="contractHeaderLocked ? onLockedFrameworkFieldClick() : entityChanges.dismissField('contract_number')">
                 <v-text-field v-model="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
                   :placeholder="isNew ? 'Присвоится после сохранения (можно ввести вручную)' : ''"
                   :hint="contractHeaderLocked ? contractHeaderLockedHint : needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : 'Можно изменить вручную'"
@@ -1035,18 +1050,25 @@
                   :readonly="contractHeaderLocked || (!isNew && !contractNumberEditEnabled)"
                   :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
                   data-field="contract_number"
-                  @click="!contractHeaderLocked && !isNew && !contractNumberEditEnabled && enableContractNumberEdit()" />
+                  @click="contractHeaderLocked ? onLockedFrameworkFieldClick() : (!isNew && !contractNumberEditEnabled && enableContractNumberEdit())" />
+                <div v-if="contractHeaderLocked" class="text-caption mt-1">
+                  <a href="#" class="text-primary font-weight-medium" @click.prevent.stop="goToLinkedContract">Отредактировать в договоре →</a>
+                </div>
               </div>
             </v-col>
             <v-col cols="12" md="3" data-field-name="contract_date">
               <div :class="entityChanges.isFieldUnseen('contract_date') ? 'field-changed' : ''"
-                @click="entityChanges.dismissField('contract_date')">
+                @click="contractHeaderLocked ? onLockedFrameworkFieldClick() : entityChanges.dismissField('contract_date')">
                 <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
                   density="compact" type="date" :rules="contractDateRules" data-field="contract_date"
                   :readonly="contractHeaderLocked"
                   :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
                   :hint="contractHeaderLocked ? 'Берётся из договора — изменить в карточке договора' : undefined"
-                  :persistent-hint="contractHeaderLocked" />
+                  :persistent-hint="contractHeaderLocked"
+                  @click="contractHeaderLocked ? onLockedFrameworkFieldClick() : undefined" />
+                <div v-if="contractHeaderLocked" class="text-caption mt-1">
+                  <a href="#" class="text-primary font-weight-medium" @click.prevent.stop="goToLinkedContract">Отредактировать в договоре →</a>
+                </div>
               </div>
             </v-col>
             <v-col cols="12" md="3">
@@ -1362,6 +1384,9 @@
         :form="form"
         :is-framework="isFramework"
         :selected-framework-contract="selectedFrameworkContract"
+        :contract-header-locked="contractHeaderLocked"
+        :on-go-to-contract="goToLinkedContract"
+        :on-locked-field-click="onLockedFrameworkFieldClick"
       />
 
       <PurchaseAcceptanceSection
@@ -3786,10 +3811,26 @@ const contractWordGen = computed(() => isFramework.value ? 'заказа' : 'д�
 // молча игнорируют эти поля из payload'а при contract_id — contract_fields_ignored
 // в ответе). Фронт больше не даёт их редактировать здесь — правка только в
 // карточке договора (реестр «Договоры»).
-const contractHeaderLocked = computed(() => !!form.contract_id)
+const contractHeaderLocked = computed(() => isFramework.value && !!form.contract_id)
 const contractHeaderLockedHint = computed(() =>
-  `Берётся из договора №${form.contract_number || '—'} — изменить в карточке договора`
+  `Общее поле рамочного договора №${form.contract_number || '—'} — редактируется в карточке договора`
 )
+
+function goToLinkedContract() {
+  if (form.contract_id) {
+    router.push({ path: '/contracts', query: { edit: String(form.contract_id) } })
+  }
+}
+
+function onLockedFrameworkFieldClick() {
+  if (contractHeaderLocked.value) {
+    showSnack(
+      'Это общее поле рамочного договора. Отредактируйте его в карточке договора (внимание: изменения применятся ко всем связанным закупкам).',
+      'warning',
+      { actionText: 'Перейти в договор', onAction: goToLinkedContract, duration: 7000 }
+    )
+  }
+}
 // Phase 31-04 chip «Расхождение с договором»: поля номера/даты на этой форме уже
 // показывают значения договора (см. комментарий у чипа выше, ПРАВИЛО №6 D7) —
 // расхождение живёт только во внутреннем кэше, чинится пересохранением договора
@@ -3958,7 +3999,15 @@ function openPublishDialog() {
   // каждом открытии диалога.
 }
 
-async function onPlatformWinnerApplied(payload: { contractor_id: number; contractor_name: string; contract_price: number | null }) {
+async function onPlatformWinnerApplied(payload: {
+  contractor_id: number
+  contractor_name: string
+  contract_price: number | null
+  status?: string | null
+  substatus?: string | null
+}) {
+  if (payload.status) form.status = payload.status
+  if (payload.substatus !== undefined) form.substatus = payload.substatus
   if (payload.contractor_id) {
     form.contractor_id = payload.contractor_id
   }
@@ -4438,9 +4487,10 @@ const loadRefs = async () => {
 }
 
 const contractorFilter = (value: string, query: string, item?: any): boolean => {
-  const q = query.toLowerCase()
+  const q = (query || '').trim().toLowerCase()
+  if (!q) return true
   const name = (item?.raw?.name || '').toLowerCase()
-  const inn = (item?.raw?.inn || '').toLowerCase()
+  const inn = (item?.raw?.inn || '').trim().toLowerCase()
   return name.includes(q) || inn.includes(q)
 }
 
@@ -4481,12 +4531,13 @@ const {
 
 const contractorSearchLoading = computed(() => contractorsStore.searching)
 let _contractorSearchTimeout: any = null
-function onContractorSearch(query: string) {
+function onContractorSearch(val: string) {
   clearTimeout(_contractorSearchTimeout)
-  if (!query || query.length < 2) return
+  const q = (val || '').trim()
+  if (!q || q.length < 2) return
   // Phase 26-ZZ: server-search через store с отменой in-flight + cache
   _contractorSearchTimeout = setTimeout(async () => {
-    const list = await contractorsStore.search(query, 50)
+    const list = await contractorsStore.search(q, 50)
     // Merge with existing local array (хранит selected + per-item lookups)
     const existing = new Set(contractors.value.map(c => c.id))
     for (const c of list) {

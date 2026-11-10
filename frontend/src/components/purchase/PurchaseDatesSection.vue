@@ -144,14 +144,20 @@
       <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Договор и оплата</div>
       <v-row>
         <v-col cols="12" md="3">
-          <v-text-field
-            v-model="form.contract_end_date"
-            label="Срок действия договора"
-            variant="outlined" density="compact" type="date"
-            :readonly="isFramework && !!selectedFrameworkContract?.end_date"
-            :bg-color="isFramework && selectedFrameworkContract?.end_date ? 'grey-lighten-4' : undefined"
-            hint="До какой даты действует договор" persistent-hint
-          />
+          <div @click="(contractHeaderLocked || (isFramework && !!selectedFrameworkContract?.end_date)) ? onLockedFieldClick?.() : undefined">
+            <v-text-field
+              v-model="form.contract_end_date"
+              label="Срок действия договора"
+              variant="outlined" density="compact" type="date"
+              :readonly="contractHeaderLocked || (isFramework && !!selectedFrameworkContract?.end_date)"
+              :bg-color="(contractHeaderLocked || (isFramework && selectedFrameworkContract?.end_date)) ? 'grey-lighten-4' : undefined"
+              :hint="(contractHeaderLocked || (isFramework && selectedFrameworkContract?.end_date)) ? 'Общий срок действия рамочного договора — при изменении применится ко всем связанным закупкам' : 'До какой даты действует договор'"
+              persistent-hint
+            />
+            <div v-if="contractHeaderLocked || (isFramework && selectedFrameworkContract?.end_date)" class="text-caption mt-1">
+              <a href="#" class="text-primary font-weight-medium" @click.prevent.stop="onGoToContract?.()">Отредактировать в договоре →</a>
+            </div>
+          </div>
         </v-col>
         <v-col cols="12" md="3">
           <v-select
@@ -213,6 +219,9 @@ const props = defineProps<{
   form: any
   isFramework: boolean
   selectedFrameworkContract: any
+  contractHeaderLocked?: boolean
+  onGoToContract?: () => void
+  onLockedFieldClick?: () => void
 }>()
 
 const { endOfMonthMenu, endOfMonthYear, endOfMonthMonth, endOfMonthMonthItems, applyEndOfMonth } = useEndOfMonthFill(props.form)

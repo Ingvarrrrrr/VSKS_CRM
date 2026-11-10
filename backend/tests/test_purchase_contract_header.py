@@ -135,14 +135,14 @@ async def test_put_purchase_with_contract_id_ignores_incoming_header_fields(
     from app.models.contract import Contract
     from app.models.purchase import Purchase
 
-    contract = Contract(number="Д-100", date=date(2026, 1, 10), contract_type="single")
+    contract = Contract(number="Д-100", date=date(2026, 1, 10), contract_type="framework_cumulative")
     db_session.add(contract)
     await db_session.flush()
 
     p = Purchase(
         status="planned", item_type="goods", item_name="Test",
         contract_id=contract.id, contract_number="Д-100", contract_date=date(2026, 1, 10),
-        purchase_contract_type="single", assigned_user_id=test_admin_user.id,
+        purchase_contract_type="framework_cumulative", assigned_user_id=test_admin_user.id,
     )
     db_session.add(p)
     await db_session.commit()
@@ -179,13 +179,14 @@ async def test_patch_purchase_with_contract_id_ignores_incoming_header_fields(
     from app.models.contract import Contract
     from app.models.purchase import Purchase
 
-    contract = Contract(number="Д-200", date=date(2026, 2, 20), contract_type="single")
+    contract = Contract(number="Д-200", date=date(2026, 2, 20), contract_type="framework_cumulative")
     db_session.add(contract)
     await db_session.flush()
 
     p = Purchase(
         status="planned", item_type="goods", item_name="Test patch",
         contract_id=contract.id, contract_number="Д-200",
+        purchase_contract_type="framework_cumulative",
         assigned_user_id=test_user.id,
     )
     db_session.add(p)
@@ -203,6 +204,99 @@ async def test_patch_purchase_with_contract_id_ignores_incoming_header_fields(
     assert "contract_number" not in data["changed"]
     await db_session.refresh(p)
     assert p.contract_number == "Д-200"
+
+
+@pytest.mark.asyncio
+async def test_single_contract_bidirectional_sync_from_purchase(
+    db_session, client, admin_headers, test_admin_user,
+):
+    from app.models.contract import Contract
+    from app.models.purchase import Purchase
+    from app.models.contractor import Contractor
+
+    c1 = Contractor(name="Контрагент 1", inn="7701000001")
+    c2 = Contractor(name="Контрагент 2", inn="7701000002")
+    db_session.add_all([c1, c2])
+    await db_session.flush()
+
+    contract = Contract(
+        number="Д-ОДИНОЧНЫЙ",
+        date=date(2026, 1, 15),
+        contract_type="single",
+        contractor_id=c1.id,
+        end_date=date(2026, 6, 30),
+    )
+    db_session.add(contract)
+    await db_session.flush()
+
+    p = Purchase(
+        status="planned", item_type="goods", item_name="Single Contract Purchase",
+        contract_id=contract.id, contract_number="Д-ОДИНОЧНЫЙ", contract_date=date(2026, 1, 15),
+        purchase_contract_type="single", contractor_id=c1.id, contract_end_date=date(2026, 6, 30),
+        assigned_user_id=test_admin_user.id,
+    )
+    db_session.add(p)
+    await db_session.commit()
+
+    # 1. Проверяем PATCH закупки для single договора
+    patch_resp = await client.patch(
+        f"/api/purchases/{p.id}",
+        json={
+            "contract_number": "НОВЫЙ-СИНГЛ-1",
+            "contract_date": "2026-03-20",
+            "contract_end_date": "2026-12-31",
+            "contractor_id": c2.id,
+        },
+        headers=admin_headers,
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    patch_data = patch_resp.json()
+    assert "contract_number" not in patch_data.get("contract_fields_ignored", [])
+
+    await db_session.refresh(p)
+    await db_session.refresh(contract)
+    assert p.contract_number == "НОВЫЙ-СИНГЛ-1"
+    assert p.contract_date == date(2026, 3, 20)
+    assert p.contract_end_date == date(2026, 12, 31)
+    assert p.contractor_id == c2.id
+
+    assert contract.number == "НОВЫЙ-СИНГЛ-1"
+    assert contract.date == date(2026, 3, 20)
+    assert contract.end_date == date(2026, 12, 31)
+    assert contract.contractor_id == c2.id
+
+    # 2. Проверяем PUT закупки для single договора
+    put_body = {
+        "contract_id": contract.id,
+        "contract_number": "НОВЫЙ-СИНГЛ-2",
+        "contract_date": "2026-04-10",
+        "contract_end_date": "2026-11-30",
+        "contractor_id": c1.id,
+        "purchase_contract_type": "single",
+        "status": "planned",
+        "assigned_user_id": test_admin_user.id,
+        "items": [],
+    }
+    put_resp = await client.put(
+        f"/api/purchases/{p.id}?admin_override=true",
+        json=put_body,
+        headers=admin_headers,
+    )
+    assert put_resp.status_code == 200, put_resp.text
+    put_data = put_resp.json()
+    assert "contract_number" not in put_data.get("contract_fields_ignored", [])
+
+    await db_session.refresh(p)
+    await db_session.refresh(contract)
+    assert p.contract_number == "НОВЫЙ-СИНГЛ-2"
+    assert p.contract_date == date(2026, 4, 10)
+    assert p.contract_end_date == date(2026, 11, 30)
+    assert p.contractor_id == c1.id
+
+    assert contract.number == "НОВЫЙ-СИНГЛ-2"
+    assert contract.date == date(2026, 4, 10)
+    assert contract.end_date == date(2026, 11, 30)
+    assert contract.contractor_id == c1.id
 
 
 @pytest.mark.asyncio

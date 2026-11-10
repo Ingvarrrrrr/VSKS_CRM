@@ -471,11 +471,13 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
     cascade_number = 'number' in set_fields
     cascade_date = 'date' in set_fields
     cascade_contractor = 'contractor_id' in set_fields
+    cascade_end_date = 'end_date' in set_fields
+    cascade_type = 'contract_type' in set_fields
 
     n_updated_purchases = 0
     warnings = ContractSyncWarnings()
 
-    if cascade_number or cascade_date or cascade_contractor:
+    if cascade_number or cascade_date or cascade_contractor or cascade_end_date or cascade_type:
         linked_result = await db.execute(select(Purchase).where(Purchase.contract_id == cid))
         linked_purchases = linked_result.scalars().all()
         n_updated_purchases = len(linked_purchases)
@@ -490,7 +492,7 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
         # импорт — purchases.py импортирует ИЗ этого модуля на уровне модуля
         # (ensure_contract_linked), обратный импорт сверху дал бы цикл.
         from app.routers.purchases import _sync_purchase_from_contract
-        _sync_fields = ("contract_number", "contract_date", "purchase_contract_type", "contractor_id")
+        _sync_fields = ("contract_number", "contract_date", "purchase_contract_type", "contractor_id", "contract_end_date")
 
         for p in linked_purchases:
             before = {f: getattr(p, f) for f in _sync_fields}

@@ -74,3 +74,17 @@ async def test_post_contractor_matches_existing_with_trailing_space_inn(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["id"] == existing_id
+
+
+@pytest.mark.asyncio
+async def test_search_contractor_by_inn_with_spaces(
+    db_session, client, test_org, superadmin_headers
+):
+    # Поиск по ИНН с пробелами в запросе должен находить контрагента
+    resp = await client.get(
+        "/api/contractors/?search=%207723543065%20",
+        headers=superadmin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()
+    assert any(c["inn"] == "7723543065" for c in items)

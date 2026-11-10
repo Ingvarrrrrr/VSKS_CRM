@@ -148,7 +148,8 @@ async def generate_document_bytes(
     # а не N синхронных попыток читать bytea с уже удалённой колонки
     # products.photo_data (владелец, 26.10.2026 — фото в отдельной таблице).
     from app.services.product_photo_store import load_photos_bulk
-    _photo_map = await load_photos_bulk(db, [it.product_id for it in (p.items or [])])
+    _all_pids = [it.product_id for it in (p.items or [])] + [ci.product_id for ci in (p.contract_items or [])]
+    _photo_map = await load_photos_bulk(db, _all_pids)
     resolve_photo = make_photo_resolver(tpl, photo_map=_photo_map)
 
     # Items / subject_kind.
@@ -224,7 +225,7 @@ async def generate_document_bytes(
     receipt_png_paths = await build_contract_items_and_receipts_context(context, p, db, tpl, pid, doc_type)
 
     # Render (with custom-template auto-fallback) + post-process buffer.
-    tpl, template_path, fallback_info = render_template(tpl, context, template_path, doc_type)
+    tpl, template_path, fallback_info = render_template(tpl, context, template_path, doc_type, pid=pid)
     buf = build_final_buffer(tpl, doc_type, approvers_list, receipt_png_paths, pid, template_path)
 
     # Contract ТЗ table append, methodology attach, secondary-doc merge.

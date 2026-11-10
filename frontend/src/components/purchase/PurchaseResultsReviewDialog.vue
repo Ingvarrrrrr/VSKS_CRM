@@ -454,7 +454,13 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'winner-applied', payload: { contractor_id: number; contractor_name: string; contract_price: number | null }): void
+  (e: 'winner-applied', payload: {
+    contractor_id: number
+    contractor_name: string
+    contract_price: number | null
+    status?: string | null
+    substatus?: string | null
+  }): void
 }>()
 
 const open = ref(false)
@@ -815,6 +821,8 @@ async function applyWinner() {
       contractor_id: res.contractor_id,
       contractor_name: res.contractor_name,
       contract_price: res.contract_price,
+      status: res.status,
+      substatus: res.substatus,
     })
   } catch (e: any) {
     toast.addToast(e?.detail || 'Ошибка переноса победителя в закупку', 'error')

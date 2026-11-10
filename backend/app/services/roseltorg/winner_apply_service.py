@@ -272,6 +272,10 @@ async def apply_winner_full(
     if protocol_number:
         purchase.procurement_protocol_number = protocol_number
 
+    if purchase.status in ("wishes", "plan_schedule", "work_in_progress", None, ""):
+        purchase.status = "work_in_progress"
+        purchase.substatus = "contract_signing"
+
     updated_pos_count, applied_alts_count, created_ci_count = await apply_winner_positions_and_alternatives(
         db=db,
         purchase=purchase,
@@ -293,6 +297,8 @@ async def apply_winner_full(
         "updated_positions_count": updated_pos_count,
         "applied_alternatives_count": applied_alts_count,
         "created_contract_items_count": created_ci_count,
+        "status": purchase.status,
+        "substatus": purchase.substatus,
         "vat_mode": purchase.vat_mode,
         "vat_applicable": purchase.vat_applicable,
         "vat_rate": purchase.vat_rate,

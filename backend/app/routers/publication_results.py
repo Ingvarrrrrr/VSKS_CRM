@@ -35,6 +35,7 @@ from app.services.documents.formatting import _fmt_date, _extract_city_from_addr
 from app.services.documents.protocol_vsks import build_vsks_protocol_docx
 from app.services.documents.tkp_form_xlsx import render_standardized_tkp_xlsx
 from app.services.documents.tkp_form_pdf import render_standardized_tkp_pdf
+from app.services.publications_status import sync_purchase_on_platform_published
 from app.services.roseltorg.analog_matcher import extract_item_structured_chars
 from app.services.roseltorg.protocol_parser import parse_protocol_file
 from app.services.roseltorg.results_builder import get_or_build_default_results
@@ -149,6 +150,9 @@ async def ensure_publication_for_results(
         await db.commit()
         await db.refresh(pub)
 
+    sync_purchase_on_platform_published(purchase)
+    await db.commit()
+
     results = await get_or_build_default_results(db, purchase, pub)
     return {
         "pub_id": pub.id,
@@ -188,6 +192,9 @@ async def sync_publication_results(
         pub.platform_number = str(results["registration_number"])
     if results.get("procedure_state"):
         pub.platform_state = str(results["procedure_state"])
+
+    purchase = await db.get(Purchase, pub.purchase_id)
+    sync_purchase_on_platform_published(purchase)
 
     await db.commit()
     await db.refresh(pub)
@@ -280,6 +287,9 @@ async def import_protocol_file(
         raise HTTPException(status_code=422, detail="Не выбраны файлы для загрузки")
 
     merged = await import_multiple_protocol_files(db, pub, purchase, file_list)
+
+    sync_purchase_on_platform_published(purchase)
+    await db.commit()
 
     return {
         "ok": True,

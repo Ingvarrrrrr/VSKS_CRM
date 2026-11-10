@@ -15,10 +15,12 @@ from sqlalchemy import select
 
 from app.database import async_session
 from app.models.platform_publication import PlatformPublication
+from app.models.purchase import Purchase
 from app.services.publications_status import (
     _set_pub_success,
     _set_pub_error,
     _set_pub_attachments_result,
+    sync_purchase_on_platform_published,
 )
 from app.services.publications_fabrikant_client import _get_platform_creds
 
@@ -432,6 +434,9 @@ async def refresh_roseltorg_status(pub_id: int, user_id: int | None = None) -> d
             if new_status == "published" and not pub.published_at:
                 pub.published_at = datetime.now(timezone.utc)
             pub.updated_at = datetime.now(timezone.utc)
+            if new_status == "published":
+                purchase = await db.get(Purchase, pub.purchase_id)
+                sync_purchase_on_platform_published(purchase)
             await db.commit()
 
     detail = f"Статус: {notice_state or 'неизвестен'}"

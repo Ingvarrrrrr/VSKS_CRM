@@ -242,6 +242,15 @@ export function usePurchasePublications(
     } catch {}
   }
 
+  function syncFormPublishedStatus() {
+    if (['wishes', 'plan_schedule', 'work_in_progress', ''].includes(form.status || '')) {
+      form.status = 'work_in_progress'
+      if (!form.substatus || ['tz_forming', 'kp_collecting'].includes(form.substatus)) {
+        form.substatus = 'on_platform'
+      }
+    }
+  }
+
   async function refreshPubStatus(pub: Publication) {
     refreshingPubId.value = pub.id
     try {
@@ -249,6 +258,7 @@ export function usePurchasePublications(
       const idx = publications.value.findIndex(p => p.id === pub.id)
       if (idx !== -1) publications.value[idx] = updated
       if (updated.status === 'published') {
+        syncFormPublishedStatus()
         showSnack(`Процедура размещена на ${PLATFORM_LABELS[updated.platform] || updated.platform}`, 'success')
       } else if (updated.status === 'draft') {
         showSnack(`Статус обновлён: черновик${updated.platform_number ? ' №' + updated.platform_number : ''} на Фабриканте`)
@@ -380,6 +390,9 @@ export function usePurchasePublications(
       const updated = await apiFetch<Publication>(`/publications/${pub.id}/publish-draft`, { method: 'POST' })
       const idx = publications.value.findIndex(p => p.id === pub.id)
       if (idx >= 0) publications.value[idx] = updated
+      if (updated.status === 'published') {
+        syncFormPublishedStatus()
+      }
       showSnack(
         updated.status === 'published'
           ? `Процедура размещена на ${PLATFORM_LABELS[pub.platform] || pub.platform}`
@@ -479,6 +492,7 @@ export function usePurchasePublications(
           showSnack(pub.error_text || 'Ошибка публикации', 'error')
         }
       } else if (pub && pub.status === 'published') {
+        syncFormPublishedStatus()
         showSnack(`Закупка опубликована на ${PLATFORM_LABELS[pub.platform] || pub.platform}`, 'success')
       } else if (pub && pub.status === 'draft') {
         showSnack(

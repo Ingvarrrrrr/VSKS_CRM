@@ -7,6 +7,17 @@ from sqlalchemy import select
 
 from app.database import async_session
 from app.models.platform_publication import PlatformPublication
+from app.models.purchase import Purchase
+
+
+def sync_purchase_on_platform_published(purchase: Purchase | None) -> None:
+    """Переводит закупку в статус 'work_in_progress' и подстатус 'on_platform' при размещении на ЭТП или получении заявок (не понижая уже достигнутые стадии)."""
+    if not purchase:
+        return
+    if purchase.status in ("wishes", "plan_schedule", "work_in_progress", None, ""):
+        purchase.status = "work_in_progress"
+        if purchase.substatus in (None, "", "tz_forming", "kp_collecting"):
+            purchase.substatus = "on_platform"
 
 
 def _make_ssl_ctx() -> ssl.SSLContext:
@@ -43,6 +54,9 @@ async def _set_pub_success(
             if status == "published":
                 pub.published_at = datetime.now(timezone.utc)
             pub.updated_at = datetime.now(timezone.utc)
+            if status == "published":
+                purchase = await db.get(Purchase, pub.purchase_id)
+                sync_purchase_on_platform_published(purchase)
             await db.commit()
 
 

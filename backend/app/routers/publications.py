@@ -24,6 +24,7 @@ from app.services.publications_fabrikant_client import (
     _fabrikant_procedure_state,
 )
 from app.services.publications_roseltorg_client import _call_roseltorg
+from app.services.publications_status import sync_purchase_on_platform_published
 from app.services.roseltorg.client import publish_roseltorg_draft, refresh_roseltorg_status
 from app.auth.object_visibility import ensure_purchase_visible
 
@@ -306,6 +307,9 @@ async def refresh_publication_status(
     if new_status == "published" and not pub.published_at:
         pub.published_at = datetime.now(timezone.utc)
     pub.updated_at = datetime.now(timezone.utc)
+
+    if new_status == "published":
+        sync_purchase_on_platform_published(purchase)
 
     await db.commit()
     await db.refresh(pub)

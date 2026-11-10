@@ -236,7 +236,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:noNmcd': [value: boolean]
-  'winner-applied': [payload: { contractor_id: number; contractor_name: string; contract_price: number | null }]
+  'winner-applied': [payload: {
+    contractor_id: number
+    contractor_name: string
+    contract_price: number | null
+    status?: string | null
+    substatus?: string | null
+  }]
 }>()
 
 const resultsDialogRef = ref<any>(null)

@@ -1263,6 +1263,82 @@ def test_subsidy_protocol_base_doc_copies_header_from_contract(tmp_path):
     assert "ОТДЕЛЕНИЕ КРЫМ" in render_doc.tables[0].rows[0].cells[1].text
 
 
+@pytest.mark.asyncio
+async def test_publication_and_winner_status_transitions():
+    """Проверяет переходы статусов и подстатусов закупки при размещении на площадке и выборе победителя."""
+    from app.services.publications_status import sync_purchase_on_platform_published
+    from app.services.roseltorg.winner_apply_service import apply_winner_full
+
+    # 1. sync_purchase_on_platform_published: переход из plan_schedule в work_in_progress / on_platform
+    p1 = Purchase(id=101, subject="Закупка 1", status="plan_schedule", substatus=None)
+    sync_purchase_on_platform_published(p1)
+    assert p1.status == "work_in_progress"
+    assert p1.substatus == "on_platform"
+
+    # Если уже tz_forming / kp_collecting -> также обновляет в on_platform
+    p1_tz = Purchase(id=102, subject="Закупка TZ", status="work_in_progress", substatus="tz_forming")
+    sync_purchase_on_platform_published(p1_tz)
+    assert p1_tz.status == "work_in_progress"
+    assert p1_tz.substatus == "on_platform"
+
+    # Если уже contract_signing или contracted -> не понижает статус и подстатус
+    p_advanced = Purchase(id=103, subject="Закупка на этапе подписания", status="work_in_progress", substatus="contract_signing")
+    sync_purchase_on_platform_published(p_advanced)
+    assert p_advanced.status == "work_in_progress"
+    assert p_advanced.substatus == "contract_signing"
+
+    p_contracted = Purchase(id=104, subject="Договор заключен", status="contracted", substatus=None)
+    sync_purchase_on_platform_published(p_contracted)
+    assert p_contracted.status == "contracted"
+    assert p_contracted.substatus is None
+
+    # 2. apply_winner_full: переход в status="work_in_progress", substatus="contract_signing"
+    p2 = Purchase(id=105, subject="Закупка с победителем", status="work_in_progress", substatus="on_platform")
+    db = AsyncMock()
+    db.add = MagicMock()
+    mock_r = MagicMock()
+    mock_r.scalars.return_value.all.return_value = []
+    mock_r.scalars.return_value.first.return_value = None
+    mock_r.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=mock_r)
+
+    winner = {
+        "supplier_name": "ООО «ТестПоставщик»",
+        "inn": "7712345678",
+        "price_with_vat": 150000.0,
+        "positions": [],
+    }
+
+    with patch("app.routers.purchases._recalc_contract_price_from_contract_items", new=AsyncMock()):
+        res2 = await apply_winner_full(
+            db=db,
+            purchase=p2,
+            winner=winner,
+            protocol_number="ПР-01",
+        )
+    assert res2["ok"] is True
+    assert p2.status == "work_in_progress"
+    assert p2.substatus == "contract_signing"
+    assert res2["status"] == "work_in_progress"
+    assert res2["substatus"] == "contract_signing"
+
+    # 3. apply_winner_full: сохранение status="contracted" (не сбрасывается назад в work_in_progress)
+    p3 = Purchase(id=106, subject="Закупка уже заключена", status="contracted", substatus="some_sub")
+    with patch("app.routers.purchases._recalc_contract_price_from_contract_items", new=AsyncMock()):
+        res3 = await apply_winner_full(
+            db=db,
+            purchase=p3,
+            winner=winner,
+            protocol_number="ПР-02",
+        )
+    assert res3["ok"] is True
+    assert p3.status == "contracted"
+    assert p3.substatus == "some_sub"
+    assert res3["status"] == "contracted"
+    assert res3["substatus"] == "some_sub"
+
+
+
 
 
 

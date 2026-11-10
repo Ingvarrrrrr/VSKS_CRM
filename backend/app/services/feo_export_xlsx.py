@@ -26,10 +26,11 @@ try:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Protection, Border, Side
     from openpyxl.worksheet.datavalidation import DataValidation
-    from openpyxl.formatting.rule import FormulaRule
+    from openpyxl.formatting.rule import FormulaRule, CellIsRule
 except ImportError:  # pragma: no cover
     Workbook = None
     FormulaRule = None
+    CellIsRule = None
 
 from app.services.feo_export_columns import (
     MONEY_KEYS,
@@ -249,6 +250,7 @@ async def load_item_procurement_and_payments(
             "purchases": set(), "contractors": set(), "inns": set(),
             "contracts": set(), "contract_amounts": set(), "contract_residuals": set(),
             "order_amount": 0.0,
+            "fact_amount": 0.0,
             "purchase_totals_by_pid": {},
             "seen_p_ids": set(),
             "fact_quantities": [], "fact_unit_prices": [], "order_numbers": set(),
@@ -289,7 +291,7 @@ async def load_item_procurement_and_payments(
             "contractor_inn": c_inn,
             "fact_qty": fact_q,
             "fact_unit_price": fact_up,
-            "fact_amount": round(b["order_amount"], 2) if b["order_amount"] > 0 else "",
+            "fact_amount": round(b["fact_amount"], 2) if b["fact_amount"] > 0 else "",
             "paid_amount_money": pay_amt,
             "payment_doc_number": pay_doc,
             "payment_date": pay_dt,
@@ -326,11 +328,28 @@ async def load_item_procurement_and_payments(
         if getattr(r, "p_protocol_num", None):
             b["protocol_numbers"].add(str(r.p_protocol_num))
 
-        if r.pi_qty is not None and float(r.pi_qty) > 0:
-            b["fact_quantities"].append(float(r.pi_qty))
-        f_up = r.pi_final_unit_price if r.pi_final_unit_price is not None else r.pi_unit_price
-        if f_up is not None and float(f_up) > 0:
-            b["fact_unit_prices"].append(float(f_up))
+        is_contracted = (r.p_status in ("contracted", "ordered", "delivered", "paid")) or bool(
+            r.contract_num or getattr(r, "p_contract_num", None) or r.contract_id
+        )
+        has_final_price = (
+            getattr(r, "pi_final_unit_price", None) is not None
+            or getattr(r, "pi_final_total", None) is not None
+        )
+
+        if is_contracted or has_final_price:
+            if r.pi_qty is not None and float(r.pi_qty) > 0:
+                b["fact_quantities"].append(float(r.pi_qty))
+            f_up = r.pi_final_unit_price if r.pi_final_unit_price is not None else r.pi_unit_price
+            if f_up is not None and float(f_up) > 0:
+                b["fact_unit_prices"].append(float(f_up))
+
+            if r.pi_final_total is not None and float(r.pi_final_total) > 0:
+                fact_item_amt = float(r.pi_final_total)
+            elif r.pi_total_price is not None and float(r.pi_total_price) > 0:
+                fact_item_amt = float(r.pi_total_price)
+            else:
+                fact_item_amt = float(r.p_final_amt or r.p_contract_price or 0.0)
+            b["fact_amount"] += fact_item_amt
 
         if r.pi_final_total is not None and float(r.pi_final_total) > 0:
             item_amt = float(r.pi_final_total)
@@ -416,8 +435,13 @@ async def load_item_procurement_and_payments(
         if getattr(r, "p_protocol_num", None):
             b["protocol_numbers"].add(str(r.p_protocol_num))
 
+        is_contracted = (r.p_status in ("contracted", "ordered", "delivered", "paid")) or bool(
+            r.contract_num or getattr(r, "p_contract_num", None) or r.contract_id
+        )
         item_amt = float(r.p_final_amt or r.p_contract_price or 0.0)
         b["order_amount"] += item_amt
+        if is_contracted:
+            b["fact_amount"] += item_amt
 
         if r.p_id not in b["seen_p_ids"]:
             b["seen_p_ids"].add(r.p_id)
@@ -609,6 +633,18 @@ def render_feo_tree_sheet(
     FILL_ORDERED = PatternFill(start_color="D9F99D", end_color="D9F99D", fill_type="solid")   # лайм / жёлто-зелёный (Товар заказан)
     FILL_IN_WORK = PatternFill(start_color="FEF08A", end_color="FEF08A", fill_type="solid")   # тёплый жёлтый (Закупка в работе)
     FILL_PLAN = PatternFill(start_color="FEF9C3", end_color="FEF9C3", fill_type="solid")      # светло-жёлтый (Запланировано)
+
+    # Цвета для условного форматирования ячеек «Да» / «Нет» и колонок факта
+    FILL_YES_GREEN = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    FONT_YES_GREEN = Font(color="166534", bold=True)
+    FILL_NO_RED = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    FONT_NO_RED = Font(color="991B1B")
+
+    FILL_DIFF_RED = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    FONT_DIFF_RED = Font(color="991B1B")
+    FILL_DIFF_GREEN = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    FONT_DIFF_GREEN = Font(color="166534")
+
     BOLD_FONT = Font(bold=True)
     SEMI_FONT = Font(bold=False)
     ITEM_FONT = Font(italic=True, color="475569")
@@ -793,6 +829,53 @@ def render_feo_tree_sheet(
             row_fill = None
 
         row_idx = _write_row(values, row_fill, ITEM_FONT)
+
+        # Сохранение формул произведения количества на цену (задача владельца):
+        # 1. План: кол-во по плану * цена по плану
+        ci_plan = column_index(selected_keys, "plan")
+        ci_plan_qty = column_index(selected_keys, "plan_qty")
+        ci_plan_price = column_index(selected_keys, "plan_unit_price")
+        if (
+            ci_plan is not None
+            and ci_plan_qty is not None
+            and ci_plan_price is not None
+            and item.quantity is not None
+            and plan_unit_price is not None
+        ):
+            lpq = ws.cell(row_idx, ci_plan_qty).column_letter
+            lpp = ws.cell(row_idx, ci_plan_price).column_letter
+            ws.cell(row_idx, ci_plan, value=f"={lpq}{row_idx}*{lpp}{row_idx}").number_format = NUM_FMT
+
+        # 2. Факт сумма: факт кол-во * факт цена (если закупка состоялась и есть факт кол-во и цена)
+        ci_fact_amt = column_index(selected_keys, "fact_amount")
+        ci_fact_qty = column_index(selected_keys, "fact_qty")
+        ci_fact_price = column_index(selected_keys, "fact_unit_price")
+        if (
+            ci_fact_amt is not None
+            and ci_fact_qty is not None
+            and ci_fact_price is not None
+        ):
+            fq = proc.get("fact_qty")
+            fup = proc.get("fact_unit_price")
+            if fq not in (None, "") and fup not in (None, "") and float(fq) > 0 and float(fup) > 0:
+                lfq = ws.cell(row_idx, ci_fact_qty).column_letter
+                lfup = ws.cell(row_idx, ci_fact_price).column_letter
+                ws.cell(row_idx, ci_fact_amt, value=f"={lfq}{row_idx}*{lfup}{row_idx}").number_format = NUM_FMT
+
+        # 3. ФЭО: кол-во по ФЭО * цена по ФЭО
+        ci_feo = column_index(selected_keys, "feo")
+        ci_feo_qty = column_index(selected_keys, "feo_qty")
+        ci_feo_price = column_index(selected_keys, "feo_unit_price")
+        if (
+            ci_feo is not None
+            and ci_feo_qty is not None
+            and ci_feo_price is not None
+            and feo_quantity is not None
+            and feo_unit_price is not None
+        ):
+            lfqty = ws.cell(row_idx, ci_feo_qty).column_letter
+            lfprice = ws.cell(row_idx, ci_feo_price).column_letter
+            ws.cell(row_idx, ci_feo, value=f"={lfqty}{row_idx}*{lfprice}{row_idx}").number_format = NUM_FMT
         ci_feo = column_index(selected_keys, "feo")
         ci_ordered = column_index(selected_keys, "ordered")
         ci_to_order = column_index(selected_keys, "to_order")
@@ -978,7 +1061,119 @@ def render_feo_tree_sheet(
     last_col_letter = ws.cell(row=HEADER_ROW, column=n_cols).column_letter
     ws.auto_filter.ref = f"A{HEADER_ROW}:{last_col_letter}{max(last_row, HEADER_ROW)}"
 
-    # Условное форматирование строк: плавный градиент от жёлтого к зелёному (задача владельца 03.11.2026)
+    max_validation_row = max(last_row + 100, 200)
+    max_cf_row = max(last_row, max_validation_row)
+
+    status_keys = (
+        "active",
+        "is_in_plan",
+        "in_work",
+        "purchase_done",
+        "protocol_signed",
+        "contracted",
+        "ordered_flag",
+        "delivered",
+        "paid_marked",
+        "paid_confirmed",
+    )
+
+    # 1. Условное форматирование ячеек «Да» / «Нет» (задача владельца):
+    # Добавляется ПЕРЕД строчными правилами (gradual row rules), чтобы иметь приоритет.
+    if CellIsRule is not None and last_row >= DATA_FIRST_ROW:
+        rule_yes = CellIsRule(
+            operator="equal",
+            formula=['"Да"'],
+            fill=FILL_YES_GREEN,
+            font=FONT_YES_GREEN,
+            border=THIN_BORDER,
+            stopIfTrue=True,
+        )
+        rule_no = CellIsRule(
+            operator="equal",
+            formula=['"Нет"'],
+            fill=FILL_NO_RED,
+            font=FONT_NO_RED,
+            border=THIN_BORDER,
+            stopIfTrue=True,
+        )
+        for sk in status_keys:
+            ci_st = column_index(selected_keys, sk)
+            if ci_st is not None:
+                col_letter = ws.cell(row=HEADER_ROW, column=ci_st).column_letter
+                st_range = f"{col_letter}{DATA_FIRST_ROW}:{col_letter}{max_cf_row}"
+                ws.conditional_formatting.add(st_range, rule_yes)
+                ws.conditional_formatting.add(st_range, rule_no)
+
+    # 2. Условное форматирование колонок факта (fact_qty, fact_unit_price, fact_amount):
+    # Добавляется ПЕРЕД строчными правилами (gradual row rules), чтобы иметь приоритет.
+    if FormulaRule is not None and last_row >= DATA_FIRST_ROW:
+        ci_rt = column_index(selected_keys, "row_type")
+        col_rt = ws.cell(row=HEADER_ROW, column=ci_rt).column_letter if ci_rt else None
+
+        ci_fact_qty = column_index(selected_keys, "fact_qty")
+        ci_plan_qty = column_index(selected_keys, "plan_qty")
+        ci_fact_price = column_index(selected_keys, "fact_unit_price")
+        ci_plan_price = column_index(selected_keys, "plan_unit_price")
+        ci_fact_amt = column_index(selected_keys, "fact_amount")
+        ci_plan = column_index(selected_keys, "plan")
+
+        if col_rt:
+            # fact_qty: если заполнено и отличается от плана в строках не категорий -> мягкий красный
+            if ci_fact_qty and ci_plan_qty:
+                col_fq = ws.cell(row=HEADER_ROW, column=ci_fact_qty).column_letter
+                col_pq = ws.cell(row=HEADER_ROW, column=ci_plan_qty).column_letter
+                rule_fq = FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_fq}{DATA_FIRST_ROW}<>"", ${col_fq}{DATA_FIRST_ROW}<>${col_pq}{DATA_FIRST_ROW})'],
+                    fill=FILL_DIFF_RED,
+                    font=FONT_DIFF_RED,
+                    border=THIN_BORDER,
+                    stopIfTrue=True,
+                )
+                ws.conditional_formatting.add(f"{col_fq}{DATA_FIRST_ROW}:{col_fq}{max_cf_row}", rule_fq)
+
+            # fact_unit_price: если факт > плана -> красный, факт < плана -> зелёный
+            if ci_fact_price and ci_plan_price:
+                col_fup = ws.cell(row=HEADER_ROW, column=ci_fact_price).column_letter
+                col_pup = ws.cell(row=HEADER_ROW, column=ci_plan_price).column_letter
+                rule_fup_red = FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_fup}{DATA_FIRST_ROW}<>"", ${col_pup}{DATA_FIRST_ROW}<>"", ${col_fup}{DATA_FIRST_ROW}>${col_pup}{DATA_FIRST_ROW})'],
+                    fill=FILL_DIFF_RED,
+                    font=FONT_DIFF_RED,
+                    border=THIN_BORDER,
+                    stopIfTrue=True,
+                )
+                rule_fup_green = FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_fup}{DATA_FIRST_ROW}<>"", ${col_pup}{DATA_FIRST_ROW}<>"", ${col_fup}{DATA_FIRST_ROW}>0, ${col_fup}{DATA_FIRST_ROW}<${col_pup}{DATA_FIRST_ROW})'],
+                    fill=FILL_DIFF_GREEN,
+                    font=FONT_DIFF_GREEN,
+                    border=THIN_BORDER,
+                    stopIfTrue=True,
+                )
+                ws.conditional_formatting.add(f"{col_fup}{DATA_FIRST_ROW}:{col_fup}{max_cf_row}", rule_fup_red)
+                ws.conditional_formatting.add(f"{col_fup}{DATA_FIRST_ROW}:{col_fup}{max_cf_row}", rule_fup_green)
+
+            # fact_amount: если факт > плана -> красный, факт < плана -> зелёный
+            if ci_fact_amt and ci_plan:
+                col_fa = ws.cell(row=HEADER_ROW, column=ci_fact_amt).column_letter
+                col_plan_l = ws.cell(row=HEADER_ROW, column=ci_plan).column_letter
+                rule_fa_red = FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_fa}{DATA_FIRST_ROW}<>"", ${col_plan_l}{DATA_FIRST_ROW}<>"", ${col_fa}{DATA_FIRST_ROW}>${col_plan_l}{DATA_FIRST_ROW})'],
+                    fill=FILL_DIFF_RED,
+                    font=FONT_DIFF_RED,
+                    border=THIN_BORDER,
+                    stopIfTrue=True,
+                )
+                rule_fa_green = FormulaRule(
+                    formula=[f'AND(${col_rt}{DATA_FIRST_ROW}<>"Категория", ${col_fa}{DATA_FIRST_ROW}<>"", ${col_plan_l}{DATA_FIRST_ROW}<>"", ${col_fa}{DATA_FIRST_ROW}>0, ${col_fa}{DATA_FIRST_ROW}<${col_plan_l}{DATA_FIRST_ROW})'],
+                    fill=FILL_DIFF_GREEN,
+                    font=FONT_DIFF_GREEN,
+                    border=THIN_BORDER,
+                    stopIfTrue=True,
+                )
+                ws.conditional_formatting.add(f"{col_fa}{DATA_FIRST_ROW}:{col_fa}{max_cf_row}", rule_fa_red)
+                ws.conditional_formatting.add(f"{col_fa}{DATA_FIRST_ROW}:{col_fa}{max_cf_row}", rule_fa_green)
+
+    # 3. Условное форматирование строк: плавный градиент от жёлтого к зелёному (задача владельца 03.11.2026)
     if FormulaRule is not None and last_row >= DATA_FIRST_ROW:
         ci_rt = column_index(selected_keys, "row_type")
         ci_plan = column_index(selected_keys, "plan")
@@ -1044,19 +1239,7 @@ def render_feo_tree_sheet(
             for rule in rules:
                 ws.conditional_formatting.add(cf_range, rule)
 
-    # Выпадающий список «Да / Нет» для статусных колонок (задача владельца 03.11.2026)
-    status_keys = {
-        "active",
-        "is_in_plan",
-        "in_work",
-        "purchase_done",
-        "protocol_signed",
-        "contracted",
-        "ordered_flag",
-        "delivered",
-        "paid_marked",
-        "paid_confirmed",
-    }
+    # 4. Выпадающий список «Да / Нет» для статусных колонок (задача владельца 03.11.2026)
     dv_yes_no = DataValidation(
         type="list",
         formula1="_meta!$D$1:$D$2",
@@ -1066,28 +1249,42 @@ def render_feo_tree_sheet(
     dv_yes_no.errorTitle = "Недопустимое значение"
     ws.add_data_validation(dv_yes_no)
 
-    max_validation_row = max(last_row + 100, 200)
-
     for sk in status_keys:
         ci_st = column_index(selected_keys, sk)
         if ci_st is not None:
             col_letter = ws.cell(row=HEADER_ROW, column=ci_st).column_letter
             dv_yes_no.add(f"{col_letter}{DATA_FIRST_ROW}:{col_letter}{max_validation_row}")
 
-    # Запасные строки с формулой автогенерации хэша/ID для новых строк (задача владельца 03.11.2026):
+    # 5. Запасные строки с формулой автогенерации хэша/ID и формулой плана (задача владельца):
     # При заполнении колонки наименования в столбце Хэш автоматически появляется NEW-<номер_строки>
-    if ci_row_id is not None:
-        ci_name = column_index(selected_keys, "name")
-        col_name_letter = ws.cell(row=HEADER_ROW, column=ci_name).column_letter if ci_name else "A"
+    # В столбце plan (Плановая стоимость за объём) формула произведения кол-ва на цену:
+    # =IF(AND(${col_plan_qty}{spare_r}<>"",${col_plan_price}{spare_r}<>""),${col_plan_qty}{spare_r}*${col_plan_price}{spare_r},"")
+    ci_name = column_index(selected_keys, "name")
+    ci_plan = column_index(selected_keys, "plan")
+    ci_plan_qty = column_index(selected_keys, "plan_qty")
+    ci_plan_price = column_index(selected_keys, "plan_unit_price")
+    col_name_letter = ws.cell(row=HEADER_ROW, column=ci_name).column_letter if ci_name else "A"
+    col_pq_letter = ws.cell(row=HEADER_ROW, column=ci_plan_qty).column_letter if ci_plan_qty else None
+    col_pp_letter = ws.cell(row=HEADER_ROW, column=ci_plan_price).column_letter if ci_plan_price else None
+
+    if ci_row_id is not None or (ci_plan and col_pq_letter and col_pp_letter):
         for spare_r in range(last_row + 1, last_row + 51):
-            c_spare = ws.cell(row=spare_r, column=ci_row_id, value=f'=IF(${col_name_letter}{spare_r}<>"","NEW-"&ROW(),"")')
-            c_spare.protection = Protection(locked=True)
-            c_spare.border = THIN_BORDER
+            if ci_row_id is not None:
+                c_spare = ws.cell(row=spare_r, column=ci_row_id, value=f'=IF(${col_name_letter}{spare_r}<>"","NEW-"&ROW(),"")')
+                c_spare.protection = Protection(locked=True)
+                c_spare.border = THIN_BORDER
             for ci_other in range(1, n_cols + 1):
                 cell_other = ws.cell(row=spare_r, column=ci_other)
                 cell_other.border = THIN_BORDER
                 if ci_other != ci_row_id:
                     cell_other.protection = Protection(locked=False)
+            if ci_plan and col_pq_letter and col_pp_letter:
+                c_plan_spare = ws.cell(
+                    row=spare_r,
+                    column=ci_plan,
+                    value=f'=IF(AND(${col_pq_letter}{spare_r}<>"",${col_pp_letter}{spare_r}<>""),${col_pq_letter}{spare_r}*${col_pp_letter}{spare_r},"")',
+                )
+                c_plan_spare.number_format = NUM_FMT
 
     # Защита листа от случайного изменения заблокированных ячеек (столбец row_id),
     # без пароля, разрешая сортировку, фильтрацию, форматирование, добавление и удаление строк:

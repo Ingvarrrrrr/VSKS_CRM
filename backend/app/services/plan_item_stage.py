@@ -94,12 +94,14 @@ def _is_purchase_done(
 ) -> bool:
     """Закупка проведена (purchase_done):
     1. Статус закупки in ('contracted', 'ordered', 'delivered', 'paid')
-    2. ЛИБО присвоен хотя бы один официальный реквизит проведения/заказа/договора:
-       purchase_number, order_number, contract_number, procurement_protocol_number.
-    Внутренний registry_number НЕ учитывается."""
+    2. ЛИБО присвоен хотя бы один официальный реквизит договора/протокола:
+       contract_number, procurement_protocol_number.
+    Внутренние purchase_number, order_number, registry_number НЕ учитываются
+    (присваиваются всем созданным закупкам в CRM, из-за чего даже несостоявшиеся
+    закупки ошибочно считались бы проведёнными)."""
     if (status or "") in _PURCHASE_DONE_STATUSES:
         return True
-    for val in (purchase_number, order_number, contract_number, protocol_number):
+    for val in (contract_number, protocol_number):
         if val is not None and str(val).strip():
             return True
     return False

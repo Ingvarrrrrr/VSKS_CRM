@@ -332,13 +332,19 @@
           />
         </v-col>
         <v-col cols="12" md="3">
-          <v-text-field
-            v-model="form.delivery_city"
-            label="Город / населённый пункт"
-            variant="outlined"
-            density="compact"
-            hide-details
-          />
+          <div id="pub-target-city" style="position:relative">
+            <div v-if="pointerTarget === 'city'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+            <div :class="pointerTarget === 'city' ? 'pub-glow' : ''">
+              <v-text-field
+                v-model="form.delivery_city"
+                label="Город / населённый пункт"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="pointerTarget = null; clearGuideArrow()"
+              />
+            </div>
+          </div>
         </v-col>
         <v-col cols="12" md="3">
           <v-text-field
@@ -376,57 +382,64 @@
            «Условия договора» выше — тот определяет текст договора, это поле —
            структурированные условия для площадки (ПРАВИЛО №6: разные задачи,
            разные поля, не объединяем). -->
-      <v-row id="pub-target-payment-terms" class="mt-1">
-        <v-col cols="12">
-          <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-1">
-            Условия оплаты (для площадки)
-          </div>
-        </v-col>
-        <v-col cols="12" md="4">
-          <v-select
-            v-model="form.payment_terms_type"
-            :items="PAYMENT_TERMS_TYPE_OPTIONS"
-            item-title="title"
-            item-value="value"
-            label="Условия оплаты"
-            variant="outlined"
-            density="compact"
-            hide-details
-            @update:model-value="flushAutosaveOnBlur"
-          />
-        </v-col>
-        <v-col v-if="form.payment_terms_type === 'postponement'" cols="12" md="4">
-          <div class="d-flex ga-2">
-            <v-text-field
-              v-model.number="form.payment_postpone_days"
-              type="number"
-              label="Дней отсрочки"
-              density="compact"
-              variant="outlined"
-              hide-details
-              style="max-width:140px"
-              @blur="flushAutosaveOnBlur"
-            />
-            <v-select
-              v-model="form.payment_postpone_day_type"
-              :items="[{title: 'Календарных', value: 'calendar'}, {title: 'Рабочих', value: 'work'}]"
-              item-title="title" item-value="value"
-              density="compact" variant="outlined" hide-details
-              @update:model-value="flushAutosaveOnBlur"
-            />
-          </div>
-        </v-col>
-        <v-col v-if="form.payment_terms_type === 'other'" cols="12" md="4">
-          <v-text-field
-            v-model="form.payment_other_terms"
-            label="Условия оплаты (текст)"
-            density="compact"
-            variant="outlined"
-            hide-details
-            @blur="flushAutosaveOnBlur"
-          />
-        </v-col>
-      </v-row>
+      <div id="pub-target-payment-terms" style="position:relative">
+        <div v-if="pointerTarget === 'payment-terms'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+        <div :class="pointerTarget === 'payment-terms' ? 'pub-glow' : ''">
+          <v-row class="mt-1">
+            <v-col cols="12">
+              <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-1">
+                Условия оплаты (для площадки)
+              </div>
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-select
+                v-model="form.payment_terms_type"
+                :items="PAYMENT_TERMS_TYPE_OPTIONS"
+                item-title="title"
+                item-value="value"
+                label="Условия оплаты"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="pointerTarget = null; clearGuideArrow(); flushAutosaveOnBlur()"
+              />
+            </v-col>
+            <v-col v-if="form.payment_terms_type === 'postponement'" cols="12" md="4">
+              <div class="d-flex ga-2">
+                <v-text-field
+                  v-model.number="form.payment_postpone_days"
+                  type="number"
+                  label="Дней отсрочки"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  style="max-width:140px"
+                  @update:model-value="pointerTarget = null; clearGuideArrow()"
+                  @blur="flushAutosaveOnBlur"
+                />
+                <v-select
+                  v-model="form.payment_postpone_day_type"
+                  :items="[{title: 'Календарных', value: 'calendar'}, {title: 'Рабочих', value: 'work'}]"
+                  item-title="title" item-value="value"
+                  density="compact" variant="outlined" hide-details
+                  @update:model-value="flushAutosaveOnBlur"
+                />
+              </div>
+            </v-col>
+            <v-col v-if="form.payment_terms_type === 'other'" cols="12" md="4">
+              <v-text-field
+                v-model="form.payment_other_terms"
+                label="Условия оплаты (текст)"
+                density="compact"
+                variant="outlined"
+                hide-details
+                @update:model-value="pointerTarget = null; clearGuideArrow()"
+                @blur="flushAutosaveOnBlur"
+              />
+            </v-col>
+          </v-row>
+        </div>
+      </div>
       <!-- Владелец (жалоба п.10, 2026-09-17): «Предоплата» и срок оплаты (постоплата)
            перенесены в блок «Условия договора» выше (см. переключатель «Предоплата /
            Оплата по факту») — раньше чекбокс стоял здесь отдельно, оторванный от

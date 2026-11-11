@@ -36,6 +36,7 @@ class PublishRequest(BaseModel):
     auction_date_start: Optional[str] = None   # ISO datetime, дата начала редукциона
     auction_bet_limit_from: Optional[float] = None  # граница ставки от
     auction_bet_limit_to: Optional[float] = None    # граница ставки до
+    publish_immediately: bool = False  # Росэлторг.Бизнес: опубликовать процедуру сразу (не оставлять черновиком)
 
 class PublicationStatusUpdate(BaseModel):
     status: str             # published / error

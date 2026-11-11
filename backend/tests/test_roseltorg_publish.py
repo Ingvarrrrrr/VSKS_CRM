@@ -445,6 +445,90 @@ async def test_call_roseltorg_lot_success_false_sets_error(monkeypatch, patched_
     assert "Currency not found" in captured["error"]
 
 
+async def test_call_roseltorg_publish_immediately_success(monkeypatch, patched_session):
+    async def fake_get_creds(db, user_id, platform):
+        return ("", "user-token")
+    monkeypatch.setattr(rb_client, "_get_platform_creds", fake_get_creds)
+
+    async def fake_jwt(token):
+        return "jwt-abc"
+    monkeypatch.setattr(rb_client, "get_roseltorg_jwt", fake_jwt)
+
+    calls = []
+
+    async def fake_rb_call(jwt, url, body=None, method="POST"):
+        calls.append((method, url, body))
+        if url.endswith("/new"):
+            return {"success": True, "data": {"noticeId": 777}}, 201
+        if "/notice-lot" in url:
+            return {"success": True, "data": {"noticeLotId": 88}}, 201
+        if url.endswith("/publish"):
+            return {"success": True, "data": {}}, 200
+        return {"success": True, "data": {}}, 200
+    monkeypatch.setattr(rb_client, "rb_call", fake_rb_call)
+
+    async def fake_load_rows(db, purchase_id):
+        return None, []
+    monkeypatch.setattr(rb_client, "load_purchase_item_rows", fake_load_rows)
+
+    results_box = {}
+
+    async def fake_set_success(pub_id, external_id=None, external_url=None, status="published",
+                                platform_number=None, platform_state=None):
+        results_box["status"] = status
+        results_box["external_id"] = external_id
+        results_box["platform_state"] = platform_state
+    monkeypatch.setattr(rb_client, "_set_pub_success", fake_set_success)
+
+    sync_called = []
+    def fake_sync(p):
+        sync_called.append(p)
+    monkeypatch.setattr(rb_client, "sync_purchase_on_platform_published", fake_sync)
+
+    payload = {"purchase_id": 42, "subject": "Тест", "nmck": 1000}
+    await rb_client._call_roseltorg(1, payload, user_id=1, publish_immediately=True)
+
+    assert any(c[1].endswith("/notices/777/publish") for c in calls)
+    assert results_box["status"] == "published"
+    assert results_box["platform_state"] == "published"
+    assert results_box["external_id"] == "777"
+    assert len(sync_called) == 1
+
+
+async def test_call_roseltorg_publish_immediately_failure(monkeypatch, patched_session):
+    async def fake_get_creds(db, user_id, platform):
+        return ("", "user-token")
+    monkeypatch.setattr(rb_client, "_get_platform_creds", fake_get_creds)
+
+    async def fake_jwt(token):
+        return "jwt-abc"
+    monkeypatch.setattr(rb_client, "get_roseltorg_jwt", fake_jwt)
+
+    async def fake_rb_call(jwt, url, body=None, method="POST"):
+        if url.endswith("/new"):
+            return {"success": True, "data": {"noticeId": 777}}, 201
+        if "/notice-lot" in url:
+            return {"success": True, "data": {"noticeLotId": 88}}, 201
+        if url.endswith("/publish"):
+            return {"success": False, "errors": ["Не заполнены поля заявки"]}, 400
+        return {"success": True, "data": {}}, 200
+    monkeypatch.setattr(rb_client, "rb_call", fake_rb_call)
+
+    async def fake_load_rows(db, purchase_id):
+        return None, []
+    monkeypatch.setattr(rb_client, "load_purchase_item_rows", fake_load_rows)
+
+    captured = {}
+    async def fake_set_error(pub_id, text):
+        captured["error"] = text
+    monkeypatch.setattr(rb_client, "_set_pub_error", fake_set_error)
+
+    payload = {"purchase_id": 42, "subject": "Тест", "nmck": 1000}
+    await rb_client._call_roseltorg(1, payload, user_id=1, publish_immediately=True)
+
+    assert "Черновик #777 создан, но ошибка немедленной публикации" in captured["error"]
+
+
 async def test_call_roseltorg_no_nmcd_omits_initial_sum_and_item_price(monkeypatch, patched_session):
     """«Без НМЦД» (payload["no_nmcd"], то же поле, что у Фабриканта): лот без
     initialSum (не "0" — живая проверка: площадка принимает лот без ключа,

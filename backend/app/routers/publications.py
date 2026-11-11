@@ -229,7 +229,7 @@ async def publish_purchase(
     elif body.platform == "roseltorg_rb":
         background_tasks.add_task(
             _call_roseltorg, pub.id, payload, current_user.id,
-            body.attach_documents,
+            body.attach_documents, body.publish_immediately,
         )
 
     return pub

@@ -3545,6 +3545,8 @@ const GUIDE_ARROW_TARGET_LABELS: Record<string, string> = {
   items: 'раздел «Позиции закупки» / «Техническое задание»',
   address: '«Адрес доставки» в разделе «Параметры договора» (для документа)',
   region: '«Регион поставки» в разделе «Параметры договора» (для документа)',
+  city: '«Город / населённый пункт» в разделе «Параметры договора» (для документа)',
+  'payment-terms': '«Условия оплаты» в разделе «Параметры договора»',
   nmck: '«НМЦД» в разделе «Финансовые показатели»',
   okpd2: '«Код ОКПД2» в диалоге публикации на Фабрикант',
   'auction-date': '«Дата начала редукциона» в диалоге публикации на Фабрикант',
@@ -3592,6 +3594,12 @@ const GUIDE_TARGET_RESOLVED: Record<string, () => boolean> = {
   items: () => !items.value.some(it => it.item_name?.trim() && !it.feo_planned_item_id),
   address: () => !!form.delivery_location?.trim(),
   region: () => !!form.delivery_region,
+  city: () => !!String(form.delivery_city || '').trim(),
+  'payment-terms': () => {
+    if (form.payment_terms_type === 'postponement') return !!form.payment_postpone_days
+    if (form.payment_terms_type === 'other') return !!String(form.payment_other_terms || '').trim()
+    return true
+  },
   nmck: () => (nmckMode.value === 'auto' ? displayNmck.value > 0 : !!nmckManualValue.value),
   okpd2: () => !!fabrikantOkpd2.value,
   'auction-date': () => !!fabrikantAuctionDateStart.value,
@@ -3679,6 +3687,19 @@ async function revealField(target: string) {
   }
   guideArrowTo(target)
 }
+
+function _onGuideArrowTargetEvent(e: Event) {
+  const custom = e as CustomEvent<string>
+  if (custom?.detail) {
+    revealField(custom.detail)
+  }
+}
+onMounted(() => {
+  window.addEventListener('guide-arrow-target', _onGuideArrowTargetEvent)
+})
+onUnmounted(() => {
+  window.removeEventListener('guide-arrow-target', _onGuideArrowTargetEvent)
+})
 
 // ── Linked tasks / Link existing task — вынесено в
 // composables/purchase/usePurchaseTasks.ts + components/purchase/LinkedTaskDialogs.vue ──

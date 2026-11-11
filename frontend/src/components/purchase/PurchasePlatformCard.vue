@@ -84,11 +84,25 @@
             <td class="text-caption">
               <!-- Черновик: ссылка недоступна до размещения — показываем пояснение -->
               <template v-if="pub.status === 'draft' && pub.platform === 'roseltorg_rb'">
-                <span class="text-orange-darken-2">
-                  Черновик №{{ pub.platform_number || pub.external_id || '—' }} на Росэлторге —
-                  <a v-if="pub.external_url" :href="pub.external_url" target="_blank" class="text-blue-darken-2 text-decoration-none">открыть кабинет</a>
-                  и разместить его (кнопка слева) или сразу в личном кабинете площадки.
-                </span>
+                <div class="d-flex align-center flex-wrap ga-2 my-1">
+                  <span class="text-orange-darken-2 font-weight-medium">
+                    Черновик №{{ pub.platform_number || pub.external_id || '—' }} на Росэлторге
+                  </span>
+                  <v-btn
+                    size="small"
+                    color="deep-purple"
+                    variant="flat"
+                    prepend-icon="mdi-upload-outline"
+                    :loading="publishingDraftPubId === pub.id"
+                    @click="publishDraft(pub)"
+                  >
+                    Опубликовать черновик
+                  </v-btn>
+                  <a v-if="pub.external_url" :href="pub.external_url" target="_blank" class="text-blue-darken-2 text-caption text-decoration-none">
+                    открыть кабинет
+                    <v-icon size="11">mdi-open-in-new</v-icon>
+                  </a>
+                </div>
               </template>
               <template v-else-if="pub.status === 'draft'">
                 <span class="text-orange-darken-2">

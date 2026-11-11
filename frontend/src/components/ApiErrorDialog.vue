@@ -40,6 +40,14 @@
           {{ copied ? 'Скопировано!' : 'Скопировать' }}
         </v-btn>
         <v-spacer />
+        <v-btn
+          v-if="fieldTarget"
+          color="primary"
+          variant="text"
+          prepend-icon="mdi-arrow-right-bold"
+          @click="goToTarget">
+          Показать поле
+        </v-btn>
         <v-btn color="primary" variant="tonal" @click="show = false">Закрыть</v-btn>
       </v-card-actions>
     </v-card>
@@ -166,6 +174,23 @@ const techDetailsText = computed(() => {
   const header = detailsHeaderLines().join('\n')
   return error.value?.details ? `${header}\n\n${error.value.details}` : header
 })
+
+const fieldTarget = computed<string | null>(() => {
+  const text = ((error.value?.message || '') + ' ' + (error.value?.details || '')).toLowerCase()
+  if (!text.trim()) return null
+  if (text.includes('населённый пункт') || text.includes('город')) return 'city'
+  if (text.includes('субъект') || text.includes('регион поставки')) return 'region'
+  if (text.includes('условия оплаты') || text.includes('отсрочки')) return 'payment-terms'
+  if (text.includes('окпд')) return 'okpd2'
+  return null
+})
+
+function goToTarget() {
+  if (fieldTarget.value) {
+    window.dispatchEvent(new CustomEvent('guide-arrow-target', { detail: fieldTarget.value }))
+    show.value = false
+  }
+}
 
 async function copyDetails() {
   const text = [

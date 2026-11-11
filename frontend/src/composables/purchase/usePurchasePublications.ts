@@ -65,7 +65,7 @@ export const FABRIKANT_PROCEDURE_TYPES = [
 // см. ItemsTableFlat.vue + useGuideArrow.ts) — тот же приём, что уже
 // применяется в CreateOrderView.vue для «не указан тип»/«не указана ФЭО»
 // (ПРАВИЛО №6, не второй механизм адресации строки).
-export type PublishTarget = 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet' | 'region' | 'address' | 'payment-terms' | `item:${string}`
+export type PublishTarget = 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet' | 'region' | 'city' | 'address' | 'payment-terms' | 'okpd2' | 'tz-duplicates' | 'vat' | `item:${string}`
 
 export function usePurchasePublications(
   purchaseId: ComputedRef<number | null>,
@@ -171,9 +171,15 @@ export function usePurchasePublications(
     }
   }
 
-  function checkPublishReady(): {text: string; target: PublishTarget}[] {
+  function checkPublishReady(platform?: string | null): {text: string; target: PublishTarget}[] {
+    const targetPlatform = platform || pendingPlatform.value
     const errors: {text: string; target: PublishTarget}[] = []
     if (!form.subject?.trim()) errors.push({ text: 'Не заполнено наименование закупки', target: 'subject' })
+    if (targetPlatform === 'roseltorg_rb') {
+      if (!String(form.delivery_city || '').trim()) {
+        errors.push({ text: 'Укажите город / населённый пункт доставки (для Росэлторга)', target: 'city' })
+      }
+    }
     // Мониторинг цен не требует позиций (и deliveryPlace там опционален)
     if (fabrikantProcedureType.value !== 'price_monitoring') {
       if (!items.value.some(i => i.item_name?.trim())) errors.push({ text: 'Нет позиций в закупке (добавьте хотя бы одну)', target: 'items' })
@@ -271,7 +277,7 @@ export function usePurchasePublications(
     }
   }
 
-  async function doPublish(platform: string, procedureType?: string | null) {
+  async function doPublish(platform: string, procedureType?: string | null, publishImmediately: boolean = false) {
     publishingPlatform.value = platform
     // Сначала сбрасываем несохранённые изменения в БД, иначе бэкенд читает устаревший delivery_region
     if (isEdit.value && purchaseId.value) {
@@ -312,10 +318,12 @@ export function usePurchasePublications(
         if (fabrikantDates.value.summing_up_date) body.summing_up_date = fabrikantDates.value.summing_up_date
         // «Без НМЦД» — то же состояние, что у Фабриканта (ПРАВИЛО №6)
         body.no_nmcd = fabrikantNoNmcd.value
+        body.publish_immediately = publishImmediately
       }
       const pub = await apiFetch<Publication>(`/publications/purchases/${purchaseId.value}`, {
         method: 'POST',
         body: JSON.stringify(body),
+        suppressErrorDialog: true,
       })
       publications.value.unshift(pub)
       showSnack(`Отправлено на публикацию: ${PLATFORM_LABELS[platform]}`)
@@ -325,6 +333,9 @@ export function usePurchasePublications(
       // Poll status for 30s
       pollPublication(pub.id)
     } catch (e: any) {
+      publishDialog.value = false
+      pendingPlatform.value = null
+      roseltorgProcedureType.value = null
       const errText = e?.detail || e?.payload?.message || e?.message || 'Ошибка при отправке на публикацию'
       // TZ_MISSING (publications.py::publish_purchase, ПРАВИЛО №8 п.1) — фронт
       // обычно ловит это раньше в checkPublishReady, но 422 с бэка та же
@@ -436,7 +447,8 @@ export function usePurchasePublications(
     const t = (errorText || '').toLowerCase()
     if (!t) return null
     if (t.includes('условия оплаты') || t.includes('отсрочки')) return 'payment-terms'
-    if (t.includes('населённый пункт') || t.includes('место поставки') || t.includes('регион')) return 'region'
+    if (t.includes('населённый пункт') || t.includes('город')) return 'city'
+    if (t.includes('место поставки') || t.includes('регион') || t.includes('субъект')) return 'region'
     if (t.includes('единица измерения')) return 'items'
     return null
   }

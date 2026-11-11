@@ -171,6 +171,7 @@ async def _call_roseltorg(
     payload: dict,
     user_id: int | None = None,
     attach_documents: bool = False,
+    publish_immediately: bool = False,
 ):
     """Создаёт черновик процедуры на Росэлторг.Бизнес из payload закупки.
 
@@ -334,6 +335,28 @@ async def _call_roseltorg(
             await _attach_roseltorg_purchase_questions(jwt, notice_id)
         except Exception as q_exc:
             logger.warning("Roseltorg purchase questions error pub=%s: %s", pub_id, q_exc)
+
+        if publish_immediately:
+            pub_result, pub_status = await rb_call(jwt, f"{base}/notices/{notice_id}/publish")
+            if not rb_ok(pub_result, pub_status):
+                err = rb_error_text(pub_result)
+                await _set_pub_error(pub_id, f"Черновик #{notice_id} создан, но ошибка немедленной публикации: {err}")
+                return
+            await _set_pub_success(
+                pub_id,
+                external_id=str(notice_id),
+                external_url=ROSELTORG_CABINET_URL,
+                status="published",
+                platform_number=None,
+                platform_state="published",
+            )
+            if purchase_id:
+                async with async_session() as db:
+                    purchase = await db.get(Purchase, purchase_id)
+                    if purchase:
+                        sync_purchase_on_platform_published(purchase)
+                        await db.commit()
+            return
 
         # Результат — ЧЕРНОВИК (владелец: не публиковать автоматически).
         # Ссылка — кабинет площадки (точный адрес страницы черновика

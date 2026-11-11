@@ -308,18 +308,25 @@
               </v-row>
 
               <v-alert type="info" variant="tonal" density="compact" class="mt-2 mb-2 text-caption">
-                Результат — черновик процедуры на площадке. Размещать его нужно отдельно,
-                кнопкой «Опубликовать черновик» в карточке публикаций.
+                Можно отправить закупку на публикацию сразу, либо сохранить как черновик для проверки на площадке.
               </v-alert>
 
-              <div class="d-flex gap-2 mt-3">
+              <div class="d-flex flex-wrap gap-2 mt-3">
                 <v-btn variant="text" @click="pendingPlatform = null; roseltorgProcedureType = null">Назад</v-btn>
                 <v-btn
                   color="deep-purple"
+                  variant="elevated"
                   :disabled="!roseltorgProcedureType"
                   :loading="publishingPlatform === 'roseltorg_rb'"
-                  @click="doPublish('roseltorg_rb', roseltorgProcedureType)"
-                >Создать черновик на Росэлторг</v-btn>
+                  @click="() => { publishErrors = checkPublishReady('roseltorg_rb'); if (!publishErrors.length) doPublish('roseltorg_rb', roseltorgProcedureType, true); else revealField(publishErrors[0]!.target) }"
+                >Опубликовать сразу на Росэлторг</v-btn>
+                <v-btn
+                  color="deep-purple"
+                  variant="outlined"
+                  :disabled="!roseltorgProcedureType"
+                  :loading="publishingPlatform === 'roseltorg_rb'"
+                  @click="() => { publishErrors = checkPublishReady('roseltorg_rb'); if (!publishErrors.length) doPublish('roseltorg_rb', roseltorgProcedureType, false); else revealField(publishErrors[0]!.target) }"
+                >Создать черновик</v-btn>
               </div>
             </div>
           </v-expand-transition>
@@ -362,10 +369,10 @@ defineProps<{
   fabrikantDates: { proposal_start: string; proposal_end: string; determination_date: string; summing_up_date: string }
   formatMoney: (v: number) => string
   isPlatformPublished: (platform: string) => boolean
-  checkPublishReady: () => { text: string; target: PublishTarget }[]
+  checkPublishReady: (platform?: string | null) => { text: string; target: PublishTarget }[]
   okpd2ItemTitle: (item: { code: string; name: string }) => string
   searchOkpd2: (q: string | undefined) => void
-  doPublish: (platform: string, procedureType?: string | null) => Promise<void>
+  doPublish: (platform: string, procedureType?: string | null, publishImmediately?: boolean) => Promise<void>
   revealField: (target: string) => void
   clearGuideArrow: () => void
   initFabrikantDates: () => void

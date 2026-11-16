@@ -3,6 +3,7 @@
 // Дословный перенос из WishesView.vue при разбиении файла на компоненты/композаблы.
 import { computed, ref } from 'vue'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
+import { refreshTaskBadges } from '@/composables/useChat'
 import { callApproverCascade, callApproverChain, ensureApproversBeforeSubmit, moveApprover as moveApproverShared } from './useApproverCascade'
 import type { WishesContext } from './useWishesContext'
 import type { Wish, WishApprover, WishMember } from './wishTypes'
@@ -313,6 +314,7 @@ export function useWishApprovers(deps: {
       // ручного «Обновить», и повторное открытие заявки из него откатывает окно.
       await reloadActiveTab()
       refreshMyPendingApprovals()  // бейдж «мои согласования» в сайдбаре
+      refreshTaskBadges()          // бейдж «Заявки на закупку» в сайдбаре
     } catch (e: any) {
       const handled = editingWish.value
         ? (

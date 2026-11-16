@@ -295,7 +295,7 @@ async def list_wishes(
         selectinload(Wish.subsidy),
         selectinload(Wish.event),
         selectinload(Wish.executor),
-        selectinload(Wish.items),
+        selectinload(Wish.items).selectinload(WishItem.planned_item),
         selectinload(Wish.stopped_by_user),
         selectinload(Wish.contractor),
         selectinload(Wish.rejected_by_user),

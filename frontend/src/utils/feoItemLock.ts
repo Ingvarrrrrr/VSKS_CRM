@@ -22,6 +22,7 @@ export interface FeoLockableItem {
   wish_item_id?: number | null
   feo_planned_item_id?: number | null
   from_plan?: boolean | null
+  planned_item_auto_created?: boolean | null
 }
 
 // Позиция закупки/заявки заблокирована, если она ЗАГРУЖЕНА из Плана закупок
@@ -42,24 +43,23 @@ export function isItemFeoCategoryLocked(item: FeoLockableItem | null | undefined
 export function feoLockChipLabel(item: FeoLockableItem | null | undefined, isWishStage = false): string | null {
   if (!item) return null
   if (item.from_plan) return item.wish_item_id != null ? 'из заявки' : 'из плана'
-  if (isWishStage && item.feo_planned_item_id != null) return 'из плана'
+  if (isWishStage && isWishItemCategoryLockedByPlan(item, true)) return 'из плана'
   return null
 }
 
 // Владелец (пакет 2, 22.10.2026, заявка №209): «категория позиции по плану не
-// меняется» — ШИРЕ, чем isItemFeoCategoryLocked (from_plan) выше: В ЗАЯВКЕ
-// (isWishStage=true) ЛЮБАЯ позиция с feo_planned_item_id блокирует выбор
-// категории построчно, не только from_plan-позиции из «Закупка по плану».
-// Сервер держит это же правило безусловно для WishItem (ПРАВИЛО №6, см.
-// app/services/wish_item_category_guard.py) — этот предикат только UI-замок ДО
-// отправки запроса. isWishStage=false (закупка, по умолчанию) — поведение НЕ
-// меняется, функция всегда false (редактор общий с закупкой, см. докстринг
-// isItemFeoCategoryLocked выше).
+// меняется» — в заявке (isWishStage=true) блокируются позиции, загруженные
+// из плана (from_plan=true) или привязанные к предсуществующим (не auto_created)
+// плановым позициям. Позиции с авто-созданными при согласовании плановыми
+// позициями (planned_item_auto_created=true, from_plan=false) НЕ блокируются.
 export function isWishItemCategoryLockedByPlan(
   item: FeoLockableItem | null | undefined, isWishStage: boolean,
 ): boolean {
   if (!isWishStage || !item) return false
-  return item.feo_planned_item_id != null
+  if (item.from_plan) return true
+  if (item.feo_planned_item_id == null) return false
+  if (item.planned_item_auto_created) return false
+  return true
 }
 
 // Шапочный замок категории ФЭО закупки (CreateOrderView.vue::FeoTreeSelect).
@@ -77,12 +77,17 @@ export function isWishItemCategoryLockedByPlan(
 export interface FeoHeaderLockableItem {
   wish_id?: number | null
   purchase_method?: string | null
+  items?: FeoLockableItem[] | null
 }
 
 export function isPurchaseFeoHeaderLocked(p: FeoHeaderLockableItem | null | undefined): boolean {
   if (!p) return false
   if (p.wish_id == null) return false
-  return p.purchase_method !== 'advance'
+  if (p.purchase_method === 'advance') return false
+  if (Array.isArray(p.items)) {
+    return p.items.some(it => isItemFeoCategoryLocked(it))
+  }
+  return true
 }
 
 // Владелец (сессия 2026-10-29, закупки PEE-2026-00957/РЕЕ-2026-00912):

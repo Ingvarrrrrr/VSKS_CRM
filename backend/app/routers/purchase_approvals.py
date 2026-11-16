@@ -571,9 +571,10 @@ async def _collect_my_pending(db: AsyncSession, current_user: User) -> list[dict
         .order_by(WishApproval.created_at)
     )
     my_wish_approvals = wish_result.scalars().all()
+    my_pending_wa_wish_ids = {wa.wish_id for wa in my_wish_approvals}
     for wa in my_wish_approvals:
         wish = await db.get(Wish, wa.wish_id)
-        if not wish or wish.status != "submitted":
+        if not wish or wish.status != "submitted" or wish.stopped_at is not None:
             continue
 
         if wish.approval_mode == "sequential":
@@ -595,10 +596,42 @@ async def _collect_my_pending(db: AsyncSession, current_user: User) -> list[dict
         out.append({
             "kind": "wish",
             "approval_id": wa.id,
+            "wish_id": wish.id,
             "title": f"Заявка №{wish.id}: {wish.title or 'без названия'}",
             "subtitle": f"{wa.role_name}: {wa.approver_full_name}" if wa.role_name else "",
             "amount": amount,
             "requested_at": wa.created_at.isoformat() if wa.created_at else None,
+            "link": f"/wishes?open={wish.id}",
+        })
+
+    # Заявки, где текущий пользователь назначен ответственным (Wish.assigned_to)
+    # и не имеет собственного шага pending в WishApproval (чтобы не дублировать и не
+    # показывать раньше очереди sequential-цепочки, если он сам в цепочке).
+    assigned_wishes_q = (
+        select(Wish)
+        .where(
+            Wish.status == "submitted",
+            Wish.stopped_at.is_(None),
+            Wish.assigned_to == current_user.id,
+        )
+        .order_by(Wish.created_at)
+    )
+    assigned_wishes = (await db.execute(assigned_wishes_q)).scalars().all()
+    for wish in assigned_wishes:
+        if wish.id in my_pending_wa_wish_ids:
+            continue
+        amount = None
+        if wish.estimated_price is not None:
+            qty = float(wish.quantity) if wish.quantity is not None else 1.0
+            amount = float(wish.estimated_price) * qty
+        out.append({
+            "kind": "wish",
+            "approval_id": -wish.id,
+            "wish_id": wish.id,
+            "title": f"Заявка №{wish.id}: {wish.title or 'без названия'}",
+            "subtitle": "На согласовании (ответственный)",
+            "amount": amount,
+            "requested_at": wish.created_at.isoformat() if wish.created_at else None,
             "link": f"/wishes?open={wish.id}",
         })
 

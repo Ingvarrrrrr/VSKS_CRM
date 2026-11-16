@@ -375,7 +375,7 @@
           <td></td>
           <td :colspan="totalColCount - 2">
             <div class="d-flex align-start ga-4 flex-wrap py-1">
-              <template v-if="feoPerItem || hasFeoBinding(item)">
+              <template v-if="feoPerItem || (item.from_plan && item.feo_category_id != null && item.feo_category_id !== defaultFeoCategoryId)">
                 <!-- data-field="item-feo-category-select-<uid>" — цель useWishForm.ts::
                      highlightMissingFeoCategory (kind='item'), wishFeoMissingTarget.ts.
                      Координатор (2026-10-26): id="item-row-<uid>" (строка 49 выше) висит

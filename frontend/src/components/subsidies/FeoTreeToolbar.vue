@@ -102,6 +102,7 @@
           <div
             v-for="r in ctx.feoSearchResults.value" :key="r.key"
             class="feo-search-dropdown__item"
+            @mousedown.prevent
             @click="ctx.goToFeoSearchResult(r)"
           >
             <v-icon

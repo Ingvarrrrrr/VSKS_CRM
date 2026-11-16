@@ -460,9 +460,9 @@
                 color="primary"
                 hide-details
                 class="mb-3"
-                :disabled="(!isWishEditable && !canEditWishFeo) || hasPlanLinkedItems"
-                :hint="hasPlanLinkedItems ? 'Включено автоматически: позиции привязаны к плану закупок' : undefined"
-                :persistent-hint="hasPlanLinkedItems"
+                :disabled="(!isWishEditable && !canEditWishFeo) || hasMultiCatPlanItems"
+                :hint="hasMultiCatPlanItems ? 'Включено автоматически: позиции из плана закупок в разных категориях' : undefined"
+                :persistent-hint="hasMultiCatPlanItems"
                 @update:model-value="onWishFeoPerItemChange"
               />
               <!-- data-field="feo_category" — одна из ТРЁХ целей highlightMissingFeoCategory
@@ -593,14 +593,14 @@
                   :supports-photo-upload="true"
                   :readonly="!isWishEditable"
                   :feo-attrs-editable="!isWishEditable && canEditWishFeo"
-                  :feo-per-item="wishForm.feo_per_item || hasPlanLinkedItems"
+                  :feo-per-item="wishForm.feo_per_item"
                   :subsidy-id="wishForm.subsidy_id"
                   :subsidy-name="selectedSubsidyName"
                   :org-id="selectedSubsidyOrgId"
                   :default-feo-category-id="wishFeoSelected"
                   :feo-planned-per-item="false"
                   :allow-per-item-plan="true"
-                  :planned-items="wishPlannedResiduals"
+                  :planned-items="wishEditorPlannedResiduals"
                   :show-needed-date="wishDateMode === 'per_item'"
                   :vat-mode="(wishForm.vat_mode as any)"
                   :vat-applicable="wishForm.vat_applicable"
@@ -681,9 +681,9 @@
                 color="primary"
                 hide-details
                 class="mb-3"
-                :disabled="hasPlanLinkedItems"
-                :hint="hasPlanLinkedItems ? 'Включено автоматически: позиции привязаны к плану закупок' : undefined"
-                :persistent-hint="hasPlanLinkedItems"
+                :disabled="hasMultiCatPlanItems"
+                :hint="hasMultiCatPlanItems ? 'Включено автоматически: позиции из плана закупок в разных категориях' : undefined"
+                :persistent-hint="hasMultiCatPlanItems"
                 @update:model-value="onWishFeoPerItemChange"
               />
               <v-alert v-if="hasPlanLinkedItems" type="info" density="compact" variant="tonal" class="mb-2">
@@ -1788,6 +1788,7 @@ import type { Wish } from '@/composables/wishes/wishTypes'
 // (Правило №6 — единственный источник item_forms.json::contract_forms).
 import { contractFormOptions as contractFormOptionsFromDict } from '@/composables/items/useItemForm'
 import { hasGoodsOrServices } from '@/utils/itemTypeKind'
+import { isWishItemCategoryLockedByPlan } from '@/utils/feoItemLock'
 
 const contractFormOptions = contractFormOptionsFromDict()
 
@@ -2160,8 +2161,23 @@ const wishContractNoDataText = computed(() => {
 // этот computed — только UI-подсказка/замок ДО отправки запроса).
 const hasPlanLinkedItems = computed(() =>
   editingWish.value?.source !== 'advance_report' &&
-  (wishForm.value.items as any[]).some(i => i.feo_planned_item_id != null)
+  (wishForm.value.items as any[]).some(i => isWishItemCategoryLockedByPlan(i, true))
 )
+const hasMultiCatPlanItems = computed(() => {
+  if (editingWish.value?.source === 'advance_report') return false
+  const lockedCats = new Set(
+    (wishForm.value.items as any[])
+      .filter(i => isWishItemCategoryLockedByPlan(i, true) && i.feo_category_id != null)
+      .map(i => i.feo_category_id),
+  )
+  return lockedCats.size > 1
+})
+const wishEditorPlannedResiduals = computed(() => {
+  const all = wishPlannedResiduals.value || []
+  if (wishForm.value.feo_per_item || wishFeoSelected.value == null) return all
+  const catId = wishFeoSelected.value
+  return all.filter(p => p.category_id === catId || (p.ancestor_ids || []).includes(catId))
+})
 
 // Нижняя закреплённая панель телефона (режим согласующего) — «Одобрить…»
 // открывает WishApproveSheet; сам шит только эмитит, вызовы actions.* здесь.

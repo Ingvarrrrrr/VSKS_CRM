@@ -17,6 +17,7 @@ import { ACTIONS } from '@/constants/permissionActions'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { numOrNull } from '@/utils/numberFormat'
 import { productPhotoSrc } from '@/utils/productPhoto'
+import { isWishItemCategoryLockedByPlan } from '@/utils/feoItemLock'
 import { resolveWishFeoMissingTarget } from './wishFeoMissingTarget'
 import type { WishesContext } from './useWishesContext'
 import type { Wish } from './wishTypes'
@@ -266,10 +267,34 @@ export function useWishForm(deps: {
   // FEO: динамический каскад (глубина = реальная глубина дерева, не 3 захардкоженных уровня).
   const wishFeoSelected = ref<number | null>(null)
 
+  watch(wishFeoSelected, (newCatId, oldCatId) => {
+    if (wishDialogLoading.value || !wishDialog.value || wishForm.value.feo_per_item) return
+    if (newCatId === oldCatId || newCatId == null) return
+    for (const it of wishForm.value.items as any[]) {
+      if (!isWishItemCategoryLockedByPlan(it, true) && !it.from_plan) {
+        it.feo_category_id = newCatId
+        if (it.feo_planned_item_id != null && editingWish.value?.source !== 'advance_report') {
+          const plannedRow = wishPlannedResiduals.value?.find(p => p.kind === 'planned_item' && p.id === it.feo_planned_item_id)
+          if (plannedRow && plannedRow.category_id !== newCatId) {
+            it.feo_planned_item_id = null
+            it.over_plan = false
+          }
+        }
+      }
+    }
+  })
+
   const wishFeoPerItemDisableDialog = ref(false)
   const wishFeoPerItemDisableCount = ref(0)
   function onWishFeoPerItemChange(val: boolean | null) {
-    if (val) return // включение — безопасно, ничего подтверждать не нужно
+    if (val) {
+      if (wishFeoSelected.value != null) {
+        for (const it of wishForm.value.items as any[]) {
+          if (it.feo_category_id == null) it.feo_category_id = wishFeoSelected.value
+        }
+      }
+      return // включение — безопасно, ничего подтверждать не нужно
+    }
     const relevantItems = (wishForm.value.items as any[])
       .filter((it) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
     const distinctCats = new Set(
@@ -285,7 +310,15 @@ export function useWishForm(deps: {
       const onlyCatId = distinctCats.values().next().value as number
       wishFeoSelected.value = onlyCatId
       for (const it of wishForm.value.items as any[]) {
-        it.feo_category_id = null
+        if (!it.from_plan) {
+          it.feo_category_id = onlyCatId
+        }
+      }
+    } else if (wishFeoSelected.value != null) {
+      for (const it of wishForm.value.items as any[]) {
+        if (!it.from_plan) {
+          it.feo_category_id = wishFeoSelected.value
+        }
       }
     }
   }
@@ -295,8 +328,11 @@ export function useWishForm(deps: {
   }
   function confirmWishFeoPerItemDisable() {
     for (const it of wishForm.value.items as any[]) {
-      it.feo_category_id = null
-      it.feo_planned_item_id = null
+      if (!it.from_plan) {
+        it.feo_category_id = wishFeoSelected.value ?? null
+        it.feo_planned_item_id = null
+        it.over_plan = false
+      }
     }
     wishForm.value.feo_per_item = false
     wishFeoPerItemDisableDialog.value = false
@@ -716,22 +752,26 @@ export function useWishForm(deps: {
     if (wishDialog.value) loadWishFrameworkContracts()
   })
 
-  // Авто-синхронизация: если у позиций появляются плановые позиции или разные категории,
-  // включаем режим per-item (feo_per_item = true), чтобы переключатель не оставался ложно выключенным.
+  // Авто-синхронизация: включаем режим per-item только если у позиций реально
+  // различаются категории или есть позиция из плана (from_plan) с отличной от шапки категорией.
+  // Наличие feo_planned_item_id в одной категории НЕ переключает тумблер.
   watch(
-    () => (wishForm.value.items as any[]).map(i => `${i.feo_planned_item_id ?? ''}:${i.feo_category_id ?? ''}`).join(','),
+    () => (wishForm.value.items as any[]).map(i => `${i.feo_planned_item_id ?? ''}:${i.feo_category_id ?? ''}:${i.from_plan ? '1' : '0'}`).join(','),
     () => {
+      if (wishDialogLoading.value || !wishDialog.value) return
       const items = wishForm.value.items as any[]
       if (!items.length) return
       const isAdv = editingWish.value?.source === 'advance_report'
-      const hasPlan = !isAdv && items.some(i => i.feo_planned_item_id != null)
       const distinctCats = new Set(items.map(i => i.feo_category_id).filter(id => id != null))
-      if (hasPlan || distinctCats.size > 1) {
+      const hasDifferentFromPlan = !isAdv && wishFeoSelected.value != null && items.some(
+        i => i.from_plan && i.feo_category_id != null && i.feo_category_id !== wishFeoSelected.value,
+      )
+      if (distinctCats.size > 1 || hasDifferentFromPlan) {
         if (!wishForm.value.feo_per_item) {
           wishForm.value.feo_per_item = true
         }
       }
-      if (wishFeoSelected.value == null && distinctCats.size === 1) {
+      if (!wishForm.value.feo_per_item && wishFeoSelected.value == null && distinctCats.size === 1) {
         wishFeoSelected.value = distinctCats.values().next().value as number
       }
     }
@@ -958,6 +998,7 @@ export function useWishForm(deps: {
           item_form: i.item_form ?? null,
           target_column_key: i.target_column_key ?? null,
           from_plan: i.from_plan ?? false,
+          planned_item_auto_created: i.planned_item_auto_created ?? false,
           purchase_match: i.purchase_match ?? null,
           // Своё ТЗ позиции (владелец, 14.10.2026, план item-tz-description.md,
           // Этап Б) — ЕДИНСТВЕННЫЙ источник, который реально сохраняется на
@@ -993,19 +1034,14 @@ export function useWishForm(deps: {
           if (it.feo_category_id == null) it.feo_category_id = wishFeoSelected.value
         }
       } else if (!wishForm.value.feo_per_item) {
-        // Дефект (прод, заявка №76, 2026-09-20): заявка создана из плана
-        // закупок с НЕСКОЛЬКИМИ категориями — у каждой позиции своя
-        // feo_category_id, но шапка (wishFeoSelected) пуста, а feo_per_item
-        // почему-то остался false (бэкенд теперь ставит true при создании из
-        // плана с разными категориями, но старые заявки/крайние случаи это не
-        // чинят). Без этой синхронизации wishItemsMissingFeoCategory (общая
-        // ветка выше) видит пустую шапку и требует категорию ЗАНОВО у всех
-        // позиций, хотя она у них уже есть — «Конечная категория ФЭО не
-        // выбрана» на заявке, где она давно выбрана для каждой позиции.
-        // Включаем per-item режим — он переводит проверку на собственные
-        // feo_category_id позиций (ветка ниже в wishItemsMissingFeoCategory).
-        const hasOwnCategory = (wishForm.value.items as any[]).some(it => it.feo_category_id != null)
-        if (hasOwnCategory) wishForm.value.feo_per_item = true
+        const distinctItemCats = new Set(
+          (wishForm.value.items as any[]).map(it => it.feo_category_id).filter(id => id != null)
+        )
+        if (distinctItemCats.size > 1) {
+          wishForm.value.feo_per_item = true
+        } else if (distinctItemCats.size === 1) {
+          wishFeoSelected.value = distinctItemCats.values().next().value as number
+        }
       }
 
       wishDateMode.value = (wishForm.value.items as any[]).some(it => it.needed_date) ? 'per_item' : 'common'
@@ -1019,20 +1055,32 @@ export function useWishForm(deps: {
 
   function buildWishPayload() {
     const isAdv = editingWish.value?.source === 'advance_report'
-    const hasPlanLinked = !isAdv && (wishForm.value.items as any[]).some((i: any) => i.feo_planned_item_id != null)
-    const distinctCats = new Set(
-      (wishForm.value.items as any[]).map((i: any) => i.feo_category_id).filter((id: any) => id != null)
+    const meaningfulItems = (wishForm.value.items as any[]).filter(
+      (it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity),
     )
-    const effectiveFeoPerItem = Boolean(wishForm.value.feo_per_item || hasPlanLinked || distinctCats.size > 1)
+    const distinctCats = new Set(
+      meaningfulItems.map((i: any) => i.feo_category_id).filter((id: any) => id != null),
+    )
+    const lockedDiffFromHeader = !isAdv && wishFeoSelected.value != null && meaningfulItems.some(
+      (i: any) => i.from_plan && i.feo_category_id != null && i.feo_category_id !== wishFeoSelected.value,
+    )
+    const effectiveFeoPerItem = Boolean(
+      wishForm.value.feo_per_item
+      || lockedDiffFromHeader
+      || (wishFeoSelected.value == null && distinctCats.size > 1),
+    )
     if (effectiveFeoPerItem && !wishForm.value.feo_per_item) {
       wishForm.value.feo_per_item = true
     }
 
     let feo = wishFeoSelected.value
-    if (feo == null && distinctCats.size === 1) {
+    if (!effectiveFeoPerItem && feo == null && distinctCats.size === 1) {
       feo = distinctCats.values().next().value as number
       wishFeoSelected.value = feo
     }
+    const headerFeoForPayload = effectiveFeoPerItem
+      ? (distinctCats.size === 1 ? (distinctCats.values().next().value as number) : null)
+      : feo
 
     let title = (wishForm.value.title || '').trim().slice(0, 255)
     if (!title) {
@@ -1046,29 +1094,33 @@ export function useWishForm(deps: {
     }
     return {
       ...wishForm.value,
-      feo_category_id: feo,
+      feo_category_id: headerFeoForPayload,
       feo_per_item: effectiveFeoPerItem,
       title,
       contractor_id: wishForm.value.contractor_id || null,
       contractor_name: (wishForm.value.contractor_name || '').toString().trim() || null,
-      items: wishForm.value.items
-        .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
+      items: meaningfulItems
         .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, price_from_catalog, ...rest }) => {
           const plannedCatId = (rest as any).feo_planned_item_id != null
             ? wishPlannedResiduals.value?.find(p => p.kind === 'planned_item' && p.id === (rest as any).feo_planned_item_id)?.category_id
             : null
           const itemCatId = (rest as any).feo_category_id ?? plannedCatId
+          const fromPlan = !!((rest as any).from_plan)
+          const targetItemCatId = effectiveFeoPerItem
+            ? (itemCatId ?? feo ?? null)
+            : (fromPlan ? (itemCatId ?? feo ?? null) : (feo ?? null))
+          const keepPlannedItemId = (!effectiveFeoPerItem && !fromPlan && feo != null && plannedCatId != null && plannedCatId !== feo)
+            ? null
+            : ((rest as any).feo_planned_item_id ?? null)
 
           return {
             ...rest,
             quantity: numOrNull((rest as any).quantity),
             unit_price: numOrNull((rest as any).unit_price),
             total_price: numOrNull((rest as any).total_price),
-            feo_category_id: (effectiveFeoPerItem || (!isAdv && (rest as any).feo_planned_item_id != null))
-              ? (itemCatId ?? feo ?? null)
-              : (feo ?? null),
-            feo_planned_item_id: (rest as any).feo_planned_item_id ?? null,
-            over_plan: !!((rest as any).over_plan),
+            feo_category_id: targetItemCatId,
+            feo_planned_item_id: keepPlannedItemId,
+            over_plan: keepPlannedItemId != null ? !!((rest as any).over_plan) : false,
           }
         }),
     }

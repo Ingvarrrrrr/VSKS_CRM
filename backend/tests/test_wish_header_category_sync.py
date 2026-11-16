@@ -45,14 +45,12 @@ async def _grant_wish_edit_feo(db_session, user, org):
 async def test_patch_execution_header_category_change_moves_items_and_plan(
     client, db_session, test_org, test_user, make_user,
 ):
-    """feo_per_item=False, категория A → B через PATCH /execution (без items в
-    теле — только шапка, ровно как смог бы сделать согласующий): позиция БЕЗ
-    плановой позиции переезжает в B вместе с шапкой; позиция С
-    feo_planned_item_id остаётся в своей категории (A) вместе со своим
-    планом — владелец (22.10.2026, заявка №209) развернул прежнее поведение
-    (позиция по плану раньше переезжала за шапкой и теряла привязку к плану
-    при чужом владении — именно это рождало ложные «дубли», см.
-    app/services/wish_item_category_guard.py)."""
+    """feo_per_item=False, категория A → B через PATCH /execution:
+    - позиция без плановой позиции переезжает в B вместе с шапкой;
+    - позиция с предсуществующей плановой позицией (auto_created=False) остаётся в A со своим планом;
+    - позиция с автосозданной при согласовании плановой позицией (auto_created=True,
+      случай Заявки №264) переезжает в B, старая плановая позиция в A деактивируется
+      (is_active=False), а в B создаётся новая активная плановая позиция."""
     subsidy = Subsidy(name=f"TestHeaderSync-{id(db_session)}", year=2026, budget=0, require_planned_dates=False)
     db_session.add(subsidy)
     await db_session.flush()
@@ -69,28 +67,39 @@ async def test_patch_execution_header_category_change_moves_items_and_plan(
     db_session.add(w)
     await db_session.flush()
 
-    fpi = FeoPlannedItem(
-        feo_category_id=cat_a.id, name="Запчасть для трактора",
+    fpi_manual = FeoPlannedItem(
+        feo_category_id=cat_a.id, name="Запчасть из плана",
         quantity=Decimal("1"), amount=Decimal("5000.00"),
+        is_active=True, auto_created=False,
+    )
+    fpi_auto = FeoPlannedItem(
+        feo_category_id=cat_a.id, name="Запчасть для трактора",
+        quantity=Decimal("1"), amount=Decimal("4000.00"),
         is_active=True, auto_created=True,
     )
-    db_session.add(fpi)
+    db_session.add_all([fpi_manual, fpi_auto])
     await db_session.flush()
 
-    item_with_plan = WishItem(
-        wish_id=w.id, item_name="Запчасть для трактора",
+    item_with_manual_plan = WishItem(
+        wish_id=w.id, item_name="Запчасть из плана",
         quantity=1, unit_price=5000, total_price=5000,
-        feo_category_id=cat_a.id, feo_planned_item_id=fpi.id,
+        feo_category_id=cat_a.id, feo_planned_item_id=fpi_manual.id,
+    )
+    item_with_auto_plan = WishItem(
+        wish_id=w.id, item_name="Запчасть для трактора",
+        quantity=1, unit_price=4000, total_price=4000,
+        feo_category_id=cat_a.id, feo_planned_item_id=fpi_auto.id,
     )
     item_without_plan = WishItem(
         wish_id=w.id, item_name="Канцтовары",
         quantity=1, unit_price=1000, total_price=1000,
         feo_category_id=cat_a.id,
     )
-    db_session.add_all([item_with_plan, item_without_plan])
+    db_session.add_all([item_with_manual_plan, item_with_auto_plan, item_without_plan])
     await db_session.commit()
     await db_session.refresh(w)
-    await db_session.refresh(item_with_plan)
+    await db_session.refresh(item_with_manual_plan)
+    await db_session.refresh(item_with_auto_plan)
     await db_session.refresh(item_without_plan)
 
     manager = await make_user(role="manager", org_id=test_org.id)
@@ -108,16 +117,28 @@ async def test_patch_execution_header_category_change_moves_items_and_plan(
     assert resp.status_code == 200, resp.text
 
     await db_session.refresh(w)
-    await db_session.refresh(item_with_plan)
+    await db_session.refresh(item_with_manual_plan)
+    await db_session.refresh(item_with_auto_plan)
     await db_session.refresh(item_without_plan)
-    await db_session.refresh(fpi)
+    await db_session.refresh(fpi_manual)
+    await db_session.refresh(fpi_auto)
 
     assert w.feo_category_id == cat_b.id
-    assert item_with_plan.feo_category_id == cat_a.id, "позиция с feo_planned_item_id не переезжает за шапкой"
+    assert item_with_manual_plan.feo_category_id == cat_a.id, "позиция из предсуществующего плана не переезжает за шапкой"
+    assert fpi_manual.feo_category_id == cat_a.id
+    assert fpi_manual.is_active is True
+    assert item_with_manual_plan.feo_planned_item_id == fpi_manual.id
+
+    assert item_with_auto_plan.feo_category_id == cat_b.id, "позиция с авто-планом переезжает за шапкой"
+    assert fpi_auto.is_active is False, "старая авто-плановая позиция отменена"
+    assert item_with_auto_plan.feo_planned_item_id is not None
+    assert item_with_auto_plan.feo_planned_item_id != fpi_auto.id
+    new_fpi_auto = await db_session.get(FeoPlannedItem, item_with_auto_plan.feo_planned_item_id)
+    assert new_fpi_auto is not None
+    assert new_fpi_auto.is_active is True
+    assert new_fpi_auto.feo_category_id == cat_b.id
+
     assert item_without_plan.feo_category_id == cat_b.id, "позиция без плановой позиции следует за шапкой, как раньше"
-    # План не трогается — он не был пропущен через move_or_detach вовсе.
-    assert fpi.feo_category_id == cat_a.id
-    assert item_with_plan.feo_planned_item_id == fpi.id, "привязка к плану не трогается"
 
 
 @pytest.mark.asyncio

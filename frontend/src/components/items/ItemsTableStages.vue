@@ -407,7 +407,7 @@
                              когда feoPerItem/allowPerItemPlan выключены — см. комментарий в
                              ItemsTableFlat.vue::feo-attrs-row (тот же предикат, ПРАВИЛО №6). -->
                         <div v-if="feoPerItem || allowPerItemPlan || hasFeoBinding(item)" class="d-flex align-start ga-2 flex-wrap" style="flex:1 1 460px;min-width:300px">
-                          <template v-if="feoPerItem || hasFeoBinding(item)">
+                          <template v-if="feoPerItem || (item.from_plan && item.feo_category_id != null && item.feo_category_id !== defaultFeoCategoryId)">
                             <div style="flex:1 1 auto;min-width:240px">
                               <v-tooltip :text="itemFeoLockTooltip(item) || (!feoPerItem ? 'Категория/плановая позиция меняется только в режиме построчного ФЭО' : '')" :disabled="!itemFeoLockTooltip(item) && feoPerItem" location="top">
                                 <template #activator="{ props: lockTip }">

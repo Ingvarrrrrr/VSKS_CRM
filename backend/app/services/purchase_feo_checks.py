@@ -399,8 +399,11 @@ async def _reset_incompatible_item_feo_links(
     if old_category_id == new_category_id:
         return 0
     from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.wish_item import WishItem
+    from app.services.plan_autoassign import auto_assign_planned_items, deactivate_if_orphaned
 
     reset_count = 0
+    reassigned_auto_items: list[tuple] = []
     for item in items:
         if not per_item_mode and item.feo_category_id != new_category_id:
             item.feo_category_id = new_category_id
@@ -410,5 +413,44 @@ async def _reset_incompatible_item_feo_links(
             planned_cat_id = planned.feo_category_id if planned else None
             if not await _category_within(db, planned_cat_id, effective_cat_id):
                 item.feo_planned_item_id = None
+                if hasattr(item, "over_plan"):
+                    item.over_plan = False
                 reset_count += 1
+                wi = None
+                wish_item_id = getattr(item, "wish_item_id", None)
+                if wish_item_id is not None:
+                    wi = await db.get(WishItem, wish_item_id)
+                    if wi is not None:
+                        wi.feo_category_id = effective_cat_id
+                        if planned is not None and wi.feo_planned_item_id == planned.id:
+                            wi.feo_planned_item_id = None
+                            wi.over_plan = False
+                if planned is not None and getattr(planned, "auto_created", False):
+                    reassigned_auto_items.append((item, planned, wi))
+
+    if reassigned_auto_items and hasattr(db, "flush"):
+        await db.flush()
+        seen_fpis: set[int] = set()
+        items_to_reassign: list = []
+        wi_by_item_obj: dict[int, WishItem] = {}
+        for item, planned, wi in reassigned_auto_items:
+            if planned.id not in seen_fpis:
+                seen_fpis.add(planned.id)
+                await deactivate_if_orphaned(db, planned)
+            items_to_reassign.append(item)
+            if wi is not None:
+                wi_by_item_obj[id(item)] = wi
+        if items_to_reassign and new_category_id is not None:
+            await auto_assign_planned_items(
+                items_to_reassign,
+                new_category_id,
+                db,
+                note="сменой категории ФЭО закупки",
+                per_item_mode=per_item_mode,
+            )
+            for item in items_to_reassign:
+                wi = wi_by_item_obj.get(id(item))
+                if wi is not None:
+                    wi.feo_planned_item_id = item.feo_planned_item_id
+                    wi.feo_category_id = item.feo_category_id
     return reset_count

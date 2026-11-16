@@ -120,6 +120,7 @@ async def auto_assign_planned_items(
     _cat_has_leaf_plan: dict[int, bool] = {}
     # cat_id -> subsidy_id (для поиска по всей субсидии ниже)
     _cat_subsidy_id: dict[int, Optional[int]] = {}
+    _cat_is_unallocated: dict[int, bool] = {}
     # subsidy_id -> [FeoPlannedItem НЕ-auto, is_active] всей субсидии; лениво,
     # нужен только когда внутри своей категории пары не нашлось (см. ниже).
     _subsidy_candidates: dict[int, list] = {}
@@ -127,9 +128,30 @@ async def auto_assign_planned_items(
     # позиция ФЭО может быть парой только ОДНОМУ дублю этого же прогона
     # (см. докстринг find_unique_feo_plan_match).
     _subsidy_claimed: dict[int, set] = {}
+    _detached_auto_fpis: list = []
     for it in items:
         if getattr(it, "feo_planned_item_id", None):
-            continue
+            if (
+                not per_item_mode
+                and fallback_category_id
+                and not getattr(it, "from_plan", False)
+            ):
+                from app.services.purchase_feo_checks import _category_within
+                _cur_fpi = await db.get(FeoPlannedItem, it.feo_planned_item_id)
+                if _cur_fpi is not None and not await _category_within(
+                    db, _cur_fpi.feo_category_id, fallback_category_id
+                ):
+                    it.feo_planned_item_id = None
+                    if hasattr(it, "over_plan"):
+                        it.over_plan = False
+                    if hasattr(it, "feo_category_id"):
+                        it.feo_category_id = fallback_category_id
+                    if getattr(_cur_fpi, "auto_created", False):
+                        _detached_auto_fpis.append(_cur_fpi)
+                else:
+                    continue
+            else:
+                continue
         eff_cat_id = effective_item_feo_category_id(
             per_item_mode, fallback_category_id, getattr(it, "feo_category_id", None),
         )
@@ -167,6 +189,10 @@ async def auto_assign_planned_items(
                 and ((cat_row.planned_quantity or 0) > 0 or (cat_row.planned_amount or 0) > 0)
             )
             _cat_subsidy_id[eff_cat_id] = cat_row.subsidy_id if cat_row is not None else None
+            _cat_is_unallocated[eff_cat_id] = bool(
+                cat_row is not None
+                and (cat_row.name or "").strip().lower() == "не определена"
+            )
         index = _cat_index[eff_cat_id]
         entry = index.get(norm_name)
         if entry is None:
@@ -180,13 +206,14 @@ async def auto_assign_planned_items(
             # Причина бага с прода (см. докстринг feo_plan_duplicate_match.py):
             # прежде чем заводить НОВУЮ auto_created позицию, проверяем, нет ли
             # уже настоящей (не-auto) позиции ФЭО с тем же именем+суммой в
-            # ДРУГОЙ категории ЭТОЙ ЖЕ субсидии — если позиция заявки/закупки
-            # осталась без собственной feo_category_id (упала в fallback,
-            # обычно «Не определена»), её план скорее всего уже где-то есть.
+            # ДРУГОЙ категории ЭТОЙ ЖЕ субсидии — ТОЛЬКО если позиция попала в
+            # техническую заглушку «Не определена» в режиме per_item_mode=True.
+            # Когда пользователь явно выбрал реальную категорию (например 4.2),
+            # позиция НИКОГДА не должна привязываться к чужой категории (4.1).
             _sid = _cat_subsidy_id.get(eff_cat_id)
             matched_fpi_id = None
             matched_item_type = None
-            if _sid is not None:
+            if _sid is not None and _cat_is_unallocated.get(eff_cat_id) and per_item_mode:
                 candidates = _subsidy_candidates.get(_sid)
                 if candidates is None:
                     cand_res = await db.execute(
@@ -249,6 +276,14 @@ async def auto_assign_planned_items(
         # позиции заявки/закупки он ещё не заполнен — уже заполненный не трогаем.
         if _fpi_item_type and hasattr(it, "item_type") and not getattr(it, "item_type", None):
             it.item_type = _fpi_item_type
+
+    if _detached_auto_fpis and hasattr(db, "flush"):
+        await db.flush()
+        _seen_det: set[int] = set()
+        for _dfpi in _detached_auto_fpis:
+            if _dfpi.id not in _seen_det:
+                _seen_det.add(_dfpi.id)
+                await deactivate_if_orphaned(db, _dfpi)
 
     # Позиции, у которых feo_planned_item_id был проставлен ДО этого вызова (явный
     # выбор пользователя/матчинг) — их сам цикл выше пропускает (см. continue в
@@ -587,10 +622,32 @@ async def move_or_detach_planned_item(db: AsyncSession, item, new_category_id: i
     other_keys = all_keys - ({self_key} if self_key is not None else set())
 
     # Человеческая плановая позиция НИКОГДА не переезжает молча (владелец,
-    # 14.10.2026, жалоба (г)) — даже если `item` её единственный владелец;
-    # только auto_created-позиция без других владельцев переезжает тихо.
+    # 14.10.2026, жалоба (г)) — даже если `item` её единственный владелец.
+    # Автосозданная плановая позиция (auto_created=True) при смене категории
+    # отвязывается и деактивируется (is_active=False), чтобы в новой категории
+    # была создана новая плановая позиция через auto_assign_planned_items.
     if fpi.auto_created and not other_keys:
-        await move_planned_item_to_category(db, fpi, new_category_id)
+        item.feo_planned_item_id = None
+        if hasattr(item, "over_plan"):
+            item.over_plan = False
+        if isinstance(item, PurchaseItem) and item.wish_item_id is not None:
+            wi = await db.get(WishItem, item.wish_item_id)
+            if wi is not None:
+                wi.feo_category_id = new_category_id
+                if wi.feo_planned_item_id == fpi.id:
+                    wi.feo_planned_item_id = None
+                    wi.over_plan = False
+        elif isinstance(item, WishItem) and item.id is not None:
+            linked_pis = (await db.execute(
+                select(PurchaseItem).where(PurchaseItem.wish_item_id == item.id)
+            )).scalars().all()
+            for pi in linked_pis:
+                pi.feo_category_id = new_category_id
+                if pi.feo_planned_item_id == fpi.id:
+                    pi.feo_planned_item_id = None
+                    pi.over_plan = False
+        await db.flush()
+        await deactivate_if_orphaned(db, fpi)
         return None
 
     old_cat_name = (await db.execute(

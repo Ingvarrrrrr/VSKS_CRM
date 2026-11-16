@@ -38,6 +38,11 @@ def _enrich(w: Wish) -> WishOut:
             canonical = _norm_okei_unit(it.unit)
             if canonical:
                 it.unit = canonical
+    from app.services.wish_item_category_guard import _get_loaded_planned_item
+    for w_item, out_item in zip(w.items or [], d.items):
+        _pi_plan = _get_loaded_planned_item(w_item)
+        if _pi_plan is not None:
+            out_item.planned_item_auto_created = bool(_pi_plan.auto_created)
     if w.creator:
         d.creator_name = w.creator.full_name or w.creator.username
     if w.approver:

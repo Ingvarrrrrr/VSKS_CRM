@@ -5,6 +5,7 @@
 // Дословный перенос из WishesView.vue при разбиении файла — см. подробные
 // комментарии по каждому решению в оригинале (git-история WishesView.vue).
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { isWishItemCategoryLockedByPlan } from '@/utils/feoItemLock'
 import type { WishesContext } from './useWishesContext'
 import type { UseWishFormReturn } from './useWishForm'
 
@@ -75,13 +76,15 @@ export function useWishItemsFeoAutosave(deps: {
 
   function feoExecutionItemsPayload(): { id: number; feo_category_id: number | null; feo_planned_item_id: number | null }[] {
     const isAdv = editingWish.value?.source === 'advance_report'
-    const hasPlanLinked = !isAdv && (wishForm.value.items as any[]).some(i => i.feo_planned_item_id != null)
-    const effectivePerItem = wishForm.value.feo_per_item || hasPlanLinked
-    return wishItemsFeoDirtyList.value.map(it => ({
-      id: it.id,
-      feo_category_id: (effectivePerItem || (!isAdv && it.feo_planned_item_id != null)) ? it.feo_category_id : (wishFeoSelected.value ?? null),
-      feo_planned_item_id: it.feo_planned_item_id,
-    }))
+    const effectivePerItem = !!wishForm.value.feo_per_item
+    return wishItemsFeoDirtyList.value.map(it => {
+      const fullItem = (wishForm.value.items as any[]).find((x: any) => x.id === it.id) || it
+      return {
+        id: it.id,
+        feo_category_id: (effectivePerItem || (!isAdv && isWishItemCategoryLockedByPlan(fullItem, true))) ? it.feo_category_id : (wishFeoSelected.value ?? null),
+        feo_planned_item_id: it.feo_planned_item_id,
+      }
+    })
   }
 
   function applyFeoExecutionSuccess(sentFeoCategoryId: number | null | undefined, serverWish?: any) {

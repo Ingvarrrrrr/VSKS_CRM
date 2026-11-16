@@ -41,7 +41,12 @@
 
     <table v-else class="scp-table">
       <tbody>
-        <tr v-for="entry in entries" :key="entry.key">
+        <tr
+          v-for="entry in entries"
+          :key="entry.key"
+          :data-feo-planned-item-id="entry.kind === 'item' ? entry.item.id : undefined"
+          :class="{ 'feo-search-highlight-row': entry.kind === 'item' && feoSearch.isFeoSearchHighlighted(`p-${entry.item.id}`) }"
+        >
           <template v-if="entry.kind === 'header'">
             <td :colspan="planToRequest.active.value ? 5 : 4" class="scp-header"
               :class="entry.level === 1 ? 'group-hdr--category' : 'group-hdr--type'"
@@ -90,6 +95,7 @@ import { matchesItemTypeFilter } from '@/utils/itemTypeKind'
 import { useFeoTreePrefs } from '@/composables/subsidies/useFeoTreePrefs'
 import { useFeoLevel5Api } from '@/composables/subsidies/useFeoLevel5'
 import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
+import { useFeoTreeSearch } from '@/composables/subsidies/useFeoTreeSearch'
 import { buildPlannedGroupEntries, type FeoPlannedGroupEntry } from '@/composables/subsidies/useFeoPlannedItemGroups'
 import type { FeoPlannedItem } from '@/composables/subsidies/types'
 
@@ -98,6 +104,7 @@ const props = defineProps<{ subsidyId: number | null }>()
 const feoTreePrefs = useFeoTreePrefs()
 const feoLevel5 = useFeoLevel5Api()
 const planToRequest = usePlanToRequest()
+const feoSearch = useFeoTreeSearch()
 
 const loading = ref(false)
 const loadError = ref<string | null>(null)
@@ -131,7 +138,10 @@ onFeoPlanChanged(() => { void load(props.subsidyId) })
 // Фильтр «Все/Товары/Услуги» применяется ДО группировки — отфильтрованные
 // позиции не попадают ни в список, ни в суммы заголовков групп.
 const filteredItems = computed(() =>
-  plannedItems.value.filter(p => matchesItemTypeFilter(p.item_type_effective, feoTreePrefs.feoItemTypeFilter.value)),
+  plannedItems.value.filter(p =>
+    feoSearch.isFeoSearchHighlighted(`p-${p.id}`) ||
+    matchesItemTypeFilter(p.item_type_effective, feoTreePrefs.feoItemTypeFilter.value),
+  ),
 )
 
 // Всегда 'category_type' (категория → вид → позиции) — см. докстринг компонента.
@@ -191,4 +201,13 @@ function toggleHeader(entry: FeoPlannedGroupEntry, on: boolean) {
 .scp-td-qty { white-space: nowrap; width: 110px; }
 .scp-td-sum { white-space: nowrap; width: 120px; font-weight: 500; }
 .scp-td-badge { width: 160px; }
+.feo-search-highlight-row td {
+  background: rgba(250, 204, 21, 0.28) !important;
+}
+.feo-search-highlight-row {
+  outline: 2px solid #f59e0b;
+}
+.scp-table tr[data-feo-planned-item-id] {
+  scroll-margin-top: calc(var(--feo-toolbar-h, 120px) + 64px);
+}
 </style>

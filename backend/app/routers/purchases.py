@@ -2035,7 +2035,15 @@ async def _guard_feo_category_change_after_approval(
     # суперадмин (OWNER_ROLES) проходят оба замка ниже; согласовавшие и
     # ответственный получают уведомление (блок в конце функции).
     is_owner = getattr(current_user, "role", None) in OWNER_ROLES
-    from_wish = getattr(p, "wish_id", None) is not None and getattr(p, "purchase_method", None) != "advance"
+    has_wish = getattr(p, "wish_id", None) is not None and getattr(p, "purchase_method", None) != "advance"
+    if isinstance(p, Purchase) and has_wish:
+        from_wish = (await db.execute(
+            select(PurchaseItem.id)
+            .where(PurchaseItem.purchase_id == p.id, PurchaseItem.from_plan.is_(True))
+            .limit(1)
+        )).scalar_one_or_none() is not None
+    else:
+        from_wish = has_wish
     if from_wish and not is_owner:
         raise HTTPException(
             422,

@@ -344,6 +344,11 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     title = (wish.title or "").strip() or f"Заявка #{wish.id}"
     p.subject = title
     p.item_name = title
+    if wish.subsidy_id:
+        p.subsidy_id = wish.subsidy_id
+    p.feo_category_id = wish.feo_category_id
+    p.feo_per_item = bool(getattr(wish, 'feo_per_item', False))
+    p.event_id = getattr(wish, 'event_id', None)
     if getattr(wish, 'contractor_id', None) and not p.contractor_id:
         p.contractor_id = wish.contractor_id
     # Форма договора заявки (владелец, 2026-09-15) — тот же принцип, что и у

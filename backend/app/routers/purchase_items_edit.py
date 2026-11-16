@@ -207,7 +207,7 @@ async def patch_purchase_item(
         raise HTTPException(404, "Закупка не найдена")
     # Владелец 09.11.2026, ложный 409 на закупке 4882: снимок потолка субсидии ДО изменений
     _ceiling_before: dict | None = None
-    if p.subsidy_id and not (body.admin_override and current_user.role in ADMIN_ROLES):
+    if getattr(p, "subsidy_id", None) and not (body.admin_override and current_user.role in ADMIN_ROLES):
         from app.services.subsidy_ceiling import ceiling_snapshot
         _ceiling_before = await ceiling_snapshot(db, p.subsidy_id)
     # W3 (сужено — принцип владельца, 2026-08-18): «когда перевели в Закупку,
@@ -380,6 +380,12 @@ async def patch_purchase_item(
                 note=f"переносом позиции в закупке №{p.purchase_number or p.id}",
                 per_item_mode=bool(p.feo_per_item),
             )
+            if it.wish_item_id is not None:
+                from app.models.wish_item import WishItem as _WishItemSync
+                _wi_sync = await db.get(_WishItemSync, it.wish_item_id)
+                if _wi_sync is not None:
+                    _wi_sync.feo_planned_item_id = it.feo_planned_item_id
+                    _wi_sync.feo_category_id = it.feo_category_id
     else:
         from app.models.feo_planned_item import FeoPlannedItem as _FPIExplicit
         _old_fpi_id_explicit = it.feo_planned_item_id
@@ -731,7 +737,7 @@ async def patch_purchase_item(
             _log.getLogger(__name__).warning("entity_change record failed for purchase_item admin_override: %s", _exc)
     # Владелец 09.11.2026, ложный 409 на закупке 4882: контроль жёсткого потолка
     # субсидии по итогам изменения позиции закупки.
-    if _ceiling_before is not None and p.subsidy_id:
+    if _ceiling_before is not None and getattr(p, "subsidy_id", None):
         from app.services.subsidy_ceiling import assert_ceiling_not_worsened
         await assert_ceiling_not_worsened(db, p.subsidy_id, _ceiling_before)
 

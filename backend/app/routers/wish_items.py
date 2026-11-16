@@ -64,6 +64,7 @@ async def patch_wish_item(
     # трогает уже сохранённую категорию позиции.
     if "feo_category_id" in body.model_fields_set:
         _is_adv_item = getattr(wish, "source", None) == "advance_report"
+        _old_snapshot = {item.id: (item.feo_category_id, item.feo_planned_item_id)}
         await assert_wish_item_category_from_plan(
             db, item, body.feo_category_id, is_advance_report=_is_adv_item,
         )
@@ -75,6 +76,9 @@ async def patch_wish_item(
             db, body.feo_category_id, [{"item_name": item.item_name, "item_type": item.item_type}],
         )
         item.feo_category_id = body.feo_category_id
+        if not _is_adv_item:
+            from app.services.feo_effective_category import replace_wish_auto_planned_items_on_category_change
+            await replace_wish_auto_planned_items_on_category_change(db, wish, _old_snapshot)
         if _is_adv_item:
             from sqlalchemy import select as _sel_pi
             from app.models.purchase_item import PurchaseItem as _AdvPi

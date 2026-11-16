@@ -448,3 +448,63 @@ def test_put_items_batches_multiple_items_in_one_select():
         asyncio.run(run())
     assert exc_info.value.detail["code"] == "ITEM_FEO_CATEGORY_LOCKED_FROM_PLAN"
     assert db.execute_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# 5) Заявка №264: автосозданная при согласовании заявки плановая позиция
+#    (auto_created=True, from_plan=False) НЕ блокирует смену категории ФЭО,
+#    а предсуществующая из плана (auto_created=False или from_plan=True) — блокирует.
+# ---------------------------------------------------------------------------
+
+def test_wish_264_auto_created_plan_item_does_not_lock_category():
+    from app.services.wish_item_category_guard import (
+        is_wish_item_plan_locked,
+        wish_items_all_plan_linked,
+        assert_wish_item_category_from_plan,
+    )
+    from app.services.feo_effective_category import sync_items_to_header_category
+
+    auto_fpi = SimpleNamespace(id=101, feo_category_id=1, auto_created=True)
+    manual_fpi = SimpleNamespace(id=102, feo_category_id=1, auto_created=False)
+
+    it_auto = SimpleNamespace(
+        from_plan=False, feo_planned_item_id=101, feo_category_id=1, planned_item=auto_fpi,
+    )
+    it_manual = SimpleNamespace(
+        from_plan=False, feo_planned_item_id=102, feo_category_id=1, planned_item=manual_fpi,
+    )
+    it_from_plan_even_auto = SimpleNamespace(
+        from_plan=True, feo_planned_item_id=101, feo_category_id=1, planned_item=auto_fpi,
+    )
+
+    assert is_wish_item_plan_locked(it_auto) is False
+    assert is_wish_item_plan_locked(it_manual) is True
+    assert is_wish_item_plan_locked(it_from_plan_even_auto) is True
+    assert wish_items_all_plan_linked([it_auto]) is False
+    assert wish_items_all_plan_linked([it_manual]) is True
+
+    class _FakeFpiGetDB:
+        def __init__(self, fpis):
+            self._fpis = fpis
+
+        async def get(self, model, id_):
+            return self._fpis.get(id_)
+
+    db = _FakeFpiGetDB({101: auto_fpi, 102: manual_fpi})
+
+    # Автосозданная плановая позиция без from_plan разрешает смену категории 1 -> 2
+    asyncio.run(assert_wish_item_category_from_plan(db, it_auto, 2))
+
+    # Предсуществующая плановая позиция (auto_created=False) или from_plan=True -> 422
+    with pytest.raises(HTTPException) as exc_manual:
+        asyncio.run(assert_wish_item_category_from_plan(db, it_manual, 2))
+    assert exc_manual.value.status_code == 422
+
+    with pytest.raises(HTTPException) as exc_fp:
+        asyncio.run(assert_wish_item_category_from_plan(db, it_from_plan_even_auto, 2))
+    assert exc_fp.value.status_code == 422
+
+    # sync_items_to_header_category переносит it_auto в новую категорию 2, но не трогает it_manual
+    asyncio.run(sync_items_to_header_category([it_auto, it_manual], 1, 2, False, db))
+    assert it_auto.feo_category_id == 2
+    assert it_manual.feo_category_id == 1

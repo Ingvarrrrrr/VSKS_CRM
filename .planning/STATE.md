@@ -14,6 +14,27 @@ progress:
 
 # STATE.md — VSKS_CRM
 
+## 2026-11-16 — Заявка №264, поиск «Вся субсидия», счётчик согласований Цыганова и Заявка №266 / Закупка РЕЕ-2026-04894 (локально, не запушено)
+- **Заявка №264 (разблокировка категории ФЭО и пересоздание авто-плановых позиций):**
+  - В `WishItem` и `WishItemOut` (`wish_item.py`, `schemas/wishes.py`, `wish_serializers.py`) добавлено `planned_item` / `planned_item_auto_created`.
+  - `wish_item_category_guard.py::is_wish_item_plan_locked`, `feoItemLock.ts::isWishItemCategoryLockedByPlan` / `isPurchaseFeoHeaderLocked`, `purchases.py::_guard_feo_category_change_after_approval` больше не блокируют смену категории у позиций, созданных вручную (`from_plan=False`) с автосозданными плановыми позициями (`auto_created=True`).
+  - Добавлена функция `replace_wish_auto_planned_items_on_category_change` (`feo_effective_category.py`) и обновлена `move_or_detach_planned_item` (`plan_autoassign.py`) / `_reset_incompatible_item_feo_links` (`purchase_feo_checks.py`): старая `auto_created` плановая позиция деактивируется (`is_active=False`), в новой категории ФЭО заводится/подбирается новая плановая позиция и синхронизируется в связанные незамороженные закупки и `WishItem`/`PurchaseItem`.
+  - Обновлены `WishFormDialog.vue`, `useWishForm.ts`, `useWishItemsFeoAutosave.ts`, `CreateOrderView.vue`.
+- **Поиск в субсидии в режиме «Вся субсидия» (`SubsidyCategoryPanel.vue`, `useFeoTreeSearch.ts`, `FeoTreeToolbar.vue`):**
+  - Добавлены `data-feo-planned-item-id`, `scroll-margin-top` под липкой панелью, подсветка `.feo-search-highlight-row` и сохранение найденной строки при активном фильтре типа в `SubsidyCategoryPanel.vue`.
+  - `useFeoTreeSearch.ts` в режиме `'category_subsidy'` ищет DOM-элемент в `.subsidy-category-panel` в приоритете перед `ctx.feoTableArea`, автоматически сбрасывает `feoItemTypeFilter` при необходимости и переключает режим с `'category_subsidy'` на `'category'` при клике по категории.
+  - На `.feo-search-dropdown__item` добавлен `@mousedown.prevent`, чтобы blur инпута не перехватывал клик.
+- **Счётчик новых заявок на согласование (`task_badges.py`, `purchase_approvals.py`, `useChat.ts`, `useWishActions.ts`, `useWishApprovers.ts`):**
+  - В `task_badges.py` (`wishes_approval` и `wishes_new`) добавлен `Wish.stopped_at.is_(None)` и фильтрация по всему контуру организаций пользователя (`get_org_filter(current_user)`) вместо одиночного `org_id` из `localStorage.active_org_id` (после `1b5a8aa1` заявки других субсидий аккаунта получали иной `org_id` и переставали попадать в счётчик).
+  - В `purchase_approvals.py::_collect_my_pending` добавлен учёт `submitted`-заявок с `Wish.assigned_to == current_user.id` без активного шага `WishApproval` (уникальный `approval_id = -wish.id`).
+  - Экспортирован `refreshTaskBadges` в `useChat.ts`; после действий над заявками обновляются оба счётчика в сайдбаре.
+- **Заявка №266 / Закупка `РЕЕ-2026-04894` — противоречие общей категории `4.2` и потоварной `4.1` (`plan_autoassign.py`, `wishes.py`, `useWishForm.ts`, `useWishItemsFeoAutosave.ts`, `WishFormDialog.vue`, `CreateOrderView.vue`, `ItemsTableFlat.vue`, `ItemsTableStages.vue`):**
+  - В `plan_autoassign.py::auto_assign_planned_items` межкатегорийный подбор `find_unique_feo_plan_match` ограничен только технической категорией «Не определена» в режиме `per_item_mode=True` (явно выбранная категория вроде `4.2` больше не перепривязывается к плановым позициям другой ветки `4.1`); при `not per_item_mode` несовместимые плановые ссылки отвязываются от не-`from_plan` позиций.
+  - В `wishes.py::update_wish` при `not wish.feo_per_item` и `wish.feo_category_id != None` для не-`from_plan` позиций категория выравнивается по шапке, а несовместимая плановая ссылка сбрасывается до гейта.
+  - Убрано авто-включение `feo_per_item=true` из-за простого `feo_planned_item_id != null` (последствие `b0c948ac`) в `useWishForm.ts` и `useWishItemsFeoAutosave.ts`; в `WishFormDialog.vue` список `planned-items` в режиме одной категории фильтруется по выбранной категории шапки.
+  - В `CreateOrderView.vue` скрыта общая «Категория ФЭО *» при включённом `form.feo_per_item` (вместо этого пишется «Разные категории — указаны в каждой позиции»), исправлен `doSave` (в single-режиме обычные позиции следуют за `form.feo_category_id`), в `ItemsTableFlat.vue`/`ItemsTableStages.vue` убран дублирующий построчный выбор категории при `feoPerItem=false` для не-`from_plan` строк.
+- **Верификация:** `vue-tsc --noEmit` (OK), `npm --prefix frontend run build` (OK), `py_compile` (OK), офлайн `pytest` (`test_purchase_feo_category_guard.py` + `test_feo_change_resets_item_links.py` — 45 passed).
+
 ## 2026-11-07 — Правовая проверка и изоляция рабочих сообщений, комментариев и чатов по закупкам, задачам и ФЭО ✅
 - **Законодательство РФ и правовые документы (`legal/`):**
   - Внутреннее рабочее обсуждение закупок/задач/ФЭО закрытым кругом авторизованных сотрудников организации не является распространением ПДн неопределённому кругу лиц (ст. 10.1 152-ФЗ) и не образует публичного сервиса обмена сообщениями (ОРИ, ст. 10.1 149-ФЗ).

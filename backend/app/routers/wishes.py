@@ -115,7 +115,7 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
             selectinload(Wish.subsidy),
             selectinload(Wish.event),
             selectinload(Wish.executor),
-            selectinload(Wish.items),
+            selectinload(Wish.items).selectinload(WishItem.planned_item),
             selectinload(Wish.stopped_by_user),
             selectinload(Wish.contractor),
             selectinload(Wish.rejected_by_user),
@@ -453,13 +453,12 @@ async def update_wish(
     await ensure_wish_read_access(wish, current_user, db)
 
     if not _is_saas(current_user) and wish.created_by != current_user.id:
-        # Участники заявки (WishMember) тоже могут её редактировать
+        # Участники заявки (WishMember), менеджеры, адресат, согласующие из цепочки
+        # или пользователи с правом wish.edit_feo тоже могут сохранять изменения
+        # (в т.ч. корректировать категорию ФЭО после отката заявки в черновик).
         if not await _is_wish_member(wish_id, current_user.id, db):
-            # Дефект 1 (владелец, 2026-08-20): согласующий из цепочки WishApproval
-            # сюда попадать не должен вовсе — фронт больше не зовёт PUT для него,
-            # ФЭО он правит через PATCH /execution. Но если это всё-таки произошло
-            # (старый фронт/прямой запрос) — подсказать конкретно, а не молчать
-            # общей фразой (feedback_explain_blocking_reason).
+            from app.auth.jwt import MANAGER_ROLES
+            from app.auth.permissions import has_org_key
             from app.models.wish_approval import WishApproval
             is_chain_approver = (await db.execute(
                 select(WishApproval.id).where(
@@ -467,10 +466,19 @@ async def update_wish(
                     WishApproval.user_id == current_user.id,
                 ).limit(1)
             )).scalar_one_or_none() is not None
-            detail = "Редактировать заявку может автор или участник заявки"
-            if is_chain_approver:
-                detail += ". Состав заявки меняет автор — как согласующий, правьте категорию ФЭО прямо в форме (сохраняется автоматически), решение отправляйте кнопкой «Согласовать»/«Отклонить»"
-            raise HTTPException(status_code=403, detail=detail)
+            can_edit_feo = await has_org_key(
+                current_user, db, wish.org_id, "wish.edit_feo", subsidy_id=wish.subsidy_id
+            )
+            if not (
+                current_user.role in MANAGER_ROLES
+                or wish.assigned_to == current_user.id
+                or is_chain_approver
+                or can_edit_feo
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Редактировать заявку может автор, участник или согласующий заявки",
+                )
 
     # W2: contracted-lock replaces old draft-only gate
     if not _is_saas(current_user):
@@ -570,6 +578,10 @@ async def update_wish(
     # Снимок ДО мутации — нужен ensure_wish_contract_allowed ниже, чтобы
     # проверять только РЕАЛЬНУЮ смену договора (заявка №209, 22.10.2026).
     _old_contract_id = wish.contract_id
+    _old_wi_feo_snapshot = {
+        wi.id: (wi.feo_category_id, wi.feo_planned_item_id)
+        for wi in (wish.items or []) if wi.id is not None
+    }
 
     if body.subsidy_id is not None:
         from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
@@ -725,7 +737,10 @@ async def update_wish(
     # non-draft ниже) — возвращаются в ответе, не проглатываются молча.
     _plan_transfer_warnings: list[str] = []
 
-    if (old_status != "draft" or _is_advance_wish_put) and wish.feo_category_id != _old_header_cat_id_for_sync:
+    if wish.feo_category_id != _old_header_cat_id_for_sync and wish.feo_category_id is not None:
+        from app.services.wish_item_category_guard import MSG_HEADER_LOCKED, wish_items_all_plan_linked
+        if wish_items_all_plan_linked(wish.items or [], is_advance_report=_is_advance_wish_put):
+            raise HTTPException(status_code=422, detail=MSG_HEADER_LOCKED)
         if not bool(getattr(wish, "feo_per_item", False)):
             from app.services.payroll_category_guard import assert_no_goods_in_payroll
             await assert_no_goods_in_payroll(db, wish.feo_category_id, wish.items or [])
@@ -874,6 +889,15 @@ async def update_wish(
             )
             if 'feo_category_id' in item_data:
                 wi.feo_category_id = item_data['feo_category_id']
+            if (
+                not bool(getattr(wish, "feo_per_item", False))
+                and wish.feo_category_id != _old_header_cat_id_for_sync
+                and wish.feo_category_id is not None
+            ):
+                from app.services.wish_item_category_guard import is_wish_item_plan_locked
+                if not is_wish_item_plan_locked(wi):
+                    wi.feo_category_id = wish.feo_category_id
+                    _wi_cat_changing = True
             if 'feo_planned_item_id' in item_data:
                 _new_fpi_id_put = item_data['feo_planned_item_id']
                 if _is_advance_wish_put and _new_fpi_id_put is None and wi.feo_planned_item_id is not None:
@@ -882,6 +906,22 @@ async def update_wish(
                         wi.feo_planned_item_id = None
                 else:
                     wi.feo_planned_item_id = _new_fpi_id_put
+            if (
+                not bool(getattr(wish, "feo_per_item", False))
+                and wish.feo_category_id is not None
+                and not getattr(wi, "from_plan", False)
+            ):
+                if wi.feo_category_id != wish.feo_category_id:
+                    wi.feo_category_id = wish.feo_category_id
+                    _wi_cat_changing = True
+                if wi.feo_planned_item_id is not None and not _is_advance_wish_put:
+                    from app.services.purchase_feo_checks import _category_within
+                    _fpi_chk = await db.get(FeoPlannedItem, wi.feo_planned_item_id)
+                    if _fpi_chk is not None and not await _category_within(
+                        db, _fpi_chk.feo_category_id, wish.feo_category_id
+                    ):
+                        wi.feo_planned_item_id = None
+                        wi.over_plan = False
             if (_wi_cat_changing or old_status == "draft") and wi.feo_planned_item_id is not None:
                 await assert_wish_item_category_from_plan(
                     db, wi, wi.feo_category_id, is_advance_report=_is_advance_wish_put,
@@ -943,6 +983,10 @@ async def update_wish(
                 if _rem_cnt == 0:
                     _ep.planned_quantity = 0
             await db.flush()
+
+    if not _is_advance_wish_put:
+        from app.services.feo_effective_category import replace_wish_auto_planned_items_on_category_change
+        await replace_wish_auto_planned_items_on_category_change(db, wish, _old_wi_feo_snapshot)
 
     if _is_advance_wish_put and wish.items:
         from app.services.advance_wish_sync import apply_wish_item_feo_link_to_purchase_item

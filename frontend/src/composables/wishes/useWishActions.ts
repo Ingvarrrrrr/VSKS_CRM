@@ -4,6 +4,8 @@
 // отчёт», создание закупки (convert), скачивание Excel/служебной записки.
 // Дословный перенос из WishesView.vue при разбиении файла на компоненты/композаблы.
 import { ref } from 'vue'
+import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
+import { refreshTaskBadges } from '@/composables/useChat'
 import { numOrNull } from '@/utils/numberFormat'
 import { productPhotoSrc } from '@/utils/productPhoto'
 import type { WishesContext } from './useWishesContext'
@@ -111,6 +113,8 @@ export function useWishActions(deps: {
       await apiFetch(`/wishes/${wish.id}/submit`, { method: 'POST' })
       showSnack('Заявка отправлена')
       await reloadActiveTab()
+      refreshMyPendingApprovals()
+      refreshTaskBadges()
     } catch (e: any) {
       const handled = await handleMissingDatesError(e, wish)
       if (!handled) {
@@ -143,6 +147,8 @@ export function useWishActions(deps: {
       deleteConfirmDialog.value = false
       deletingWishItem.value = null
       await reloadActiveTab()
+      refreshMyPendingApprovals()
+      refreshTaskBadges()
     } catch (e: any) {
       // 409 — текст с сервера содержит перечень закупок-блокеров, не глушим общим «ошибка».
       showSnack(`${e?.payload?.message || e?.message || 'Не удалось удалить заявку'}`, 'error')
@@ -212,6 +218,8 @@ export function useWishActions(deps: {
       showPurchaseSync(res?.purchase_sync)
       form.wishConvertError.value = null
       await reloadActiveTab()
+      refreshMyPendingApprovals()
+      refreshTaskBadges()
     } catch (e: any) {
       const handled = (await handleMissingDatesError(e, wish))
         || (await handleMissingFeoCategoryError(e, wish))
@@ -249,6 +257,8 @@ export function useWishActions(deps: {
       showSnack('Заявка отклонена')
       rejectDialog.value = false
       await reloadActiveTab()
+      refreshMyPendingApprovals()
+      refreshTaskBadges()
     } catch (e: any) {
       showSnack(`Ошибка при отклонении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
     } finally {

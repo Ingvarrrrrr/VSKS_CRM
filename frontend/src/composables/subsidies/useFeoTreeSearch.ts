@@ -32,6 +32,7 @@ import { makeCtxSingleton } from './ctxSingleton'
 import type { FeoCategory } from './types'
 import { useToast } from '@/composables/useToast'
 import { waitForFeoSearchElement } from './useFeoTreeSearchHighlight'
+import { useFeoTreePrefs } from './useFeoTreePrefs'
 import { searchWords, matchesAllWords } from '@/utils/textSearch'
 
 export interface FeoSearchResult {
@@ -214,11 +215,25 @@ function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
   // ни сигнала об ошибке (жалоба владельца, п.2-3).
   async function scrollAndHighlight(r: FeoSearchResult) {
     await nextTick()
-    const area = ctx.feoTableArea.value
+    const prefs = useFeoTreePrefs()
     const selector = r.kind === 'planned_item'
       ? `[data-feo-planned-item-id="${r.id}"]`
       : `[data-feo-node-id="${r.id}"]`
-    const el = area ? await waitForFeoSearchElement(area, selector) : null
+    const getSearchArea = () =>
+      prefs.feoItemsGroupBy.value === 'category_subsidy'
+        ? (document.querySelector<HTMLElement>('.subsidy-category-panel') || ctx.feoTableArea.value)
+        : (ctx.feoTableArea.value || document.querySelector<HTMLElement>('.subsidy-category-panel'))
+    const initialArea = getSearchArea()
+    if (r.kind === 'planned_item' && !initialArea?.querySelector(selector) && prefs.feoItemTypeFilter.value !== 'all') {
+      prefs.feoItemTypeFilter.value = 'all'
+      await nextTick()
+    }
+    let targetArea = getSearchArea()
+    if (!targetArea) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      targetArea = getSearchArea()
+    }
+    const el = targetArea ? await waitForFeoSearchElement(targetArea, selector) : null
     if (!el) {
       highlightedKey.value = null
       searchPathCategoryIds.value = new Set()
@@ -229,6 +244,10 @@ function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
   }
 
   async function goToFeoSearchResult(r: FeoSearchResult) {
+    const prefs = useFeoTreePrefs()
+    if (r.kind === 'category' && prefs.feoItemsGroupBy.value === 'category_subsidy') {
+      prefs.feoItemsGroupBy.value = 'category'
+    }
     // Раскрыть предков найденного узла (тот же приём, что и addFeoCategory в
     // FeoCategoryDialog.vue — push недостающих id в expandedIds); собственный id
     // тоже попадает в список — лишним не мешает (isNodeVisible смотрит только на
@@ -245,7 +264,7 @@ function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
     // «Скрыть закупленные полностью» не должен прятать найденный узел/путь к
     // нему, пока держится подсветка (см. докстринг searchPathCategoryIds выше).
     searchPathCategoryIds.value = pathIds
-    if (r.kind === 'planned_item') {
+    if (r.kind === 'planned_item' && prefs.feoItemsGroupBy.value !== 'category_subsidy') {
       // Открыть панель «План vs факт» категории-владельца и подгрузить данные — тот
       // же приём, что и applyKpiExpansion в useKpiDrilldown.ts (панель раскрывается
       // прямым присваиванием, данные — отдельным refreshComparison, если их ещё нет).

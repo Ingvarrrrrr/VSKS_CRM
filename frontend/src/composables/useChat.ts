@@ -339,4 +339,5 @@ export function destroyChat() {
   }
 }
 
+export const refreshTaskBadges = pollBadgeCount
 export { connect }

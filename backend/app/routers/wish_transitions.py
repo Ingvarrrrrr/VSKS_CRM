@@ -417,8 +417,8 @@ async def patch_wish_execution(
     # обходил проверки без привязки к аккаунту — см. wishes.py::update_wish.
     from app.services.wish_access import ensure_wish_read_access
     await ensure_wish_read_access(wish, current_user, db)
-    if not wishes_core._is_saas(current_user) and wish.status not in ("submitted", "approved"):
-        raise HTTPException(status_code=400, detail="Срок и исполнителя можно задать только в статусах «На согласовании» или «Согласована»")
+    if not wishes_core._is_saas(current_user) and wish.status not in ("draft", "rejected", "submitted", "approved"):
+        raise HTTPException(status_code=400, detail="Срок, исполнителя и ФЭО можно менять только до передачи заявки в закупку")
     if not wishes_core._is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
         # Согласующий из цепочки тоже может править (в т.ч. сменить ФЭО, если не согласен)
         from app.models.wish_approval import WishApproval
@@ -439,6 +439,10 @@ async def patch_wish_execution(
     # право не трогает — их разрешают проверки выше (цепочка/assignee/менеджер+).
     # Хозяин аккаунта = суперадмин в своём аккаунте (владелец, 16.10.2026).
     _is_advance_report = getattr(wish, "source", None) == "advance_report"
+    _old_wi_feo_snapshot = {
+        wi.id: (wi.feo_category_id, wi.feo_planned_item_id)
+        for wi in (wish.items or []) if wi.id is not None
+    }
     _feo_fields_touched = (
         body.feo_category_id is not None
         or body.feo_per_item is not None
@@ -714,6 +718,10 @@ async def patch_wish_execution(
         )).scalars().all()
         for _pi in _linked_pis:
             apply_wish_item_feo_link_to_purchase_item(_pi, _items_by_id[_pi.wish_item_id])
+
+    if not _is_advance_report:
+        from app.services.feo_effective_category import replace_wish_auto_planned_items_on_category_change
+        await replace_wish_auto_planned_items_on_category_change(db, wish, _old_wi_feo_snapshot)
 
     await db.commit()
     wish = await wishes_core._load_wish(wish_id, db)

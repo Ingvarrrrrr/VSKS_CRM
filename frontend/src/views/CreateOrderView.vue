@@ -495,7 +495,7 @@
             </v-col>
             <!-- Дерево категорий ФЭО (замена трёхуровневого каскада) — один узел любой глубины,
                  промежуточные уровни заполняются автоматически при клике на лист. -->
-            <v-col v-if="form.subsidy_id && feoTreeNodes.length && !feoHeaderCategoriesDiffer" cols="12" md="4">
+            <v-col v-if="form.subsidy_id && feoTreeNodes.length && !form.feo_per_item && !feoHeaderCategoriesDiffer" cols="12" md="4">
               <FeoTreeSelect
                 v-model="form.feo_category_id"
                 :nodes="feoTreeNodes"
@@ -529,7 +529,7 @@
                  обязательное дерево ФЭО без объяснения — выглядело как потерянные
                  данные. Не обязательное, не красное — категории уже видны в каждой
                  позиции ниже (ItemsTableFlat/ItemsTableStages, feo-attrs-row). -->
-            <v-col v-if="form.subsidy_id && feoHeaderCategoriesDiffer" cols="12" md="4">
+            <v-col v-if="form.subsidy_id && (form.feo_per_item || feoHeaderCategoriesDiffer)" cols="12" md="4">
               <div class="text-body-2">Разные категории — указаны в каждой позиции</div>
               <div v-if="isFeoHeaderLocked" class="text-caption text-medium-emphasis mt-1">
                 {{ FEO_CATEGORY_LOCKED_HINT }}
@@ -4142,6 +4142,7 @@ const feoCategoryMissing = computed(() =>
 const isFeoHeaderLocked = computed(() => !isSaas.value && isPurchaseFeoHeaderLocked({
   wish_id: purchaseData.value?.wish_id,
   purchase_method: form.purchase_method,
+  items: items.value,
 }))
 
 const feoHeaderCategoriesDiffer = computed(() => {
@@ -4191,9 +4192,9 @@ const feoValidationError = computed((): string | null => {
   if (formMode.value === 'advance_report') return null
   if (!form.subsidy_id || !feoTreeNodes.value.length) return null
   if (!form.feo_category_id) {
-    // Категории позиций реально различаются (см. feoHeaderCategoriesDiffer) —
+    // Категории позиций реально различаются (см. feoHeaderCategoriesDiffer) или включён режим feo_per_item —
     // шапочная категория осознанно пуста, требовать её здесь нечего выбирать.
-    if (feoHeaderCategoriesDiffer.value) return null
+    if (form.feo_per_item || feoHeaderCategoriesDiffer.value) return null
     return 'Выберите категорию ФЭО'
   }
   if (feoSkipLast.value) return null
@@ -4258,30 +4259,56 @@ const onFeoPickUnallocated = async (parentId: number | null) => {
 const feoPerItemDisableDialog = ref(false)
 const feoPerItemDisableCount = ref(0)
 const onFeoPerItemChange = (val: boolean | null) => {
-  // С деревом form.feo_category_id уже актуален в любой момент (нет отдельных
-  // selectedFeo2/3 для «схлопывания») — при включении режима просто ничего не делаем.
-  if (val) return
-  // Ручное выключение — предупреждаем, если есть позиции с уже выбранной категорией
-  const count = items.value.filter(i => i.feo_category_id != null).length
-  if (count > 0) {
-    feoPerItemDisableCount.value = count
-    feoPerItemDisableDialog.value = true
+  if (val) {
+    if (form.feo_category_id != null) {
+      for (const it of items.value as any[]) {
+        if (it.feo_category_id == null) it.feo_category_id = form.feo_category_id
+      }
+    }
+    return
   }
-  // Заполнение пустых позиций дефолтом выполняется внутри PurchaseItemsEditor
-  // (watch на feoPerItem + defaultFeoCategoryId). При выключении ничего не делаем.
+  const distinctCats = new Set(
+    items.value.map(i => i.feo_category_id).filter((v: any): v is number => v != null),
+  )
+  const differsFromHeader = form.feo_category_id != null && items.value.some(
+    i => i.feo_category_id != null && i.feo_category_id !== form.feo_category_id,
+  )
+  if (distinctCats.size > 1 || differsFromHeader) {
+    feoPerItemDisableCount.value = items.value.filter(i => i.feo_category_id != null).length
+    feoPerItemDisableDialog.value = true
+    form.feo_per_item = true
+    return
+  }
+  if (!form.feo_category_id && distinctCats.size === 1) {
+    form.feo_category_id = [...distinctCats][0]
+  }
+  for (const it of items.value as any[]) {
+    if (!it.from_plan) {
+      it.feo_category_id = form.feo_category_id ?? null
+    }
+  }
 }
 const cancelFeoPerItemDisable = () => {
   form.feo_per_item = true
   feoPerItemDisableDialog.value = false
 }
-// Подтверждение «Отключить» — очищаем per-item ФЭО СРАЗУ, а не только при сохранении
-// (см. аналогичный фикс в WishesView.vue): иначе до следующего save() позиции
-// продолжают нести свои feo_category_id/feo_planned_item_id.
+// Подтверждение «Отключить» — приводим не-from_plan позиции к общей категории шапки
+// (и отвязываем чужие плановые позиции) сразу в форме.
 const confirmFeoPerItemDisable = () => {
-  for (const it of items.value as any[]) {
-    it.feo_category_id = null
-    it.feo_planned_item_id = null
+  if (!form.feo_category_id) {
+    const distinctCats = new Set(
+      items.value.map(i => i.feo_category_id).filter((v: any): v is number => v != null),
+    )
+    if (distinctCats.size === 1) form.feo_category_id = [...distinctCats][0]
   }
+  for (const it of items.value as any[]) {
+    if (!it.from_plan) {
+      it.feo_category_id = form.feo_category_id ?? null
+      it.feo_planned_item_id = null
+      it.over_plan = false
+    }
+  }
+  form.feo_per_item = false
   feoPerItemDisableDialog.value = false
 }
 
@@ -5425,31 +5452,47 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
     }
     const validItems = items.value
       .filter(i => i.item_name?.trim())
-      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, feo_node_id: _feoNodeId, price_from_catalog, ...rest }) => ({
-        ...rest,
-        // numOrNull (2026-09-04) заменил локальную проверку `!== '' && != null ? v : null`
-        // (ПРАВИЛО №6, один источник истины): '' → null, 0 сохраняется как число.
-        unit_price: numOrNull(rest.unit_price),
-        quantity: numOrNull(rest.quantity),
-        // Возвращено из отката e0db76a (КОРЕНЬ ПРОБЛЕМЫ): раньше здесь ОБА поля
-        // принудительно писались как null в режиме single — позиция пересоздавалась
-        // и ЛЮБАЯ привязка стиралась первым же сохранением (id 2871 → 2872 на проде,
-        // привязка «Great Wall POER» потеряна). Владелец (сессия 2026-08-21): «каждому
-        // товару надо присваивать свою плановую» — feo_planned_item_id ВСЕГДА построчный,
-        // в ОБОИХ режимах (никакого шапочного фолбэка больше нет, см. allow-per-item-plan
-        // в шаблоне и headFeoPlannedItemId — убран целиком). feo_category_id ниже остаётся
-        // режимо-зависимым — категория в single-режиме по-прежнему общая на всю закупку.
-        feo_planned_item_id: rest.feo_planned_item_id ?? null,
-        // FCAT-F1: per-item leaf FeoCategory
-        feo_category_id: form.feo_per_item
-          ? (rest.feo_category_id ?? null)
-          : (rest.feo_category_id ?? form.feo_category_id ?? null),
-      }))
+      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, feo_node_id: _feoNodeId, price_from_catalog, ...rest }) => {
+        const fromPlan = !!rest.from_plan
+        const plannedRow = rest.feo_planned_item_id != null
+          ? feoPlannedItems.value?.find(p => p.kind === 'planned_item' && p.id === rest.feo_planned_item_id)
+          : null
+        const plannedCatMatchesHeader = !!(
+          plannedRow
+          && form.feo_category_id != null
+          && (
+            plannedRow.category_id === form.feo_category_id
+            || (plannedRow.ancestor_ids || []).includes(form.feo_category_id)
+          )
+        )
+        const keepPlannedItemId = (!form.feo_per_item && !fromPlan && form.feo_category_id != null && plannedRow && !plannedCatMatchesHeader)
+          ? null
+          : (rest.feo_planned_item_id ?? null)
+        return {
+          ...rest,
+          unit_price: numOrNull(rest.unit_price),
+          quantity: numOrNull(rest.quantity),
+          feo_planned_item_id: keepPlannedItemId,
+          over_plan: keepPlannedItemId != null ? !!rest.over_plan : false,
+          // В single-режиме (feo_per_item=false) все не-from_plan позиции следуют
+          // за общей категорией шапки (form.feo_category_id).
+          feo_category_id: form.feo_per_item
+            ? (rest.feo_category_id ?? null)
+            : (fromPlan ? (rest.feo_category_id ?? form.feo_category_id ?? null) : (form.feo_category_id ?? rest.feo_category_id ?? null)),
+        }
+      })
     if (items.value.length !== validItems.length) {
       items.value = items.value.filter(i => i.item_name?.trim())
     }
+    const validItemCats = new Set(
+      validItems.map(i => i.feo_category_id).filter((v: any): v is number => v != null),
+    )
+    const headerFeoCategoryId = form.feo_per_item
+      ? (validItemCats.size === 1 ? [...validItemCats][0] : null)
+      : form.feo_category_id
     const payload = {
       ...form,
+      feo_category_id: headerFeoCategoryId,
       // contract_price/vat_rate/payment_amount/payment_federal/price_increase/
       // acceptance_term_days/penalty_rate/advance_amount/warranty_period_days/
       // monthly_payment_count/monthly_payment_amount — v-model.number-поля формы,

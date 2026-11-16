@@ -95,13 +95,135 @@ async def sync_items_to_header_category(
     if per_item_mode or old_header_cat_id == new_header_cat_id or new_header_cat_id is None:
         return []
 
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.services.wish_item_category_guard import is_wish_item_plan_locked
+
     warnings: list[str] = []
     for it in items:
         if not hasattr(it, "feo_category_id"):
             continue
-        if not is_advance_report and getattr(it, "feo_planned_item_id", None) is not None:
-            continue
+        if not is_advance_report and is_wish_item_plan_locked(it):
+            _allow_auto = False
+            if (
+                not getattr(it, "from_plan", False)
+                and getattr(it, "feo_planned_item_id", None) is not None
+                and db is not None
+            ):
+                _fpi = await db.get(FeoPlannedItem, it.feo_planned_item_id)
+                if _fpi is not None and _fpi.auto_created:
+                    _allow_auto = True
+            if not _allow_auto:
+                continue
         if it.feo_category_id == new_header_cat_id:
             continue
         it.feo_category_id = new_header_cat_id
     return warnings
+
+
+async def replace_wish_auto_planned_items_on_category_change(
+    db,
+    wish,
+    old_wi_snapshot: dict[int, tuple[Optional[int], Optional[int]]],
+) -> None:
+    """При смене категории ФЭО в заявке отменяет (деактивирует) старые
+    автосозданные плановые позиции (auto_created=True, from_plan=False) и
+    создаёт/подбирает новые в новой категории ФЭО, синхронизируя незамороженные
+    закупки и их позиции."""
+    from sqlalchemy import select
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.services.plan_autoassign import auto_assign_planned_items, deactivate_if_orphaned
+    from app.routers.purchases import TZ_FROZEN_STATUSES
+
+    per_item_mode = bool(getattr(wish, "feo_per_item", False))
+    wish_items = list(getattr(wish, "items", None) or [])
+    if not wish_items:
+        return
+
+    old_fpis_to_deactivate: dict[int, FeoPlannedItem] = {}
+    moved_wish_items: list = []
+
+    linked_purchases = (await db.execute(
+        select(Purchase).where(Purchase.wish_id == wish.id)
+    )).scalars().all()
+    unfrozen_purchase_ids = {
+        p.id for p in linked_purchases if p.status not in TZ_FROZEN_STATUSES
+    }
+
+    for wi in wish_items:
+        eff_cat_id = effective_item_feo_category_id(
+            per_item_mode, getattr(wish, "feo_category_id", None), getattr(wi, "feo_category_id", None),
+        )
+        _old_cat_id, old_fpi_id = old_wi_snapshot.get(
+            getattr(wi, "id", None),
+            (getattr(wi, "feo_category_id", None), getattr(wi, "feo_planned_item_id", None)),
+        )
+        fpi_id_to_check = old_fpi_id or getattr(wi, "feo_planned_item_id", None)
+        if fpi_id_to_check is None:
+            continue
+        old_fpi = await db.get(FeoPlannedItem, fpi_id_to_check)
+        if (
+            old_fpi is not None
+            and old_fpi.feo_category_id != eff_cat_id
+            and old_fpi.auto_created
+            and not getattr(wi, "from_plan", False)
+        ):
+            wi.feo_planned_item_id = None
+            wi.planned_item = None
+            wi.over_plan = False
+            wi.feo_category_id = eff_cat_id
+            if getattr(wi, "id", None) is not None and unfrozen_purchase_ids:
+                linked_pis = (await db.execute(
+                    select(PurchaseItem).where(
+                        PurchaseItem.wish_item_id == wi.id,
+                        PurchaseItem.purchase_id.in_(unfrozen_purchase_ids),
+                    )
+                )).scalars().all()
+                for pi in linked_pis:
+                    pi.feo_planned_item_id = None
+                    pi.over_plan = False
+                    pi.feo_category_id = eff_cat_id
+            old_fpis_to_deactivate[old_fpi.id] = old_fpi
+            moved_wish_items.append(wi)
+
+    if moved_wish_items:
+        await db.flush()
+        for old_fpi in old_fpis_to_deactivate.values():
+            await deactivate_if_orphaned(db, old_fpi)
+        items_for_auto = [
+            wi for wi in moved_wish_items
+            if effective_item_feo_category_id(
+                per_item_mode, getattr(wish, "feo_category_id", None), getattr(wi, "feo_category_id", None),
+            ) is not None
+        ]
+        if items_for_auto:
+            await auto_assign_planned_items(
+                items_for_auto,
+                getattr(wish, "feo_category_id", None),
+                db,
+                note=f"сменой категории ФЭО в заявке №{wish.id}",
+                per_item_mode=per_item_mode,
+            )
+            for _mwi in items_for_auto:
+                if getattr(_mwi, "feo_planned_item_id", None) is not None:
+                    _mwi.planned_item = await db.get(FeoPlannedItem, _mwi.feo_planned_item_id)
+
+    if unfrozen_purchase_ids:
+        for p in linked_purchases:
+            if p.id in unfrozen_purchase_ids and getattr(p, "purchase_method", None) != "advance":
+                p.feo_category_id = getattr(wish, "feo_category_id", None)
+                p.feo_per_item = per_item_mode
+        wi_by_id = {wi.id: wi for wi in wish_items if getattr(wi, "id", None) is not None}
+        if wi_by_id:
+            all_linked_pis = (await db.execute(
+                select(PurchaseItem).where(
+                    PurchaseItem.wish_item_id.in_(set(wi_by_id.keys())),
+                    PurchaseItem.purchase_id.in_(unfrozen_purchase_ids),
+                )
+            )).scalars().all()
+            for pi in all_linked_pis:
+                wi = wi_by_id.get(pi.wish_item_id)
+                if wi is not None:
+                    pi.feo_category_id = wi.feo_category_id
+                    pi.feo_planned_item_id = wi.feo_planned_item_id

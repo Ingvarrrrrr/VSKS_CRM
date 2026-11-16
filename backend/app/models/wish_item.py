@@ -71,3 +71,4 @@ class WishItem(Base):
 
     wish = relationship("Wish", back_populates="items")
     product = relationship("Product", foreign_keys=[product_id])
+    planned_item = relationship("FeoPlannedItem", foreign_keys=[feo_planned_item_id], lazy="selectin")

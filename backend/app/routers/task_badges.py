@@ -324,18 +324,25 @@ async def get_badges(
         from app.models.wish_approval import WishApproval
 
         # 1) submitted-заявки, где я назначенный согласующий ИЛИ мой шаг цепочки pending
+        # Фильтруем по всему доступному пользователю контуру организаций (get_org_filter),
+        # а не по одному query org_id из active_org_id: после переноса org_id заявки на
+        # организацию её субсидии заявки других субсидий аккаунта отсекались бы одиночным org_id.
+        org_filter_ids = get_org_filter(current_user)
         my_pending_appr_wids = select(WishApproval.wish_id).where(
             WishApproval.user_id == current_user.id,
             WishApproval.status == "pending",
         ).scalar_subquery()
         wishes_approval_q = select(func.count(func.distinct(Wish.id))).where(
             Wish.status == "submitted",
+            Wish.stopped_at.is_(None),
             or_(
                 Wish.assigned_to == current_user.id,
                 Wish.id.in_(my_pending_appr_wids),
             ),
         )
-        if org_id is not None:
+        if org_filter_ids is not None:
+            wishes_approval_q = wishes_approval_q.where(Wish.org_id.in_(org_filter_ids))
+        elif org_id is not None:
             wishes_approval_q = wishes_approval_q.where(Wish.org_id == org_id)
         wishes_approval = (await db.execute(wishes_approval_q)).scalar() or 0
 
@@ -345,16 +352,19 @@ async def get_badges(
             .select_from(WishMember)
             .join(Wish, Wish.id == WishMember.wish_id)
             .where(
+                Wish.stopped_at.is_(None),
                 WishMember.user_id == current_user.id,
                 WishMember.added_by_id != current_user.id,
                 WishMember.created_at > cutoff,
             )
         )
-        if org_id is not None:
+        if org_filter_ids is not None:
+            wishes_new_q = wishes_new_q.where(Wish.org_id.in_(org_filter_ids))
+        elif org_id is not None:
             wishes_new_q = wishes_new_q.where(Wish.org_id == org_id)
         wishes_new = (await db.execute(wishes_new_q)).scalar() or 0
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("task_badges wishes block failed: %s", exc)
 
     return {
         "new_tasks": new_tasks,

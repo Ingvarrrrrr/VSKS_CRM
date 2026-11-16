@@ -51,42 +51,61 @@ MSG_HEADER_LOCKED = (
 )
 
 
+def _get_loaded_planned_item(item):
+    """Возвращает уже загруженный item.planned_item без ленивого запроса в БД
+    (защита от MissingGreenlet в синхронных хелперах/тестах)."""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        state = sa_inspect(item)
+        if "planned_item" in state.unloaded:
+            return None
+    except Exception:
+        pass
+    return getattr(item, "planned_item", None)
+
+
+def is_wish_item_plan_locked(item) -> bool:
+    """True — позиция заявки привязана к предсуществующей позиции Плана закупок
+    (загружена из плана `from_plan=True` ИЛИ привязана к не-автосозданной
+    `FeoPlannedItem` с `auto_created=False`). Если `FeoPlannedItem` была создана
+    автоматически при согласовании самой заявки (`auto_created=True` и `from_plan=False`),
+    категория позиции НЕ заблокирована планом."""
+    if getattr(item, "from_plan", False):
+        return True
+    if getattr(item, "feo_planned_item_id", None) is None:
+        return False
+    planned = _get_loaded_planned_item(item)
+    if planned is not None and getattr(planned, "auto_created", False):
+        return False
+    if getattr(item, "planned_item_auto_created", False):
+        return False
+    return True
+
+
 def wish_items_all_plan_linked(items, *, is_advance_report: bool = False) -> bool:
-    """True — у заявки есть позиции И ВСЕ они по плану (feo_planned_item_id
-    задан у каждой). Пустой список позиций — False (нет позиций, нечего
-    блокировать). См. MSG_HEADER_LOCKED выше.
-    Для авансовых отчётов (is_advance_report=True) всегда False: у них
-    плановые позиции создаются автоматически из чека и следуют за выбранной
-    категорией ФЭО."""
+    """True — у заявки есть позиции И ВСЕ они заблокированы предсуществующим
+    планом закупок (`is_wish_item_plan_locked`). Пустой список позиций — False.
+    Для авансовых отчётов (is_advance_report=True) всегда False."""
     if is_advance_report:
         return False
     items = list(items)
     if not items:
         return False
-    return all(getattr(it, "feo_planned_item_id", None) is not None for it in items)
+    return all(is_wish_item_plan_locked(it) for it in items)
 
 
 async def assert_wish_item_category_from_plan(
     db: AsyncSession, item: WishItem, new_feo_category_id: Optional[int], *, is_advance_report: bool = False,
 ) -> None:
-    """422, если у `item` задан feo_planned_item_id, а `new_feo_category_id`
-    отличается от текущей feo_category_id этой плановой позиции.
-
-    `item` может быть как уже персистентным WishItem (PATCH одной позиции),
-    так и свежесконструированным, ещё не добавленным в сессию объектом
-    (черновичный пересбор в update_wish) — в обоих случаях используется
-    только item.feo_planned_item_id, читать/писать сам item здесь не нужно.
-
-    Ничего не проверяет (тихо возвращается), если позиция вообще не
-    привязана к плановой позиции, либо это авансовый отчёт (где плановая
-    позиция создаётся автоматически в выбранной категории), либо привязанная
-    плановая позиция уже не существует (её удаление/деактивация — забота
-    другого механизма, app.services.plan_autoassign.deactivate_if_orphaned,
-    не этой проверки)."""
+    """422, если у `item` задан feo_planned_item_id, привязанный к предсуществующему
+    плану закупок (не auto_created или при from_plan=True), а `new_feo_category_id`
+    отличается от текущей feo_category_id этой плановой позиции."""
     if is_advance_report or item.feo_planned_item_id is None:
         return
     planned = await db.get(FeoPlannedItem, item.feo_planned_item_id)
     if planned is None:
+        return
+    if planned.auto_created and not getattr(item, "from_plan", False):
         return
     if planned.feo_category_id != new_feo_category_id:
         raise HTTPException(status_code=422, detail=CATEGORY_FROM_PLAN_MESSAGE)

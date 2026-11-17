@@ -34,6 +34,10 @@
       :can-copy-to-subsidy="canCopyToSubsidy"
       :syncing-plan="syncingPlan"
       :on-sync-from-plan="onSyncFromPlan"
+      :can-correct="canCorrectPurchase"
+      :on-correct-purchase="() => { correctionDialogOpen = true }"
+      :corrections="purchaseCorrections"
+      :on-open-correction-history="() => { correctionHistoryOpen = true }"
     />
 
     <PurchaseStopDialog
@@ -52,6 +56,33 @@
       :purchase-id="purchaseId"
       :source-subsidy-id="form.subsidy_id || null"
       @done="onPurchaseCopiedToSubsidy"
+    />
+
+    <PurchaseCorrectionDialog
+      v-if="isEdit && purchaseId"
+      v-model="correctionDialogOpen"
+      :purchase-id="purchaseId"
+      :wish-id="purchaseData?.wish_id ?? null"
+      :purchase-status="form.status"
+      :subsidy-id="form.subsidy_id || null"
+      :feo-tree-nodes="feoTreeNodes"
+      :feo-leaves="feoTreeLeavesForNote"
+      :root-label="selectedSubsidyName"
+      :node-amounts="feoHeaderNodeAmounts"
+      :events="filteredEvents"
+      :planned-items="feoPlannedItems"
+      :initial-feo-category-id="form.feo_category_id"
+      :initial-feo-per-item="!!form.feo_per_item"
+      :initial-event-id="form.event_id"
+      :items="items"
+      @saved="onCorrectionSaved"
+      @returned-to-draft="onReturnedToDraft"
+    />
+
+    <PurchaseCorrectionHistoryDialog
+      v-if="isEdit && purchaseId"
+      v-model="correctionHistoryOpen"
+      :corrections="purchaseCorrections"
     />
 
     <div v-if="form.subsidy_id && (feoDirections.length || feoResiduals.length)" class="mb-4">
@@ -521,6 +552,18 @@
               <div v-if="isFeoHeaderLocked" class="text-caption text-medium-emphasis mt-1">
                 {{ FEO_CATEGORY_LOCKED_HINT }}
               </div>
+              <div v-if="isEdit && purchaseCorrections?.category_corrected" class="mt-1">
+                <v-chip
+                  size="x-small"
+                  color="warning"
+                  variant="tonal"
+                  prepend-icon="mdi-history"
+                  class="cursor-pointer"
+                  @click="correctionHistoryOpen = true"
+                >
+                  Категория корректировалась
+                </v-chip>
+              </div>
             </v-col>
             <!-- Владелец (26.09, закупка PEE-2026-00957): «категория ФЭО... не
                  отображается в закупке» — у позиций закупки из заявки/плана могут
@@ -533,6 +576,18 @@
               <div class="text-body-2">Разные категории — указаны в каждой позиции</div>
               <div v-if="isFeoHeaderLocked" class="text-caption text-medium-emphasis mt-1">
                 {{ FEO_CATEGORY_LOCKED_HINT }}
+              </div>
+              <div v-if="isEdit && purchaseCorrections?.category_corrected" class="mt-1">
+                <v-chip
+                  size="x-small"
+                  color="warning"
+                  variant="tonal"
+                  prepend-icon="mdi-history"
+                  class="cursor-pointer"
+                  @click="correctionHistoryOpen = true"
+                >
+                  Категория корректировалась
+                </v-chip>
               </div>
             </v-col>
             <!-- Владелец (сессия 2026-08-21): шапочный read-only перечень плановых позиций
@@ -620,6 +675,18 @@
                     <v-icon v-bind="tooltipProps" icon="mdi-calendar-alert" color="warning" class="mb-5" />
                   </template>
                 </v-tooltip>
+              </div>
+              <div v-if="isEdit && purchaseCorrections?.event_corrected" class="mt-1">
+                <v-chip
+                  size="x-small"
+                  color="info"
+                  variant="tonal"
+                  prepend-icon="mdi-history"
+                  class="cursor-pointer"
+                  @click="correctionHistoryOpen = true"
+                >
+                  Мероприятие корректировалось
+                </v-chip>
               </div>
             </v-col>
             <!-- Мероприятие не привязано, а у субсидии их вообще нет — значок вместо поля -->
@@ -2145,6 +2212,8 @@ import { usePurchaseStop } from '@/composables/orders/usePurchaseStop'
 import PurchaseStopDialog from '@/components/orders/PurchaseStopDialog.vue'
 import PurchaseCopyToSubsidyDialog from '@/components/purchase/PurchaseCopyToSubsidyDialog.vue'
 import PurchaseCopyLinks from '@/components/purchase/PurchaseCopyLinks.vue'
+import PurchaseCorrectionDialog from '@/components/purchase/PurchaseCorrectionDialog.vue'
+import PurchaseCorrectionHistoryDialog, { type PurchaseCorrectionsSummary } from '@/components/purchase/PurchaseCorrectionHistoryDialog.vue'
 import { usePurchaseFiles } from '@/composables/purchase/usePurchaseFiles'
 import { usePurchaseNmck } from '@/composables/purchase/usePurchaseNmck'
 import PurchaseFileDialogs from '@/components/purchase/PurchaseFileDialogs.vue'
@@ -3436,6 +3505,35 @@ const canViewAllLevelsBudget = computed(() => authStore.hasAction(ACTIONS.FEO_BU
 // появления (тот же обходной путь, что и 'publication.create' выше, см.
 // докстринг constants/permissionActions.ts).
 const canCopyToSubsidy = computed(() => authStore.hasAction('purchase.copy_to_subsidy'))
+const correctionDialogOpen = ref(false)
+const correctionHistoryOpen = ref(false)
+const purchaseCorrections = ref<PurchaseCorrectionsSummary | null>(null)
+const canCorrectPurchase = computed(() => {
+  if (!isEdit.value || form.status === 'cancelled') return false
+  return isSaas.value || authStore.hasAction(ACTIONS.PURCHASE_CORRECT!)
+})
+async function loadPurchaseCorrections() {
+  if (!purchaseId.value) {
+    purchaseCorrections.value = null
+    return
+  }
+  try {
+    purchaseCorrections.value = await apiFetch<PurchaseCorrectionsSummary>(`/purchases/${purchaseId.value}/corrections`)
+  } catch {
+    purchaseCorrections.value = null
+  }
+}
+async function onCorrectionSaved(summary: PurchaseCorrectionsSummary) {
+  purchaseCorrections.value = summary
+  showSnack('Корректировка сохранена', 'success')
+  await loadPurchase()
+  await reloadPurchasePlanned()
+  await loadFeoResiduals()
+}
+function onReturnedToDraft(wishId: number) {
+  showSnack(`Закупка возвращена в черновик заявки №${wishId}`, 'success')
+  router.push({ path: '/wishes', query: { open: String(wishId) } })
+}
 type FeoNode = { id: number; name: string; level: number; path: string; budget: number; used: number; residual: number; contracted_used: number; planned_used: number; uncontracted_remaining: number; spendable_remaining: number }
 type FeoLeaf = FeoNode & { ancestors: FeoNode[] }
 const feoDirections = ref<FeoNode[]>([])
@@ -5253,6 +5351,7 @@ onMounted(async () => {
   await loadRefs()
   if (isEdit.value && purchaseId.value) {
     await loadPurchase()
+    await loadPurchaseCorrections()
     await loadPublications()
     await loadLinkedTasks()
     await loadPurchaseComments()

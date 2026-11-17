@@ -14,7 +14,27 @@ progress:
 
 # STATE.md — VSKS_CRM
 
-## 2026-11-16 — Заявка №264, поиск «Вся субсидия», счётчик согласований Цыганова и Заявка №266 / Закупка РЕЕ-2026-04894 (локально, не запушено)
+## 2026-11-17 — Право `purchase.correct`, сохранение плановых позиций при откате в заявку, контроль сумм и возврат в черновик через «Корректировку» (локально, не запушено)
+- **Право `purchase.correct` в матрице ролей и прав пользователей (`permission_seeds.py`, `dictionaries.json`, `purchase_correction_service.py`, `CreateOrderView.vue`):**
+  - Заведено право `purchase.correct` («Корректировка действующей закупки», по умолчанию для `superadmin`/`account_owner`/`admin`/`org_admin`/`manager`, выключено для `employee`), выгружено в `dictionaries.json` через `export_dictionaries.py`, подключено на бэкенде (`ensure_can_correct`) и фронтенде (`ACTIONS.PURCHASE_CORRECT`).
+- **Жизненный цикл `auto_created`-позиций при откате vs смене категории (`wish_distribution.py`, `purchase_return.py`, `plan_autoassign.py`, `feo_effective_category.py`):**
+  - При возврате заявки/закупки в `draft`/`rejected`/`wishes` позиции **остаются на своих плановых позициях** (`cleanup_wish_auto_planned_items` оставлен только в `stop_wish`). Удаление (`is_active=False`) старой и создание новой `auto_created`-позиции происходит только при явном переносе позиции в другую категорию ФЭО (в т.ч. в черновике).
+  - В `plan_autoassign.py::auto_assign_planned_items` чужие `auto_created` плановые позиции, зарезервированные черновиками/откатами других заявок, исключены из авто-дедупликации, чтобы новые заявки (№266) не перехватывали позиции откатанных черновиков (№264).
+- **Контроль сумм и кнопка «Вернуть в черновик заявки» в «Корректировке» (`purchase_correction_service.py`, `purchase_correction.py`, `PurchaseCorrectionDialog.vue`, `PurchaseCorrectionHistoryDialog.vue`):**
+  - В `POST /api/purchases/{pid}/correction` добавлен контроль превышений (`check_correction_excess` — возвращает `409 CORRECTION_CAUSES_EXCESS` с детализацией сумм и предложением вернуть закупку в черновик заявки либо подтвердить отправку превышения на согласование через `allow_excess=True`).
+  - Добавлен эндпоинт `POST /api/purchases/{pid}/return-to-draft-wish` и блок в `PurchaseCorrectionDialog.vue` для возврата до-договорных закупок в черновик заявки (на пересогласование) с сохранением привязок позиций к плановым позициям. История корректировок вынесена в `PurchaseCorrectionHistoryDialog.vue`.
+
+## 2026-11-16 — Кнопка «Корректировка» действующих закупок и очистка `auto_created`-позиций при откате (локально, не запушено)
+- **Очистка `auto_created` плановых позиций при откате заявки в черновик/отклонённую/остановке (`plan_autoassign.py`, `wish_distribution.py`, `purchase_return.py`, `wish_transitions.py`, `wishes.py`, `feo_effective_category.py`):**
+  - В `plan_autoassign.py::_fpi_reference_keys` ссылки теперь считаются только по живым документам (закупки вне `('wishes', 'cancelled')` с `stopped_at IS NULL`; заявки вне `('draft', 'rejected', 'waiting_funds')` с `stopped_at IS NULL`), чтобы черновики/откаты/скрытые закупки не держали активной старую автосозданную плановую позицию.
+  - Добавлен `cleanup_wish_auto_planned_items(db, wish_id)` и встроен в `_withdraw_wish_from_plan`, `return_purchase_to_wish` и `stop_wish`: при откате/возврате/остановке отвязывает `auto_created` плановые позиции (`from_plan=False`) у заявки и неактивных закупок и деактивирует осиротевшие (`is_active=False`).
+  - В `wishes.py::update_wish` при удалении позиций вызывается `deactivate_if_orphaned`.
+  - В `feo_effective_category.py::replace_wish_auto_planned_items_on_category_change` в статусах `draft`/`rejected`/`waiting_funds` старые `auto_created` отвязываются и деактивируются без преждевременного создания новых до согласования.
+- **Кнопка «Корректировка» действующих закупок с историей (`purchase_correction.py`, `purchases.py`, `PurchaseCorrectionDialog.vue`, `PurchaseHeader.vue`, `CreateOrderView.vue`):**
+  - Новый роутер `backend/app/routers/purchase_correction.py` (`GET /api/purchases/{pid}/corrections`, `POST /api/purchases/{pid}/correction`): корректировка общей или построчной категории ФЭО, привязки позиций к плановым позициям и мероприятия без сброса статуса/согласования закупки. При смене отвязывает и деактивирует старые `auto_created` плановые позиции и создаёт/подбирает новые в выбранной категории, синхронизирует связанную заявку и сохраняет аудит в `PurchaseEvent(event_type='purchase_correction')`.
+  - На фронтенде добавлен `PurchaseCorrectionDialog.vue`, кнопка «Корректировка» в `PurchaseHeader.vue` и кликабельные бейджи «Категория корректировалась» / «Мероприятие корректировалось» (открывают модальное окно с первоначальными и текущими значениями, ФИО и датой/временем каждого изменения).
+
+## 2026-11-16 — Заявка №264, поиск «Вся субсидия», счётчик согласований Цыганова и Заявка №266 / Закупка РЕЕ-2026-04894 (запушено `58fd72ab`)
 - **Заявка №264 (разблокировка категории ФЭО и пересоздание авто-плановых позиций):**
   - В `WishItem` и `WishItemOut` (`wish_item.py`, `schemas/wishes.py`, `wish_serializers.py`) добавлено `planned_item` / `planned_item_auto_created`.
   - `wish_item_category_guard.py::is_wish_item_plan_locked`, `feoItemLock.ts::isWishItemCategoryLockedByPlan` / `isPurchaseFeoHeaderLocked`, `purchases.py::_guard_feo_category_change_after_approval` больше не блокируют смену категории у позиций, созданных вручную (`from_plan=False`) с автосозданными плановыми позициями (`auto_created=True`).

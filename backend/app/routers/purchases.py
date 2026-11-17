@@ -84,6 +84,7 @@ from app.services.plan_graph_versions import _create_plan_graph_version
 # + путь эндпоинта в дочернем файле. routes.py не трогается.
 from app.routers.purchase_tz import router as purchase_tz_router
 from app.routers.purchase_return import router as purchase_return_router
+from app.routers.purchase_correction import router as purchase_correction_router
 # Перф (прод-жалоба 27.10.2026, «закупки падают с 500 после 12-15с»):
 # request-scoped кэш compute_account_contour_org_ids (ПРАВИЛО №6, см. её
 # докстринг в app/auth/account_contour_cache.py) — apply_purchase_visibility
@@ -96,6 +97,7 @@ from app.auth.account_contour_cache import with_account_contour_cache
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 router.include_router(purchase_tz_router)
 router.include_router(purchase_return_router)
+router.include_router(purchase_correction_router)
 
 # Phase 31: fields tracked for diff-highlighting (D-05..D-09)
 PURCHASE_TRACKED_FIELDS: set[str] = {

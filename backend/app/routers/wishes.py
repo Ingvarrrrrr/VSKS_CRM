@@ -966,10 +966,21 @@ async def update_wish(
                         PurchaseItem.purchase_id.in_(_early_stage_purchase_ids),
                     )
                 )
+            _removed_fpi_ids: set[int] = set()
             for _del_id in ids_to_delete:
-                wish.items.remove(existing_items[_del_id])
+                _del_wi = existing_items[_del_id]
+                if getattr(_del_wi, "feo_planned_item_id", None) is not None and not getattr(_del_wi, "from_plan", False):
+                    _removed_fpi_ids.add(_del_wi.feo_planned_item_id)
+                wish.items.remove(_del_wi)
 
         await db.flush()
+        if ids_to_delete and _removed_fpi_ids:
+            from app.services.plan_autoassign import deactivate_if_orphaned
+            _fpi_cleanup_rows = (await db.execute(
+                select(FeoPlannedItem).where(FeoPlannedItem.id.in_(_removed_fpi_ids))
+            )).scalars().all()
+            for _fpi_clean in _fpi_cleanup_rows:
+                await deactivate_if_orphaned(db, _fpi_clean)
         if ids_to_delete and _early_stage_purchases:
             from decimal import Decimal as _DecWishDel
             from app.services.purchase_money_writer import recalc_purchase_money

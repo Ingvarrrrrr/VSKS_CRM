@@ -79,6 +79,41 @@
         >
           Актуализировать по плану
         </v-btn>
+        <v-btn
+          v-if="isEdit && purchaseId && canCorrect && (form?.status || purchaseData?.status) !== 'cancelled'"
+          size="x-small"
+          variant="tonal"
+          color="amber-darken-2"
+          prepend-icon="mdi-file-edit-outline"
+          title="Скорректировать категорию ФЭО, плановые позиции или мероприятие без сброса закупки"
+          @click="onCorrectPurchase?.()"
+        >
+          Корректировка
+        </v-btn>
+        <v-chip
+          v-if="isEdit && corrections?.category_corrected"
+          size="x-small"
+          color="warning"
+          variant="tonal"
+          prepend-icon="mdi-history"
+          class="cursor-pointer"
+          title="Посмотреть историю корректировок категории ФЭО"
+          @click="onOpenCorrectionHistory?.()"
+        >
+          Категория корректировалась
+        </v-chip>
+        <v-chip
+          v-if="isEdit && corrections?.event_corrected"
+          size="x-small"
+          color="info"
+          variant="tonal"
+          prepend-icon="mdi-history"
+          class="cursor-pointer"
+          title="Посмотреть историю корректировок мероприятия"
+          @click="onOpenCorrectionHistory?.()"
+        >
+          Мероприятие корректировалось
+        </v-chip>
         <v-icon v-if="form.is_monthly_payment" size="small" color="blue" title="Ежемесячный платёж">mdi-calendar-sync</v-icon>
         <span v-if="isEdit && form.registry_number" class="text-caption text-medium-emphasis">
           Реестр: {{ form.registry_number }}
@@ -237,6 +272,10 @@ interface Props {
   canCopyToSubsidy: boolean
   syncingPlan?: boolean
   onSyncFromPlan?: () => void
+  canCorrect?: boolean
+  onCorrectPurchase?: () => void
+  corrections?: { category_corrected?: boolean; event_corrected?: boolean; planned_corrected?: boolean } | null
+  onOpenCorrectionHistory?: () => void
   // Квик-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б): на
   // стадии 'delivered' у авансового кнопка «Остановить» ниже физически и есть
   // «Отказать в оплате» директора (can_stop_purchase расширил порог до 'paid'

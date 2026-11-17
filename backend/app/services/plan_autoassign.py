@@ -176,8 +176,66 @@ async def auto_assign_planned_items(
                     FeoPlannedItem.is_active == True,
                 )
             )
+            all_cat_fpis = existing_res.scalars().all()
+            auto_fpi_ids = [f.id for f in all_cat_fpis if getattr(f, "auto_created", False)]
+            blocked_auto_fpi_ids: set[int] = set()
+            if auto_fpi_ids:
+                from app.models.purchase import Purchase as _PIdx
+                from app.models.purchase_item import PurchaseItem as _PIIdx
+                from app.models.wish import Wish as _WIdx
+                from app.models.wish_item import WishItem as _WIIdx
+                _self_wids = {getattr(x, "wish_id", None) for x in items if getattr(x, "wish_id", None) is not None}
+                _self_pids = {getattr(x, "purchase_id", None) for x in items if getattr(x, "purchase_id", None) is not None}
+
+                _act_pi = (await db.execute(
+                    select(_PIIdx.feo_planned_item_id)
+                    .join(_PIdx, _PIIdx.purchase_id == _PIdx.id)
+                    .where(
+                        _PIIdx.feo_planned_item_id.in_(auto_fpi_ids),
+                        _PIdx.status.notin_(("wishes", "cancelled")),
+                        _PIdx.stopped_at.is_(None),
+                    )
+                )).scalars().all()
+                _act_wi = (await db.execute(
+                    select(_WIIdx.feo_planned_item_id)
+                    .join(_WIdx, _WIIdx.wish_id == _WIdx.id)
+                    .where(
+                        _WIIdx.feo_planned_item_id.in_(auto_fpi_ids),
+                        _WIdx.status.notin_(("draft", "rejected", "waiting_funds")),
+                        _WIdx.stopped_at.is_(None),
+                    )
+                )).scalars().all()
+                _active_auto_fpi_ids = {fid for fid in (*_act_pi, *_act_wi) if fid is not None}
+
+                _inact_pi = (await db.execute(
+                    select(_PIIdx.feo_planned_item_id, _PIIdx.purchase_id)
+                    .join(_PIdx, _PIIdx.purchase_id == _PIdx.id)
+                    .where(
+                        _PIIdx.feo_planned_item_id.in_(auto_fpi_ids),
+                        _PIdx.status == "wishes",
+                        _PIdx.stopped_at.is_(None),
+                    )
+                )).all()
+                _inact_wi = (await db.execute(
+                    select(_WIIdx.feo_planned_item_id, _WIIdx.wish_id)
+                    .join(_WIdx, _WIIdx.wish_id == _WIdx.id)
+                    .where(
+                        _WIIdx.feo_planned_item_id.in_(auto_fpi_ids),
+                        _WIdx.status.in_(("draft", "rejected", "waiting_funds")),
+                        _WIdx.stopped_at.is_(None),
+                    )
+                )).all()
+                _draft_only_ids = {
+                    fid for fid, pid in _inact_pi if fid is not None and pid not in _self_pids
+                } | {
+                    fid for fid, wid in _inact_wi if fid is not None and wid not in _self_wids
+                }
+                blocked_auto_fpi_ids = _draft_only_ids - _active_auto_fpi_ids
+
             index = {}
-            for fpi in existing_res.scalars().all():
+            for fpi in all_cat_fpis:
+                if fpi.id in blocked_auto_fpi_ids:
+                    continue
                 key = normalize(fpi.name or "")
                 if key and key not in index:
                     index[key] = (fpi.id, fpi.item_type)  # первое совпадение побеждает при легаси-дублях в БД
@@ -509,23 +567,123 @@ async def _fpi_reference_keys(db: AsyncSession, fpi_id: int) -> set:
       - PurchaseItem без wish_item_id (заведена прямо в закупке) →
         ('purchase_item', id);
       - WishItem → ('wish_item', id).
+
+    Учитываются документы вне отменённых/остановленных состояний: закупки с
+    status != 'cancelled' и stopped_at IS NULL (включая 'wishes', чтобы при
+    возврате в черновик заявки позиции сохраняли свои плановые до смены категории)
+    и заявки с stopped_at IS NULL.
     """
+    from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
+    from app.models.wish import Wish
     from app.models.wish_item import WishItem
 
     keys: set = set()
     pi_rows = (await db.execute(
         select(PurchaseItem.id, PurchaseItem.wish_item_id)
-        .where(PurchaseItem.feo_planned_item_id == fpi_id)
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .where(
+            PurchaseItem.feo_planned_item_id == fpi_id,
+            Purchase.status != "cancelled",
+            Purchase.stopped_at.is_(None),
+        )
     )).all()
     for pid, wiid in pi_rows:
         keys.add(("wish_item", wiid) if wiid is not None else ("purchase_item", pid))
     wi_rows = (await db.execute(
-        select(WishItem.id).where(WishItem.feo_planned_item_id == fpi_id)
+        select(WishItem.id)
+        .join(Wish, WishItem.wish_id == Wish.id)
+        .where(
+            WishItem.feo_planned_item_id == fpi_id,
+            Wish.stopped_at.is_(None),
+        )
     )).all()
     for (wid,) in wi_rows:
         keys.add(("wish_item", wid))
     return keys
+
+
+async def cleanup_wish_auto_planned_items(db: AsyncSession, wish_id: int) -> None:
+    """При откате заявки в черновик/отклонённую/wishes или остановке отвязывает
+    автосозданные плановые позиции (auto_created=True, from_plan=False) у самой
+    заявки и её неактивных/скрытых закупок и деактивирует осиротевшие
+    FeoPlannedItem (is_active=False), чтобы они не оставались «призраками» в плане
+    ФЭО и к ним не привязывались другие заявки. Ручные привязки (from_plan=True
+    или auto_created=False) не затрагиваются."""
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.models.wish_item import WishItem
+
+    wish_items = (await db.execute(
+        select(WishItem).where(WishItem.wish_id == wish_id)
+    )).scalars().all()
+    linked_purchases = (await db.execute(
+        select(Purchase).where(Purchase.wish_id == wish_id)
+    )).scalars().all()
+
+    inactive_p_ids = [
+        p.id for p in linked_purchases
+        if p.stopped_at is not None or p.status in ("wishes", "cancelled")
+    ]
+    active_p_ids = [
+        p.id for p in linked_purchases
+        if p.stopped_at is None and p.status not in ("wishes", "cancelled")
+    ]
+
+    active_wi_ids: set[int] = set()
+    if active_p_ids:
+        active_wi_ids = set((await db.execute(
+            select(PurchaseItem.wish_item_id).where(
+                PurchaseItem.purchase_id.in_(active_p_ids),
+                PurchaseItem.wish_item_id.is_not(None),
+            )
+        )).scalars().all())
+
+    inactive_pis: list[PurchaseItem] = []
+    if inactive_p_ids:
+        inactive_pis = (await db.execute(
+            select(PurchaseItem).where(PurchaseItem.purchase_id.in_(inactive_p_ids))
+        )).scalars().all()
+
+    candidate_items = [
+        it for it in wish_items if getattr(it, "id", None) not in active_wi_ids
+    ] + list(inactive_pis)
+
+    fpi_ids = {
+        it.feo_planned_item_id
+        for it in candidate_items
+        if getattr(it, "feo_planned_item_id", None) is not None
+        and not getattr(it, "from_plan", False)
+    }
+    if not fpi_ids:
+        return
+
+    fpi_rows = (await db.execute(
+        select(FeoPlannedItem).where(FeoPlannedItem.id.in_(fpi_ids))
+    )).scalars().all()
+    fpi_by_id = {f.id: f for f in fpi_rows}
+
+    fpis_to_check: dict[int, FeoPlannedItem] = {}
+    for it in candidate_items:
+        if getattr(it, "from_plan", False):
+            continue
+        fpi_id = getattr(it, "feo_planned_item_id", None)
+        if fpi_id is None:
+            continue
+        fpi = fpi_by_id.get(fpi_id)
+        if fpi is not None and fpi.auto_created:
+            it.feo_planned_item_id = None
+            if hasattr(it, "over_plan"):
+                it.over_plan = False
+            if hasattr(it, "planned_item"):
+                it.planned_item = None
+            fpis_to_check[fpi.id] = fpi
+
+    if fpis_to_check:
+        await db.flush()
+        for fpi in fpis_to_check.values():
+            await deactivate_if_orphaned(db, fpi)
 
 
 async def deactivate_if_orphaned(db: AsyncSession, fpi) -> None:

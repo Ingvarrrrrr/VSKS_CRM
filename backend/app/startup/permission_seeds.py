@@ -830,6 +830,39 @@ async def _products_edit_catalog_action():
         logging.getLogger(__name__).warning(f"products.edit_catalog action seed skipped (non-fatal): {e}")
 
 
+async def _purchase_correct_action():
+    # Право на корректировку действующей закупки (категория ФЭО, плановые позиции,
+    # мероприятие и возврат в черновик заявки без технического переключения статуса).
+    # Дефолт: superadmin/account_owner/admin/org_admin/manager=TRUE; employee=FALSE.
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'purchase.correct'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Корректировка действующей закупки (категория ФЭО, плановая позиция, мероприятие, возврат в черновик)',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', True), ('org_admin', True),
+                ('manager', True), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"purchase.correct action seed skipped (non-fatal): {e}")
+
+
 async def _account_owner_all_rights():
     # Владелец (2026-10-06): «Владелец аккаунта может всё. Он один в аккаунте,
     # может быть передан, но он один». На проде у роли account_owner стояли
@@ -893,4 +926,5 @@ async def run():
     await _purchase_copy_to_subsidy_action()
     await _paid_confirmation_decide_action()
     await _products_edit_catalog_action()
+    await _purchase_correct_action()
     await _account_owner_all_rights()

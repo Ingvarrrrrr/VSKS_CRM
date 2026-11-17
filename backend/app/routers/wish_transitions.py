@@ -122,6 +122,9 @@ async def stop_wish(
     partial = total > 0 and stopped_count < total
     wish.stopped_partial = partial
 
+    from app.services.plan_autoassign import cleanup_wish_auto_planned_items
+    await cleanup_wish_auto_planned_items(db, wish.id)
+
     await db.commit()
 
     try:

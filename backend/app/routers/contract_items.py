@@ -26,6 +26,7 @@ PlanExcessApproval, ПРАВИЛО №6 — второй способ хране
 заводится). См. app.services.contract_excess_approval, единственное место,
 где формула сравнения и текст отказа определены.
 """
+from types import SimpleNamespace
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -48,8 +49,39 @@ from app.schemas.schemas import ContractItemCreate, ContractItemOut, ContractIte
 # плановую позицию по имени/цене/порядку среди позиций ЭТОЙ закупки.
 from app.services.contract_item_link import relink_contract_items
 from app.services.contract_excess_approval import enforce_contract_excess_approval
+from app.services.item_amounts import apply_contract_item_amounts
+from app.services.item_forms import item_form_for_purchase_item
 
 router = APIRouter(prefix="/api/purchases/{pid}/contract-items", tags=["contract_items"])
+
+
+def _clean_contract_extra_attrs(raw) -> dict:
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v for k, v in raw.items() if k != "_accepted"}
+
+
+def _sync_contract_item_payload_amounts(p: Purchase, payload: dict) -> None:
+    """Пересчитывает quantity/unit_price/total договорной строки по extra_attrs,
+    если у позиции действует спец-форма (проживание/питание/перевозки/билеты) и
+    extra_attrs не пуст (ПРАВИЛО №6 — единый расчёт apply_contract_item_amounts)."""
+    raw_extra = payload.get("extra_attrs")
+    cleaned = _clean_contract_extra_attrs(raw_extra)
+    if "extra_attrs" in payload:
+        payload["extra_attrs"] = cleaned
+    ns = SimpleNamespace(
+        item_form=payload.get("item_form"),
+        extra_attrs=cleaned,
+        quantity=payload.get("quantity"),
+        unit_price=payload.get("unit_price"),
+        total=payload.get("total"),
+    )
+    ci_form = item_form_for_purchase_item(p, ns)
+    if ci_form and cleaned:
+        apply_contract_item_amounts(ns, ci_form)
+        payload["quantity"] = ns.quantity
+        payload["unit_price"] = ns.unit_price
+        payload["total"] = ns.total
 
 
 async def _purchase_items_by_id(db: AsyncSession, pid: int) -> dict:
@@ -81,6 +113,7 @@ async def create_contract_item(pid: int, data: ContractItemCreate,
         raise HTTPException(404, detail={"code": "PURCHASE_NOT_FOUND",
                                           "message": f"Закупка #{pid} не найдена"})
     payload = data.model_dump(exclude_none=True)
+    _sync_contract_item_payload_amounts(p, payload)
     # D-08-симметрия: Fuzzy auto-link product if missing.
     # Purchase не имеет .org_id напрямую (org — через subsidy); каталог товаров
     # общий для всех орг (см. bulk replace_all_contract_items ниже — тот же
@@ -199,13 +232,17 @@ async def replace_all_contract_items(pid: int, items: List[ContractItemCreate],
     # участвуют (effective None — та же логика отбрасывания, что и в цикле
     # создания ниже, ПРАВИЛО №6: один и тот же критерий «валиден ли
     # source_item_id», не два разных).
+    _payloads: list[dict] = []
     _check_items = []
     for it in items:
-        if it.source_item_id and it.source_item_id in existing_src_ids:
-            _check_items.append(it)
+        p_dump = it.model_dump(exclude_none=True)
+        _sync_contract_item_payload_amounts(p, p_dump)
+        _payloads.append(p_dump)
+        if p_dump.get("source_item_id") and p_dump["source_item_id"] in existing_src_ids:
+            _check_items.append(ContractItemCreate(**p_dump))
         else:
             _check_items.append(ContractItemCreate(
-                **{**it.model_dump(exclude_none=True), "source_item_id": None}
+                **{**p_dump, "source_item_id": None}
             ))
     await enforce_contract_excess_approval(
         db, _check_items, purchase_items_map,
@@ -217,8 +254,8 @@ async def replace_all_contract_items(pid: int, items: List[ContractItemCreate],
     await db.execute(delete(ContractItem).where(ContractItem.purchase_id == pid))
 
     created = []
-    for it in items:
-        payload = it.model_dump(exclude_none=True)
+    for raw_payload in _payloads:
+        payload = dict(raw_payload)
         # Drop stale source_item_id silently — purchase_item уже не существует
         # (или принадлежит чужой закупке). Позиция не остаётся без категории
         # навсегда — relink_contract_items ниже пытается найти замену по
@@ -262,13 +299,29 @@ async def patch_contract_item(pid: int, item_id: int, data: ContractItemUpdate,
         raise HTTPException(404, detail={"code": "CONTRACT_ITEM_NOT_FOUND",
                                           "message": f"Позиция договора #{item_id} не найдена"})
     payload = data.model_dump(exclude_unset=True)
+    p = await db.get(Purchase, pid)
+    if p is not None:
+        _merged_ns = SimpleNamespace(
+            item_form=payload.get("item_form", ci.item_form),
+            extra_attrs=_clean_contract_extra_attrs(payload.get("extra_attrs", ci.extra_attrs)),
+            quantity=payload.get("quantity", ci.quantity),
+            unit_price=payload.get("unit_price", ci.unit_price),
+            total=payload.get("total", ci.total),
+        )
+        _ci_form = item_form_for_purchase_item(p, _merged_ns)
+        if _ci_form and _merged_ns.extra_attrs:
+            if "extra_attrs" in payload:
+                payload["extra_attrs"] = _merged_ns.extra_attrs
+            apply_contract_item_amounts(_merged_ns, _ci_form)
+            payload["quantity"] = _merged_ns.quantity
+            payload["unit_price"] = _merged_ns.unit_price
+            payload["total"] = _merged_ns.total
 
     # Волна 4 п.18: собираем эффективные значения ПОСЛЕ патча (merge с текущими
     # полями ci), но ДО setattr на реальном объекте — если превышение не
     # согласовано, 409 бросается раньше, чем что-либо изменится.
     _effective_source_id = payload.get("source_item_id", ci.source_item_id)
     if _effective_source_id:
-        p = await db.get(Purchase, pid)
         pi = await db.get(PurchaseItem, _effective_source_id)
         if p is not None and pi is not None and pi.purchase_id == pid:
             _check_item = ContractItemCreate(
@@ -366,7 +419,8 @@ async def copy_from_purchase_items(pid: int, db: AsyncSession = Depends(get_db))
             total=pi.total_price,
             vat_rate=pi.vat_rate,
             vat_on_top=pi.vat_on_top,
-            extra_attrs=getattr(pi, 'extra_attrs', None) or {},
+            extra_attrs=_clean_contract_extra_attrs(getattr(pi, 'extra_attrs', None)),
+            item_form=getattr(pi, 'item_form', None),
             match_confirmed=True,
         )
         db.add(ci)
@@ -525,4 +579,7 @@ def _item_accepted_brief(it: PurchaseItem) -> dict:
         "accepted_name": it.accepted_name,
         "accepted_quantity": float(it.accepted_quantity) if it.accepted_quantity is not None else None,
         "accepted_unit": it.accepted_unit,
+        "extra_attrs": getattr(it, "extra_attrs", None) or {},
+        "final_unit_price": float(it.final_unit_price) if it.final_unit_price is not None else None,
+        "final_total": float(it.final_total) if it.final_total is not None else None,
     }

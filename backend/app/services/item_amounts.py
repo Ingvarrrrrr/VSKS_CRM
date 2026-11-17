@@ -303,31 +303,9 @@ def compute_item_total(
     )
 
 
-def apply_item_amounts(
-    item: Any, item_form: Optional[str], vat_on_top: bool = False, vat_rate: Any = "__unset__",
-) -> Decimal:
-    """Выставляет quantity/unit_price/total_price на `item` по правилам формы
-    и возвращает итоговую сумму. Для accommodation/transport quantity (и для
-    transport ещё и unit_price) — ПРОИЗВОДНЫЕ от extra_attrs, не принимаются
-    напрямую с фронта (см. план, раздел «Модель»); то же для food в режиме
-    «меню по дням» (quantity И unit_price — производные).
-
-    Владелец (2026-09-15): у форм со спец-полями («Проживание»/«Перевозки»/
-    «Питание») ТИП позиции — всегда «услуга» (это явно услуга, не товар/
-    работа); единственное место, проставляющее item_type для этих форм — сам
-    выбор типа позиции на фронте (PurchaseItemsEditor.vue) forced-дефолтом
-    зеркалит эту же проверку `if item_form`, второго списка форм не заводить
-    (Правило №6).
-
-    Даты позиции (п. С4, 30.09.2026) — validate_item_form_dates (services/
-    item_form_dates.py) вызывается ЗДЕСЬ, единственной точке записи total_price
-    на КАЖДОМ сохранении позиции закупки/заявки — raises HTTPException(422) при
-    «отправление позже окончания» (transport) / «обратно раньше туда»
-    (flight/train), вторая проверка по роутерам не заводится (Правило №6)."""
-    from app.services.item_form_dates import validate_item_form_dates
-    validate_item_form_dates(item, item_form)
-    if item_form:
-        item.item_type = "услуга"
+def _apply_derived_item_amounts(item: Any, item_form: Optional[str]) -> None:
+    """Общий расчёт производных quantity / unit_price по extra_attrs для
+    PurchaseItem / WishItem и ContractItem (ПРАВИЛО №6 — без второй копии)."""
     extra = _extra(item)
     if item_form == "accommodation":
         item.quantity = _accommodation_quantity(extra)
@@ -353,6 +331,48 @@ def apply_item_amounts(
         else:
             item.quantity = _food_quantity(extra)
             # unit_price — цена за приём пищи, вводится пользователем напрямую.
+
+
+def apply_item_amounts(
+    item: Any, item_form: Optional[str], vat_on_top: bool = False, vat_rate: Any = "__unset__",
+) -> Decimal:
+    """Выставляет quantity/unit_price/total_price на `item` по правилам формы
+    и возвращает итоговую сумму. Для accommodation/transport quantity (и для
+    transport ещё и unit_price) — ПРОИЗВОДНЫЕ от extra_attrs, не принимаются
+    напрямую с фронта (см. план, раздел «Модель»); то же для food в режиме
+    «меню по дням» (quantity И unit_price — производные).
+
+    Владелец (2026-09-15): у форм со спец-полями («Проживание»/«Перевозки»/
+    «Питание») ТИП позиции — всегда «услуга» (это явно услуга, не товар/
+    работа); единственное место, проставляющее item_type для этих форм — сам
+    выбор типа позиции на фронте (PurchaseItemsEditor.vue) forced-дефолтом
+    зеркалит эту же проверку `if item_form`, второго списка форм не заводить
+    (Правило №6).
+
+    Даты позиции (п. С4, 30.09.2026) — validate_item_form_dates (services/
+    item_form_dates.py) вызывается ЗДЕСЬ, единственной точке записи total_price
+    на КАЖДОМ сохранении позиции закупки/заявки — raises HTTPException(422) при
+    «отправление позже окончания» (transport) / «обратно раньше туда»
+    (flight/train), вторая проверка по роутерам не заводится (Правило №6)."""
+    from app.services.item_form_dates import validate_item_form_dates
+    validate_item_form_dates(item, item_form)
+    if item_form:
+        item.item_type = "услуга"
+    _apply_derived_item_amounts(item, item_form)
     total = compute_item_total(item, item_form, vat_on_top=vat_on_top, vat_rate=vat_rate)
     item.total_price = total
+    return total
+
+
+def apply_contract_item_amounts(
+    ci: Any, item_form: Optional[str], vat_on_top: bool = False, vat_rate: Any = "__unset__",
+) -> Decimal:
+    """Эквивалент apply_item_amounts для договорной строки (ContractItem хранит
+    итог в `.total`, а не `.total_price`, и не имеет `.item_type`). Переиспользует
+    общий _apply_derived_item_amounts + compute_item_total (ПРАВИЛО №6)."""
+    from app.services.item_form_dates import validate_item_form_dates
+    validate_item_form_dates(ci, item_form)
+    _apply_derived_item_amounts(ci, item_form)
+    total = compute_item_total(ci, item_form, vat_on_top=vat_on_top, vat_rate=vat_rate)
+    ci.total = total
     return total

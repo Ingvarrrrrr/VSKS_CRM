@@ -387,11 +387,12 @@
                         :item-form="itemForm"
                         :row-form="item.item_form"
                         :fields="itemFormFields"
-                        :model-value="item.extra_attrs"
+                        :model-value="cleanExtra(item.extra_attrs)"
                         :unit-price="item.unit_price"
+                        :total-price="item.total_price"
                         :disabled="tzDisabled"
                         @update:row-form="(v) => { item.item_form = v; emit('calc-item-total', idx) }"
-                        @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
+                        @update:model-value="(v) => onUpdateTzExtra(item, idx, v)"
                         @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
                       />
                     </td>
@@ -562,6 +563,21 @@
                         @update:model-value="(v: string) => emit('update-contract-field', idx, 'name', v)"
                       />
                     </td>
+                    <td v-if="hasItemForm" colspan="3">
+                      <v-btn-toggle
+                        v-if="(vatMode || 'uniform') === 'per_item'"
+                        :model-value="vatOnTopToTriState(getContractItemFor(idx)?.vat_on_top)"
+                        density="compact" rounded="lg" mandatory class="mt-1"
+                        style="transform:scale(0.8);transform-origin:left"
+                        :disabled="readonly"
+                        @update:model-value="(v: string) => emit('update-contract-field', idx, 'vat_on_top', triStateToVatOnTop(v as any))"
+                      >
+                        <v-btn value="default" size="x-small">как у закупки</v-btn>
+                        <v-btn value="included" size="x-small">с НДС</v-btn>
+                        <v-btn value="on_top" size="x-small">сверху</v-btn>
+                      </v-btn-toggle>
+                    </td>
+                    <template v-else>
                     <td>
                       <v-text-field
                         :model-value="contractFieldNumber(getContractItemFor(idx)?.quantity ?? (isAdvance ? (items[idx] as any)?.quantity : null))"
@@ -603,6 +619,7 @@
                         <v-btn value="on_top" size="x-small">сверху</v-btn>
                       </v-btn-toggle>
                     </td>
+                    </template>
                     <!-- Fix 4/5: НДС % column (Договор). v-select для единообразия
                          со строкой ТЗ выше (тот же фиксированный список ставок). -->
                     <td v-if="showVatColumnsInExpandRow">
@@ -635,6 +652,24 @@
                       </div>
                     </td>
                   </tr>
+                  <tr v-if="hasItemForm" class="stage-contract-row item-form-row">
+                    <td></td>
+                    <td :colspan="(showVatColumnsInExpandRow ? 9 : 7) - 1">
+                      <ItemRowFormSwitch
+                        :row-item-form-choices="rowItemFormChoices"
+                        :item-form="itemForm"
+                        :row-form="contractRowForm(idx)"
+                        :fields="itemFormFields"
+                        :model-value="contractExtraAttrs(idx)"
+                        :unit-price="contractUnitPriceNum(idx)"
+                        :total-price="contractTotalNum(idx)"
+                        :disabled="readonly"
+                        @update:row-form="(v) => emit('update-contract-field', idx, 'item_form', v)"
+                        @update:model-value="(v) => emit('update-contract-field', idx, 'extra_attrs', v)"
+                        @update:unit-price="(v) => emit('update-contract-field', idx, 'unit_price', v)"
+                      />
+                    </td>
+                  </tr>
                   <!-- Поставка sub-row (D-01.1.1) — «Приняли»: редактируется на delivered/paid -->
                   <tr class="stage-delivery-row" :class="{ 'stage-delivery-empty': !isDeliveryFilled(idx) }">
                     <td><v-chip color="purple" size="x-small" variant="tonal">Поставка</v-chip></td>
@@ -651,6 +686,8 @@
                           @update:model-value="(v: string) => emit('update-accepted-field', idx, 'accepted_name', v)"
                         />
                       </td>
+                      <td v-if="hasItemForm" colspan="3"></td>
+                      <template v-else>
                       <td>
                         <v-text-field
                           :model-value="contractFieldNumber((items[idx] as any)?.accepted_quantity)"
@@ -668,6 +705,7 @@
                         />
                       </td>
                       <td class="text-caption text-grey-darken-1">{{ formatMoneyInput(getContractItemFor(idx)?.unit_price) || '—' }}</td>
+                      </template>
                       <!-- Fix 4/5: НДС % readonly (Поставка) -->
                       <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ effectiveVatRate(idx, 'delivery') ?? '—' }}</td>
                       <!-- Fix 4/5: НДС сумма readonly (Поставка) -->
@@ -698,9 +736,12 @@
                           :title="(items[idx] as any)?.item_name || ''"
                         >{{ (items[idx] as any)?.item_name || '—' }}</div>
                       </td>
+                      <td v-if="hasItemForm" colspan="3"></td>
+                      <template v-else>
                       <td class="text-caption text-grey-darken-1">{{ formatNumber((items[idx] as any)?.quantity) || '—' }}</td>
                       <td class="text-caption text-grey-darken-1">{{ (items[idx] as any)?.unit ?? '—' }}</td>
                       <td class="text-caption text-grey-darken-1">{{ formatMoneyInput((items[idx] as any)?.unit_price) || '—' }}</td>
+                      </template>
                       <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ (items[idx] as any)?.vat_rate ?? '—' }}</td>
                       <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ fmtRub(vatAmount((items[idx] as any) ?? {})) }}</td>
                       <td class="text-caption text-grey-darken-1 font-weight-medium">{{ fmtRub(Number((items[idx] as any)?.total_price ?? 0)) }}</td>
@@ -711,6 +752,39 @@
                         Появится после перевода закупки в статус «Поставлено»
                       </td>
                     </template>
+                  </tr>
+                  <tr v-if="isDelivered(idx) && hasItemForm && acceptedDeliveryFor" class="stage-delivery-row item-form-row">
+                    <td></td>
+                    <td :colspan="(showVatColumnsInExpandRow ? 9 : 7) - 1">
+                      <ItemRowFormSwitch
+                        :row-item-form-choices="rowItemFormChoices"
+                        :item-form="itemForm"
+                        :row-form="acceptedDeliveryFor(idx).item_form"
+                        :fields="itemFormFields"
+                        :model-value="acceptedDeliveryFor(idx).extra_attrs"
+                        :unit-price="acceptedDeliveryFor(idx).unit_price"
+                        :total-price="acceptedDeliveryFor(idx).total"
+                        :disabled="readonly"
+                        @update:row-form="(v) => emit('update-accepted-form', idx, { item_form: v })"
+                        @update:model-value="(v) => emit('update-accepted-form', idx, { extra_attrs: v })"
+                        @update:unit-price="(v) => emit('update-accepted-form', idx, { unit_price: v })"
+                      />
+                    </td>
+                  </tr>
+                  <tr v-else-if="isAdvance && !isDelivered(idx) && hasItemForm" class="stage-delivery-row item-form-row">
+                    <td></td>
+                    <td :colspan="(showVatColumnsInExpandRow ? 9 : 7) - 1">
+                      <ItemRowFormSwitch
+                        :row-item-form-choices="rowItemFormChoices"
+                        :item-form="itemForm"
+                        :row-form="items[idx]?.item_form"
+                        :fields="itemFormFields"
+                        :model-value="cleanExtra(items[idx]?.extra_attrs)"
+                        :unit-price="items[idx]?.unit_price"
+                        :total-price="items[idx]?.total_price"
+                        :disabled="true"
+                      />
+                    </td>
                   </tr>
                 </tbody>
               </v-table>
@@ -926,6 +1000,7 @@ const props = defineProps<{
   totalWithVat: (row: EditorItem) => number
   totalWithVatForStage: (idx: number, stage: 'contract' | 'delivery') => number
   getContractItemFor: (idx: number) => any
+  acceptedDeliveryFor?: (idx: number) => { extra_attrs: Record<string, any>; unit_price: number | null; total: number | null; item_form: string | null }
   contractorNameById: (cid: number | null | undefined) => string
   contractStageContractorName: (idx: number) => string
   deliveryStageContractorName: (idx: number) => string
@@ -992,6 +1067,48 @@ function contractPriceBlur(idx: number): void {
 
 const tzDisabled = computed(() => props.readonly || !!props.tzFrozen)
 const tzFrozenTooltip = 'Закупка объявлена — кол-во и цена ТЗ зафиксированы. Итоговую цену по результатам закупки внесите в подстроке «Договор» ниже.'
+const hasItemForm = computed(() => Boolean(props.itemForm || (props.rowItemFormChoices && props.rowItemFormChoices.length)))
+
+function cleanExtra(raw: any): Record<string, any> {
+  if (!raw || typeof raw !== 'object') return {}
+  if (!('_accepted' in raw)) return raw
+  const copy = { ...raw }
+  delete copy._accepted
+  return copy
+}
+
+function onUpdateTzExtra(item: any, idx: number, nextExtra: Record<string, any>) {
+  const prevAccepted = item?.extra_attrs && typeof item.extra_attrs === 'object' ? item.extra_attrs._accepted : undefined
+  const merged: Record<string, any> = { ...nextExtra }
+  if (prevAccepted !== undefined) merged._accepted = prevAccepted
+  item.extra_attrs = merged
+  emit('calc-item-total', idx)
+}
+
+function contractRowForm(idx: number): string | null {
+  const ci = props.getContractItemFor(idx)
+  return ci?.item_form ?? props.items[idx]?.item_form ?? null
+}
+
+function contractExtraAttrs(idx: number): Record<string, any> {
+  const ci = props.getContractItemFor(idx)
+  if (ci) return cleanExtra(ci.extra_attrs)
+  return props.isAdvance ? cleanExtra(props.items[idx]?.extra_attrs) : {}
+}
+
+function contractUnitPriceNum(idx: number): number | null {
+  const ci = props.getContractItemFor(idx)
+  if (ci) return ci.unit_price != null ? Number(ci.unit_price) : null
+  const fb = props.isAdvance ? (props.items[idx] as any)?.unit_price : null
+  return fb != null ? Number(fb) : null
+}
+
+function contractTotalNum(idx: number): number | null {
+  const ci = props.getContractItemFor(idx)
+  if (ci) return ci.total != null ? Number(ci.total) : null
+  const fb = props.isAdvance ? (props.items[idx] as any)?.total_price : null
+  return fb != null ? Number(fb) : null
+}
 
 // item-forms-accommodation-transport.md: компактная расшифровка extra_attrs для
 // свёрнутой сводной строки (полное редактирование — в развёрнутой ТЗ-подстроке,
@@ -1105,6 +1222,7 @@ const emit = defineEmits<{
   'update-contract-field': [idx: number, field: string, val: unknown]
   'contract-vat-change': [idx: number, val: any]
   'update-accepted-field': [idx: number, field: 'accepted_name' | 'accepted_quantity' | 'accepted_unit', val: unknown]
+  'update-accepted-form': [idx: number, patch: { extra_attrs?: Record<string, any>; unit_price?: number | null; item_form?: string | null }]
   'apply-avg-price': [idx: number]
 }>()
 </script>

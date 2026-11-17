@@ -44,7 +44,15 @@ export async function copyNamesFromPurchase(purchaseId: number): Promise<CopyNam
 // (см. backend/app/routers/contract_items.py::copy_contract_items_to_delivery).
 export interface CopyToDeliveryResult {
   updated_count: number
-  items: { id: number; accepted_name: string | null; accepted_quantity: number | null; accepted_unit: string | null }[]
+  items: {
+    id: number
+    accepted_name: string | null
+    accepted_quantity: number | null
+    accepted_unit: string | null
+    extra_attrs?: Record<string, any> | null
+    final_unit_price?: number | null
+    final_total?: number | null
+  }[]
 }
 
 export async function copyContractToDelivery(purchaseId: number): Promise<CopyToDeliveryResult> {

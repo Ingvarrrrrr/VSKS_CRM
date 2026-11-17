@@ -137,3 +137,111 @@ async def test_plain_services_food_behaviour_unchanged(client, db_session, make_
         select(PurchaseItem).where(PurchaseItem.purchase_id == p.id)
     )).scalars().first()
     assert db_item.total_price == Decimal("37500.00")
+
+
+@pytest.mark.asyncio
+async def test_food_and_accommodation_copy_contract_and_delivery_stages(
+    client, db_session, make_purchase, admin_headers,
+):
+    """Перенос ТЗ → Договор (с сохранением extra_attrs/item_form и пересчётом
+    сумм договора) и перенос Договор → Поставка (extra_attrs['_accepted'] и
+    final_total) для Проживания и Питания."""
+    from app.models.contract_item import ContractItem
+    from app.models.purchase_item import PurchaseItem
+
+    p = await make_purchase(
+        status="delivered", purchase_method="advance", subject="Проживание и питание стадии",
+    )
+    tz_payload = {
+        "subject": "Проживание и питание стадии",
+        "purchase_method": "advance",
+        "contract_form": "services_accommodation_food",
+        "items": [
+            {
+                "item_name": "Проживание",
+                "item_form": "accommodation",
+                "unit_price": "5000",
+                "extra_attrs": {"price_basis": "room", "rooms": 4, "nights": 2},
+            },
+            {
+                "item_name": "Организация питания",
+                "item_form": "food",
+                "unit_price": "300",
+                "extra_attrs": {"mode": "simple", "persons": 10, "meals_per_day": 3, "days": 2},
+            },
+        ],
+    }
+    r_tz = await client.put(f"/api/purchases/{p.id}", json=tz_payload, headers=admin_headers)
+    assert r_tz.status_code == 200, r_tz.text
+
+    # 1. Кнопка «Перенести все позиции из ТЗ в договор»
+    r_copy = await client.post(
+        f"/api/purchases/{p.id}/contract-items/copy-from-purchase",
+        headers=admin_headers,
+    )
+    assert r_copy.status_code == 200, r_copy.text
+    ci_list = r_copy.json()
+    assert len(ci_list) == 2
+    ci_by_form = {c["item_form"]: c for c in ci_list}
+    assert Decimal(str(ci_by_form["accommodation"]["total"])) == Decimal("40000.00")
+    assert Decimal(str(ci_by_form["food"]["total"])) == Decimal("18000.00")
+    assert ci_by_form["accommodation"]["extra_attrs"]["nights"] == 2
+    assert ci_by_form["food"]["extra_attrs"]["days"] == 2
+
+    # 2. Правка «Как в договоре» через PUT /contract-items — сервер пересчитывает
+    #    quantity и total по extra_attrs (nights=3 для проживания, уменьшение человек для питания).
+    ci_acc = ci_by_form["accommodation"]
+    ci_food = ci_by_form["food"]
+    put_ci_payload = [
+        {
+            "source_item_id": ci_acc["source_item_id"],
+            "name": ci_acc["name"],
+            "item_form": "accommodation",
+            "unit_price": "4500",
+            "extra_attrs": {"price_basis": "room", "rooms": 4, "nights": 2},
+        },
+        {
+            "source_item_id": ci_food["source_item_id"],
+            "name": ci_food["name"],
+            "item_form": "food",
+            "unit_price": "250",
+            "extra_attrs": {"mode": "simple", "persons": 10, "meals_per_day": 3, "days": 2},
+        },
+    ]
+    r_put_ci = await client.put(
+        f"/api/purchases/{p.id}/contract-items",
+        json=put_ci_payload,
+        headers=admin_headers,
+    )
+    assert r_put_ci.status_code == 200, r_put_ci.text
+    updated_cis = {c["item_form"]: c for c in r_put_ci.json()}
+    assert Decimal(str(updated_cis["accommodation"]["total"])) == Decimal("36000.00")
+    assert Decimal(str(updated_cis["food"]["total"])) == Decimal("15000.00")
+
+    # 3. Перенос «из договора в поставку» (Как поставили)
+    r_del = await client.post(
+        f"/api/purchases/{p.id}/contract-items/copy-to-delivery",
+        headers=admin_headers,
+    )
+    assert r_del.status_code == 200, r_del.text
+    del_items = r_del.json()["items"]
+    assert len(del_items) == 2
+    totals = sorted(Decimal(str(it["final_total"])) for it in del_items)
+    assert totals == [Decimal("15000.00"), Decimal("36000.00")]
+    assert all("_accepted" in (it["extra_attrs"] or {}) for it in del_items)
+
+    # Проверяем, что копирование обратно ТЗ → Договор не тянет служебный ключ _accepted
+    r_recopy = await client.post(
+        f"/api/purchases/{p.id}/contract-items/copy-from-purchase",
+        headers=admin_headers,
+    )
+    assert r_recopy.status_code == 200, r_recopy.text
+    assert all("_accepted" not in (c["extra_attrs"] or {}) for c in r_recopy.json())
+    db_cis = (await db_session.execute(
+        select(ContractItem).where(ContractItem.purchase_id == p.id)
+    )).scalars().all()
+    assert all("_accepted" not in (ci.extra_attrs or {}) for ci in db_cis)
+    db_pis = (await db_session.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == p.id)
+    )).scalars().all()
+    assert all("_accepted" in (pi.extra_attrs or {}) for pi in db_pis)

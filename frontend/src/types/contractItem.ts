@@ -16,6 +16,8 @@ export interface ContractItem {
   // 2026-10-02 (НДС «в цене»/«сверху»): null = «как у закупки» (contract_vat_on_top
   // шапки), иначе построчный флаг в режиме per_item — см. useVatCalc.ts::effectiveVatOnTop.
   vat_on_top?: boolean | null
+  extra_attrs?: Record<string, any> | null
+  item_form?: string | null
   match_confirmed: boolean
   created_at?: string | null
   updated_at?: string | null
@@ -37,5 +39,7 @@ export interface ContractItemDraft {
   // бэке не от чего считать «сверху».
   vat_rate?: string | null
   vat_on_top?: boolean | null
+  extra_attrs?: Record<string, any> | null
+  item_form?: string | null
   match_confirmed?: boolean
 }

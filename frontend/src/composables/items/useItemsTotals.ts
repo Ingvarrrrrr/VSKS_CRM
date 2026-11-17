@@ -66,6 +66,13 @@ export function useItemsTotals(deps: UseItemsTotalsDeps) {
     return resolvedVatRate(ci?.vat_rate ?? localItems.value[idx]?.vat_rate ?? null)
   }
 
+  function deliveryStageTotal(idx: number): number {
+    const pi = localItems.value[idx] as any
+    const acceptedTotal = pi?.extra_attrs?._accepted?.total ?? pi?.final_total
+    if (acceptedTotal != null) return Number(acceptedTotal) || 0
+    return Number(getContractItemFor(idx)?.total ?? 0)
+  }
+
   function vatAmountForStage(idx: number, stage: 'tz' | 'contract' | 'delivery'): number {
     let rate: string | null = null
     let total = 0
@@ -78,7 +85,7 @@ export function useItemsTotals(deps: UseItemsTotalsDeps) {
       total = Number(getContractItemFor(idx)?.total ?? 0)
     } else {
       rate = effectiveVatRate(idx, 'delivery')
-      total = Number(getContractItemFor(idx)?.total ?? 0)
+      total = deliveryStageTotal(idx)
     }
     if (!rate) return 0
     const pct = parseVatRatePercent(rate)
@@ -87,7 +94,7 @@ export function useItemsTotals(deps: UseItemsTotalsDeps) {
   }
 
   function totalWithVatForStage(idx: number, stage: 'contract' | 'delivery'): number {
-    void stage
+    if (stage === 'delivery') return deliveryStageTotal(idx)
     return Number(getContractItemFor(idx)?.total ?? 0)
   }
 

@@ -5710,6 +5710,8 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
           // (replaceAllContractItems пересоздаёт строки), см. types/contractItem.ts.
           vat_rate: ci.vat_rate ?? null,
           vat_on_top: (ci as any).vat_on_top ?? null,
+          extra_attrs: ci.extra_attrs ?? {},
+          item_form: ci.item_form ?? null,
           match_confirmed: ci.match_confirmed,
         }))
         try {

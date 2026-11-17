@@ -24,6 +24,7 @@ PurchaseEvent/комментарий и оставить закупку в 'wish
 """
 from fastapi import HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract_item import ContractItem
@@ -39,19 +40,23 @@ from app.services.type_excess_approval import (
 )
 from app.services.price_actualization import actualize_contract_item_prices
 from app.services.contract_items_materialize import copy_items_to_contract
+from app.services.item_forms import item_form_for_purchase_item
 
 
-async def _autofill_accepted_fields(purchase: Purchase, db: AsyncSession) -> None:
-    """Дословная копия app/routers/purchase_transitions.py::_autofill_accepted_fields
-    невозможна без циклического импорта роутера сюда — обе функции держим
-    идентичными вручную (см. её докстринг там); переносить сюда насовсем не
-    стал, т.к. роутер её тоже использует отдельно на своём пути (SaaS-bypass)."""
+async def _autofill_accepted_fields(purchase: Purchase, db: AsyncSession, force: bool = False) -> int:
+    """Единственная реализация автозаполнения стадии «Приняли»/«Поставка» при
+    переходе в delivered или ручном переносе из договора (force=True) — ПРАВИЛО №6.
+
+    Для обычных позиций пишет accepted_name/accepted_quantity/accepted_unit; для
+    позиций со спец-формой (проживание/питание/перевозки/билеты) сохраняет
+    снимок спец-полей в it.extra_attrs['_accepted'] = {extra_attrs, unit_price,
+    total, item_form} и синхронизирует final_unit_price / final_total."""
     items_res = await db.execute(
         select(PurchaseItem).where(PurchaseItem.purchase_id == purchase.id)
     )
     items = items_res.scalars().all()
     if not items:
-        return
+        return 0
     item_ids = [it.id for it in items]
     ci_res = await db.execute(
         select(ContractItem).where(ContractItem.source_item_id.in_(item_ids))
@@ -60,8 +65,9 @@ async def _autofill_accepted_fields(purchase: Purchase, db: AsyncSession) -> Non
     for ci in ci_res.scalars().all():
         if ci.source_item_id not in ci_by_source:
             ci_by_source[ci.source_item_id] = ci
+    updated = 0
     for it in items:
-        if it.accepted_name is not None:
+        if it.accepted_name is not None and not force:
             continue
         ci = ci_by_source.get(it.id)
         if ci is not None:
@@ -72,6 +78,30 @@ async def _autofill_accepted_fields(purchase: Purchase, db: AsyncSession) -> Non
             it.accepted_name = it.item_name
             it.accepted_quantity = it.quantity
             it.accepted_unit = it.unit
+        _form = item_form_for_purchase_item(purchase, ci if ci is not None else it)
+        if _form:
+            _src_raw = (
+                ci.extra_attrs if (ci is not None and getattr(ci, "extra_attrs", None))
+                else getattr(it, "extra_attrs", None)
+            ) or {}
+            _src_extra = {k: v for k, v in _src_raw.items() if k != "_accepted"}
+            _src_price = ci.unit_price if ci is not None else it.unit_price
+            _src_total = ci.total if ci is not None else it.total_price
+            _src_form = (getattr(ci, "item_form", None) if ci is not None else None) or getattr(it, "item_form", None)
+            _cur_extra = dict(getattr(it, "extra_attrs", None) or {})
+            _cur_extra["_accepted"] = {
+                "extra_attrs": _src_extra,
+                "unit_price": float(_src_price) if _src_price is not None else None,
+                "total": float(_src_total) if _src_total is not None else None,
+                "item_form": _src_form,
+            }
+            it.extra_attrs = _cur_extra
+            if hasattr(it, "_sa_instance_state"):
+                flag_modified(it, "extra_attrs")
+            it.final_unit_price = _src_price
+            it.final_total = _src_total
+        updated += 1
+    return updated
 
 
 async def _notify_status_change(p: Purchase, pid: int, target_status: str, current_user, db: AsyncSession) -> None:

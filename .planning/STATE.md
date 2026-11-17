@@ -14,7 +14,18 @@ progress:
 
 # STATE.md — VSKS_CRM
 
-## 2026-11-17 — Право `purchase.correct`, сохранение плановых позиций при откате в заявку, контроль сумм и возврат в черновик через «Корректировку» (локально, не запушено)
+## 2026-11-17 — Стадии «Как в ТЗ» / «Как в договоре» / «Как поставили» для договоров питания и проживания + диагностика прода (локально, не запушено)
+- **Диагностика производительности и недоступности прода (`201.34.139.168`, read-only SSH):**
+  - 2 vCPU / 3.8 GiB RAM / 2.0 GiB Swap: контейнер `trading-bot` потреблял `97.64% CPU`, `935.3 MiB RAM`, `4218 PIDs`; load average `3.46–7.19`, Swap занят на `1.8–2.0 GiB` из `2.0 GiB`, диск `/dev/sda1` занят на `88%`. Из-за нехватки CPU/RAM даже лёгкие запросы в `vsks-crm-nginx-1` шли `2.1–8.5s` (`/api/users/me/signature` `4.314s`, `/api/staff-location/shift/me` `4.318s`, `/api/purchases/?scope=purchases&with_feo_excess=true` `8.504s`).
+  - За 24ч в `vsks-crm-nginx-1` зафиксированы `24` ошибки `111: Connection refused` / `502` / `504` строго в окна автодеплоя и пересоздания реплик (`16.11 21:59–22:04 MSK` и `17.11 14:07–14:12 MSK`). Сейчас все контейнеры `vsks-crm-*` в статусе `Up (healthy)`.
+- **Стадии «Как в ТЗ», «Как в договоре», «Как поставили» и перенос из ТЗ в договор для питания и проживания:**
+  - `backend/app/services/item_amounts.py`: выделен общий расчёт `_apply_derived_item_amounts` и добавлен `apply_contract_item_amounts` для `ContractItem` (пишет производные `quantity`/`unit_price` и `total`).
+  - `backend/app/routers/contract_items.py`: `copy_from_purchase_items` переносит также `item_form` и очищает служебный `_accepted`; `POST`/`PUT`/`PATCH` пересчитывают спец-формы через `_sync_contract_item_payload_amounts`; `_item_accepted_brief` возвращает `extra_attrs`, `final_unit_price`, `final_total`.
+  - `backend/app/services/contract_items_materialize.py`, `backend/app/services/purchase_transition_core.py`, `backend/app/routers/purchase_transitions.py`: единый `_autofill_accepted_fields` (без дубликата в роутере) и `copy_items_to_contract` переносят `extra_attrs`/`item_form` в договор и заполняют `extra_attrs["_accepted"]` + `final_unit_price`/`final_total` при переходе в `delivered` и по кнопке переноса в поставку (без добавления колонок БД).
+  - `frontend/src/types/contractItem.ts`, `frontend/src/api/contractItems.ts`, `frontend/src/views/CreateOrderView.vue`: `extra_attrs` и `item_form` сохраняются в `replaceAllContractItems`.
+  - `frontend/src/components/items/FoodStagesPanel.vue`, `ItemsTableStages.vue`, `PurchaseItemsEditor.vue`, `frontend/src/composables/items/useItemsTotals.ts`: для `services_food` убран запрет тулбара (`!isFoodForm`) и подключён 3-стадийный `FoodStagesPanel`; в `ItemsTableStages.vue` для `accommodation`/`accommodation_food` и других спец-форм добавлены `ItemRowFormSwitch` в подстроках «Договор» и «Поставка» и пересчёт `recalcContractTotal`/`updateAcceptedForm`/`stageTotals`.
+
+## 2026-11-17 — Право `purchase.correct`, сохранение плановых позиций при откате в заявку, контроль сумм и возврат в черновик через «Корректировку» (запушено `8c553e42`)
 - **Право `purchase.correct` в матрице ролей и прав пользователей (`permission_seeds.py`, `dictionaries.json`, `purchase_correction_service.py`, `CreateOrderView.vue`):**
   - Заведено право `purchase.correct` («Корректировка действующей закупки», по умолчанию для `superadmin`/`account_owner`/`admin`/`org_admin`/`manager`, выключено для `employee`), выгружено в `dictionaries.json` через `export_dictionaries.py`, подключено на бэкенде (`ensure_can_correct`) и фронтенде (`ACTIONS.PURCHASE_CORRECT`).
 - **Жизненный цикл `auto_created`-позиций при откате vs смене категории (`wish_distribution.py`, `purchase_return.py`, `plan_autoassign.py`, `feo_effective_category.py`):**

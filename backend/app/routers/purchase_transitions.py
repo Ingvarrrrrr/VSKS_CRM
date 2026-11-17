@@ -65,53 +65,7 @@ TRANSITION_REQUIRED: dict[str, list[str]] = {
 }
 
 
-async def _autofill_accepted_fields(purchase: Purchase, db: AsyncSession, force: bool = False) -> int:
-    """5-я стадия жизненного цикла позиции («приняли») — автозаполнение при delivered.
-
-    Для каждой purchase_item, у которой accepted_name ещё NULL: берём name/quantity/unit
-    из связанной ContractItem (по source_item_id), а если договорной строки нет — из самой
-    purchase_item (item_name/quantity/unit). Позиции, где accepted_name уже заполнен
-    (ручная правка PATCH-ем или повторный переход), не трогаем — КРОМЕ случая force=True.
-
-    force=True (владелец, чек-лист пункт 22, 2026-10-13: «в Поставку тоже должна
-    быть возможность перенести все позиции из Договора», тем же механизмом, что
-    и «Перенести все позиции из ТЗ в договор») — перезаписывает ВСЕ позиции
-    (включая уже заполненные вручную), для кнопки ручного переноса
-    app/routers/contract_items.py::copy_contract_items_to_delivery. Автоматический
-    вызов на переходе в delivered остаётся force=False (не портит ручные правки
-    приёмки повторным переходом) — единственная функция на оба случая, ПРАВИЛО №6.
-
-    Возвращает число обновлённых строк.
-    """
-    items_res = await db.execute(
-        select(PurchaseItem).where(PurchaseItem.purchase_id == purchase.id)
-    )
-    items = items_res.scalars().all()
-    if not items:
-        return 0
-    item_ids = [it.id for it in items]
-    ci_res = await db.execute(
-        select(ContractItem).where(ContractItem.source_item_id.in_(item_ids))
-    )
-    ci_by_source: dict[int, ContractItem] = {}
-    for ci in ci_res.scalars().all():
-        if ci.source_item_id not in ci_by_source:
-            ci_by_source[ci.source_item_id] = ci
-    updated = 0
-    for it in items:
-        if it.accepted_name is not None and not force:
-            continue
-        ci = ci_by_source.get(it.id)
-        if ci is not None:
-            it.accepted_name = ci.name
-            it.accepted_quantity = ci.quantity
-            it.accepted_unit = ci.unit
-        else:
-            it.accepted_name = it.item_name
-            it.accepted_quantity = it.quantity
-            it.accepted_unit = it.unit
-        updated += 1
-    return updated
+from app.services.purchase_transition_core import _autofill_accepted_fields  # noqa: F401 — ПРАВИЛО №6: единый источник в purchase_transition_core
 
 
 @router.post("/{pid}/transition", response_model=PurchaseOutFull)

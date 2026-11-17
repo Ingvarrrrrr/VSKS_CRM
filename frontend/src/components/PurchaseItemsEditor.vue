@@ -120,7 +120,7 @@
          позиции договора. Разделена на две: полный перенос (с подтверждением, что
          сотрёт N позиций) и точечная подстановка только названий (без подтверждения —
          количество/цена/сумма/товар не трогаются, стирать нечего). -->
-    <div v-if="stagesEnabled && !props.readonly && !isFoodForm" class="d-flex ga-2 mb-2 flex-wrap">
+    <div v-if="stagesEnabled && !props.readonly" class="d-flex ga-2 mb-2 flex-wrap">
       <v-btn
         variant="tonal" prepend-icon="mdi-content-copy" size="small" color="success"
         :loading="contractItemCopying"
@@ -130,6 +130,7 @@
         Перенести все позиции из ТЗ в договор
       </v-btn>
       <v-btn
+        v-if="!isFoodForm"
         variant="tonal" prepend-icon="mdi-form-textbox" size="small" color="primary"
         :loading="contractNamesCopying"
         :disabled="localContractItems.length === 0"
@@ -138,6 +139,7 @@
         Подставить названия из ТЗ
       </v-btn>
       <v-btn
+        v-if="!isFoodForm"
         variant="tonal" prepend-icon="mdi-file-import" size="small" color="primary"
         @click="openContractImportDialog"
       >
@@ -240,7 +242,28 @@
          stagesEnabled (у отредактированной закупки canShowContractColumns=true
          независимо от формы договора — см. CreateOrderView.vue). -->
     <template v-if="isFoodForm">
-      <div class="food-items-panels">
+      <FoodStagesPanel
+        v-if="stagesEnabled"
+        :items="localItems"
+        :readonly="props.readonly"
+        :tz-disabled="props.readonly || tzFrozen"
+        :item-form-fields="itemFormFields || []"
+        :is-advance="isAdvance"
+        :contract-items-total="contractItemsTotal"
+        :purchase-planned-total="purchasePlannedTotal"
+        :contract-savings="contractSavings"
+        :contract-savings-percent="contractSavingsPercent"
+        :get-contract-item-for="getContractItemFor"
+        :stage-totals="stageTotals"
+        :is-delivered="isDelivered"
+        :accepted-delivery-for="acceptedDeliveryFor"
+        :fmt-rub="fmtRub"
+        @remove-item="removeItem"
+        @calc-item-total="calcItemTotal"
+        @update-contract-field="(idx, field, val) => updateContractField(idx, field as any, val)"
+        @update-accepted-form="updateAcceptedForm"
+      />
+      <div v-else class="food-items-panels">
         <v-sheet
           v-for="(item, fIdx) in localItems" :key="item._uid ?? fIdx"
           class="food-item-panel pa-3 mb-3" variant="outlined" rounded
@@ -329,6 +352,7 @@
           :total-with-vat="totalWithVat"
           :total-with-vat-for-stage="totalWithVatForStage"
           :get-contract-item-for="getContractItemFor"
+          :accepted-delivery-for="acceptedDeliveryFor"
           :contractor-name-by-id="contractorNameById"
           :contract-stage-contractor-name="contractStageContractorName"
           :delivery-stage-contractor-name="deliveryStageContractorName"
@@ -367,6 +391,7 @@
           @update-contract-field="updateContractField"
           @contract-vat-change="onContractVatRateChange"
           @update-accepted-field="updateAcceptedField"
+          @update-accepted-form="updateAcceptedForm"
           @planned-item-created="emit('planned-item-created')"
           @planned-item-deleted="emit('planned-item-deleted')"
         />
@@ -875,6 +900,8 @@ import ItemsTableStages from '@/components/items/ItemsTableStages.vue'
 // панель на всю ширину) вместо делегирования в одну из 4 таблиц выше — см.
 // `v-if="isFoodForm"` в шаблоне.
 import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import FoodStagesPanel, { type AcceptedDeliverySnapshot } from '@/components/items/FoodStagesPanel.vue'
+import { applyItemAmounts } from '@/utils/itemAmounts'
 import PurchaseVatBlock from '@/components/purchase/PurchaseVatBlock.vue'
 import BulkFeoAssignDialog from '@/components/items/BulkFeoAssignDialog.vue'
 import CreatePlannedBulkDialog from '@/components/items/CreatePlannedBulkDialog.vue'
@@ -1665,7 +1692,34 @@ function getContractItemFor(rowIdx: number): ContractItem | undefined {
 // recalcContractTotal — единственная формула qty×цена для стадии «Договор»
 // (ПРАВИЛО №6): применяется что при создании строки, что при любой правке
 // количества/цены, что раньше жило в двух копиях (одна вообще не пересчитывала).
-function recalcContractTotal(ci: ContractItem) {
+function cleanTzExtraAttrs(raw: any): Record<string, any> {
+  if (!raw || typeof raw !== 'object') return {}
+  if (!('_accepted' in raw)) return { ...raw }
+  const copy = { ...raw }
+  delete copy._accepted
+  return copy
+}
+
+function recalcContractTotal(ci: ContractItem, rowIdx?: number) {
+  const pi = rowIdx != null
+    ? (localItems.value[rowIdx] as any)
+    : (ci.source_item_id != null ? localItems.value.find(p => (p as any).id === ci.source_item_id) : undefined)
+  const form = isFoodForm.value
+    ? 'food'
+    : resolveRowItemForm({ item_form: (ci as any).item_form ?? (pi as any)?.item_form })
+  if (form) {
+    const tmp = {
+      quantity: ci.quantity,
+      unit_price: ci.unit_price,
+      total_price: ci.total,
+      extra_attrs: cleanTzExtraAttrs((ci as any).extra_attrs),
+    }
+    applyItemAmounts(tmp, form)
+    ci.quantity = tmp.quantity ?? null
+    ci.unit_price = tmp.unit_price ?? null
+    ci.total = tmp.total_price ?? null
+    return
+  }
   // «НДС сверху» для стадии «Договор» (2026-10-02): цена договора/УПД может быть
   // введена без НДС — сумма строки всегда с НДС, формула ЕДИНСТВЕННАЯ в
   // useVatCalc.ts (lineTotalWithVat), effectiveVatOnTop разрешает построчный
@@ -1677,16 +1731,6 @@ function recalcContractTotal(ci: ContractItem) {
   ci.total = lineTotalWithVat(ci.quantity, ci.unit_price, resolvedVatRate(ci.vat_rate), onTop)
 }
 
-// Заводит ContractItem для строки, если его ещё нет — сиды количества/ед./
-// цены/названия/ставки НДС берутся из связанной позиции ТЗ (то же самое, что
-// UI и так показывает как ПРОЧЕРК-фолбэк в незаполненных полях «Договор», см.
-// :model-value="getContractItemFor(idx)?.quantity ?? items[idx]?.quantity ?? ''"
-// в ItemsTableStages.vue) — иначе первое же редактирование одного поля (например,
-// только цены) создавало бы строку с quantity=null, и total считался бы от
-// несуществующего количества. Общая точка входа для updateContractField И
-// onContractVatRateChange — раньше вторая молча игнорировала отсутствие ci
-// (`if (!ci) return`), из-за чего смена ставки НДС ДО первой правки количества/
-// цены нигде не сохранялась.
 function ensureContractItemFor(rowIdx: number): ContractItem {
   const existing = getContractItemFor(rowIdx)
   if (existing) return existing
@@ -1696,7 +1740,7 @@ function ensureContractItemFor(rowIdx: number): ContractItem {
     purchase_id: props.purchaseId || 0,
     source_item_id: pi?.id ?? null,
     contract_id: null,
-    product_id: null,
+    product_id: pi?.product_id ?? null,
     name: pi?.item_name || '',
     quantity: pi?.quantity ?? null,
     unit: pi?.unit ?? null,
@@ -1704,9 +1748,11 @@ function ensureContractItemFor(rowIdx: number): ContractItem {
     total: null,
     vat_rate: pi?.vat_rate ?? null,
     vat_on_top: pi?.vat_on_top ?? null,
+    extra_attrs: cleanTzExtraAttrs(pi?.extra_attrs),
+    item_form: pi?.item_form ?? null,
     match_confirmed: true,
   } as ContractItem
-  recalcContractTotal(newCi)
+  recalcContractTotal(newCi, rowIdx)
   localContractItems.value.push(newCi)
   return newCi
 }
@@ -1714,12 +1760,86 @@ function ensureContractItemFor(rowIdx: number): ContractItem {
 function updateContractField(rowIdx: number, field: keyof ContractItem, value: unknown) {
   const ci = ensureContractItemFor(rowIdx)
   ;(ci as any)[field] = value
-  // vat_on_top/vat_rate тоже влияют на сумму строки (lineTotalWithVat) — не только
-  // quantity/unit_price, как было до «НДС сверху» (2026-10-02).
-  if (field === 'quantity' || field === 'unit_price' || field === 'vat_on_top' || field === 'vat_rate') {
-    recalcContractTotal(ci)
+  // vat_on_top/vat_rate и спец-поля (extra_attrs/item_form) тоже влияют на сумму строки.
+  if (
+    field === 'quantity' ||
+    field === 'unit_price' ||
+    field === 'vat_on_top' ||
+    field === 'vat_rate' ||
+    field === 'extra_attrs' ||
+    field === 'item_form'
+  ) {
+    recalcContractTotal(ci, rowIdx)
   }
   emitContractItemsUpdate()
+}
+
+function acceptedDeliveryFor(idx: number): AcceptedDeliverySnapshot {
+  const item = localItems.value[idx] as any
+  const stored = item?.extra_attrs?._accepted
+  if (stored && typeof stored === 'object') {
+    return {
+      extra_attrs: stored.extra_attrs && typeof stored.extra_attrs === 'object' ? stored.extra_attrs : {},
+      unit_price: stored.unit_price != null
+        ? Number(stored.unit_price)
+        : (item?.final_unit_price != null ? Number(item.final_unit_price) : null),
+      total: stored.total != null
+        ? Number(stored.total)
+        : (item?.final_total != null ? Number(item.final_total) : null),
+      item_form: stored.item_form ?? item?.item_form ?? null,
+    }
+  }
+  const ci = getContractItemFor(idx) as any
+  if (ci) {
+    return {
+      extra_attrs: cleanTzExtraAttrs(ci.extra_attrs),
+      unit_price: ci.unit_price != null ? Number(ci.unit_price) : null,
+      total: ci.total != null ? Number(ci.total) : null,
+      item_form: ci.item_form ?? item?.item_form ?? null,
+    }
+  }
+  return {
+    extra_attrs: cleanTzExtraAttrs(item?.extra_attrs),
+    unit_price: item?.unit_price != null ? Number(item.unit_price) : null,
+    total: item?.total_price != null ? Number(item.total_price) : null,
+    item_form: item?.item_form ?? null,
+  }
+}
+
+function updateAcceptedForm(idx: number, patch: Partial<AcceptedDeliverySnapshot>) {
+  const item = localItems.value[idx] as any
+  if (!item) return
+  const cur = acceptedDeliveryFor(idx)
+  const nextExtra = patch.extra_attrs !== undefined ? cleanTzExtraAttrs(patch.extra_attrs) : { ...cur.extra_attrs }
+  const nextPrice = patch.unit_price !== undefined ? patch.unit_price : cur.unit_price
+  const nextItemForm = patch.item_form !== undefined ? patch.item_form : cur.item_form
+  const form = isFoodForm.value ? 'food' : resolveRowItemForm({ item_form: nextItemForm })
+  const tmp = {
+    quantity: item.accepted_quantity ?? null,
+    unit_price: nextPrice,
+    total_price: cur.total,
+    extra_attrs: nextExtra,
+  }
+  if (form) {
+    applyItemAmounts(tmp, form)
+  }
+  const prevRaw = item.extra_attrs && typeof item.extra_attrs === 'object' ? item.extra_attrs : {}
+  item.extra_attrs = {
+    ...prevRaw,
+    _accepted: {
+      extra_attrs: nextExtra,
+      unit_price: tmp.unit_price ?? null,
+      total: tmp.total_price ?? null,
+      item_form: nextItemForm ?? null,
+    },
+  }
+  item.accepted_quantity = tmp.quantity ?? item.accepted_quantity ?? null
+  item.final_unit_price = tmp.unit_price ?? null
+  item.final_total = tmp.total_price ?? null
+  const ci = getContractItemFor(idx) as any
+  if (!item.accepted_name) item.accepted_name = ci?.name || item.item_name || ''
+  if (!item.accepted_unit) item.accepted_unit = ci?.unit ?? item.unit ?? null
+  emitUpdate()
 }
 
 // Стадия «Поставка»/«Приняли» — то же по паттерну, что и updateContractField выше,
@@ -1868,8 +1988,12 @@ async function handleCopyContractToDelivery() {
         target.accepted_name = upd.accepted_name
         target.accepted_quantity = upd.accepted_quantity
         target.accepted_unit = upd.accepted_unit
+        if (upd.extra_attrs !== undefined) target.extra_attrs = upd.extra_attrs
+        if (upd.final_unit_price !== undefined) target.final_unit_price = upd.final_unit_price
+        if (upd.final_total !== undefined) target.final_total = upd.final_total
       }
     }
+    emitUpdate()
     showSnack(`Перенесено ${result.updated_count} ${pluralRu(result.updated_count, 'позиция', 'позиции', 'позиций')} из договора в поставку`)
   } catch (e: any) {
     const msg = e?.response?.data?.detail?.message || e?.detail || e?.message || 'Ошибка переноса позиций'
@@ -1975,9 +2099,11 @@ function summaryName(idx: number): string {
 }
 
 function stageTotals(idx: number) {
-  const tz = Number(localItems.value[idx]?.total_price || 0)
+  const item = localItems.value[idx] as any
+  const tz = Number(item?.total_price || 0)
   const dog = Number(getContractItemFor(idx)?.total || 0)
-  const delivery = isDelivered(idx) ? dog : 0
+  const acceptedRaw = item?.extra_attrs?._accepted?.total ?? item?.final_total
+  const delivery = isDelivered(idx) ? Number(acceptedRaw != null ? acceptedRaw : dog) : 0
   return { tz, dog, delivery }
 }
 

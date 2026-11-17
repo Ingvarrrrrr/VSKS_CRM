@@ -45,14 +45,20 @@ async def copy_items_to_contract(
         )).scalar_one_or_none()
         if exists_ci:
             continue
+        _raw_extra = getattr(pi, "extra_attrs", None) or {}
         db.add(ContractItem(
             purchase_id=purchase_id,
             source_item_id=pi.id,
+            product_id=pi.product_id,
             name=pi.item_name or "Позиция",
             quantity=pi.quantity,
             unit=pi.unit or 'шт.',
             unit_price=pi.unit_price,
             total=pi.total_price,
+            vat_rate=getattr(pi, "vat_rate", None),
+            vat_on_top=getattr(pi, "vat_on_top", None),
+            extra_attrs={k: v for k, v in _raw_extra.items() if k != "_accepted"},
+            item_form=getattr(pi, "item_form", None),
             match_confirmed=True,
         ))
     await db.flush()

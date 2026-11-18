@@ -178,6 +178,16 @@
             </div>
             <PriceFreshnessStamp :price-meta="item._price_meta" />
             <AvgPriceHint v-if="item.product_id" :stats="avgPriceFor?.(item) ?? null" :readonly="tzDisabled" @apply="emit('apply-avg-price', idx)" />
+            <MarketPriceHint
+              :product-id="item.product_id"
+              :item-name="item.item_name"
+              :quantity="item.quantity"
+              :unit="item.unit"
+              :unit-price="item.unit_price"
+              :is-from-subsidy-plan="isSubsidyPlanItem(item, planForItem?.(item))"
+              :readonly="tzDisabled || isItemFeoCategoryLocked(item)"
+              @apply-price="(p) => { applyMarketPriceToItem(item, p); emit('calc-item-total', idx) }"
+            />
           </td>
           </template>
           <td>
@@ -479,6 +489,8 @@ import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
 import AvgPriceHint from '@/components/items/AvgPriceHint.vue'
+import MarketPriceHint from '@/components/items/MarketPriceHint.vue'
+import { isSubsidyPlanItem, applyMarketPriceToItem } from '@/composables/useMarketPriceCheck'
 import type { AvgPriceStats } from '@/utils/avgPrice'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'

@@ -121,6 +121,16 @@
               </v-tooltip>
               <PriceFreshnessStamp :price-meta="item._price_meta" />
               <AvgPriceHint v-if="item.product_id" :stats="avgPriceFor?.(item) ?? null" :readonly="tzDisabled" @apply="emit('apply-avg-price', idx)" />
+              <MarketPriceHint
+                :product-id="item.product_id"
+                :item-name="item.item_name"
+                :quantity="item.quantity"
+                :unit="item.unit"
+                :unit-price="item.unit_price"
+                :is-from-subsidy-plan="isSubsidyPlanItem(item, planForItem?.(item))"
+                :readonly="tzDisabled || isItemFeoCategoryLocked(item)"
+                @apply-price="(p) => { applyMarketPriceToItem(item, p); emit('calc-item-total', idx) }"
+              />
             </td>
             </template>
             <td class="font-weight-medium" style="font-size:12px;white-space:nowrap">
@@ -309,6 +319,16 @@
                         {{ UNIT_PRICE_NOT_FIXED_HINT }}
                       </div>
                       <PriceFreshnessStamp :price-meta="item._price_meta" />
+                      <MarketPriceHint
+                        :product-id="item.product_id"
+                        :item-name="item.item_name"
+                        :quantity="item.quantity"
+                        :unit="item.unit"
+                        :unit-price="item.unit_price"
+                        :is-from-subsidy-plan="isSubsidyPlanItem(item, planForItem?.(item))"
+                        :readonly="tzDisabled || isItemFeoCategoryLocked(item)"
+                        @apply-price="(p) => { applyMarketPriceToItem(item, p); emit('calc-item-total', idx) }"
+                      />
                       <!-- 2026-10-02: построчный флаг «НДС сверху» — только в режиме
                            per_item (в uniform цену целиком решает шапка PurchaseVatBlock).
                            3 состояния (не checkbox) — владелец, после приёмки: нужен путь
@@ -846,6 +866,8 @@ import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
 import AvgPriceHint from '@/components/items/AvgPriceHint.vue'
+import MarketPriceHint from '@/components/items/MarketPriceHint.vue'
+import { isSubsidyPlanItem, applyMarketPriceToItem } from '@/composables/useMarketPriceCheck'
 import type { AvgPriceStats } from '@/utils/avgPrice'
 import type { Contractor } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'

@@ -194,7 +194,13 @@ export function useItemMatching() {
     // Защищена только явно отмеченная ручная правка (price_from_catalog===false
     // — см. resetPriceIfFromCatalog выше про остальные значения флага).
     const manualPrice = row.unit_price != null && row.price_from_catalog === false
-    if (!(row as any).from_plan && !isSameProduct && !manualPrice) {
+    const hasPlanPrice = Boolean((row as any).from_plan) || (
+      (row as any).feo_planned_item_id != null
+      && row.unit_price != null
+      && Number(row.unit_price) > 0
+      && row.price_from_catalog !== true
+    )
+    if (!hasPlanPrice && !isSameProduct && !manualPrice) {
       const best = cand.contract_price ?? cand.price
       row.unit_price = best != null ? Number(best) : null
       if (row.unit_price != null && row.quantity != null) {

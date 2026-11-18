@@ -439,8 +439,9 @@ export function useItemsFeo(deps: UseItemsFeoDeps) {
           if ((it.quantity == null || Number(it.quantity) === 0) && plannedRow.planned_quantity != null) {
             it.quantity = plannedRow.planned_quantity
           }
-          if ((it.unit_price == null || Number(it.unit_price) === 0) && plannedRow.unit_price != null) {
+          if ((it.unit_price == null || Number(it.unit_price) === 0 || it.price_from_catalog === true) && plannedRow.unit_price != null) {
             it.unit_price = plannedRow.unit_price
+            it.price_from_catalog = false
           }
           if ((!it.unit || it.unit === 'шт.') && plannedRow.unit) {
             it.unit = plannedRow.unit

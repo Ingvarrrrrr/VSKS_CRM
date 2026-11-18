@@ -46,6 +46,8 @@ export interface SubsidyRow {
   budget: number; contracted: number; paid: number; planned: number
   plan_schedule: number; ordered: number
   total_feo_planned: number  // 12-01
+  paid_confirmed?: number
+  paid_declared?: number
   // Phase 31-05: canonical budget fields
   remaining?: number | null
   planned_amount?: number | null
@@ -270,9 +272,12 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const totalBudget       = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.budget, 0))
   const totalContracted   = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.contracted, 0))
   const totalPaid         = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.paid, 0))
+  const totalPaidConfirmed = computed(() => filteredSubsidies.value.reduce((s, x) => s + (x.paid_confirmed ?? 0), 0))
+  const totalPaidDeclared  = computed(() => filteredSubsidies.value.reduce((s, x) => s + (x.paid_declared ?? x.paid ?? 0), 0))
   const totalPlanned      = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.planned, 0))
   const totalPlanSchedule = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule, 0))
   const totalOrdered      = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.ordered, 0))
+  const totalWork          = computed(() => effectiveWidgets.value?.work.amount ?? 0)
   const totalFeoPlanned   = computed(() => filteredSubsidies.value.reduce((s: number, x: SubsidyRow) => s + (x.total_feo_planned ?? 0), 0))  // 12-01
   const totalRemaining    = computed(() => totalBudget.value - totalPaid.value)
   const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
@@ -439,7 +444,8 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
 
   // ── Animated KPI targets (mirrors kpiCards amount logic) ─────────────
   const kpiTarget_budget           = computed(() => totalBudget.value)
-  const kpiTarget_plan_schedule    = computed(() => effectiveWidgets.value?.plan_schedule.amount    ?? totalPlanSchedule.value)
+  // План-График: утверждённый план ФЭО выбранных субсидий (единый источник истины)
+  const kpiTarget_plan_schedule    = computed(() => totalPlanSchedule.value)
   const kpiTarget_work             = computed(() => effectiveWidgets.value?.work.amount             ?? 0)
   const kpiTarget_ordered          = computed(() => effectiveWidgets.value?.ordered.amount          ?? totalOrdered.value)
   const kpiTarget_contracts        = computed(() => effectiveWidgets.value?.contracts.amount        ?? 0)
@@ -496,9 +502,9 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         label: 'План-График',
         icon: 'mdi-calendar-clock',
         amount: only ? totalPlannedPayroll.value : kpiAnim_plan_schedule.value,
-        count: w?.plan_schedule.count ?? 0,
-        countLabel: 'закупок',
-        tooltip: 'включает все последующие этапы',
+        count: 0,
+        countLabel: '',
+        tooltip: 'суммарный план по дереву ФЭО выбранных субсидий',
         monthly: null,
         over: undefined as boolean | undefined,
         split: only ? undefined : stageTypeSplit('plan_schedule'),
@@ -729,6 +735,8 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         budget: s.feo_entered === false ? 0 : (s.calculated_budget || s.feo_budget_total || s.budget),
         contracted: s.total_confirmed,
         paid: s.total_paid,
+        paid_confirmed: s.paid_confirmed ?? 0,
+        paid_declared: s.paid_declared ?? s.total_paid ?? 0,
         planned: s.total_planned,
         // plan_schedule = единый источник «Запланировано» = план дерева ФЭО (ручные позиции + из заявок).
         // Совпадает с KPI «Запланировано» на вкладке «Субсидии».
@@ -820,7 +828,8 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
     loading, loadingPurchases,
     allSubsidies, allPurchases, statusCounts, widgetsData, subsidiesNearCeiling,
     availableYears, yearSubsidies, filteredSubsidies, recentPurchases,
-    totalBudget, totalContracted, totalPaid, totalPlanned, totalPlanSchedule, totalOrdered,
+    totalBudget, totalContracted, totalPaid, totalPaidConfirmed, totalPaidDeclared,
+    totalWork, totalPlanned, totalPlanSchedule, totalOrdered,
     totalFeoPlanned, totalRemaining, totalUsagePct,
     totalRedistributable, totalEconomy, totalEconomyNoPlannedPriceItems,
     totalCommittedMissingFactItems, totalPlannedNotCommitted, totalRedistributableByKind,

@@ -1,30 +1,30 @@
 // Виджет «Закупки по этапам» (pipeline) + два его drill-down диалога:
 // - stageFeoDrillVisible/Title/Statuses → StageFeoDrillDialog (FEO-иерархический drill)
 // - statusDrillDialog/Status/Statuses → StatusDrillDialog (плоский список закупок статуса)
-// Также содержит статус-pie вычисления (filteredStatusCounts..statusPieOptions,
-// onPieSliceClick) — ПЕРЕНЕСЕНЫ КАК ЕСТЬ: в исходном DashboardView.vue они уже были
-// мёртвым кодом (StatusPieWithWishes импортирован, но нигде не используется в
-// шаблоне; ни один из статус-pie computed'ов там тоже не рендерился). Оставлено
-// без изменений поведения, отмечено в отчёте о рефакторинге.
-// Перенесено без изменений из DashboardView.vue при разбиении на модули.
+// Единый источник истины: этапы берут данные из effectiveWidgets и totalPlanSchedule
+// (без расхождений с KPI-карточками, с учётом рамочных договоров и плана ФЭО).
 import { ref, computed, type Ref } from 'vue'
 import { purchaseEffectivePrice } from './dashboardFormat'
 import { STATUS_LABELS, STATUS_COLORS } from './dashboardStatusMaps'
-import type { SubsidyRow } from './useDashboardData'
+import type { SubsidyRow, WidgetsData } from './useDashboardData'
 import { useToast } from '@/composables/useToast'
+import { KPI_STAGE_CUMULATIVE_STATUSES } from '@/utils/itemTypeKind'
 
-// Pipeline stages (purchase lifecycle funnel)
-const PIPELINE_ORDER = ['plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
+export interface PipelineStageItem {
+  status: string
+  label: string
+  color: string
+  amount: number
+  pct: number
+}
 
 export function usePipelineWidget(
   allPurchases: Ref<any[]>,
   filteredSubsidies: Ref<SubsidyRow[]>,
   totalBudget: Ref<number>,
+  effectiveWidgets: Ref<WidgetsData | null>,
+  totalPlanSchedule: Ref<number>,
 ) {
-  // Прежде showSnack была не определена/не импортирована в этом catch — не
-  // компилировалось под настоящий tsconfig.app.json (и бросило бы ReferenceError,
-  // сработай catch на проде). Правка исправляет именно эту ссылку (Правило №6:
-  // useToast — единственный источник тостов в проекте), поведение экспорта не меняет.
   const toast = useToast()
 
   // Status pie drill-down
@@ -38,14 +38,7 @@ export function usePipelineWidget(
   const stageFeoDrillVisible = ref(false)
   const stageFeoDrillTitle = ref('')
   const stageFeoDrillStatuses = ref<string[]>([])
-  // Раздел C1 (план ancient-prancing-music.md, 21.09): клик по строке «товары»/
-  // «услуги»/«без типа» в KPI-карточке открывает ТОТ ЖЕ диалог в режиме позиций
-  // одного типа — null здесь означает обычный (категорийный) режим drill,
-  // выставляется/сбрасывается DashboardView.vue (onKpiTypeRowClick/onPipelineClick).
   const stageFeoDrillTypeKind = ref<'goods' | 'services' | 'unspecified' | null>(null)
-  // Ключ этапа (plan_schedule/work/ordered/...) для GET /api/dashboard/type-drill
-  // (StageFeoDrillDialog.vue, режим typeKind) — та же строка, что и card.key/
-  // payload.stage в onKpiTypeRowClick, единственный источник запроса расшифровки.
   const stageFeoDrillStageKey = ref<string | null>(null)
 
   const statusDrillPurchases = computed(() => {
@@ -59,7 +52,7 @@ export function usePipelineWidget(
     })
   })
 
-  // Excel export для status drill-down (клиентский — использует список из computed).
+  // Excel export для status drill-down
   async function exportStatusDrillXlsx() {
     try {
       const XLSX = await import('xlsx')
@@ -95,50 +88,79 @@ export function usePipelineWidget(
     return amounts
   })
 
-  const pipelineStages = computed(() => {
+  // ── Единый источник истины для воронки этапов ──────────────────────────
+  const pipelineStages = computed<PipelineStageItem[]>(() => {
     const budget = totalBudget.value || 1
-    const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-    const filtered = allPurchases.value.filter((p: any) =>
-      subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id)
-    )
-    return PIPELINE_ORDER
-      .map((status, idx) => {
-        const stagesAtOrBeyond = PIPELINE_ORDER.slice(idx)
-        const amount = filtered
-          .filter((p: any) => stagesAtOrBeyond.includes(p.status))
-          .reduce((sum: number, p: any) => sum + purchaseEffectivePrice(p), 0)
-        return {
-          status,
-          label: STATUS_LABELS[status] || status,
-          color: STATUS_COLORS[status] || '#94A3B8',
-          amount,
-          pct: Math.round(amount / budget * 100),
-        }
-      })
+    const w = effectiveWidgets.value
+
+    const defs: { status: string; label: string; color: string; amount: number }[] = [
+      {
+        status: 'plan_schedule',
+        label: 'План закупок',
+        color: '#F59E0B',
+        amount: totalPlanSchedule.value,
+      },
+      {
+        status: 'work',
+        label: 'Ведётся работа',
+        color: '#8B5CF6', // контрастный фиолетовый
+        amount: w?.work.amount ?? 0,
+      },
+      {
+        status: 'contracts',
+        label: 'Заключён договор',
+        color: '#6366F1',
+        amount: w?.contracts.amount ?? 0,
+      },
+      {
+        status: 'ordered',
+        label: 'Заказано',
+        color: '#3B82F6',
+        amount: w?.ordered.amount ?? 0,
+      },
+      {
+        status: 'delivered',
+        label: 'Поставлено',
+        color: '#06B6D4',
+        amount: w?.delivered.amount ?? 0,
+      },
+      {
+        status: 'paid',
+        label: 'Оплачено',
+        color: '#059669',
+        amount: w?.paid.amount ?? 0,
+      },
+    ]
+
+    return defs.map(d => ({
+      ...d,
+      pct: Math.round((d.amount / budget) * 100),
+    }))
   })
 
-  // «Поставлено, не оплачено» = SUM(delivered) − SUM(paid). Drill открывает status='delivered'.
+  // «Поставлено, не оплачено» = effectiveWidgets.delivered_unpaid
   const deliveredNotPaid = computed(() => {
-    const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-    const filtered = allPurchases.value.filter((p: any) =>
-      subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id)
-    )
-    const delivered = filtered.filter((p: any) => p.status === 'delivered')
-      .reduce((sum: number, p: any) => sum + purchaseEffectivePrice(p), 0)
     const budget = totalBudget.value || 1
+    const amount = effectiveWidgets.value?.delivered_unpaid.amount ?? 0
     return {
-      amount: delivered,
-      pct: Math.round(delivered / budget * 100),
+      amount,
+      pct: Math.round((amount / budget) * 100),
     }
   })
 
   function onPipelineClick(status: string) {
-    // Cumulative: Заказано → ordered+delivered+paid и т.д.
-    const idx = PIPELINE_ORDER.indexOf(status)
-    const statuses = idx >= 0 ? PIPELINE_ORDER.slice(idx) : [status]
-    const label = STATUS_LABELS[status] || status
-    // Открываем FEO-иерархический drill (Субсидия → ФЭО 1 → ФЭО 2 → ... → закупки)
-    stageFeoDrillTypeKind.value = null  // обычный (не по типу) режим — сброс возможного typeKind
+    const statuses = KPI_STAGE_CUMULATIVE_STATUSES[status] || [status]
+    const stageLabels: Record<string, string> = {
+      plan_schedule: 'План закупок',
+      work: 'Ведётся работа',
+      contracts: 'Заключён договор',
+      ordered: 'Заказано',
+      delivered: 'Поставлено',
+      paid: 'Оплачено',
+      delivered_unpaid: 'Поставлено, не оплачено',
+    }
+    const label = stageLabels[status] || STATUS_LABELS[status] || status
+    stageFeoDrillTypeKind.value = null
     stageFeoDrillStageKey.value = null
     stageFeoDrillTitle.value = `${label} (и далее) — drill по ФЭО`
     stageFeoDrillStatuses.value = statuses
@@ -152,7 +174,7 @@ export function usePipelineWidget(
     statusDrillDialog.value = true
   }
 
-  // ── Status pie (мёртвый код, см. заголовок файла) ──────────────────
+  // ── Status pie (мёртвый код) ──────────────────
   const filteredStatusCounts = computed(() => {
     const subsidyIds = filteredSubsidies.value.map(s => s.id)
     const counts: Record<string, number> = {}
@@ -168,7 +190,6 @@ export function usePipelineWidget(
     Object.values(filteredStatusCounts.value).some(v => v > 0)
   )
 
-  // Sorted entries so chart is stable
   const statusPieEntries = computed(() => {
     const ORDER = ['planned', 'in_progress', 'work_in_progress', 'contracted', 'delivered', 'paid']
     return Object.entries(filteredStatusCounts.value)
@@ -181,7 +202,6 @@ export function usePipelineWidget(
   const statusPieColors = computed(() => statusPieEntries.value.map(([k]) => STATUS_COLORS[k] || '#94A3B8'))
   const statusPieKey    = computed(() => statusPieEntries.value.map(e => e[0]).join('-'))
 
-  // For custom StatusPieWithWishes component
   const statusPieForComponent = computed(() =>
     statusPieEntries.value
       .filter(([k]) => k !== 'wishes')
@@ -194,7 +214,7 @@ export function usePipelineWidget(
   )
   const wishesAmountForPie = computed(() => filteredStatusAmounts.value['wishes'] || 0)
   function onPieSliceClick(status: string) {
-    statusDrillStatuses.value = []   // exact mode
+    statusDrillStatuses.value = []
     statusDrillStatus.value = status
     statusDrillDialog.value = true
   }
@@ -204,7 +224,6 @@ export function usePipelineWidget(
     exportStatusDrillXlsx, filteredStatusAmounts,
     stageFeoDrillVisible, stageFeoDrillTitle, stageFeoDrillStatuses, stageFeoDrillTypeKind, stageFeoDrillStageKey,
     pipelineStages, deliveredNotPaid, onPipelineClick, onDeliveredNotPaidClick,
-    // мёртвый код (см. заголовок)
     filteredStatusCounts, statusPieReady, statusPieEntries, statusPieSeries,
     statusPieLabels, statusPieColors, statusPieKey, statusPieForComponent,
     wishesAmountForPie, onPieSliceClick,

@@ -2,8 +2,10 @@
   <v-dialog v-model="show" max-width="500" :fullscreen="mobile">
     <v-card>
       <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
-        <v-icon :color="['success','primary','warning','grey'][drillDownSegment ?? 0]"
-          :icon="['mdi-cash-check','mdi-file-sign','mdi-clock-outline','mdi-cash-remove'][drillDownSegment ?? 0]" />
+        <v-icon
+          :color="(segmentColors && segmentColors[drillDownSegment ?? 0]) || 'primary'"
+          :icon="(segmentIcons && segmentIcons[drillDownSegment ?? 0]) || 'mdi-chart-donut'"
+        />
         {{ drillDownSegment !== null ? segmentLabels[drillDownSegment] : '' }}
       </v-card-title>
       <v-card-subtitle class="px-5 pb-1 text-caption text-medium-emphasis">Разбивка по субсидиям</v-card-subtitle>
@@ -43,13 +45,20 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { SEGMENT_ICONS, SEGMENT_COLORS } from '@/composables/dashboard/useDonutWidget'
+
+withDefaults(defineProps<{
   mobile: boolean
   drillDownSegment: number | null
   drillDownRows: { name: string; value: number }[]
   segmentLabels: string[]
+  segmentIcons?: string[]
+  segmentColors?: string[]
   formatCurrency: (v: number) => string
-}>()
+}>(), {
+  segmentIcons: () => SEGMENT_ICONS,
+  segmentColors: () => SEGMENT_COLORS,
+})
 
 const show = defineModel<boolean>({ required: true })
 </script>

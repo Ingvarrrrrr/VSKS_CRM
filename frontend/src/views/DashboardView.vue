@@ -97,6 +97,12 @@
             :drill-down-segment="drillDownSegment"
             :breakdown-bar-options="breakdownBarOptions" :breakdown-bar-series="breakdownBarSeries"
             :segment-labels="SEGMENT_LABELS"
+            :segment-icons="SEGMENT_ICONS"
+            :segment-colors="SEGMENT_COLORS"
+            :has-overrun="hasOverrun"
+            :overrun-amount="overrunAmount"
+            :overrun-pct="overrunPct"
+            :total-plan-schedule="totalPlanSchedule"
           />
         </DashboardGridWidget>
       </GridItem>
@@ -243,7 +249,8 @@
     <DonutDrillDialog
       v-model="drillDownDialog"
       :mobile="mobile" :drill-down-segment="drillDownSegment" :drill-down-rows="drillDownRows"
-      :segment-labels="SEGMENT_LABELS" :format-currency="formatCurrency"
+      :segment-labels="SEGMENT_LABELS" :segment-icons="SEGMENT_ICONS" :segment-colors="SEGMENT_COLORS"
+      :format-currency="formatCurrency"
     />
 
     <!-- ── Financial Plan Drill-Down Dialog ── -->
@@ -307,7 +314,7 @@ import { useDashboardData } from '@/composables/dashboard/useDashboardData'
 import { useDashboardGridLayout } from '@/composables/dashboard/useDashboardGridLayout'
 import { useKpiAutoHeight } from '@/composables/dashboard/useKpiAutoHeight'
 import { useBudgetDrilldown } from '@/composables/dashboard/useBudgetDrilldown'
-import { useDonutWidget, SEGMENT_LABELS } from '@/composables/dashboard/useDonutWidget'
+import { useDonutWidget, SEGMENT_LABELS, SEGMENT_ICONS, SEGMENT_COLORS } from '@/composables/dashboard/useDonutWidget'
 import { usePipelineWidget } from '@/composables/dashboard/usePipelineWidget'
 import { KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, KIND_LABELS } from '@/utils/itemTypeKind'
 import { useGoodsServicesWidget } from '@/composables/dashboard/useGoodsServicesWidget'
@@ -327,7 +334,8 @@ const {
   loading, loadingPurchases,
   allSubsidies, allPurchases, statusCounts, widgetsData, subsidiesNearCeiling,
   availableYears, yearSubsidies, filteredSubsidies, recentPurchases,
-  totalBudget, totalContracted, totalPaid, totalPlanned, totalPlanSchedule, totalOrdered,
+  totalBudget, totalContracted, totalPaid, totalPaidConfirmed, totalPaidDeclared,
+  totalWork, totalPlanned, totalPlanSchedule, totalOrdered,
   totalFeoPlanned, totalRemaining, totalUsagePct,
   totalRedistributable,
   overrunSubsidies, effectiveWidgets, kpiCards,
@@ -354,8 +362,9 @@ const {
   donutReady, donutSeries, donutOptions,
   drillDownDialog, drillDownSegment, donutView,
   drillDownRows, breakdownBarSeries, breakdownBarOptions,
+  hasOverrun, overrunAmount, overrunPct,
 } = useDonutWidget(
-  { totalPaid, totalOrdered, totalPlanSchedule, totalBudget },
+  { totalPaid, totalPaidConfirmed, totalOrdered, totalWork, totalPlanSchedule, totalBudget },
   filteredSubsidies,
   chartTheme,
   { showBreakdownDialog, breakdownMetric, drillDialogSubsidies },
@@ -402,7 +411,7 @@ const {
   stageFeoDrillVisible, stageFeoDrillTitle, stageFeoDrillStatuses, stageFeoDrillTypeKind, stageFeoDrillStageKey,
   pipelineStages, deliveredNotPaid, onPipelineClick, onDeliveredNotPaidClick,
   wishesAmountForPie,
-} = usePipelineWidget(allPurchases, filteredSubsidies, totalBudget)
+} = usePipelineWidget(allPurchases, filteredSubsidies, totalBudget, effectiveWidgets, totalPlanSchedule)
 
 // Раздел C1 (план ancient-prancing-music.md, 21.09): клик по строке «товары»/
 // «услуги»/«без типа» KPI-карточки открывает ТОТ ЖЕ StageFeoDrillDialog в

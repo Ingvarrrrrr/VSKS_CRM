@@ -1,14 +1,55 @@
 // Донат-график «Структура бюджета» + переключаемый бар-график разбивки сегмента
 // по субсидиям + связь с общим диалогом BudgetDrillDownDialog.
-// Перенесено без изменений из DashboardView.vue при разбиении на модули.
+// Единый источник истины и визуализация «второго круга» (Вариант А).
 import { ref, computed, type Ref } from 'vue'
 import { formatCurrency, formatCurrencyShort, truncate } from './dashboardFormat'
 import { deferChartAction } from './deferChartAction'
 import type { SubsidyRow } from './useDashboardData'
 
-export const SEGMENT_LABELS  = ['Оплачено', 'Заказано', 'Запланировано', 'Свободно']
-export const SEGMENT_COLORS  = ['#22C55E', '#3B82F6', '#F59E0B', '#94A3B8']
-export const SEGMENT_METRICS = ['paid', 'ordered', 'budget', 'budget'] // maps to BudgetDrillDownDialog metric
+export const SEGMENT_LABELS = [
+  'Подтверждено выпиской',
+  'Оплачено (по отметке)',
+  'Заказано',
+  'Ведётся работа',
+  'В плане',
+  'Свободно',
+]
+
+export const SEGMENT_COLORS = [
+  '#059669', // тёмно-изумрудный (подтверждено выпиской)
+  '#22C55E', // светло-зелёный (по отметке)
+  '#3B82F6', // насыщенный синий (заказано)
+  '#8B5CF6', // контрастный фиолетовый (ведётся работа)
+  '#F59E0B', // тёплый янтарь (в плане)
+  '#64748B', // графитово-серый (свободно)
+]
+
+export const SEGMENT_ICONS = [
+  'mdi-check-decagram',
+  'mdi-cash-check',
+  'mdi-cart-check',
+  'mdi-progress-wrench',
+  'mdi-calendar-clock',
+  'mdi-cash-lock-open',
+]
+
+export const SEGMENT_ICON_COLORS = [
+  '#059669',
+  '#22C55E',
+  '#3B82F6',
+  '#8B5CF6',
+  '#F59E0B',
+  '#64748B',
+]
+
+export const SEGMENT_METRICS = [
+  'paid',
+  'paid',
+  'ordered',
+  'work',
+  'plan_schedule',
+  'budget',
+]
 
 interface ChartTheme {
   isDark: Ref<boolean>
@@ -26,7 +67,9 @@ interface BudgetDrilldown {
 export function useDonutWidget(
   totals: {
     totalPaid: Ref<number>
+    totalPaidConfirmed: Ref<number>
     totalOrdered: Ref<number>
+    totalWork: Ref<number>
     totalPlanSchedule: Ref<number>
     totalBudget: Ref<number>
   },
@@ -35,16 +78,32 @@ export function useDonutWidget(
   budgetDrilldown: BudgetDrilldown,
 ) {
   const { isDark, chartText, chartMuted, chartGrid } = theme
-  const { totalPaid, totalOrdered, totalPlanSchedule, totalBudget } = totals
+  const { totalPaid, totalPaidConfirmed, totalOrdered, totalWork, totalPlanSchedule, totalBudget } = totals
 
-  const donutReady = computed(() => totalBudget.value > 0)
+  const donutReady = computed(() => totalBudget.value > 0 || totalPlanSchedule.value > 0)
 
+  // Перерасход плана относительно утверждённого бюджета
+  const overrunAmount = computed(() => Math.max(0, totalPlanSchedule.value - totalBudget.value))
+  const overrunPct = computed(() => (totalBudget.value > 0 ? Math.round((overrunAmount.value / totalBudget.value) * 100) : 0))
+  const hasOverrun = computed(() => totalBudget.value > 0 && totalPlanSchedule.value > totalBudget.value)
+
+  // 6 контрастных сегментов структуры бюджета
   const donutSeries = computed(() => {
-    const paid       = totalPaid.value
-    const ordered    = Math.max(0, totalOrdered.value - paid)         // заказано (договор), не оплачено
-    const planned    = totalPlanSchedule.value                        // запланировано (confirmed+wip)
-    const free       = Math.max(0, totalBudget.value - totalOrdered.value - planned)
-    return [paid, ordered, planned, free]
+    const paidConfirmed = totalPaidConfirmed.value
+    const paid          = totalPaid.value
+    const ordered       = totalOrdered.value
+    const work          = totalWork.value
+    const plan_schedule = totalPlanSchedule.value
+    const budget        = totalBudget.value
+
+    const s1 = Math.max(0, paidConfirmed)
+    const s2 = Math.max(0, paid - paidConfirmed)
+    const s3 = Math.max(0, ordered - paid)
+    const s4 = Math.max(0, work - ordered)
+    const s5 = Math.max(0, plan_schedule - Math.max(work, ordered, paid))
+    const s6 = Math.max(0, budget - plan_schedule)
+
+    return [s1, s2, s3, s4, s5, s6]
   })
 
   const drillDownDialog  = ref(false)
@@ -54,11 +113,20 @@ export function useDonutWidget(
   const drillDownRows = computed(() => {
     if (drillDownSegment.value === null) return []
     return filteredSubsidies.value.map(s => {
+      const paidConfirmed = s.paid_confirmed ?? 0
+      const paid          = s.paid ?? 0
+      const ordered       = s.ordered ?? 0
+      const work          = s.widget?.work?.amount ?? 0
+      const plan_schedule = s.plan_schedule ?? 0
+      const budget        = s.budget ?? 0
+
       const values = [
-        s.paid,
-        Math.max(0, s.ordered - s.paid),
-        s.plan_schedule,
-        Math.max(0, s.budget - s.ordered - s.plan_schedule),
+        Math.max(0, paidConfirmed),
+        Math.max(0, paid - paidConfirmed),
+        Math.max(0, ordered - paid),
+        Math.max(0, work - ordered),
+        Math.max(0, plan_schedule - Math.max(work, ordered, paid)),
+        Math.max(0, budget - plan_schedule),
       ]
       return { name: s.name, value: values[drillDownSegment.value!] }
     }).filter(r => r.value > 0).sort((a, b) => b.value - a.value)
@@ -75,8 +143,6 @@ export function useDonutWidget(
       animations: { speed: 350 },
       theme: { mode: isDark.value ? 'dark' : 'light' },
       events: {
-        // deferChartAction: открытие диалога не должно размонтировать этот же
-        // бар-график СИНХРОННО изнутри его собственного клика (см. хелпер).
         dataPointSelection: (_e: any, _ctx: any, config: any) => {
           const row = drillDownRows.value[config.dataPointIndex]
           if (!row) return
@@ -117,9 +183,6 @@ export function useDonutWidget(
       animations: { speed: 500 },
       theme: { mode: isDark.value ? 'dark' : 'light' },
       events: {
-        // deferChartAction: donutView='breakdown' переключает v-if/Transition
-        // и размонтирует ИМЕННО этот <apexchart> (донат) — делать это нужно
-        // не синхронно изнутри его же обработчика клика (см. хелпер).
         dataPointSelection: (_e: any, _ctx: any, config: any) => {
           const idx = config.dataPointIndex
           deferChartAction(() => {
@@ -129,12 +192,12 @@ export function useDonutWidget(
         }
       }
     },
-    colors: ['#22C55E', '#3B82F6', '#F59E0B', '#94A3B8'],
+    colors: SEGMENT_COLORS,
     labels: SEGMENT_LABELS,
-    legend: { position: 'bottom', fontSize: '12px', labels: { colors: chartText.value } },
+    legend: { position: 'bottom', fontSize: '11px', labels: { colors: chartText.value } },
     dataLabels: {
       enabled: true,
-      style: { fontSize: '11px', colors: ['#fff', '#fff', '#fff', '#374151'] },
+      style: { fontSize: '11px', colors: ['#fff', '#fff', '#fff', '#fff', '#fff', '#fff'] },
       dropShadow: { enabled: false }
     },
     plotOptions: {
@@ -145,19 +208,21 @@ export function useDonutWidget(
             show: true,
             total: {
               show: true,
-              label: 'Бюджет',
-              color: chartMuted.value,
+              label: hasOverrun.value ? 'Превышение' : 'Бюджет',
+              color: hasOverrun.value ? '#EF4444' : chartMuted.value,
               fontSize: '13px',
-              formatter: () => formatCurrencyShort(totalBudget.value)
+              formatter: () => hasOverrun.value
+                ? `+${formatCurrencyShort(overrunAmount.value)} (+${overrunPct.value}%)`
+                : formatCurrencyShort(totalBudget.value)
             },
             value: {
               show: true,
-              fontSize: '18px',
+              fontSize: '17px',
               fontWeight: '600',
-              color: chartText.value,
+              color: hasOverrun.value ? '#EF4444' : chartText.value,
               formatter: (v: string) => formatCurrencyShort(Number(v))
             },
-            name: { show: true, color: chartMuted.value }
+            name: { show: true, color: hasOverrun.value ? '#EF4444' : chartMuted.value }
           }
         }
       }
@@ -169,5 +234,6 @@ export function useDonutWidget(
     donutReady, donutSeries, donutOptions,
     drillDownDialog, drillDownSegment, donutView,
     drillDownRows, breakdownBarSeries, breakdownBarOptions,
+    hasOverrun, overrunAmount, overrunPct,
   }
 }

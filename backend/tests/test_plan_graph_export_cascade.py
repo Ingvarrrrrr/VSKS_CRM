@@ -78,7 +78,7 @@ def test_build_live_plan_graph_xlsx_item_row_cumulative_and_cancelled_excluded()
 
     headers = {cell.value: idx + 1 for idx, cell in enumerate(ws[HEADER_ROW])}
     rows = list(ws.iter_rows(min_row=DATA_FIRST_ROW, values_only=False))
-    item_row = next(r for r in rows if r[headers["Наименование"] - 1].value == "Позиция")
+    item_row = next(r for r in rows if r[headers["Наименование позиции"] - 1].value == "Позиция")
 
     def _val(row, label):
         return row[headers[label] - 1].value
@@ -231,7 +231,7 @@ def test_column_selection_limits_headers_and_keeps_name():
     )
     ws = wb["План закупок (по направлениям)"]
     header_values = [c.value for c in ws[HEADER_ROW] if c.value]
-    assert header_values == ["Наименование", "Оплачено, ₽", "Статус"]
+    assert header_values == ["Наименование позиции", "Оплачено, ₽", "Статус"]
 
 
 def test_resolve_selected_keys_empty_returns_default_only():
@@ -285,8 +285,8 @@ def test_new_contract_payment_columns_appear_only_when_selected():
     wb_default = build_live_plan_graph_xlsx(_make_sub(), "http://example.test", data)
     ws_default = wb_default["План закупок (по направлениям)"]
     headers_default = [c.value for c in ws_default[HEADER_ROW] if c.value]
-    assert "№ договора" not in headers_default
-    assert "ПП: №" not in headers_default
+    assert "Номер договора" not in headers_default
+    assert "Номер платёжного документа" not in headers_default
 
     # Явно выбрали — колонка появляется, в под-строке оплаченной закупки
     # заполнена значением с самой закупки, в строке плановой позиции — пусто.
@@ -296,23 +296,23 @@ def test_new_contract_payment_columns_appear_only_when_selected():
     )
     ws = wb["План закупок (по направлениям)"]
     headers = {cell.value: idx + 1 for idx, cell in enumerate(ws[HEADER_ROW])}
-    assert "№ договора" in headers
-    assert "ПП: №" in headers
+    assert "Номер договора" in headers
+    assert "Номер платёжного документа" in headers
 
     rows = list(ws.iter_rows(min_row=DATA_FIRST_ROW, values_only=False))
 
     def _val(row, label):
         return row[headers[label] - 1].value
 
-    item_row = next(r for r in rows if _val(r, "Наименование") == "Позиция")
-    assert _val(item_row, "№ договора") == ""
-    assert _val(item_row, "ПП: №") == ""
+    item_row = next(r for r in rows if _val(r, "Наименование позиции") == "Позиция")
+    assert _val(item_row, "Номер договора") == ""
+    assert _val(item_row, "Номер платёжного документа") == ""
 
     sub_row = next(
         r for r in rows if "Купленное" in str(_val(r, "Состав закупки") or "")
     )
-    assert _val(sub_row, "№ договора") == "ДОГ-55/2026"
-    assert _val(sub_row, "ПП: №") == "ПП-100"
+    assert _val(sub_row, "Номер договора") == "ДОГ-55/2026"
+    assert _val(sub_row, "Номер платёжного документа") == "ПП-100"
     assert _val(sub_row, "Назначение платежа") == "За услуги"
 
 

@@ -14,6 +14,7 @@
 import { ref } from 'vue'
 import { apiFetch } from '@/api'
 import { useLatestRequest } from '@/composables/useLatestRequest'
+import { filenameFromContentDisposition } from '@/utils/contentDisposition'
 
 export interface PaymentControlTotals {
   executed_total: number
@@ -395,9 +396,10 @@ export function useSubsidyPaymentControl() {
         throw new Error(msg)
       }
       const blob = await res.blob()
-      const cd = res.headers.get('Content-Disposition') ?? ''
-      const match = cd.match(/filename[^;=\n]*=(?:(['"])(.+?)\1|([^;\n]+))/i)
-      const filename = (match ? (match[2] ?? match[3]) : null)?.trim() || `Сверка_выписки_${subsidyId}.xlsx`
+      const filename = filenameFromContentDisposition(
+        res.headers.get('Content-Disposition'),
+        `Сверка_выписки_${subsidyId}.xlsx`,
+      )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url

@@ -16,8 +16,8 @@ from tests.test_feo_export_outline import _make_category, _make_subsidy
 
 
 @pytest.mark.asyncio
-async def test_columns_catalog(client, admin_headers):
-    r = await client.get("/api/feo-categories/export/columns", headers=admin_headers)
+async def test_columns_catalog(client, superadmin_headers):
+    r = await client.get("/api/feo-categories/export/columns", headers=superadmin_headers)
     assert r.status_code == 200, r.text
     cols = r.json()
     keys = {c["key"] for c in cols}
@@ -29,7 +29,7 @@ async def test_columns_catalog(client, admin_headers):
 
 
 @pytest.mark.asyncio
-async def test_item_partial_ordered_and_category_subtotal(client, db_session, admin_headers):
+async def test_item_partial_ordered_and_category_subtotal(client, db_session, superadmin_headers):
     from app.models.feo_planned_item import FeoPlannedItem
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
@@ -63,14 +63,14 @@ async def test_item_partial_ordered_and_category_subtotal(client, db_session, ad
     db_session.add(pi)
     await db_session.commit()
 
-    r = await client.get("/api/feo-categories/export", params={"subsidy_id": subsidy.id}, headers=admin_headers)
+    r = await client.get("/api/feo-categories/export", params={"subsidy_id": subsidy.id}, headers=superadmin_headers)
     assert r.status_code == 200, r.text
     wb = load_workbook(BytesIO(r.content))
     ws = wb.active
 
     headers = [c.value for c in ws[3]]
     ci = {h: i + 1 for i, h in enumerate(headers)}
-    name_col_idx = ci.get("Наименование товара", 1) - 1
+    name_col_idx = ci.get("Наименование позиции", ci.get("Наименование товара", 1)) - 1
 
     def _find_row(exact_name):
         for row in ws.iter_rows(min_row=4):
@@ -85,13 +85,16 @@ async def test_item_partial_ordered_and_category_subtotal(client, db_session, ad
     # «Товар заказан» — доля 0.5 (100 из 200) → "Частично"; сумма — 100 000.
     assert ws.cell(r_item, ci["Товар заказан"]).value == "Частично"
     assert ws.cell(r_item, ci["Товар заказан, ₽"]).value == pytest.approx(100000.0)
-    assert ws.cell(r_item, ci["Заказано (₽)"]).value == pytest.approx(100000.0)
+    ordered_h = "Заказано" if "Заказано" in ci else "Заказано (₽)"
+    to_order_h = "Надо заказать" if "Надо заказать" in ci else "Надо заказать (₽)"
+    assert ws.cell(r_item, ci[ordered_h]).value == pytest.approx(100000.0)
     # Надо заказать = План (200000) − Заказано (100000).
-    assert ws.cell(r_item, ci["Надо заказать (₽)"]).value == pytest.approx(100000.0)
+    assert ws.cell(r_item, ci[to_order_h]).value == pytest.approx(100000.0)
 
     # Категория-лист (без детей-категорий, но с плановой позицией) —
     # SUM(...) по строке позиции, не литерал (не SUBTOTAL — см. докстринг
     # _money_subtotal в feo_export_xlsx.py).
-    feo_leaf = ws.cell(r_leaf, ci["Финансирование по ФЭО (₽)"]).value
+    feo_header = "Сумма по ФЭО" if "Сумма по ФЭО" in ci else "Финансирование по ФЭО (₽)"
+    feo_leaf = ws.cell(r_leaf, ci[feo_header]).value
     assert isinstance(feo_leaf, str) and feo_leaf.startswith("=SUM(")
-    assert f"{ws.cell(r_leaf, ci['Финансирование по ФЭО (₽)']).column_letter}{r_item}" in feo_leaf
+    assert f"{ws.cell(r_leaf, ci[feo_header]).column_letter}{r_item}" in feo_leaf

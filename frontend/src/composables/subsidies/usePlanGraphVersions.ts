@@ -8,6 +8,7 @@
 import { computed, ref } from 'vue'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { filenameFromContentDisposition } from '@/utils/contentDisposition'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 
 // ── Version history ──
@@ -100,9 +101,10 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
       })
       if (!res.ok) throw new Error('Ошибка экспорта')
       const blob = await res.blob()
-      const cd = res.headers.get('content-disposition') || ''
-      const m = cd.match(/filename="?([^"]+)"?/)
-      const filename = m?.[1] ?? `version-${vid}.xlsx`
+      const filename = filenameFromContentDisposition(
+        res.headers.get('content-disposition'),
+        `version-${vid}.xlsx`,
+      )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url; a.download = filename; a.click()
@@ -157,14 +159,7 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    const cd = res.headers.get('Content-Disposition') || ''
-    // Парсим RFC 5987: предпочитаем filename*=UTF-8'' (кириллица), иначе filename="...".
-    // Голый /filename=([^;]+)/ захватывал кавычки → браузер превращал их в «_» → битый «.xlsx_».
-    let name = 'feo_export.xlsx'
-    const star = cd.match(/filename\*\s*=\s*UTF-8''([^;\n]+)/i)
-    const plain = cd.match(/filename\s*=\s*(?:"([^"]+)"|([^;\n]+))/i)
-    if (star) name = decodeURIComponent(star[1]!.trim())
-    else if (plain) name = (plain[1] ?? plain[2] ?? name).trim()
+    const name = filenameFromContentDisposition(res.headers.get('Content-Disposition'), 'feo_export.xlsx')
     a.href = url; a.download = name; a.click()
     URL.revokeObjectURL(url)
   }
@@ -200,12 +195,7 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
         throw new Error(errMsg)
       }
       const blob = await res.blob()
-      const cd = res.headers.get('Content-Disposition') || ''
-      let name = 'feo_editions.xlsx'
-      const star = cd.match(/filename\*\s*=\s*UTF-8''([^;\n]+)/i)
-      const plain = cd.match(/filename\s*=\s*(?:"([^"]+)"|([^;\n]+))/i)
-      if (star) name = decodeURIComponent(star[1]!.trim())
-      else if (plain) name = (plain[1] ?? plain[2] ?? name).trim()
+      const name = filenameFromContentDisposition(res.headers.get('Content-Disposition'), 'feo_editions.xlsx')
       const objUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = objUrl; a.download = name; a.click()
@@ -235,9 +225,10 @@ export function usePlanGraphVersions(ctx?: Pick<SubsidyDetailContext, 'selectedI
         throw new Error(errMsg)
       }
       const blob = await res.blob()
-      const cd = res.headers.get('content-disposition') || ''
-      const m = cd.match(/filename="?([^"]+)"?/)
-      const filename = m?.[1] ?? `compare-v${v1}-v${v2}.xlsx`
+      const filename = filenameFromContentDisposition(
+        res.headers.get('content-disposition'),
+        `compare-v${v1}-v${v2}.xlsx`,
+      )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url; a.download = filename; a.click()

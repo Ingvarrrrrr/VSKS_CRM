@@ -173,7 +173,7 @@ async def test_plan_sheet_contract_balance_column_shows_remaining(db_session):
     ws = wb["План закупок (по направлениям)"]
 
     headers = {cell.value: idx + 1 for idx, cell in enumerate(ws[3])}
-    col = headers["Остаток по договору, ₽"]
+    col = headers["Остаток по договору"]
     rows = list(ws.iter_rows(min_row=4, values_only=False))
 
     composition_col = headers["Состав закупки"]

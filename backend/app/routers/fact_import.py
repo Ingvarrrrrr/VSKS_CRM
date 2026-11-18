@@ -19,12 +19,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from io import BytesIO
-from urllib.parse import quote
 
 from app.database import get_db
 from app.models.subsidy import Subsidy
 from app.auth.jwt import get_current_user
 from app.auth.permissions import has_org_key
+from app.utils.http import content_disposition
 
 router = APIRouter(prefix="/{subsidy_id}/fact-import", tags=["fact-import"])
 
@@ -63,7 +63,7 @@ async def fact_import_template(
     if layout == "single":
         from app.services.historical_fact_import.template import build_template_workbook
         content = await build_template_workbook(db, subsidy_id)
-        filename = f"fact_import_template_{subsidy_id}.xlsx"
+        filename = f"Шаблон_импорта_факта_{subsidy_id}.xlsx"
     elif layout == "stages":
         from app.services.historical_fact_import.template_stages import build_stages_template_workbook
         content = await build_stages_template_workbook(db, subsidy_id)
@@ -74,7 +74,7 @@ async def fact_import_template(
     return StreamingResponse(
         BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 

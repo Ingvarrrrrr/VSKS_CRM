@@ -92,11 +92,11 @@ export function useItemsImport(deps: UseItemsImportDeps) {
   const importTruncated = ref(false)
 
   const TARGET_FIELDS = [
-    { value: 'item_name',     title: 'Наименование',    required: true },
-    { value: 'unit_price',    title: 'Цена за ед.',     required: false },
-    { value: 'quantity',      title: 'Количество',      required: false },
-    { value: 'unit',          title: 'Ед. изм.',        required: false },
-    { value: 'total_price',   title: 'Сумма',           required: false },
+    { value: 'item_name',     title: 'Наименование позиции', required: true },
+    { value: 'unit_price',    title: 'Цена за ед.',          required: false },
+    { value: 'quantity',      title: 'Количество',           required: false },
+    { value: 'unit',          title: 'Ед. изм.',             required: false },
+    { value: 'total_price',   title: 'Сумма',                required: false },
     { value: 'description',   title: 'Описание',        required: false },
     { value: 'row_num',       title: '№',               required: false, hint: 'Номер строки в исходном документе' },
     { value: 'vat_rate',      title: 'Ставка НДС',      required: false },
@@ -826,16 +826,16 @@ export function useItemsImport(deps: UseItemsImportDeps) {
   // (с фото и поиском), а не отдельный SingleProductPickerDialog.vue.
 
   const CRM_MAPPING_FIELDS: Record<string, string> = {
-    item_name: 'Наименование',
-    quantity: 'Кол-во',
+    item_name: 'Наименование позиции',
+    quantity: 'Количество',
     unit: 'Ед. изм.',
     unit_price: 'Цена за ед.',
     total_price: 'Сумма',
   }
 
   const crmFieldSelectItems = [
-    { title: 'Наименование', value: 'item_name' },
-    { title: 'Кол-во', value: 'quantity' },
+    { title: 'Наименование позиции', value: 'item_name' },
+    { title: 'Количество', value: 'quantity' },
     { title: 'Ед. изм.', value: 'unit' },
     { title: 'Цена за ед.', value: 'unit_price' },
     { title: 'Сумма', value: 'total_price' },

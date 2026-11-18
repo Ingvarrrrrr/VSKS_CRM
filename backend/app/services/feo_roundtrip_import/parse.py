@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
 
+from app.services.excel_column_names import normalize_excel_header
 from app.services.feo_export_columns import FEO_EXPORT_COLUMNS
 from app.services.feo_import_common import to_dec
 
@@ -35,32 +36,49 @@ READABLE_KEYS = (
     "row_type", "row_id",
 )
 _LABEL_BY_KEY = {k: label for k, label, _g, _w, _d in FEO_EXPORT_COLUMNS if k in READABLE_KEYS}
-# Заголовок -> ключ (нормализован: strip, без учёта регистра — Excel любит
-# менять регистр при автозамене/автозаполнении, тот же приём устойчивости,
-# что и у остального импорта ФЭО, см. feo_import_common.norm).
-_KEY_BY_LABEL_NORM = {label.strip().lower(): k for k, label in _LABEL_BY_KEY.items()}
+# Заголовок -> ключ (нормализован через normalize_excel_header — без (₽) и лишних пробелов)
+_KEY_BY_LABEL_NORM = {normalize_excel_header(label): k for k, label in _LABEL_BY_KEY.items()}
 # Синонимы для обратной совместимости старых и новых выгрузок
-_KEY_BY_LABEL_NORM["наименование"] = "name"
-_KEY_BY_LABEL_NORM["наименование товара"] = "name"
-_KEY_BY_LABEL_NORM["ед."] = "feo_unit"
-_KEY_BY_LABEL_NORM["ед. изм."] = "feo_unit"
-_KEY_BY_LABEL_NORM["ед. изм. (океи)"] = "feo_unit"
-_KEY_BY_LABEL_NORM["кол-во по плану"] = "plan_qty"
-_KEY_BY_LABEL_NORM["плановое количество"] = "plan_qty"
-_KEY_BY_LABEL_NORM["цена за ед. по плану (₽)"] = "plan_unit_price"
-_KEY_BY_LABEL_NORM["плановая цена"] = "plan_unit_price"
-_KEY_BY_LABEL_NORM["запланировано (₽)"] = "plan"
-_KEY_BY_LABEL_NORM["плановая стоимость за объём"] = "plan"
-_KEY_BY_LABEL_NORM["комментарий"] = "notes"
-_KEY_BY_LABEL_NORM["№ в системе"] = "row_id"
-_KEY_BY_LABEL_NORM["хэш / id строки"] = "row_id"
-_KEY_BY_LABEL_NORM["хэш/id строки"] = "row_id"
-_KEY_BY_LABEL_NORM["id строки"] = "row_id"
-_KEY_BY_LABEL_NORM["хэш"] = "row_id"
-_KEY_BY_LABEL_NORM["hash"] = "row_id"
+_ALIASES_TO_KEY = {
+    "наименование": "name",
+    "наименование товара": "name",
+    "наименование позиции": "name",
+    "прил.": "app",
+    "приложение": "app",
+    "ед.": "feo_unit",
+    "ед. изм.": "feo_unit",
+    "ед. изм": "feo_unit",
+    "ед. изм. (океи)": "feo_unit",
+    "ед. изм. по фэо": "feo_unit",
+    "ед. изм. плана": "feo_unit",
+    "кол-во по фэо": "feo_qty",
+    "количество по фэо": "feo_qty",
+    "цена за ед. по фэо": "feo_unit_price",
+    "цена за единицу по фэо": "feo_unit_price",
+    "финансирование по фэо": "feo",
+    "сумма по фэо": "feo",
+    "кол-во по плану": "plan_qty",
+    "плановое количество": "plan_qty",
+    "цена за ед. по плану": "plan_unit_price",
+    "плановая цена": "plan_unit_price",
+    "плановая цена за ед.": "plan_unit_price",
+    "плановая цена за единицу": "plan_unit_price",
+    "запланировано": "plan",
+    "плановая стоимость за объём": "plan",
+    "плановая сумма": "plan",
+    "сумма плана": "plan",
+    "комментарий": "notes",
+    "№ в системе": "row_id",
+    "хэш / id строки": "row_id",
+    "хэш/id строки": "row_id",
+    "id строки": "row_id",
+    "хэш": "row_id",
+    "hash": "row_id",
+}
+_KEY_BY_LABEL_NORM.update(_ALIASES_TO_KEY)
 
 NAME_HEADER = _LABEL_BY_KEY["name"]
-NAME_HEADER_ALIASES = {"наименование", "наименование товара"}
+NAME_HEADER_ALIASES = {"наименование", "наименование товара", "наименование позиции"}
 FORMAT_VERSION = "feo-export-1"
 _HEADER_SEARCH_ROWS = 10
 
@@ -104,7 +122,7 @@ class ParseResult:
 
 
 def _norm_header(s) -> str:
-    return str(s).strip().lower() if s is not None else ""
+    return normalize_excel_header(s)
 
 
 def _find_header_row(ws) -> Optional[int]:

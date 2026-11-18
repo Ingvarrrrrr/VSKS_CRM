@@ -64,7 +64,11 @@ async def test_roundtrip_template_downloads_with_howto_sheet_and_empty_row_ids(
     assert "Тип строки" in hmap
 
     row_id_col = hmap[row_id_key]
-    name_key = "Наименование товара" if "Наименование товара" in hmap else "Наименование"
+    name_key = (
+        "Наименование позиции"
+        if "Наименование позиции" in hmap
+        else ("Наименование товара" if "Наименование товара" in hmap else "Наименование")
+    )
     for r in range(4, ws.max_row + 1):
         name_val = ws.cell(row=r, column=hmap[name_key]).value
         if not name_val or not str(name_val).strip():

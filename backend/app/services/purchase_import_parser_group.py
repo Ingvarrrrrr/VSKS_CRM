@@ -43,6 +43,7 @@ from app.services.purchase_import_parser_helpers import (
     _to_dec,
     _to_date_val,
 )
+from app.services.excel_column_names import normalize_excel_header
 from app.services.purchase_import_parser_maps import (
     _COLUMN_MAP,
     _CONTRACT_TYPE_MAP,
@@ -91,10 +92,10 @@ async def _parse_and_group(
         raise HTTPException(400, "Файл пустой или содержит только заголовки")
 
     # --- Build col_idx for «Закупки» ---
-    raw_headers = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
+    raw_headers = [normalize_excel_header(h) for h in rows[0]]
     col_idx: Dict[str, int] = {}
     for i, h in enumerate(raw_headers):
-        field = _COLUMN_MAP.get(h)
+        field = _COLUMN_MAP.get(h) or _COLUMN_MAP.get(str(rows[0][i]).strip().lower() if rows[0][i] is not None else "")
         if field and field not in col_idx:
             col_idx[field] = i
 
@@ -457,10 +458,10 @@ async def _parse_and_group(
     if pay_sheet is not None:
         pay_rows = list(pay_sheet.iter_rows(values_only=True))
         if len(pay_rows) >= 2:
-            raw_pay_headers = [str(h).strip().lower() if h is not None else "" for h in pay_rows[0]]
+            raw_pay_headers = [normalize_excel_header(h) for h in pay_rows[0]]
             pay_col_idx: Dict[str, int] = {}
             for i, h in enumerate(raw_pay_headers):
-                field = _PAYMENTS_COLUMN_MAP.get(h)
+                field = _PAYMENTS_COLUMN_MAP.get(h) or _PAYMENTS_COLUMN_MAP.get(str(pay_rows[0][i]).strip().lower() if pay_rows[0][i] is not None else "")
                 if field and field not in pay_col_idx:
                     pay_col_idx[field] = i
 

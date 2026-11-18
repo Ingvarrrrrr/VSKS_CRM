@@ -45,14 +45,14 @@ TEMPLATE_HEADER[0] = "Субсидия"
 TEMPLATE_HEADER[4] = "Направление расходов по категориям в соответствии с ФЭО"
 TEMPLATE_HEADER[5] = "Тип расходов в соответствии с ФЭО Конкретизированный"
 TEMPLATE_HEADER[6] = "Направление расходов из приложений к ФЭО"
-TEMPLATE_HEADER[7] = "Плановая позиция (папка НЕ создаётся)"
+TEMPLATE_HEADER[7] = "Наименование позиции"
 TEMPLATE_HEADER[8] = "Товар/услуга/работа"
 TEMPLATE_HEADER[9] = "Комментарий"
 TEMPLATE_HEADER[10] = "План 2026"
-TEMPLATE_HEADER[14] = "Ед. изм. плана"
+TEMPLATE_HEADER[14] = "Ед. изм."
 TEMPLATE_HEADER[15] = "Плановое количество"
-TEMPLATE_HEADER[16] = "Плановая цена за единицу"
-TEMPLATE_HEADER[17] = "Сумма плана"
+TEMPLATE_HEADER[16] = "Плановая цена за ед."
+TEMPLATE_HEADER[17] = "Плановая сумма"
 TEMPLATE_HEADER[18] = "Факт"
 TEMPLATE_HEADER[21] = "Оплачено "
 # Задача 2 (владелец, 05.10.2026) — «Аванс (да/нет)»: оплачено ДО поставки
@@ -64,8 +64,8 @@ TEMPLATE_HEADER.append(None)
 TEMPLATE_HEADER[22] = "Аванс (да/нет)"
 TEMPLATE_HEADER[23] = "Законтрактовано"
 TEMPLATE_HEADER[25] = "Правильный статус"
-TEMPLATE_HEADER[26] = "№ Закупки"
-TEMPLATE_HEADER[28] = "Поставщик "
+TEMPLATE_HEADER[26] = "Номер закупки"
+TEMPLATE_HEADER[28] = "Контрагент"
 
 FIELDS = (
     "path_l2", "path_l3", "path_l4", "path_l5", "plan_item_name", "item_type", "unit",
@@ -221,7 +221,7 @@ def _map_columns_format(header: list) -> list:
             # «Тип расходов конкретизированный (сам придумываю…)» (AH) —
             # 4-й (новый) уровень владельца, после l2/l3/l4 выше.
             field = "path_l5"
-        elif "плановая позиция" in h or "наименование товара" in h:
+        elif "плановая позиция" in h or "наименование товара" in h or "наименование позиции" in h:
             field = "plan_item_name"
         elif "товар/услуга" in h or "товар / услуга" in h or "товары или услуги" in h:
             field = "item_type"
@@ -231,7 +231,7 @@ def _map_columns_format(header: list) -> list:
             field = "plan_qty"
         elif "плановая цена" in h:
             field = "plan_price"
-        elif "сумма плана" in h or "плановая стоимость" in h:
+        elif "сумма плана" in h or "плановая стоимость" in h or "плановая сумма" in h:
             field = "plan_amount"
         elif "закупка провед" in h:
             field = "stage_purchase_done"
@@ -248,11 +248,11 @@ def _map_columns_format(header: list) -> list:
         # ПЕРЕД веткой h.strip()=="факт", чтобы "факт: сумма" не пыталась
         # совпасть с ней (там строгое равенство "факт", не совпало бы и так,
         # но порядок рядом — для читаемости).
-        elif "факт: количество" in h or "факт количество" in h:
+        elif "факт: количество" in h or "факт количество" in h or "фактическое количество" in h:
             field = "fact_qty"
-        elif "факт: цена" in h or "факт цена" in h or "итоговая цена за единицу" in h:
+        elif "факт: цена" in h or "факт цена" in h or "фактическая цена" in h or "итоговая цена за единицу" in h:
             field = "fact_price"
-        elif "факт: сумма" in h or "факт сумма" in h or "итоговая цена за объ" in h:
+        elif "факт: сумма" in h or "факт сумма" in h or "фактическая сумма" in h or "итоговая цена за объ" in h:
             field = "fact_amount"
         elif h.strip() == "факт":
             cols.append({"index": i, "letter": _col_letter(i), "header": header[i], "field": "fact_qty"})

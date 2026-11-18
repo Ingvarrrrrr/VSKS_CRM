@@ -65,7 +65,7 @@ async def _make_item(db_session, feo_category_id, **kwargs):
 
 
 @pytest.mark.asyncio
-async def test_export_outline_and_feo_items(client, db_session, admin_headers, test_admin_user):
+async def test_export_outline_and_feo_items(client, db_session, superadmin_headers, superadmin_user):
     subsidy = await _make_subsidy(db_session)
 
     root = await _make_category(db_session, subsidy.id, level=1, name="Направление", budget=Decimal("500000"))
@@ -88,7 +88,7 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
     )
 
     r = await client.get(
-        "/api/feo-categories/export", params={"subsidy_id": subsidy.id}, headers=admin_headers
+        "/api/feo-categories/export", params={"subsidy_id": subsidy.id}, headers=superadmin_headers
     )
     assert r.status_code == 200, r.text
 
@@ -98,7 +98,11 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
     assert ws.sheet_properties.outlinePr.summaryBelow is False
 
     headers = [c.value for c in ws[3]]
-    name_col_idx = (headers.index("Наименование товара") if "Наименование товара" in headers else 0)
+    name_col_idx = (
+        headers.index("Наименование позиции")
+        if "Наименование позиции" in headers
+        else (headers.index("Наименование товара") if "Наименование товара" in headers else 0)
+    )
     col_letter = ws.cell(3, name_col_idx + 1).column_letter
 
     names = [c.value.strip() for c in ws[col_letter] if c.value]
@@ -135,8 +139,12 @@ async def test_export_outline_and_feo_items(client, db_session, admin_headers, t
     # владельца 20.10.2026, часть 4) сдвинули «Финансирование по ФЭО»/
     # «Запланировано» с жёстких B/C (app.services.feo_export_columns.DEFAULT_KEYS).
     headers0 = [c.value for c in ws[3]]
-    ci_feo = headers0.index("Финансирование по ФЭО (₽)") + 1
-    ci_plan = (headers0.index("Плановая стоимость за объём") if "Плановая стоимость за объём" in headers0 else headers0.index("Запланировано (₽)")) + 1
+    ci_feo = (headers0.index("Сумма по ФЭО") if "Сумма по ФЭО" in headers0 else headers0.index("Финансирование по ФЭО (₽)")) + 1
+    ci_plan = (
+        headers0.index("Плановая сумма")
+        if "Плановая сумма" in headers0
+        else (headers0.index("Плановая стоимость за объём") if "Плановая стоимость за объём" in headers0 else headers0.index("Запланировано (₽)"))
+    ) + 1
     feo_col_letter = ws.cell(row=3, column=ci_feo).column_letter
 
     assert ws.cell(r_item1, ci_feo).value == 1000.0

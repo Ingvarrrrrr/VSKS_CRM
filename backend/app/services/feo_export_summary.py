@@ -18,19 +18,26 @@ try:
 except ImportError:  # pragma: no cover — openpyxl отсутствует, роутер уже отказал раньше
     pass
 
+from app.services.excel_column_names import (
+    COL_FEO_TOTAL,
+    COL_ORDERED,
+    COL_PLANNED_TOTAL,
+    COL_RESIDUAL,
+    COL_TO_ORDER,
+)
 from app.services.export_dashboard_charts import build_bar_chart, build_doughnut_chart
 from app.services.feo_export_columns import STAGE_DEFS, column_index
 
-# (key, label) — порядок столбцов «Сводной»; «Финансирование по ФЭО» и т.д.
+# (key, label) — порядок столбцов «Сводной»; «Сумма по ФЭО» и т.д.
 # показываются, только если ключ есть в selected_keys выгрузки (владелец:
 # «суммы стадий — только те, что выбраны в выгрузке» — это касается и пяти
 # денежных столбцов, не только стадий).
 _MONEY_COLS = (
-    ("feo", "Финансирование по ФЭО, ₽"),
-    ("plan", "Запланировано, ₽"),
-    ("ordered", "Заказано, ₽"),
-    ("to_order", "Надо заказать, ₽"),
-    ("residual", "Остаток, ₽"),
+    ("feo", f"{COL_FEO_TOTAL}, ₽"),
+    ("plan", f"{COL_PLANNED_TOTAL}, ₽"),
+    ("ordered", f"{COL_ORDERED}, ₽"),
+    ("to_order", f"{COL_TO_ORDER}, ₽"),
+    ("residual", f"{COL_RESIDUAL}, ₽"),
 )
 NUM_FMT = "#,##0.00"
 _LABEL_COL = 1  # столбец A — название направления

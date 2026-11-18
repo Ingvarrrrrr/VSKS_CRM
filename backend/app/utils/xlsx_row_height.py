@@ -58,7 +58,9 @@ def row_height_for_row(ws, row_idx: int, *, min_height: float = _MIN_HEIGHT, fon
         if value is None or value == "":
             continue
         width = ws.column_dimensions[cell.column_letter].width or _DEFAULT_COL_WIDTH
-        lines = wrapped_line_count(value, width, font_size)
+        indent = getattr(getattr(cell, "alignment", None), "indent", 0) or 0
+        effective_width = max(8.0, width - indent * 1.8)
+        lines = wrapped_line_count(value, effective_width, font_size)
         if lines > max_lines:
             max_lines = lines
     line_height = font_size * _LINE_HEIGHT_FACTOR

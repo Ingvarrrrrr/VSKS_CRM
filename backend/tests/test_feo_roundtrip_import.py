@@ -81,12 +81,12 @@ async def test_roundtrip_export_edit_import_tree(db_session, test_org, make_user
     insert_at = None
     transport_outline = None
     for r in range(4, last_row + 1):
-        name_cell = ws.cell(row=r, column=hmap["Наименование"])
+        name_cell = ws.cell(row=r, column=hmap["Наименование позиции"])
         name_val = (name_cell.value or "").strip()
         if name_val == "Equipment":
             name_cell.value = "Equipment and PPE"
         if name_val == "Jacket":
-            ws.cell(row=r, column=hmap["Финансирование по ФЭО (₽)"]).value = 60000
+            ws.cell(row=r, column=hmap["Сумма по ФЭО"]).value = 60000
         if name_val == "Transport":
             insert_at = r + 1
             transport_outline = ws.row_dimensions[r].outline_level or 0
@@ -99,15 +99,15 @@ async def test_roundtrip_export_edit_import_tree(db_session, test_org, make_user
     # (т.к. use_outline=True для всего файла) — то же, что сделал бы живой
     # человек через «Группировать» в Excel, не просто отступ в тексте.
     item_outline = transport_outline + 1
-    ws.cell(row=insert_at, column=hmap["Наименование"]).value = "Hat"
-    ws.cell(row=insert_at, column=hmap["Финансирование по ФЭО (₽)"]).value = 5000
-    ws.cell(row=insert_at, column=hmap["Запланировано (₽)"]).value = 5000
+    ws.cell(row=insert_at, column=hmap["Наименование позиции"]).value = "Hat"
+    ws.cell(row=insert_at, column=hmap["Сумма по ФЭО"]).value = 5000
+    ws.cell(row=insert_at, column=hmap["Плановая сумма"]).value = 5000
     ws.cell(row=insert_at, column=hmap["Тип строки"]).value = "Позиция"
     ws.row_dimensions[insert_at].outline_level = item_outline
 
-    ws.cell(row=insert_at + 1, column=hmap["Наименование"]).value = "Radio"
-    ws.cell(row=insert_at + 1, column=hmap["Финансирование по ФЭО (₽)"]).value = 15000
-    ws.cell(row=insert_at + 1, column=hmap["Запланировано (₽)"]).value = 15000
+    ws.cell(row=insert_at + 1, column=hmap["Наименование позиции"]).value = "Radio"
+    ws.cell(row=insert_at + 1, column=hmap["Сумма по ФЭО"]).value = 15000
+    ws.cell(row=insert_at + 1, column=hmap["Плановая сумма"]).value = 15000
     ws.cell(row=insert_at + 1, column=hmap["Тип строки"]).value = "Позиция"
     ws.row_dimensions[insert_at + 1].outline_level = item_outline
 
@@ -169,12 +169,12 @@ async def test_roundtrip_empty_subsidy_builds_tree_from_indentation(db_session, 
     hmap = _headers_map(ws)
 
     r = 4
-    ws.cell(row=r, column=hmap["Наименование"]).value = "Article A"
-    ws.cell(row=r, column=hmap["Финансирование по ФЭО (₽)"]).value = 100000
+    ws.cell(row=r, column=hmap["Наименование позиции"]).value = "Article A"
+    ws.cell(row=r, column=hmap["Сумма по ФЭО"]).value = 100000
     r += 1
-    ws.cell(row=r, column=hmap["Наименование"]).value = "  Item A1"
-    ws.cell(row=r, column=hmap["Финансирование по ФЭО (₽)"]).value = 40000
-    ws.cell(row=r, column=hmap["Запланировано (₽)"]).value = 40000
+    ws.cell(row=r, column=hmap["Наименование позиции"]).value = "  Item A1"
+    ws.cell(row=r, column=hmap["Сумма по ФЭО"]).value = 40000
+    ws.cell(row=r, column=hmap["Плановая сумма"]).value = 40000
 
     buf = io.BytesIO()
     wb.save(buf)

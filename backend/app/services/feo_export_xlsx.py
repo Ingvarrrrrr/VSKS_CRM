@@ -40,6 +40,7 @@ from app.services.feo_export_columns import (
     headers_and_widths,
 )
 from app.services.plan_item_stage import _STAGE_RANK
+from app.utils.xlsx_row_height import apply_row_heights
 
 HEADER_ROW = 3
 DATA_FIRST_ROW = 4
@@ -645,9 +646,9 @@ def render_feo_tree_sheet(
     FILL_DIFF_GREEN = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
     FONT_DIFF_GREEN = Font(color="166534")
 
-    BOLD_FONT = Font(bold=True)
-    SEMI_FONT = Font(bold=False)
-    ITEM_FONT = Font(italic=True, color="475569")
+    BOLD_FONT = Font(bold=True, size=10, color="0F172A")
+    SEMI_FONT = Font(bold=True, size=9, color="1E293B")
+    ITEM_FONT = Font(italic=True, size=9, color="334155")
     TOTAL_FONT = Font(bold=True, color="1E3A5F")
     NUM_FMT = "#,##0.00"
     _MAX_OUTLINE = 7
@@ -677,7 +678,13 @@ def render_feo_tree_sheet(
 
     row_num = DATA_FIRST_ROW
 
-    def _write_row(values: dict, fill, font) -> int:
+    _LEFT_WRAP_KEYS = {
+        "feo_direction", "feo_type", "feo_subdirection",
+        "notes", "contractor_name", "payment_purpose", "payment_kbk",
+    }
+    _QTY_KEYS = {"plan_qty", "fact_qty", "feo_qty"}
+
+    def _write_row(values: dict, fill, font, *, indent_level: int = 0) -> int:
         nonlocal row_num
         for ci, key in enumerate(selected_keys, 1):
             val = values.get(key, "")
@@ -687,6 +694,19 @@ def render_feo_tree_sheet(
             cell.font = font
             cell.border = THIN_BORDER
             cell.protection = Protection(locked=(key == "row_id"))
+            if key == "name":
+                cell.alignment = Alignment(
+                    horizontal="left",
+                    vertical="center",
+                    wrap_text=True,
+                    indent=min(max(indent_level, 0), 15),
+                )
+            elif key in MONEY_KEYS or key in _QTY_KEYS:
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+            elif key in _LEFT_WRAP_KEYS:
+                cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            else:
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             if key in MONEY_KEYS and isinstance(val, (int, float)):
                 cell.number_format = NUM_FMT
         r = row_num
@@ -828,7 +848,7 @@ def render_feo_tree_sheet(
         else:
             row_fill = None
 
-        row_idx = _write_row(values, row_fill, ITEM_FONT)
+        row_idx = _write_row(values, row_fill, ITEM_FONT, indent_level=min(depth * 2, 15))
 
         # Сохранение формул произведения количества на цену (задача владельца):
         # 1. План: кол-во по плану * цена по плану
@@ -983,7 +1003,7 @@ def render_feo_tree_sheet(
         else:
             fill = L4_FILL
         font = BOLD_FONT if c.level == 1 else SEMI_FONT
-        row_idx = _write_row(values, fill, font)
+        row_idx = _write_row(values, fill, font, indent_level=min(depth * 2, 15))
         if depth > 0:
             ws.row_dimensions[row_idx].outline_level = min(depth, _MAX_OUTLINE)
 
@@ -1286,6 +1306,9 @@ def render_feo_tree_sheet(
                 )
                 c_plan_spare.number_format = NUM_FMT
 
+    if last_row >= DATA_FIRST_ROW:
+        apply_row_heights(ws, range(DATA_FIRST_ROW, last_row + 1), min_height=19.0, font_size=10.0)
+
     # Защита листа от случайного изменения заблокированных ячеек (столбец row_id),
     # без пароля, разрешая сортировку, фильтрацию, форматирование, добавление и удаление строк:
     ws.protection.sheet = True
@@ -1441,10 +1464,10 @@ def _write_feo_roundtrip_howto_sheet(wb) -> None:
         "",
         "Уровень вложенности задаётся ОДНИМ из двух способов:",
         "  — группировкой Excel (выделите строки → Данные → Группировать) — предпочтительно, так же сделан этот шаблон;",
-        "  — ИЛИ отступом: 2 пробела в начале «Наименования» на каждый уровень вложенности (если группировку не ставили).",
+        "  — ИЛИ отступом: 2 пробела в начале «Наименование позиции» на каждый уровень вложенности (если группировку не ставили).",
         "",
-        "Какие колонки загружаются: Наименование, Код, Прил., Кол-во по ФЭО, Ед., «Цена за ед. по ФЭО», «Финансирование по ФЭО» "
-        "(у позиций и у «Категория без позиций»), «Кол-во по плану», «Цена за ед. по плану», «Запланировано» (три последних — только у позиций), "
+        "Какие колонки загружаются: Наименование позиции, Код, Приложение, Количество по ФЭО, Ед. изм., «Цена за ед. по ФЭО», «Сумма по ФЭО» "
+        "(у позиций и у «Категория без позиций»), «Плановое количество», «Плановая цена за ед.», «Плановая сумма» (три последних — только у позиций), "
         "Активна (Да/Нет). Суммы категорий с детьми — формулы, считаются сами, их трогать не нужно. "
         "Колонки заказов и стадий закупки в этот шаблон не включены — их считает система, в загрузке они не участвуют.",
         "",
@@ -1453,8 +1476,8 @@ def _write_feo_roundtrip_howto_sheet(wb) -> None:
         "Если заполнены и сумма, и кол-во с ценой, и они не сходятся — загрузка не ошибётся, но предупредит об этом в предпросмотре "
         "и запишет именно ту сумму, что указана в файле.",
         "",
-        "«№ в системе» — скрытая служебная колонка. В выгрузке УЖЕ существующей субсидии по ней строки находят себя в базе при повторной загрузке; "
-        "в этом шаблоне она пустая у всех строк — все строки примера новые. Не копируйте номер из одной строки в другую.",
+        "«Хэш / ID строки» — служебная колонка. В выгрузке УЖЕ существующей субсидии по ней строки находят себя в базе при повторной загрузке; "
+        "в этом шаблоне она пустая у всех строк — все строки примера новые. Не копируйте идентификатор из одной строки в другую.",
         "",
         "Числа — без знака «₽», пробелы-разделители тысяч и запятая вместо точки допускаются.",
         "",

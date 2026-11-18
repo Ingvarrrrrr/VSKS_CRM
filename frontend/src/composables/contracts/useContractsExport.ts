@@ -20,7 +20,7 @@ export function useContractsExport(options: {
 
   const exportDialog = ref(false)
   const exportColumns = reactive([
-    { key: 'number', title: '№ договора', selected: true },
+    { key: 'number', title: 'Номер договора', selected: true },
     { key: 'date', title: 'Дата договора', selected: true },
     { key: 'contract_type', title: 'Тип договора', selected: true },
     { key: 'purchase_method', title: 'Способ закупки', selected: true },
@@ -28,7 +28,7 @@ export function useContractsExport(options: {
     { key: 'contractor_inn', title: 'ИНН контрагента', selected: true },
     { key: 'subject', title: 'Предмет договора', selected: true },
     { key: 'subsidy_name', title: 'Субсидия', selected: true },
-    { key: 'max_amount', title: 'Макс. сумма', selected: true },
+    { key: 'max_amount', title: 'Сумма договора', selected: true },
     { key: 'total_ordered', title: 'Заказано', selected: true },
     { key: 'total_delivered', title: 'Поставлено', selected: true },
     { key: 'total_paid', title: 'Оплачено', selected: true },

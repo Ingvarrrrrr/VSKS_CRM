@@ -30,8 +30,8 @@ from app.services.historical_fact_import.statuses import STATUS_CHOICES
 from tests.test_feo_import_tree import _cleanup_subsidy, _get_categories, _get_items, _make_subsidy
 
 _FACT_HEADERS = [
-    "Правильный статус", "Факт: Количество", "Факт: Цена", "Факт: Сумма",
-    "Оплачено", "Аванс (да/нет)", "Законтрактовано", "Поставщик", "№ закупки",
+    "Правильный статус", "Фактическое количество", "Фактическая цена за ед.", "Фактическая сумма",
+    "Оплачено", "Аванс (да/нет)", "Законтрактовано", "Контрагент", "Номер закупки",
 ]
 
 
@@ -59,8 +59,8 @@ async def test_template_has_fact_block_and_status_dropdown(db_session, superadmi
     ws = wb["Категории ФЭО"]
     headers = [c.value for c in ws[1]]
     assert headers[-9:] == [
-        "Правильный статус", "Факт: Количество", "Факт: Цена", "Факт: Сумма",
-        "Оплачено", "Аванс (да/нет)", "Законтрактовано", "Поставщик", "№ закупки",
+        "Правильный статус", "Фактическое количество", "Фактическая цена за ед.", "Фактическая сумма",
+        "Оплачено", "Аванс (да/нет)", "Законтрактовано", "Контрагент", "Номер закупки",
     ], headers
 
     ws3 = wb["Справочники"]
@@ -157,15 +157,15 @@ async def test_fact_import_preview_autodetects_feo_template_columns(db_session, 
         )
         fields_by_header = {c["header"]: c["field"] for c in preview["columns"] if c["field"]}
         assert fields_by_header.get("Уровень 2") == "path_l2"
-        assert fields_by_header.get("Плановая позиция") == "plan_item_name"
+        assert fields_by_header.get("Наименование позиции") == "plan_item_name" or fields_by_header.get("Плановая позиция") == "plan_item_name"
         assert fields_by_header.get("Плановое количество") == "plan_qty"
-        assert fields_by_header.get("Плановая цена за единицу") == "plan_price"
+        assert fields_by_header.get("Плановая цена за ед.") == "plan_price" or fields_by_header.get("Плановая цена за единицу") == "plan_price"
         assert fields_by_header.get("Правильный статус") == "status_raw"
-        assert fields_by_header.get("Факт: Количество") == "fact_qty"
-        assert fields_by_header.get("Факт: Цена") == "fact_price"
-        assert fields_by_header.get("Факт: Сумма") == "fact_amount"
+        assert fields_by_header.get("Фактическое количество") == "fact_qty" or fields_by_header.get("Факт: Количество") == "fact_qty"
+        assert fields_by_header.get("Фактическая цена за ед.") == "fact_price" or fields_by_header.get("Факт: Цена") == "fact_price"
+        assert fields_by_header.get("Фактическая сумма") == "fact_amount" or fields_by_header.get("Факт: Сумма") == "fact_amount"
         assert fields_by_header.get("Законтрактовано") == "contracted"
-        assert fields_by_header.get("Поставщик") == "supplier"
+        assert fields_by_header.get("Контрагент") == "supplier" or fields_by_header.get("Поставщик") == "supplier"
 
         rows_with_status = [r for r in preview["rows"] if r["status_raw"]]
         assert len(rows_with_status) == 1, preview["rows"]

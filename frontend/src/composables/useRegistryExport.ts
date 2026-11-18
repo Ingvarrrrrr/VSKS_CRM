@@ -1,5 +1,7 @@
 import { ref, nextTick } from 'vue'
 import { useTheme } from 'vuetify'
+import { filenameFromContentDisposition } from '@/utils/contentDisposition'
+import { safeHtml2Canvas } from '@/utils/safeHtml2Canvas'
 
 export interface ExportColumn {
   key: string
@@ -45,10 +47,7 @@ async function _downloadBlob(res: Response, fallbackName: string): Promise<void>
     throw new Error(msg)
   }
   const blob = await res.blob()
-  let downloadName = fallbackName
-  const cd = res.headers.get('Content-Disposition') ?? ''
-  const match = cd.match(/filename[^;=\n]*=(?:(['"])(.+?)\1|([^;\n]+))/i)
-  if (match) downloadName = (match[2] ?? match[3] ?? downloadName).trim()
+  const downloadName = filenameFromContentDisposition(res.headers.get('Content-Disposition'), fallbackName)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -99,10 +98,7 @@ async function _exportScreenshotPdf(
   filename?: string,
   opts?: ScreenshotPdfOptions,
 ): Promise<void> {
-  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-    import('html2canvas'),
-    import('jspdf'),
-  ])
+  const { jsPDF } = await import('jspdf')
 
   // Фон PDF всегда непрозрачный светлый: прозрачный/rgba(0,0,0,0) фон (VueFlow-канва,
   // элементы без своего фона) html2canvas → jsPDF превращает в ЧЁРНЫЙ. Принудительно белый.
@@ -128,13 +124,13 @@ async function _exportScreenshotPdf(
 
   let canvas: HTMLCanvasElement
   try {
-    canvas = await html2canvas(el, {
+    canvas = await safeHtml2Canvas(el, {
       scale: Math.min(2, window.devicePixelRatio || 1.5),
       backgroundColor: bg,
       useCORS: true,
       logging: false,
-      windowWidth: el.scrollWidth,
-      windowHeight: el.scrollHeight,
+      windowWidth: Math.max(1, el.scrollWidth || el.offsetWidth),
+      windowHeight: Math.max(1, el.scrollHeight || el.offsetHeight),
     })
   } finally {
     for (const n of hidden) {
@@ -142,6 +138,10 @@ async function _exportScreenshotPdf(
       delete n.dataset._pdfDisplay
     }
     if (styleEl) styleEl.remove()
+  }
+
+  if (canvas.width < 1 || canvas.height < 1) {
+    throw new Error('Не удалось сформировать снимок экрана: пустой размер области')
   }
 
   const orientation = canvas.width >= canvas.height ? 'landscape' : 'portrait'
@@ -158,23 +158,24 @@ async function _exportScreenshotPdf(
     pdf.addImage(img, 'PNG', margin, margin, imgW, imgH)
   } else {
     // Высокий контент — режем canvas по страницам
-    const pxPerPage = Math.floor((canvas.width * (pageH - margin * 2)) / imgW)
+    const pxPerPage = Math.max(1, Math.floor((canvas.width * (pageH - margin * 2)) / imgW))
     let renderedPx = 0
     let first = true
     while (renderedPx < canvas.height) {
       const sliceH = Math.min(pxPerPage, canvas.height - renderedPx)
+      if (sliceH < 1) break
       const slice = document.createElement('canvas')
-      slice.width = canvas.width
-      slice.height = sliceH
+      slice.width = Math.max(1, canvas.width)
+      slice.height = Math.max(1, Math.round(sliceH))
       const ctx = slice.getContext('2d')!
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, slice.width, slice.height)
-      ctx.drawImage(canvas, 0, renderedPx, canvas.width, sliceH, 0, 0, canvas.width, sliceH)
+      ctx.drawImage(canvas, 0, renderedPx, canvas.width, slice.height, 0, 0, slice.width, slice.height)
       const sliceImg = slice.toDataURL('image/png')
-      const sliceImgH = (sliceH * imgW) / canvas.width
+      const sliceImgH = (slice.height * imgW) / canvas.width
       if (!first) pdf.addPage()
       pdf.addImage(sliceImg, 'PNG', margin, margin, imgW, sliceImgH)
-      renderedPx += sliceH
+      renderedPx += slice.height
       first = false
     }
   }

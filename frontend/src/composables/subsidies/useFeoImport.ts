@@ -177,18 +177,18 @@ const FEO_TARGET_FIELDS = [
   // категории дерева ФЭО, между Уровнем 4 и «Плановой позицией»; lvl5
   // (имя позиции) НЕ переименован, см. c_lvl4b в app/services/feo_import_core.py.
   { value: 'lvl4b',         title: 'Уровень 5 (категория)',                      required: false },
-  { value: 'lvl5',          title: 'Плановая позиция (папку не создаёт)',        required: false },
+  { value: 'lvl5',          title: 'Наименование позиции',                     required: false },
   { value: 'item_type',       title: 'Товар/услуга/работа',                     required: false },
   // Плоский шаблон (2026-08-14): одна пара колонок «по ФЭО»/«плана» на всю
   // строку — вместо колонок-на-каждый-уровень. См. col_row_* в _do_feo_import.
   { value: 'row_feo_qty',     title: 'Количество по ФЭО',                        required: false },
   { value: 'row_feo_unit',    title: 'Ед. изм. по ФЭО',                          required: false },
-  { value: 'row_feo_price',   title: 'Цена за единицу по ФЭО',                   required: false },
+  { value: 'row_feo_price',   title: 'Цена за ед. по ФЭО',                       required: false },
   { value: 'row_feo_sum',     title: 'Сумма по ФЭО',                             required: false },
   { value: 'row_plan_qty',    title: 'Плановое количество',                      required: false },
-  { value: 'row_plan_unit',   title: 'Ед. изм. плана',                           required: false },
-  { value: 'row_plan_price',  title: 'Плановая цена за единицу',                 required: false },
-  { value: 'row_plan_sum',    title: 'Сумма плана',                              required: false },
+  { value: 'row_plan_unit',   title: 'Ед. изм.',                                 required: false },
+  { value: 'row_plan_price',  title: 'Плановая цена за ед.',                     required: false },
+  { value: 'row_plan_sum',    title: 'Плановая сумма',                           required: false },
   { value: 'code',     title: 'Код',                                        required: false },
   { value: 'appendix', title: 'Приложение',                                 required: false },
   { value: 'active',   title: 'Активна',                                    required: false },
@@ -208,20 +208,20 @@ const FEO_TARGET_FIELDS = [
   // для has_fact_columns/fact_rows (app/services/feo_import_fact_summary.py)
   // и передаётся мастеру «Импорт факта» при переходе с тем же файлом
   // (useFactImport.ts::openWizardWithFile).
-  { value: 'fact_status',       title: 'Правильный статус',  required: false, group: 'fact' },
-  { value: 'fact_qty',          title: 'Факт: Количество',   required: false, group: 'fact' },
-  { value: 'fact_price',        title: 'Факт: Цена',          required: false, group: 'fact' },
-  { value: 'fact_amount',       title: 'Факт: Сумма',         required: false, group: 'fact' },
-  { value: 'fact_paid',         title: 'Оплачено',            required: false, group: 'fact' },
+  { value: 'fact_status',       title: 'Правильный статус',          required: false, group: 'fact' },
+  { value: 'fact_qty',          title: 'Фактическое количество',     required: false, group: 'fact' },
+  { value: 'fact_price',        title: 'Фактическая цена за ед.',    required: false, group: 'fact' },
+  { value: 'fact_amount',       title: 'Фактическая сумма',          required: false, group: 'fact' },
+  { value: 'fact_paid',         title: 'Оплачено',                   required: false, group: 'fact' },
   // Задача 2 (владелец, 05.10.2026): «Аванс (да/нет)» — оплачено ДО поставки,
   // см. колонку шаблона сразу после «Оплачено» (app/routers/feo_import_
   // template.py) и app/services/historical_fact_import/columns.py (header
   // "аванс" → field "advance"). Автоопределение по заголовку работает и без
   // ручного маппинга — здесь только для списка полей сетки мастера.
-  { value: 'fact_advance',      title: 'Аванс (да/нет)',      required: false, group: 'fact' },
-  { value: 'fact_contracted',   title: 'Законтрактовано',     required: false, group: 'fact' },
-  { value: 'fact_supplier',     title: 'Поставщик',           required: false, group: 'fact' },
-  { value: 'fact_purchase_no',  title: '№ закупки',           required: false, group: 'fact' },
+  { value: 'fact_advance',      title: 'Аванс (да/нет)',             required: false, group: 'fact' },
+  { value: 'fact_contracted',   title: 'Законтрактовано',            required: false, group: 'fact' },
+  { value: 'fact_supplier',     title: 'Контрагент',                 required: false, group: 'fact' },
+  { value: 'fact_purchase_no',  title: 'Номер закупки',              required: false, group: 'fact' },
 ]
 const feoDragMapping = ref<Record<string, number | null>>({})
 const feoIgnoredCols = ref<number[]>([])
@@ -443,7 +443,7 @@ function feoAutoMap(headers: string[]) {
     // общему слову «конкретизир» раньше своей очереди.
     lvl4b:    ['конкретизированный (свой)', 'уровень 5 (категория)', 'уровень 4б'],
     lvl4:     ['уровень 4', 'конкретизир', 'level 4'],
-    lvl5:     ['плановая позиция', 'уровень 5', 'плановый товар', 'level 5'],
+    lvl5:     ['наименование позиции', 'плановая позиция', 'уровень 5', 'плановый товар', 'level 5'],
     // Плоский шаблон (2026-08-14): одна пара «по ФЭО»/«плана» на всю строку.
     // lvl5 объявлен строкой выше item_type — иначе «товар/услуга» в заголовке
     // lvl5 старого формата перехватил бы item_type.
@@ -452,9 +452,9 @@ function feoAutoMap(headers: string[]) {
     row_feo_price:  ['цена за единицу по фэо', 'цена за ед. по фэо'],
     row_feo_sum:    ['сумма по фэо'],
     row_plan_qty:   ['плановое количество'],
-    row_plan_unit:  ['ед. изм. плана'],
+    row_plan_unit:  ['ед. изм. плана', 'ед. изм.'],
     row_plan_price: ['плановая цена за единицу', 'плановая цена за ед.'],
-    row_plan_sum:   ['сумма плана'],
+    row_plan_sum:   ['сумма плана', 'плановая сумма'],
     item_type:      ['товар/услуга', 'тип позиции'],
     code:     ['код'],
     appendix: ['приложение'],
@@ -470,13 +470,13 @@ function feoAutoMap(headers: string[]) {
     // app/services/feo_import_fact_summary.py (Правило №6: та же дублирующая
     // пара ключевых слов на фронте/бэке, какой уже пользуется comment выше).
     fact_status:      ['правильный статус'],
-    fact_qty:         ['факт: количество', 'факт количество'],
-    fact_price:       ['факт: цена', 'факт цена'],
-    fact_amount:      ['факт: сумма', 'факт сумма'],
+    fact_qty:         ['фактическое количество', 'факт: количество', 'факт количество'],
+    fact_price:       ['фактическая цена за ед.', 'факт: цена', 'факт цена'],
+    fact_amount:      ['фактическая сумма', 'факт: сумма', 'факт сумма'],
     fact_paid:        ['оплачено'],
     fact_contracted:  ['законтрактовано'],
-    fact_supplier:    ['поставщик'],
-    fact_purchase_no: ['№ закупки', 'номер закупки'],
+    fact_supplier:    ['контрагент', 'поставщик'],
+    fact_purchase_no: ['номер закупки', '№ закупки'],
   }
   // Каждая колонка достаётся ровно одному полю: без этого generic-ключи
   // («ед. изм») утаскивали колонку Ур.2 в поле Ур.5

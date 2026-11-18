@@ -136,7 +136,7 @@ def test_flat_sheet_sorted_globally_by_purchase_number_with_tail():
 
     # Первая строка данных — закупка №1 (item B), затем закупка №3 (item A),
     # затем хвост "Позиция без закупок" без закупки.
-    names = [_val(r, "Наименование") for r in rows]
+    names = [_val(r, "Наименование позиции") for r in rows]
     assert names[0] == "Позиция B"
     assert names[1] == "Позиция A"
     assert names[-1] == "Позиция без закупок"
@@ -171,10 +171,10 @@ def test_plan_amount_on_first_fact_row_only_no_duplication():
     plan_col = "План (плановые позиции), ₽"
     # item21 ("Позиция B", amount=1000) — одна закупка, её единственная
     # строка несёт план.
-    row_b = next(r for r in rows if _val(r, "Наименование") == "Позиция B")
+    row_b = next(r for r in rows if _val(r, "Наименование позиции") == "Позиция B")
     assert _val(row_b, plan_col) == 1000.0
     # item22 — без закупок, хвостовая строка несёт план.
-    row_tail = next(r for r in rows if _val(r, "Наименование") == "Позиция без закупок")
+    row_tail = next(r for r in rows if _val(r, "Наименование позиции") == "Позиция без закупок")
     assert _val(row_tail, plan_col) == 1000.0
     # «Бюджет ФЭО» пусто у этой же строки (владелец 09.10.2026, замечание 3а
     # — не смешиваем с planом).

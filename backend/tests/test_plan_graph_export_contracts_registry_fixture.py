@@ -149,24 +149,24 @@ async def test_write_contracts_sheet_from_real_fixture_item_rows_carry_order_mon
             out.append(r)
         return out
 
-    # Строка договора разовой закупки (5001) — найти по № закупки.
+    # Строка договора разовой закупки (5001) — найти по номеру закупки.
     single_row = next(
         r for r in range(DATA_FIRST_ROW, ws.max_row + 1)
-        if ws.cell(row=r, column=headers["№ закупки"]).value == 5001
+        if ws.cell(row=r, column=headers["Номер закупки"]).value == 5001
     )
     assert ws.cell(row=single_row, column=headers["Сумма заявки, ₽"]).value == ""
 
     item_rows = [r for r in range(single_row + 1, ws.max_row + 1)
                  if ws.cell(row=r, column=headers["Уровень"]).value == "Позиция"
-                 and ws.cell(row=r, column=headers["№ договора"]).value == "ДОГ-5001"]
+                 and ws.cell(row=r, column=headers["Номер договора"]).value == "ДОГ-5001"]
     assert len(item_rows) == 2
     item_sums = [ws.cell(row=r, column=headers["Сумма заявки, ₽"]).value for r in item_rows]
     assert sorted(item_sums) == [30000.0, 50000.0]
     assert sum(item_sums) == ws.cell(row=single_row, column=headers["Сумма договора, ₽"]).value
 
-    # QA 09.10.2026: «Цена за ед., ₽» писалась с number_format General (189
+    # QA 09.10.2026: «Цена за ед.» писалась с number_format General (189
     # ячеек на стенде) — теперь тот же "#,##0.00", что у денежных столбцов.
-    price_col = headers["Цена за ед., ₽"]
+    price_col = headers["Цена за ед."]
     for r in item_rows:
         assert ws.cell(row=r, column=price_col).number_format == "#,##0.00"
 

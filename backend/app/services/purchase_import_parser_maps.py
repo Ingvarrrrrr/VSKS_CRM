@@ -33,11 +33,13 @@ _COLUMN_MAP: Dict[str, str] = {
     "номер заказа внутри закупки":                              "order_number",
     "номер заказа внутри закупки или период оказания услуг":   "order_number",
     "номер заказа":                                              "order_number",
+    "номер заявки":                                              "order_number",
     "предмет договора (общий)":                                 "subject",
     "предмет договора":                                         "subject",
     "наименование товара":                                       "item_name",
     "максимальная цена договора":                               "contract_price",
     "максимальная цена договора (предел рамочного)":           "contract_price",
+    "сумма договора":                                            "contract_price",
     "наименование позиции":         "item_name",
     "наименование позиции *":       "item_name",
     "тип (товар/услуга/работа)":    "item_type",
@@ -78,15 +80,23 @@ _COLUMN_MAP: Dict[str, str] = {
     "основание для оплаты":         "payment_basis_type",
     "количество (план) *":          "plan_qty",
     "количество (план)":            "plan_qty",
+    "плановое количество":          "plan_qty",
     "ед. изм.":                     "unit",
     "ед. изм":                      "unit",
     "цена за ед. (план) *":         "plan_unit_price",
     "цена за ед. (план)":           "plan_unit_price",
+    "плановая цена за ед.":         "plan_unit_price",
+    "плановая цена за ед":          "plan_unit_price",
     "сумма план":                   "plan_total",
+    "плановая сумма":               "plan_total",
     "кол-во факт":                  "fact_qty",
+    "фактическое количество":       "fact_qty",
     "цена за ед. (факт)":           "fact_unit_price",
+    "фактическая цена за ед.":      "fact_unit_price",
+    "фактическая цена за ед":       "fact_unit_price",
     "сумма факт *":                 "fact_total",
     "сумма факт":                   "fact_total",
+    "фактическая сумма":            "fact_total",
     "страна происхождения":         "country_origin",
     "ставка ндс":                   "vat_rate",
     "год":                          "year",
@@ -171,11 +181,17 @@ _COLUMN_MAP: Dict[str, str] = {
 
 # «Платежи» sheet column map
 _PAYMENTS_COLUMN_MAP: Dict[str, str] = {
-    "№ договора":           "contract_number",
-    "№ пп":                 "document_number",
-    "дата платежа":         "payment_date",
-    "сумма":                "amount",
-    "назначение платежа":   "payment_purpose",
+    "№ договора":                   "contract_number",
+    "номер договора":               "contract_number",
+    "№ пп":                         "document_number",
+    "номер платёжного документа":   "document_number",
+    "номер платежного документа":   "document_number",
+    "дата платежа":                 "payment_date",
+    "дата платёжного документа":    "payment_date",
+    "дата платежного документа":    "payment_date",
+    "сумма":                        "amount",
+    "сумма оплаты":                 "amount",
+    "назначение платежа":           "payment_purpose",
 }
 
 _STATUS_MAP = {
@@ -271,14 +287,14 @@ _METHOD_MAP = {
 
 # Required fields for new-format validation (field_name, display_label)
 _REQUIRED_FIELDS = [
-    ("item_name",       "Наименование товара"),
+    ("item_name",       "Наименование позиции"),
     ("feo_l1",          "ФЭО Ур.1"),
     ("contractor_inn",  "ИНН контрагента"),
-    ("contract_number", "№ договора"),
+    ("contract_number", "Номер договора"),
     ("contract_date",   "Дата договора"),
-    ("plan_qty",        "Количество (план)"),
-    ("plan_unit_price", "Цена за ед. (план)"),
-    ("fact_total",      "Сумма факт"),
+    ("plan_qty",        "Плановое количество"),
+    ("plan_unit_price", "Плановая цена за ед."),
+    ("fact_total",      "Фактическая сумма"),
 ]
 
 # Marker fields that distinguish new template from old legacy template

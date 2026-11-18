@@ -12,6 +12,7 @@
 import { computed, reactive } from 'vue'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { filenameFromContentDisposition } from '@/utils/contentDisposition'
 import type { ImportMappingTargetField } from '@/components/common/ImportMappingGrid.vue'
 
 // ---- Контракт API (словами владельца, см. задание) -----------------------
@@ -413,22 +414,22 @@ export const FACT_IMPORT_TARGET_FIELDS: ImportMappingTargetField[] = [
   { key: 'path_l3', label: 'Уровень 3 (Тип расходов по ФЭО)' },
   { key: 'path_l4', label: 'Уровень 4 (Конкретизированный)' },
   { key: 'path_l5', label: 'Уровень 5 (категория)' },
-  { key: 'plan_item_name', label: 'Плановая позиция (папка НЕ создаётся)', required: true },
+  { key: 'plan_item_name', label: 'Наименование позиции', required: true },
   { key: 'item_type', label: 'Товар/услуга/работа' },
-  { key: 'unit', label: 'Ед. изм. плана' },
+  { key: 'unit', label: 'Ед. изм.' },
   { key: 'plan_qty', label: 'Плановое количество' },
-  { key: 'plan_price', label: 'Плановая цена за единицу' },
-  { key: 'plan_amount', label: 'Сумма плана' },
-  { key: 'fact_qty', label: 'Факт: Количество' },
-  { key: 'fact_price', label: 'Факт: Цена' },
-  { key: 'fact_amount', label: 'Факт: Сумма', hint: 'Это сумма договора' },
+  { key: 'plan_price', label: 'Плановая цена за ед.' },
+  { key: 'plan_amount', label: 'Плановая сумма' },
+  { key: 'fact_qty', label: 'Фактическое количество' },
+  { key: 'fact_price', label: 'Фактическая цена за ед.' },
+  { key: 'fact_amount', label: 'Фактическая сумма', hint: 'Это сумма договора' },
   { key: 'paid', label: 'Оплачено' },
   { key: 'advance', label: 'Аванс (да/нет)' },
   { key: 'contracted', label: 'Законтрактовано' },
   { key: 'status_raw', label: 'Правильный статус' },
   { key: 'status', label: 'Статус' },
-  { key: 'purchase_no', label: '№ Закупки' },
-  { key: 'supplier', label: 'Поставщик' },
+  { key: 'purchase_no', label: 'Номер закупки' },
+  { key: 'supplier', label: 'Контрагент' },
   { key: 'comment', label: 'Комментарий' },
   // Лист GoodsService владельца (16.10.2026) — стадия закупки в НЕСКОЛЬКИХ
   // колонках Да/Нет вместо одной «Статус»/«Правильный статус».
@@ -688,7 +689,8 @@ export function useFactImport() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = layout === 'stages' ? 'Шаблон_импорта_факта_статусы_по_колонкам.xlsx' : 'Шаблон_импорта_факта.xlsx'
+      const fallback = layout === 'stages' ? 'Шаблон_импорта_факта_статусы_по_колонкам.xlsx' : 'Шаблон_импорта_факта.xlsx'
+      a.download = filenameFromContentDisposition(res.headers.get('Content-Disposition'), fallback)
       a.click()
       URL.revokeObjectURL(url)
     } catch (e: any) {

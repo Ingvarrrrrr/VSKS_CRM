@@ -174,8 +174,8 @@ async def items_import_template(_=Depends(require_tab('purchases'))):
     ws = wb.active
     ws.title = "Позиции"
 
-    headers = ["Наименование", "Описание / ТЗ", "Тип (товар/услуга/работа)", "Количество", "Ед. изм.", "Цена за единицу"]
-    required = {"Наименование"}
+    headers = ["Наименование позиции", "Описание / ТЗ", "Тип (товар/услуга/работа)", "Количество", "Ед. изм.", "Цена за ед."]
+    required = {"Наименование позиции"}
 
     header_fill = PatternFill("solid", fgColor="1E40AF")
     req_fill = PatternFill("solid", fgColor="1D4ED8")

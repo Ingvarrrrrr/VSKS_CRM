@@ -1,20 +1,54 @@
 """feo_export_columns.py — каталог столбцов выгрузки «Выгрузить ФЭО»
-(GET /api/feo-categories/export, задача владельца 20.10.2026).
+(GET /api/feo-categories/export).
 
-ПРАВИЛО №6: тот же приём выбора столбцов, что уже есть у плана-графика
-(app.services.plan_graph_export_columns.PLAN_GRAPH_COLUMNS/columns_catalog/
-resolve_selected_keys) — форма [{key,label,group,width,default}], тот же
-смысл query-параметра `columns` (через запятую, неизвестные ключи
-игнорируются, пусто/нет → ТОЛЬКО default=True). Общий хелпер вынесен в
-app.services.export_columns_catalog (columns_catalog/resolve_selected_keys/
-headers_and_widths/column_index, параметризованы списком колонок) и
-переиспользован ОБОИМИ модулями — второй алгоритм парсинга `columns` не
-заводим.
+ПРАВИЛО №6: единый механизм выбора столбцов (export_columns_catalog.py) и
+единые канонические подписи столбцов из app.services.excel_column_names.
+Колонка `name` («Наименование позиции») стоит первой, чтобы при открытии
+файла в Excel сразу читалась древовидная иерархия с отступами.
 """
 from __future__ import annotations
 
 from typing import Optional
 
+from app.services.excel_column_names import (
+    COL_ACTIVE,
+    COL_APPENDIX,
+    COL_CODE,
+    COL_CONTRACTOR,
+    COL_CONTRACTOR_INN,
+    COL_CONTRACT_AMOUNT,
+    COL_CONTRACT_NUMBER,
+    COL_CONTRACT_RESIDUAL,
+    COL_FACT_QTY,
+    COL_FACT_TOTAL,
+    COL_FACT_UNIT_PRICE,
+    COL_FEO_DIRECTION,
+    COL_FEO_QTY,
+    COL_FEO_SUBDIRECTION,
+    COL_FEO_TOTAL,
+    COL_FEO_TYPE,
+    COL_FEO_UNIT_PRICE,
+    COL_ITEM_NAME,
+    COL_NOTES,
+    COL_ORDER_AMOUNT,
+    COL_ORDER_NUMBER,
+    COL_ORDERED,
+    COL_PAID_AMOUNT_MONEY,
+    COL_PAYMENT_AMOUNT,
+    COL_PAYMENT_DATE,
+    COL_PAYMENT_DOC_NUMBER,
+    COL_PAYMENT_PURPOSE,
+    COL_PLANNED_QTY,
+    COL_PLANNED_TOTAL,
+    COL_PLANNED_UNIT_PRICE,
+    COL_PURCHASE_AMOUNT,
+    COL_PURCHASE_NUMBER,
+    COL_RESIDUAL,
+    COL_ROW_ID,
+    COL_ROW_TYPE,
+    COL_TO_ORDER,
+    COL_UNIT,
+)
 from app.services.export_columns_catalog import (
     column_index as _column_index,
     columns_catalog as _columns_catalog,
@@ -22,7 +56,7 @@ from app.services.export_columns_catalog import (
     resolve_selected_keys as _resolve_selected_keys,
 )
 
-# Стадии шкалы выполнения (подписи согласованы со структурой GoodsService владельца)
+# Стадии шкалы выполнения
 STAGE_DEFS: list[tuple] = [
     ("in_work", "Ведётся работа"),
     ("purchase_done", "Закупка проведена"),
@@ -34,27 +68,23 @@ STAGE_DEFS: list[tuple] = [
 ]
 
 # (key, label, group, ширина, default)
-# Задача владельца 03.11.2026: первые 27 колонок идут строго в порядке структуры GoodsService:
-# «Направление расходов по категориям в соответствии с ФЭО», «Тип расходов в соответствии с ФЭО Конкретизированный»,
-# «Направление расходов из приложений к ФЭО», «Наименование товара», «Ед. изм. (ОКЕИ)», «Плановое количество»,
-# «Плановая цена», «Плановая стоимость за объём», «Комментарий», «Правильный статус», «Товары или Услуги»,
-# «План закупок», «Ведётся работа», «Закупка проведена», «Подписание протокола», «Договор заключен (устно или письменно)»,
-# «Товар заказан», «Товар поставлен», «Оплачено», «Факт: Количество», «Итоговая цена за единицу товара»,
-# «Итоговая цена за объём», «Оплачено в деньгах», «№ Закупки», «№ Заявки», «Контрагент», «ИНН Контрагента».
-# Остальные используемые колонки (договоры, платежи, КБК, остатки, суммы) следуют за ними.
+# Колонка `name` стоит первой (столбец A), чтобы дерево категорий и товаров
+# сразу открывалось с визуальными отступами по уровням вложенности.
 FEO_EXPORT_COLUMNS: list[tuple] = [
-    # 1–3. Категории и направления ФЭО
-    ("feo_direction", "Направление расходов по категориям в соответствии с ФЭО", "Категории ФЭО", 35, True),
-    ("feo_type", "Тип расходов в соответствии с ФЭО Конкретизированный", "Категории ФЭО", 35, True),
-    ("feo_subdirection", "Направление расходов из приложений к ФЭО", "Категории ФЭО", 35, True),
+    # 1. Иерархия дерева (наименование с отступами)
+    ("name", COL_ITEM_NAME, "План", 48, True),
 
-    # 4–9. План позиции
-    ("name", "Наименование товара", "План", 45, True),
-    ("feo_unit", "Ед. изм. (ОКЕИ)", "План", 16, True),
-    ("plan_qty", "Плановое количество", "План", 18, True),
-    ("plan_unit_price", "Плановая цена", "План", 18, True),
-    ("plan", "Плановая стоимость за объём", "План", 22, True),
-    ("notes", "Комментарий", "План", 25, True),
+    # 2–4. Плоские колонки уровней ФЭО (для фильтрации и сводных)
+    ("feo_direction", COL_FEO_DIRECTION, "Категории ФЭО", 30, True),
+    ("feo_type", COL_FEO_TYPE, "Категории ФЭО", 30, True),
+    ("feo_subdirection", COL_FEO_SUBDIRECTION, "Категории ФЭО", 30, True),
+
+    # 5–9. План позиции
+    ("feo_unit", COL_UNIT, "План", 16, True),
+    ("plan_qty", COL_PLANNED_QTY, "План", 20, True),
+    ("plan_unit_price", COL_PLANNED_UNIT_PRICE, "План", 22, True),
+    ("plan", COL_PLANNED_TOTAL, "План", 22, True),
+    ("notes", COL_NOTES, "План", 25, True),
 
     # 10–12. Статусы и тип
     ("stage_status", "Правильный статус", "Статусы", 20, True),
@@ -71,53 +101,50 @@ FEO_EXPORT_COLUMNS: list[tuple] = [
     ("paid_marked", "Оплачено", "Стадии", 16, True),
 
     # 20–23. Факт и оплата
-    ("fact_qty", "Факт: Количество", "Факт", 18, True),
-    ("fact_unit_price", "Итоговая цена за единицу товара", "Факт", 22, True),
-    ("fact_amount", "Итоговая цена за объём", "Факт", 22, True),
-    ("paid_amount_money", "Оплачено в деньгах", "Факт", 20, True),
+    ("fact_qty", COL_FACT_QTY, "Факт", 20, True),
+    ("fact_unit_price", COL_FACT_UNIT_PRICE, "Факт", 22, True),
+    ("fact_amount", COL_FACT_TOTAL, "Факт", 22, True),
+    ("paid_amount_money", COL_PAID_AMOUNT_MONEY, "Факт", 20, True),
 
     # 24–27. Закупка и контрагент
-    ("purchase_number", "№ Закупки", "Договор и закупки", 16, True),
-    ("order_number", "№ Заявки", "Договор и закупки", 16, True),
-    # 26–27. Контрагент
-    ("contractor_name", "Контрагент", "Договор и закупки", 32, True),
-    ("contractor_inn", "ИНН Контрагента", "Договор и закупки", 18, True),
+    ("purchase_number", COL_PURCHASE_NUMBER, "Договор и закупки", 18, True),
+    ("order_number", COL_ORDER_NUMBER, "Договор и закупки", 18, True),
+    ("contractor_name", COL_CONTRACTOR, "Договор и закупки", 32, True),
+    ("contractor_inn", COL_CONTRACTOR_INN, "Договор и закупки", 18, True),
 
-    # --- Колонки заказа, договора и платежа (задача владельца 03.11.2026) ---
-    ("purchase_amount", "Сумма закупки / заказа (₽)", "Договор и закупки", 24, True),
-    ("payment_purpose", "Назначение платежа", "Закупки и платежи", 42, True),
-    ("order_amount", "Сумма заявки (₽)", "Договор и закупки", 22, True),
-    ("contract_number", "Номер договора", "Договор и закупки", 22, True),
-    ("contract_amount", "Сумма по договору (₽)", "Договор и закупки", 24, True),
-    ("contract_residual", "Остаток по договору (₽)", "Договор и закупки", 22, True),
+    # Колонки заказа, договора и платежа
+    ("purchase_amount", COL_PURCHASE_AMOUNT, "Договор и закупки", 24, True),
+    ("payment_purpose", COL_PAYMENT_PURPOSE, "Закупки и платежи", 42, True),
+    ("order_amount", COL_ORDER_AMOUNT, "Договор и закупки", 22, True),
+    ("contract_number", COL_CONTRACT_NUMBER, "Договор и закупки", 22, True),
+    ("contract_amount", COL_CONTRACT_AMOUNT, "Договор и закупки", 24, True),
+    ("contract_residual", COL_CONTRACT_RESIDUAL, "Договор и закупки", 22, True),
 
     # Платежи и реквизиты
-    ("payment_doc_number", "Номер платёжного документа", "Закупки и платежи", 26, True),
-    ("payment_date", "Дата платежа", "Закупки и платежи", 16, True),
-    ("payment_amount", "Сумма платёжного документа (₽)", "Закупки и платежи", 24, True),
+    ("payment_doc_number", COL_PAYMENT_DOC_NUMBER, "Закупки и платежи", 26, True),
+    ("payment_date", COL_PAYMENT_DATE, "Закупки и платежи", 18, True),
+    ("payment_amount", COL_PAYMENT_AMOUNT, "Закупки и платежи", 24, True),
     ("expense_group_code", "Код расходов", "Закупки и платежи", 18, True),
     ("payment_kbk", "Детализированный код / КБК", "Закупки и платежи", 24, True),
     ("payment_status", "Статус платежа", "Закупки и платежи", 18, True),
     ("paid_confirmed", "Подтверждено выпиской", "Стадии", 22, True),
 
     # Показатели ФЭО и остатки
-    ("feo_qty", "Кол-во по ФЭО", "ФЭО", 16, True),
-    ("feo_unit_price", "Цена за ед. по ФЭО (₽)", "ФЭО", 20, True),
-    ("feo", "Финансирование по ФЭО (₽)", "ФЭО", 22, True),
-    ("ordered", "Заказано (₽)", "ФЭО", 20, True),
-    ("to_order", "Надо заказать (₽)", "ФЭО", 20, True),
-    ("residual", "Остаток (₽)", "ФЭО", 20, True),
-    ("active", "Активна", "ФЭО", 16, True),
-    ("code", "Код", "ФЭО", 16, False),
-    ("app", "Прил.", "ФЭО", 14, False),
+    ("feo_qty", COL_FEO_QTY, "ФЭО", 18, True),
+    ("feo_unit_price", COL_FEO_UNIT_PRICE, "ФЭО", 22, True),
+    ("feo", COL_FEO_TOTAL, "ФЭО", 22, True),
+    ("ordered", COL_ORDERED, "ФЭО", 20, True),
+    ("to_order", COL_TO_ORDER, "ФЭО", 20, True),
+    ("residual", COL_RESIDUAL, "ФЭО", 20, True),
+    ("active", COL_ACTIVE, "ФЭО", 16, True),
+    ("code", COL_CODE, "ФЭО", 16, False),
+    ("app", COL_APPENDIX, "ФЭО", 14, False),
 ] + [
-    # Суммы по стадиям (в деньгах, сдвинуты в конец для сводных отчётов)
     (f"{key}_amt", f"{label}, ₽", "Суммы по стадиям", 22, True)
     for key, label in STAGE_DEFS
 ] + [
-    # Обязательные служебные колонки
-    ("row_type", "Тип строки", "Служебное", 22, True),
-    ("row_id", "Хэш / ID строки", "Служебное", 20, True),
+    ("row_type", COL_ROW_TYPE, "Служебное", 22, True),
+    ("row_id", COL_ROW_ID, "Служебное", 20, True),
 ]
 
 _BY_KEY = {k: (label, group, width) for k, label, group, width, _d in FEO_EXPORT_COLUMNS}
@@ -131,17 +158,12 @@ MONEY_KEYS: set = {
     "feo_unit_price", "feo", "ordered", "to_order", "residual",
 } | {f"{k}_amt" for k, _ in STAGE_DEFS}
 
-# Текстовые Да/Нет столбцы — у строк категорий остаются пустыми, снабжены DataValidation
 STAGE_TEXT_KEYS: tuple = (
     "is_in_plan", "in_work", "purchase_done", "protocol_signed",
     "contracted", "ordered_flag", "delivered", "paid_marked", "paid_confirmed",
     "active",
 )
 STAGE_AMOUNT_KEYS: tuple = tuple(f"{k}_amt" for k, _ in STAGE_DEFS)
-# Служебная колонка-идентификатор — никогда не показывается в окне выбора
-# столбцов (columns_catalog), но всегда пишется в файл (см. resolve_selected_
-# keys always= ниже) и читается обратно загрузкой
-# (app/services/feo_roundtrip_import/parse.py).
 HIDDEN_CATALOG_KEYS: set = {"row_id"}
 
 

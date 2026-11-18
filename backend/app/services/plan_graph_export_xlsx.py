@@ -245,6 +245,7 @@ def build_live_plan_graph_xlsx(
     ws = wb.active
     ws.title = "План закупок (по направлениям)"
     ws.sheet_view.showGridLines = True
+    ws.sheet_properties.outlinePr.summaryBelow = False
 
     n_cols = len(HEADERS)
     last_col_letter = ws.cell(row=1, column=n_cols).column_letter
@@ -307,7 +308,7 @@ def build_live_plan_graph_xlsx(
 
     row_num = DATA_FIRST_ROW
 
-    def _write_row_projected(values: dict, fill, font, height=None) -> int:
+    def _write_row_projected(values: dict, fill, font, height=None, *, indent_level: int = 0, outline_level: int = 0) -> int:
         """Пишет строку по словарю {key: значение} в порядке selected_keys —
         единственная точка записи строки листа «План закупок» (Задача D:
         проекция на выбранные столбцы, Задача B: number_format для денежных
@@ -320,11 +321,19 @@ def build_live_plan_graph_xlsx(
             cell.font = font
             cell.border = THIN_BORDER
             is_money = key in MONEY_COL_KEYS
-            cell.alignment = RIGHT_ALIGN if (is_money or key in ("qty", "pct", "num")) else LEFT_ALIGN
+            if key == "name" and indent_level > 0:
+                cell.alignment = Alignment(
+                    horizontal="left", vertical="center", wrap_text=True,
+                    indent=min(indent_level, 15),
+                )
+            else:
+                cell.alignment = RIGHT_ALIGN if (is_money or key in ("qty", "pct", "num")) else LEFT_ALIGN
             if is_money and isinstance(val, (int, float)):
                 cell.number_format = NUM_FMT
         if height is not None:
             ws.row_dimensions[row_num].height = height
+        if outline_level > 0:
+            ws.row_dimensions[row_num].outline_level = min(outline_level, 7)
         row_idx = row_num
         row_num += 1
         return row_idx
@@ -342,12 +351,15 @@ def build_live_plan_graph_xlsx(
         cell.hyperlink = f"{base_url}/orders/{purchase_id}"
         cell.font = LINK_FONT
 
-    def _write_fact_rows(rows: list) -> None:
+    def _write_fact_rows(rows: list, *, indent_level: int = 0, outline_level: int = 0) -> None:
         """Пишет строки фактических позиций (уже собранные
         plan_graph_export_rows.collect_plan_graph_rows) — leaf-уровень
         «Закупка», значения литеральные (не формула)."""
         for row in rows:
-            row_idx = _write_row_projected(row, SUB_FILL, SUB_FONT, height=16)
+            row_idx = _write_row_projected(
+                row, SUB_FILL, SUB_FONT, height=16,
+                indent_level=indent_level, outline_level=outline_level,
+            )
             _set_doc_link(row.get("_purchase_id"), row_idx)
 
     def _apply_group_subtotal(row_idx: int, start: int, end: int, keys=STAGE_MONEY_COL_KEYS) -> None:
@@ -398,12 +410,21 @@ def build_live_plan_graph_xlsx(
             }
             fill, font, height = L3_FILL, L3_FONT, None
         values.update(_money_cols_dict(cat.id, cat_contractor_map.get(cat.id, "")))
-        row_idx = _write_row_projected(values, fill, font, height=height)
+        cat_depth = max(0, (cat.level or 1) - 1)
+        row_idx = _write_row_projected(
+            values, fill, font, height=height,
+            indent_level=min(cat_depth * 2, 12),
+            outline_level=min(cat_depth, 6),
+        )
 
         start_row = row_num
 
         # Собственные закупки категории (ЛЮБОЙ уровень — без плановой статьи).
-        _write_fact_rows(rows_info["fact_rows_by_cat"].get(cat.id, []))
+        _write_fact_rows(
+            rows_info["fact_rows_by_cat"].get(cat.id, []),
+            indent_level=min((cat_depth + 1) * 2, 14),
+            outline_level=min(cat_depth + 1, 7),
+        )
 
         # Собственные плановые позиции категории (ЛЮБОЙ уровень).
         for item in rows_info["items_order_by_cat"].get(cat.id, []):
@@ -448,10 +469,18 @@ def build_live_plan_graph_xlsx(
                 "fact_total": round(used, 2), "residual": round(residual, 2),
                 "pct": f"{pct}%", "contractor": contractor, "status": status,
             }
-            item_row_idx = _write_row_projected(item_values, NO_FILL, item_font)
+            item_row_idx = _write_row_projected(
+                item_values, NO_FILL, item_font,
+                indent_level=min((cat_depth + 1) * 2, 14),
+                outline_level=min(cat_depth + 1, 7),
+            )
 
             item_start = row_num
-            _write_fact_rows(rows_info["fact_rows_by_item"].get(item.id, []))
+            _write_fact_rows(
+                rows_info["fact_rows_by_item"].get(item.id, []),
+                indent_level=min((cat_depth + 2) * 2, 15),
+                outline_level=min(cat_depth + 2, 7),
+            )
             _apply_group_subtotal(item_row_idx, item_start, row_num - 1)
 
         for child in cats_by_parent.get(cat.id, []):

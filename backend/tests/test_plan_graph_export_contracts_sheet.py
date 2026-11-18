@@ -136,10 +136,10 @@ def test_framework_contract_row_split_levels_no_double_count():
     order2_row = order1_row + 3      # 9
 
     assert _val(head_row, "Уровень") == "Договор"
-    assert _val(head_row, "№ закупки") == 1093
+    assert _val(head_row, "Номер закупки") == 1093
     assert _val(head_row, "Контрагент") == "ЦЕНТРАВТО"
-    assert _val(head_row, "ИНН") == "7700000000"
-    assert _val(head_row, "№ договора") == "2026 СТО"
+    assert _val(head_row, "ИНН контрагента") == "7700000000"
+    assert _val(head_row, "Номер договора") == "2026 СТО"
     assert _val(head_row, "Вид договора") == "Рамочный накопительный"
     assert _val(head_row, "Тип договора") == "Оказание услуг"
     assert _val(head_row, "Сумма договора, ₽") == 600000.0
@@ -154,13 +154,13 @@ def test_framework_contract_row_split_levels_no_double_count():
         assert not (isinstance(v, str) and v.startswith("="))
 
     assert _val(order1_row, "Уровень") == "Заявка"
-    assert _val(order1_row, "№ заявки в договоре") == "1"
+    assert _val(order1_row, "Номер заявки") == "1"
     assert _val(order1_row, "Сумма заявки, ₽") == 150000.0
     assert _val(order1_row, "Поставлено, ₽") == 150000.0
     assert _val(order1_row, "Оплачено, ₽") == 50000.0
     assert _val(order1_row, "Сумма договора, ₽") == ""
     assert _val(order1_row, "Контрагент") == "ЦЕНТРАВТО"
-    assert _val(order1_row, "№ договора") == "2026 СТО"
+    assert _val(order1_row, "Номер договора") == "2026 СТО"
     assert _val(order1_row, "Вид договора") == "Рамочный накопительный"
     assert _val(order1_row, "Тип договора") == "Оказание услуг"
     assert _val(order1_row, "Товар / услуга") == "Услуга"
@@ -177,7 +177,7 @@ def test_framework_contract_row_split_levels_no_double_count():
     assert _val(item1b_row, "Сумма позиции, ₽") == 100000.0
     assert _val(item1a_row, "Сумма позиции, ₽") + _val(item1b_row, "Сумма позиции, ₽") == 150000.0  # == сумма заявки 1 (своя строка выше)
 
-    assert _val(order2_row, "№ заявки в договоре") == "2"
+    assert _val(order2_row, "Номер заявки") == "2"
 
     assert ws.auto_filter.ref is not None
     assert ws.freeze_panes == f"A{DATA_FIRST_ROW}"
@@ -196,7 +196,7 @@ def test_single_with_items_money_on_item_rows_not_head():
     item_b_row = single_row + 2              # 12
 
     assert _val(single_row, "Уровень") == "Договор"
-    assert _val(single_row, "№ закупки") == 2001
+    assert _val(single_row, "Номер закупки") == 2001
     assert _val(single_row, "Вид договора") == "Разовый"
     assert _val(single_row, "Тип договора") == "Поставка товаров"
     assert _val(single_row, "Сумма договора, ₽") == 80000.0
@@ -243,7 +243,7 @@ def test_single_itemless_keeps_order_level_on_head_row():
     itemless_row = DATA_FIRST_ROW + 8        # 13
 
     assert _val(itemless_row, "Уровень") == "Договор"
-    assert _val(itemless_row, "№ закупки") == 3001
+    assert _val(itemless_row, "Номер закупки") == 3001
     assert _val(itemless_row, "Вид договора") == "Разовый"
     assert _val(itemless_row, "Тип договора") == "Оказание услуг"
     assert _val(itemless_row, "Сумма заявки, ₽") == 40000.0
@@ -308,7 +308,7 @@ def test_top_summary_rows_number_format_matches_data_columns():
     # QA 09.10.2026: «Цена за ед., ₽» — тот же number_format/alignment, что
     # денежные столбцы, но НЕ входит в верхние SUM/SUBTOTAL (строки 1-2 там
     # пустые для этого столбца — суммировать цену за единицу бессмысленно).
-    price_col = headers["Цена за ед., ₽"]
+    price_col = headers["Цена за ед."]
     price_data_cell = ws.cell(row=DATA_FIRST_ROW + 2, column=price_col)  # item1a_row
     assert price_data_cell.number_format == "#,##0.00"
     assert price_data_cell.alignment.horizontal == "right"

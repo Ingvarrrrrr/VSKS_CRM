@@ -56,10 +56,10 @@ def render_plan_graph_workbook(tree: list, items: list, meta: dict):
     )
 
     HEADERS = [
-        "№", "Направление расходов", "Тип расходов", "Наименование",
-        "Ед.", "Кол-во план", "Плановая сумма, ₽",
-        "Фактическая сумма, ₽", "Остаток, ₽",
-        "% исполнения", "Исполнитель", "Статус",
+        "№", "Направление расходов", "Тип расходов", "Наименование позиции",
+        "Ед. изм.", "Плановое количество", "Плановая сумма",
+        "Фактическая сумма", "Остаток",
+        "% исполнения", "Контрагент", "Статус",
     ]
     COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 12, 30, 15]
     n_cols = len(HEADERS)
@@ -69,6 +69,7 @@ def render_plan_graph_workbook(tree: list, items: list, meta: dict):
     ws = wb.active
     ws.title = "План закупок"
     ws.sheet_view.showGridLines = True
+    ws.sheet_properties.outlinePr.summaryBelow = False
 
     # ── Title row ─────────────────────────────────────────────────────────────
     subsidy_name = meta.get("subsidy_name", "")
@@ -122,15 +123,23 @@ def render_plan_graph_workbook(tree: list, items: list, meta: dict):
     row_num = header_row + 1
     seq = 0
 
-    def _write_row(values, fill, font, height=20):
+    def _write_row(values, fill, font, height=20, *, indent_level: int = 0, outline_level: int = 0):
         nonlocal row_num
         for col_idx, val in enumerate(values, 1):
             cell = ws.cell(row=row_num, column=col_idx, value=val)
             cell.fill = fill
             cell.font = font
             cell.border = THIN_BORDER
-            cell.alignment = RIGHT_ALIGN if col_idx >= 6 else LEFT_ALIGN
+            if col_idx == 4 and indent_level > 0:
+                cell.alignment = Alignment(
+                    horizontal="left", vertical="center", wrap_text=True,
+                    indent=min(indent_level, 15),
+                )
+            else:
+                cell.alignment = RIGHT_ALIGN if col_idx >= 6 else LEFT_ALIGN
         ws.row_dimensions[row_num].height = height
+        if outline_level > 0:
+            ws.row_dimensions[row_num].outline_level = min(outline_level, 7)
         row_num += 1
 
     if tree:
@@ -146,18 +155,18 @@ def render_plan_graph_workbook(tree: list, items: list, meta: dict):
                 direction_name = name
                 _write_row(
                     [code, name, "", "", "", "", budget or "", "", "", "", "", ""],
-                    L1_FILL, L1_FONT, height=22,
+                    L1_FILL, L1_FONT, height=22, indent_level=0, outline_level=0,
                 )
             elif level == 2:
                 type_name = name
                 _write_row(
                     ["", direction_name, name, "", "", "", budget or "", "", "", "", "", ""],
-                    L2_FILL, L2_FONT,
+                    L2_FILL, L2_FONT, indent_level=2, outline_level=1,
                 )
             elif level == 3:
                 _write_row(
                     ["", direction_name, type_name, name, "", "", budget or "", "", "", "", "", ""],
-                    L3_FILL, L3_FONT,
+                    L3_FILL, L3_FONT, indent_level=4, outline_level=2,
                 )
 
             for child in node.get("children", []):

@@ -13,11 +13,11 @@ from tests.test_feo_export_outline import _make_category, _make_subsidy
 
 
 @pytest.mark.asyncio
-async def test_no_summary_sheet_without_flag(client, db_session, admin_headers):
+async def test_no_summary_sheet_without_flag(client, db_session, superadmin_headers):
     subsidy = await _make_subsidy(db_session)
     await _make_category(db_session, subsidy.id, level=1, name="Направление 1", budget=100000)
 
-    r = await client.get("/api/feo-categories/export", params={"subsidy_id": subsidy.id}, headers=admin_headers)
+    r = await client.get("/api/feo-categories/export", params={"subsidy_id": subsidy.id}, headers=superadmin_headers)
     assert r.status_code == 200, r.text
     wb = load_workbook(BytesIO(r.content))
     assert "Сводная" not in wb.sheetnames
@@ -25,7 +25,7 @@ async def test_no_summary_sheet_without_flag(client, db_session, admin_headers):
 
 
 @pytest.mark.asyncio
-async def test_summary_sheet_references_category_rows(client, db_session, admin_headers):
+async def test_summary_sheet_references_category_rows(client, db_session, superadmin_headers):
     subsidy = await _make_subsidy(db_session)
     root1 = await _make_category(db_session, subsidy.id, level=1, name="Экипировка", budget=100000)
     root2 = await _make_category(db_session, subsidy.id, level=1, name="Транспорт", budget=50000)
@@ -33,7 +33,7 @@ async def test_summary_sheet_references_category_rows(client, db_session, admin_
     r = await client.get(
         "/api/feo-categories/export",
         params={"subsidy_id": subsidy.id, "with_summary": "1"},
-        headers=admin_headers,
+        headers=superadmin_headers,
     )
     assert r.status_code == 200, r.text
     wb = load_workbook(BytesIO(r.content))

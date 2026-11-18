@@ -602,16 +602,20 @@ async function exportPlanGraphDocx() {
 }
 
 async function exportFeoPdf() {
-  if (!ctx.feoTableArea.value) { showSnack('Таблица ФЭО не готова', 'error'); return }
+  const targetEl =
+    ctx.feoItemsGroupBy.value === 'category_subsidy'
+      ? (document.querySelector<HTMLElement>('.subsidy-category-panel') ?? ctx.feoTableArea.value)
+      : (ctx.feoTableArea.value ?? document.querySelector<HTMLElement>('.feo-table-wrap'))
+  if (!targetEl) { showSnack('Таблица ФЭО не готова', 'error'); return }
   try {
     const name = `ФЭО_${ctx.selectedSubsidy.value?.name ?? ''}`.trim()
-    await _exportFeoScreenshotPdf(ctx.feoTableArea.value, name, undefined, {
+    await _exportFeoScreenshotPdf(targetEl, name, undefined, {
       // Колонка «Действия» нефункциональна в PDF и съедает место — скрыть.
-      hideSelectors: ['.feo-th-actions', '.feo-td-actions'],
+      hideSelectors: ['.feo-th-actions', '.feo-td-actions', '.scp-td-check'],
       // С table-layout:fixed «Наименование» ужимается в столбик; auto + перенос по словам.
-      extraCss: '.feo-table{table-layout:auto!important;width:100%!important}'
-        + '.feo-th-name,.feo-td-name{min-width:280px!important;white-space:normal!important}'
-        + '.feo-name{word-break:normal!important;overflow-wrap:anywhere!important}',
+      extraCss: '.feo-table,.scp-table{table-layout:auto!important;width:100%!important}'
+        + '.feo-th-name,.feo-td-name,.scp-td-name{min-width:280px!important;white-space:normal!important}'
+        + '.feo-name,.scp-td-name{word-break:normal!important;overflow-wrap:anywhere!important}',
     })
   } catch (e: any) {
     showSnack(e?.message ?? 'Ошибка экспорта PDF', 'error')

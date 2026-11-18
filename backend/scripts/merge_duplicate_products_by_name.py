@@ -76,7 +76,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa: E402
 
 from app.database import async_session  # noqa: E402
-from app.services.product_name_signature import merge_characteristics, merge_price_links  # noqa: E402
+from app.services.product_characteristics_parse import (  # noqa: E402
+    extract_characteristics_from_description,
+)
+from app.services.product_name_signature import (  # noqa: E402
+    merge_characteristics, merge_price_links, normalize_name_for_dedup,
+)
+from app.services.product_protection import load_protected_product_ids  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 # Простые поля, которые донаполняются из удаляемой записи, если у оставшейся
@@ -105,9 +111,8 @@ COMPLETENESS_TEXT_FIELDS = ["description", "description_44fz", "category"]
 
 
 def normalize_name(name: str) -> str:
-    """Обрезка пробелов по краям + схлопывание повторяющихся пробелов +
-    регистронезависимость. НИКАКОГО fuzzy — только это."""
-    return " ".join((name or "").split()).lower()
+    """Единая нормализация названия для дедупликации без цифр (ПРАВИЛО №6)."""
+    return normalize_name_for_dedup(name)
 
 
 def is_empty(value) -> bool:
@@ -254,6 +259,10 @@ def plan_backfill(keep_row: dict, remove_rows: list[dict]) -> dict:
     merged_chars = keep_row.get("characteristics") or []
     for rrow in remove_rows:
         merged_chars = merge_characteristics(merged_chars, rrow.get("characteristics") or [])
+    for row in [keep_row] + list(remove_rows):
+        desc = row.get("description")
+        if desc:
+            merged_chars = merge_characteristics(merged_chars, extract_characteristics_from_description(desc))
     if merged_chars and merged_chars != (keep_row.get("characteristics") or []):
         plan["characteristics"] = json.dumps(merged_chars, ensure_ascii=False)
     merged_links = keep_row.get("price_links") or []
@@ -351,6 +360,9 @@ async def run(apply_changes: bool, name_substr: str | None, limit: int | None) -
         fk_tables = await find_fk_tables_on_products(db)
         print(f"Таблицы с FK на products.id (information_schema): {fk_tables}")
 
+        protected_ids = await load_protected_product_ids(db)
+        print(f"Защищённых товаров (договоры/закупки/заявки): {len(protected_ids)}")
+
         groups = await find_duplicate_groups(db, name_substr)
         print(f"\nГрупп с точным совпадением имени после нормализации: {len(groups)}")
         if limit:
@@ -360,8 +372,12 @@ async def run(apply_changes: bool, name_substr: str | None, limit: int | None) -
         total_remove = 0
         total_moved: dict[str, int] = {}
         skipped_no_desc = 0
+        skipped_protected = 0
 
         for g in groups:
+            if any(pid in protected_ids for pid in g["ids"]):
+                skipped_protected += 1
+                continue
             ids = g["ids"]
             rows = await load_products(db, ids)
             decision = choose_keep(ids, rows)
@@ -405,6 +421,7 @@ async def run(apply_changes: bool, name_substr: str | None, limit: int | None) -
 
         print("\n" + "=" * 70)
         print(f"Групп к слиянию: {total_merge_groups} (записей на удаление: {total_remove})")
+        print(f"Групп пропущено (защищённый товар договора/закупки): {skipped_protected}")
         print(f"Групп пропущено (нет описания ни у кого): {skipped_no_desc}")
         print(f"Ссылок к переносу по таблицам: {total_moved}")
         if not apply_changes:

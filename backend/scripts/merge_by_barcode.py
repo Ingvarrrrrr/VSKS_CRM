@@ -48,6 +48,7 @@ from app.models.product_barcode import ProductBarcode
 from app.models.product_price_history import ProductPriceHistory
 from app.models.user import User
 from app.services.product_merge import merge_products
+from app.services.product_protection import load_protected_product_ids
 
 BATCH_SIZE = 200
 
@@ -137,9 +138,10 @@ async def _plan(db) -> list:
     if not barcode_groups:
         return []
 
+    protected_ids = await load_protected_product_ids(db)
     all_product_ids = set()
     for ids in barcode_groups.values():
-        all_product_ids.update(ids)
+        all_product_ids.update(pid for pid in ids if pid not in protected_ids)
     products_by_id, history_count_by_id, history_pairs_by_id = await _load_products_and_history(
         db, all_product_ids,
     )

@@ -56,6 +56,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.supplier import SupplierProduct
 from app.models.wish_item import WishItem
 from app.services.price_actualization import actualize_product_price
+from app.services.product_characteristics_parse import extract_characteristics_from_description
 from app.services.product_description_merge import merge_missing_lines
 from app.services.product_description_history import set_product_description
 from app.services.product_name_signature import merge_characteristics, merge_price_links
@@ -299,13 +300,18 @@ async def merge_products(
         if await _merge_description_field(db, winner, loser, "description_44fz", user):
             filled_fields.append(f"description_44fz (от №{loser_id})")
 
-        # --- характеристики (JSONB-список) — объединяем без потерь (winner + недостающие от loser) ---
-        if loser.characteristics:
-            merged_chars = merge_characteristics(winner.characteristics, loser.characteristics)
-            if merged_chars != (winner.characteristics or []):
-                winner.characteristics = merged_chars
-                flag_modified(winner, "characteristics")
-                filled_fields.append(f"characteristics (от №{loser_id})")
+        # --- характеристики (JSONB-список) — объединяем без потерь (winner + недостающие от loser + из description) ---
+        merged_chars = merge_characteristics(winner.characteristics, loser.characteristics)
+        desc_chars_winner = extract_characteristics_from_description(winner.description)
+        desc_chars_loser = extract_characteristics_from_description(loser.description)
+        if desc_chars_winner:
+            merged_chars = merge_characteristics(merged_chars, desc_chars_winner)
+        if desc_chars_loser:
+            merged_chars = merge_characteristics(merged_chars, desc_chars_loser)
+        if merged_chars != (winner.characteristics or []):
+            winner.characteristics = merged_chars
+            flag_modified(winner, "characteristics")
+            filled_fields.append(f"characteristics (от №{loser_id})")
 
         # --- простые скалярные поля ---
         for field in _FILL_SCALAR_FIELDS:

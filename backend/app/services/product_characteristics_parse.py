@@ -162,6 +162,30 @@ _COMPOUND_AXIS_PART_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Разделитель для инлайн-меток характеристик внутри одной строки описания без ';'
+_INLINE_DESC_LABEL_RE = re.compile(
+    r"(?<=\S)\s+(?=(?:Производитель|Изготовитель|Бренд|Модель|Марка|Тип|Вид\s+сложения|"
+    r"Материал|Масса|Вес|Длина|Ширина|Высота|Диаметр|Габариты|Цвет|Страна|"
+    r"Мощность|Напряжение|Объ[её]м|Рабочее\s+давление|Срок\s+службы|Гарантия)\s*:)",
+    flags=re.IGNORECASE,
+)
+
+# Заголовки текстовых разделов в начале строки описания
+_SECTION_HEADER_RE = re.compile(
+    r"^(?:общая\s+информация|технические\s+характеристики|характеристики|описание)\s*:?\s*",
+    flags=re.IGNORECASE,
+)
+
+# Стоп-множество текстовых рубрик и полей производителя для фильтрации ложных характеристик
+_DESC_CHAR_STOP_LABELS = frozenset({
+    "описание", "назначение", "применение", "область применения",
+    "общее описание", "общая информация", "технические характеристики",
+    "характеристики", "особенности", "преимущества", "примечание",
+    "внимание", "важно", "инструкция", "способ применения", "условия хранения",
+    "наименование", "название", "товар", "ссылка", "источник",
+    "производитель", "изготовитель", "бренд", "торговая марка",
+})
+
 # Мусорные/служебные названия характеристик, которые не должны храниться в карточке товара
 _JUNK_CHAR_NAMES_EXACT = frozenset({
     "магазин-источник", "категория каталога", "раздел", "подраздел",
@@ -443,3 +467,66 @@ def parse_pasted_characteristics(text: str) -> list:
             "unit": unit_part or unit_from_name,
         })
     return items
+
+
+def extract_characteristics_from_description(description: Optional[str]) -> list[dict]:
+    """Автоматическое извлечение структурированных характеристик из текста
+    description (пары через ';', с новой строки или инлайн 'Производитель: ... Модель: ...').
+    ПРАВИЛО №5 и ПРАВИЛО №6 — единая реализация извлечения характеристик из описания товара."""
+    if not description or not str(description).strip():
+        return []
+
+    text = str(description).strip()
+    if len(text) > MAX_TEXT_LENGTH:
+        text = text[:MAX_TEXT_LENGTH]
+
+    # Вставляем перенос строки перед известными метками с двоеточием внутри связной строки
+    text = _INLINE_DESC_LABEL_RE.sub("\n", text)
+    raw_lines = text.splitlines()
+
+    raw_items: list[dict] = []
+    for raw_line in raw_lines:
+        line = _SECTION_HEADER_RE.sub("", raw_line).strip()
+        if not line:
+            continue
+
+        if ";" in line:
+            parts = [p.strip().rstrip(";").strip() for p in line.split(";") if p.strip().rstrip(";").strip()]
+            pairs_count = sum(1 for p in parts if _split_line(_SECTION_HEADER_RE.sub("", p).strip()) is not None)
+            segments = parts if pairs_count >= 2 else [line.rstrip(";").strip()]
+        else:
+            segments = [line]
+
+        for seg in segments:
+            seg = _SECTION_HEADER_RE.sub("", seg).strip()
+            if not seg:
+                continue
+
+            parsed = _split_line(seg)
+            if not parsed:
+                continue
+
+            label, value = parsed
+            label_clean = (label or "").strip()
+            value_clean = (value or "").strip()
+            if not label_clean or not value_clean:
+                continue
+
+            label_norm = label_clean.lower().rstrip(":").strip()
+            if len(label_norm) < 2 or len(label_norm) > 55 or "http" in label_norm or "//" in label_norm:
+                continue
+
+            if label_norm in _DESC_CHAR_STOP_LABELS:
+                continue
+
+            if len(value_clean) > 120 or value_clean.endswith("…") or value_clean.endswith("..."):
+                continue
+
+            raw_items.append({
+                "name": label_clean,
+                "value": value_clean,
+                "unit": None,
+            })
+
+    return clean_characteristics_list(raw_items)
+

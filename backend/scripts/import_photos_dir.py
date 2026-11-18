@@ -38,8 +38,9 @@ def _iter_files(directory: str):
         yield int(stem), os.path.join(directory, fname)
 
 
-async def run(directory: str, overwrite: bool) -> int:
+async def run(directory: str, overwrite: bool, batch_size: int = 200) -> int:
     imported, skipped_no_product, skipped_has_photo, errors = 0, 0, 0, 0
+    pending = 0
     async with async_session() as db:
         for product_id, path in _iter_files(directory):
             product = await db.get(Product, product_id)
@@ -53,12 +54,18 @@ async def run(directory: str, overwrite: bool) -> int:
                 with open(path, "rb") as f:
                     raw = f.read()
                 await save_product_photo(db, product, raw)
-                await db.commit()
                 imported += 1
+                pending += 1
+                if pending >= batch_size:
+                    await db.commit()
+                    pending = 0
             except Exception as e:
                 await db.rollback()
+                pending = 0
                 print(f"  [!] id={product_id}: {e}")
                 errors += 1
+        if pending > 0:
+            await db.commit()
 
     print(f"Импортировано: {imported}")
     print(f"Пропущено (товар не найден): {skipped_no_product}")

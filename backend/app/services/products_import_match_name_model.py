@@ -182,6 +182,7 @@ async def load_name_model_candidates(
             "name": p.name, "manufacturer": p.manufacturer,
             "characteristics": p.characteristics or [],
             "product_type": p.product_type, "category": p.category,
+            "description": p.description,
         }, brand_dictionary=brand_dictionary)
         key = grouping_key(sig)
         if key is None:

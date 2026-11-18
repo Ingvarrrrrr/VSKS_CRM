@@ -43,6 +43,7 @@ from app.services.barcodes import normalize_barcode
 from app.services.catalog_gala.stores import store_for_inn
 from app.services.contractor_resolve import find_or_create_contractor
 from app.services.price_actualization import actualize_product_price, record_price_point
+from app.services.product_characteristics_parse import extract_characteristics_from_description
 from app.services.product_photo_autofetch import schedule_photo_fetch
 from app.services.product_unit import backfill_product_unit
 from app.services.product_description_merge import (
@@ -416,6 +417,7 @@ async def apply_products_import(
             "characteristics": _row_characteristics_raw(row, col_idx) or [],
             "product_type": _cell(row, col_idx, "product_type"),
             "category": _cell(row, col_idx, "category"),
+            "description": _cell(row, col_idx, "description"),
         }, brand_dictionary=brand_dictionary)
         if _sig.digit_tokens:
             file_name_signatures_by_key.setdefault(_sig.digit_tokens, []).append(_sig)
@@ -536,10 +538,15 @@ async def apply_products_import(
                 # обычный Excel-импорт не трогает эти поля вовсе.
                 row_manufacturer_for_match = _cell(row, col_idx, "manufacturer")
                 row_manufacturer_article_for_match = _cell(row, col_idx, "manufacturer_article")
+                _chars_idx = col_idx.get("characteristics")
+                if _chars_idx is not None and _chars_idx < len(row):
+                    characteristics_val = row[_chars_idx] or None
+                if desc_val:
+                    desc_chars = extract_characteristics_from_description(desc_val)
+                    if desc_chars:
+                        characteristics_val = merge_characteristics(characteristics_val, desc_chars)
+
                 if supplier_description:
-                    _chars_idx = col_idx.get("characteristics")
-                    if _chars_idx is not None and _chars_idx < len(row):
-                        characteristics_val = row[_chars_idx] or None
                     manufacturer_val = row_manufacturer_for_match
                     manufacturer_article_val = row_manufacturer_article_for_match
                     country_origin_val = _cell(row, col_idx, "country_origin")
@@ -634,6 +641,7 @@ async def apply_products_import(
                     "characteristics": _row_characteristics_raw(row, col_idx) or [],
                     "product_type": _cell(row, col_idx, "product_type"),
                     "category": _cell(row, col_idx, "category"),
+                    "description": _cell(row, col_idx, "description"),
                 }, brand_dictionary=brand_dictionary)
 
                 match = match_index.find(
@@ -765,6 +773,13 @@ async def apply_products_import(
                             desc_val = build_tech_description(ep.characteristics, _cell(row, col_idx, "description"))
                         _fill("manufacturer", manufacturer_val)
                         _fill("article", manufacturer_article_val)
+                    else:
+                        if characteristics_val:
+                            merged_chars = merge_characteristics(ep.characteristics, characteristics_val)
+                            if merged_chars != (ep.characteristics or []):
+                                ep.characteristics = merged_chars
+                                flag_modified(ep, "characteristics")
+                                changed = True
                         # "Страна производства" (Задача baucenter, 2026-10-26)
                         # — заполняем, только если у товара её нет или стоит
                         # дефолт "РФ" (не считаем это осмысленно заполненным

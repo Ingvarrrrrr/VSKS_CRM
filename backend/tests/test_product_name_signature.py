@@ -1,7 +1,9 @@
 """Тесты правила «тот же товар» (владелец, 27.10.2026) —
 app.services.product_name_signature. SECRET_KEY для импорта app.* берётся
 из tests/conftest.py (ПРАВИЛО №6, второй фиктивный ключ здесь не завести)."""
-from app.services.product_name_signature import build_signature, match
+from app.services.product_name_signature import (
+    build_signature, match, normalize_name_for_dedup,
+)
 
 
 def _sig(name, manufacturer=None, characteristics=None, brand_dictionary=None):
@@ -811,4 +813,117 @@ def test_size_or_preposition_in_manufacturer_rejected_as_brand():
     assert sig_xl.brand is None
     assert sig_a4.brand is None
     assert sig_prep.brand is None
+
+
+def test_medplant_seven_tourniquet_positions_collapse_into_two_models():
+    """7 реальных позиций жгутов ЖК схлопываются строго в 2 модели (ЖК-02 и ЖК-01),
+    а между разными моделями дают decision == 'no'."""
+    pos1 = {"name": "Жгут кровоостанавливающий ЖК-02-«Медплант»"}
+    pos2 = {"name": "Жгут кровоостанавливающий ЖК-02-Медплант"}
+    pos3 = {"name": "Жгут кровоостанавливающий ЖК-01-Медплант"}
+    pos4 = {"name": "Жгут кровоостанавливающий ЖК-02", "description": "Производитель: ООО «Медплант», Россия"}
+    pos5 = {"name": "Жгут кровоостанавливающий ЖК-Медплант (вид сложения 1)"}
+    pos6 = {"name": "Жгут кровоостанавливающий ЖК-Медплант (вид сложения 1)", "description": "Производитель: Медплант; Модель: ЖК-01"}
+    pos7 = {"name": "Жгут кровоостанавливающий ЖК-Медплант (вид сложения 1), Россия", "description": "Модель: ЖК-01", "manufacturer": "Медплант"}
+
+    sig1 = build_signature(pos1)
+    sig2 = build_signature(pos2)
+    sig3 = build_signature(pos3)
+    sig4 = build_signature(pos4)
+    sig5 = build_signature(pos5)
+    sig6 = build_signature(pos6)
+    sig7 = build_signature(pos7)
+
+    # Позиции №1, №2, №4 (ЖК-02)
+    for sig in (sig1, sig2, sig4):
+        assert sig.product_type == "жгут"
+        assert sig.brand_fold == "медплант"
+        assert sig.model_code_tokens == frozenset({"жк02"})
+
+    # Попарно дают match() == "auto"
+    assert match(sig1, sig2)["decision"] == "auto"
+    assert match(sig1, sig4)["decision"] == "auto"
+    assert match(sig2, sig4)["decision"] == "auto"
+
+    # Позиции №3, №6, №7 (ЖК-01)
+    for sig in (sig3, sig6, sig7):
+        assert sig.product_type == "жгут"
+        assert sig.brand_fold == "медплант"
+        assert sig.model_code_tokens == frozenset({"жк01"})
+
+    # Попарно дают match() == "auto"
+    assert match(sig3, sig6)["decision"] == "auto"
+    assert match(sig3, sig7)["decision"] == "auto"
+    assert match(sig6, sig7)["decision"] == "auto"
+
+    # Между любой карточкой ЖК-01 и любой карточкой ЖК-02 match() возвращает decision == "no"
+    for s_02 in (sig1, sig2, sig4):
+        for s_01 in (sig3, sig6, sig7):
+            res = match(s_02, s_01)
+            assert res["decision"] == "no"
+
+    # Позиция №5 имеет одинаковый normalize_name_for_dedup с №6 и №7
+    norm5 = normalize_name_for_dedup(pos5["name"])
+    norm6 = normalize_name_for_dedup(pos6["name"])
+    norm7 = normalize_name_for_dedup(pos7["name"])
+    assert norm5 == norm6 == norm7
+
+
+def test_with_vs_without_modifier_conflict():
+    a = build_signature({"name": "Тонометр механический ТМ-1 с фонендоскопом", "manufacturer": "Адъютор"})
+    b = build_signature({"name": "Тонометр механический ТМ-1 без фонендоскопа", "manufacturer": "Адъютор"})
+    res = match(a, b)
+    assert res["decision"] == "no"
+    assert "комплектация" in res["reason"]
+    assert "фонендоскоп" in res["reason"]
+
+
+def test_extract_characteristics_from_description_and_merge():
+    from app.services.product_characteristics_parse import extract_characteristics_from_description
+    from app.services.product_name_signature import merge_characteristics
+
+    # 1. Проверить разбор описания с ';'
+    desc_semicolon = (
+        "Тип: жгут кровоостанавливающий; "
+        "Модель: ЖК-01-Медплант, с циферблатом для фиксации времени; "
+        "Вид сложения: 1; "
+        "Масса (не более): 0,15 кг"
+    )
+    chars1 = extract_characteristics_from_description(desc_semicolon)
+    by_name1 = {c["name"]: c for c in chars1}
+    assert "Тип" in by_name1
+    assert by_name1["Тип"]["value"] == "жгут кровоостанавливающий"
+    assert "Модель" in by_name1
+    assert by_name1["Модель"]["value"] == "ЖК-01-Медплант, с циферблатом для фиксации времени"
+    assert "Вид сложения" in by_name1
+    assert by_name1["Вид сложения"]["value"] == "1"
+    assert "Масса" in by_name1
+    assert by_name1["Масса"]["value"] == "0,15"
+    assert by_name1["Масса"]["unit"] == "кг"
+
+    # 2. Проверить разбор инлайн-описания
+    desc_inline = "Общая информация Производитель: ЗАО «Медплант» (Россия) Модель: ЖК-01 «Медплант»"
+    chars2 = extract_characteristics_from_description(desc_inline)
+    by_name2 = {c["name"]: c for c in chars2}
+    assert "Модель" in by_name2
+    assert by_name2["Модель"]["value"] == "ЖК-01 «Медплант»"
+    assert "Производитель" not in by_name2
+    assert "Общая информация" not in by_name2
+
+    # 3. Проверить, что обычный связный текст НЕ превращается в ложную характеристику "Описание"
+    desc_prose = "Описание: Жгут – турникет кровоостанавливающий для остановки массированных артериальных кровотечений…"
+    chars3 = extract_characteristics_from_description(desc_prose)
+    by_name3 = {c["name"]: c for c in chars3}
+    assert "Описание" not in by_name3
+    assert len(chars3) == 0
+
+    # 4. Проверить слияние с существующими явными характеристиками через merge_characteristics
+    existing = [{"name": "Цвет", "value": "Черный", "unit": None}]
+    merged = merge_characteristics(existing, chars1)
+    by_name_merged = {c["name"]: c for c in merged}
+    assert "Цвет" in by_name_merged
+    assert "Тип" in by_name_merged
+    assert "Модель" in by_name_merged
+
+
 

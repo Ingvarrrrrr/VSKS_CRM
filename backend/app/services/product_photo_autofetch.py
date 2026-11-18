@@ -21,6 +21,7 @@ pick_external_url (product_photo_download.py) и has_photo
 должна ронять ничего, кроме себя)."""
 import asyncio
 import logging
+import os
 from typing import Iterable
 
 from app.database import async_session
@@ -47,6 +48,8 @@ def schedule_photo_fetch(db, product_ids: Iterable[int]) -> None:
     Вызывающая сторона НЕ обязана сама проверять photo_url/has_photo перед
     вызовом — дёшево позвать для любого набора id после commit (создание/
     правка товара, импорт, взять из живого поиска)."""
+    if os.getenv("VSKS_SKIP_PHOTO_AUTOFETCH") == "1":
+        return
     ids = [pid for pid in dict.fromkeys(product_ids) if pid]
     if not ids:
         return

@@ -15,7 +15,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 export async function refreshMyPendingApprovals() {
   if (!isLoggedIn()) return
   try {
-    const data = await apiFetch<{ total: number }>('/approvals/my-pending/count')
+    const data = await apiFetch<{ total: number }>('/approvals/my-pending/count', { background: true })
     myPendingApprovalsCount.value = data.total ?? 0
   } catch (e: any) {
     // Не роняем бейдж/поллинг из-за одной неудачной попытки — просто оставляем

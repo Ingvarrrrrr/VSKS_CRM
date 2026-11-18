@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/auth'
 import { useToast } from '../composables/useToast'
 import { consentGateRequired, ensureConsentGateLoaded } from '../composables/useConsentGate'
 import { isLoggedIn } from '../composables/useAuthFlag'
+import { beginRouteNavigation, finishRouteNavigation } from '../composables/useLongWait'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -593,12 +594,20 @@ router.beforeEach(async (to, _, next) => {
 
   // Публичные маршруты доступны без токена
   if (PUBLIC_PATHS.includes(to.path) || to.meta.public) {
+    finishRouteNavigation(to.path)
     return next()
   }
 
   // Не авторизован + закрытый маршрут → лендинг
   if (!isAuthenticated) {
+    finishRouteNavigation('/')
     return next('/')
+  }
+
+  if (to.path !== '/consent-required') {
+    beginRouteNavigation(to.path)
+  } else {
+    finishRouteNavigation(to.path)
   }
 
   // 152-ФЗ: гейт согласия после входа — ДО tab_key-проверки ниже и ДО
@@ -654,6 +663,14 @@ router.beforeEach(async (to, _, next) => {
   }
 
   next()
+})
+
+router.afterEach((to) => {
+  finishRouteNavigation(to.path)
+})
+
+router.onError(() => {
+  finishRouteNavigation()
 })
 
 export default router

@@ -318,9 +318,9 @@ function approvalKindLabel(kind: string) { return APPROVAL_KIND_META[kind]?.labe
 function approvalKindColor(kind: string) { return APPROVAL_KIND_META[kind]?.color || 'grey' }
 function formatApprovalAmount(amount: number) { return amount.toLocaleString('ru-RU') + ' ₽' }
 
-async function loadPendingApprovals() {
+async function loadPendingApprovals(background = false) {
   try {
-    pendingApprovals.value = await apiFetch<any[]>('/approvals/my-pending')
+    pendingApprovals.value = await apiFetch<any[]>('/approvals/my-pending', { background })
   } catch (e: any) {
     console.error('Load pending approvals error:', e?.payload?.message || e?.message)
   }
@@ -743,13 +743,13 @@ async function load() {
 async function pollTasks() {
   try {
     const [myTasks, pending, declines] = await Promise.all([
-      apiFetch<any[]>('/tasks/my'),
-      apiFetch<any[]>('/tasks/pending-consent').catch(() => [] as any[]),
-      apiFetch<any[]>('/tasks/consent-declines').catch(() => [] as any[]),
+      apiFetch<any[]>('/tasks/my', { background: true }),
+      apiFetch<any[]>('/tasks/pending-consent', { background: true }).catch(() => [] as any[]),
+      apiFetch<any[]>('/tasks/consent-declines', { background: true }).catch(() => [] as any[]),
     ])
     generalTasks.value = myTasks
     pendingConsentTasks.value = pending
-    await loadPendingApprovals()
+    await loadPendingApprovals(true)
     consentDeclines.value = declines
   } catch { /* silent */ }
 }

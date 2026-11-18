@@ -1,0 +1,453 @@
+.gala-swarm-overlay {
+  position: fixed;
+  overflow: hidden;
+  pointer-events: auto;
+  user-select: none;
+  background-color: #f5f3ef;
+  background-image:
+    linear-gradient(to right, rgba(90, 84, 72, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(90, 84, 72, 0.06) 1px, transparent 1px);
+  background-size: 24px 24px;
+  transition: opacity 0.2s ease;
+}
+
+.gala-swarm-overlay--dark {
+  background-color: #0f0e0c;
+  background-image:
+    linear-gradient(to right, rgba(240, 236, 228, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(240, 236, 228, 0.05) 1px, transparent 1px);
+}
+
+.gala-swarm-overlay--completing {
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.22s ease 0.04s;
+}
+
+.gala-swarm-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* Figma-style пиксельные линейки */
+.gala-swarm-ruler-top,
+.gala-swarm-ruler-left {
+  position: absolute;
+  pointer-events: none;
+  z-index: 4;
+  background: rgba(255, 255, 255, 0.72);
+  color: #78716c;
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-ruler-top,
+.gala-swarm-overlay--dark .gala-swarm-ruler-left {
+  background: rgba(28, 25, 22, 0.78);
+  color: #a8a29e;
+}
+
+.gala-swarm-ruler-top {
+  top: 0;
+  left: 22px;
+  right: 0;
+  height: 20px;
+  border-bottom: 1px solid rgba(90, 84, 72, 0.16);
+}
+
+.gala-swarm-ruler-left {
+  top: 20px;
+  left: 0;
+  bottom: 0;
+  width: 22px;
+  border-right: 1px solid rgba(90, 84, 72, 0.16);
+}
+
+.gala-swarm-tick-x {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  background: rgba(90, 84, 72, 0.28);
+}
+
+.gala-swarm-tick-y {
+  position: absolute;
+  right: 0;
+  height: 1px;
+  background: rgba(90, 84, 72, 0.28);
+}
+
+.gala-swarm-tick-lbl {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  white-space: nowrap;
+}
+
+.gala-swarm-tick-lbl--y {
+  top: 2px;
+  left: 2px;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+/* Направляющие с координатами */
+.gala-swarm-guide-x,
+.gala-swarm-guide-y {
+  position: absolute;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.gala-swarm-guide-x {
+  left: 22px;
+  right: 0;
+  height: 1px;
+  border-top: 1px dashed rgba(194, 98, 10, 0.55);
+}
+
+.gala-swarm-guide-y {
+  top: 20px;
+  bottom: 0;
+  width: 1px;
+  border-left: 1px dashed rgba(194, 98, 10, 0.55);
+}
+
+.gala-swarm-guide-pill {
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  background: #c2620a;
+  color: #fff;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-guide-pill {
+  background: #fb923c;
+  color: #0f0e0c;
+}
+
+/* SVG слой векторов клонирования ⌥ */
+.gala-swarm-vectors {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 7;
+}
+
+.gala-swarm-dup-tag {
+  position: absolute;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  background: rgba(37, 99, 235, 0.9);
+  color: #fff;
+  pointer-events: none;
+  z-index: 8;
+}
+
+/* Элементы чертежа */
+.gala-swarm-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  font-family: var(--font-ui, 'Inter Tight', sans-serif);
+  color: #1c1916;
+  transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.2s ease;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-item {
+  color: #f1f5f9;
+}
+
+.gala-swarm-item--draft {
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px dashed rgba(194, 98, 10, 0.65);
+}
+
+.gala-swarm-overlay--dark .gala-swarm-item--draft {
+  background: rgba(28, 25, 22, 0.55);
+  border-color: rgba(251, 146, 60, 0.65);
+}
+
+.gala-swarm-item--snapped {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(90, 84, 72, 0.16);
+  box-shadow: 0 1px 4px rgba(28, 25, 22, 0.04);
+}
+
+.gala-swarm-overlay--dark .gala-swarm-item--snapped {
+  background: rgba(28, 25, 22, 0.95);
+  border-color: rgba(240, 236, 228, 0.12);
+}
+
+.gala-swarm-item--heading.gala-swarm-item--snapped {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.gala-swarm-item--btn-primary.gala-swarm-item--snapped {
+  background: #c2620a;
+  border-color: #c2620a;
+  color: #ffffff;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-item--btn-primary.gala-swarm-item--snapped {
+  background: #fb923c;
+  border-color: #fb923c;
+  color: #0f0e0c;
+}
+
+.gala-swarm-item--chip.gala-swarm-item--accent.gala-swarm-item--snapped,
+.gala-swarm-item--step.gala-swarm-item--accent.gala-swarm-item--snapped {
+  background: rgba(194, 98, 10, 0.12);
+  border-color: rgba(194, 98, 10, 0.45);
+  color: #c2620a;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-item--chip.gala-swarm-item--accent.gala-swarm-item--snapped,
+.gala-swarm-overlay--dark .gala-swarm-item--step.gala-swarm-item--accent.gala-swarm-item--snapped {
+  background: rgba(251, 146, 60, 0.15);
+  border-color: rgba(251, 146, 60, 0.45);
+  color: #fb923c;
+}
+
+.gala-swarm-item--divider {
+  border: none !important;
+  background: rgba(90, 84, 72, 0.22) !important;
+  box-shadow: none !important;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-item--divider {
+  background: rgba(240, 236, 228, 0.2) !important;
+}
+
+/* 4 угловых маркера выделения (Figma handles) */
+.gala-swarm-handle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: #ffffff;
+  border: 1.5px solid #c2620a;
+  z-index: 3;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-handle {
+  background: #0f0e0c;
+  border-color: #fb923c;
+}
+
+.gala-swarm-handle--tl { top: -3px; left: -3px; }
+.gala-swarm-handle--tr { top: -3px; right: -3px; }
+.gala-swarm-handle--bl { bottom: -3px; left: -3px; }
+.gala-swarm-handle--br { bottom: -3px; right: -3px; }
+
+.gala-swarm-size-tag {
+  position: absolute;
+  right: 4px;
+  bottom: -16px;
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #c2620a;
+  color: #fff;
+  white-space: nowrap;
+  z-index: 4;
+}
+
+/* Содержимое примитивов */
+.gala-swarm-inner {
+  width: 100%;
+  height: 100%;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.gala-swarm-inner--col {
+  padding: 10px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+.gala-swarm-heading-txt {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.gala-swarm-kpi-val {
+  font-family: var(--font-mono, monospace);
+  font-size: 17px;
+  font-weight: 700;
+  color: #c2620a;
+  margin-top: auto;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-kpi-val {
+  color: #fb923c;
+}
+
+.gala-swarm-cells {
+  display: grid;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.gala-swarm-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.gala-swarm-caret {
+  display: inline-block;
+  width: 2px;
+  height: 13px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: #c2620a;
+  animation: gala-caret-blink 0.65s steps(2) infinite;
+}
+
+/* Курсоры GALA + бейдж активного инструмента */
+.gala-swarm-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 16;
+  pointer-events: none;
+  will-change: transform, opacity;
+  transition: opacity 0.16s ease;
+}
+
+.gala-swarm-cursor--vanishing {
+  opacity: 0 !important;
+  transition: opacity 0.15s ease, transform 0.15s ease !important;
+}
+
+.gala-swarm-cursor-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 11px;
+  margin-top: -4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-family: var(--font-ui, 'Inter Tight', sans-serif);
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffffff;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
+}
+
+.gala-swarm-tool-mark {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+/* Плашка статуса внизу слева */
+.gala-swarm-status-pill {
+  position: absolute;
+  left: 30px;
+  bottom: 14px;
+  z-index: 18;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(90, 84, 72, 0.22);
+  box-shadow: 0 4px 16px rgba(28, 25, 22, 0.12);
+  font-family: var(--font-ui, 'Inter Tight', sans-serif);
+  font-size: 12px;
+  color: #1c1916;
+  backdrop-filter: blur(6px);
+}
+
+.gala-swarm-overlay--dark .gala-swarm-status-pill {
+  background: rgba(28, 25, 22, 0.94);
+  border-color: rgba(240, 236, 228, 0.18);
+  color: #f1f5f9;
+}
+
+@media (max-width: 959.98px) {
+  .gala-swarm-status-pill {
+    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+    left: 12px;
+    max-width: calc(100% - 24px);
+  }
+}
+
+.gala-swarm-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c2620a;
+  animation: gala-swarm-dot 1.1s ease-in-out infinite;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-pulse { background: #fb923c; }
+
+.gala-swarm-pill-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  opacity: 0.8;
+}
+
+.gala-swarm-pill-btn:hover { opacity: 1; background: rgba(194, 98, 10, 0.12); }
+
+.gala-swarm-boot-brand {
+  position: absolute;
+  top: 26px;
+  left: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 10;
+  color: #c2620a;
+}
+
+.gala-swarm-overlay--dark .gala-swarm-boot-brand { color: #fb923c; }
+
+@keyframes gala-caret-blink { 50% { opacity: 0; } }
+@keyframes gala-swarm-dot {
+  0%, 100% { transform: scale(0.85); opacity: 0.6; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gala-swarm-cursor { display: none; }
+  .gala-swarm-caret { animation: none; }
+}

@@ -59,6 +59,8 @@ export interface ApiFetchOptions extends RequestInit {
   timeoutMs?: number
   /** Формат ответа ('blob' для скачивания .docx/.xlsx через apiFetch — напр. protocol.docx). */
   responseType?: 'json' | 'text' | 'blob'
+  /** Фоновый опрос (поллинг бейджей, трекинг, live-sync): не поднимает индикатор загрузки и экран сборки. */
+  background?: boolean
 }
 
 // Сетевая ошибка (сервер недоступен/DNS/CORS/обрыв соединения — браузерный
@@ -137,8 +139,11 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   const body = options.body && typeof options.body === 'object' && !(options.body instanceof FormData)
     ? JSON.stringify(options.body)
     : options.body
-  _inflight += 1
-  emitLoading()
+  const trackLoading = !options.background
+  if (trackLoading) {
+    _inflight += 1
+    emitLoading()
+  }
   // Внешний AbortController поверх пользовательского options.signal: signal
   // передаёт useProductSearch.ts (отмена устаревшего поиска при вводе) — отмена
   // вызывающего не должна читаться как таймаут (см. catch ниже).
@@ -309,8 +314,10 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   }
   } finally {
     clearTimeout(timeoutId)
-    _inflight -= 1
-    emitLoading()
+    if (trackLoading) {
+      _inflight -= 1
+      emitLoading()
+    }
   }
 }
 

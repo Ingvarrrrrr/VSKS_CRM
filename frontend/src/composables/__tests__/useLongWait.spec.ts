@@ -10,9 +10,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.stubGlobal('window', new EventTarget())
 import {
   __resetLongWaitStateForTests,
+  beginRouteNavigation,
+  dismissSwarm,
   ensureLongWaitListener,
+  finishRouteNavigation,
   isBusy,
+  isGameOpen,
   isLongWait,
+  isSwarmCompleting,
+  isSwarmVisible,
+  markKeepAliveRefresh,
+  setSwarmBooting,
+  setSwarmGameOpen,
+  swarmTargetPath,
 } from '../useLongWait'
 
 function emitApiLoading(count: number) {
@@ -92,5 +102,50 @@ describe('useLongWait', () => {
     expect(isLongWait.value).toBe(false)
     vi.advanceTimersByTime(200) // 2000мс от нового старта
     expect(isLongWait.value).toBe(true)
+  })
+
+  it('Swarm Rebuild: включается через 550мс, завершается мягко (completing -> скрыт)', () => {
+    beginRouteNavigation('/subsidies')
+    expect(swarmTargetPath.value).toBe('/subsidies')
+    vi.advanceTimersByTime(549)
+    expect(isSwarmVisible.value).toBe(false)
+
+    vi.advanceTimersByTime(1)
+    expect(isSwarmVisible.value).toBe(true)
+    expect(isSwarmCompleting.value).toBe(false)
+
+    finishRouteNavigation('/subsidies')
+    // После паузы settle (180мс) включается completing (220мс), затем исчезает
+    vi.advanceTimersByTime(179)
+    expect(isSwarmCompleting.value).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(isSwarmCompleting.value).toBe(true)
+    expect(isSwarmVisible.value).toBe(true)
+
+    vi.advanceTimersByTime(220)
+    expect(isSwarmCompleting.value).toBe(false)
+    expect(isSwarmVisible.value).toBe(false)
+  })
+
+  it('keep-alive возврат (markKeepAliveRefresh) подавляет оверлей для тихого фонового обновления', () => {
+    markKeepAliveRefresh()
+    emitApiLoading(1)
+    vi.advanceTimersByTime(1000)
+    expect(isSwarmVisible.value).toBe(false)
+    emitApiLoading(0)
+  })
+
+  it('dismissSwarm (Esc) мгновенно скрывает рой для текущей серии, а игра ставит его на паузу', () => {
+    setSwarmBooting(true)
+    vi.advanceTimersByTime(550)
+    expect(isSwarmVisible.value).toBe(true)
+
+    setSwarmGameOpen(true)
+    expect(isGameOpen.value).toBe(true)
+    setSwarmGameOpen(false)
+
+    dismissSwarm()
+    expect(isSwarmVisible.value).toBe(false)
+    setSwarmBooting(false)
   })
 })

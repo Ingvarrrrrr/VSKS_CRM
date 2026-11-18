@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import vuetify from './plugins/vuetify'
 import './styles/gala.css'
+import './styles/app-global.css'
 import { createPinia } from 'pinia'
 import router from './router'
 import { vResizableColumns } from './directives/resizable-columns'
@@ -10,6 +11,16 @@ import { initSwUpdate, initChunkLoadRecovery } from './composables/useSwUpdate'
 import VDialogWithClose from './components/global/VDialogWithClose.vue'
 import { migrateLegacyToken } from './composables/useLegacyTokenMigration'
 import { initLastUserAction } from './utils/lastUserAction'
+import { isLoggedIn } from './composables/useAuthFlag'
+import { ensureLongWaitListener, setSwarmBooting } from './composables/useLongWait'
+
+ensureLongWaitListener()
+if (isLoggedIn()) {
+  const pubPaths = ['/', '/login', '/register', '/verify-email', '/reset-password', '/consent-required']
+  if (!pubPaths.includes(window.location.pathname) || window.location.pathname === '/') {
+    setSwarmBooting(true)
+  }
+}
 
 // Трекер «последнее действие пользователя» — для ApiErrorDialog.vue (строка
 // «Произошло после: …» под JS-ошибкой). Один раз на всё приложение, до

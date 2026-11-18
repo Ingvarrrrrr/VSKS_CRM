@@ -8,6 +8,7 @@
 // при каждом возврате из кэша. Первый вызов дублировал бы то, что страница
 // уже сделала в своём onMounted — пропускаем его явно.
 import { onActivated, onDeactivated } from 'vue'
+import { markKeepAliveRefresh } from './useLongWait'
 
 export interface UsePageCacheOptions {
   // Фоновое "тихое" обновление данных при возврате на страницу. Страница
@@ -32,6 +33,7 @@ export function usePageCache(options: UsePageCacheOptions) {
       return
     }
     options.onReturn?.()
+    markKeepAliveRefresh()
     void options.refresh()
   })
 

@@ -6,6 +6,7 @@
 // (handleFeoUndoKeydown, см. SubsidiesView.vue onMounted) — хоткей не должен
 // срабатывать, пока человек смотрит Закупки/Сводную/т.д.
 import { onActivated, onDeactivated } from 'vue'
+import { markKeepAliveRefresh } from './useLongWait'
 
 export interface UseSubsidiesPageCacheOptions {
   // Тихое обновление списка субсидий + дерева ФЭО выбранной субсидии.
@@ -27,6 +28,7 @@ export function useSubsidiesPageCache(options: UseSubsidiesPageCacheOptions) {
       return
     }
     window.addEventListener('keydown', options.keydownHandler)
+    markKeepAliveRefresh()
     void options.refresh()
   })
 

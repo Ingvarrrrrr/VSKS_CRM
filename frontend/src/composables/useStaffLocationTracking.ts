@@ -153,6 +153,7 @@ export async function flushQueue() {
           method: 'POST',
           body: { points: slice.map(({ id: _id, ...rest }) => rest) },
           suppressErrorDialog: true,
+          background: true,
         })
         await removeQueued(QUEUE_STORE, slice.map(s => s.id))
         lastSentAt.value = new Date()

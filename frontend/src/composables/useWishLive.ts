@@ -136,8 +136,8 @@ export function useWishLive<A extends WishLiveApprover, W extends WishLiveHeader
     const versionAtStart = localVersion
     try {
       const [freshApprovers, freshWish] = await Promise.all([
-        apiFetch<A[]>(`/wishes/${wid}/approvers`),
-        apiFetch<W>(`/wishes/${wid}`),
+        apiFetch<A[]>(`/wishes/${wid}/approvers`, { background: true }),
+        apiFetch<W>(`/wishes/${wid}`, { background: true }),
       ])
       // Пока запрос летел, диалог могли закрыть или открыть другую заявку —
       // применять устаревший ответ к текущему состоянию нельзя.

@@ -23,9 +23,9 @@
 // источник этого признака, ПРАВИЛО №6) и только внутри приложения
 // (не на публичных страницах входа/регистрации/лендинге — тот же список
 // PUBLIC_ROUTES, что уже использует App.vue для AppBar/showAppBar).
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ensureLongWaitListener, isLongWait } from '../../composables/useLongWait'
+import { ensureLongWaitListener, isLongWait, isSwarmPreview, setSwarmGameOpen } from '../../composables/useLongWait'
 import DuckShootWindow from './DuckShootWindow.vue'
 
 const PUBLIC_ROUTES = ['/', '/login', '/register', '/verify-email', '/reset-password', '/consent-required']
@@ -33,8 +33,12 @@ const PUBLIC_ROUTES = ['/', '/login', '/register', '/verify-email', '/reset-pass
 const route = useRoute()
 const gameOpen = ref(false)
 
+watch(gameOpen, (open) => {
+  setSwarmGameOpen(open)
+})
+
 const showButton = computed(() =>
-  isLongWait.value && !gameOpen.value && !PUBLIC_ROUTES.includes(route.path)
+  isLongWait.value && !gameOpen.value && (isSwarmPreview.value || !PUBLIC_ROUTES.includes(route.path))
 )
 
 function openGame() {

@@ -4,6 +4,9 @@ import hashlib
 import zipfile
 import re
 import mimetypes
+
+mimetypes.add_type("image/tiff", ".jtif")
+mimetypes.add_type("image/jpeg", ".jfif")
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
@@ -40,6 +43,11 @@ ALLOWED_MIME = {
     # тоже может прикрепляться как файл, если парсинг не удался.
     "text/html",
     "image/tiff",
+    "image/x-tiff",
+    "image/jtif",
+    "image/jfif",
+    "image/pjpeg",
+    "image/webp",
     "image/heic",
 }
 
@@ -52,6 +60,13 @@ FORMAT_RULES = {
         "image/jpeg",
         "image/jpg",
         "image/png",
+        "image/tiff",
+        "image/x-tiff",
+        "image/jtif",
+        "image/jfif",
+        "image/pjpeg",
+        "image/webp",
+        "image/heic",
     },
     "editable": {
         "application/msword",
@@ -190,8 +205,25 @@ async def upload_file(
 
     await _check_upload_permission(pid, current_user, db)
 
-    if file.content_type not in ALLOWED_MIME:
-        raise HTTPException(400, f"Недопустимый тип файла: {file.content_type}")
+    filename_lower = (file.filename or "").lower()
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if filename_lower.endswith((".tif", ".tiff", ".jtif")):
+        if content_type in ("", "application/octet-stream", "image/jtif", "image/x-tiff"):
+            content_type = "image/tiff"
+    elif filename_lower.endswith((".jpg", ".jpeg", ".jfif")):
+        if content_type in ("", "application/octet-stream", "image/jfif", "image/pjpeg"):
+            content_type = "image/jpeg"
+    elif filename_lower.endswith(".png") and content_type in ("", "application/octet-stream"):
+        content_type = "image/png"
+    elif filename_lower.endswith(".pdf") and content_type in ("", "application/octet-stream"):
+        content_type = "application/pdf"
+    elif filename_lower.endswith(".webp") and content_type in ("", "application/octet-stream"):
+        content_type = "image/webp"
+    elif filename_lower.endswith((".heic", ".heif")) and content_type in ("", "application/octet-stream"):
+        content_type = "image/heic"
+
+    if content_type not in ALLOWED_MIME:
+        raise HTTPException(400, f"Недопустимый тип файла: {content_type}")
 
     if file_type not in FILE_TYPES:
         file_type = "other"
@@ -202,7 +234,7 @@ async def upload_file(
     # ALLOWED_MIME format — see FORMAT_RULE_EXEMPT_TYPES)
     if file_type not in FORMAT_RULE_EXEMPT_TYPES:
         allowed_for_format = FORMAT_RULES.get(doc_format)
-        if allowed_for_format and file.content_type not in allowed_for_format:
+        if allowed_for_format and content_type not in allowed_for_format:
             if doc_format == "scan":
                 raise HTTPException(400, "Скан-копии: допускаются только JPEG, PNG, PDF. Редактируемые файлы (Word, Excel) нельзя загружать как скан.")
             else:
@@ -310,7 +342,7 @@ async def upload_file(
         filename=file.filename,
         original_name=file.filename,
         filepath=dest_path,
-        mime_type=file.content_type,
+        mime_type=content_type,
         size=size,
         file_type=file_type,
         doc_format=doc_format,
@@ -366,6 +398,16 @@ async def _store_purchase_file(
             fh.write(data)
 
     mime_type, _ = mimetypes.guess_type(filename)
+    if not mime_type or mime_type == "application/octet-stream":
+        fn_lower = (filename or "").lower()
+        if fn_lower.endswith((".tif", ".tiff", ".jtif")):
+            mime_type = "image/tiff"
+        elif fn_lower.endswith((".jpg", ".jpeg", ".jfif")):
+            mime_type = "image/jpeg"
+        elif fn_lower.endswith(".webp"):
+            mime_type = "image/webp"
+        elif fn_lower.endswith((".heic", ".heif")):
+            mime_type = "image/heic"
     mime_type = mime_type or "application/octet-stream"
 
     pf = PurchaseFile(
@@ -414,7 +456,7 @@ def _infer_file_type(name: str) -> str:
 def _infer_doc_format(name: str) -> str:
     """Determine doc_format from file extension."""
     ext = os.path.splitext(name)[1].lower().lstrip(".")
-    if ext in {"pdf", "jpg", "jpeg", "png", "tif", "tiff", "heic"}:
+    if ext in {"pdf", "jpg", "jpeg", "png", "tif", "tiff", "jtif", "jfif", "webp", "heic", "heif"}:
         return "scan"
     if ext in {"docx", "xlsx", "doc", "xls"}:
         return "editable"

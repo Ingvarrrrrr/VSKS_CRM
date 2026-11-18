@@ -97,7 +97,7 @@
           />
           <FileDropZone
             v-model="otherFile"
-            accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx"
+            accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx,.tif,.tiff,.jtif,.jfif"
             hint="PDF, JPG, PNG, DOCX до 25 МБ"
           />
           <div v-if="otherUploadError" class="mt-2">

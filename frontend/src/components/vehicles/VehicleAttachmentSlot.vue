@@ -192,7 +192,7 @@ const emit = defineEmits<{
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ALLOWED_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx'
+const ALLOWED_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx,.tif,.tiff,.jtif,.jfif'
 
 // ── State ─────────────────────────────────────────────────────────────────────
 

@@ -143,7 +143,7 @@
             </div>
           </v-alert>
           <FileDropZone v-model="state.smartImportFile"
-            accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm,.jpg,.jpeg,.png,.webp,.heic"
+            accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm,.jpg,.jpeg,.png,.webp,.heic,.tif,.tiff,.jtif,.jfif"
             hint="Excel, PDF, Word, HTML, фото чека — перетащите или нажмите"
             :max-size-mb="MAX_UPLOAD_SIZE_MB"
             class="mb-4" />

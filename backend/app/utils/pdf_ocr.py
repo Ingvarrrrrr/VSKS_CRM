@@ -9,8 +9,112 @@ per-page PSM selection on top of the same row-grouping logic.
 """
 import logging
 import math
+import threading
 
 logger = logging.getLogger(__name__)
+
+# Строго поочерёдная обработка тяжёлых страниц/изображений (защита от OOM при сотнях пользователей)
+HEAVY_VISION_SEMAPHORE = threading.BoundedSemaphore(1)
+
+
+def iter_pdf_page_images(
+    content: bytes,
+    dpi: int = 200,
+    max_pages: int = 25,
+    pages: list[int] | None = None,
+):
+    """Unified generator for page-by-page PDF rendering under HEAVY_VISION_SEMAPHORE.
+
+    Renders one page at a time with first_page=page_num, last_page=page_num,
+    yielding PIL Image and closing it in finally so uncompressed bitmaps
+    do not accumulate in RAM across pages or concurrent requests.
+    """
+    if not content:
+        return
+
+    try:
+        from pdf2image import convert_from_bytes
+        from pdf2image.exceptions import PDFPageCountError
+    except ImportError:
+        logger.warning("iter_pdf_page_images: pdf2image is not installed")
+        return
+
+    if pages is not None:
+        page_nums = sorted({p for p in pages if isinstance(p, int) and p > 0})[:max_pages]
+    else:
+        page_nums = list(range(1, max_pages + 1))
+
+    for page_num in page_nums:
+        img = None
+        try:
+            with HEAVY_VISION_SEMAPHORE:
+                try:
+                    imgs = convert_from_bytes(
+                        content, dpi=dpi, first_page=page_num, last_page=page_num
+                    )
+                except PDFPageCountError:
+                    break
+                except Exception as e:
+                    logger.warning("iter_pdf_page_images: page %s render error: %s", page_num, e)
+                    break
+
+            if not imgs:
+                break
+            img = imgs[0]
+            yield img
+        finally:
+            if img is not None:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+
+
+def ocr_pdf_to_simple_rows(content: bytes, dpi: int = 200) -> tuple[list, str | None]:
+    """Lightweight line-by-line OCR for tabular PDF scans (contracts, contractor cards).
+
+    Iterates page-by-page via iter_pdf_page_images, calls pytesseract.image_to_string
+    under HEAVY_VISION_SEMAPHORE, and splits lines by tab or multiple spaces.
+    Returns (all_rows, error_message).
+    """
+    if not content:
+        return [], "PDF пуст или не содержит данных."
+
+    try:
+        import pdf2image  # noqa: F401
+        import pytesseract
+    except ImportError:
+        return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
+
+    import re
+    all_rows = []
+    had_pages = False
+
+    for img in iter_pdf_page_images(content, dpi=dpi):
+        had_pages = True
+        try:
+            with HEAVY_VISION_SEMAPHORE:
+                text = pytesseract.image_to_string(img, lang="rus+eng")
+        except Exception as e:
+            return [], f"Ошибка OCR-распознавания: {e}"
+
+        if not text:
+            continue
+        for line in text.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            cells = re.split(r"\t|  {2,}", line)
+            cells = [c.strip() for c in cells if c.strip()]
+            if cells:
+                all_rows.append(cells)
+
+    if not had_pages:
+        return [], "PDF не содержит страниц для распознавания."
+    if not all_rows:
+        return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
+    return all_rows, None
+
 
 try:
     import cv2
@@ -20,33 +124,32 @@ except ImportError:
     np = None
 
 
-def ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
+def ocr_pdf_to_rows(content: bytes, dpi: int = 250) -> tuple[list, str | None]:
     """Convert scanned PDF to rows via OCR with layout awareness.
     Uses pytesseract image_to_data (TSV) — gives bounding boxes per word.
     Group words into rows by y-coordinate, then split into columns by
     x-gaps within each row. Returns (rows, error_message).
     """
+    if not content:
+        return [], "PDF пуст или не содержит данных."
+
     try:
-        from pdf2image import convert_from_bytes
+        import pdf2image  # noqa: F401
         import pytesseract
     except ImportError:
         return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
-    try:
-        # 400 DPI gives noticeably better recognition on receipts/invoices than 300
-        images = convert_from_bytes(content, dpi=400)
-    except Exception as e:
-        return [], f"Не удалось преобразовать PDF в изображения для OCR (poppler установлен?): {e}"
-    if not images:
-        return [], "PDF не содержит страниц для распознавания."
 
     all_rows: list[list[str]] = []
-    for img in images:
+    had_pages = False
+    for img in iter_pdf_page_images(content, dpi=dpi):
+        had_pages = True
         try:
-            # PSM 6 = "Assume a single uniform block of text" — best for tables/lists
-            data = pytesseract.image_to_data(
-                img, lang='rus+eng', config='--psm 6',
-                output_type=pytesseract.Output.DICT,
-            )
+            with HEAVY_VISION_SEMAPHORE:
+                # PSM 6 = "Assume a single uniform block of text" — best for tables/lists
+                data = pytesseract.image_to_data(
+                    img, lang='rus+eng', config='--psm 6',
+                    output_type=pytesseract.Output.DICT,
+                )
         except Exception as e:
             return [], f"Ошибка OCR-распознавания (tesseract установлен?): {e}"
 
@@ -96,6 +199,8 @@ def ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
             if cells:
                 all_rows.append(cells)
 
+    if not had_pages:
+        return [], "PDF не содержит страниц для распознавания."
     if not all_rows:
         return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
     return all_rows, None
@@ -305,7 +410,7 @@ def best_psm_data(pil_image, lang: str = 'rus+eng', psm_candidates: tuple = (6, 
     return best_data, best_psm, best_score
 
 
-def ocr_pdf_to_rows_enhanced(content: bytes, dpi: int = 400, pages: list[int] | None = None) -> tuple[list, str | None]:
+def ocr_pdf_to_rows_enhanced(content: bytes, dpi: int = 250, pages: list[int] | None = None) -> tuple[list, str | None]:
     """Enhanced version of ocr_pdf_to_rows: preprocessing + PSM auto-selection.
 
     Same contract as ocr_pdf_to_rows: returns (rows, error_message). Applies
@@ -313,46 +418,36 @@ def ocr_pdf_to_rows_enhanced(content: bytes, dpi: int = 400, pages: list[int] | 
     best_psm_data, optionally restricts to a 1-based `pages` subset, and
     reuses the exact same word→line→cell grouping logic as the original.
     """
+    if not content:
+        return [], "PDF пуст или не содержит данных."
+
     try:
-        from pdf2image import convert_from_bytes
+        import pdf2image  # noqa: F401
+        import pytesseract  # noqa: F401
     except ImportError:
         return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
 
-    convert_kwargs = {"dpi": dpi}
-    if pages:
-        sorted_pages = sorted(p for p in pages if isinstance(p, int) and p > 0)
-        if sorted_pages:
-            convert_kwargs["first_page"] = sorted_pages[0]
-            convert_kwargs["last_page"] = sorted_pages[-1]
-
-    try:
-        images = convert_from_bytes(content, **convert_kwargs)
-    except Exception as e:
-        return [], f"Не удалось преобразовать PDF в изображения для OCR (poppler установлен?): {e}"
-    if not images:
-        return [], "PDF не содержит страниц для распознавания."
-
-    if pages:
-        sorted_pages = sorted(p for p in pages if isinstance(p, int) and p > 0)
-        if sorted_pages:
-            first = sorted_pages[0]
-            wanted = set(sorted_pages)
-            # images[i] corresponds to page (first + i) since we asked poppler
-            # for the [first_page, last_page] range
-            images = [img for i, img in enumerate(images) if (first + i) in wanted]
-
     all_rows: list[list[str]] = []
-    for img in images:
+    had_pages = False
+    for img in iter_pdf_page_images(content, dpi=dpi, pages=pages):
+        had_pages = True
+        processed = img
         try:
-            processed = preprocess_for_ocr(img)
+            with HEAVY_VISION_SEMAPHORE:
+                processed = preprocess_for_ocr(img)
         except Exception as e:
             logger.warning("ocr_pdf_to_rows_enhanced: preprocessing failed, using original image: %s", e)
             processed = img
 
-        data, _psm, _score = best_psm_data(processed, lang='rus+eng')
+        with HEAVY_VISION_SEMAPHORE:
+            data, _psm, _score = best_psm_data(processed, lang='rus+eng')
+        if processed is not img:
+            try:
+                processed.close()
+            except Exception:
+                pass
         if not data:
             continue
-
         # Group words by (block_num, par_num, line_num) → one OCR line each
         n = len(data.get('text', []))
         line_buckets: dict[tuple, list] = {}
@@ -367,19 +462,10 @@ def ocr_pdf_to_rows_enhanced(content: bytes, dpi: int = 400, pages: list[int] | 
             if conf < 0:
                 continue
             key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
-            line_buckets.setdefault(key, []).append({
-                'text': word,
-                'left': int(data['left'][i]),
-                'right': int(data['left'][i]) + int(data['width'][i]),
-                'top': int(data['top'][i]),
-            })
-
+            left, width, top = int(data['left'][i]), int(data['width'][i]), int(data['top'][i])
+            line_buckets.setdefault(key, []).append({'text': word, 'left': left, 'right': left + width, 'top': top})
         # Sort lines top-to-bottom by mean y-coord of their words
-        sorted_lines = sorted(
-            line_buckets.values(),
-            key=lambda ws: sum(w['top'] for w in ws) / len(ws),
-        )
-
+        sorted_lines = sorted(line_buckets.values(), key=lambda ws: sum(w['top'] for w in ws) / len(ws))
         for words in sorted_lines:
             words.sort(key=lambda w: w['left'])
             # Split into cells: gap > 40px between adjacent words = new column
@@ -399,6 +485,8 @@ def ocr_pdf_to_rows_enhanced(content: bytes, dpi: int = 400, pages: list[int] | 
             if cells:
                 all_rows.append(cells)
 
+    if not had_pages:
+        return [], "PDF не содержит страниц для распознавания."
     if not all_rows:
         return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
     return all_rows, None

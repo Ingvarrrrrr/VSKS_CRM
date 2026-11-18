@@ -170,7 +170,7 @@ async def import_items_smart(
     content = await file.read()
     filename = (file.filename or "").lower()
 
-    IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")
+    IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".jtif", ".jfif", ".tif", ".tiff")
     allowed_ext = (".pdf", ".docx", ".doc", ".xlsx", ".xls", ".html", ".htm") + IMAGE_EXTS
     if not any(filename.endswith(ext) for ext in allowed_ext):
         raise HTTPException(400, "Поддерживаются файлы: PDF, DOCX, XLSX/XLS, HTML, JPG/PNG (фото чека)")

@@ -128,6 +128,22 @@ async def test_pdf_file_attaches_as_receipt(client, auth_headers, test_user, db_
 
 
 @pytest.mark.asyncio
+async def test_jtif_file_attaches_as_receipt_and_normalizes_mime(client, auth_headers, test_user, db_session, make_purchase):
+    p = await make_purchase()
+    await _add_member(db_session, p.id, test_user.id)
+    resp = await client.post(
+        f"/api/purchases/{p.id}/files",
+        headers=auth_headers,
+        data={"file_type": "receipt", "doc_format": "scan"},
+        files={"file": ("check.jtif", b"fake jtif bytes", "application/octet-stream")},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["file_type"] == "receipt"
+    assert data["mime_type"] == "image/tiff"
+
+
+@pytest.mark.asyncio
 async def test_tiff_file_attaches_as_receipt(client, auth_headers, test_user, db_session, make_purchase):
     p = await make_purchase()
     await _add_member(db_session, p.id, test_user.id)

@@ -34,6 +34,10 @@ ALLOWED_MIME = {
     "image/png",
     "image/webp",
     "image/heic",
+    "image/tiff",
+    "image/x-tiff",
+    "image/jtif",
+    "image/jfif",
     "application/pdf",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -129,7 +133,23 @@ async def upload_attachment(
     repair = await _get_repair(repair_id, db, current_user)
 
     # MIME check
-    mime = file.content_type or "application/octet-stream"
+    filename_lower = (file.filename or "").lower()
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    if filename_lower.endswith((".tif", ".tiff", ".jtif")):
+        if mime in ("", "application/octet-stream", "image/jtif", "image/x-tiff"):
+            mime = "image/tiff"
+    elif filename_lower.endswith((".jpg", ".jpeg", ".jfif")):
+        if mime in ("", "application/octet-stream", "image/jfif", "image/pjpeg"):
+            mime = "image/jpeg"
+    elif filename_lower.endswith(".png") and mime in ("", "application/octet-stream"):
+        mime = "image/png"
+    elif filename_lower.endswith(".pdf") and mime in ("", "application/octet-stream"):
+        mime = "application/pdf"
+    elif filename_lower.endswith(".webp") and mime in ("", "application/octet-stream"):
+        mime = "image/webp"
+    elif filename_lower.endswith((".heic", ".heif")) and mime in ("", "application/octet-stream"):
+        mime = "image/heic"
+    mime = mime or "application/octet-stream"
     if mime not in ALLOWED_MIME:
         raise HTTPException(
             status_code=400,

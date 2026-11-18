@@ -20,7 +20,7 @@
       ref="fileInputRef"
       type="file"
       hidden
-      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.heic"
+      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.heic,.tif,.tiff,.jtif,.jfif"
       @change="onFileSelected"
     />
 

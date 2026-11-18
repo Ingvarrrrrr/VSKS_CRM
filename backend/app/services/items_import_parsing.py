@@ -541,50 +541,60 @@ def _try_decode_qr(image_bytes: bytes) -> str | None:
     except Exception:
         pass
 
-    img = None
-    try:
-        from PIL import Image as _PILImage
-        import io as _io
-        img = _PILImage.open(_io.BytesIO(image_bytes))
-        if max(img.size) > 2000:
-            img.thumbnail((2000, 2000))
-            if img.mode not in ("RGB", "RGBA", "L"):
-                img = img.convert("RGB")
-            buf = _io.BytesIO()
-            img.save(buf, format="PNG")
-            image_bytes = buf.getvalue()
-    except Exception:
-        pass
+    from app.utils.pdf_ocr import HEAVY_VISION_SEMAPHORE
 
-    # pyzbar
-    if img is not None:
+    with HEAVY_VISION_SEMAPHORE:
+        img = None
         try:
-            from pyzbar.pyzbar import decode as _pyzbar_decode
-            decoded = _pyzbar_decode(img)
-            for d in decoded:
-                data = d.data
-                if isinstance(data, bytes):
-                    data = data.decode("utf-8", errors="replace")
-                if data:
-                    return data
-        except Exception:
-            pass
+            try:
+                from PIL import Image as _PILImage
+                import io as _io
+                img = _PILImage.open(_io.BytesIO(image_bytes))
+                if max(img.size) > 2000:
+                    img.thumbnail((2000, 2000))
+                    if img.mode not in ("RGB", "RGBA", "L"):
+                        img = img.convert("RGB")
+                    buf = _io.BytesIO()
+                    img.save(buf, format="PNG")
+                    image_bytes = buf.getvalue()
+            except Exception:
+                pass
 
-    # cv2 fallback
-    try:
-        import cv2 as _cv2
-        import numpy as _np
-        arr = _np.frombuffer(image_bytes, dtype=_np.uint8)
-        img_cv = _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
-        if img_cv is not None:
-            detector = _cv2.QRCodeDetector()
-            data, _, _ = detector.detectAndDecode(img_cv)
-            if data:
-                return data
-    except Exception:
-        pass
+            # pyzbar
+            if img is not None:
+                try:
+                    from pyzbar.pyzbar import decode as _pyzbar_decode
+                    decoded = _pyzbar_decode(img)
+                    for d in decoded:
+                        data = d.data
+                        if isinstance(data, bytes):
+                            data = data.decode("utf-8", errors="replace")
+                        if data:
+                            return data
+                except Exception:
+                    pass
 
-    return None
+            # cv2 fallback
+            try:
+                import cv2 as _cv2
+                import numpy as _np
+                arr = _np.frombuffer(image_bytes, dtype=_np.uint8)
+                img_cv = _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
+                if img_cv is not None:
+                    detector = _cv2.QRCodeDetector()
+                    data, _, _ = detector.detectAndDecode(img_cv)
+                    if data:
+                        return data
+            except Exception:
+                pass
+
+            return None
+        finally:
+            if img is not None:
+                try:
+                    img.close()
+                except Exception:
+                    pass
 
 
 def _smart_import_image_ocr(content: bytes, filename: str) -> dict:

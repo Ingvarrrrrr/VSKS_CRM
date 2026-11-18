@@ -29,6 +29,10 @@ SAFE_INLINE_MIME = {
     "image/gif",
     "image/webp",
     "application/pdf",
+    "image/tiff",
+    "image/x-tiff",
+    "image/jtif",
+    "image/jfif",
 }
 
 

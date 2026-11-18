@@ -386,7 +386,7 @@
             <v-file-input
               v-model="form.file"
               label="Файл документа (PDF, JPG, PNG)"
-              accept=".pdf,.jpg,.jpeg,.png"
+              accept=".pdf,.jpg,.jpeg,.png,.webp,.tif,.tiff,.jtif,.jfif"
               variant="outlined"
               density="compact"
               prepend-icon=""

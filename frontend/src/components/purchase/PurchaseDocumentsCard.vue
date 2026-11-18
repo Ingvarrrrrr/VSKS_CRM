@@ -9,7 +9,7 @@
            invoice/order/etc) при upload. Файлы списком ниже. -->
       <div class="doc-upload-grid mb-4">
         <FileDropZone v-for="sec in docUploadSections" :key="sec.type"
-          accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" :multiple="true" :disabled="!purchaseId"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.tif,.tiff,.jtif,.jfif" :multiple="true" :disabled="!purchaseId"
           class="doc-upload-tile" style="min-height:140px; align-items:flex-start; padding:12px"
           @files="(files: File[]) => uploadFilesForType(files, sec.type)">
           <template #default="{ dragging }">

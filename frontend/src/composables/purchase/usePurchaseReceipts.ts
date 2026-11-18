@@ -53,11 +53,11 @@ export const POST_SAVE_ACTION_KEY = 'advance_report_post_save_action'
 // Используется и как атрибут accept, и как селектор в document.querySelector
 // (см. onJsonBtnClick / consumePostSaveAction ниже) для клика по input,
 // который рендерит FileDropZone.
-export const RECEIPT_FILE_ACCEPT = '.json,.pdf,.html,.htm,.png,.jpg,.jpeg,.webp,.tif,.tiff,.heic'
+export const RECEIPT_FILE_ACCEPT = '.json,.pdf,.html,.htm,.png,.jpg,.jpeg,.webp,.tif,.tiff,.jtif,.jfif,.heic'
 // Владелец (уточнение 2026-09-29): PDF/TIFF/HEIC теперь ТОЖЕ проверяются на
 // QR (на бэкенде — canvas в браузере эти форматы не декодирует), подсказка
 // больше не должна звучать так, будто для PDF распознавание не пробуется.
-export const RECEIPT_FILE_HINT = 'PDF/фото/TIFF/HEIC с QR, HTML (proverkacheka), JSON ФНС'
+export const RECEIPT_FILE_HINT = 'PDF/фото/TIFF/JTIF/HEIC с QR, HTML (proverkacheka), JSON ФНС'
 
 // Файлы, перетащенные в блок «Чеки» ДО того, как черновик авансового/закупки
 // сохранён. save() при создании делает router.push('/…/{id}/edit') — вид
@@ -122,9 +122,11 @@ export function usePurchaseReceipts(
     try {
       const all = await apiFetch<any[]>(`/purchases/${purchaseId.value}/files`)
       receiptFiles.value = (all || []).filter(f => f.file_type === 'receipt' && f.is_active !== false)
-      for (const rf of receiptFiles.value) {
-        void _loadReceiptFileThumb(rf)
-      }
+      void (async () => {
+        for (const rf of receiptFiles.value) {
+          await _loadReceiptFileThumb(rf)
+        }
+      })()
     } catch {
       receiptFiles.value = []
     }
@@ -408,13 +410,15 @@ export function usePurchaseReceipts(
       return false
     }
 
-    for (const f of files) {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      let accessedFns = false
       const lower = f.name.toLowerCase()
       const isJson = lower.endsWith('.json')
       const isHtml = lower.endsWith('.html') || lower.endsWith('.htm')
       const isImage = !isJson && !isHtml &&
-        ((f.type || '').startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(lower)) &&
-        !/\.(tiff?|heic|heif)$/i.test(lower)
+        ((f.type || '').startsWith('image/') || /\.(png|jpe?g|webp|jfif)$/i.test(lower)) &&
+        !/\.(tiff?|jtif|heic|heif)$/i.test(lower)
       // Баг 2026-09-29 (РЕЕ-2026-00960): PDF/TIFF/HEIC раньше сразу уходили в
       // fallback-прикрепление файлом — canvas/createImageBitmap в браузере не
       // умеет их декодировать (см. utils/qrDecode.ts), поэтому клиентский
@@ -423,7 +427,7 @@ export function usePurchaseReceipts(
       // декодер, что и для фото — app/services/receipt_pdf_qr.py), а не
       // молчим, как раньше (владелец: «чек был с QR-кодом, но позиции не
       // загрузились»).
-      const isServerQrFile = !isJson && !isHtml && !isImage && /\.(pdf|tiff?|heic|heif)$/i.test(lower)
+      const isServerQrFile = !isJson && !isHtml && !isImage && /\.(pdf|tiff?|jtif|heic|heif)$/i.test(lower)
 
       try {
         if (isJson) {
@@ -458,6 +462,7 @@ export function usePurchaseReceipts(
             continue
           }
           try {
+            accessedFns = true
             const r = await apiFetch<Receipt>(
               `/purchases/${purchaseId.value}/receipts/from-qr-fetch`,
               { method: 'POST', body: { qr } as any },
@@ -497,6 +502,7 @@ export function usePurchaseReceipts(
           }
         } else if (isServerQrFile) {
           try {
+            accessedFns = true
             const fd = new FormData()
             fd.append('file', f)
             const r = await apiFetch<Receipt>(
@@ -529,6 +535,9 @@ export function usePurchaseReceipts(
         if (!handleDuplicate(err?.payload)) {
           showSnack(err?.message || `Ошибка обработки ${f.name}`, 'error')
         }
+      }
+      if (files.length > 1 && accessedFns && i < files.length - 1) {
+        await new Promise(r => setTimeout(r, 1200))
       }
     }
     await loadReceipts()

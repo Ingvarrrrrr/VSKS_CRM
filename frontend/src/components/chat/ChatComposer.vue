@@ -31,7 +31,7 @@
       <input
         ref="fileInputEl"
         type="file"
-        accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+        accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.tif,.tiff,.jtif,.jfif"
         style="display: none"
         @change="onFileSelected"
       />

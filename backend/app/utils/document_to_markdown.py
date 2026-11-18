@@ -195,21 +195,21 @@ def _ocr_pdf_to_markdown(content: bytes) -> str:
     nothing — plain text is still better than an empty result.
     """
     try:
-        from pdf2image import convert_from_bytes
         import pytesseract
     except ImportError:
         return ""
 
-    try:
-        images = convert_from_bytes(content, dpi=300)
-    except Exception as e:
-        logger.warning("pdf2image failed: %s", e)
-        return ""
+    from app.utils.pdf_ocr import HEAVY_VISION_SEMAPHORE, iter_pdf_page_images
 
     lines = []
-    for img in images:
-        text = pytesseract.image_to_string(img, lang="rus+eng")
-        lines.append(text)
+    for img in iter_pdf_page_images(content, dpi=200):
+        try:
+            with HEAVY_VISION_SEMAPHORE:
+                text = pytesseract.image_to_string(img, lang="rus+eng")
+            if text and text.strip():
+                lines.append(text.strip())
+        except Exception as e:
+            logger.warning("_ocr_pdf_to_markdown: tesseract error: %s", e)
 
     return "\n\n".join(lines)
 

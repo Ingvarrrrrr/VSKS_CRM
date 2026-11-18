@@ -26,37 +26,8 @@ except ImportError:
 def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
     """Fallback: convert scanned PDF pages to images, run OCR, parse lines.
     Returns (rows, error_message). error_message is None on success."""
-    try:
-        from pdf2image import convert_from_bytes
-        import pytesseract
-    except ImportError:
-        return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
-    try:
-        images = convert_from_bytes(content, dpi=300)
-    except Exception as e:
-        return [], f"Не удалось преобразовать PDF в изображения для OCR: {e}"
-    if not images:
-        return [], "PDF не содержит страниц для распознавания."
-    import re
-    all_rows = []
-    for img in images:
-        try:
-            text = pytesseract.image_to_string(img, lang='rus+eng')
-        except Exception as e:
-            return [], f"Ошибка OCR-распознавания: {e}"
-        if not text:
-            continue
-        for line in text.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            cells = re.split(r'\t|  {2,}', line)
-            cells = [c.strip() for c in cells if c.strip()]
-            if cells:
-                all_rows.append(cells)
-    if not all_rows:
-        return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
-    return all_rows, None
+    from app.utils.pdf_ocr import ocr_pdf_to_simple_rows
+    return ocr_pdf_to_simple_rows(content)
 
 
 # ---------------------------------------------------------------------------

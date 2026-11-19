@@ -57,6 +57,7 @@ PurchaseItemsEditor.vue) — легальный случай, который э�
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import select
@@ -64,6 +65,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract_item import ContractItem
 from app.models.purchase_item import PurchaseItem
+from app.services.feo_item_lock import _norm_unit_price
 
 
 def _norm_name(value: Optional[str]) -> str:
@@ -117,6 +119,33 @@ def build_purchase_item_id_map(
             match = candidates[0]
             id_map[old_id] = match.id
             used_new_ids.add(match.id)
+        elif len(candidates) > 1:
+            norm_old_price = _norm_unit_price(unit_price)
+            price_matched = (
+                [ni for ni in candidates if _norm_unit_price(ni.unit_price) == norm_old_price]
+                if norm_old_price is not None
+                else []
+            )
+            match = None
+            if len(price_matched) == 1:
+                match = price_matched[0]
+            elif len(price_matched) > 1:
+                if quantity is not None:
+                    def _same_qty(ni_qty, target_qty) -> bool:
+                        try:
+                            return Decimal(str(ni_qty)) == Decimal(str(target_qty))
+                        except Exception:
+                            return ni_qty == target_qty
+
+                    qty_matched = [ni for ni in price_matched if _same_qty(ni.quantity, quantity)]
+                    match = qty_matched[0] if qty_matched else price_matched[0]
+                else:
+                    match = price_matched[0]
+            if match is not None:
+                id_map[old_id] = match.id
+                used_new_ids.add(match.id)
+            else:
+                remaining_old.append((old_id, name, quantity, unit_price))
         else:
             remaining_old.append((old_id, name, quantity, unit_price))
 

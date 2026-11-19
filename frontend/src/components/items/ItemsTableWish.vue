@@ -155,7 +155,7 @@
               </template>
             </v-tooltip>
             <PriceFreshnessStamp :price-meta="item._price_meta" />
-            <AvgPriceHint v-if="item.product_id" :stats="avgPriceFor?.(item) ?? null" :readonly="readonly" @apply="emit('apply-avg-price', idx)" />
+            <AvgPriceHint v-if="item.product_id" :stats="avgPriceFor?.(item) ?? null" :readonly="readonly || isItemFeoCategoryLocked(item)" @apply="emit('apply-avg-price', idx)" />
           </td>
           </template>
           <td>

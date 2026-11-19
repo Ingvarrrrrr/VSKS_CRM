@@ -392,3 +392,74 @@ async def test_from_plan_item_price_unchanged_on_put_ok(client, auth_headers, db
     )).scalars().one()
     assert float(new_item.unit_price) == 300.0
     assert new_item.from_plan is True
+
+
+@pytest.mark.asyncio
+async def test_from_plan_wish_item_quantity_decrease_with_kopeks_put_ok(client, superadmin_headers, db_session):
+    """Редактирование заявки из плана: уменьшение количества позиции с дробными
+    копейками (float(1234.56) в JSON vs Decimal('1234.56') в БД) сохраняет 200 OK
+    (не падает с 409 ITEM_PRICE_LOCKED_FROM_PLAN), а реальная смена цены дает 409."""
+    subsidy = await _make_subsidy(db_session)
+    cat = await _make_category(db_session, subsidy.id, name="Категория заявки из плана")
+
+    create_payload = {
+        "title": "Тест заявки из плана с копейками",
+        "subsidy_id": subsidy.id,
+        "items": [
+            {
+                "item_name": "Позиция плана 1234.56",
+                "item_type": "товар",
+                "quantity": 2,
+                "unit": "шт",
+                "unit_price": 1234.56,
+                "total_price": 2469.12,
+                "feo_category_id": cat.id,
+                "from_plan": True,
+            },
+        ],
+    }
+    resp = await client.post("/api/wishes/", json=create_payload, headers=superadmin_headers)
+    assert resp.status_code in (200, 201), resp.text
+    wish_data = resp.json()
+    wish_id = wish_data["id"]
+    item_id = wish_data["items"][0]["id"]
+
+    # 1. Уменьшаем количество с 2 до 1, unit_price не меняется (1234.56) -> 200 OK
+    put_payload = {
+        "items": [
+            {
+                "id": item_id,
+                "item_name": "Позиция плана 1234.56",
+                "quantity": 1,
+                "unit_price": 1234.56,
+                "total_price": 1234.56,
+                "feo_category_id": cat.id,
+                "from_plan": True,
+            }
+        ]
+    }
+    put_resp = await client.put(f"/api/wishes/{wish_id}", json=put_payload, headers=superadmin_headers)
+    assert put_resp.status_code == 200, put_resp.text
+    res_items = put_resp.json()["items"]
+    assert float(res_items[0]["quantity"]) == 1.0
+    assert float(res_items[0]["unit_price"]) == 1234.56
+    assert float(res_items[0]["total_price"]) == 1234.56
+
+    # 2. Попытка реально изменить unit_price на 1234.57 -> 409 ITEM_PRICE_LOCKED_FROM_PLAN
+    put_payload_bad = {
+        "items": [
+            {
+                "id": item_id,
+                "item_name": "Позиция плана 1234.56",
+                "quantity": 1,
+                "unit_price": 1234.57,
+                "total_price": 1234.57,
+                "feo_category_id": cat.id,
+                "from_plan": True,
+            }
+        ]
+    }
+    put_resp_bad = await client.put(f"/api/wishes/{wish_id}", json=put_payload_bad, headers=superadmin_headers)
+    assert put_resp_bad.status_code == 409, put_resp_bad.text
+    assert put_resp_bad.json()["code"] == "ITEM_PRICE_LOCKED_FROM_PLAN"
+

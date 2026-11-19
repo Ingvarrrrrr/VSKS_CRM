@@ -15,6 +15,7 @@ f1a2b3c4d5e6_purchase_wish_items_from_plan), ставится ТОЛЬКО пр�
 (через зеркало) фронтом (frontend/src/utils/feoItemLock.ts) — один и тот же
 предикат, второй копии не заводим.
 """
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Protocol
 
 from fastapi import HTTPException
@@ -41,6 +42,18 @@ ITEM_PRICE_LOCKED_FROM_PLAN_DETAIL = {
 }
 
 
+_CENTS = Decimal("0.01")
+
+
+def _norm_unit_price(value) -> Optional[Decimal]:
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        return Decimal(str(value)).quantize(_CENTS, rounding=ROUND_HALF_UP)
+    except Exception:
+        return None
+
+
 def assert_item_price_not_locked(item: FeoLockableRow, new_unit_price) -> None:
     """Бросает HTTPException(409), если у позиции, ЗАГРУЖЕННОЙ из плана
     (is_item_feo_locked), цена в запросе отличается от текущей цены в БД.
@@ -50,7 +63,9 @@ def assert_item_price_not_locked(item: FeoLockableRow, new_unit_price) -> None:
     if not is_item_feo_locked(item):
         return
     current_price = getattr(item, "unit_price", None)
-    if new_unit_price is None or current_price is None:
+    cur_norm = _norm_unit_price(current_price)
+    new_norm = _norm_unit_price(new_unit_price)
+    if cur_norm is None or new_norm is None:
         return
-    if new_unit_price != current_price:
+    if new_norm != cur_norm:
         raise HTTPException(409, detail=ITEM_PRICE_LOCKED_FROM_PLAN_DETAIL)

@@ -1,10 +1,58 @@
-// Снимок живого DOM рабочей области (.v-main) для сборки реальных
-// видимых элементов по Alt+Shift+S или в режиме живого демо.
-
+// Снимок живого DOM рабочей области (.v-main) и кэширование реальных экранов GALA.
 import { SWARM_AGENTS, type SwarmItem, type SwarmTool, type SwarmVisualKind } from './swarmTypes'
 
-const MAX_SNAPSHOT_ITEMS = 60
-const MIN_SNAPSHOT_ITEMS = 12
+const MAX_SNAPSHOT_ITEMS = 72
+const MIN_SNAPSHOT_ITEMS = 8
+const DOM_CACHE_KEY = 'gala_swarm_dom_cache_v2'
+
+const memDomCache = new Map<string, SwarmItem[]>()
+
+function routeCacheKey(path: string, isMobile: boolean): string {
+  const clean = (path || '/').split('?')[0]
+  return `${clean}:${isMobile ? 'm' : 'd'}`
+}
+
+export function getCachedRouteSnapshot(path: string, isMobile: boolean): SwarmItem[] | null {
+  const key = routeCacheKey(path, isMobile)
+  const mem = memDomCache.get(key)
+  if (mem && mem.length >= MIN_SNAPSHOT_ITEMS) return mem
+
+  if (typeof window === 'undefined' || !window.sessionStorage) return null
+  try {
+    const raw = sessionStorage.getItem(DOM_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    const items = parsed[key] as SwarmItem[] | undefined
+    if (items && Array.isArray(items) && items.length >= MIN_SNAPSHOT_ITEMS) {
+      memDomCache.set(key, items)
+      return items
+    }
+  } catch {}
+  return null
+}
+
+export function cacheLiveRouteSnapshot(
+  path: string,
+  mainEl: HTMLElement | null,
+  isDark: boolean,
+  isMobile: boolean,
+): SwarmItem[] | null {
+  const snap = snapshotLiveWorkspace(mainEl, isDark, isMobile)
+  if (!snap || snap.length < MIN_SNAPSHOT_ITEMS) return null
+
+  const key = routeCacheKey(path, isMobile)
+  memDomCache.set(key, snap)
+
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const raw = sessionStorage.getItem(DOM_CACHE_KEY)
+      const data = raw ? JSON.parse(raw) : {}
+      data[key] = snap
+      sessionStorage.setItem(DOM_CACHE_KEY, JSON.stringify(data))
+    } catch {}
+  }
+  return snap
+}
 
 function classifyElement(el: HTMLElement): SwarmVisualKind {
   const tag = el.tagName
@@ -29,10 +77,10 @@ function cleanText(raw: string | null | undefined, maxLen = 46): string {
 }
 
 function isUsefulBox(rect: DOMRect, vw: number, vh: number, kind: SwarmVisualKind): boolean {
-  if (rect.width < 22 || (kind !== 'divider' && rect.height < 14)) return false
+  if (rect.width < 20 || (kind !== 'divider' && rect.height < 14)) return false
   if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) return false
-  // Отбрасываем гигантские обёртки, закрывающие > 92% экрана целиком
-  if (kind === 'card' && rect.width > vw * 0.94 && rect.height > vh * 0.85) return false
+  // Отбрасываем гигантские карточки-обёртки во весь экран
+  if (kind === 'card' && rect.width > vw * 0.88 && rect.height > vh * 0.55) return false
   return true
 }
 
@@ -80,9 +128,7 @@ export function snapshotLiveWorkspace(
   for (const el of candidates) {
     if (collected.length >= MAX_SNAPSHOT_ITEMS) break
     const style = getComputedStyle(el)
-    if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) < 0.08) {
-      continue
-    }
+    if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) < 0.08) continue
     const r = el.getBoundingClientRect()
     const kind = classifyElement(el)
     const relX = Math.round(r.left - originX)
@@ -99,8 +145,6 @@ export function snapshotLiveWorkspace(
   }
 
   if (collected.length < MIN_SNAPSHOT_ITEMS) return null
-
-  // Сортируем сверху вниз, слева направо для естественной хореографии сборки
   collected.sort((a, b) => (Math.abs(a.y - b.y) > 16 ? a.y - b.y : a.x - b.x))
 
   const agentLimit = isMobile ? 3 : SWARM_AGENTS.length
@@ -129,16 +173,25 @@ export function snapshotLiveWorkspace(
 
     let cells: string[] | undefined
     let text = cleanText(el.innerText)
+    let subtext: string | undefined
+    let statusText: string | undefined
+
     if (kind === 'table-row' || kind === 'table-head') {
-      const cellEls = Array.from(el.querySelectorAll<HTMLElement>('td, th')).slice(0, 5)
+      const cellEls = Array.from(el.querySelectorAll<HTMLElement>('td, th')).slice(0, 10)
       if (cellEls.length) {
-        cells = cellEls.map((c) => cleanText(c.innerText, 24) || '—')
+        cells = cellEls.map((c) => cleanText(c.innerText, 28) || '—')
         text = cells[0]
       }
+    } else if (kind === 'card') {
+      const lines = (el.innerText || '').split('\n').map((l) => l.trim()).filter(Boolean)
+      if (lines.length >= 1) text = cleanText(lines[0], 34)
+      if (lines.length >= 2) subtext = cleanText(lines[1], 34)
+      const badge = el.querySelector<HTMLElement>('.v-chip, .v-badge, [class*="status"]')
+      if (badge) statusText = cleanText(badge.innerText, 16)
     }
 
     const startMs = Math.min(2050, 20 + Math.round((idx / collected.length) * 1850))
-    const durationMs = kind === 'divider' ? 280 : kind === 'table-row' || kind === 'chip' ? 320 : 420
+    const durationMs = kind === 'divider' ? 260 : kind === 'table-row' || kind === 'chip' ? 300 : 400
 
     result.push({
       id,
@@ -151,11 +204,13 @@ export function snapshotLiveWorkspace(
       rx: Math.min(14, parseFloat(style.borderRadius) || (kind === 'chip' ? 999 : 8)),
       dupFromId,
       text: text || (kind === 'input' ? 'Поиск…' : undefined),
+      subtext,
+      statusText,
       cells,
       bg: style.backgroundColor && style.backgroundColor !== 'rgba(0, 0, 0, 0)' ? style.backgroundColor : undefined,
       border: style.borderColor,
       color: style.color,
-      accent: kind === 'btn-primary' || (isDark ? false : false),
+      accent: kind === 'btn-primary',
       cursorIndex: idx % agentLimit,
       startMs,
       durationMs,

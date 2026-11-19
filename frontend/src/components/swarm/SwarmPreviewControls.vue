@@ -56,7 +56,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import {
   completeSwarmPreview,
@@ -82,6 +82,7 @@ const SECTIONS: SectionPreset[] = [
 ]
 
 const route = useRoute()
+const router = useRouter()
 const theme = useTheme()
 const expanded = ref(!!props.autoOpen)
 const activeKey = ref('subsidies')
@@ -93,6 +94,9 @@ function currentPreset(): SectionPreset {
 
 function selectSection(item: SectionPreset) {
   activeKey.value = item.key
+  if (!item.booting && route.path !== item.path) {
+    router.push(item.path).catch(() => {})
+  }
   startSwarmPreview(item.path, { booting: !!item.booting })
 }
 

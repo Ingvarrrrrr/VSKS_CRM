@@ -103,8 +103,8 @@
             </div>
 
             <div v-else-if="item.kind === 'kpi'" class="gala-swarm-inner gala-swarm-inner--col">
-              <span style="font-size:11px;opacity:0.72">{{ item.typedText }}<span v-if="item.isTyping" class="gala-swarm-caret" /></span>
               <span class="gala-swarm-kpi-val">{{ item.subtext || '—' }}</span>
+              <span style="font-size:11px;opacity:0.72">{{ item.typedText }}<span v-if="item.isTyping" class="gala-swarm-caret" /></span>
             </div>
 
             <div v-else-if="item.kind === 'table-head' || item.kind === 'table-row'" class="gala-swarm-inner">
@@ -116,7 +116,12 @@
                   opacity: item.kind === 'table-head' ? 0.78 : 0.94,
                 }"
               >
-                <span v-for="(cell, cIdx) in item.cells || [item.typedText]" :key="cIdx" class="text-truncate">
+                <span
+                  v-for="(cell, cIdx) in item.cells || [item.typedText]"
+                  :key="cIdx"
+                  class="text-truncate"
+                  style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 0"
+                >
                   {{ cIdx === 0 && item.isTyping ? item.typedText : cell }}
                 </span>
                 <span v-if="item.statusText" class="gala-swarm-status-badge" :style="{ backgroundColor: item.statusColor || '#c2620a' }">
@@ -141,7 +146,51 @@
             </div>
 
             <div v-else-if="item.kind === 'card'" class="gala-swarm-inner gala-swarm-inner--col">
-              <span v-if="item.typedText" style="font-size:12px;font-weight:600">{{ item.typedText }}</span>
+              <template v-if="item.cells && item.cells.length >= 6">
+                <div style="display:flex;justify-content:space-between;align-items:center;width:100%;gap:4px">
+                  <span style="font-size:12px;font-weight:700;line-height:1.2" class="text-truncate">{{ item.typedText }}</span>
+                  <span style="font-size:9px;opacity:0.6;letter-spacing:1px;white-space:nowrap">✎ ⚙ 📄 📊 📋 ↗ 🗑</span>
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:center;text-align:center;margin:2px 0">
+                  <span style="font-size:15px;font-weight:700;line-height:1.2">{{ item.subtext }}</span>
+                  <span style="font-size:9px;opacity:0.6">Бюджет ВСКС (расчёт)</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px;font-size:9px;text-align:center;width:100%">
+                  <div>
+                    <div style="opacity:0.6;font-size:8px">Запланировано</div>
+                    <div style="font-weight:600" class="text-truncate">{{ item.cells[0] }}</div>
+                  </div>
+                  <div>
+                    <div style="opacity:0.6;font-size:8px">Заказано</div>
+                    <div style="font-weight:600" class="text-truncate">{{ item.cells[1] }}</div>
+                  </div>
+                  <div>
+                    <div style="opacity:0.6;font-size:8px">Оплачено</div>
+                    <div style="font-weight:600" class="text-truncate">{{ item.cells[2] }}</div>
+                  </div>
+                </div>
+                <div style="width:100%;height:5px;border-radius:3px;background:linear-gradient(90deg, #facc15 65%, #38bdf8 65% 85%, #22c55e 85%);margin:2px 0" />
+                <div style="display:flex;justify-content:space-between;align-items:center;width:100%;font-size:9px">
+                  <span class="gala-swarm-status-badge" :style="{ backgroundColor: item.statusColor || '#16a34a', fontSize: '8px', padding: '1px 4px' }">
+                    {{ item.cells[3] }}
+                  </span>
+                  <span style="opacity:0.75" class="text-truncate">🏛 {{ item.cells[4] }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;width:100%;font-size:9px;opacity:0.8">
+                  <span class="text-truncate">{{ item.cells[5] }}</span>
+                  <span style="color:#22c55e;font-size:8px;font-weight:600">● ФЭО</span>
+                </div>
+              </template>
+              <template v-else>
+                <div style="display:flex;justify-content:space-between;align-items:center;width:100%;gap:4px">
+                  <span v-if="item.typedText" style="font-size:12px;font-weight:600" class="text-truncate">{{ item.typedText }}</span>
+                  <span v-if="item.statusText" class="gala-swarm-status-badge" :style="{ backgroundColor: item.statusColor || '#16a34a', fontSize: '9px', padding: '1px 5px' }">
+                    {{ item.statusText }}
+                  </span>
+                </div>
+                <span v-if="item.subtext" style="font-size:11px;opacity:0.75" class="text-truncate">{{ item.subtext }}</span>
+                <span v-if="item.rightText" style="font-size:10px;font-family:var(--font-mono,monospace);opacity:0.65" class="text-truncate">{{ item.rightText }}</span>
+              </template>
             </div>
 
             <div v-else class="gala-swarm-inner">
@@ -199,7 +248,7 @@ import {
 } from '../../composables/useLongWait'
 import { isLoggedIn } from '../../composables/useAuthFlag'
 import { buildSwarmBlueprint, describeRouteForSwarm } from './swarmBlueprints'
-import { snapshotLiveWorkspace } from './swarmDomSnapshot'
+import { cacheLiveRouteSnapshot, getCachedRouteSnapshot } from './swarmDomSnapshot'
 import { computeActiveGuides, computeRenderedItems, computeRulerTicks, computeTargetCursors } from './swarmEngine'
 import type { SwarmItem, SwarmTool } from './swarmTypes'
 import { isSwarmSoundEnabled, playSwarmCompleteSound, playSwarmSnapSound, setSwarmSoundEnabled } from './swarmAudio'
@@ -318,12 +367,20 @@ function tick(frameTime: number) {
 }
 
 function captureIfLiveMode() {
-  if (swarmLiveDomMode.value) {
-    const mainEl = document.querySelector('.v-main') as HTMLElement | null
-    liveItems.value = snapshotLiveWorkspace(mainEl, isDark.value, isMobile.value)
-  } else {
-    liveItems.value = null
+  const mainEl = typeof document !== 'undefined' ? (document.querySelector('.v-main') as HTMLElement | null) : null
+  if (swarmLiveDomMode.value || (route.path === activePath.value && !isSwarmBooting.value)) {
+    const live = cacheLiveRouteSnapshot(activePath.value, mainEl, isDark.value, isMobile.value)
+    if (live) {
+      liveItems.value = live
+      return
+    }
   }
+  const cached = getCachedRouteSnapshot(activePath.value, isMobile.value)
+  if (cached) {
+    liveItems.value = cached
+    return
+  }
+  liveItems.value = null
 }
 
 function startLoop() {
@@ -383,6 +440,10 @@ watch(isSwarmVisible, (visible) => {
     suppressedByDialog.value = false
     liveItems.value = null
     stopLoop()
+    setTimeout(() => {
+      const mainEl = typeof document !== 'undefined' ? (document.querySelector('.v-main') as HTMLElement | null) : null
+      cacheLiveRouteSnapshot(route.path, mainEl, isDark.value, isMobile.value)
+    }, 280)
   }
 }, { immediate: true })
 
@@ -406,6 +467,10 @@ onMounted(() => {
     const mainEl = document.querySelector('.v-main')
     if (mainEl) { resizeObserver = new ResizeObserver(measureWorkspace); resizeObserver.observe(mainEl) }
   }
+  setTimeout(() => {
+    const mainEl = typeof document !== 'undefined' ? (document.querySelector('.v-main') as HTMLElement | null) : null
+    cacheLiveRouteSnapshot(route.path, mainEl, isDark.value, isMobile.value)
+  }, 700)
 })
 
 onUnmounted(() => {

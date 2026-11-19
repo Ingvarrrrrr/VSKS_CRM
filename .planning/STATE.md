@@ -14,6 +14,40 @@ progress:
 
 # STATE.md — VSKS_CRM
 
+## 2026-11-19 — Swarm Rebuild: сборка реальных существующих страниц GALA 1-в-1 (`swarmBlueprintData.ts`, `swarmBlueprints.ts`, `swarmDomSnapshot.ts`, `SwarmRebuildOverlay.vue`, `SwarmPreviewControls.vue`)
+- Убраны выдуманные макеты: `/subsidies` собирает реальную адаптивную сетку из 16 вертикальных карточек субсидий (на ультрашироком мониторе 2380px — `12 + 4` карточки в ряд, с полной внутренней версткой карточек субсидий и нижней сводной полосой из 10 показателей), `/orders` собирает реальную шапку из 6 кнопок (*ШАБЛОН, ИМПОРТ, СВЯЗИ, РАЗНЕСТИ СТАТУСЫ, EXCEL, + ДОБАВИТЬ*), 4 широкие KPI-карточки (крупная сумма сверху, подпись снизу), строку из 11 фильтров, 8 вкладок статусов и таблицу закупок на 10 колонок.
+- Внедрён автоматический захват и кэширование живого DOM `.v-main` для каждого маршрута (`cacheLiveRouteSnapshot` / `getCachedRouteSnapshot` в памяти и `sessionStorage`).
+- **Верификация:** `cm.py check` по всем 6 файлам PASS (`< 500` строк), `npx vitest run src/components/swarm/__tests__/swarmBlueprints.spec.ts` (`5/5 passed`).
+
+## 2026-11-19 — Выкладка 5 пакетов (чеки/OCR, каталог, рыночные цены, дашборд Donut, миграция `c3e5f7a9b1d3`, запушено `55ac1025..33f9eafb`)
+- `ee48f031` — чеки, OCR/QR, `.tif/.tiff/.jtif/.jfif`, вложения документов/автопарка (20 файлов; `pdf_ocr.py` `492` строки).
+- `c155ced2` — каталог товаров, защита `product_protection.py` во всех 4 таблицах и скрипты потоковой заливки (16 файлов).
+- `fdec3f05` — актуальная рыночная/оптовая цена в закупке и сохранение цены плана ФЭО (10 файлов).
+- `d4836b18` — индикация перерасхода и детализация сегментов в `DonutChartWidget` (6 файлов).
+- `33f9eafb` — миграция бэкфилла пустых имён контрагентов `c3e5f7a9b1d3` (перепривязана к `a8c0e2f4b6d8`, 1 голова `c3e5f7a9b1d3 (head)`).
+- **Верификация:** `alembic upgrade head` (`a8c0e2f4b6d8 -> c3e5f7a9b1d3`, OK), `pytest tests/test_receipts_html_and_file_attach.py tests/test_product_market_price.py` (`13 passed`), `pytest tests/test_product_name_signature.py` (`79 passed`), `cm.py check` (28 модулей PASS), `npm --prefix frontend run build` (`✓ 3352 modules`, `✓ built in 46.83s`).
+
+## 2026-11-18/19 — Единые заголовки Excel, шаблоны и фиксы выгрузок (запушено `55ac1025`)
+- **Единые названия столбцов Excel и шаблонов (SSOT + обратная совместимость импорта):**
+  - Создан словарь `backend/app/services/excel_column_names.py` (`COL_ITEM_NAME = "Наименование позиции"`, `COL_UNIT = "Ед. изм."`, `COL_PLANNED_*`, `COL_FACT_*`, `COL_FEO_*`, `COL_CONTRACT_*`, `COL_PAYMENT_*`, `COL_CONTRACTOR*`) и `normalize_excel_header(raw)`.
+  - Приведены к единому стандарту шаблоны, подсказки, экспорты и сводные листы: `import_template_spec.py`, `purchase_export_cells.py`, `feo_export_columns.py`, `feo_export_summary.py`, `plan_graph_export_columns.py`, `plan_graph_export_render.py`, `plan_graph_export_contracts_sheet.py`, `historical_fact_import/columns.py`, `historical_fact_import/template_stages.py`, `feo_import_template.py`, `fact_import.py` (`Шаблон_импорта_факта_{subsidy_id}.xlsx`), `purchase_items_import.py`, `wish_export.py`, `OrdersImportDialog.vue`, `useItemsImport.ts`, `useFactImport.ts`, `useFeoImport.ts`, `useContractsExport.ts`.
+  - Парсеры импорта (`purchase_import_parser_maps.py`, включая `_PAYMENTS_COLUMN_MAP`, `purchase_import_parser_group.py`, `feo_roundtrip_import/parse.py`, `feo_import.py`, `feo_import_fact_summary.py`) принимают канонические заголовки и сохраняют прежние алиасы для старых файлов.
+- **Отступы в выгрузке ФЭО и план-графике (`feo_export_columns.py`, `feo_export_xlsx.py`, `plan_graph_export_xlsx.py`, `plan_graph_export_render.py`, `xlsx_row_height.py`):**
+  - Столбец `name` (`"Наименование позиции"`) возвращён в колонку `A` (плоские столбцы ФЭО после него), в `_write_row` добавлены нативные Excel `Alignment(indent=..., wrap_text=True)`, `outline_level`, `outlinePr.summaryBelow = False` и расчёт высоты строк `apply_row_heights` (с поправкой `indent * 1.8`).
+- **WYSIWYG PDF «как на экране» и исправление имён файлов `Content-Disposition` (`safeHtml2Canvas.ts`, `useRegistryExport.ts`, `useSubsidyPaymentControl.ts`, `usePlanGraphVersions.ts`, `useFactImport.ts`, `FeoTreeToolbar.vue`):**
+  - Создан `frontend/src/utils/safeHtml2Canvas.ts`: защита `CanvasRenderingContext2D.prototype.createPattern`/`drawImage` от нулевых canvas, очистка нулевых градиентов в `onclone`, фильтрация пустых `<canvas>` и оверлеев, проверка ненулевого `getBoundingClientRect()`; в `FeoTreeToolbar.vue::exportFeoPdf` поддержан режим `category_subsidy` (`.subsidy-category-panel`).
+  - Скачивания экспортов/шаблонов в `useRegistryExport.ts`, `useSubsidyPaymentControl.ts`, `usePlanGraphVersions.ts` и `useFactImport.ts` переведены на единый `filenameFromContentDisposition` (устранена обрезка кириллицы/расширения `filename="export"`).
+- **Верификация:** в контейнере `vsks-crm-backend_a-1` с реальной транзакцией БД прошли все 9 целевых пар pytest (`75 passed`, 0 failed); `vitest` (`safeHtml2Canvas.spec.ts` `2 passed`), `cm.py check` на `<500`-модулях OK, `npm --prefix frontend run build` (`vite build`, 3348 modules, `59.84s`, OK).
+
+## 2026-11-18 — Визуализация долгой загрузки Swarm Rebuild v2 в стилистике GALA (запушено `446f75b3`)
+- **Swarm Rebuild и единый статус ожидания (`useLongWait.ts`, `api.ts`, `router/index.ts`, `usePageCache.ts`, `useSubsidiesPageCache.ts`, `PlayWhileWaiting.vue`):**
+  - Расширен `useLongWait.ts`: порог показа `550 мс` (`isSwarmVisible`), мягкое завершение `220 мс` (`isSwarmCompleting` с исчезновением курсоров на месте), отслеживание холодного старта (`setSwarmBooting`), навигации чанков (`beginRouteNavigation`/`finishRouteNavigation`), пауза при открытой мини-игре (`setSwarmGameOpen`), пропуск по `Esc` (`dismissSwarm`), локальный демо-режим (`?swarm_preview=1`), снимок живого DOM (`Alt+Shift+S`) и симулятор переходов `2.6с` для `localhost` (`setSwarmSimEnabled`).
+  - Добавлена опция `background?: boolean` в `api.ts` и включена для фоновых поллеров (`useApprovalsBadge.ts`, `useWishLive.ts`, `useStaffLocationTracking.ts`, `MyTasksView.vue::pollTasks`).
+- **Визуальный движок v2 и холодный старт (`SwarmRebuildOverlay.vue`, `swarmTypes.ts`, `swarmDomSnapshot.ts`, `swarmBlueprints.ts`, `swarmEngine.ts`, `swarmAudio.ts`, `swarm-overlay.css`, `SwarmPreviewControls.vue`, `index.html`, `main.ts`, `App.vue`, `app-global.css`):**
+  - Пиксельные линейки `20px`/`22px`, направляющие с координатами, угловые ручки `□` и размеры `W×H`, векторы `⌥`-дубликатов (`⌥ +Δpx`), перо `pen`, посимвольный набор текста, снимок живого DOM `.v-main` (`Alt+Shift+S`), 6 курсоров GALA с метками инструментов (3 на мобильных).
+  - Глобальные стили из `App.vue` вынесены в `app-global.css`; все изменённые/новые модули соблюдают лимит `< 500` строк (`84..453`).
+  - Проверка: `vitest` (`useLongWait.spec.ts` + `swarmBlueprints.spec.ts` — 10 passed), `npm --prefix frontend run build` — OK (`42.41s`).
+
 ## 2026-11-17 — Стадии «Как в ТЗ» / «Как в договоре» / «Как поставили» для договоров питания и проживания + диагностика прода (локально, не запушено)
 - **Диагностика производительности и недоступности прода (`201.34.139.168`, read-only SSH):**
   - 2 vCPU / 3.8 GiB RAM / 2.0 GiB Swap: контейнер `trading-bot` потреблял `97.64% CPU`, `935.3 MiB RAM`, `4218 PIDs`; load average `3.46–7.19`, Swap занят на `1.8–2.0 GiB` из `2.0 GiB`, диск `/dev/sda1` занят на `88%`. Из-за нехватки CPU/RAM даже лёгкие запросы в `vsks-crm-nginx-1` шли `2.1–8.5s` (`/api/users/me/signature` `4.314s`, `/api/staff-location/shift/me` `4.318s`, `/api/purchases/?scope=purchases&with_feo_excess=true` `8.504s`).

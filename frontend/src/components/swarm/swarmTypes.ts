@@ -57,6 +57,7 @@ export interface SwarmItem {
   cursorIndex: number
   startMs: number
   durationMs: number
+  el?: HTMLElement
 }
 
 export interface SwarmGuide {

@@ -46,36 +46,6 @@
       html.gala-boot-dark #app:empty::after {
         background-color: #0f0e0c;
       }
-      #gala-boot-swarm {
-        position: fixed; inset: 0; z-index: 9400; pointer-events: none;
-        background-color: #f5f3ef;
-        background-image:
-          linear-gradient(to right, rgba(90, 84, 72, 0.06) 1px, transparent 1px),
-          linear-gradient(to bottom, rgba(90, 84, 72, 0.06) 1px, transparent 1px);
-        background-size: 24px 24px;
-        font-family: system-ui, -apple-system, sans-serif;
-        color: #1c1916;
-      }
-      html.gala-boot-dark #gala-boot-swarm {
-        background-color: #0f0e0c; color: #f1f5f9;
-        background-image:
-          linear-gradient(to right, rgba(240, 236, 228, 0.05) 1px, transparent 1px),
-          linear-gradient(to bottom, rgba(240, 236, 228, 0.05) 1px, transparent 1px);
-      }
-      .gbs-box {
-        position: absolute; border: 1px dashed rgba(194, 98, 10, 0.5);
-        border-radius: 10px; background: rgba(255, 255, 255, 0.55);
-        animation: gbs-grow 0.55s cubic-bezier(.22,.9,.32,1) both;
-      }
-      html.gala-boot-dark .gbs-box {
-        border-color: rgba(251, 146, 60, 0.5); background: rgba(28, 25, 22, 0.65);
-      }
-      .gbs-cur {
-        position: absolute; padding: 2px 8px; border-radius: 999px; font-size: 11px;
-        font-weight: 600; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        transition: transform 0.65s ease;
-      }
-      @keyframes gbs-grow { from { opacity: 0; transform: scale(0.86); } to { opacity: 1; transform: scale(1); } }
     </style>
 
     <!-- Локальные шрифты (офлайн): объявлены через @font-face в src/styles/gala.css, файлы в public/fonts/.
@@ -153,36 +123,7 @@
   <body>
     <div id="app"></div>
     <script>
-      (function () {
-        var stopped = false;
-        var el = null;
-        window.__galaStopBootSwarm = function () {
-          stopped = true;
-          if (el && el.parentNode) { el.parentNode.removeChild(el); el = null; }
-        };
-        try {
-          if (localStorage.getItem('gala_auth') !== '1') return;
-          var pub = ['/login', '/register', '/verify-email', '/reset-password', '/consent-required'];
-          if (pub.indexOf(location.pathname) !== -1) return;
-        } catch (_) { return; }
-        setTimeout(function () {
-          if (stopped) return;
-          el = document.createElement('div');
-          el.id = 'gala-boot-swarm';
-          el.innerHTML =
-            '<div style="position:absolute;top:16px;left:22px;font-weight:800;letter-spacing:.12em;font-size:18px">GA<span style="color:#fb923c">L</span>A</div>' +
-            '<div class="gbs-box" style="left:4%;top:10%;width:92%;height:11%"></div>' +
-            '<div class="gbs-box" style="left:4%;top:24%;width:29%;height:14%;animation-delay:.12s"></div>' +
-            '<div class="gbs-box" style="left:35.5%;top:24%;width:29%;height:14%;animation-delay:.22s"></div>' +
-            '<div class="gbs-box" style="left:67%;top:24%;width:29%;height:14%;animation-delay:.32s"></div>' +
-            '<div class="gbs-box" style="left:4%;top:41%;width:92%;height:50%;animation-delay:.4s"></div>' +
-            '<div class="gbs-cur" style="left:16%;top:14%;background:#c2620a">ФЭО</div>' +
-            '<div class="gbs-cur" style="left:48%;top:29%;background:#2563eb">Закупки</div>' +
-            '<div class="gbs-cur" style="left:72%;top:48%;background:#16a34a">Договоры</div>';
-          document.body.appendChild(el);
-          setTimeout(function () { if (!stopped) window.__galaStopBootSwarm(); }, 15000);
-        }, 380);
-      })();
+      window.__galaStopBootSwarm = function () {};
     </script>
     <script type="module" src="/src/main.ts"></script>
   </body>

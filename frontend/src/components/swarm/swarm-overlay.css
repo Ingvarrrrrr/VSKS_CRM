@@ -1,21 +1,21 @@
 .gala-swarm-overlay {
   position: fixed;
   overflow: hidden;
-  pointer-events: auto;
+  pointer-events: none;
   user-select: none;
-  background-color: #f5f3ef;
+  background-color: transparent !important;
   background-image:
-    linear-gradient(to right, rgba(90, 84, 72, 0.06) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(90, 84, 72, 0.06) 1px, transparent 1px);
+    linear-gradient(to right, rgba(90, 84, 72, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(90, 84, 72, 0.04) 1px, transparent 1px);
   background-size: 24px 24px;
   transition: opacity 0.2s ease;
 }
 
 .gala-swarm-overlay--dark {
-  background-color: #0f0e0c;
+  background-color: transparent !important;
   background-image:
-    linear-gradient(to right, rgba(240, 236, 228, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(240, 236, 228, 0.05) 1px, transparent 1px);
+    linear-gradient(to right, rgba(240, 236, 228, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(240, 236, 228, 0.03) 1px, transparent 1px);
 }
 
 .gala-swarm-overlay--completing {
@@ -161,7 +161,9 @@
   box-sizing: border-box;
   font-family: var(--font-ui, 'Inter Tight', sans-serif);
   color: #1c1916;
-  transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.2s ease;
+  pointer-events: none;
+  background: transparent !important;
+  transition: border-color 0.16s ease, opacity 0.25s ease;
 }
 
 .gala-swarm-overlay--dark .gala-swarm-item {
@@ -169,24 +171,29 @@
 }
 
 .gala-swarm-item--draft {
-  background: rgba(255, 255, 255, 0.45);
-  border: 1px dashed rgba(194, 98, 10, 0.65);
+  background: rgba(194, 98, 10, 0.04) !important;
+  border: 1.5px dashed rgba(194, 98, 10, 0.85);
+  box-shadow: 0 0 0 1px rgba(194, 98, 10, 0.12);
 }
 
 .gala-swarm-overlay--dark .gala-swarm-item--draft {
-  background: rgba(28, 25, 22, 0.55);
-  border-color: rgba(251, 146, 60, 0.65);
+  background: rgba(251, 146, 60, 0.04) !important;
+  border-color: rgba(251, 146, 60, 0.85);
+  box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.12);
 }
 
 .gala-swarm-item--snapped {
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(90, 84, 72, 0.16);
-  box-shadow: 0 1px 4px rgba(28, 25, 22, 0.04);
+  background: transparent !important;
+  border: 1.5px solid rgba(22, 163, 74, 0.45);
+  box-shadow: none !important;
+  opacity: 0;
+  transition: opacity 0.35s ease;
 }
 
 .gala-swarm-overlay--dark .gala-swarm-item--snapped {
-  background: rgba(28, 25, 22, 0.95);
-  border-color: rgba(240, 236, 228, 0.12);
+  background: transparent !important;
+  border-color: rgba(74, 222, 128, 0.45);
+  opacity: 0;
 }
 
 .gala-swarm-item--heading.gala-swarm-item--snapped {

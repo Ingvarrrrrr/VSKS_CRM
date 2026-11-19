@@ -2,7 +2,7 @@
 import { SWARM_AGENTS, type SwarmItem, type SwarmTool, type SwarmVisualKind } from './swarmTypes'
 
 const MAX_SNAPSHOT_ITEMS = 72
-const MIN_SNAPSHOT_ITEMS = 8
+const MIN_SNAPSHOT_ITEMS = 2
 const DOM_CACHE_KEY = 'gala_swarm_dom_cache_v2'
 
 const memDomCache = new Map<string, SwarmItem[]>()
@@ -214,6 +214,7 @@ export function snapshotLiveWorkspace(
       cursorIndex: idx % agentLimit,
       startMs,
       durationMs,
+      el,
     })
   })
 

@@ -18,11 +18,14 @@ import {
   isGameOpen,
   isLongWait,
   isSwarmCompleting,
+  isSwarmDisabled,
   isSwarmVisible,
   markKeepAliveRefresh,
   setSwarmBooting,
+  setSwarmDisabled,
   setSwarmGameOpen,
   swarmTargetPath,
+  toggleSwarmDisabled,
 } from '../useLongWait'
 
 function emitApiLoading(count: number) {
@@ -147,5 +150,31 @@ describe('useLongWait', () => {
     dismissSwarm()
     expect(isSwarmVisible.value).toBe(false)
     setSwarmBooting(false)
+  })
+
+  it('отключение Swarm (setSwarmDisabled / toggleSwarmDisabled) блокирует показ оверлея', () => {
+    expect(isSwarmDisabled.value).toBe(false)
+
+    setSwarmDisabled(true)
+    expect(isSwarmDisabled.value).toBe(true)
+
+    emitApiLoading(1)
+    vi.advanceTimersByTime(1000)
+    // Оверлей не должен показаться даже при долгой загрузке
+    expect(isSwarmVisible.value).toBe(false)
+    expect(isBusy.value).toBe(true)
+
+    emitApiLoading(0)
+    vi.advanceTimersByTime(500)
+
+    // Переключатель восстанавливает показ
+    const nextState = toggleSwarmDisabled()
+    expect(nextState).toBe(false)
+    expect(isSwarmDisabled.value).toBe(false)
+
+    emitApiLoading(1)
+    vi.advanceTimersByTime(550)
+    expect(isSwarmVisible.value).toBe(true)
+    emitApiLoading(0)
   })
 })

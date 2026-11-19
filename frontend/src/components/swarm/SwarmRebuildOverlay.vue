@@ -136,7 +136,7 @@ import { useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import {
   dismissSwarm, ensureLongWaitListener, isGameOpen, isSwarmBooting, isSwarmCompleting,
-  isSwarmPreview, isSwarmVisible, startSwarmPreview, swarmLiveDomMode, swarmPreviewRunId, swarmTargetPath,
+  isSwarmDisabled, isSwarmPreview, isSwarmVisible, startSwarmPreview, swarmLiveDomMode, swarmPreviewRunId, swarmTargetPath,
 } from '../../composables/useLongWait'
 import { isLoggedIn } from '../../composables/useAuthFlag'
 import { cacheLiveRouteSnapshot, getCachedRouteSnapshot, snapshotLiveWorkspace } from './swarmDomSnapshot'
@@ -179,6 +179,7 @@ const hasPreviewQuery = computed(() => {
 const showPreviewControls = computed(() => hasPreviewQuery.value || isLocalhost)
 
 const showOverlay = computed(() => {
+  if (isSwarmDisabled.value && !isSwarmPreview.value) return false
   if (!isSwarmVisible.value || isGameOpen.value) return false
   if (isSwarmPreview.value) return true
   if (suppressedByDialog.value) return false

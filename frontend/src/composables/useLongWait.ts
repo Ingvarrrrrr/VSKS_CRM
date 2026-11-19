@@ -21,10 +21,19 @@ const SWARM_COMPLETING_MS = 220
 const KEEP_ALIVE_QUIET_WINDOW_MS = 250
 const SIM_NAV_DURATION_MS = 2600
 const SIM_STORAGE_KEY = 'gala_swarm_sim_ms'
+const DISABLED_STORAGE_KEY = 'gala_swarm_disabled'
 
 function readInitialSimFlag(): boolean {
   try {
     return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(SIM_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function readInitialDisabledFlag(): boolean {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(DISABLED_STORAGE_KEY) === '1'
   } catch {
     return false
   }
@@ -41,6 +50,7 @@ const _isSwarmPreview = ref(false)
 const _swarmPreviewRunId = ref(0)
 const _swarmLiveDomMode = ref(false)
 const _swarmSimEnabled = ref(readInitialSimFlag())
+const _isSwarmDisabled = ref(readInitialDisabledFlag())
 
 export const isBusy = readonly(_isBusy)
 export const isLongWait = readonly(_isLongWait)
@@ -53,6 +63,7 @@ export const isSwarmPreview = readonly(_isSwarmPreview)
 export const swarmPreviewRunId = readonly(_swarmPreviewRunId)
 export const swarmLiveDomMode = readonly(_swarmLiveDomMode)
 export const swarmSimEnabled = readonly(_swarmSimEnabled)
+export const isSwarmDisabled = readonly(_isSwarmDisabled)
 
 let listenerInstalled = false
 let inflightCount = 0
@@ -127,14 +138,14 @@ function triggerSwarmComplete() {
 
 function scheduleSwarmShow(delayMs: number) {
   clearTimer('show')
-  if (seriesDismissed || seriesSuppressedByCache) return
+  if (seriesDismissed || seriesSuppressedByCache || _isSwarmDisabled.value) return
   if (_isSwarmVisible.value) {
     _isSwarmCompleting.value = false
     return
   }
   swarmShowTimer = setTimeout(() => {
     swarmShowTimer = null
-    if (!seriesDismissed && !seriesSuppressedByCache && (inflightCount > 0 || routePending || bootPending || simPending)) {
+    if (!seriesDismissed && !seriesSuppressedByCache && !_isSwarmDisabled.value && (inflightCount > 0 || routePending || bootPending || simPending)) {
       _isSwarmCompleting.value = false
       _isSwarmVisible.value = true
     }
@@ -263,7 +274,7 @@ export function beginRouteNavigation(path: string): void {
   routePending = true
   quietCacheWindowUntil = 0
   seriesSuppressedByCache = false
-  if (_swarmSimEnabled.value) {
+  if (_swarmSimEnabled.value && !_isSwarmDisabled.value) {
     clearTimer('sim')
     simPending = true
     seriesDismissed = false
@@ -292,6 +303,30 @@ export function setSwarmSimEnabled(enabled: boolean): void {
     simPending = false
     reconcileActiveLoading()
   }
+}
+
+/** Полное отключение анимации Swarm Rebuild (сохраняется в localStorage). */
+export function setSwarmDisabled(disabled: boolean): void {
+  _isSwarmDisabled.value = disabled
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (disabled) {
+        localStorage.setItem(DISABLED_STORAGE_KEY, '1')
+      } else {
+        localStorage.removeItem(DISABLED_STORAGE_KEY)
+      }
+    }
+  } catch {}
+  if (disabled && _isSwarmVisible.value && !_isSwarmPreview.value) {
+    hideSwarmImmediately()
+  }
+}
+
+/** Переключение состояния активности Swarm Rebuild. Возвращает новое состояние (true = выключен). */
+export function toggleSwarmDisabled(): boolean {
+  const next = !_isSwarmDisabled.value
+  setSwarmDisabled(next)
+  return next
 }
 
 /** Завершение навигации роутера (последующая загрузка данных подхватывается через api-loading). */
@@ -378,4 +413,5 @@ export function __resetLongWaitStateForTests(): void {
   _swarmPreviewRunId.value = 0
   _swarmLiveDomMode.value = false
   _swarmSimEnabled.value = false
+  _isSwarmDisabled.value = false
 }

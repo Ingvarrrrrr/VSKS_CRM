@@ -129,6 +129,17 @@
       @click="toggleTheme"
     />
 
+    <!-- Swarm Rebuild анимация (десктоп переключатель) -->
+    <v-btn
+      :icon="isSwarmDisabled ? 'mdi-cursor-default-outline' : 'mdi-cursor-default-click'"
+      variant="text"
+      size="small"
+      class="mr-1 d-none d-md-flex"
+      :color="isSwarmDisabled ? 'grey' : undefined"
+      :title="isSwarmDisabled ? 'Анимация Swarm: выключена (нажмите чтобы включить)' : 'Анимация Swarm: включена (нажмите чтобы выключить)'"
+      @click="toggleSwarm"
+    />
+
     <global-search class="mr-3 d-none d-sm-flex" />
 
     <!-- Superadmin: multi-org picker button -->
@@ -200,6 +211,19 @@
         <v-list-item :to="'/my-location'">
           <v-list-item-title class="d-flex align-center">
             <v-icon icon="mdi-map-marker-radius-outline" class="mr-2" />Моё местоположение
+          </v-list-item-title>
+        </v-list-item>
+        <v-divider />
+        <!-- Переключатель анимации Swarm Rebuild -->
+        <v-list-item @click="toggleSwarm" :title="isSwarmDisabled ? 'Включить анимацию Swarm Rebuild' : 'Отключить анимацию Swarm Rebuild'">
+          <v-list-item-title class="d-flex align-center justify-space-between">
+            <span class="d-flex align-center">
+              <v-icon :icon="isSwarmDisabled ? 'mdi-cursor-default-outline' : 'mdi-cursor-default-click'" class="mr-2" :color="isSwarmDisabled ? 'grey' : 'primary'" />
+              Анимация Swarm
+            </span>
+            <v-chip size="x-small" :color="isSwarmDisabled ? 'default' : 'success'" variant="tonal" class="ml-2">
+              {{ isSwarmDisabled ? 'выкл' : 'вкл' }}
+            </v-chip>
           </v-list-item-title>
         </v-list-item>
         <v-divider />
@@ -511,6 +535,7 @@ import { myPendingApprovalsCount, initApprovalsBadge, destroyApprovalsBadge } fr
 import { initStaffLocationTracking, destroyStaffLocationTracking } from '@/composables/useStaffLocationTracking'
 import { resetConsentGate } from '@/composables/useConsentGate'
 import { isLoggedIn, clearLoggedIn } from '@/composables/useAuthFlag'
+import { isSwarmDisabled, toggleSwarmDisabled } from '@/composables/useLongWait'
 import ShiftToggleButton from '@/components/staff/ShiftToggleButton.vue'
 import { useAuthStore } from '../stores/auth'
 import { ROLE_LABELS } from '@/composables/staff/staffLabels'
@@ -568,6 +593,10 @@ function toggleTheme() {
   const next = isDark.value ? 'light' : 'dark'
   vuetifyTheme.global.name.value = next
   localStorage.setItem('theme', next)
+}
+
+function toggleSwarm() {
+  toggleSwarmDisabled()
 }
 
 const userName = computed(() => localStorage.getItem('user_name') || 'Пользователь')

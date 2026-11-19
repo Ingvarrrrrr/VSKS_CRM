@@ -1,7 +1,7 @@
 // Снимок живого DOM рабочей области (.v-main) и кэширование реальных экранов GALA.
 import { SWARM_AGENTS, type SwarmItem, type SwarmTool, type SwarmVisualKind } from './swarmTypes'
 
-const MAX_SNAPSHOT_ITEMS = 72
+const MAX_SNAPSHOT_ITEMS = 90
 const MIN_SNAPSHOT_ITEMS = 2
 const DOM_CACHE_KEY = 'gala_swarm_dom_cache_v2'
 
@@ -57,8 +57,8 @@ export function cacheLiveRouteSnapshot(
 function classifyElement(el: HTMLElement): SwarmVisualKind {
   const tag = el.tagName
   if (el.matches('hr, .v-divider')) return 'divider'
-  if (el.matches('thead th, .v-data-table__th')) return 'table-head'
-  if (el.matches('tbody tr')) return 'table-row'
+  if (el.matches('thead th, .v-data-table__th, thead tr')) return 'table-head'
+  if (el.matches('tbody tr, .v-data-table__tr')) return 'table-row'
   if (el.matches('.v-chip, .v-tab')) return 'chip'
   if (el.matches('.v-field')) return 'input'
   if (el.matches('.v-btn')) {
@@ -76,7 +76,8 @@ function cleanText(raw: string | null | undefined, maxLen = 46): string {
   return s.length > maxLen ? `${s.slice(0, maxLen - 1)}…` : s
 }
 
-function isUsefulBox(rect: DOMRect, vw: number, vh: number, kind: SwarmVisualKind): boolean {
+function isUsefulBox(rect: DOMRect, vw: number, vh: number, kind: SwarmVisualKind, el?: HTMLElement): boolean {
+  if (el?.matches('.v-data-table-rows-loading, .v-data-table-rows-no-data')) return false
   if (rect.width < 20 || (kind !== 'divider' && rect.height < 14)) return false
   if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) return false
   // Отбрасываем гигантские карточки-обёртки во весь экран
@@ -108,6 +109,7 @@ export function snapshotLiveWorkspace(
     '.v-card',
     'thead tr',
     'tbody tr',
+    '.v-data-table__tr',
     '.v-list-item',
     'hr, .v-divider',
     '.apexcharts-canvas',
@@ -136,7 +138,7 @@ export function snapshotLiveWorkspace(
     const relW = Math.round(r.width)
     const relH = kind === 'divider' ? Math.max(2, Math.round(r.height)) : Math.round(r.height)
     const relRect = new DOMRect(relX, relY, relW, relH)
-    if (!isUsefulBox(relRect, cw, ch, kind)) continue
+    if (!isUsefulBox(relRect, cw, ch, kind, el)) continue
 
     const sig = `${Math.round(relX / 8)}:${Math.round(relY / 8)}:${Math.round(relW / 12)}:${Math.round(relH / 8)}`
     if (seenBoxes.has(sig)) continue

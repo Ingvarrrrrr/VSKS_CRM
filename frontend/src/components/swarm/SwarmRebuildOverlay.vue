@@ -216,7 +216,18 @@ function measureWorkspace() {
   }
 }
 
-const elapsedMs = computed(() => (isSwarmCompleting.value ? 3200 : Math.max(0, nowMs.value - startTimestamp.value)))
+const completingStartTime = ref(0)
+let domObserver: MutationObserver | null = null
+let scanDebounceTimer: number | null = null
+
+const elapsedMs = computed(() => {
+  const raw = Math.max(0, nowMs.value - startTimestamp.value)
+  if (!isSwarmCompleting.value) return raw
+  if (completingStartTime.value === 0) {
+    completingStartTime.value = nowMs.value
+  }
+  return raw + (nowMs.value - completingStartTime.value) * 2.2
+})
 const renderedItems = computed(() =>
   computeRenderedItems(activeItems.value, elapsedMs.value, isSwarmCompleting.value, snappedIds, (idx) => playSwarmSnapSound(idx)),
 )
@@ -266,6 +277,59 @@ function restoreAllElements() {
   })
 }
 
+function setupDomObserver(mainEl: HTMLElement | null) {
+  if (domObserver) {
+    domObserver.disconnect()
+    domObserver = null
+  }
+  if (typeof MutationObserver === 'undefined' || !mainEl) return
+  domObserver = new MutationObserver(() => {
+    if (!showOverlay.value) return
+    if (scanDebounceTimer !== null) cancelAnimationFrame(scanDebounceTimer)
+    scanDebounceTimer = requestAnimationFrame(() => {
+      scanDebounceTimer = null
+      syncNewlyRenderedElements()
+    })
+  })
+  domObserver.observe(mainEl, { childList: true, subtree: true })
+}
+
+function syncNewlyRenderedElements() {
+  const mainEl = typeof document !== 'undefined' ? (document.querySelector('.v-main') as HTMLElement | null) : null
+  if (!mainEl) return
+  const currentSnap = snapshotLiveWorkspace(mainEl, isDark.value, isMobile.value)
+  if (!currentSnap || !currentSnap.length) return
+
+  const existingEls = new Set((liveItems.value || []).map((it) => it.el).filter(Boolean))
+  const newItems: SwarmItem[] = []
+
+  for (const item of currentSnap) {
+    if (item.el && !existingEls.has(item.el)) {
+      newItems.push(item)
+    }
+  }
+
+  if (newItems.length === 0) return
+
+  const currentElapsed = Math.max(0, nowMs.value - startTimestamp.value)
+  const agentLimit = isMobile.value ? 3 : SWARM_AGENTS.length
+  const baseOffset = (liveItems.value?.length || 0) > 0 ? 50 : 20
+
+  newItems.forEach((item, idx) => {
+    if (item.el) {
+      item.el.classList.add('gala-swarm-target')
+      item.el.style.transition = 'opacity 0.28s cubic-bezier(0.2, 0.8, 0.3, 1), transform 0.28s cubic-bezier(0.2, 0.8, 0.3, 1)'
+      item.el.style.opacity = '0.2'
+      item.el.style.transform = 'scale(0.99)'
+    }
+    item.startMs = currentElapsed + baseOffset + idx * 45
+    item.durationMs = 240
+    item.cursorIndex = ((liveItems.value?.length || 0) + idx) % agentLimit
+  })
+
+  liveItems.value = [...(liveItems.value || []), ...newItems]
+}
+
 function tick(frameTime: number) {
   const dt = lastFrameTime ? Math.max(8, frameTime - lastFrameTime) : 16
   lastFrameTime = frameTime
@@ -277,7 +341,21 @@ function tick(frameTime: number) {
       item.el.style.transform = 'none'
     }
   }
-  if (showOverlay.value && !isSwarmCompleting.value) rafId = requestAnimationFrame(tick)
+
+  if (isSwarmCompleting.value) {
+    const allSnapped = activeItems.value.length === 0 || activeItems.value.every((it) => snappedIds.has(it.id))
+    const timeSinceCompleting = completingStartTime.value ? frameTime - completingStartTime.value : 0
+    if (allSnapped || timeSinceCompleting > 750) {
+      if (!completePlayed) {
+        completePlayed = true
+        playSwarmCompleteSound()
+      }
+      stopLoop()
+      return
+    }
+  }
+
+  if (showOverlay.value) rafId = requestAnimationFrame(tick)
   else rafId = null
 }
 
@@ -302,14 +380,25 @@ function startLoop() {
   startTimestamp.value = performance.now()
   nowMs.value = startTimestamp.value
   lastFrameTime = startTimestamp.value
+  completingStartTime.value = 0
   smoothCursors.value = {}
   snappedIds.clear()
   completePlayed = false
   applyRebuildStylesToElements()
+  const mainEl = typeof document !== 'undefined' ? (document.querySelector('.v-main') as HTMLElement | null) : null
+  setupDomObserver(mainEl)
   rafId = requestAnimationFrame(tick)
 }
 
 function stopLoop() {
+  if (domObserver) {
+    domObserver.disconnect()
+    domObserver = null
+  }
+  if (scanDebounceTimer !== null) {
+    cancelAnimationFrame(scanDebounceTimer)
+    scanDebounceTimer = null
+  }
   restoreAllElements()
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
 }

@@ -28,6 +28,7 @@ from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.services.catalog_gala.stores import store_for_domain
 from app.services.contractor_resolve import find_or_create_contractor
@@ -333,10 +334,11 @@ async def check_market_price(
 
     if product is not None:
         raw_hist = (await db.execute(
-            select(ProductPriceHistory, Contractor.name, Purchase.org_id)
+            select(ProductPriceHistory, Contractor.name, Subsidy.org_id)
             .outerjoin(Contractor, Contractor.id == ProductPriceHistory.contractor_id)
             .outerjoin(PurchaseItem, PurchaseItem.id == ProductPriceHistory.purchase_item_id)
             .outerjoin(Purchase, Purchase.id == PurchaseItem.purchase_id)
+            .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
             .where(ProductPriceHistory.product_id == product.id)
             .order_by(ProductPriceHistory.collected_at.desc(), ProductPriceHistory.id.desc())
         )).all()
@@ -374,8 +376,9 @@ async def check_market_price(
                     }
 
         ci_rows = (await db.execute(
-            select(ContractItem.unit_price, ContractItem.quantity, Purchase.org_id)
+            select(ContractItem.unit_price, ContractItem.quantity, Subsidy.org_id)
             .join(Purchase, Purchase.id == ContractItem.purchase_id)
+            .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
             .where(
                 ContractItem.product_id == product.id,
                 ContractItem.unit_price.isnot(None),
@@ -391,9 +394,10 @@ async def check_market_price(
                 contract_prices.append(p_val)
 
         cr_rows = (await db.execute(
-            select(CommercialRequestOffer.unit_price, Purchase.org_id)
+            select(CommercialRequestOffer.unit_price, Subsidy.org_id)
             .join(CommercialRequest, CommercialRequest.id == CommercialRequestOffer.request_id)
             .join(Purchase, Purchase.id == CommercialRequest.purchase_id)
+            .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
             .where(
                 CommercialRequestOffer.product_id == product.id,
                 CommercialRequestOffer.unit_price.isnot(None),

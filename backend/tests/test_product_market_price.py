@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.product_market_price import (
     _persist_live_points,
@@ -160,5 +160,48 @@ def test_persist_live_points_updates_unprotected_product():
             assert act_mock.call_args.kwargs["price"] == Decimal("1300.0")
             assert act_mock.call_args.kwargs["write_history"] is False
             db.commit.assert_awaited_once()
+
+    asyncio.run(_run())
+
+
+def test_get_product_market_price_queries_execute_safely():
+    """Проверяет, что check_market_price формирует SQL-запросы к БД без AttributeError (Purchase.org_id -> Subsidy.org_id)."""
+    from app.services.product_market_price import check_market_price
+
+    async def _run():
+        db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        mock_result.scalars.return_value.all.return_value = []
+        mock_result.scalar_one_or_none.return_value = None
+        db.execute = AsyncMock(return_value=mock_result)
+
+        product = SimpleNamespace(
+            id=123,
+            name="Бинт марлевый медицинский",
+            price=Decimal("45.00"),
+            unit="шт.",
+            price_updated_at=datetime.utcnow(),
+            price_shared=False,
+            price_links=[],
+            manufacturer=None,
+        )
+        user = SimpleNamespace(id=1, org_id=1, role="user")
+
+        with (
+            patch("app.services.product_market_price._resolve_product", new=AsyncMock(return_value=product)),
+            patch("app.services.product_market_price._allowed_org_ids", new=AsyncMock(return_value={1})),
+        ):
+            res = await check_market_price(
+                db=db,
+                product_id=123,
+                quantity=10,
+                unit="шт.",
+                current_user=user,
+            )
+            assert res is not None
+            assert res["product_id"] == 123
+            # Проверяем, что db.execute вызывался и сформированные запросы не упали
+            assert db.execute.await_count >= 3
 
     asyncio.run(_run())

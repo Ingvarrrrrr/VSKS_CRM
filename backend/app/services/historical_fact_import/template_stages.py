@@ -21,6 +21,24 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.excel_column_names import (
+    COL_CONTRACTOR,
+    COL_CONTRACTOR_INN,
+    COL_FACT_TOTAL,
+    COL_FACT_UNIT_PRICE,
+    COL_FEO_L2,
+    COL_FEO_L3,
+    COL_FEO_L4,
+    COL_FEO_L5,
+    COL_ITEM_NAME,
+    COL_ITEM_TYPE,
+    COL_PAID_AMOUNT_MONEY,
+    COL_PLANNED_QTY,
+    COL_PLANNED_TOTAL,
+    COL_PLANNED_UNIT_PRICE,
+    COL_PURCHASE_NUMBER,
+    COL_UNIT,
+)
 from app.services.historical_fact_import import columns as columns_mod
 from app.services.historical_fact_import.template_common import entry_name_and_levels
 from app.services.plan_catalog import load_plan_catalog
@@ -29,27 +47,27 @@ from app.services.plan_catalog import load_plan_catalog
 # как у владельца между ними; columns.py ищет поля ПО ТЕКСТУ заголовка, не
 # по фиксированному индексу/букве — порядок колонок на разбор не влияет).
 _HEADER = [
-    "Номер закупки",                                                              # 0  purchase_no
-    "Наименование позиции",                                                       # 1  plan_item_name
-    "Контрагент",                                                                 # 2  supplier
-    "ИНН контрагента",                                                            # 3  inn
-    "Плановое количество",                                                        # 4  plan_qty
-    "Ед. изм.",                                                                   # 5  unit
-    "Плановая цена за ед.",                                                       # 6  plan_price
-    "Плановая сумма",                                                             # 7  plan_amount
-    "Фактическая цена за ед.",                                                    # 8  fact_price
-    "Фактическая сумма",                                                          # 9  fact_amount
-    "Товары или Услуги",                                                          # 10 item_type
-    "Направление расходов по категориям в соответствии с ФЭО",                     # 11 path_l2
-    "Тип расходов в соответствии с ФЭО Конкретизированный",                        # 12 path_l3
-    "Направление расходов из приложений к ФЭО",                                   # 13 path_l4
-    "Тип расходов конкретизированный (сам придумываю общий тип для cебя)",        # 14 path_l5
+    COL_PURCHASE_NUMBER,                                                          # 0  purchase_no
+    COL_ITEM_NAME,                                                                # 1  plan_item_name
+    COL_CONTRACTOR,                                                               # 2  supplier
+    COL_CONTRACTOR_INN,                                                           # 3  inn
+    COL_PLANNED_QTY,                                                              # 4  plan_qty
+    COL_UNIT,                                                                     # 5  unit
+    COL_PLANNED_UNIT_PRICE,                                                       # 6  plan_price
+    COL_PLANNED_TOTAL,                                                            # 7  plan_amount
+    COL_FACT_UNIT_PRICE,                                                          # 8  fact_price
+    COL_FACT_TOTAL,                                                               # 9  fact_amount
+    COL_ITEM_TYPE,                                                                # 10 item_type
+    COL_FEO_L2,                                                                   # 11 path_l2
+    COL_FEO_L3,                                                                   # 12 path_l3
+    COL_FEO_L4,                                                                   # 13 path_l4
+    COL_FEO_L5,                                                                   # 14 path_l5
     "Закупка проведена",                                                          # 15 stage_purchase_done
     "Договор заключен (устно или письменно)",                                     # 16 stage_contracted
     "Товар заказан",                                                              # 17 stage_ordered
     "Товар поставлен",                                                            # 18 stage_delivered
     "Оплачено",                                                                   # 19 stage_paid (флаг — рядом "Оплачено в деньгах")
-    "Оплачено в деньгах",                                                         # 20 paid (сумма платежа)
+    COL_PAID_AMOUNT_MONEY,                                                        # 20 paid (сумма платежа)
     "Аванс (да/нет)",                                                             # 21 advance
 ]
 

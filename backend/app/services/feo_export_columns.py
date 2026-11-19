@@ -29,6 +29,7 @@ from app.services.excel_column_names import (
     COL_FEO_TYPE,
     COL_FEO_UNIT_PRICE,
     COL_ITEM_NAME,
+    COL_ITEM_TYPE,
     COL_NOTES,
     COL_ORDER_AMOUNT,
     COL_ORDER_NUMBER,
@@ -88,7 +89,7 @@ FEO_EXPORT_COLUMNS: list[tuple] = [
 
     # 10–12. Статусы и тип
     ("stage_status", "Правильный статус", "Статусы", 20, True),
-    ("item_type", "Товары или Услуги", "Статусы", 18, True),
+    ("item_type", COL_ITEM_TYPE, "Статусы", 18, True),
     ("is_in_plan", "План закупок", "Стадии", 16, True),
 
     # 13–19. Стадии выполнения

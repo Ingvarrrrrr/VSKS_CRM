@@ -43,7 +43,7 @@ from app.services.purchase_import_parser_helpers import (
     _to_dec,
     _to_date_val,
 )
-from app.services.excel_column_names import normalize_excel_header
+from app.services.excel_column_names import normalize_excel_header, parse_feo_level_header
 from app.services.purchase_import_parser_maps import (
     _COLUMN_MAP,
     _CONTRACT_TYPE_MAP,
@@ -96,13 +96,21 @@ async def _parse_and_group(
     col_idx: Dict[str, int] = {}
     for i, h in enumerate(raw_headers):
         field = _COLUMN_MAP.get(h) or _COLUMN_MAP.get(str(rows[0][i]).strip().lower() if rows[0][i] is not None else "")
+        if not field:
+            lvl_num = parse_feo_level_header(rows[0][i])
+            if lvl_num is not None:
+                field = f"feo_l{lvl_num}"
         if field and field not in col_idx:
             col_idx[field] = i
 
     cell = _make_cell_helper(col_idx)
 
     # Detect template format: prefer new (feo_l1) over old (feo_path)
-    has_new_feo = bool(_NEW_TEMPLATE_MARKER_FIELDS & set(col_idx.keys()))
+    feo_level_fields = sorted(
+        (f for f in col_idx if f.startswith("feo_l") and f[5:].isdigit()),
+        key=lambda f: int(f[5:]),
+    )
+    has_new_feo = bool((_NEW_TEMPLATE_MARKER_FIELDS & set(col_idx.keys())) or feo_level_fields)
     has_old_feo = bool(_OLD_TEMPLATE_MARKER_FIELDS & set(col_idx.keys()))
     # is_new_template: new format with level cols, OR both — prefer levels
     is_new_template = has_new_feo
@@ -177,9 +185,9 @@ async def _parse_and_group(
         feo_id = None
         feo_levels_display = None  # list of non-empty level strings, for preview display
 
-        if has_new_feo and any(cell(row, f"feo_l{n}") for n in range(1, 6)):
-            # New: collect non-empty level values in order
-            raw_levels = [cell(row, f"feo_l{n}") or "" for n in range(1, 6)]
+        if has_new_feo and any(cell(row, f) for f in (feo_level_fields or [f"feo_l{n}" for n in range(1, 6)])):
+            # New: collect non-empty level values in order (supports N levels up to 100+)
+            raw_levels = [cell(row, f) or "" for f in (feo_level_fields or [f"feo_l{n}" for n in range(1, 6)])]
             levels = [v for v in raw_levels if v.strip()]
             feo_levels_display = levels
 
@@ -187,7 +195,7 @@ async def _parse_and_group(
                 # feo_l1 is required — already validated below in required-field check,
                 # but guard here too
                 if not levels:
-                    errors.append({"row": row_num, "name": item_name, "message": "ФЭО Ур.1 обязателен"})
+                    errors.append({"row": row_num, "name": item_name, "message": "Уровень 1 обязателен"})
                     continue
                 feo_id, feo_err = await _resolve_feo_levels(
                     levels, sid, feo_index,

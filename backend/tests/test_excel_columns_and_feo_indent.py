@@ -11,15 +11,27 @@ from app.services.excel_column_names import (
     COL_FACT_QTY,
     COL_FACT_TOTAL,
     COL_FACT_UNIT_PRICE,
+    COL_FEO_DIRECTION,
+    COL_FEO_L1,
+    COL_FEO_L2,
+    COL_FEO_L3,
+    COL_FEO_L4,
+    COL_FEO_L5,
+    COL_FEO_SUBDIRECTION,
     COL_FEO_TOTAL,
+    COL_FEO_TYPE,
     COL_FEO_UNIT_PRICE,
     COL_ITEM_NAME,
+    COL_ITEM_TYPE,
+    COL_PAID_AMOUNT_MONEY,
     COL_PLANNED_QTY,
     COL_PLANNED_TOTAL,
     COL_PLANNED_UNIT_PRICE,
     COL_PURCHASE_NUMBER,
     COL_UNIT,
+    feo_level_col,
     normalize_excel_header,
+    parse_feo_level_header,
 )
 from app.services.feo_export_columns import FEO_EXPORT_COLUMNS, resolve_selected_keys
 from app.services.feo_export_xlsx import (
@@ -151,6 +163,10 @@ def test_canonical_column_names_unified_and_backward_compatible():
 
     feo_labels = {k: lbl for k, lbl, *_ in FEO_EXPORT_COLUMNS}
     assert feo_labels["name"] == COL_ITEM_NAME
+    assert feo_labels["feo_direction"] == COL_FEO_L1 == "Уровень 1"
+    assert feo_labels["feo_type"] == COL_FEO_L2 == "Уровень 2"
+    assert feo_labels["feo_subdirection"] == COL_FEO_L3 == "Уровень 3"
+    assert feo_labels["item_type"] == COL_ITEM_TYPE == "Тип позиции (Товар/Услуга)"
     assert feo_labels["feo_unit"] == COL_UNIT
     assert feo_labels["plan_qty"] == COL_PLANNED_QTY
     assert feo_labels["plan_unit_price"] == COL_PLANNED_UNIT_PRICE
@@ -164,15 +180,34 @@ def test_canonical_column_names_unified_and_backward_compatible():
 
     pg_labels = {k: lbl for k, lbl, *_ in PLAN_GRAPH_COLUMNS}
     assert pg_labels["name"] == COL_ITEM_NAME
+    assert pg_labels["direction"] == COL_FEO_L1 == "Уровень 1"
+    assert pg_labels["type"] == COL_FEO_L2 == "Уровень 2"
+    assert pg_labels["item_kind"] == COL_ITEM_TYPE == "Тип позиции (Товар/Услуга)"
     assert pg_labels["unit"] == COL_UNIT
     assert pg_labels["qty"] == COL_PLANNED_QTY
 
     assert COL_ITEM_NAME in FACT_TEMPLATE_HEADER
+    assert COL_FEO_L2 in FACT_TEMPLATE_HEADER
+    assert COL_FEO_L3 in FACT_TEMPLATE_HEADER
+    assert COL_FEO_L4 in FACT_TEMPLATE_HEADER
+    assert COL_ITEM_TYPE in FACT_TEMPLATE_HEADER
+    assert COL_PAID_AMOUNT_MONEY in FACT_TEMPLATE_HEADER
     assert COL_PLANNED_UNIT_PRICE in FACT_TEMPLATE_HEADER
     assert COL_PLANNED_TOTAL in FACT_TEMPLATE_HEADER
     assert COL_ITEM_NAME in FACT_STAGES_HEADER
+    assert COL_FEO_L2 in FACT_STAGES_HEADER
+    assert COL_FEO_L5 in FACT_STAGES_HEADER
+    assert COL_ITEM_TYPE in FACT_STAGES_HEADER
     assert COL_PLANNED_UNIT_PRICE in FACT_STAGES_HEADER
     assert COL_FACT_UNIT_PRICE in FACT_STAGES_HEADER
+
+    assert feo_level_col(1) == "Уровень 1"
+    assert feo_level_col(6) == "Уровень 6"
+    assert feo_level_col(100) == "Уровень 100"
+    assert parse_feo_level_header("Уровень 1") == 1
+    assert parse_feo_level_header("Уровень 100") == 100
+    assert parse_feo_level_header("ФЭО Ур.5") == 5
+    assert parse_feo_level_header("Уровень 2 (Направление расходов по ФЭО)") == 2
 
     # Парсеры принимают и новые канонические названия, и прежние алиасы
     for raw, expected_field in [

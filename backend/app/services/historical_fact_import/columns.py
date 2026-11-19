@@ -22,6 +22,22 @@ from __future__ import annotations
 
 from typing import Optional
 
+from app.services.excel_column_names import (
+    COL_CONTRACTOR,
+    COL_FEO_L2,
+    COL_FEO_L3,
+    COL_FEO_L4,
+    COL_ITEM_NAME,
+    COL_ITEM_TYPE,
+    COL_NOTES,
+    COL_PAID_AMOUNT_MONEY,
+    COL_PLANNED_QTY,
+    COL_PLANNED_TOTAL,
+    COL_PLANNED_UNIT_PRICE,
+    COL_PURCHASE_NUMBER,
+    COL_UNIT,
+    parse_feo_level_header,
+)
 from app.services.import_preview_sheets import read_preview_sheets, read_full_sheet_rows
 
 # Хинты для detect_header_row/listing — общий словарь слов обоих форматов,
@@ -42,19 +58,19 @@ _HEADER_HINTS = (
 # один макет, не вторая копия индексов).
 TEMPLATE_HEADER: list = [None] * 28
 TEMPLATE_HEADER[0] = "Субсидия"
-TEMPLATE_HEADER[4] = "Направление расходов по категориям в соответствии с ФЭО"
-TEMPLATE_HEADER[5] = "Тип расходов в соответствии с ФЭО Конкретизированный"
-TEMPLATE_HEADER[6] = "Направление расходов из приложений к ФЭО"
-TEMPLATE_HEADER[7] = "Наименование позиции"
-TEMPLATE_HEADER[8] = "Товар/услуга/работа"
-TEMPLATE_HEADER[9] = "Комментарий"
+TEMPLATE_HEADER[4] = COL_FEO_L2
+TEMPLATE_HEADER[5] = COL_FEO_L3
+TEMPLATE_HEADER[6] = COL_FEO_L4
+TEMPLATE_HEADER[7] = COL_ITEM_NAME
+TEMPLATE_HEADER[8] = COL_ITEM_TYPE
+TEMPLATE_HEADER[9] = COL_NOTES
 TEMPLATE_HEADER[10] = "План 2026"
-TEMPLATE_HEADER[14] = "Ед. изм."
-TEMPLATE_HEADER[15] = "Плановое количество"
-TEMPLATE_HEADER[16] = "Плановая цена за ед."
-TEMPLATE_HEADER[17] = "Плановая сумма"
+TEMPLATE_HEADER[14] = COL_UNIT
+TEMPLATE_HEADER[15] = COL_PLANNED_QTY
+TEMPLATE_HEADER[16] = COL_PLANNED_UNIT_PRICE
+TEMPLATE_HEADER[17] = COL_PLANNED_TOTAL
 TEMPLATE_HEADER[18] = "Факт"
-TEMPLATE_HEADER[21] = "Оплачено "
+TEMPLATE_HEADER[21] = COL_PAID_AMOUNT_MONEY
 # Задача 2 (владелец, 05.10.2026) — «Аванс (да/нет)»: оплачено ДО поставки
 # (см. statuses.py/commit.py — Аванс=да переводит статус «Оплачено» строки в
 # закупку status='ordered', is_prepayment=true, поставлено 0). Вставлена
@@ -64,8 +80,8 @@ TEMPLATE_HEADER.append(None)
 TEMPLATE_HEADER[22] = "Аванс (да/нет)"
 TEMPLATE_HEADER[23] = "Законтрактовано"
 TEMPLATE_HEADER[25] = "Правильный статус"
-TEMPLATE_HEADER[26] = "Номер закупки"
-TEMPLATE_HEADER[28] = "Контрагент"
+TEMPLATE_HEADER[26] = COL_PURCHASE_NUMBER
+TEMPLATE_HEADER[28] = COL_CONTRACTOR
 
 FIELDS = (
     "path_l2", "path_l3", "path_l4", "path_l5", "plan_item_name", "item_type", "unit",
@@ -208,7 +224,10 @@ def _map_columns_format(header: list) -> list:
     while i < n:
         h = _norm(header[i])
         field = None
-        if "уровень 2" in h or "направление расходов по категориям" in h:
+        lvl_num = parse_feo_level_header(header[i])
+        if lvl_num is not None and lvl_num >= 2:
+            field = f"path_l{lvl_num}"
+        elif "уровень 2" in h or "направление расходов по категориям" in h:
             field = "path_l2"
         elif "уровень 3" in h or ("тип расходов" in h and "соответс" in h):
             # "соответс" (не "соответств") — лист владельца пишет «в
@@ -223,7 +242,7 @@ def _map_columns_format(header: list) -> list:
             field = "path_l5"
         elif "плановая позиция" in h or "наименование товара" in h or "наименование позиции" in h:
             field = "plan_item_name"
-        elif "товар/услуга" in h or "товар / услуга" in h or "товары или услуги" in h:
+        elif "товар/услуга" in h or "товар / услуга" in h or "товары или услуги" in h or "тип позиции" in h:
             field = "item_type"
         elif "ед. изм. плана" in h or h == "ед. изм." or "ед. изм" in h:
             field = "unit"
@@ -414,7 +433,7 @@ def apply_mapping_override(columns: list, mapping: Optional[dict]) -> list:
     nulls = []
     assigns = []
     for field, idx in mapping.items():
-        if field == "columns" or field not in FIELDS:
+        if field == "columns" or (field not in FIELDS and not (isinstance(field, str) and field.startswith("path_l") and field[6:].isdigit())):
             continue
         if idx is None:
             nulls.append(field)

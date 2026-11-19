@@ -44,7 +44,12 @@ _COLUMN_MAP: Dict[str, str] = {
     "наименование позиции *":       "item_name",
     "тип (товар/услуга/работа)":    "item_type",
     "тип":                          "item_type",
-    # New 5-level FEO columns
+    # New 5-level FEO columns + canonical «Уровень 1..N»
+    "уровень 1":                    "feo_l1",
+    "уровень 2":                    "feo_l2",
+    "уровень 3":                    "feo_l3",
+    "уровень 4":                    "feo_l4",
+    "уровень 5":                    "feo_l5",
     "фэо ур.1":                     "feo_l1",
     "фэо ур.2":                     "feo_l2",
     "фэо ур.3":                     "feo_l3",
@@ -288,7 +293,7 @@ _METHOD_MAP = {
 # Required fields for new-format validation (field_name, display_label)
 _REQUIRED_FIELDS = [
     ("item_name",       "Наименование позиции"),
-    ("feo_l1",          "ФЭО Ур.1"),
+    ("feo_l1",          "Уровень 1"),
     ("contractor_inn",  "ИНН контрагента"),
     ("contract_number", "Номер договора"),
     ("contract_date",   "Дата договора"),

@@ -173,7 +173,7 @@ def _row_has_meaningful_data(status_raw: Optional[str], fact_amount, paid) -> bo
     return False
 
 
-def _build_path(l2: Optional[str], l3: Optional[str], l4: Optional[str], l5: Optional[str], leaf_name: str) -> list:
+def _build_path(l2: Optional[str], l3: Optional[str], l4: Optional[str], l5: Optional[str], leaf_name: str, extra_levels: Optional[list] = None) -> list:
     path = [p for p in (l2, l3) if p and p != leaf_name]
     if l4 and l4 != leaf_name:
         path.append(l4)
@@ -183,6 +183,9 @@ def _build_path(l2: Optional[str], l3: Optional[str], l4: Optional[str], l5: Opt
     # не дублируется.
     if l5 and l5 != leaf_name:
         path.append(l5)
+    for xl in (extra_levels or ()):
+        if xl and xl != leaf_name:
+            path.append(xl)
     return path
 
 
@@ -208,6 +211,11 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
             return None
         return raw_row[idx]
 
+    extra_level_fields = sorted(
+        (f for f in by_field if f.startswith("path_l") and f[6:].isdigit() and int(f[6:]) > 5),
+        key=lambda f: int(f[6:]),
+    )
+
     data_rows = all_rows[header_row:]
 
     # Проход 0: собрать записи по непустым строкам файла (полностью пустые
@@ -226,6 +234,7 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
             "l3": _to_text(get(raw_row, "path_l3")),
             "l4": _to_text(get(raw_row, "path_l4")),
             "l5": _to_text(get(raw_row, "path_l5")),
+            "extra_levels": [v for f in extra_level_fields if (v := _to_text(get(raw_row, f)))],
             "own_item_name": _to_text(get(raw_row, "plan_item_name")),
         })
 
@@ -266,7 +275,7 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
                 continue  # категория без позиций и без данных — пропуск молча
             no_item_name_flag = True
 
-        path = _build_path(l2, l3, l4, l5, leaf_name)
+        path = _build_path(l2, l3, l4, l5, leaf_name, rec.get("extra_levels"))
         # Чек-лист 13.10.2026 (прод «ДНР 3», «Проезд, проживание, питание»):
         # `path` НЕ годится как категория строки для матчинга — _build_path
         # выбрасывает уровень, РАВНЫЙ имени позиции (чтобы не дублировать его
@@ -278,17 +287,8 @@ def parse_rows(detected: dict, columns: list, header_row: int) -> list:
         # ЕГО, не path — ПРАВИЛО №6, одно поле «категория строки» для
         # матчинга, path остаётся только для отображения/авто-раскрытия
         # дерева, см. FeoPlanTreePicker.vue).
-        # Правка (владелец, 16.10.2026, сверка карточек субсидии 26121):
-        # лист GoodsService завёл 4-й уровень категории (l5/AH, задача 1
-        # «Уровень 5 (категория)») — здесь он не учитывался вовсе, строка с
-        # реальной категорией на этом уровне (например, «Услуги связи» под
-        # AH) получала category_name НА УРОВЕНЬ ВЫШЕ настоящей категории
-        # дерева ФЭО (l4/l3/l2) — _row_category_key не совпадал с
-        # _candidate_category_key (последний сегмент пути позиции —
-        # настоящая глубокая категория), 14 строк «БРОНИРОВАНИЕ ГОСТИНИЦ» (и
-        # другие) уходили в ambiguous/not_found, хотя для каждой строки в
-        # плане была СВОЯ позиция с той же суммой в правильной категории.
-        category_name = l5 or l4 or l3 or l2
+        extra_lvls = rec.get("extra_levels") or []
+        category_name = (extra_lvls[-1] if extra_lvls else None) or l5 or l4 or l3 or l2
 
         plan_qty = _to_dec(get(raw_row, "plan_qty"))
         plan_price = _to_dec(get(raw_row, "plan_price"))

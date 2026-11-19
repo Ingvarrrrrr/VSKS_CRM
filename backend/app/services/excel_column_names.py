@@ -34,16 +34,45 @@ COL_FACT_QTY = "Фактическое количество"
 COL_FACT_UNIT_PRICE = "Фактическая цена за ед."
 COL_FACT_TOTAL = "Фактическая сумма"
 
+def feo_level_col(n: int) -> str:
+    """Стандартное каноническое название столбца уровня ФЭО / субсидии: «Уровень N» (от 1 до 100+)."""
+    return f"Уровень {n}"
+
+
+_FEO_LEVEL_HEADER_RE = re.compile(
+    r"^(?:фэо\s+)?ур(?:овень|\.)\s*(\d+)(?:\s*\(.*?\))?$",
+    re.IGNORECASE,
+)
+
+
+def parse_feo_level_header(raw: object) -> int | None:
+    """Распознаёт заголовки уровней субсидии / ФЭО:
+    «Уровень 1» .. «Уровень 100», «ФЭО Ур.1», «Ур. 1», «Уровень 2 (...)».
+    Возвращает целое число 1..100 (или больше) либо None."""
+    if raw is None:
+        return None
+    text = str(raw).replace("\xa0", " ").strip()
+    m = _FEO_LEVEL_HEADER_RE.match(text)
+    if m:
+        try:
+            val = int(m.group(1))
+            if 1 <= val <= 200:
+                return val
+        except ValueError:
+            pass
+    return None
+
+
 # ── Показатели ФЭО ────────────────────────────────────────────────────────────
 COL_FEO_CATEGORY = "Категория ФЭО"
-COL_FEO_L1 = "ФЭО Ур.1"
-COL_FEO_L2 = "ФЭО Ур.2"
-COL_FEO_L3 = "ФЭО Ур.3"
-COL_FEO_L4 = "ФЭО Ур.4"
-COL_FEO_L5 = "ФЭО Ур.5"
-COL_FEO_DIRECTION = "Направление расходов по ФЭО"
-COL_FEO_TYPE = "Тип расходов по ФЭО"
-COL_FEO_SUBDIRECTION = "Поднаправление расходов по ФЭО"
+COL_FEO_L1 = feo_level_col(1)
+COL_FEO_L2 = feo_level_col(2)
+COL_FEO_L3 = feo_level_col(3)
+COL_FEO_L4 = feo_level_col(4)
+COL_FEO_L5 = feo_level_col(5)
+COL_FEO_DIRECTION = COL_FEO_L1
+COL_FEO_TYPE = COL_FEO_L2
+COL_FEO_SUBDIRECTION = COL_FEO_L3
 COL_FEO_QTY = "Количество по ФЭО"
 COL_FEO_UNIT = "Ед. изм. по ФЭО"
 COL_FEO_UNIT_PRICE = "Цена за ед. по ФЭО"

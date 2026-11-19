@@ -22,6 +22,11 @@ from __future__ import annotations
 
 from typing import Optional
 
+from app.services.excel_column_names import (
+    COL_FEO_L1,
+    COL_FEO_L2,
+    COL_ITEM_TYPE,
+)
 from app.services.export_columns_catalog import (
     column_index as _shared_column_index,
     columns_catalog as _shared_columns_catalog,
@@ -53,21 +58,21 @@ PLAN_GRAPH_COLUMNS: list[tuple] = [
     # своей подписью здесь для контекста плана-графика).
     ("purchase_number", _PURCHASE_COLUMNS["purchase_number"]["label"], "Позиция", 14, True),
     ("order_number", _PURCHASE_COLUMNS["order_number"]["label"], "Позиция", 14, True),
-    ("direction", "Направление расходов", "Позиция", 30, True),
-    ("type", "Тип расходов", "Позиция", 25, True),
+    ("direction", COL_FEO_L1, "Позиция", 30, True),
+    ("type", COL_FEO_L2, "Позиция", 25, True),
     ("name", _PURCHASE_COLUMNS["item_name"]["label"], "Позиция", 40, True),
     # «Состав закупки» / «Цена за ед.» — название и цена закупленной позиции
     # (раньше склеивались текстом в name: «    └ Название — цена ₽/ед.»,
     # владелец 08.10.2026 — каждое значение в своём столбце для фильтра).
     ("composition", "Состав закупки", "Позиция", 35, True),
     ("unit_price", "Цена за ед.", "Позиция", 14, True),
-    # «Товар / услуга» (владелец 08.10.2026, замечание 1 — «нужен столбец, где
+    # «Тип позиции (Товар/Услуга)» (владелец 08.10.2026, замечание 1 — «нужен столбец, где
     # указывается Товары или Услуги»): в строках закупок — вид закупленной
     # позиции, в строках плановых позиций — вид плановой позиции; значение —
     # app.services.plan_graph_export_data.item_kind_label (единственная точка
     # вызова app.services.item_type_split.kind_of_by_category_id для этого
     # столбца, ПРАВИЛО №6 — не разбираем item_type заново).
-    ("item_kind", "Товар / услуга", "Позиция", 12, True),
+    ("item_kind", COL_ITEM_TYPE, "Позиция", 18, True),
     ("unit", _PURCHASE_COLUMNS["unit"]["label"], "Позиция", 10, True),
     ("qty", "Плановое количество", "Позиция", 14, True),
     ("feo_budget", "Бюджет ФЭО, ₽", "Деньги по стадиям", 18, True),

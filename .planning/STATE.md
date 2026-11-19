@@ -14,10 +14,22 @@ progress:
 
 # STATE.md — VSKS_CRM
 
-## 2026-11-19 — Swarm Rebuild: сборка реальных существующих страниц GALA 1-в-1 (`swarmBlueprintData.ts`, `swarmBlueprints.ts`, `swarmDomSnapshot.ts`, `SwarmRebuildOverlay.vue`, `SwarmPreviewControls.vue`)
-- Убраны выдуманные макеты: `/subsidies` собирает реальную адаптивную сетку из 16 вертикальных карточек субсидий (на ультрашироком мониторе 2380px — `12 + 4` карточки в ряд, с полной внутренней версткой карточек субсидий и нижней сводной полосой из 10 показателей), `/orders` собирает реальную шапку из 6 кнопок (*ШАБЛОН, ИМПОРТ, СВЯЗИ, РАЗНЕСТИ СТАТУСЫ, EXCEL, + ДОБАВИТЬ*), 4 широкие KPI-карточки (крупная сумма сверху, подпись снизу), строку из 11 фильтров, 8 вкладок статусов и таблицу закупок на 10 колонок.
-- Внедрён автоматический захват и кэширование живого DOM `.v-main` для каждого маршрута (`cacheLiveRouteSnapshot` / `getCachedRouteSnapshot` в памяти и `sessionStorage`).
-- **Верификация:** `cm.py check` по всем 6 файлам PASS (`< 500` строк), `npx vitest run src/components/swarm/__tests__/swarmBlueprints.spec.ts` (`5/5 passed`).
+## 2026-11-19 — Унификация уровней субсидии (Уровень 1..N) и названий столбцов во всех шаблонах и выгрузках (`excel_column_names.py`, `import_template_spec.py`, `feo_export_columns.py`, `plan_graph_export_columns.py`, `feo_import_template.py`, `historical_fact_import/columns.py`, `rows.py`, `template_stages.py`, `purchase_import_parser_maps.py`, `purchase_import_parser_group.py`, `useFeoImport.ts`, `useFactImport.ts`)
+- Все уровни субсидии/ФЭО во всех шаблонах и выгрузках переведены на канонические имена `Уровень 1`, `Уровень 2`, ..., `Уровень N` через `excel_column_names.py::feo_level_col(n)`.
+- Добавлен динамический разбор уровней произвольной глубины (до 100+ уровней) через `parse_feo_level_header` в `historical_fact_import/columns.py`, `rows.py` (`extra_levels`), `purchase_import_parser_group.py` и `import_template_builder.py`.
+- Унифицированы столбцы `Тип позиции (Товар/Услуга)` (`COL_ITEM_TYPE`) и `Оплачено в деньгах` (`COL_PAID_AMOUNT_MONEY`) с сохранением 100% обратной совместимости по старым заголовкам.
+- **Верификация:** `cm.py check` по всем 10 Python-модулям PASS (`< 500` строк), тесты `test_excel_columns_and_feo_indent.py` и `test_feo_template_fact_columns.py` обновлены и проверены, `npm --prefix frontend run build` PASS (`3351 modules transformed`, `built in 40.31s`).
+
+## 2026-11-19 — Заявка №275: уменьшение количества позиции из плана без ложной ошибки 409 `ITEM_PRICE_LOCKED_FROM_PLAN` (`feo_item_lock.py`, `contract_item_link.py`, `useItemMatching.ts`, `ItemsTableWish.vue`, `test_purchase_from_plan_lock.py`)
+- В `assert_item_price_not_locked` (`backend/app/services/feo_item_lock.py`) цены за единицу нормализуются до копеек через `_norm_unit_price` (`Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)`), устраняя ложное срабатывание `float != Decimal` при `PUT /api/wishes/{id}` (где `WishUpdate.items` приходит как `list[dict]` с `float`), когда пользователь уменьшает количество позиции из плана (с 2 до 1) и меняется только общая стоимость (`total_price`), а цена за единицу (`unit_price`) остаётся плановой.
+- В `build_purchase_item_id_map` (`backend/app/services/contract_item_link.py`) добавлено сужение одноимённых позиций по `_norm_unit_price` и `quantity`.
+- На фронте в `useItemMatching.ts` выделен предикат `isPlanPriceProtected(row)` (применён в `resetPriceIfFromCatalog` и `applyCandidate`), а в `ItemsTableWish.vue` заблокирован `AvgPriceHint` для `isItemFeoCategoryLocked(item)`.
+- **Верификация:** `cm.py check` PASS (5 файлов `< 500` строк), `pytest tests/test_purchase_from_plan_lock.py -k "kopeks"` -> `1 passed`.
+
+## 2026-11-19 — Swarm Rebuild: прозрачный HUD-слой поверх реального DOM с динамическим подхватом строк таблиц (`SwarmRebuildOverlay.vue`, `swarm-overlay.css`, `swarmDomSnapshot.ts`, `swarmTypes.ts`, `index.html`)
+- Устранена задержка проявления строк реестров (договоры, закупки): добавлен `MutationObserver` на `.v-main` (`setupDomObserver` + `syncNewlyRenderedElements`). Как только асинхронный ответ API возвращает данные и Vuetify вставляет строки таблицы `tbody tr` / `.v-data-table__tr` (лимит расширен до 90 элементов), курсоры динамически подхватывают их и каскадной волной с щелчками проявляют каждую строку по очереди.
+- Завершение оверлея удерживается до полного прохождения каскада строк. Убраны синтетические прелоадеры `#gala-boot-swarm`.
+- **Верификация:** `cm.py check` (PASS, все < 500 строк), `vitest` `swarmBlueprints.spec.ts` (5/5) + `useLongWait.spec.ts` (8/8) PASS, `npm --prefix frontend run build` PASS.
 
 ## 2026-11-19 — Выкладка 5 пакетов (чеки/OCR, каталог, рыночные цены, дашборд Donut, миграция `c3e5f7a9b1d3`, запушено `55ac1025..33f9eafb`)
 - `ee48f031` — чеки, OCR/QR, `.tif/.tiff/.jtif/.jfif`, вложения документов/автопарка (20 файлов; `pdf_ocr.py` `492` строки).

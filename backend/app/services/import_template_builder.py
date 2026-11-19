@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feo_category import FeoCategory
+from app.services.excel_column_names import parse_feo_level_header
 from app.services.import_template_spec import _COL_SPEC
 from app.services.import_template_examples import (
     _TEMPLATE_EXAMPLE_ROW,
@@ -289,10 +290,9 @@ async def build_purchase_import_template_workbook(
     fill_req_row = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
     align_wrap = Alignment(wrap_text=True, vertical="top")
 
-    # Строки колонок «ФЭО Ур.N» на этом листе — запоминаем, чтобы после построения каскада
+    # Строки колонок «Уровень N» / «ФЭО Ур.N» на этом листе — запоминаем, чтобы после построения каскада
     # (ниже по коду) дописать в «Формат/пример», что это связанный список.
     _feo_fmt_rows: dict[int, int] = {}
-    _feo_headers_set = {"ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"}
 
     for spec in _COL_SPEC:
         fmt_val = spec["fmt"]
@@ -310,8 +310,9 @@ async def build_purchase_import_template_workbook(
         for cell in ref_ws[ref_ws.max_row]:
             cell.border = thin_border
         row_idx = ref_ws.max_row
-        if spec["header"] in _feo_headers_set:
-            _feo_fmt_rows[int(spec["header"][-1])] = row_idx
+        lvl_parsed = parse_feo_level_header(spec["header"])
+        if lvl_parsed is not None:
+            _feo_fmt_rows[lvl_parsed] = row_idx
         if spec["required"]:
             for col_idx2 in range(1, 6):
                 ref_ws.cell(row_idx, col_idx2).fill = fill_req_row
@@ -472,12 +473,11 @@ async def build_purchase_import_template_workbook(
                     # 4. Скрытые хелпер-колонки на листе «Закупки» (col 70+)
                     #    helperL → id выбранного узла уровня L в этой строке
                     # ---------------------------------------------------------------
-                    # Находим колонки ФЭО Ур.1..5 на листе «Закупки»
+                    # Находим колонки Уровень 1..5 / ФЭО Ур.1..5 на листе «Закупки»
                     feo_headers_map: dict[int, str] = {}  # уровень → col_letter
                     for feo_col_i, spec in enumerate(_COL_SPEC, 1):
-                        hdr = spec["header"]
-                        if hdr in ("ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"):
-                            lvl_num = int(hdr[-1])
+                        lvl_num = parse_feo_level_header(spec["header"])
+                        if lvl_num is not None:
                             feo_headers_map[lvl_num] = ws.cell(1, feo_col_i).column_letter
 
                     # Хелпер-колонки начинаем с col=70 (заведомо за _COL_SPEC)
@@ -518,11 +518,10 @@ async def build_purchase_import_template_workbook(
                     # ЕСЛИ хелпер есть; иначе (в т.ч. N > глубины дерева субсидии) — списка НЕТ,
                     # только подсказка, что уровня в дереве субсидии нет. Никакого fallback на корни.
                     # ---------------------------------------------------------------
-                    feo_headers_list = ["ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"]
                     for feo_col_i, spec in enumerate(_COL_SPEC, 1):
-                        if spec["header"] not in feo_headers_list:
+                        level_num = parse_feo_level_header(spec["header"])
+                        if level_num is None:
                             continue
-                        level_num = int(spec["header"][-1])
                         col_letter = ws.cell(1, feo_col_i).column_letter
 
                         dn_formula = None
@@ -618,11 +617,10 @@ async def build_purchase_import_template_workbook(
         warn_cell.alignment = Alignment(wrap_text=True)
         wb_ref_ws.row_dimensions[1].height = 46
 
-        # На листе «Закупки»: серая заливка шапки + предупреждение в подсказке DV колонок ФЭО Ур.1..5
+        # На листе «Закупки»: серая заливка шапки + предупреждение в подсказке DV колонок Уровень 1..5
         fill_warn = PatternFill(start_color="9CA3AF", end_color="9CA3AF", fill_type="solid")
-        feo_headers_list = ["ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"]
         for feo_col_i, spec in enumerate(_COL_SPEC, 1):
-            if spec["header"] not in feo_headers_list:
+            if parse_feo_level_header(spec["header"]) is None:
                 continue
             col_letter = ws.cell(1, feo_col_i).column_letter
             ws.cell(1, feo_col_i).fill = fill_warn

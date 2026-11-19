@@ -169,16 +169,16 @@ const feoImportTargetSubsidy = ref<number | null>(null)
 // (ImportMappingGrid.vue), на мэппинг/отправку не влияет.
 const FEO_TARGET_FIELDS = [
   { value: 'subsidy',  title: 'Субсидия (название)',                          required: true },
-  { value: 'lvl2',     title: 'Уровень 2 — Направление расходов по ФЭО',     required: true },
-  { value: 'lvl3',          title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
-  { value: 'lvl4',          title: 'Уровень 4 — Конкретизированный',              required: false },
+  { value: 'lvl2',     title: 'Уровень 2',                                    required: true },
+  { value: 'lvl3',          title: 'Уровень 3',                               required: false },
+  { value: 'lvl4',          title: 'Уровень 4',                               required: false },
   // 🟡 Правка 16.10.2026 (задача 1, лист GoodsService владельца, колонка AH
   // «Тип расходов конкретизированный (свой)») — 4-й настраиваемый уровень
   // категории дерева ФЭО, между Уровнем 4 и «Плановой позицией»; lvl5
   // (имя позиции) НЕ переименован, см. c_lvl4b в app/services/feo_import_core.py.
-  { value: 'lvl4b',         title: 'Уровень 5 (категория)',                      required: false },
+  { value: 'lvl4b',         title: 'Уровень 5',                               required: false },
   { value: 'lvl5',          title: 'Наименование позиции',                     required: false },
-  { value: 'item_type',       title: 'Товар/услуга/работа',                     required: false },
+  { value: 'item_type',       title: 'Тип позиции (Товар/Услуга)',             required: false },
   // Плоский шаблон (2026-08-14): одна пара колонок «по ФЭО»/«плана» на всю
   // строку — вместо колонок-на-каждый-уровень. См. col_row_* в _do_feo_import.
   { value: 'row_feo_qty',     title: 'Количество по ФЭО',                        required: false },
@@ -212,7 +212,7 @@ const FEO_TARGET_FIELDS = [
   { value: 'fact_qty',          title: 'Фактическое количество',     required: false, group: 'fact' },
   { value: 'fact_price',        title: 'Фактическая цена за ед.',    required: false, group: 'fact' },
   { value: 'fact_amount',       title: 'Фактическая сумма',          required: false, group: 'fact' },
-  { value: 'fact_paid',         title: 'Оплачено',                   required: false, group: 'fact' },
+  { value: 'fact_paid',         title: 'Оплачено в деньгах',         required: false, group: 'fact' },
   // Задача 2 (владелец, 05.10.2026): «Аванс (да/нет)» — оплачено ДО поставки,
   // см. колонку шаблона сразу после «Оплачено» (app/routers/feo_import_
   // template.py) и app/services/historical_fact_import/columns.py (header

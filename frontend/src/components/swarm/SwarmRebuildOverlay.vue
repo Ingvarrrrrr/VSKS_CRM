@@ -141,7 +141,7 @@ import {
 import { isLoggedIn } from '../../composables/useAuthFlag'
 import { cacheLiveRouteSnapshot, getCachedRouteSnapshot, snapshotLiveWorkspace } from './swarmDomSnapshot'
 import { computeActiveGuides, computeRenderedItems, computeRulerTicks, computeTargetCursors } from './swarmEngine'
-import type { SwarmItem, SwarmTool } from './swarmTypes'
+import { SWARM_AGENTS, type SwarmItem, type SwarmTool } from './swarmTypes'
 import { isSwarmSoundEnabled, playSwarmCompleteSound, playSwarmSnapSound, setSwarmSoundEnabled } from './swarmAudio'
 import SwarmPreviewControls from './SwarmPreviewControls.vue'
 import './swarm-overlay.css'

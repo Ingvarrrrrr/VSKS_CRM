@@ -1231,7 +1231,7 @@ const props = withDefaults(defineProps<{
   purchaseStatus: '',
   allowedItemTypes: () => ['товар', 'услуга', 'работа'],
   defaultItemType: 'товар',
-  defaultUnit: 'шт.',
+  defaultUnit: 'Штука',
   defaultCountry: 'РФ',
   supportsExcelImport: true,
   supportsSmartImport: true,
@@ -2606,6 +2606,18 @@ defineExpose({
   firstMissingFeoRowUid() {
     if (!props.feoPerItem) return null
     return localItems.value.find(it => !it.feo_category_id)?._uid ?? null
+  },
+  expandRows(indexes: number[]) {
+    const next = { ...expanded.value }
+    for (const idx of indexes) {
+      next[idx] = true
+    }
+    expanded.value = next
+  },
+  expandAll() {
+    const next: Record<number, boolean> = {}
+    localItems.value.forEach((_, i) => { next[i] = true })
+    expanded.value = next
   },
 })
 </script>

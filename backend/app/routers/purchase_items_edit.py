@@ -1255,7 +1255,7 @@ async def delete_purchase_item(
             entity_type="purchase",
             entity_id=pid,
             field_name="items",
-            old_value=f"Позиция «{it.item_name}» ({it.quantity or 0} {it.unit or 'шт.'} на {it.total_price or 0} ₽)",
+            old_value=f"Позиция «{it.item_name}» ({it.quantity or 0} {it.unit or 'Штука'} на {it.total_price or 0} ₽)",
             new_value="Удалена из закупки (снята с плана)",
             changed_by_id=current_user.id,
             changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
@@ -1339,7 +1339,7 @@ async def sync_purchase_items_from_plan(
 
         # 1. Позиция обнулена в плане или деактивирована -> удаляем из закупки
         if not fpi.is_active or plan_qty <= Decimal("0"):
-            old_qty_str = f"{it.quantity or 0} {it.unit or 'шт.'}"
+            old_qty_str = f"{it.quantity or 0} {it.unit or 'Штука'}"
             changes.append({
                 "item_id": it.id,
                 "item_name": it.item_name,
@@ -1364,7 +1364,7 @@ async def sync_purchase_items_from_plan(
 
         # 2. Количество в плане уменьшилось -> актуализируем
         elif plan_qty < cur_qty:
-            old_qty_str = f"{it.quantity} {it.unit or 'шт.'}"
+            old_qty_str = f"{it.quantity} {it.unit or 'Штука'}"
             it.quantity = plan_qty
             apply_item_amounts(
                 it, item_form_for_purchase_item(p, it),
@@ -1388,7 +1388,7 @@ async def sync_purchase_items_from_plan(
                 entity_id=pid,
                 field_name="item_quantity",
                 old_value=f"Позиция «{it.item_name}»: {old_qty_str}",
-                new_value=f"Позиция «{it.item_name}»: {plan_qty} {it.unit or 'шт.'} (актуализация по плану ФЭО)",
+                new_value=f"Позиция «{it.item_name}»: {plan_qty} {it.unit or 'Штука'} (актуализация по плану ФЭО)",
                 changed_by_id=current_user.id,
                 changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
                 source="autoassign",

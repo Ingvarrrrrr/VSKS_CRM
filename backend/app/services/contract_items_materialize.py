@@ -52,7 +52,7 @@ async def copy_items_to_contract(
             product_id=pi.product_id,
             name=pi.item_name or "Позиция",
             quantity=pi.quantity,
-            unit=pi.unit or 'шт.',
+            unit=pi.unit or 'Штука',
             unit_price=pi.unit_price,
             total=pi.total_price,
             vat_rate=getattr(pi, "vat_rate", None),

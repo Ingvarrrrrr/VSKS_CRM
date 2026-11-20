@@ -197,7 +197,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
                     purchase_id=purchase_id,
                     item_name=raw_name,
                     quantity=qty,
-                    unit='шт.',
+                    unit='Штука',
                     unit_price=price,
                     total_price=total,
                     match_confirmed=False,
@@ -464,7 +464,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
                         source_item_id=pi.id,
                         name=pi.item_name or "Позиция",
                         quantity=pi.quantity,
-                        unit=pi.unit or 'шт.',
+                        unit=pi.unit or 'Штука',
                         unit_price=pi.unit_price,
                         total=pi.total_price,
                         vat_rate=pi.vat_rate,  # NEW Phase 27.1.17

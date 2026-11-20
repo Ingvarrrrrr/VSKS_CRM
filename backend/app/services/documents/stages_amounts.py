@@ -128,11 +128,10 @@ def compute_amounts_and_vat(p: Purchase, doc_type: str) -> dict:
                 vat_rate_val = int(_parse_vat_rate_percent(unique_rates[0]))
                 vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
             else:
-                # Разные ставки у разных позиций — единого числа для {{vat_rate}}
-                # нет, полная картина только в vat_info_line (как и в advance-ветке
-                # ниже для того же случая).
+                # Владелец (замечание 4): когда разный НДС для разных позиций,
+                # в листе согласования и в договорах не должен указываться в тексте процент НДС, просто сумма.
                 vat_rate_val = None
-                vat_info_line = f"НДС по позициям ({', '.join(unique_rates)}): {_fmt_money_plain(vat_amount_val)} руб."
+                vat_info_line = f"В том числе НДС: {_fmt_money_plain(vat_amount_val)} руб."
         else:
             # Позиций с проставленной ставкой нет (пустая закупка) — не
             # придумываем ни ставку, ни основание освобождения.
@@ -165,7 +164,12 @@ def compute_amounts_and_vat(p: Purchase, doc_type: str) -> dict:
             if items_with_vat:
                 # Per-item VAT — показать сводку по факту
                 unique_rates = sorted({str(it.vat_rate) for it in items_with_vat if it.vat_rate})
-                vat_info_line = f"НДС по позициям: {', '.join(unique_rates)}"
+                adv_vat_sum = round(sum(_item_vat_amount(it) for it in items_with_vat), 2)
+                if len(unique_rates) == 1:
+                    adv_rate = int(_parse_vat_rate_percent(unique_rates[0]))
+                    vat_info_line = f"В том числе НДС {adv_rate}%: {_fmt_money_plain(adv_vat_sum)} руб."
+                else:
+                    vat_info_line = f"В том числе НДС: {_fmt_money_plain(adv_vat_sum)} руб."
             else:
                 vat_info_line = ""  # пусто — не придумываем
         else:

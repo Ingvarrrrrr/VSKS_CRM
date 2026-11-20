@@ -311,4 +311,92 @@ function ignoreColumn(idx: number) {
   color: #888;
   align-self: center;
 }
+
+/* ── Dark theme contrast overrides (владелец: не видно названий импортируемых колонок) ── */
+:deep(.v-theme--dark) .imap-col,
+.v-theme--dark .imap-col {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.04);
+}
+:deep(.v-theme--dark) .imap-col--over,
+.v-theme--dark .imap-col--over {
+  border-color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+}
+:deep(.v-theme--dark) .imap-col--filled,
+.v-theme--dark .imap-col--filled {
+  border-color: #4ade80;
+  background: rgba(74, 222, 128, 0.10);
+}
+:deep(.v-theme--dark) .imap-col--required,
+.v-theme--dark .imap-col--required {
+  border-color: #f87171;
+  background: rgba(248, 113, 113, 0.10);
+}
+:deep(.v-theme--dark) .imap-col--group-fact,
+.v-theme--dark .imap-col--group-fact {
+  border-color: #f87171;
+  background: rgba(239, 68, 68, 0.08);
+}
+:deep(.v-theme--dark) .imap-col--group-fact.imap-col--filled,
+.v-theme--dark .imap-col--group-fact.imap-col--filled {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.16);
+}
+:deep(.v-theme--dark) .imap-col-hdr,
+.v-theme--dark .imap-col-hdr {
+  color: #f3f4f6 !important;
+  border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+:deep(.v-theme--dark) .imap-col-hint,
+.v-theme--dark .imap-col-hint {
+  color: #94a3b8 !important;
+}
+:deep(.v-theme--dark) .imap-col-empty,
+.v-theme--dark .imap-col-empty {
+  color: #64748b;
+}
+:deep(.v-theme--dark) .imap-card,
+.v-theme--dark .imap-card {
+  background: #1e293b !important;
+  border: 1px solid #475569 !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+:deep(.v-theme--dark) .imap-card:hover,
+.v-theme--dark .imap-card:hover {
+  border-color: #60a5fa !important;
+  box-shadow: 0 2px 8px rgba(96, 165, 250, 0.25);
+}
+:deep(.v-theme--dark) .imap-card-name,
+.v-theme--dark .imap-card-name {
+  color: #ffffff !important;
+  font-weight: 600;
+}
+:deep(.v-theme--dark) .imap-card-samples,
+.v-theme--dark .imap-card-samples {
+  color: #cbd5e1 !important;
+}
+:deep(.v-theme--dark) .imap-card-approx,
+.v-theme--dark .imap-card-approx {
+  color: #fde68a !important;
+  background: rgba(245, 158, 11, 0.25) !important;
+}
+:deep(.v-theme--dark) .imap-card--free,
+.v-theme--dark .imap-card--free {
+  background: #0f172a !important;
+  border-color: #334155 !important;
+}
+:deep(.v-theme--dark) .imap-unresolved,
+.v-theme--dark .imap-unresolved {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.03);
+}
+:deep(.v-theme--dark) .imap-unresolved-label,
+.v-theme--dark .imap-unresolved-label {
+  color: #cbd5e1 !important;
+}
+:deep(.v-theme--dark) .imap-unresolved-done,
+.v-theme--dark .imap-unresolved-done {
+  color: #4ade80 !important;
+}
 </style>

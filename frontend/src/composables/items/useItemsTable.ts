@@ -5,6 +5,7 @@
 // PurchaseItemsEditor.vue (monolith refactor, часть 2).
 import { ref, computed, watch, type Ref } from 'vue'
 import { resetPriceIfFromCatalog } from '@/composables/useItemMatching'
+import { normalizeOkeiUnit } from '@/composables/useOkeiUnits'
 
 // EditorItem is structurally identical to the parent's; kept loose here (same
 // convention as ItemsTableFlat.vue) since the parent owns the real shape and
@@ -48,8 +49,17 @@ export function useItemsTable(deps: UseItemsTableDeps) {
 
   // BUG #3: assign stable _uid to every incoming item missing one (in-place so the
   // parent's objects keep identity), preserving insertion order.
+  // Росэлторг: неподдерживаемые единицы измерения приводятся к каноническим (например 'шт.' -> 'Штука').
   function normalizeItems(items: EditorItem[]): EditorItem[] {
-    return items.map(it => ensureUid(it))
+    return items.map(it => {
+      ensureUid(it)
+      if (it.unit) {
+        it.unit = normalizeOkeiUnit(it.unit)
+      } else if (!it.unit && props.defaultUnit) {
+        it.unit = normalizeOkeiUnit(props.defaultUnit)
+      }
+      return it
+    })
   }
   const localItems: Ref<EditorItem[]> = ref(normalizeItems([...props.modelValue]))
 
@@ -82,7 +92,7 @@ export function useItemsTable(deps: UseItemsTableDeps) {
       item_name: '',
       item_type: props.defaultItemType,
       quantity: null,
-      unit: props.defaultUnit,
+      unit: normalizeOkeiUnit(props.defaultUnit || 'Штука'),
       unit_price: null,
       total_price: null,
       country_origin: props.defaultCountry,

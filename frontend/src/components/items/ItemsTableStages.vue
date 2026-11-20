@@ -465,24 +465,29 @@
                                category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id;
                                владелец 2026-08-17: в общем режиме падает на defaultFeoCategoryId — категорию,
                                выбранную один раз в шапке заявки/закупки. Видна всегда при hasFeoBinding. -->
-                          <FeoPlannedItemsSelect
+                          <div
                             v-if="feoPlannedPerItem || allowPerItemPlan || hasFeoBinding(item)"
-                            :readonly="feoReadonly || !(feoPlannedPerItem || allowPerItemPlan)"
-                            :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
-                            :category-id="effectiveCategoryId(item)"
-                            :nodes="feoNodes" :items="plannedItems || []"
-                            :subsidy-id="subsidyId"
-                            :amount="item.total_price" dense class="mt-1"
-                            :pending-by-planned-item="pendingByPlannedItem"
-                            :pending-items-by-planned-item="pendingItemsByPlannedItem"
-                            :purchase-id="purchaseId"
-                            :wish-id="wishId"
-                            :candidates="itemCandidates ? itemCandidates(item) : undefined"
-                            :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price, unitPrice: item.unit_price, itemType: item.item_type, productId: item.product_id }"
-                            :is-advance="isAdvance"
-                            @update:model-value="(v) => emit('item-planned-change', idx, v)"
-                            @planned-item-created="emit('planned-item-created')"
-                            @planned-item-deleted="emit('planned-item-deleted')" />
+                            :data-field="`item-feo-planned-select-${item._uid ?? idx}`"
+                            style="flex:1 1 320px;min-width:260px"
+                          >
+                            <FeoPlannedItemsSelect
+                              :readonly="feoReadonly || !(feoPlannedPerItem || allowPerItemPlan)"
+                              :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
+                              :category-id="effectiveCategoryId(item)"
+                              :nodes="feoNodes" :items="plannedItems || []"
+                              :subsidy-id="subsidyId"
+                              :amount="item.total_price" dense class="mt-1"
+                              :pending-by-planned-item="pendingByPlannedItem"
+                              :pending-items-by-planned-item="pendingItemsByPlannedItem"
+                              :purchase-id="purchaseId"
+                              :wish-id="wishId"
+                              :candidates="itemCandidates ? itemCandidates(item) : undefined"
+                              :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price, unitPrice: item.unit_price, itemType: item.item_type, productId: item.product_id }"
+                              :is-advance="isAdvance"
+                              @update:model-value="(v) => emit('item-planned-change', idx, v)"
+                              @planned-item-created="emit('planned-item-created')"
+                              @planned-item-deleted="emit('planned-item-deleted')" />
+                          </div>
                           <!-- Владелец (2026-08-26, заявка №45/Минтруд_2026): «уже запланировано по
                                статье»/«остаток на статье» — ТОЛЬКО когда нет выбранной КОНКРЕТНОЙ
                                плановой позиции (см. categoryResidualFor в PurchaseItemsEditor.vue). -->

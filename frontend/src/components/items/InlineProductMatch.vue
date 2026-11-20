@@ -7,22 +7,8 @@
       </template>
     </v-tooltip>
 
-    <!-- Perf (lazy matcher): when NOT active, render a lightweight read-only field
-         instead of the heavy v-autocomplete (menu + virtual list + tooltips). The
-         real autocomplete only mounts once the user focuses/clicks this row. On
-         initial render of N rows, ZERO v-autocomplete instances mount.
-
-         ДЕФЕКТ приёмки 29.10.2026 (окно «Новая заявка», 1440×900, свежедобавленная
-         строка внизу формы): `@mousedown` БЕЗ `.prevent` — браузер успевает
-         нативно сфокусировать именно ЭТО readonly-поле (как ЛЮБОЙ клик по
-         focusable-элементу) ещё ДО того, как Vue успевает переключить active
-         и смонтировать настоящий v-autocomplete; нативный фокус без
-         preventScroll прокручивает тесный диалог далеко вниз (к «Обоснование
-         и сроки»), меню автозаполнения, которое открывается следом, попадает
-         в тот же скролл и закрывается. `.prevent` отменяет нативный
-         фокус/скролл СТАРОГО поля — activate() ниже сам фокусирует НОВОЕ
-         поле с preventScroll (см. его докстринг). -->
-
+    <!-- Perf (lazy matcher): lightweight read-only field until active (0 autocompletes mounted initially).
+         @mousedown.prevent отменяет нативный скролл тесного диалога, activate() фокусирует с preventScroll. -->
     <v-text-field
       v-if="!active"
       :model-value="displayName"
@@ -63,6 +49,7 @@
       @click:clear="onClear"
       @update:search="onSearch"
       @update:model-value="onSelect"
+      @blur="onBlur"
     >
       <template #selection="{ item: it }">
         <!-- 2026-09-01 (владелец, диалог «Добавить плановую позицию»): длинное
@@ -234,24 +221,7 @@ function activate() {
   if (!isSearchTooShort(searchText.value)) {
     void runMatch(searchText.value)
   }
-  // Focus the real autocomplete once it has mounted.
-  //
-  // ДЕФЕКТ приёмки 29.10.2026 (окно «Новая заявка», 1440×900, строка добавлена
-  // ближе к низу формы): обычный `.focus()` без preventScroll — браузер сам
-  // решает, КАК прокрутить скроллящийся контейнер (.v-card-text диалога),
-  // чтобы новый фокус был виден, и на тесной высоте проматывает диалог
-  // слишком далеко вниз (к «Обоснование и сроки», см. отчёт приёмки) — меню
-  // автозаполнения, которое только что открылось, попадает в тот же скролл
-  // контейнера и закрывается (scroll-strategy меню). На высоте 2000px диалог
-  // целиком помещается без скролла — потому там не воспроизводилось.
-  // Фикс — focus({preventScroll:true}) на НАСТОЯЩЕМ input (сам Vuetify
-  // .focus() опции не прокидывает). Без своего scrollIntoView() ПОСЛЕ —
-  // строка и так видна (иначе по ней не кликнуть), а любой дополнительный
-  // скролл именно в момент открытия меню — та прокрутка контейнера, от
-  // которой меню и закрывается (reposition-стратегия v-menu не успевает
-  // отработать достаточно быстро на резком скачке скролла). preventScroll
-  // достаточно: он не даёт браузеру самому решить, куда скроллить контейнер
-  // диалога ради фокуса.
+  // Focus with preventScroll to avoid container jump and menu close on tight layouts.
   void nextTick(() => {
     const inputEl = autocompleteRef.value?.$el?.querySelector('input') as HTMLInputElement | null
     if (inputEl) {
@@ -296,6 +266,10 @@ watch(() => props.itemName, (v) => {
 })
 
 // Display the current binding as a synthetic selection (so the field is not empty).
+// Владелец (баг «при вводе наименования дублируется запись»): когда productId == null,
+// товар ещё не привязан к каталогу, пользователь вводит свободный текст в input (v-model:search).
+// Раньше здесь возвращался фиктивный { product_id: 0, name: itemName }, из-за чего
+// Vuetify рисовал ОДНОВРЕМЕННО слот #selection и инпут со значением, дублируя название в строке.
 const selectedModel = computed<MatchCandidate | null>(() => {
   if (props.productId != null) {
     const found = candidates.value.find(c => c.product_id === props.productId)
@@ -306,14 +280,6 @@ const selectedModel = computed<MatchCandidate | null>(() => {
       price: null,
       score: 1,
     }
-  }
-  if ((props.itemName || '').trim()) {
-    return {
-      product_id: 0,
-      name: props.itemName,
-      price: null,
-      score: 1,
-    } as MatchCandidate
   }
   return null
 })
@@ -435,6 +401,15 @@ function onClear() {
   searchText.value = ''
   emit('clear')
   emit('update:search-text', '')
+}
+
+function onBlur() {
+  if (searchText.value && searchText.value !== props.itemName) {
+    emit('update:search-text', searchText.value)
+  }
+  setTimeout(() => {
+    active.value = false
+  }, 250)
 }
 
 function onSelect(val: MatchCandidate | null) {

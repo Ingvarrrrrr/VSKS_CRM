@@ -23,7 +23,10 @@ import { useToast, type ToastType } from '@/composables/useToast'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoNode } from './types'
 
-export const CATEGORY_UNIT_OPTIONS = ['шт.', 'усл.', 'компл.', 'уп.', 'м.', 'кг.', 'л.', 'п.м.', 'кв.м.', 'час.', 'мес.', 'год']
+export const CATEGORY_UNIT_OPTIONS = [
+  'Штука', 'Условная единица', 'Комплект', 'Упаковка', 'Метр', 'Килограмм',
+  'Литр; кубический дециметр', 'Погонный метр', 'Квадратный метр', 'Час', 'Месяц', 'Год',
+]
 
 // «Ед. изм.» — число (напр. 5500000 вместо «шт») — след старого импорта со сдвигом
 // колонок (на проде таких 35 категорий). Распознаём как «подозрительно», если строка

@@ -19,6 +19,7 @@ import { numOrNull } from '@/utils/numberFormat'
 import { productPhotoSrc } from '@/utils/productPhoto'
 import { isWishItemCategoryLockedByPlan } from '@/utils/feoItemLock'
 import { resolveWishFeoMissingTarget } from './wishFeoMissingTarget'
+import { normalizeOkeiUnit } from '@/composables/useOkeiUnits'
 import type { WishesContext } from './useWishesContext'
 import type { Wish } from './wishTypes'
 import type { EnsureApproversOutcome } from './useWishApprovers'
@@ -102,6 +103,7 @@ export function useWishForm(deps: {
 
   const wishFormRef = ref<any>(null)
   const wishSubmitBtnRef = ref<any>(null)
+  const itemsEditorRef = ref<any>(null)
 
   // Стрелочки к незаполненным полям (паттерн из CreateOrderView)
   const validationArrowsActive = ref(false)
@@ -117,7 +119,17 @@ export function useWishForm(deps: {
   // Общий хелпер: рисует стрелки от кнопки «Отправить/Сохранить» к переданным целям.
   function pointArrowsTo(targets: HTMLElement[]) {
     if (!targets.length) return
-    const btn = (wishSubmitBtnRef.value?.$el ?? wishSubmitBtnRef.value) as HTMLElement | null
+    let btn = (wishSubmitBtnRef.value?.$el ?? wishSubmitBtnRef.value) as HTMLElement | null
+    if (!btn) {
+      btn = document.querySelector(
+        '.v-dialog--active [data-action="approve"], .v-overlay--active [data-action="approve"], .v-dialog--active .wish-approve-btn, .v-overlay--active .wish-approve-btn'
+      ) as HTMLElement | null
+      if (!btn) {
+        btn = document.querySelector(
+          '.v-dialog--active .v-card-actions .v-btn--variant-elevated, .v-dialog--active .v-card-actions .v-btn'
+        ) as HTMLElement | null
+      }
+    }
     if (!btn) return
     validationArrowFrom.value = btn
     validationArrowTargets.value = targets.slice(0, 8)
@@ -977,7 +989,7 @@ export function useWishForm(deps: {
           item_name: i.item_name || '',
           item_type: i.item_type || 'товар',
           quantity: i.quantity != null ? Number(i.quantity) : null,
-          unit: i.unit || 'шт.',
+          unit: normalizeOkeiUnit(i.unit),
           unit_price: i.unit_price != null ? Number(i.unit_price) : null,
           total_price: i.total_price != null ? Number(i.total_price) : null,
           country_origin: i.country_origin || 'РФ',
@@ -1362,27 +1374,42 @@ export function useWishForm(deps: {
           .filter((i: number) => i !== -1)
       )
     }
-    const highlighted: HTMLElement[] = []
-    missingIndexes.forEach(idx => {
-      const item = items[idx]
-      const uid = item?._uid ?? idx
-      const target = (
-        document.querySelector(`[data-field="item-feo-planned-select-${uid}"]`)
-        || document.querySelector(`[data-field="item-feo-category-select-${uid}"]`)
-        || document.getElementById(`item-row-${uid}`)
-      ) as HTMLElement | null
-      if (target) highlighted.push(target)
-    })
-    if (!highlighted.length) {
-      highlightMissingFeoCategory()
-      return
+
+    // Владелец (замечание 3): при нехватке плановой позиции развернуть каждую строку,
+    // чтобы поле плановой позиции присутствовало в DOM и стрелочка указывала на него.
+    if (itemsEditorRef.value?.expandRows && missingIndexes.size > 0) {
+      itemsEditorRef.value.expandRows(Array.from(missingIndexes))
     }
-    highlighted[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    highlighted.forEach(el => {
-      el.classList.add('plan-bulk-row-pulse')
-      setTimeout(() => el.classList.remove('plan-bulk-row-pulse'), 3000)
-    })
-    pointArrowsTo(highlighted)
+
+    const doHighlight = () => {
+      const highlighted: HTMLElement[] = []
+      missingIndexes.forEach(idx => {
+        const item = items[idx]
+        const uid = item?._uid ?? idx
+        const target = (
+          document.querySelector(`[data-field="item-feo-planned-select-${uid}"]`)
+          || document.querySelector(`[data-field="item-feo-category-select-${uid}"]`)
+          || document.getElementById(`item-row-${uid}`)
+        ) as HTMLElement | null
+        if (target) highlighted.push(target)
+      })
+      if (!highlighted.length) {
+        highlightMissingFeoCategory()
+        return
+      }
+      highlighted[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      highlighted.forEach(el => {
+        el.classList.add('plan-bulk-row-pulse')
+        setTimeout(() => el.classList.remove('plan-bulk-row-pulse'), 3000)
+      })
+      pointArrowsTo(highlighted)
+    }
+
+    if (itemsEditorRef.value?.expandRows && missingIndexes.size > 0) {
+      window.setTimeout(doHighlight, 150)
+    } else {
+      doHighlight()
+    }
   }
 
   // ── T3: highlight items without needed_date ──────────────────────────────
@@ -1500,7 +1527,7 @@ export function useWishForm(deps: {
     // core state
     wishDialog, wishDialogLoading, editingWishId, editingWish, wishDateMode, wishConvertError,
     convertedEditGateDialog, convertedEditGateReason,
-    applyCommonDateToAllItems, wishFormRef, wishSubmitBtnRef,
+    applyCommonDateToAllItems, wishFormRef, wishSubmitBtnRef, itemsEditorRef,
     validationArrowsActive, validationArrowFrom, validationArrowTargets, dismissValidationArrows,
     pointArrowsTo, showValidationArrows,
     saving, serverFieldErrors, wishForm, selectedSubsidyName, selectedSubsidyOrgId, eventsForSubsidy,

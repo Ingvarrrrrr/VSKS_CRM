@@ -577,6 +577,7 @@
                   {{ feoAutosaveSaving ? 'Сохранение ФЭО…' : 'Есть несохранённые изменения ФЭО — сохранятся автоматически' }}
                 </div>
                 <PurchaseItemsEditor
+                  ref="itemsEditorRef"
                   v-model="wishForm.items"
                   item-shape="purchase"
                   :purchase-id="null"
@@ -584,7 +585,7 @@
                   :is-wish-stage="editingWish?.source !== 'advance_report'"
                   :form-mode="editingWish?.source === 'advance_report' ? 'advance_report' : 'default'"
                   :contract-form="wishForm.contract_form"
-                  :default-unit="'шт.'"
+                  :default-unit="'Штука'"
                   :default-country="'РФ'"
                   :allowed-item-types="['товар','услуга','работа']"
                   :supports-excel-import="true"
@@ -1075,6 +1076,8 @@
                         color="green"
                         variant="flat"
                         size="small"
+                        class="wish-approve-btn"
+                        data-action="approve"
                         :loading="decideLoading === a.id"
                         :disabled="isDecidingOnBehalf(a) && !(decideComment[a.id] || '').trim()"
                         prepend-icon="mdi-check"
@@ -1504,7 +1507,7 @@
           <v-tooltip :disabled="!wishFeoCategoryMissing" location="top">
             <template #activator="{ props: tipProps }">
               <span v-bind="tipProps">
-                <v-btn color="success" variant="tonal" prepend-icon="mdi-check" :loading="actions.approvingId.value === editingWish.id"
+                <v-btn color="success" variant="tonal" prepend-icon="mdi-check" class="wish-approve-btn" data-action="approve" :loading="actions.approvingId.value === editingWish.id"
                        @click="wishFeoCategoryMissing ? onHighlightMissingFeoCategory() : actions.approveWish(editingWish, actions.quickApproveTzNotRequired.value).then(() => wishDialog = false)">
                   Одобрить без согласования остальных
                 </v-btn>
@@ -1951,7 +1954,7 @@ async function applyRowForceStatus() { await form.applyRowForceStatus() }
 const {
   wishDialog, wishDialogLoading, editingWishId, editingWish, wishDateMode, wishConvertError,
   convertedEditGateDialog, convertedEditGateReason,
-  applyCommonDateToAllItems, wishFormRef, wishSubmitBtnRef,
+  applyCommonDateToAllItems, wishFormRef, wishSubmitBtnRef, itemsEditorRef,
   validationArrowsActive, validationArrowFrom, validationArrowTargets, dismissValidationArrows,
   highlightMissingFeoCategory, saving, serverFieldErrors, wishForm, selectedSubsidyName, selectedSubsidyOrgId, eventsForSubsidy,
   wishFeoSelected, wishFeoPerItemDisableDialog, wishFeoPerItemDisableCount,
@@ -1974,6 +1977,7 @@ const {
 // внутри useWishForm.ts (showValidationArrows/pointArrowsTo) они читаются постоянно.
 void wishFormRef
 void wishSubmitBtnRef
+void itemsEditorRef
 
 // Правило владельца (22.10.2026, заявка №209), QA-дефект того же дня: серить
 // статьи ФОТ в FeoTreeSelect (blockPayroll на обоих деревьях ниже) ТОЛЬКО

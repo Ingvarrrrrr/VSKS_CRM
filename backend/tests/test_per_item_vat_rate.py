@@ -199,8 +199,9 @@ def test_compute_amounts_per_item_mixed_rates_reports_breakdown():
     assert result["vat_app"] is True
     assert result["vat_rate_val"] is None
     assert result["vat_amount_val"] == pytest.approx(250.0)
-    assert "по позициям" in result["vat_info_line"]
-    assert "5%" in result["vat_info_line"] and "20%" in result["vat_info_line"]
+    # Владелец: при разном НДС по позициям в листе согласования и договорах
+    # процент не пишется, только сумма без процентов
+    assert result["vat_info_line"] == "В том числе НДС: 250,00 руб."
 
 
 def test_compute_amounts_per_item_no_priced_items_reports_no_vat():

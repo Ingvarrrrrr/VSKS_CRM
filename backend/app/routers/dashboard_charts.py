@@ -65,6 +65,7 @@ from app.routers.dashboard_metric_drill import router as metric_drill_router
 # НЕ вторая формула, прозрачный request-scoped кэш вокруг той же функции (см.
 # докстринг app.services.feo_plan_tree_cache); декоратор не трогает тело
 # обработчика ниже (минимальный дифф в большом файле).
+from app.auth.account_contour_cache import with_account_contour_cache
 from app.services.feo_plan_tree_cache import with_feo_plan_tree_cache
 # Право «Видеть ФОТ» (владелец, решение 21.10.2026, план part1/2) — ЕДИНСТВЕННОЕ
 # место, где /charts решает видимость ФОТ (app.services.payroll_visibility,
@@ -81,6 +82,7 @@ router.include_router(metric_drill_router)
 
 
 @router.get("/charts")
+@with_account_contour_cache
 @with_feo_plan_tree_cache
 async def dashboard_charts(
     db: AsyncSession = Depends(get_db),
@@ -145,6 +147,7 @@ async def dashboard_charts(
     subsidy_q = (
         select(
             Subsidy.id, Subsidy.name, Subsidy.year, Subsidy.budget,
+            Subsidy.is_sandbox, Subsidy.copied_from_id, Subsidy.contractor_id,
             func.coalesce(func.sum(Purchase.planned_total_price), 0).label("total_planned"),
             func.coalesce(func.sum(
                 case((Purchase.status.in_(["contracted", "delivered", "paid"]), Purchase.contract_price), else_=None)
@@ -233,7 +236,7 @@ async def dashboard_charts(
         )
         .select_from(Subsidy)
         .outerjoin(Purchase, and_(Purchase.subsidy_id == Subsidy.id, _aggregate_scope_expr()))
-        .group_by(Subsidy.id, Subsidy.name, Subsidy.year, Subsidy.budget)
+        .group_by(Subsidy.id, Subsidy.name, Subsidy.year, Subsidy.budget, Subsidy.is_sandbox, Subsidy.copied_from_id, Subsidy.contractor_id)
         .order_by(Subsidy.year.desc(), Subsidy.name)
     )
     if use_sids:
@@ -275,7 +278,7 @@ async def dashboard_charts(
     # _calculate_feo_planned_tree_bulk (см. её докстринг и docstring
     # feo_plan_subsidy_totals/subsidy_type_totals — опциональный `tree`).
     _shared_feo_tree = None
-    if effective_type_split and sid_list:
+    if sid_list:
         from app.services.feo_plan_tree import compute_feo_plan_tree as _compute_feo_plan_tree
         _shared_feo_tree = await _compute_feo_plan_tree(db, sid_list)
     planned_tree_map = await _calculate_feo_planned_tree_bulk(db, sid_list, tree=_shared_feo_tree)
@@ -286,13 +289,7 @@ async def dashboard_charts(
     # calculate_ceiling_forecasts_bulk внутри себя звала ту же функцию
     # заново на тот же sid_list, Правило №6).
     ceiling_forecasts = await calculate_ceiling_forecasts_bulk(db, sid_list, budgets=budgets)
-    sub_objs = {}
-    if subsidy_rows:
-        sub_objs = {
-            s.id: s for s in (await db.execute(
-                select(Subsidy).where(Subsidy.id.in_(sid_list))
-            )).scalars().all()
-        }
+    sub_objs = {row.id: row for row in subsidy_rows}
     # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б,
     # правка после приёмки): на scope=managed subsidy_q/sub_objs ВКЛЮЧАЮТ копию
     # (строка должна остаться в списке — её нужно удалить/сделать настоящей), но
@@ -304,11 +301,10 @@ async def dashboard_charts(
     contractor_ids = {s.contractor_id for s in sub_objs.values() if s.contractor_id}
     contractors = {}
     if contractor_ids:
-        contractors = {
-            c.id: c for c in (await db.execute(
-                select(Contractor).where(Contractor.id.in_(contractor_ids))
-            )).scalars().all()
-        }
+        contractor_rows = (await db.execute(
+            select(Contractor.id, Contractor.name, Contractor.inn).where(Contractor.id.in_(contractor_ids))
+        )).all()
+        contractors = {c.id: c for c in contractor_rows}
 
     # Виджет «Заключено договоров» — ЕДИНЫЙ источник
     # app.services.stage_cumulative.contracted_total_by_subsidy() (Правило №6,

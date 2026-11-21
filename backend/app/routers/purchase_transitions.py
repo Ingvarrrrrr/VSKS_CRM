@@ -72,6 +72,7 @@ from app.services.purchase_transition_core import _autofill_accepted_fields  # n
 async def transition_status(
     pid: int,
     target_status: str = Query(..., alias="status"),
+    share_contract_prices: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
@@ -237,6 +238,7 @@ async def transition_status(
     from app.services.purchase_transition_core import apply_purchase_status_transition
     _excess_warnings = await apply_purchase_status_transition(
         p, pid, target_status, current_user, db, current_idx, target_idx,
+        share_contract_prices=share_contract_prices,
     )
 
     if _is_advance_paid_decision:

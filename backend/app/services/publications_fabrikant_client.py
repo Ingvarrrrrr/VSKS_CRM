@@ -368,20 +368,37 @@ async def _get_platform_creds(db: AsyncSession, user_id: int, platform: str):
 
 
 async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None, attach_documents: bool = False):
-    # Определяем логин/пароль: per-user креды из БД (приоритет) или env
-    login = FABRIKANT_LOGIN
-    password = FABRIKANT_PASSWORD
-    if user_id is not None:
-        try:
-            async with async_session() as _cred_db:
-                result = await _get_platform_creds(_cred_db, user_id, "fabrikant")
-            if result:
-                login, password = result
-        except Exception:
-            pass  # fallback to env creds
+    # Определяем логин/пароль: из организации субсидии (План 2026-10-30), личные креды или env
+    login = None
+    password = None
+    org_name = payload.get("org_name") or "ВСКС"
+    purchase_id = int(payload.get("purchase_id") or 0)
+    if purchase_id:
+        from app.services.etp_credentials import resolve_purchase_etp_credentials
+        async with async_session() as cred_db:
+            creds = await resolve_purchase_etp_credentials(cred_db, purchase_id, "fabrikant")
+            if creds.get("ok"):
+                login = creds.get("login")
+                password = creds.get("password")
+                org_name = creds.get("org_name") or org_name
+            else:
+                await _set_pub_error(pub_id, creds.get("error") or "Не заданы учётные данные Фабриканта")
+                return
 
     if not login or not password:
-        await _set_pub_error(pub_id, "Не заданы FABRIKANT_LOGIN / FABRIKANT_PASSWORD в окружении")
+        login = FABRIKANT_LOGIN
+        password = FABRIKANT_PASSWORD
+        if user_id is not None:
+            try:
+                async with async_session() as _cred_db:
+                    result = await _get_platform_creds(_cred_db, user_id, "fabrikant")
+                if result:
+                    login, password = result
+            except Exception:
+                pass  # fallback to env creds
+
+    if not login or not password:
+        await _set_pub_error(pub_id, f"У организации «{org_name}» нет учётных данных Фабриканта — добавьте в карточке организации")
         return
 
     nmck = float(payload.get("nmck") or 0)

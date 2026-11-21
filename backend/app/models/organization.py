@@ -74,6 +74,10 @@ class Organization(Base):
     # (аббревиатуры вроде ВСКС/МЧС, устойчивые фразы с заглавной — Российской
     # Федерации). По одной записи в строке, см. org_name_exceptions().
     doc_name_exceptions = Column(String, nullable=True)
+    # Ключи площадок (ЭТП): Росэлторг и Фабрикант (хранятся зашифрованно)
+    roseltorg_token_encrypted = Column(String, nullable=True)
+    fabrikant_login = Column(String(255), nullable=True)
+    fabrikant_password_encrypted = Column(String, nullable=True)
 
     users      = relationship("User", back_populates="organization", foreign_keys="User.org_id")
     child_orgs = relationship("Organization", foreign_keys="Organization.root_org_id", lazy="selectin")

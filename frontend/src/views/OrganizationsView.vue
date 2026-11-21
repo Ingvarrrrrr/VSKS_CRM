@@ -286,6 +286,15 @@
             hint="По одному слову или фразе в строке, как должно быть в документе: ВСКС, МЧС, Российской Федерации. Наименование из ЕГРЮЛ (заглавными) в документах пишется с заглавной только в начале и в кавычках, остальное — строчными; слова из этого списка — как вы их написали."
             persistent-hint
           />
+
+          <!-- Ключи площадок (ЭТП) -->
+          <OrgPlatformKeysSection
+            v-model:roseltorg-token="editOrgItem.roseltorg_token"
+            v-model:fabrikant-login="editOrgItem.fabrikant_login"
+            v-model:fabrikant-password="editOrgItem.fabrikant_password"
+            :has-roseltorg-token="editOrgItem.has_roseltorg_token"
+            :has-fabrikant-credentials="editOrgItem.has_fabrikant_credentials"
+          />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -392,6 +401,7 @@ import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
 import OrgCreateDialog from '@/components/org/OrgCreateDialog.vue'
+import OrgPlatformKeysSection from '@/components/org/OrgPlatformKeysSection.vue'
 import { useOrgCreate } from '@/composables/org/useOrgCreate'
 import { useToast, type ToastType } from '@/composables/useToast'
 
@@ -652,6 +662,9 @@ async function saveOrg() {
       contractor_id: editOrgItem.value.contractor_id ?? null,
       // '' (не null): сервер пропускает null как «не менять», пустая строка очищает поле
       doc_name_exceptions: editOrgItem.value.doc_name_exceptions ?? '',
+      roseltorg_token: editOrgItem.value.roseltorg_token !== undefined ? editOrgItem.value.roseltorg_token : undefined,
+      fabrikant_login: editOrgItem.value.fabrikant_login !== undefined ? editOrgItem.value.fabrikant_login : undefined,
+      fabrikant_password: editOrgItem.value.fabrikant_password !== undefined ? editOrgItem.value.fabrikant_password : undefined,
     }
     await apiFetch(`/organizations/${editOrgItem.value.id}`, { method: 'PUT', body })
     editOrgDialog.value = false

@@ -98,6 +98,11 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         region=org.region or None,
         contract_city=org.contract_city or None,
         doc_name_exceptions=org.doc_name_exceptions or None,
+        has_roseltorg_token=bool(getattr(org, 'roseltorg_token_encrypted', None)),
+        has_fabrikant_credentials=bool(getattr(org, 'fabrikant_login', None) and getattr(org, 'fabrikant_password_encrypted', None)),
+        roseltorg_token_masked="••••••••" if getattr(org, 'roseltorg_token_encrypted', None) else None,
+        fabrikant_login=getattr(org, 'fabrikant_login', None) or None,
+        fabrikant_password_masked="••••••••" if getattr(org, 'fabrikant_password_encrypted', None) else None,
     )
 
 
@@ -418,6 +423,14 @@ async def create_organization(
         color=data.color,
         doc_name_exceptions=data.doc_name_exceptions or None,
     )
+    if data.roseltorg_token and data.roseltorg_token.strip():
+        from app.services.cred_crypto import encrypt_password
+        org.roseltorg_token_encrypted = encrypt_password(data.roseltorg_token.strip())
+    if data.fabrikant_login:
+        org.fabrikant_login = data.fabrikant_login.strip() or None
+    if data.fabrikant_password and data.fabrikant_password.strip():
+        from app.services.cred_crypto import encrypt_password
+        org.fabrikant_password_encrypted = encrypt_password(data.fabrikant_password.strip())
     maybe_set_org_region_from_address(org, data.address)
     db.add(org)
     await db.flush()  # get org.id so we can link a new/existing Contractor back
@@ -555,6 +568,23 @@ async def update_organization(
     # Explicit contractor_id override (allows un-linking by setting null)
     if data.contractor_id is not None:
         org.contractor_id = data.contractor_id
+
+    # Ключи интеграции с площадками (ЭТП)
+    from app.services.cred_crypto import encrypt_password
+    if data.roseltorg_token is not None:
+        t = data.roseltorg_token.strip()
+        if t and not t.startswith("•••"):
+            org.roseltorg_token_encrypted = encrypt_password(t)
+        elif t == "":
+            org.roseltorg_token_encrypted = None
+    if data.fabrikant_login is not None:
+        org.fabrikant_login = data.fabrikant_login.strip() or None
+    if data.fabrikant_password is not None:
+        p = data.fabrikant_password.strip()
+        if p and not p.startswith("•••"):
+            org.fabrikant_password_encrypted = encrypt_password(p)
+        elif p == "":
+            org.fabrikant_password_encrypted = None
 
     _requisite_fields = (
         'full_name', 'inn', 'kpp', 'ogrn', 'address',

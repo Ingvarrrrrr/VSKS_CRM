@@ -560,13 +560,16 @@ async def get_visible_subsidy_ids(
     # include_subsidy_grants=False: орг-дефолт = чисто орг-уровень (роль+орг-override);
     # пер-субсидийные гранты учитываются отдельно ниже, иначе грант tab_key по
     # одной субсидии ошибочно открыл бы ВСЕ субсидии орг.
+    matching_oids = []
     for oid in org_ids:
         eff = await _get_effective_simple(user, db, oid, include_subsidy_grants=False)
         if tab_key in eff:
-            sub_ids = (await db.execute(
-                select(Subsidy.id).where(Subsidy.org_id == oid)
-            )).scalars().all()
-            visible.update(int(s) for s in sub_ids)
+            matching_oids.append(oid)
+    if matching_oids:
+        sub_ids = (await db.execute(
+            select(Subsidy.id).where(Subsidy.org_id.in_(matching_oids))
+        )).scalars().all()
+        visible.update(int(s) for s in sub_ids)
 
     # Пер-субсидийный override перебивает орг-дефолт.
     grant_subs = (await db.execute(

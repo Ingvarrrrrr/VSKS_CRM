@@ -379,6 +379,49 @@ async def _subsidy_commission_and_pub_results_columns():
         logging.getLogger(__name__).warning(f"_subsidy_commission_and_pub_results_columns skipped (non-fatal): {e}")
 
 
+async def _ensure_contract_price_shared():
+    try:
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS price_shared BOOLEAN NOT NULL DEFAULT FALSE;"))
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"_ensure_contract_price_shared skipped (non-fatal): {e}")
+
+
+async def _ensure_org_etp_keys_and_unified_terms():
+    try:
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS roseltorg_token_encrypted TEXT;"))
+            await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS fabrikant_login VARCHAR(255);"))
+            await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS fabrikant_password_encrypted TEXT;"))
+            await conn.execute(text("ALTER TABLE purchases ADD COLUMN IF NOT EXISTS prepayment_percent NUMERIC(5, 2);"))
+            await conn.execute(text("""
+                UPDATE purchases
+                SET service_term_mode = 'deadline',
+                    service_deadline_date = execution_term
+                WHERE (service_term_mode IS NULL OR service_term_mode = '')
+                  AND execution_term IS NOT NULL;
+            """))
+            await conn.execute(text("""
+                UPDATE purchases
+                SET service_term_mode = 'deadline',
+                    service_deadline_date = delivery_date,
+                    execution_term = delivery_date
+                WHERE (service_term_mode IS NULL OR service_term_mode = '')
+                  AND delivery_date IS NOT NULL;
+            """))
+            await conn.execute(text("""
+                UPDATE purchases
+                SET delivery_location = delivery_address,
+                    delivery_location_kind = COALESCE(delivery_location_kind, 'delivery')
+                WHERE (delivery_location IS NULL OR delivery_location = '')
+                  AND delivery_address IS NOT NULL AND delivery_address <> '';
+            """))
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"_ensure_org_etp_keys_and_unified_terms skipped (non-fatal): {e}")
+
+
 async def run():
     """Вызывает все idempotent DDL-блоки в исходном порядке (см. app/__init__.py.lifespan до разрезания)."""
     await _phase22_bank_payments_hash_migration()
@@ -401,3 +444,11 @@ async def run():
     await _contractor_card_columns()
     await _ensure_game_tables()
     await _subsidy_commission_and_pub_results_columns()
+    await _ensure_contract_price_shared()
+    await _ensure_org_etp_keys_and_unified_terms()
+    await _phase27_delivery_items_schema()
+
+
+async def _phase27_delivery_items_schema():
+    from app.startup.delivery_items_ddl import ensure_delivery_items_schema
+    await ensure_delivery_items_schema()

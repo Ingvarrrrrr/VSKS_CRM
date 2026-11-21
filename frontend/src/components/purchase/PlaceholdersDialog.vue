@@ -5,7 +5,7 @@
        единственный источник теперь TEMPLATE_VARIABLES на бэке (ПРАВИЛО №6),
        тот же справочник отдаёт GET /documents/template-vars и показывает
        SubsidyTemplatesDialog.vue. -->
-  <v-dialog v-model="open" max-width="960" scrollable :fullscreen="mobile">
+  <v-dialog v-model="open" max-width="1150" scrollable :fullscreen="mobile">
     <v-card>
       <v-card-title class="pa-4 d-flex align-center">
         <v-icon icon="mdi-code-braces" class="mr-2" />Доступные переменные шаблонов
@@ -13,31 +13,70 @@
         <v-btn icon="mdi-close" variant="text" size="small" @click="open = false" />
       </v-card-title>
       <v-divider />
-      <v-card-text style="max-height:70vh">
-        <v-text-field
-          v-model="search"
-          prepend-inner-icon="mdi-magnify"
-          label="Поиск по переменной или описанию..."
-          density="compact"
-          hide-details
-          clearable
-          class="mb-3"
-        />
+      <v-card-text style="max-height:75vh">
+        <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-3">
+          <v-text-field
+            v-model="search"
+            prepend-inner-icon="mdi-magnify"
+            label="Поиск по переменной, описанию или примеру..."
+            density="compact"
+            hide-details
+            clearable
+            style="min-width: 320px; max-width: 500px;"
+          />
+          <v-chip-group v-model="sectionFilter" mandatory class="py-0">
+            <v-chip value="all" size="small" filter variant="tonal">Все разделы</v-chip>
+            <v-chip value="customer" size="small" filter variant="tonal" color="indigo">Заказчик</v-chip>
+            <v-chip value="contractor" size="small" filter variant="tonal" color="teal">Подрядчик</v-chip>
+          </v-chip-group>
+        </div>
         <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" />
         <template v-for="grp in filteredGroups" :key="grp.title">
           <div v-if="grp.items.length" class="mb-5">
-            <div class="text-subtitle-2 font-weight-bold mb-2" style="color:#6200ea">{{ grp.title }}</div>
+            <div class="d-flex align-center mb-2">
+              <v-chip
+                v-if="grp.title.toUpperCase().includes('ЗАКАЗЧИК') || grp.title.toUpperCase().includes('БУХГАЛТЕР')"
+                size="small"
+                color="indigo"
+                variant="flat"
+                class="mr-2 font-weight-bold"
+              >
+                Заказчик
+              </v-chip>
+              <v-chip
+                v-else-if="grp.title.toUpperCase().includes('ПОДРЯДЧИК')"
+                size="small"
+                color="teal"
+                variant="flat"
+                class="mr-2 font-weight-bold"
+              >
+                Подрядчик
+              </v-chip>
+              <span class="text-subtitle-2 font-weight-bold" :style="{ color: groupColor(grp.title) }">
+                {{ grp.title }}
+              </span>
+            </div>
             <v-table density="compact">
               <thead>
                 <tr>
-                  <th style="width:260px">Переменная</th>
+                  <th style="width:320px; min-width:300px">Переменная (клик — скопировать)</th>
                   <th>Описание</th>
-                  <th style="width:220px">Пример</th>
+                  <th style="width:240px">Пример</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="(item, idx) in grp.items" :key="item.var + idx">
-                  <td><code style="font-size:11px">{{ item.var }}</code></td>
+                  <td
+                    class="cursor-pointer"
+                    style="white-space: nowrap"
+                    title="Нажмите, чтобы скопировать {{переменную}}"
+                    @click="copyVar(item.var)"
+                  >
+                    <code class="text-caption px-1 rounded font-weight-bold" style="background-color: rgba(98, 0, 234, 0.08); user-select: all;">
+                      {{ item.var }}
+                    </code>
+                    <v-icon size="x-small" icon="mdi-content-copy" class="ml-1 text-medium-emphasis" />
+                  </td>
                   <td class="text-body-2">{{ item.description }}</td>
                   <td class="text-caption text-medium-emphasis">{{ item.example_result || item.example_template }}</td>
                 </tr>
@@ -61,16 +100,50 @@
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { useToast } from '@/composables/useToast'
 
 interface TemplateVar { var: string; description: string; example_template: string; example_result: string }
 
 const open = defineModel<boolean>({ default: false })
 const { mobile } = useDisplay()
+const toast = useToast()
 
 const search = ref('')
+const sectionFilter = ref<string>('all')
 const loading = ref(false)
 const rawVars = ref<TemplateVar[]>([])
 let loaded = false
+
+async function copyVar(text: string) {
+  let ok = false
+  try {
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      ok = true
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      ta.style.top = '0'
+      ta.style.left = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      try { ok = document.execCommand('copy') } catch { ok = false }
+      document.body.removeChild(ta)
+    }
+  } catch { ok = false }
+  if (ok) toast.addToast(`Скопировано: ${text}`, 'success', { duration: 2500 })
+  else toast.addToast(`Не удалось скопировать. Выделите и нажмите Ctrl+C: ${text}`, 'error')
+}
+
+function groupColor(title: string): string {
+  const t = title.toUpperCase()
+  if (t.includes('ЗАКАЗЧИК') || t.includes('БУХГАЛТЕР')) return '#3f51b5'
+  if (t.includes('ПОДРЯДЧИК')) return '#00897b'
+  return '#6200ea'
+}
 
 async function loadTemplateVars() {
   loading.value = true
@@ -117,9 +190,25 @@ const groups = computed<Group[]>(() => {
 // «подписант» должен находить раздел «Подписант Заказчика» целиком, даже
 // если слово не повторено в описании каждой строки внутри него.
 const filteredGroups = computed<Group[]>(() => {
-  if (!search.value) return groups.value
-  const q = search.value.toLowerCase()
-  return groups.value
+  let base = groups.value
+
+  if (sectionFilter.value === 'customer') {
+    base = base.filter(g => {
+      const t = g.title.toUpperCase()
+      return t.includes('ЗАКАЗЧИК') || t.includes('БУХГАЛТЕР') ||
+        g.items.some(i => i.var.toLowerCase().includes('customer'))
+    })
+  } else if (sectionFilter.value === 'contractor') {
+    base = base.filter(g => {
+      const t = g.title.toUpperCase()
+      return t.includes('ПОДРЯДЧИК') ||
+        g.items.some(i => i.var.toLowerCase().includes('contractor'))
+    })
+  }
+
+  if (!search.value) return base
+  const q = search.value.toLowerCase().trim()
+  return base
     .map(g => {
       const titleMatches = g.title.toLowerCase().includes(q)
       return {
@@ -128,8 +217,9 @@ const filteredGroups = computed<Group[]>(() => {
           ? g.items
           : g.items.filter(v =>
               v.var.toLowerCase().includes(q) ||
-              v.description.toLowerCase().includes(q) ||
-              v.example_template.toLowerCase().includes(q)
+              (v.description && v.description.toLowerCase().includes(q)) ||
+              (v.example_template && v.example_template.toLowerCase().includes(q)) ||
+              (v.example_result && v.example_result.toLowerCase().includes(q))
             ),
       }
     })

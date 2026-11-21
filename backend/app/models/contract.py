@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Numeric, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Date, Numeric, Text, ForeignKey, Boolean, text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -19,7 +19,16 @@ class Contract(Base):
     purchase_method = Column(String(50), nullable=True)  # single / competitive
     item_type = Column(String(20), nullable=True)  # товар / услуга
     planned_monthly = Column(Numeric(15, 2), nullable=True)
+    price_shared = Column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
     contractor = relationship("Contractor")
     subsidy = relationship("Subsidy")
     purchases = relationship("Purchase", back_populates="contract")
     extra_subsidies = relationship("ContractSubsidy", cascade="all, delete-orphan", lazy="selectin")
+
+    @property
+    def share_contract_prices(self) -> bool:
+        return bool(self.price_shared)
+
+    @share_contract_prices.setter
+    def share_contract_prices(self, val: bool) -> None:
+        self.price_shared = bool(val)

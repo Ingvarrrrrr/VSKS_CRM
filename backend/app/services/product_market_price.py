@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.visibility import get_account_contour_org_ids
 from app.models.commercial_request import CommercialRequest, CommercialRequestOffer
+from app.models.contract import Contract
 from app.models.contract_item import ContractItem
 from app.models.contractor import Contractor
 from app.models.organization import Organization
@@ -334,18 +335,20 @@ async def check_market_price(
 
     if product is not None:
         raw_hist = (await db.execute(
-            select(ProductPriceHistory, Contractor.name, Subsidy.org_id)
+            select(ProductPriceHistory, Contractor.name, Subsidy.org_id, Contract.price_shared)
             .outerjoin(Contractor, Contractor.id == ProductPriceHistory.contractor_id)
             .outerjoin(PurchaseItem, PurchaseItem.id == ProductPriceHistory.purchase_item_id)
             .outerjoin(Purchase, Purchase.id == PurchaseItem.purchase_id)
             .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
+            .outerjoin(Contract, Contract.id == Purchase.contract_id)
             .where(ProductPriceHistory.product_id == product.id)
             .order_by(ProductPriceHistory.collected_at.desc(), ProductPriceHistory.id.desc())
         )).all()
 
-        for h, c_name, p_org_id in raw_hist:
-            if h.source == "contract" and allowed_orgs is not None and not product.price_shared:
-                if p_org_id is not None and p_org_id not in allowed_orgs:
+        for h, c_name, p_org_id, c_price_shared in raw_hist:
+            if h.source == "contract" and allowed_orgs is not None:
+                is_shared = bool(c_price_shared or product.price_shared)
+                if not is_shared and (p_org_id is not None and p_org_id not in allowed_orgs):
                     continue
             hist_rows.append(h)
             if h.source in ("store", "import", "monitoring") and h.price and float(h.price) > 0:
@@ -376,9 +379,10 @@ async def check_market_price(
                     }
 
         ci_rows = (await db.execute(
-            select(ContractItem.unit_price, ContractItem.quantity, Subsidy.org_id)
+            select(ContractItem.unit_price, ContractItem.quantity, Subsidy.org_id, Contract.price_shared)
             .join(Purchase, Purchase.id == ContractItem.purchase_id)
             .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
+            .outerjoin(Contract, Contract.id == Purchase.contract_id)
             .where(
                 ContractItem.product_id == product.id,
                 ContractItem.unit_price.isnot(None),
@@ -386,8 +390,9 @@ async def check_market_price(
                 Purchase.status != "cancelled",
             )
         )).all()
-        for up, qty, org_id in ci_rows:
-            if allowed_orgs is not None and not product.price_shared and org_id not in allowed_orgs:
+        for up, qty, org_id, c_price_shared in ci_rows:
+            is_shared = bool(c_price_shared or product.price_shared)
+            if allowed_orgs is not None and not is_shared and (org_id is not None and org_id not in allowed_orgs):
                 continue
             p_val = _to_float(up)
             if p_val and batch_label(qty) == target_batch:

@@ -120,6 +120,15 @@
               <v-text-field v-model="form.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details :readonly="!!form.contractor_id" />
             </v-col>
           </v-row>
+
+          <!-- Ключи площадок (ЭТП) -->
+          <OrgPlatformKeysSection
+            v-model:roseltorg-token="(form as any).roseltorg_token"
+            v-model:fabrikant-login="(form as any).fabrikant_login"
+            v-model:fabrikant-password="(form as any).fabrikant_password"
+            :has-roseltorg-token="(form as any).has_roseltorg_token"
+            :has-fabrikant-credentials="(form as any).has_fabrikant_credentials"
+          />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -134,6 +143,7 @@
 <script setup lang="ts">
 import { useDisplay } from 'vuetify'
 import OrgDirectorBlock from '@/components/organizations/OrgDirectorBlock.vue'
+import OrgPlatformKeysSection from '@/components/org/OrgPlatformKeysSection.vue'
 
 defineProps<{
   form: {

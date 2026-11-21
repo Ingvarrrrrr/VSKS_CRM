@@ -220,6 +220,35 @@
 
     <VehicleBodyIconsDialog v-model="bodyIconsDialog" />
 
+    <!-- Ключи площадок (ЭТП) -->
+    <v-card variant="outlined" class="mt-6">
+      <v-card-title class="text-subtitle-1 font-weight-bold px-6 pt-5 pb-3 d-flex align-center gap-2">
+        <v-icon icon="mdi-key-chain" color="indigo" />
+        Ключи площадок (ЭТП)
+      </v-card-title>
+      <v-divider />
+      <v-card-text class="px-6 py-4">
+        <OrgPlatformKeysSection
+          v-model:roseltorg-token="etpKeys.roseltorg_token"
+          v-model:fabrikant-login="etpKeys.fabrikant_login"
+          v-model:fabrikant-password="etpKeys.fabrikant_password"
+          :has-roseltorg-token="etpKeys.has_roseltorg_token"
+          :has-fabrikant-credentials="etpKeys.has_fabrikant_credentials"
+        />
+      </v-card-text>
+      <v-card-actions class="px-6 pb-4">
+        <v-btn
+          color="indigo"
+          variant="flat"
+          prepend-icon="mdi-content-save"
+          :loading="etpSaving"
+          @click="saveEtpKeys"
+        >
+          Сохранить ключи площадок
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+
     <!-- Warning dialog -->
     <v-dialog v-model="warnDialog.show" max-width="480" persistent>
       <v-card>
@@ -253,6 +282,7 @@ import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import VehicleFieldsDialog from '@/components/vehicles/VehicleFieldsDialog.vue'
 import VehicleBodyIconsDialog from '@/components/vehicles/VehicleBodyIconsDialog.vue'
+import OrgPlatformKeysSection from '@/components/org/OrgPlatformKeysSection.vue'
 
 const { hiddenSections, loadConfig, updateConfig, loading: configLoading } = useOrgConfig()
 const vehicleFieldsDialog = ref(false)
@@ -466,10 +496,61 @@ async function savePriceFreshnessRules() {
   }
 }
 
+const currentOrgId = ref<number | null>(null)
+const etpSaving = ref(false)
+const etpKeys = reactive({
+  roseltorg_token: '',
+  fabrikant_login: '',
+  fabrikant_password: '',
+  has_roseltorg_token: false,
+  has_fabrikant_credentials: false,
+})
+
+async function loadEtpKeys() {
+  try {
+    const me = await apiFetch<{ id: number | null }>('/organizations/me')
+    if (me?.id) {
+      currentOrgId.value = me.id
+      const org = await apiFetch<any>(`/organizations/${me.id}`)
+      if (org) {
+        etpKeys.has_roseltorg_token = !!org.has_roseltorg_token
+        etpKeys.has_fabrikant_credentials = !!org.has_fabrikant_credentials
+        etpKeys.fabrikant_login = org.fabrikant_login || ''
+      }
+    }
+  } catch (e) {
+    // best-effort
+  }
+}
+
+async function saveEtpKeys() {
+  if (!currentOrgId.value) return
+  etpSaving.value = true
+  try {
+    await apiFetch(`/organizations/${currentOrgId.value}`, {
+      method: 'PUT',
+      body: {
+        roseltorg_token: etpKeys.roseltorg_token || undefined,
+        fabrikant_login: etpKeys.fabrikant_login || undefined,
+        fabrikant_password: etpKeys.fabrikant_password || undefined,
+      },
+    })
+    showSnack('Ключи площадок сохранены')
+    etpKeys.roseltorg_token = ''
+    etpKeys.fabrikant_password = ''
+    await loadEtpKeys()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Ошибка сохранения ключей', 'error')
+  } finally {
+    etpSaving.value = false
+  }
+}
+
 onMounted(async () => {
   await loadConfig()
   localHidden.value = new Set(hiddenSections.value)
   await loadSmtp()
   await loadPriceFreshnessRules()
+  await loadEtpKeys()
 })
 </script>

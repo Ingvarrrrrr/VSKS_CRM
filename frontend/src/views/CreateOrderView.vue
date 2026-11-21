@@ -1447,6 +1447,24 @@
         :flush-autosave-on-blur="flushAutosaveOnBlur"
       />
 
+      <PurchasePaymentTermsCard
+        :form="form"
+        v-model:pointer-target="pointerTarget"
+        :flush-autosave-on-blur="flushAutosaveOnBlur"
+        :clear-guide-arrow="clearGuideArrow"
+      />
+
+      <PurchaseDeliveryAddressCard
+        :form="form"
+        v-model:pointer-target="pointerTarget"
+        :delivery-address-suggestions="deliveryAddressSuggestions"
+        :on-delivery-address-search="onDeliveryAddressSearch"
+        :on-delivery-address-select="onDeliveryAddressSelect"
+        :save-delivery-address-if-new="saveDeliveryAddressIfNew"
+        :flush-autosave-on-blur="flushAutosaveOnBlur"
+        :clear-guide-arrow="clearGuideArrow"
+      />
+
       <PurchaseDatesSection
         :form="form"
         :is-framework="isFramework"
@@ -1954,6 +1972,7 @@
       v-model:duplicate-open="duplicateDialog"
       v-model:contracted-confirm-open="showContractedConfirm"
       v-model:contract-price="form.contract_price"
+      v-model:share-contract-prices="shareContractPricesOnTransition"
       :budget-info="budgetInfo"
       :saving="saving"
       :feo-per-item-disable-count="feoPerItemDisableCount"
@@ -2166,6 +2185,8 @@ import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import PurchaseHeader from '@/components/purchase/PurchaseHeader.vue'
 import AdvanceReimbursementCard from '@/components/purchase/AdvanceReimbursementCard.vue'
 import PurchaseVatPaymentsBanner from '@/components/purchase/PurchaseVatPaymentsBanner.vue'
+import PurchasePaymentTermsCard from '@/components/purchase/PurchasePaymentTermsCard.vue'
+import PurchaseDeliveryAddressCard from '@/components/purchase/PurchaseDeliveryAddressCard.vue'
 import PurchaseDatesSection from '@/components/purchase/PurchaseDatesSection.vue'
 import PurchaseAcceptanceSection from '@/components/purchase/PurchaseAcceptanceSection.vue'
 import PurchasePaymentSection from '@/components/purchase/PurchasePaymentSection.vue'
@@ -5887,6 +5908,7 @@ function highlightMissingFields(fields: string[]) {
 // позиции» уводит к существующему редактору (переиспользуем guideArrowTo,
 // он же используется для наведения на поля публикации).
 const showContractedConfirm = ref(false)
+const shareContractPricesOnTransition = ref(false)
 const contractedConfirmItems = computed(() =>
   items.value
     .filter(i => (i.item_name || '').trim())
@@ -5915,8 +5937,12 @@ const doTransition = async () => {
   if (!nextStatusTarget.value || !purchaseId.value) return
   transitioning.value = true
   try {
+    let url = `/purchases/${purchaseId.value}/transition?status=${nextStatusTarget.value}`
+    if (nextStatusTarget.value === 'contracted' && shareContractPricesOnTransition.value) {
+      url += `&share_contract_prices=true`
+    }
     const updated = await apiFetch<any>(
-      `/purchases/${purchaseId.value}/transition?status=${nextStatusTarget.value}`,
+      url,
       { method: 'POST' }
     )
     form.status = updated.status

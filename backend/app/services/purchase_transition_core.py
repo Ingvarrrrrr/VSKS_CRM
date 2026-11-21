@@ -168,6 +168,7 @@ async def apply_purchase_status_transition(
     commit: bool = True, send_notification: bool = True,
     skip_plan_excess_gates: bool = False, plan_excess_messages_out: list = None,
     via_paid_confirmation: bool = False,
+    share_contract_prices: bool = False,
 ) -> list[dict]:
     """Гейты + смена статуса + побочные эффекты — БЕЗ permission/direction
     проверок (это ответственность вызывающего). current_idx/target_idx —
@@ -455,6 +456,11 @@ async def apply_purchase_status_transition(
 
     if target_status == "contracted":
         await ensure_contract_linked(p, db)
+        if share_contract_prices and p.contract_id:
+            from app.models.contract import Contract
+            c = await db.get(Contract, p.contract_id)
+            if c:
+                c.price_shared = True
 
     if commit:
         await db.commit()

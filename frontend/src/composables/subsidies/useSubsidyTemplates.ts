@@ -14,7 +14,14 @@ import { useToast, type ToastType } from '@/composables/useToast'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { SubsidyRow } from './types'
 
-export interface TemplateVar { var: string; description: string; example_template: string; example_result: string }
+export interface TemplateVar {
+  var: string
+  description: string
+  example_template: string
+  example_result: string
+  section?: string
+  is_header?: boolean
+}
 
 export const DOC_TYPE_RU: Record<string, string> = {
   service_note_delivery: 'Служебная_записка_выдача',
@@ -57,6 +64,7 @@ const uploadingDocType     = ref<string | null>(null)
 // Template variables panel state
 const templateVars = ref<TemplateVar[]>([])
 const varsSearch = ref('')
+const varsSectionFilter = ref<string>('all')
 
 // ── Copy Templates state ──
 const showCopyTemplatesDialog = ref(false)
@@ -76,24 +84,58 @@ export function useSubsidyTemplates(ctx?: SubsidyDetailContext) {
   }
 
   // Справочник отдаёт строки-заголовки разделов (var === '', description —
-  // заголовок группы, как в PlaceholdersDialog.vue). Здесь список выводится
-  // плоской v-data-table с resizable-columns — под неё группировка как в
-  // PlaceholdersDialog не укладывается без переделки таблицы, поэтому минимальный
-  // фильтр: не показываем строки-заголовки отдельной пустой строкой в таблице.
+  // заголовок группы). Обогащаем переменные их секциями и поддерживаем
+  // фильтрацию по разделам («Заказчик», «Подрядчик» и т.д.) и поиск.
   const filteredVars = computed(() => {
-    const base = templateVars.value.filter(v => v.var)
+    let base = templateVars.value.filter(v => v.var)
+
+    if (varsSectionFilter.value === 'customer') {
+      base = base.filter(v =>
+        v.var.toLowerCase().includes('customer') ||
+        (v.section && (v.section.toUpperCase().includes('ЗАКАЗЧИК') || v.section.toUpperCase().includes('БУХГАЛТЕР')))
+      )
+    } else if (varsSectionFilter.value === 'contractor') {
+      base = base.filter(v =>
+        v.var.toLowerCase().includes('contractor') ||
+        (v.section && v.section.toUpperCase().includes('ПОДРЯДЧИК'))
+      )
+    } else if (varsSectionFilter.value === 'finance') {
+      base = base.filter(v =>
+        (v.section && (v.section.toUpperCase().includes('ФИНАНСЫ') || v.section.toUpperCase().includes('НДС'))) ||
+        v.var.toLowerCase().includes('price') ||
+        v.var.toLowerCase().includes('nmcd') ||
+        v.var.toLowerCase().includes('nmck') ||
+        v.var.toLowerCase().includes('vat')
+      )
+    }
+
     if (!varsSearch.value) return base
-    const q = varsSearch.value.toLowerCase()
+    const q = varsSearch.value.toLowerCase().trim()
     return base.filter(v =>
       v.var.toLowerCase().includes(q) ||
-      v.description.toLowerCase().includes(q) ||
-      v.example_template.toLowerCase().includes(q)
+      (v.description && v.description.toLowerCase().includes(q)) ||
+      (v.example_template && v.example_template.toLowerCase().includes(q)) ||
+      (v.example_result && v.example_result.toLowerCase().includes(q)) ||
+      (v.section && v.section.toLowerCase().includes(q))
     )
   })
 
   async function loadTemplateVars() {
     try {
-      templateVars.value = await apiFetch<TemplateVar[]>('/documents/template-vars')
+      const raw = await apiFetch<TemplateVar[]>('/documents/template-vars')
+      let currentSection = 'Общие'
+      const enriched: TemplateVar[] = []
+      for (const item of raw) {
+        if (!item.var && item.description) {
+          currentSection = item.description.trim()
+        } else if (item.var) {
+          enriched.push({
+            ...item,
+            section: currentSection,
+          })
+        }
+      }
+      templateVars.value = enriched
     } catch (e) { console.error('loadTemplateVars:', e) }
   }
 
@@ -245,7 +287,7 @@ export function useSubsidyTemplates(ctx?: SubsidyDetailContext) {
 
   return {
     showTemplateDialog, templateSubsidy, contractTemplates, subsidyTemplatesList,
-    templateFileInputRef, uploadingDocType, templateVars, varsSearch, filteredVars,
+    templateFileInputRef, uploadingDocType, templateVars, varsSearch, varsSectionFilter, filteredVars,
     showCopyTemplatesDialog, copyTemplates, copySourceSubsidiesForTemplates,
     loadTemplateVars, copyVar, openCopyTemplatesDialog, openTemplateDialog, confirmCopyTemplates,
     triggerTemplateUpload, onTemplateFileSelected, downloadSubsidyTemplate, deleteSubsidyTemplate,

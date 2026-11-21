@@ -49,6 +49,7 @@
         class="ml-1"
         @click.stop="emit('select')"
       >{{ suggestReason || 'Похоже совпадает' }}</v-chip>
+      <PlannedStoreOffersBadge :name="row.name" />
     </span>
     <FeoPlanResidualSummary
       :row="row"
@@ -83,6 +84,7 @@ import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { PlanResidualDisplay } from '@/utils/numberFormat'
 import FeoPlannedTakenBy from './FeoPlannedTakenBy.vue'
 import FeoPlanResidualSummary from './FeoPlanResidualSummary.vue'
+import PlannedStoreOffersBadge from '@/components/products/PlannedStoreOffersBadge.vue'
 
 defineProps<{
   row: FeoPlanPosition

@@ -60,6 +60,7 @@ from app.services.documents.blank_placeholders import render_docx
 # закупку/глобальный бланк, даже когда для субсидии был загружен свой
 # service_note_advance.docx.
 from app.services.documents.templates import _resolve_doc_template_path
+from app.services.documents.case_forms import add_all_case_forms
 
 router = APIRouter(prefix="/api/wishes", tags=["wish-documents"])
 
@@ -315,7 +316,11 @@ async def generate_wish_service_note(
         "event_name": "",
     }
 
+    add_all_case_forms(context)
+
     # ── Render template ──────────────────────────────────────────────────────
+    add_all_case_forms(context)
+
     try:
         render_docx(tpl, context)
         buf = BytesIO()
@@ -438,6 +443,8 @@ async def generate_wish_tech_spec(
         "contractor_signatory_line": "",
         "items": items_list,
     }
+
+    add_all_case_forms(context)
 
     try:
         render_docx(tpl, context)

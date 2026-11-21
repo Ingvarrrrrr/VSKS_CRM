@@ -87,7 +87,9 @@ def _characteristics_from_params_table(html: str) -> list[dict]:
 def _to_decimal(raw) -> Optional[Decimal]:
     if raw is None:
         return None
-    text = re.sub(r"[^\d.,]", "", str(raw)).replace(",", ".")
+    unescaped = _html_unescape(_html_unescape(str(raw)))
+    unescaped = re.sub(r"&#\d+;|&[a-zA-Z]+;", " ", unescaped)
+    text = re.sub(r"[^\d.,]", "", unescaped).replace(",", ".")
     if not text:
         return None
     try:

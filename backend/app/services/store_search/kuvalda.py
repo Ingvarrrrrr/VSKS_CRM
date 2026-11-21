@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import json
 import re
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from html import unescape as _html_unescape
 from urllib.parse import quote
 
 from app.services.store_search.base import (
@@ -60,8 +61,17 @@ def _find_offer_catalog(html: str) -> dict:
             obj = json.loads(block)
         except (json.JSONDecodeError, ValueError):
             continue
-        if isinstance(obj, dict) and obj.get("@type") == "OfferCatalog":
-            return obj
+        candidates = []
+        if isinstance(obj, dict):
+            if obj.get("@type") == "OfferCatalog":
+                return obj
+            if "@graph" in obj and isinstance(obj["@graph"], list):
+                candidates.extend(obj["@graph"])
+        elif isinstance(obj, list):
+            candidates.extend(obj)
+        for item in candidates:
+            if isinstance(item, dict) and item.get("@type") == "OfferCatalog":
+                return item
     return {}
 
 
@@ -73,8 +83,17 @@ def parse_search_html(html: str) -> list[StoreOffer]:
         name = offer.get("name")
         if not url or not name:
             continue
+        if url.startswith("/"):
+            url = "https://www.kuvalda.ru" + url
         price_raw = offer.get("price")
-        price = Decimal(str(price_raw)) if price_raw else None
+        price = None
+        if price_raw is not None:
+            digits = re.sub(r"[^\d.,]", "", _html_unescape(str(price_raw))).replace(",", ".")
+            if digits:
+                try:
+                    price = Decimal(digits)
+                except (InvalidOperation, Exception):
+                    price = None
         image = offer.get("image")
         store_article_m = re.search(r"product-(\d+)", url)
         offers.append(StoreOffer(

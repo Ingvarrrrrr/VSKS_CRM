@@ -88,6 +88,8 @@ DOC_TYPES = {
     "fabrikant_contract_project":   ("fabrikant_contract_project.docx",   "Фабрикант_проект_договора"),
     # Протокол закупочной комиссии
     "procurement_protocol":         ("procurement_protocol.docx",         "Протокол_закупки"),
+    # Phase Wave 4c: Дополнительное соглашение к договору
+    "contract_amendment":           ("contract_amendment.docx",           "Дополнительное_соглашение"),
 }
 
 

@@ -75,6 +75,15 @@
       >
         Объединить закупки ({{ selectedOrders.length }})
       </v-btn>
+      <v-btn
+        color="teal"
+        variant="tonal"
+        size="small"
+        prepend-icon="mdi-cloud-upload-outline"
+        @click="batchPublishDialogRef?.open(selectedOrders)"
+      >
+        Отправить на площадку ({{ selectedOrders.length }})
+      </v-btn>
       <v-spacer />
       <v-btn v-if="isAdmin" color="error" variant="tonal" size="small" prepend-icon="mdi-delete" @click="confirmBulkDelete">
         Удалить выбранные
@@ -168,6 +177,7 @@
     <OrdersScansDialog ref="scansDialogRef" :subsidies="subsidies" :show-snack="showSnack" />
     <OrdersPaymentMatchDialog ref="paymentMatchDialogRef" :subsidies="subsidies" :show-snack="showSnack" :on-applied="loadOrders" />
     <OrdersMergeDialog ref="mergeDialogRef" :show-snack="showSnack" :on-merged="() => { selectedOrders = []; loadOrders() }" />
+    <BatchPlatformPublishDialog ref="batchPublishDialogRef" :show-snack="showSnack" :on-published="() => { selectedOrders = []; loadOrders() }" />
     <OrdersFilterPresetDialog :dialog="filterPresetDialog" :filters="filters" :subsidies="subsidies" :on-confirm="confirmSaveFilterPreset" />
 
     <!-- Column Config Dialog -->
@@ -209,6 +219,7 @@ import OrdersImportDialog from '@/components/orders/OrdersImportDialog.vue'
 import OrdersScansDialog from '@/components/orders/OrdersScansDialog.vue'
 import OrdersPaymentMatchDialog from '@/components/orders/OrdersPaymentMatchDialog.vue'
 import OrdersMergeDialog from '@/components/orders/OrdersMergeDialog.vue'
+import BatchPlatformPublishDialog from '@/components/purchase/BatchPlatformPublishDialog.vue'
 import OrdersFilterPresetDialog from '@/components/orders/OrdersFilterPresetDialog.vue'
 import OrdersExportDialog from '@/components/orders/OrdersExportDialog.vue'
 import PurchaseStopDialog from '@/components/orders/PurchaseStopDialog.vue'
@@ -305,6 +316,7 @@ const importDialogRef = ref<InstanceType<typeof OrdersImportDialog> | null>(null
 const scansDialogRef = ref<InstanceType<typeof OrdersScansDialog> | null>(null)
 const paymentMatchDialogRef = ref<InstanceType<typeof OrdersPaymentMatchDialog> | null>(null)
 const mergeDialogRef = ref<InstanceType<typeof OrdersMergeDialog> | null>(null)
+const batchPublishDialogRef = ref<InstanceType<typeof BatchPlatformPublishDialog> | null>(null)
 const exportDialogRef = ref<InstanceType<typeof OrdersExportDialog> | null>(null)
 
 const canMergePurchases = computed(() =>

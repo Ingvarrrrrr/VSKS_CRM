@@ -114,6 +114,7 @@ class ContractCreate(BaseModel):
     purchase_method: Optional[str] = None
     item_type: Optional[str] = None  # товар / услуга
     planned_monthly: Optional[Decimal] = Field(None, ge=0)
+    price_shared: bool = False
     extra_subsidy_ids: List[int] = []
 
 class ContractOut(ContractCreate):

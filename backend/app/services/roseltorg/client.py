@@ -180,12 +180,29 @@ async def _call_roseltorg(
     okpd2_code (тот же PublishRequest, что у Фабриканта — ПРАВИЛО №6, поля
     не переизобретаются под вторую площадку).
     """
-    token = await _resolve_roseltorg_token(user_id)
+    purchase_id = int(payload.get("purchase_id") or 0)
+    token = None
+    org_name = payload.get("org_name") or "ВСКС"
+    org_inn = payload.get("org_inn") or ""
+    if purchase_id:
+        from app.services.etp_credentials import resolve_purchase_etp_credentials
+        async with async_session() as cred_db:
+            creds = await resolve_purchase_etp_credentials(cred_db, purchase_id, "roseltorg_rb")
+            if creds.get("ok"):
+                token = creds.get("token")
+                org_name = creds.get("org_name") or org_name
+                org_inn = creds.get("org_inn") or org_inn
+            else:
+                await _set_pub_error(pub_id, creds.get("error") or "Не задан токен Росэлторг.Бизнес")
+                return
+
+    if not token:
+        token = await _resolve_roseltorg_token(user_id)
+
     if not token:
         await _set_pub_error(
             pub_id,
-            "Не задан токен Росэлторг.Бизнес — укажите его в профиле "
-            "(Учётные данные площадок → Росэлторг.Бизнес) или ROSELTORG_TOKEN в окружении сервера.",
+            f"У организации «{org_name}» нет ключа Росэлторга — добавьте в карточке организации",
         )
         return
 
@@ -200,6 +217,16 @@ async def _call_roseltorg(
         return
     except Exception as e:
         await _set_pub_error(pub_id, f"Ошибка авторизации Росэлторг: {str(e)[:250]}")
+        return
+
+    # Сверка ИНН организатора площадки с ИНН организации субсидии
+    from app.services.etp_credentials import extract_organizer_inn_from_jwt
+    organizer_inn = extract_organizer_inn_from_jwt(jwt)
+    if organizer_inn and org_inn and organizer_inn.strip() != org_inn.strip():
+        await _set_pub_error(
+            pub_id,
+            f"ИНН ключа площадки ({organizer_inn}) не совпадает с ИНН организации субсидии «{org_name}» ({org_inn})",
+        )
         return
 
     base = ROSELTORG_BASE_URL

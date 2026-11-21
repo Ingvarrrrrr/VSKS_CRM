@@ -40,6 +40,7 @@ db=None (вызов без сессии БД — например, прямой 
 в service.py."""
 from __future__ import annotations
 
+import re
 from itertools import combinations
 from typing import Optional
 
@@ -55,7 +56,11 @@ from app.services.product_query_parse import (
     ParsedQuery,
     product_type_synonyms,
 )
-from app.services.product_search import _tsquery_token, _tsquery_type_group
+from app.services.product_search import (
+    _looks_like_article_query,
+    _tsquery_token,
+    _tsquery_type_group,
+)
 from app.services.store_search.base import StoreOffer
 
 
@@ -123,6 +128,18 @@ async def filter_relevant_offers(
     для решения)."""
     if not offers:
         return offers
+
+    if _looks_like_article_query(parsed.raw or ""):
+        raw_code = re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]", "", parsed.raw or "").lower()
+        if raw_code:
+            return [
+                o for o in offers
+                if (
+                    raw_code in re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]", "", o.name or "").lower()
+                    or raw_code in re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]", "", o.store_article or "").lower()
+                    or raw_code in re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]", "", o.url or "").lower()
+                )
+            ]
 
     required_signals = _required_signal_words(parsed)
     ordinary_words = list(parsed.optional)

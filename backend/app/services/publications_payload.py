@@ -133,6 +133,8 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         "payment_postpone_days":     p.payment_postpone_days,
         "payment_postpone_day_type": p.payment_postpone_day_type,
         "payment_other_terms":       p.payment_other_terms,
+        "org_id":            _sub_org.id if _sub_org else None,
+        "org_name":          _sub_org.name if _sub_org else None,
         "org_inn":           org_inn,
         "contractor": {
             "name": contractor.name if contractor else None,

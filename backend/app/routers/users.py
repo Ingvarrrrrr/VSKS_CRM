@@ -22,6 +22,7 @@ app/routers/departments.py, импортирует его по прежнему 
 потребитель не переписывался.
 """
 from datetime import date as _date_type
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -791,3 +792,18 @@ async def delete_user(
     await db.delete(user)
     await db.commit()
     return {"ok": True}
+
+
+class UserMergeRequest(BaseModel):
+    merge_user_ids: List[int]
+
+
+@router.post("/{keep_id}/merge")
+async def merge_users_endpoint(
+    keep_id: int,
+    body: UserMergeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_action('user.manage')),
+):
+    from app.services.user_merge import merge_users
+    return await merge_users(keep_id, body.merge_user_ids, current_user, db)

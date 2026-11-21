@@ -7,10 +7,14 @@ import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { SCROLLERHASH_MASTER_KEYS } from '@/constants/scrollerhash_columns'
 import { coreColumnDefs } from './paymentsTypes'
 
-export function usePaymentsColumns(options: { importId: { value: number | null } }) {
+export function usePaymentsColumns(options: {
+  importId: { value: number | null }
+  paymentsSource?: () => any[]
+}) {
   const { importId } = options
 
   const showColumnPicker = ref(false)
+  const showEmptyColumns = ref(false)
   const rawColumns = ref<{ key: string; count: number }[]>([])
   const masterFilter = ref('')
   const masterListLength = SCROLLERHASH_MASTER_KEYS.length
@@ -73,8 +77,37 @@ export function usePaymentsColumns(options: { importId: { value: number | null }
     activeFilterCount,
   } = useColumnConfig('payment_registry', allColumnsRef)
 
-  const activeHeaders = computed(() =>
-    visibleColumnHeaders.value.map(col => {
+  const emptyColumnKeys = computed<Set<string>>(() => {
+    const list = options.paymentsSource?.()
+    if (!list || list.length === 0) return new Set()
+    const emptyKeys = new Set<string>()
+    for (const col of visibleColumnHeaders.value) {
+      if (['actions', 'matched', '_rownum', 'payment_date', 'amount', 'purpose', 'contractor_name'].includes(col.key)) {
+        continue
+      }
+      const isRaw = col.key.startsWith('raw_')
+      const rawKey = isRaw ? col.key.slice(4) : ''
+      const hasValue = list.some(row => {
+        const v = isRaw ? row?.raw_json?.[rawKey] : row?.[col.key]
+        return v !== null && v !== undefined && String(v).trim() !== '' && v !== '—'
+      })
+      if (!hasValue) {
+        emptyKeys.add(col.key)
+      }
+    }
+    return emptyKeys
+  })
+
+  const emptyColumnsCount = computed(() => emptyColumnKeys.value.size)
+
+  const activeHeaders = computed(() => {
+    const emptySet = emptyColumnKeys.value
+    const shouldFilterEmpty = !showEmptyColumns.value && emptySet.size > 0
+    const visibleCols = shouldFilterEmpty
+      ? visibleColumnHeaders.value.filter(col => !emptySet.has(col.key))
+      : visibleColumnHeaders.value
+
+    return visibleCols.map(col => {
       // raw_* колонки — данные из raw_json
       if (col.key.startsWith('raw_')) {
         const rawKey = col.key.slice(4)
@@ -95,7 +128,7 @@ export function usePaymentsColumns(options: { importId: { value: number | null }
         width: w ? `${w}px` : undefined,
       }
     })
-  )
+  })
 
   // _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
   const tableHeaders = computed(() => [

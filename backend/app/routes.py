@@ -292,6 +292,7 @@ from app.routers.documents import guide_router as documents_guide_router
 # Phase 27.1: contract_items MUST be registered BEFORE purchases.router
 # because purchases has catch-all /{purchase_id} that would intercept /contract-items
 from app.routers import contract_items as contract_items_router
+from app.routers import delivery_items as delivery_items_router
 # bank_statements MUST be registered BEFORE payments.router:
 # /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
 # Разрезание bank_statements.py (Правило №5, сессия 2026-09-08): bank_statements
@@ -397,6 +398,7 @@ def register_routes(app: FastAPI) -> None:
     # Phase 27.1: contract_items MUST be registered BEFORE purchases.router
     # because purchases has catch-all /{purchase_id} that would intercept /contract-items
     app.include_router(contract_items_router.router)
+    app.include_router(delivery_items_router.router)
     # Статические литеральные пути /api/purchases/* — ДО purchases.router
     # (catch-all "/{pid}"), см. комментарий у импортов выше.
     app.include_router(purchase_duplicates.router)

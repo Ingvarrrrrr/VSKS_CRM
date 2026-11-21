@@ -77,6 +77,7 @@ from app.services.product_characteristics_parse import _separate_unit
 from app.services.product_name_signature import build_signature, grouping_key, match
 from app.services.product_photo_autofetch import schedule_photo_fetch
 from app.services.product_query_parse import get_manufacturer_brand_dictionary
+from app.services.product_tech_description import build_tech_description
 from app.services.products_import_match import (
     load_candidates_by_brand_article,
     load_candidates_by_store_article,
@@ -323,6 +324,8 @@ async def take_offer(
     article = details.get("article") or offer.store_article
     manufacturer = details.get("manufacturer") or offer.manufacturer
     characteristics = details.get("characteristics") or []
+    if not description and characteristics:
+        description = build_tech_description(characteristics, None)
 
     contractor_id = await _resolve_store_contractor_id(db, adapter.domain)
     product = await _find_existing_product(
@@ -368,6 +371,8 @@ async def take_offer(
             # Та же логика «не затирать более полное» — по количеству
             # распознанных характеристик (ПРАВИЛО, см. докстринг модуля).
             product.characteristics = characteristics
+        if not product.description and product.characteristics:
+            product.description = build_tech_description(product.characteristics, None)
 
     # Защита от повторного «Взять» того же предложения — record_price_point
     # (дедуп по contractor_id+price+collected_at+store_article). collected_at

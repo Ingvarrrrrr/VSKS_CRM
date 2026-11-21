@@ -60,6 +60,7 @@ class Purchase(Base):
     is_likely_needed = Column(Boolean, default=True, nullable=True)   # «Скорее всего понадобится»
     is_prepayment = Column(Boolean, default=False, nullable=True)     # Предоплата
     prepayment_date = Column(Date, nullable=True)                      # Дата возникновения обязательств для предоплаты
+    prepayment_percent = Column(Numeric(5, 2), nullable=True)          # Процент предоплаты
     stage_label = Column(String(100), nullable=True)                   # Подпись этапа (напр. «Февраль 2026»)
 
     # Phase 1: new fields

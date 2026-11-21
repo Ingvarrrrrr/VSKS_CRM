@@ -2,17 +2,24 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Импорт ФЭО: алерты «позиция стала подразделом» для ручного разбора (строки 31/216 боевого файла) + прежний алерт чужого родителя (211/214) — приёмка на файле владельца пройдена, не запушено. Дальше: шаблоны загрузки закупок проживания/перевозок от владельца, волна 4c доп. соглашений, синк графа
-last_updated: "2026-09-09T16:45:00Z"
+status: Закрыты свежие планы GSD (живой поиск этапы 1-3 + Contract.price_shared, единые блоки оплаты/сроков/адреса + ключи ЭТП организаций + массовая отправка на ЭТП), рабочие хвосты (склонение ФИО, автономер приказа, переменные Заказчик/Подрядчик, волна 4c доп. соглашений, GZip + ускорение dashboard/charts, слияние дублей сотрудников, 26-B1) и отложенные фазы (Phase 27 delivery_items, вкладки Оборудование/Прочее в Имуществе) — локально проверено (vite build + целевые pytest + cm.py check PASS), ждёт слова владельца на пуш
+last_updated: "2026-11-21T14:48:00+03:00"
 progress:
   total_phases: 22
-  completed_phases: 12
+  completed_phases: 22
   total_plans: 81
-  completed_plans: 71
-  percent: 55
+  completed_plans: 81
+  percent: 100
 ---
 
 # STATE.md — VSKS_CRM
+
+## 2026-11-21 — Закрытие свежих планов GSD, рабочих хвостов и отложенных фаз (`Phase 27` `delivery_items`, Имущество Оборудование/Прочее, ЭТП организаций и пакетная отправка, Живой поиск Этапы 1–3, Доп. соглашения 4c, `GZip` + дашборд, слияние дублей сотрудников) — локально, не запушено
+- **Живой поиск (Этапы 1–3) и `Contract.price_shared`:** исправлены парсеры `chipdip.py` (`&#160;`), `kuvalda.py` (`@graph`), отсев по артикулам в `relevance.py`, склейка `ОП 2` в `product_name_signature.py`, ТЗ из характеристик в `take.py`; добавлен фоновый бейдж `PlannedStoreOffersBadge.vue` (`🔎 Найдено в магазинах: N, от X ₽`) в `FeoPlannedItemRow.vue`; введено разрешение делиться договорными ценами `Contract.price_shared` (миграция `d9a1b3c5e7f9`, фильтрация в `product_market_price.py` и `products_price.py`, UI в `ContractsEditDialog.vue` и `PurchaseConfirmDialogs.vue`).
+- **Единые карточки оплаты/сроков/адреса + ключи ЭТП Организации + массовая отправка:** миграция `e5f7a9b1c3d5`, шифрование ключей площадок в `organizations.py` + `OrgPlatformKeysSection.vue`, сверка ИНН организатора субсидии в `etp_credentials.py`, пакетная проверка/отправка `publications_batch.py` + `BatchPlatformPublishDialog.vue` в `OrdersView.vue`, модульные карточки `PurchasePaymentTermsCard.vue`, `PurchaseDeliveryAddressCard.vue`, `PurchaseDatesSection.vue` в `CreateOrderView.vue`.
+- **Документы, склонение ФИО, переменные и Доп. соглашения 4c:** чистый склонятор `fio_inflect.py` + `contexts_signatory_cases.py` (родительный падеж подписантов и автономер приказа `procurement_order_number`), разрезка `morphology.py` (`< 500` строк), поиск и секции «Заказчик / Подрядчик» в `SubsidyTemplatesDialog.vue` и `PlaceholdersDialog.vue`, генератор и UI доп. соглашений `contract_amendment.py` + `contract_amendments.py` + `ContractAmendmentDialog.vue` + `contract_amendment.docx` (без `{% tr %}`).
+- **Производительность, дедуп сотрудников, платежи и отложенные фазы:** `GZipMiddleware(minimum_size=1000)` в `main.py`, ускорение `/api/dashboard/charts`, `POST /api/users/{keep_id}/merge` (`user_merge.py` + `StaffInnDupDialog.vue`), авто-скрытие пустых колонок в `PaymentsTable.vue` (`292` строки) и `StaffView.vue` (`468` строк), рабочие реестры вкладок «Оборудование» и «Прочее» (`PropertyAssetListPanel.vue`, `PropertyAssetDialog.vue`), полная реализация **`Phase 27` (`delivery_items`)** — миграция `f6a8b0c2d4e6`, роутер `delivery_items.py` (CRUD, `from-contract`, `parse-waybill`, `apply-waybill`), `DeliveryItemsPanel.vue` и `DeliveryWaybillMatchDialog.vue` в `PurchaseItemsEditor.vue`.
+- **Верификация:** цепочка миграций `c3e5f7a9b1d3 -> d9a1b3c5e7f9 -> e5f7a9b1c3d5 -> f6a8b0c2d4e6 (head)`, `cm.py check` PASS (все новые и разрезанные модули `< 500` строк), целевые `pytest` зелёные, `cm.py verify-diff` PASS, `npm --prefix frontend run build` (`✓ 3383 modules transformed`, `✓ built in 56.77s`, exit `0`).
 
 ## 2026-11-19 — Унификация уровней субсидии (Уровень 1..N) и названий столбцов во всех шаблонах и выгрузках (`excel_column_names.py`, `import_template_spec.py`, `feo_export_columns.py`, `plan_graph_export_columns.py`, `feo_import_template.py`, `historical_fact_import/columns.py`, `rows.py`, `template_stages.py`, `purchase_import_parser_maps.py`, `purchase_import_parser_group.py`, `useFeoImport.ts`, `useFactImport.ts`)
 - Все уровни субсидии/ФЭО во всех шаблонах и выгрузках переведены на канонические имена `Уровень 1`, `Уровень 2`, ..., `Уровень N` через `excel_column_names.py::feo_level_col(n)`.

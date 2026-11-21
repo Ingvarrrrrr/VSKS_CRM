@@ -65,6 +65,7 @@ from app.services.documents.contractor_override import (
     merge_contractor_override,
 )
 from app.services.documents.contexts_org_people import add_chief_accountant_context
+from app.services.documents.contexts_signatory_cases import enrich_document_signatories_and_orders
 from app.services.documents.case_forms import add_all_case_forms
 from app.services.documents.org_name_case import org_name_exceptions
 from app.services.documents.stages_receipts import build_contract_items_and_receipts_context
@@ -214,6 +215,9 @@ async def generate_document_bytes(
     add_contractor_signatory_context(context, c, customer_org=customer_org)
     add_prepayment_context(context, p)
     add_day_words_context(context, p)
+
+    # Обогащение родительным падежом подписантов и авто-номером приказа
+    enrich_document_signatories_and_orders(context, p, subsidy)
 
     # Все 5 косвенных падежей для каждой склоняемой переменной (задача
     # 29.10.2026, case_forms.py, ПРАВИЛО №6) — последний шаг сборки контекста,

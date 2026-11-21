@@ -26,6 +26,7 @@ export function useContractsDialog(options: {
     extra_subsidy_ids: [] as number[],
     subject: '', max_amount: null as number | null, planned_monthly: null as number | null,
     start_date: '', end_date: '', status: 'active', notes: '',
+    price_shared: false,
   })
   const dialog = reactive({ show: false, saving: false, id: 0, form: emptyForm() })
 
@@ -68,6 +69,7 @@ export function useContractsDialog(options: {
       max_amount: c.max_amount || null, planned_monthly: c.planned_monthly || null,
       start_date: c.start_date || '', end_date: c.end_date || '',
       status: c.status || 'active', notes: c.notes || '',
+      price_shared: Boolean(c.price_shared),
     })
     dialog.show = true
   }

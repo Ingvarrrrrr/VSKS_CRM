@@ -26,11 +26,13 @@ from app.models.purchase_comment import PurchaseComment  # ensure purchase_comme
 from app.models import bank_statement  # ensure bank_statement_imports / bank_payments tables registered
 from app.models.entity_change import EntityChange, EntityFieldSeen  # ensure entity_changes / entity_field_seen tables registered
 from app.models.game_score import GameScore, GameProfile  # ensure game_scores / game_profiles tables registered
+from app.models import delivery_item  # ensure delivery_items table registered
 
 from app.startup import lifespan
 from app.errors import register_error_handlers
 from app.errors_db import register_db_error_handlers
 from app.routes import register_routes
+from starlette.middleware.gzip import GZipMiddleware
 from app.auth.csrf_protection import CsrfProtectionMiddleware
 from app.auth.session_renew import SessionRenewMiddleware
 from app.config import settings
@@ -59,6 +61,9 @@ app.add_middleware(CsrfProtectionMiddleware)
 # Скользящая сессия: 30 дней с последней активности, не со входа (app/auth/
 # session_renew.py — источник истины, что/когда продлевать).
 app.add_middleware(SessionRenewMiddleware)
+
+# Сжатие gzip для ответов >= 1000 байт (снимает передачу сырых 4.5 МБ JSON на списках закупок)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 @app.middleware("http")

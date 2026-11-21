@@ -19,10 +19,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, get_single_org_id, ADMIN_ROLES, OWNER_ROLES
 from app.auth.permissions import require_tab
+from app.auth.visibility import get_account_contour_org_ids
 from app.database import get_db
+from app.models.contract import Contract
 from app.models.contractor import Contractor
 from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
+from app.models.purchase import Purchase
+from app.models.purchase_item import PurchaseItem
+from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.schemas.schemas import (
     ProductOut, PriceActualizationIn, ProductPriceHistoryOut, PriceHistoryManualIn,
@@ -127,7 +132,7 @@ async def actualize_price(
 async def get_price_history(
     product_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """История актуализации цены товара, новые сверху. Карточка товара
     (владелец, 2026-09-16, п.3): дата/источник/контрагент/ссылка по каждой
@@ -137,14 +142,34 @@ async def get_price_history(
     if not product:
         raise HTTPException(404, "Товар не найден")
     rows = (await db.execute(
-        select(ProductPriceHistory, Contractor.name.label("contractor_name"))
+        select(
+            ProductPriceHistory,
+            Contractor.name.label("contractor_name"),
+            Subsidy.org_id.label("org_id"),
+            Contract.price_shared.label("contract_price_shared"),
+        )
         .outerjoin(Contractor, Contractor.id == ProductPriceHistory.contractor_id)
+        .outerjoin(PurchaseItem, PurchaseItem.id == ProductPriceHistory.purchase_item_id)
+        .outerjoin(Purchase, Purchase.id == PurchaseItem.purchase_id)
+        .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
+        .outerjoin(Contract, Contract.id == Purchase.contract_id)
         .where(ProductPriceHistory.product_id == product_id)
         .order_by(ProductPriceHistory.created_at.desc())
     )).all()
 
+    allowed_orgs = None
+    if current_user.role != "superadmin":
+        if current_user.role == "account_owner":
+            allowed_orgs = await get_account_contour_org_ids(current_user, db)
+        else:
+            allowed_orgs = {current_user.org_id} if current_user.org_id is not None else set()
+
     out: List[ProductPriceHistoryOut] = []
-    for history_row, contractor_name in rows:
+    for history_row, contractor_name, p_org_id, c_price_shared in rows:
+        if history_row.source == "contract" and allowed_orgs is not None:
+            is_shared = bool(c_price_shared or product.price_shared)
+            if not is_shared and (p_org_id is not None and p_org_id not in allowed_orgs):
+                continue
         item = ProductPriceHistoryOut.model_validate(history_row)
         item.contractor_name = contractor_name
         out.append(item)
@@ -155,7 +180,7 @@ async def get_price_history(
 async def get_price_stats(
     product_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Средняя цена товара за окно (владелец, 2026-09-16, п.4) — единая функция
     app.services.product_price_stats.compute_price_stats, без второй формулы
@@ -171,10 +196,32 @@ async def get_price_stats(
             ProductPriceHistory.collected_at,
             ProductPriceHistory.source,
             ProductPriceHistory.contractor_id,
+            Subsidy.org_id.label("org_id"),
+            Contract.price_shared.label("contract_price_shared"),
         )
+        .outerjoin(PurchaseItem, PurchaseItem.id == ProductPriceHistory.purchase_item_id)
+        .outerjoin(Purchase, Purchase.id == PurchaseItem.purchase_id)
+        .outerjoin(Subsidy, Subsidy.id == Purchase.subsidy_id)
+        .outerjoin(Contract, Contract.id == Purchase.contract_id)
         .where(ProductPriceHistory.product_id == product_id)
     )).all()
-    stats = compute_price_stats(rows)
+
+    allowed_orgs = None
+    if current_user.role != "superadmin":
+        if current_user.role == "account_owner":
+            allowed_orgs = await get_account_contour_org_ids(current_user, db)
+        else:
+            allowed_orgs = {current_user.org_id} if current_user.org_id is not None else set()
+
+    filtered_rows = []
+    for row in rows:
+        if row[3] == "contract" and allowed_orgs is not None:
+            is_shared = bool(row[6] or product.price_shared)
+            if not is_shared and (row[5] is not None and row[5] not in allowed_orgs):
+                continue
+        filtered_rows.append(row[:5])
+
+    stats = compute_price_stats(filtered_rows)
     return stats.as_dict()
 
 

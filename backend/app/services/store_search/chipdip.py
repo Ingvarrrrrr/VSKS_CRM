@@ -1,4 +1,4 @@
-"""Адаптер живого поиска chipdip.ru — этап 1 «живой поиск товара в
+r"""Адаптер живого поиска chipdip.ru — этап 1 «живой поиск товара в
 магазинах», владелец, 28.10.2026.
 
 Проверено на живой фикстуре (backend/tests/fixtures/store_search/chipdip.html,
@@ -48,6 +48,20 @@ _PRICE_RE = re.compile(r'id="price_\d+">([^<]*)<')
 _IMG_RE = re.compile(r'<img\s+src="([^"]+)"')
 
 
+def _clean_price(raw_text: str) -> Optional[Decimal]:
+    if not raw_text:
+        return None
+    unescaped = _html_unescape(_html_unescape(raw_text))
+    unescaped = re.sub(r"&#\d+;|&[a-zA-Z]+;", " ", unescaped)
+    digits = re.sub(r"[^\d.,]", "", unescaped).replace(",", ".")
+    if not digits:
+        return None
+    try:
+        return Decimal(digits)
+    except Exception:
+        return None
+
+
 def parse_search_html(html: str) -> list[StoreOffer]:
     offers: list[StoreOffer] = []
     if not html:
@@ -63,15 +77,7 @@ def parse_search_html(html: str) -> list[StoreOffer]:
             continue
         brand_m = _BRAND_RE.search(row)
         price_m = _PRICE_RE.search(row)
-        price = None
-        if price_m:
-            unescaped = _html_unescape(price_m.group(1))
-            digits = re.sub(r"[^\d.,]", "", unescaped).replace(",", ".")
-            if digits:
-                try:
-                    price = Decimal(digits)
-                except Exception:
-                    price = None
+        price = _clean_price(price_m.group(1)) if price_m else None
         img_m = _IMG_RE.search(row)
         offers.append(StoreOffer(
             store_key=STORE_KEY,

@@ -392,6 +392,9 @@
           to="/staff-location" prepend-icon="mdi-map-marker-account" title="Где люди" active-class="bg-primary text-white"
         />
         <v-list-item to="/m/driver"           prepend-icon="mdi-cellphone"               title="Мобильный кабинет водителя" active-class="bg-primary text-white" />
+        <v-divider class="my-1" />
+        <v-list-item to="/property/equipment" prepend-icon="mdi-toolbox-outline"         title="Оборудование"               active-class="bg-primary text-white" />
+        <v-list-item to="/property/misc"      prepend-icon="mdi-package-variant-closed"  title="Прочее"                     active-class="bg-primary text-white" />
       </v-list-group>
     </v-list>
 

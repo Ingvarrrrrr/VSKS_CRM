@@ -83,6 +83,15 @@
           <v-col cols="12">
             <v-textarea v-model="dialog.form.notes" label="Примечания" variant="outlined" density="compact" rows="2" />
           </v-col>
+          <v-col cols="12">
+            <v-switch
+              v-model="dialog.form.price_shared"
+              color="primary"
+              density="compact"
+              hide-details
+              label="Поделиться ценами этого договора с другими организациями"
+            />
+          </v-col>
         </v-row>
       </v-card-text>
       <v-card-actions class="px-4 pb-3 flex-wrap gap-2" style="min-height: auto;">
@@ -130,6 +139,7 @@ defineProps<{
       subsidy_id: number | null; extra_subsidy_ids: number[]
       subject: string; max_amount: number | null; planned_monthly: number | null
       start_date: string; end_date: string; status: string; notes: string
+      price_shared?: boolean
     }
   }
   dialogInitialContractor: { id: number; name: string; inn?: string } | null

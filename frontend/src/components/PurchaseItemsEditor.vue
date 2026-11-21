@@ -874,10 +874,19 @@
       @cancel="closeSplitDialog"
     />
 
+    <!-- Phase 27: Физические поставки по накладным (delivery_items) -->
+    <DeliveryItemsPanel
+      v-if="itemShape === 'purchase' && props.purchaseId"
+      :purchase-id="props.purchaseId"
+      :readonly="props.readonly"
+      :contract-items="localContractItems"
+    />
+
   </div>
 </template>
 
 <script setup lang="ts">
+import DeliveryItemsPanel from '@/components/delivery/DeliveryItemsPanel.vue'
 import { ref, computed, watch, reactive, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'

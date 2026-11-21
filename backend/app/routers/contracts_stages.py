@@ -19,9 +19,11 @@ from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.contract import Contract
 from app.models.purchase import Purchase
+from app.routers.contract_amendments import router as amendments_router
 from app.routers.purchase_budget import _assign_framework_seq
 
 router = APIRouter(prefix="/api/contracts", tags=["contracts"])
+router.include_router(amendments_router)
 
 RU_MONTHS_GEN = [
     "января", "февраля", "марта", "апреля", "мая", "июня",

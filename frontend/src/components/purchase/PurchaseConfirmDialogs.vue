@@ -110,6 +110,16 @@
           @click="$emit('edit-items-before-contract')">
           Изменить позиции
         </v-btn>
+        <v-divider class="my-3" />
+        <v-checkbox
+          v-model="shareContractPrices"
+          label="Поделиться ценами этого договора с другими организациями?"
+          hint="Позволит использовать цены позиций как ориентир в других закупках"
+          persistent-hint
+          density="compact"
+          color="indigo"
+          hide-details
+        />
       </v-card-text>
       <v-card-actions class="px-4 pb-4">
         <v-spacer />
@@ -130,6 +140,7 @@ const feoPerItemDisableOpen = defineModel<boolean>('feoPerItemDisableOpen', { de
 const duplicateOpen = defineModel<boolean>('duplicateOpen', { default: false })
 const contractedConfirmOpen = defineModel<boolean>('contractedConfirmOpen', { default: false })
 const contractPrice = defineModel<number | null>('contractPrice', { default: null })
+const shareContractPrices = defineModel<boolean>('shareContractPrices', { default: false })
 
 defineProps<{
   budgetInfo: { over: number } | null

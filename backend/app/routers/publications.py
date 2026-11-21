@@ -30,6 +30,9 @@ from app.auth.object_visibility import ensure_purchase_visible
 
 router = APIRouter(prefix="/api/publications", tags=["publications"])
 
+from app.routers.publications_batch import router as batch_router
+router.include_router(batch_router)
+
 PLATFORM_LABELS = {
     "fabrikant":    "Фабрикант",
     "roseltorg_rb": "Росэлторг.Бизнес",
@@ -211,6 +214,29 @@ async def publish_purchase(
             )
         if rb_errors:
             raise HTTPException(422, "; ".join(rb_errors))
+
+    # Проверка ключа площадки от имени организации субсидии (План 2026-10-30)
+    from app.services.etp_credentials import (
+        resolve_purchase_etp_credentials,
+        extract_organizer_inn_from_jwt,
+        verify_organizer_inn,
+    )
+    creds_check = await resolve_purchase_etp_credentials(db, purchase_id, body.platform)
+    if not creds_check.get("ok"):
+        raise HTTPException(422, creds_check.get("error") or "Не заданы учётные данные площадки")
+
+    if body.platform == "roseltorg_rb":
+        token = creds_check.get("token")
+        if token:
+            try:
+                from app.services.roseltorg.auth import get_roseltorg_jwt
+                jwt = await get_roseltorg_jwt(token)
+                organizer_inn = extract_organizer_inn_from_jwt(jwt)
+                verify_organizer_inn(organizer_inn, creds_check.get("org_inn"), creds_check.get("org_name") or "")
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(422, f"Ошибка авторизации Росэлторг: {str(e)[:250]}")
 
     pub = PlatformPublication(
         purchase_id=purchase_id,

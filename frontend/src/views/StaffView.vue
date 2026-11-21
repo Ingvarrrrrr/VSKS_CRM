@@ -207,60 +207,58 @@
       @error="(msg) => showSnack(msg, 'error')"
     />
 
-    <StaffDeleteUserDialog :dialog="deleteDialog" @confirm="doDelete" />
+    <StaffAuxModals
+      :delete-dialog="deleteDialog"
+      v-model:bulk-delete-users-dialog="bulkDeleteUsersDialog"
+      :selected-count="selectedUsers.length"
+      :bulk-delete-users-loading="bulkDeleteUsersLoading"
+      :hierarchy-dialog="hierarchyDialog"
+      :all-subs-not-direct="allSubsNotDirect"
+      :mobile="mobile"
+      :user-import-dialog="userImportDialog"
+      v-model:inn-dup-dialog="innDupDialog"
+      :duplicate-inn-groups="duplicateInnGroups"
+      @delete="doDelete" @bulk-delete="doBulkDeleteUsers" @add-subordinate="addSubordinate" @remove-subordinate="removeSubordinate"
+      @download-template="downloadUserTemplate" @import="doUserImport" @edit-user="openEditUser" @merged="loadUsers"
+    />
 
-    <StaffBulkDeleteUsersDialog v-model:show="bulkDeleteUsersDialog" :count="selectedUsers.length" :loading="bulkDeleteUsersLoading" @confirm="doBulkDeleteUsers" />
-
-    <StaffHierarchyDialog :dialog="hierarchyDialog" :all-subs-not-direct="allSubsNotDirect" :mobile="mobile" @add-subordinate="addSubordinate" @remove-subordinate="removeSubordinate" />
-
-    <StaffUserImportDialog :dialog="userImportDialog" :mobile="mobile" @download-template="downloadUserTemplate" @import="doUserImport" />
-
-    <StaffDeptDialog
-      v-model:show="deptDialog"
+    <StaffDepartmentModals
+      v-model:dept-dialog="deptDialog"
       :editing-dept="editingDept"
       :dept-form="deptForm"
-      :org-name="editingDeptOrgName"
-      :subsidies="editingDeptSubsidyOptions"
+      :editing-dept-org-name="editingDeptOrgName"
+      :editing-dept-subsidy-options="editingDeptSubsidyOptions"
       :dept-member-items="deptMemberItems"
       :user-dropdown-items="userDropdownItems"
       :other-dept-items="otherDeptItems"
       :mobile="mobile"
-      @save="saveDept"
-    />
-
-    <DeptCreateDialog
-      v-model:show="deptCreateShow"
-      :form="deptCreateForm"
-      :orgs="deptCreateOrgs"
-      :subsidy-options="deptCreateSubsidyOptions"
-      :saving="deptCreateSaving"
-      :loading-lists="deptCreateLoadingLists"
-      @create="createDept"
-    />
-
-    <StaffAddMemberDialog
-      v-model:show="addMemberDialog"
+      v-model:dept-create-show="deptCreateShow"
+      :dept-create-form="deptCreateForm"
+      :dept-create-orgs="deptCreateOrgs"
+      :dept-create-subsidy-options="deptCreateSubsidyOptions"
+      :dept-create-saving="deptCreateSaving"
+      :dept-create-loading-lists="deptCreateLoadingLists"
+      v-model:add-member-dialog="addMemberDialog"
       v-model:add-member-mode="addMemberMode"
       :selected-dept="selectedDept"
       :member-form="memberForm"
       :new-member-form="newMemberForm"
-      :user-dropdown-items="userDropdownItems"
-      :role-items="createRoleItems"
+      :create-role-items="createRoleItems"
       :organizations="organizations"
       :get-positions-for-org="getPositionsForOrg"
       :new-member-saving="newMemberSaving"
-      :mobile="mobile"
-      @add="addMember"
-      @create-and-add="createAndAddMember"
+      v-model:edit-member-dialog="editMemberDialog"
+      :edit-member-target="editMemberTarget"
+      :edit-member-form="editMemberForm"
+      v-model:delegate-dialog="delegateDialog"
+      :delegate-form="delegateForm"
+      v-model:dept-import-dialog="deptImportDialog"
+      v-model:dept-import-file="deptImportFile"
+      :dept-import-result="deptImportResult"
+      :dept-importing="deptImporting"
+      @save-dept="saveDept" @create-dept="createDept" @add-member="addMember" @create-and-add-member="createAndAddMember"
+      @save-edit-member="saveEditMember" @add-delegate="addDelegate" @download-dept-template="downloadDeptTemplate" @do-dept-import="doDeptImport"
     />
-
-    <StaffEditMemberDialog v-model:show="editMemberDialog" :edit-member-target="editMemberTarget" :edit-member-form="editMemberForm" @save="saveEditMember" />
-
-    <StaffDelegateDialog v-model:show="delegateDialog" :delegate-form="delegateForm" :user-dropdown-items="userDropdownItems" @add="addDelegate" />
-
-    <StaffDeptImportDialog v-model:show="deptImportDialog" v-model:dept-import-file="deptImportFile" :dept-import-result="deptImportResult" :dept-importing="deptImporting" @download-template="downloadDeptTemplate" @import="doDeptImport" />
-
-    <StaffInnDupDialog v-model:show="innDupDialog" :duplicate-inn-groups="duplicateInnGroups" :mobile="mobile" @edit-user="openEditUser" />
 
     <ColumnConfigDialog
       v-model="showColumnPicker"
@@ -290,23 +288,14 @@ import { useToast, type ToastType } from '@/composables/useToast'
 import StaffDeptToolbar from '@/components/staff/StaffDeptToolbar.vue'
 import StaffDeptTree from '@/components/staff/StaffDeptTree.vue'
 import StaffDeptDetails from '@/components/staff/StaffDeptDetails.vue'
-import StaffDeptDialog from '@/components/staff/StaffDeptDialog.vue'
-import DeptCreateDialog from '@/components/departments/DeptCreateDialog.vue'
-import StaffAddMemberDialog from '@/components/staff/StaffAddMemberDialog.vue'
-import StaffEditMemberDialog from '@/components/staff/StaffEditMemberDialog.vue'
-import StaffDelegateDialog from '@/components/staff/StaffDelegateDialog.vue'
-import StaffDeptImportDialog from '@/components/staff/StaffDeptImportDialog.vue'
+import StaffDepartmentModals from '@/components/staff/StaffDepartmentModals.vue'
 import StaffUsersToolbar from '@/components/staff/StaffUsersToolbar.vue'
 import StaffUsersAlerts from '@/components/staff/StaffUsersAlerts.vue'
 import StaffUsersTable from '@/components/staff/StaffUsersTable.vue'
 import StaffUsersCards from '@/components/staff/StaffUsersCards.vue'
 import StaffCreateUserDialog from '@/components/staff/StaffCreateUserDialog.vue'
 import StaffEditUserDialog from '@/components/staff/StaffEditUserDialog.vue'
-import StaffDeleteUserDialog from '@/components/staff/StaffDeleteUserDialog.vue'
-import StaffBulkDeleteUsersDialog from '@/components/staff/StaffBulkDeleteUsersDialog.vue'
-import StaffUserImportDialog from '@/components/staff/StaffUserImportDialog.vue'
-import StaffInnDupDialog from '@/components/staff/StaffInnDupDialog.vue'
-import StaffHierarchyDialog from '@/components/staff/StaffHierarchyDialog.vue'
+import StaffAuxModals from '@/components/staff/StaffAuxModals.vue'
 import { createStaffDeptTreeNode } from '@/components/staff/StaffDeptTreeNode'
 
 import { getRoleItems, getCreateRoleItems } from '@/composables/staff/staffLabels'
@@ -499,13 +488,4 @@ onMounted(async () => {
 })
 </script>
 
-<!--
-  Стили дерева отделов (.dept-tree-row и т.д., глобальные) переехали в
-  components/staff/staffDeptTree.css (импортируется из StaffDeptTree.vue —
-  их использует и StaffDeptTreeNode.ts, рендерящийся через h(), которому
-  scoped CSS недоступен). Стили «Вне отделов» (unassigned-*) — scoped-блок
-  в components/staff/StaffDeptTree.vue, т.к. scoped CSS не пересекает
-  границу SFC. Аватарки/фото/скан ВУ — в StaffCreateUserDialog.vue и
-  StaffEditUserDialog.vue, где теперь живёт их разметка.
--->
 

@@ -2172,7 +2172,8 @@ PATCHABLE_FIELDS = {
     "responsible_person", "initiator_id", "subject_kind", "execution_term",
     "event_id", "delivery_location_kind", "region",
     # Phase 24: stages + financial plan
-    "is_likely_needed", "is_prepayment", "prepayment_date", "stage_label",
+    "is_likely_needed", "is_prepayment", "prepayment_date", "prepayment_percent", "stage_label",
+    "execution_term_changed",
     # Авансовый отчёт: кому возмещать
     "reimbursement_user_id",
     # Phase 28 B4: ответственный исполнитель

@@ -11,6 +11,9 @@
         <v-chip v-if="contract.status" size="small" variant="flat" class="mr-3">
           {{ statusLabel(contract.status) }}
         </v-chip>
+        <v-btn variant="tonal" prepend-icon="mdi-file-document-edit-outline" class="mr-2" @click="showAmendmentDialog = true">
+          Доп. соглашение
+        </v-btn>
         <v-btn variant="tonal" prepend-icon="mdi-pencil" @click="emit('edit', contract)">Редактировать</v-btn>
       </v-toolbar>
 
@@ -49,6 +52,7 @@
       <v-tabs v-model="tab" class="px-4">
         <v-tab value="purchases">Закупки по договору</v-tab>
         <v-tab value="requisites">Реквизиты</v-tab>
+        <v-tab value="amendments">Доп. соглашения</v-tab>
       </v-tabs>
       <v-divider />
 
@@ -159,8 +163,36 @@
                  суммы поставки/оплаты там же). Второй запрос ради этой вкладки
                  заводить не стали (см. отчёт задачи). -->
           </v-window-item>
+          <!-- ── Доп. соглашения ── -->
+          <v-window-item value="amendments">
+            <v-card variant="tonal" color="indigo" class="pa-4 mb-4">
+              <div class="d-flex align-center justify-space-between flex-wrap gap-2">
+                <div>
+                  <div class="text-subtitle-1 font-weight-bold text-high-emphasis">Дополнительные соглашения (ДС) к договору</div>
+                  <div class="text-body-2 text-medium-emphasis">
+                    Формирование ДС №1..N об изменении цены договора с НДС, изменении сроков и обновлённой спецификации позиций.
+                  </div>
+                </div>
+                <v-btn
+                  color="indigo"
+                  variant="flat"
+                  prepend-icon="mdi-plus"
+                  @click="showAmendmentDialog = true"
+                >
+                  Сформировать ДС (.docx)
+                </v-btn>
+              </div>
+            </v-card>
+          </v-window-item>
         </v-window>
       </v-card-text>
+
+      <!-- Диалог формирования Доп. соглашения -->
+      <ContractAmendmentDialog
+        v-if="contract"
+        v-model="showAmendmentDialog"
+        :contract="contract"
+      />
     </v-card>
   </v-dialog>
 </template>
@@ -168,6 +200,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import ContractAmendmentDialog from '@/components/contracts/ContractAmendmentDialog.vue'
 import { purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 import {
   contractTypeLabel, purchaseMethodLabel, statusLabel,
@@ -189,6 +222,7 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const tab = ref('purchases')
+const showAmendmentDialog = ref(false)
 
 // Сбрасываем на вкладку «Закупки» при открытии новой карточки.
 watch(() => props.modelValue, (v) => { if (v) tab.value = 'purchases' })

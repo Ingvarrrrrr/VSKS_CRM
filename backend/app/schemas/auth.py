@@ -192,6 +192,10 @@ class OrganizationCreate(BaseModel):
     # создающий организацию для клиента, не представитель её сотрудников и
     # контрагентов — для него поле не требуется и значение игнорируется.
     poruchenie_accepted: bool = False
+    # Ключи интеграции с площадками
+    roseltorg_token: Optional[str] = None
+    fabrikant_login: Optional[str] = None
+    fabrikant_password: Optional[str] = None
 
 class OrganizationOut(BaseModel):
     id: int
@@ -243,6 +247,12 @@ class OrganizationOut(BaseModel):
     # Владелец 27.10.2026: исключения регистра/написания для подстановки
     # полного наименования организации в документы.
     doc_name_exceptions: Optional[str] = None
+    # ЭТП ключи и флаги наличия
+    has_roseltorg_token: bool = False
+    has_fabrikant_credentials: bool = False
+    roseltorg_token_masked: Optional[str] = None
+    fabrikant_login: Optional[str] = None
+    fabrikant_password_masked: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class RegisterRequest(BaseModel):

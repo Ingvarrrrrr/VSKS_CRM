@@ -7,10 +7,10 @@
     </v-card-title>
     <v-card-text>
 
-      <!-- Планирование -->
+      <!-- 1. Планирование -->
       <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Планирование</div>
-      <v-row>
-        <v-col cols="12" md="3">
+      <v-row dense>
+        <v-col cols="12" md="4">
           <v-text-field
             v-model="form.procurement_planned_date"
             label="Планируемая дата закупки"
@@ -19,92 +19,101 @@
             persistent-hint
           />
         </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field
-            v-model="form.delivery_date"
-            label="Нужна к дате"
-            variant="outlined" density="compact" type="date"
-            hint="Срок, к которому товар/услуга должны быть получены"
-            persistent-hint
-          />
-        </v-col>
-        <v-col cols="12" md="6">
+        <v-col cols="12" md="4">
           <v-text-field
             v-model="form.submission_deadline"
             label="Приём заявок до"
             variant="outlined" density="compact"
             type="datetime-local"
-            hint="Дедлайн подачи предложений поставщиками (уходит на Фабрикант как {{submission_deadline_datetime}})"
+            hint="Дедлайн подачи предложений поставщиками"
             persistent-hint
+          />
+        </v-col>
+        <v-col cols="12" md="4">
+          <v-text-field
+            v-model="form.order_date"
+            label="Дата заказа"
+            variant="outlined" density="compact" type="date"
+            hint="Когда сделан заказ поставщику" persistent-hint
           />
         </v-col>
       </v-row>
 
       <v-divider class="my-3" />
 
-      <!-- Исполнение -->
-      <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Исполнение</div>
-      <v-row>
+      <!-- 2. Срок поставки (исполнения) — единый блок -->
+      <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Срок поставки (исполнения)</div>
+      <v-row dense>
         <v-col cols="12">
-          <div class="text-body-2 mb-1">Срок оказания услуг</div>
           <v-radio-group
-            v-model="form.service_term_mode"
+            v-model="deliveryMode"
             inline density="compact" hide-details class="mt-0"
+            @update:model-value="onDeliveryModeChange"
           >
             <v-radio label="Не указано" value="" />
             <v-radio label="Конкретные даты (с… по…)" value="range" />
             <v-radio label="В течение N дней" value="duration" />
             <v-radio label="До даты" value="deadline" />
           </v-radio-group>
-          <div class="text-caption text-medium-emphasis mt-1">Как считается срок исполнения: период, длительность или конкретная дата</div>
+          <div class="text-caption text-medium-emphasis mt-1">
+            Единый срок поставки / оказания услуг: транслируется в шаблоны (&#123;&#123;execution_term&#125;&#125;) и на площадки
+          </div>
         </v-col>
       </v-row>
-      <v-row v-if="form.service_term_mode === 'range'">
-        <v-col cols="12" md="3">
+
+      <v-row v-if="deliveryMode === 'range'" dense class="mt-1">
+        <v-col cols="12" sm="4">
           <v-text-field
             v-model="form.service_start_date"
-            label="Начало периода" type="date"
+            label="Начало периода (с даты)" type="date"
             variant="outlined" density="compact"
-            hint="Дата начала оказания услуг/поставки" persistent-hint
+            hint="Дата начала поставки / оказания услуг" persistent-hint
+            @update:model-value="syncExecutionTermFromDates"
           />
         </v-col>
-        <v-col cols="12" md="3">
+        <v-col cols="12" sm="4">
           <v-text-field
             v-model="form.service_end_date"
-            label="Конец периода" type="date"
+            label="Конец периода (по дату)" type="date"
             variant="outlined" density="compact"
-            hint="Дата завершения оказания услуг/поставки" persistent-hint
+            hint="Дата завершения поставки / оказания услуг" persistent-hint
+            @update:model-value="syncExecutionTermFromDates"
           />
         </v-col>
       </v-row>
-      <v-row v-if="form.service_term_mode === 'duration'">
-        <v-col cols="12" md="3">
+
+      <v-row v-else-if="deliveryMode === 'duration'" dense class="mt-1">
+        <v-col cols="12" sm="4">
           <v-text-field
             v-model.number="form.service_term_days"
             label="Количество дней" type="number" min="1"
             variant="outlined" density="compact"
-            hint="Срок исполнения в днях от даты подписания" persistent-hint
+            hint="Срок исполнения в днях от даты заключения договора" persistent-hint
+            @update:model-value="syncExecutionTermFromDates"
           />
         </v-col>
-        <v-col cols="12" md="3">
+        <v-col cols="12" sm="4">
           <v-select
             v-model="form.service_term_type"
-            :items="[{title: 'Календарных', value: 'calendar'}, {title: 'Рабочих', value: 'working'}]"
+            :items="[{title: 'Календарных дней', value: 'calendar'}, {title: 'Рабочих дней', value: 'working'}]"
             item-title="title" item-value="value"
             label="Тип дней" variant="outlined" density="compact"
+            @update:model-value="syncExecutionTermFromDates"
           />
         </v-col>
       </v-row>
-      <v-row v-if="form.service_term_mode === 'deadline'">
-        <v-col cols="12" md="3">
+
+      <v-row v-else-if="deliveryMode === 'deadline'" dense class="mt-1">
+        <v-col cols="12" sm="5">
           <v-text-field
             v-model="form.service_deadline_date"
             label="До какой даты" type="date"
             variant="outlined" density="compact"
-            hint="Услуга/поставка должна быть исполнена не позднее этой даты" persistent-hint
+            hint="Товар/услуга должны быть получены не позднее этой даты" persistent-hint
+            @update:model-value="syncExecutionTermFromDates"
           />
         </v-col>
-        <v-col cols="12" md="4" class="d-flex align-center gap-2">
+        <v-col cols="12" sm="4" class="d-flex align-center gap-2">
           <!-- Конец месяца quick-fill -->
           <v-menu v-model="endOfMonthMenu" :close-on-content-click="false" location="bottom">
             <template #activator="{ props: menuProps }">
@@ -132,7 +141,7 @@
                   />
                 </v-col>
               </v-row>
-              <v-btn color="primary" size="small" block @click="applyEndOfMonth">Применить</v-btn>
+              <v-btn color="primary" size="small" block @click="onApplyEndOfMonth">Применить</v-btn>
             </v-card>
           </v-menu>
         </v-col>
@@ -140,10 +149,10 @@
 
       <v-divider class="my-3" />
 
-      <!-- Договор и оплата -->
-      <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Договор и оплата</div>
-      <v-row>
-        <v-col cols="12" md="3">
+      <!-- 3. Срок действия договора и планирование оплаты -->
+      <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Срок действия договора и платежи</div>
+      <v-row dense>
+        <v-col cols="12" md="4">
           <div @click="(contractHeaderLocked || (isFramework && !!selectedFrameworkContract?.end_date)) ? onLockedFieldClick?.() : undefined">
             <v-text-field
               v-model="form.contract_end_date"
@@ -159,7 +168,7 @@
             </div>
           </div>
         </v-col>
-        <v-col cols="12" md="3">
+        <v-col cols="12" md="4">
           <v-select
             v-model="form.commitment_quarter"
             :items="[1,2,3,4]"
@@ -168,7 +177,7 @@
             hint="Квартал, в котором приняты обязательства" persistent-hint
           />
         </v-col>
-        <v-col cols="12" md="3">
+        <v-col cols="12" md="4">
           <v-text-field
             v-model="form.planned_payment_month"
             label="Планируемый месяц платежа"
@@ -176,28 +185,12 @@
             hint="Месяц, в котором планируется платёж" persistent-hint
           />
         </v-col>
-        <v-col cols="12" md="3">
+        <v-col cols="12" md="4">
           <v-text-field
             v-model="form.agreement_date"
             label="Дата доп.соглашения"
             variant="outlined" density="compact" type="date"
             hint="Дата подписания дополнительного соглашения (при наличии)" persistent-hint
-          />
-        </v-col>
-        <v-col cols="12" md="3">
-          <v-text-field
-            v-model="form.order_date"
-            label="Дата заказа"
-            variant="outlined" density="compact" type="date"
-            hint="Когда сделан заказ поставщику" persistent-hint
-          />
-        </v-col>
-        <v-col v-if="form.is_prepayment" cols="12" md="3">
-          <v-text-field
-            v-model="form.prepayment_date"
-            label="Дата предоплаты" type="date"
-            variant="outlined" density="compact"
-            hint="Когда возникло обязательство по предоплате" persistent-hint
           />
         </v-col>
       </v-row>
@@ -207,12 +200,7 @@
 </template>
 
 <script setup lang="ts">
-// Блок «Сроки и даты» закупки. Вынесено из CreateOrderView.vue (рефакторинг
-// без изменения поведения, часть 3). form — тот же reactive-объект родителя,
-// мутируется напрямую через v-model (как и раньше). useEndOfMonthFill(form)
-// вызывается прямо здесь: endOfMonthMenu/Year/Month/Items и applyEndOfMonth
-// нигде за пределами этого блока в CreateOrderView.vue не используются —
-// перенос композабла целиком безопасен (проверено grep по всему файлу).
+import { computed } from 'vue'
 import { useEndOfMonthFill } from '@/composables/purchase/useEndOfMonthFill'
 
 const props = defineProps<{
@@ -225,4 +213,53 @@ const props = defineProps<{
 }>()
 
 const { endOfMonthMenu, endOfMonthYear, endOfMonthMonth, endOfMonthMonthItems, applyEndOfMonth } = useEndOfMonthFill(props.form)
+
+const deliveryMode = computed({
+  get(): string {
+    if (props.form.service_term_mode) return props.form.service_term_mode
+    if (props.form.execution_term || props.form.delivery_date) return 'deadline'
+    return ''
+  },
+  set(val: string) {
+    props.form.service_term_mode = val
+    if (val === 'deadline') {
+      if (!props.form.service_deadline_date) {
+        props.form.service_deadline_date = props.form.execution_term || props.form.delivery_date || ''
+      }
+    }
+  },
+})
+
+function onDeliveryModeChange(val: string) {
+  if (val === 'deadline') {
+    if (!props.form.service_deadline_date) {
+      props.form.service_deadline_date = props.form.execution_term || props.form.delivery_date || ''
+    }
+    syncExecutionTermFromDates()
+  } else if (val === 'range') {
+    syncExecutionTermFromDates()
+  } else if (val === 'duration') {
+    syncExecutionTermFromDates()
+  }
+}
+
+function syncExecutionTermFromDates() {
+  const mode = props.form.service_term_mode || deliveryMode.value
+  if (mode === 'deadline') {
+    if (props.form.service_deadline_date) {
+      props.form.execution_term = props.form.service_deadline_date
+      props.form.delivery_date = props.form.service_deadline_date
+    }
+  } else if (mode === 'range') {
+    if (props.form.service_end_date) {
+      props.form.execution_term = props.form.service_end_date
+      props.form.delivery_date = props.form.service_end_date
+    }
+  }
+}
+
+function onApplyEndOfMonth() {
+  applyEndOfMonth()
+  syncExecutionTermFromDates()
+}
 </script>

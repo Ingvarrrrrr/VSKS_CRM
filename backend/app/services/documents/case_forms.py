@@ -194,6 +194,8 @@ def add_all_case_forms(context: dict, org_exceptions: Optional[Sequence[str]] = 
     использовать безусловно).
     """
     org_exceptions = list(org_exceptions or [])
+    from app.services.documents.contexts_signatory_cases import enrich_document_signatories_and_orders
+    enrich_document_signatories_and_orders(context)
     for base_var, (kind, _example, _description) in CASE_FORM_VARIABLES.items():
         if base_var not in context:
             continue

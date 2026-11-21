@@ -1,6 +1,6 @@
 <template>
   <!-- ── Templates Dialog (multi-type) ── -->
-  <v-dialog v-model="showTemplateDialog" max-width="1100" scrollable :fullscreen="mobile">
+  <v-dialog v-model="showTemplateDialog" max-width="1200" scrollable :fullscreen="mobile">
     <v-card class="dialog-card">
       <v-card-title class="dialog-title">
         <v-icon icon="mdi-file-document-multiple-outline" color="indigo" class="mr-2" />
@@ -62,22 +62,31 @@
         <v-expansion-panels variant="accordion" class="mt-3">
           <v-expansion-panel title="Доступные переменные шаблона">
             <template #text>
-              <v-text-field
-                v-model="varsSearch"
-                prepend-inner-icon="mdi-magnify"
-                label="Поиск по переменной или описанию..."
-                density="compact"
-                hide-details
-                clearable
-                class="mb-2"
-              />
+              <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-2">
+                <v-text-field
+                  v-model="varsSearch"
+                  prepend-inner-icon="mdi-magnify"
+                  label="Поиск по переменной, описанию или примеру..."
+                  density="compact"
+                  hide-details
+                  clearable
+                  style="min-width: 300px; max-width: 450px;"
+                />
+                <v-chip-group v-model="varsSectionFilter" mandatory selected-class="font-weight-bold" class="py-0">
+                  <v-chip value="all" size="small" filter variant="tonal">Все</v-chip>
+                  <v-chip value="customer" size="small" filter variant="tonal" color="indigo">Заказчик</v-chip>
+                  <v-chip value="contractor" size="small" filter variant="tonal" color="teal">Подрядчик</v-chip>
+                  <v-chip value="finance" size="small" filter variant="tonal" color="deep-purple">Финансы и НДС</v-chip>
+                </v-chip-group>
+              </div>
               <v-data-table
                 v-resizable-columns="'subsidies-template-vars'"
                 :headers="[
-                  { title: 'Переменная', key: 'var', width: '280px', minWidth: '280px' },
+                  { title: 'Раздел', key: 'section', width: '150px' },
+                  { title: 'Переменная (кликните для копирования)', key: 'var', width: '310px', minWidth: '290px' },
                   { title: 'Описание', key: 'description' },
-                  { title: 'Пример записи в шаблоне', key: 'example_template', width: '22%' },
-                  { title: 'Что получится', key: 'example_result', width: '20%' },
+                  { title: 'Пример записи в шаблоне', key: 'example_template', width: '20%' },
+                  { title: 'Что получится', key: 'example_result', width: '18%' },
                 ]"
                 :items="filteredVars"
                 density="compact"
@@ -85,17 +94,45 @@
                 hide-default-footer
                 class="text-caption"
               >
+                <template #item.section="{ item }">
+                  <v-chip
+                    v-if="(item.section || '').toUpperCase().includes('ЗАКАЗЧИК') || (item.section || '').toUpperCase().includes('БУХГАЛТЕР')"
+                    size="x-small"
+                    color="indigo"
+                    variant="tonal"
+                  >
+                    Заказчик
+                  </v-chip>
+                  <v-chip
+                    v-else-if="(item.section || '').toUpperCase().includes('ПОДРЯДЧИК')"
+                    size="x-small"
+                    color="teal"
+                    variant="tonal"
+                  >
+                    Подрядчик
+                  </v-chip>
+                  <span v-else class="text-caption text-medium-emphasis">{{ item.section || '—' }}</span>
+                </template>
                 <template #item.var="{ item }">
-                  <div class="d-flex align-center gap-1" style="white-space: nowrap; min-width: 260px;">
-                    <v-tooltip :text="item.var" location="top">
+                  <div
+                    class="d-flex align-center gap-1 cursor-pointer"
+                    style="white-space: nowrap; min-width: 280px;"
+                    title="Нажмите, чтобы скопировать {{переменную}}"
+                    @click="copyVar(item.var)"
+                  >
+                    <v-tooltip :text="'Нажмите, чтобы скопировать ' + item.var" location="top">
                       <template #activator="{ props: tProps }">
-                        <code class="text-caption text-truncate" style="max-width: 210px; display: inline-block;" v-bind="tProps">{{ item.var }}</code>
+                        <code
+                          class="text-caption px-1 rounded"
+                          style="display: inline-block; cursor: pointer; user-select: all; font-weight: 600; background-color: rgba(98, 0, 234, 0.08);"
+                          v-bind="tProps"
+                        >{{ item.var }}</code>
                       </template>
                     </v-tooltip>
                     <v-btn
                       icon size="x-small" variant="text"
                       :title="'Копировать ' + item.var"
-                      @click="copyVar(item.var)"
+                      @click.stop="copyVar(item.var)"
                     >
                       <v-icon size="x-small">mdi-content-copy</v-icon>
                     </v-btn>
@@ -137,7 +174,7 @@ const { mobile } = useDisplay()
 
 const {
   showTemplateDialog, templateSubsidy, subsidyTemplatesList, templateFileInputRef,
-  varsSearch, filteredVars, downloadSubsidyTemplate, triggerTemplateUpload,
+  varsSearch, varsSectionFilter, filteredVars, downloadSubsidyTemplate, triggerTemplateUpload,
   deleteSubsidyTemplate, onTemplateFileSelected, copyVar, downloadMarkupGuide,
   openCopyTemplatesDialog,
 } = useSubsidyTemplates()

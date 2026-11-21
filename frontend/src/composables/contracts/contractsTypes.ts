@@ -31,6 +31,7 @@ export interface Contract {
   status?: string
   notes?: string
   planned_monthly?: number
+  price_shared?: boolean
   // Владелец, 2026-09-02: состояние согласования рамочной ГОЛОВЫ (см. contracts.py::list_contracts) —
   // 'pending' | 'approved' | null. Затемняем строку/карточку только при 'pending'.
   approval_state?: string | null

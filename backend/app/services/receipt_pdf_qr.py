@@ -52,16 +52,23 @@ def extract_qr_from_pdf_bytes(pdf_bytes: bytes) -> str | None:
     from app.services.items_import_parsing import _try_decode_qr
     from app.utils.pdf_ocr import iter_pdf_page_images
 
-    for img in iter_pdf_page_images(pdf_bytes, dpi=_PDF_QR_DPI, max_pages=_PDF_QR_MAX_PAGES):
+    for page_num in range(1, _PDF_QR_MAX_PAGES + 1):
         try:
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            qr = _try_decode_qr(buf.getvalue())
-            if qr:
-                return qr
+            qr_found = False
+            for dpi in (200, 300):
+                for img in iter_pdf_page_images(pdf_bytes, dpi=dpi, pages=[page_num]):
+                    try:
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        qr = _try_decode_qr(buf.getvalue())
+                        if qr:
+                            return qr
+                    except Exception as e:
+                        logger.warning("extract_qr_from_pdf_bytes: ошибка декодирования страницы %s (dpi %s): %s", page_num, dpi, e)
+            if qr_found:
+                break
         except Exception as e:
-            logger.warning("extract_qr_from_pdf_bytes: ошибка декодирования страницы: %s", e)
-            break
+            logger.warning("extract_qr_from_pdf_bytes: ошибка обработки страницы %s: %s", page_num, e)
     return None
 
 

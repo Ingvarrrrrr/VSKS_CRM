@@ -252,44 +252,17 @@ async def _fetch_and_create_receipt_from_qr(
     if pre_existing:
         await _raise_receipt_duplicate(pre_existing)
 
-    token = os.getenv("PROVERKACHEKA_TOKEN", "").strip()
-    if not token:
-        raise HTTPException(503, "PROVERKACHEKA_TOKEN не настроен на сервере")
-
+    from app.services.proverkacheka_client import fetch_proverkacheka_check
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                "https://proverkacheka.com/api/v1/check/get",
-                data={"qrraw": qr, "token": token},
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-    except httpx.HTTPError as e:
-        raise HTTPException(502, f"Ошибка запроса к proverkacheka.com: {e}")
-    except ValueError:
-        raise HTTPException(502, "Не удалось распарсить ответ proverkacheka.com")
-
-    if not isinstance(payload, dict) or payload.get("code") != 1:
-        msg = (payload or {}).get("data") if isinstance(payload, dict) else None
-        msg_str = msg if isinstance(msg, str) else ""
-        # Владелец (п.6а, 2026-09-17): единая классификация ответа proverkacheka —
-        # честный текст «ФНС ещё обрабатывает, до 24ч» вместо неверного «лимит»,
-        # см. docstring classify_proverkacheka_error (ПРАВИЛО №6, один источник
-        # текстов для всех вызывающих proverkacheka.com в проекте).
-        classified = classify_proverkacheka_error(msg_str)
-        # RATE_LIMIT/PENDING — оба сигналы, что чек, возможно, уже заведён (та же
-        # эвристика, что была раньше): перепроверяем БД перед тем, как отдать
-        # пользователю честный текст «подождите/введите вручную».
-        if classified["code"] in ("FNS_RATE_LIMIT", "RECEIPT_PENDING"):
+        payload = await fetch_proverkacheka_check(qr)
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict) and exc.detail.get("code") in ("FNS_RATE_LIMIT", "RECEIPT_PENDING"):
             again = await _find_existing_by_qr() or await _find_existing_loose()
             if again:
                 await _raise_receipt_duplicate(again)
-        raise HTTPException(classified["status"], detail={
-            "code": classified["code"],
-            "message": classified["message"],
-            "hint": classified["hint"],
-        })
+        raise exc
 
+    # RATE_LIMIT/PENDING check for duplicate fallback
     body = payload.get("data") or {}
     receipt_obj = body.get("json") if isinstance(body, dict) else None
     if not isinstance(receipt_obj, dict):

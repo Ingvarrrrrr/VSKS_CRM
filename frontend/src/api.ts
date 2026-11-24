@@ -201,8 +201,9 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   // 27.4-24: успешный ответ → сбрасываем счётчик 5xx
   if (res.ok) _consecutive5xx = 0
   if (!res.ok) {
-    // Счётчик подряд 5xx — если 3+, авто-чистим SW/кеш (stale bundle)
-    if (res.status >= 500 && res.status < 600) {
+    // Счётчик подряд 5xx — если 3+, авто-чистим SW/кеш (stale bundle).
+    // Не учитываем запросы с suppressErrorDialog (внешние шлюзы вроде proverkacheka.com, где вызывающий сам обрабатывает fallback).
+    if (res.status >= 500 && res.status < 600 && !options.suppressErrorDialog) {
       _consecutive5xx += 1
       if (_consecutive5xx >= 3 && !_autoRecoveryTriggered) {
         _autoRecoveryTriggered = true

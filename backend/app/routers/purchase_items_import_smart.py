@@ -192,43 +192,14 @@ async def import_items_smart(
         # Stage 0: попробовать QR-декодирование (чек ФНС)
         qr_str = _try_decode_qr(content)
         if qr_str:
-            # Делегируем на proverkacheka pipeline (те же helpers что from-qr-fetch)
+            # Делегируем на proverkacheka pipeline (Правило №6: единый клиент)
             from app.routers.purchase_receipts import (
                 _create_receipt_with_items as _r_create_receipt,
                 _parse_fns_json_receipt,
                 _parse_qr_string,
             )
-            import os as _os
-            import httpx as _httpx
-            token = _os.getenv("PROVERKACHEKA_TOKEN", "").strip()
-            if not token:
-                raise HTTPException(
-                    503,
-                    "QR-код найден, но PROVERKACHEKA_TOKEN не настроен. "
-                    "Обратитесь к администратору или импортируйте Excel/PDF."
-                )
-            try:
-                async with _httpx.AsyncClient(timeout=30.0) as _client:
-                    _resp = await _client.post(
-                        "https://proverkacheka.com/api/v1/check/get",
-                        data={"qrraw": qr_str, "token": token},
-                    )
-                    _resp.raise_for_status()
-                    _payload = _resp.json()
-            except Exception as exc:
-                raise HTTPException(502, f"Ошибка запроса к proverkacheka.com: {exc}")
-            if not isinstance(_payload, dict) or _payload.get("code") != 1:
-                _msg = (_payload or {}).get("data", "") if isinstance(_payload, dict) else ""
-                # ПРАВИЛО №6: та же классификация ответа proverkacheka, что и в
-                # purchase_receipts_import.py::import_receipt_qr_fetch — второй
-                # текст-механизм не заводим (жалоба владельца п.6а, 2026-09-17).
-                from app.services.receipts_parsing import classify_proverkacheka_error
-                _classified = classify_proverkacheka_error(_msg if isinstance(_msg, str) else "")
-                raise HTTPException(_classified["status"], detail={
-                    "code": _classified["code"],
-                    "message": _classified["message"],
-                    "hint": _classified["hint"],
-                })
+            from app.services.proverkacheka_client import fetch_proverkacheka_check
+            _payload = await fetch_proverkacheka_check(qr_str)
             _body = _payload.get("data") or {}
             _receipt_obj = _body.get("json") if isinstance(_body, dict) else None
             if not isinstance(_receipt_obj, dict):

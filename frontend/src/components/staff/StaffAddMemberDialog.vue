@@ -42,6 +42,11 @@
           />
           <v-text-field v-model="newMemberForm.password" label="Пароль *" type="password" variant="outlined" density="compact" class="mb-2"
             :rules="[v => !!v || 'Обязательное поле', v => v.length >= 8 || 'Минимум 8 символов']" />
+          <PasswordRequirementsHint
+            :password="newMemberForm.password"
+            :identifiers="[newMemberForm.email]"
+            :show-when-empty="true"
+          />
           <v-text-field v-model="newMemberForm.password_confirm" label="Подтвердите пароль *" type="password" variant="outlined" density="compact" class="mb-2"
             :error="!!newMemberForm.password_confirm && newMemberForm.password !== newMemberForm.password_confirm"
             :error-messages="newMemberForm.password_confirm && newMemberForm.password !== newMemberForm.password_confirm ? 'Пароли не совпадают' : ''" />
@@ -68,6 +73,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import PasswordRequirementsHint from '@/components/common/PasswordRequirementsHint.vue'
 import { formatPhoneRu } from '@/utils/phoneFormat'
 
 const props = defineProps<{

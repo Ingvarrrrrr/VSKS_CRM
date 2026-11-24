@@ -52,6 +52,7 @@ class FieldHistoryOut(BaseModel):
     new_value: Optional[str] = None
     changed_at: datetime
     changed_by_user_id: Optional[int] = None
+    changed_by_name: Optional[str] = None
     comment: Optional[str] = None
 
 

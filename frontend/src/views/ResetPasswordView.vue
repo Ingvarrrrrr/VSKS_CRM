@@ -16,6 +16,7 @@
             density="compact" class="mb-3" autocomplete="new-password"
             :error-messages="passwordError"
           />
+          <PasswordRequirementsHint :password="password" :show-when-empty="true" />
           <v-text-field
             v-model="passwordConfirm" label="Подтверждение пароля *" type="password" variant="outlined"
             density="compact" class="mb-4" :error-messages="confirmError"
@@ -33,6 +34,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
+import PasswordRequirementsHint from '@/components/common/PasswordRequirementsHint.vue'
+import { validatePassword } from '@/utils/passwordPolicy'
 
 const route = useRoute()
 const token = route.query.token as string
@@ -53,7 +56,11 @@ async function resetPassword() {
   error.value = ''
   passwordError.value = ''
   if (!password.value) { passwordError.value = 'Обязательное поле'; return }
-  if (password.value.length < 8) { passwordError.value = 'Минимум 8 символов'; return }
+  const check = validatePassword(password.value)
+  if (!check.valid) {
+    passwordError.value = check.message || 'Пароль не соответствует требованиям'
+    return
+  }
   if (password.value !== passwordConfirm.value) return
   if (!token) { error.value = 'Ссылка повреждена — нет токена'; return }
 

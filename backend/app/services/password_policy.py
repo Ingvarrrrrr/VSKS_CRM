@@ -6,6 +6,7 @@
 кто-то пытается установить ПРЯМО СЕЙЧАС. Не плодить второй набор правил —
 если нужна дополнительная проверка, добавлять сюда.
 """
+import re
 from typing import Iterable, Optional
 
 from fastapi import HTTPException
@@ -45,21 +46,60 @@ def _normalize(value: str) -> str:
 
 
 def validate_new_password(password: str, identifiers: Optional[Iterable[Optional[str]]] = None) -> None:
-    """Raises HTTPException(422, ...) если пароль не проходит политику.
+    """Raises HTTPException(400, ...) если пароль не проходит политику.
 
     identifiers — email/логин владельца пароля (пароль не должен им равняться).
     """
     pw = password or ""
-    if len(pw) < MIN_LENGTH:
-        raise HTTPException(422, f"Пароль слишком короткий: минимум {MIN_LENGTH} символов")
+    if not pw:
+        raise HTTPException(
+            400,
+            f"Пароль не может быть пустым. Требования: не менее {MIN_LENGTH} символов, "
+            "буквы и цифры (разрешены спецсимволы).",
+        )
 
     norm_pw = _normalize(pw)
-    if norm_pw in COMMON_PASSWORDS:
-        raise HTTPException(
-            422,
-            "Этот пароль слишком распространён и легко подбирается. Выберите другой",
-        )
 
     for ident in (identifiers or []):
         if ident and norm_pw == _normalize(ident):
-            raise HTTPException(422, "Пароль не должен совпадать с email или логином")
+            raise HTTPException(
+                400,
+                f"Пароль не должен совпадать с логином или email. Придумайте другой пароль: "
+                f"не менее {MIN_LENGTH} символов, буквы и цифры (разрешены спецсимволы).",
+            )
+
+    if norm_pw in COMMON_PASSWORDS:
+        raise HTTPException(
+            400,
+            f"Пароль слишком простой — легко угадывается. Придумайте более сложный пароль: "
+            f"не менее {MIN_LENGTH} символов, включая буквы и цифры (разрешены спецсимволы).",
+        )
+
+    if len(pw) < MIN_LENGTH:
+        raise HTTPException(
+            400,
+            f"Пароль слишком короткий (сейчас {len(pw)} симв.): нужно не менее {MIN_LENGTH} символов. "
+            "Требуются буквы и цифры (разрешены спецсимволы).",
+        )
+
+    has_letter = bool(re.search(r"[a-zA-Zа-яА-ЯёЁ]", pw))
+    has_digit = bool(re.search(r"\d", pw))
+
+    if not has_letter and not has_digit:
+        raise HTTPException(
+            400,
+            f"В пароле должны быть буквы и цифры. Требования: не менее {MIN_LENGTH} символов, "
+            "буквы и цифры (разрешены спецсимволы).",
+        )
+    if not has_letter:
+        raise HTTPException(
+            400,
+            f"В пароле отсутствуют буквы: добавьте хотя бы одну букву. Требования: не менее {MIN_LENGTH} символов, "
+            "буквы и цифры (разрешены спецсимволы).",
+        )
+    if not has_digit:
+        raise HTTPException(
+            400,
+            f"В пароле отсутствуют цифры: добавьте хотя бы одну цифру. Требования: не менее {MIN_LENGTH} символов, "
+            "буквы и цифры (разрешены спецсимволы).",
+        )

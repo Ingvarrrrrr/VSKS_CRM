@@ -770,6 +770,7 @@ async def get_vehicle_field_history(
 
     q = (
         select(VehicleFieldHistory)
+        .options(selectinload(VehicleFieldHistory.changed_by))
         .where(VehicleFieldHistory.vehicle_id == vehicle_id)
         .order_by(VehicleFieldHistory.changed_at.desc())
     )
@@ -778,7 +779,13 @@ async def get_vehicle_field_history(
 
     q = q.limit(limit).offset(offset)
     rows = (await db.execute(q)).scalars().all()
-    return [FieldHistoryOut.model_validate(r) for r in rows]
+    results = []
+    for r in rows:
+        item = FieldHistoryOut.model_validate(r)
+        if r.changed_by:
+            item.changed_by_name = r.changed_by.full_name or r.changed_by.username
+        results.append(item)
+    return results
 
 
 @router.get("/{vehicle_id}/transfer-history", response_model=List[VehicleTransferHistoryOut])

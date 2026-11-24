@@ -38,13 +38,9 @@
         <div class="mb-3">
           <div class="text-caption text-medium-emphasis mb-1">Аватарка</div>
           <div class="d-flex flex-wrap" style="gap:8px">
-            <div v-for="av in AVATARS" :key="av.id"
-              class="avatar-pick"
-              :class="{ 'avatar-pick-active': dialog.avatar === av.id }"
-              @click="dialog.avatar = av.id">
-              <v-avatar :color="av.color" size="40">
-                <v-icon :icon="av.icon" size="22" color="white" />
-              </v-avatar>
+            <div v-for="av in AVATARS" :key="av.id" class="avatar-pick"
+              :class="{ 'avatar-pick-active': dialog.avatar === av.id }" @click="dialog.avatar = av.id">
+              <v-avatar :color="av.color" size="40"><v-icon :icon="av.icon" size="22" color="white" /></v-avatar>
             </div>
           </div>
         </div>
@@ -75,6 +71,11 @@
           prepend-inner-icon="mdi-message-processing" placeholder="123456789"
           hint="Числовой ID для уведомлений через MAX-бот" persistent-hint />
         <v-text-field v-if="canChangePassword" v-model="dialog.password" label="Новый пароль (оставьте пустым чтобы не менять)" variant="outlined" density="compact" type="password" />
+        <PasswordRequirementsHint
+          v-if="canChangePassword && dialog.password"
+          :password="dialog.password"
+          :identifiers="[dialog.email, dialog.username]"
+        />
         <!-- Multi-org membership (available if orgs list loaded) -->
         <div v-if="organizations.length > 0" class="mb-3">
           <v-select
@@ -409,6 +410,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import ProfilePhotoUpload from '@/components/ProfilePhotoUpload.vue'
+import PasswordRequirementsHint from '@/components/common/PasswordRequirementsHint.vue'
 import UserPermissionsSection from '@/components/UserPermissionsSection.vue'
 import UserSubsidyAccessSection from '@/components/UserSubsidyAccessSection.vue'
 import UserPlatformCredentialsSection from '@/components/UserPlatformCredentialsSection.vue'
@@ -480,41 +482,15 @@ async function onLicenseScanFile(ev: Event) {
 </script>
 
 <style scoped>
-/* Правка ширины окна 2026-10-05: персональные поля узкой колонкой, не на
-   всю ширину расширенного (960) диалога. */
 .staff-form-narrow { max-width: 560px; margin: 0 auto; }
-
-/* Avatar picker + фото профиля + скан ВУ — перенесено из StaffView.vue */
 .avatar-pick { cursor: pointer; border-radius: 50%; padding: 2px; border: 2px solid transparent; transition: all 0.2s; }
 .avatar-pick:hover { border-color: rgba(var(--v-theme-primary), 0.3); transform: scale(1.1); }
 .avatar-pick-active { border-color: rgb(var(--v-theme-primary)); box-shadow: 0 0 8px rgba(var(--v-theme-primary), 0.4); }
-
-.staff-photo-rect {
-  width: 160px; height: 200px; border-radius: 12px; overflow: hidden;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,0.04); border: 2px solid rgba(0,0,0,0.08);
-  cursor: pointer; position: relative;
-}
+.staff-photo-rect { width: 160px; height: 200px; border-radius: 12px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.04); border: 2px solid rgba(0,0,0,0.08); cursor: pointer; position: relative; }
 .staff-photo-rect img { width: 100%; height: 100%; object-fit: cover; }
-.staff-photo-overlay {
-  position: absolute; bottom: 0; left: 0; right: 0; height: 32px;
-  background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
-}
-
-/* Phase 30.3: license scan upload preview */
-.license-scan-wrap {
-  width: 100%; min-height: 120px; border-radius: 10px;
-  border: 2px dashed rgba(0,0,0,0.15);
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,0.03); cursor: pointer; overflow: hidden;
-  transition: border-color .12s, background .12s;
-}
-.license-scan-wrap:hover {
-  border-color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.05);
-}
+.staff-photo-overlay { position: absolute; bottom: 0; left: 0; right: 0; height: 32px; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; }
+.license-scan-wrap { width: 100%; min-height: 120px; border-radius: 10px; border: 2px dashed rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.03); cursor: pointer; overflow: hidden; transition: border-color .12s, background .12s; }
+.license-scan-wrap:hover { border-color: rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), 0.05); }
 .license-scan-preview { width: 100%; max-height: 220px; object-fit: contain; }
-.license-scan-empty {
-  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px;
-}
+.license-scan-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px; }
 </style>

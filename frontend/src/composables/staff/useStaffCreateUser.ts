@@ -3,6 +3,7 @@
 import { reactive, nextTick, watch } from 'vue'
 import { apiFetch } from '@/api'
 import { unformatPhone } from '@/utils/phoneFormat'
+import { validatePassword } from '@/utils/passwordPolicy'
 import type { ToastType } from '@/composables/useToast'
 import type { UserItem } from './staffTypes'
 import { normalizeDepartment, randomAvatarId } from './staffLabels'
@@ -82,6 +83,11 @@ export function useStaffCreateUser(options: {
       showSnack('Пароли не совпадают', 'error')
       return
     }
+    const pwdCheck = validatePassword(createDialog.password, [createDialog.email])
+    if (!pwdCheck.valid) {
+      showSnack(pwdCheck.message || 'Пароль не соответствует требованиям', 'warning')
+      return
+    }
     if (!createDialog.email) {
       showSnack('Email обязателен', 'error')
       return
@@ -90,6 +96,7 @@ export function useStaffCreateUser(options: {
     try {
       const u = await apiFetch<UserItem>('/users/', {
         method: 'POST',
+        suppressErrorDialog: true,
         body: {
           email: createDialog.email,
           last_name: createDialog.last_name || null,

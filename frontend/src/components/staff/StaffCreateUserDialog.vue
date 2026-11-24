@@ -20,7 +20,12 @@
         <v-text-field v-model="dialog.password" label="Пароль *" variant="outlined" density="compact" class="mb-3"
           type="password" prepend-inner-icon="mdi-lock-outline"
           hint="Сотрудник сможет сменить пароль после входа" persistent-hint
-          :rules="[v => !!v || 'Пароль обязателен', v => (!!v && v.length >= 6) || 'Минимум 6 символов']" />
+          :rules="[v => !!v || 'Пароль обязателен', v => (!!v && v.length >= 8) || 'Минимум 8 символов']" />
+        <PasswordRequirementsHint
+          :password="dialog.password"
+          :identifiers="[dialog.email]"
+          :show-when-empty="true"
+        />
         <v-text-field v-model="dialog.password_confirm" label="Повтор пароля *" variant="outlined" density="compact" class="mb-3"
           type="password" prepend-inner-icon="mdi-lock-check-outline"
           :rules="[v => !!v || 'Повторите пароль', v => v === dialog.password || 'Пароли не совпадают']" />
@@ -101,6 +106,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import PasswordRequirementsHint from '@/components/common/PasswordRequirementsHint.vue'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
 import { AVATARS } from '@/composables/staff/staffLabels'
 import { useAuthStore } from '@/stores/auth'

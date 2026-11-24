@@ -7,7 +7,7 @@
   <v-data-table
       v-resizable-columns="'orders'"
       :headers="headers"
-      :items="items"
+      :items="displayItems"
       :loading="loading"
       density="compact"
       hover
@@ -19,194 +19,34 @@
       @update:expanded="v => emit('update:expanded', v)"
       items-per-page="25"
       :items-per-page-options="[25, 50, 100]"
+      :row-props="getRowProps"
       return-object
       class="orders-clickable"
       @click:row="(_: any, { item }: any) => router.push(`/orders/${item.id}/edit`)"
     >
       <!-- Column header menus -->
-      <template #header.registry_number="{ column }">
-        <ColumnHeaderMenu col-key="registry_number" :title="String(column.title)" col-type="enum"
-          :items="uniqValues(baseOrders, 'registry_number')"
-          :model-value="colFilters['registry_number'] ?? null"
-          :sort-by="getSortBy('registry_number')"
-          @update:model-value="v => setFilter('registry_number', v)"
-          @sort="dir => applySort('registry_number', dir)"
-          @hide="toggleVisible('registry_number', false)" />
-      </template>
-      <template #header.subject="{ column }">
-        <ColumnHeaderMenu col-key="subject" :title="String(column.title)" col-type="enum"
-          :items="uniqValues(baseOrders, 'subject')"
-          :model-value="colFilters['subject'] ?? null"
-          :sort-by="getSortBy('subject')"
-          @update:model-value="v => setFilter('subject', v)"
-          @sort="dir => applySort('subject', dir)"
-          @hide="toggleVisible('subject', false)" />
-      </template>
-      <template #header.contractor_name="{ column }">
-        <ColumnHeaderMenu col-key="contractor_name" :title="String(column.title)" col-type="enum"
-          :items="uniqValues(baseOrders, 'contractor_name')"
-          :model-value="colFilters['contractor_name'] ?? null"
-          :sort-by="getSortBy('contractor_name')"
-          @update:model-value="v => setFilter('contractor_name', v)"
-          @sort="dir => applySort('contractor_name', dir)"
-          @hide="toggleVisible('contractor_name', false)" />
-      </template>
-      <template #header.subsidy_name="{ column }">
-        <ColumnHeaderMenu col-key="subsidy_name" :title="String(column.title)" col-type="enum"
-          :items="uniqValues(baseOrders, 'subsidy_name')"
-          :model-value="colFilters['subsidy_name'] ?? null"
-          :sort-by="getSortBy('subsidy_name')"
-          @update:model-value="v => setFilter('subsidy_name', v)"
-          @sort="dir => applySort('subsidy_name', dir)"
-          @hide="toggleVisible('subsidy_name', false)" />
-      </template>
-      <template #header.effective_price="{ column }">
-        <ColumnHeaderMenu col-key="effective_price" :title="String(column.title)" col-type="number"
-          align="end"
-          :items="uniqValues(baseOrders, 'effective_price')"
-          :model-value="colFilters['effective_price'] ?? null"
-          :sort-by="getSortBy('effective_price')"
-          @update:model-value="v => setFilter('effective_price', v)"
-          @sort="dir => applySort('effective_price', dir)"
-          @hide="toggleVisible('effective_price', false)" />
-      </template>
-      <template #header.contract_number="{ column }">
-        <ColumnHeaderMenu col-key="contract_number" :title="String(column.title)" col-type="enum"
-          :items="uniqValues(baseOrders, 'contract_number')"
-          :model-value="colFilters['contract_number'] ?? null"
-          :sort-by="getSortBy('contract_number')"
-          @update:model-value="v => setFilter('contract_number', v)"
-          @sort="dir => applySort('contract_number', dir)"
-          @hide="toggleVisible('contract_number', false)" />
-      </template>
-      <template #header.contract_date="{ column }">
-        <ColumnHeaderMenu col-key="contract_date" :title="String(column.title)" col-type="date"
-          :model-value="colFilters['contract_date'] ?? null"
-          :sort-by="getSortBy('contract_date')"
-          @update:model-value="v => setFilter('contract_date', v)"
-          @sort="dir => applySort('contract_date', dir)"
-          @hide="toggleVisible('contract_date', false)" />
-      </template>
-      <template #header.purchase_type="{ column }">
-        <ColumnHeaderMenu col-key="purchase_type" :title="String(column.title)" col-type="enum"
-          :items="['one_time', 'framework_cumulative', 'framework_with_amount', 'advance', 'invoice']"
-          :item-labels="{ one_time: 'Разовый', framework_cumulative: 'Рамочный (накопительный)', framework_with_amount: 'Рамочный (с суммой)', advance: 'Авансовый', invoice: 'По счёту' }"
-          :model-value="colFilters['purchase_type'] ?? null"
-          :sort-by="getSortBy('purchase_type')"
-          @update:model-value="v => setFilter('purchase_type', v)"
-          @sort="dir => applySort('purchase_type', dir)"
-          @hide="toggleVisible('purchase_type', false)" />
-      </template>
-      <template #header.status="{ column }">
-        <ColumnHeaderMenu col-key="status" :title="String(column.title)" col-type="enum"
-          :items="STATUS_ORDER"
-          :item-labels="STATUS_LABEL"
-          :model-value="colFilters['status'] ?? null"
-          :sort-by="getSortBy('status')"
-          @update:model-value="v => setFilter('status', v)"
-          @sort="dir => applySort('status', dir)"
-          @hide="toggleVisible('status', false)" />
-      </template>
-      <template #header.approval_status="{ column }">
-        <ColumnHeaderMenu col-key="approval_status" :title="String(column.title)" col-type="enum"
-          :items="['in_progress', 'approved', 'rejected']"
-          :item-labels="{ in_progress: 'На согласовании', approved: 'Согласовано', rejected: 'Отклонено' }"
-          :model-value="colFilters['approval_status'] ?? null"
-          :sort-by="getSortBy('approval_status')"
-          @update:model-value="v => setFilter('approval_status', v)"
-          @sort="dir => applySort('approval_status', dir)"
-          @hide="toggleVisible('approval_status', false)" />
-      </template>
+      <template #header.registry_number="{ column }"><ColumnHeaderMenu col-key="registry_number" :title="String(column.title)" col-type="enum" :items="uniqValues(baseOrders, 'registry_number')" :model-value="colFilters['registry_number'] ?? null" :sort-by="getSortBy('registry_number')" @update:model-value="v => setFilter('registry_number', v)" @sort="dir => applySort('registry_number', dir)" @hide="toggleVisible('registry_number', false)" /></template>
+      <template #header.subject="{ column }"><ColumnHeaderMenu col-key="subject" :title="String(column.title)" col-type="enum" :items="uniqValues(baseOrders, 'subject')" :model-value="colFilters['subject'] ?? null" :sort-by="getSortBy('subject')" @update:model-value="v => setFilter('subject', v)" @sort="dir => applySort('subject', dir)" @hide="toggleVisible('subject', false)" /></template>
+      <template #header.contractor_name="{ column }"><ColumnHeaderMenu col-key="contractor_name" :title="String(column.title)" col-type="enum" :items="uniqValues(baseOrders, 'contractor_name')" :model-value="colFilters['contractor_name'] ?? null" :sort-by="getSortBy('contractor_name')" @update:model-value="v => setFilter('contractor_name', v)" @sort="dir => applySort('contractor_name', dir)" @hide="toggleVisible('contractor_name', false)" /></template>
+      <template #header.subsidy_name="{ column }"><ColumnHeaderMenu col-key="subsidy_name" :title="String(column.title)" col-type="enum" :items="uniqValues(baseOrders, 'subsidy_name')" :model-value="colFilters['subsidy_name'] ?? null" :sort-by="getSortBy('subsidy_name')" @update:model-value="v => setFilter('subsidy_name', v)" @sort="dir => applySort('subsidy_name', dir)" @hide="toggleVisible('subsidy_name', false)" /></template>
+      <template #header.effective_price="{ column }"><ColumnHeaderMenu col-key="effective_price" :title="String(column.title)" col-type="number" align="end" :items="uniqValues(baseOrders, 'effective_price')" :model-value="colFilters['effective_price'] ?? null" :sort-by="getSortBy('effective_price')" @update:model-value="v => setFilter('effective_price', v)" @sort="dir => applySort('effective_price', dir)" @hide="toggleVisible('effective_price', false)" /></template>
+      <template #header.contract_number="{ column }"><ColumnHeaderMenu col-key="contract_number" :title="String(column.title)" col-type="enum" :items="uniqValues(baseOrders, 'contract_number')" :model-value="colFilters['contract_number'] ?? null" :sort-by="getSortBy('contract_number')" @update:model-value="v => setFilter('contract_number', v)" @sort="dir => applySort('contract_number', dir)" @hide="toggleVisible('contract_number', false)" /></template>
+      <template #header.contract_date="{ column }"><ColumnHeaderMenu col-key="contract_date" :title="String(column.title)" col-type="date" :model-value="colFilters['contract_date'] ?? null" :sort-by="getSortBy('contract_date')" @update:model-value="v => setFilter('contract_date', v)" @sort="dir => applySort('contract_date', dir)" @hide="toggleVisible('contract_date', false)" /></template>
+      <template #header.purchase_type="{ column }"><ColumnHeaderMenu col-key="purchase_type" :title="String(column.title)" col-type="enum" :items="['one_time', 'framework_cumulative', 'framework_with_amount', 'advance', 'invoice']" :item-labels="{ one_time: 'Разовый', framework_cumulative: 'Рамочный (накопительный)', framework_with_amount: 'Рамочный (с суммой)', advance: 'Авансовый', invoice: 'По счёту' }" :model-value="colFilters['purchase_type'] ?? null" :sort-by="getSortBy('purchase_type')" @update:model-value="v => setFilter('purchase_type', v)" @sort="dir => applySort('purchase_type', dir)" @hide="toggleVisible('purchase_type', false)" /></template>
+      <template #header.status="{ column }"><ColumnHeaderMenu col-key="status" :title="String(column.title)" col-type="enum" :items="STATUS_ORDER" :item-labels="STATUS_LABEL" :model-value="colFilters['status'] ?? null" :sort-by="getSortBy('status')" @update:model-value="v => setFilter('status', v)" @sort="dir => applySort('status', dir)" @hide="toggleVisible('status', false)" /></template>
+      <template #header.approval_status="{ column }"><ColumnHeaderMenu col-key="approval_status" :title="String(column.title)" col-type="enum" :items="['in_progress', 'approved', 'rejected']" :item-labels="{ in_progress: 'На согласовании', approved: 'Согласовано', rejected: 'Отклонено' }" :model-value="colFilters['approval_status'] ?? null" :sort-by="getSortBy('approval_status')" @update:model-value="v => setFilter('approval_status', v)" @sort="dir => applySort('approval_status', dir)" @hide="toggleVisible('approval_status', false)" /></template>
       <!-- Phase 26-K: доп. соглашение и дата заказа -->
-      <template #header.agreement_number="{ column }">
-        <ColumnHeaderMenu col-key="agreement_number" :title="String(column.title)" col-type="enum"
-          :items="uniqValues(baseOrders, 'agreement_number')"
-          :model-value="colFilters['agreement_number'] ?? null"
-          :sort-by="getSortBy('agreement_number')"
-          @update:model-value="v => setFilter('agreement_number', v)"
-          @sort="dir => applySort('agreement_number', dir)"
-          @hide="toggleVisible('agreement_number', false)" />
-      </template>
-      <template #header.agreement_date="{ column }">
-        <ColumnHeaderMenu col-key="agreement_date" :title="String(column.title)" col-type="date"
-          :model-value="colFilters['agreement_date'] ?? null"
-          :sort-by="getSortBy('agreement_date')"
-          @update:model-value="v => setFilter('agreement_date', v)"
-          @sort="dir => applySort('agreement_date', dir)"
-          @hide="toggleVisible('agreement_date', false)" />
-      </template>
-      <template #header.order_number="{ column }">
-        <ColumnHeaderMenu col-key="order_number" :title="String(column.title)" col-type="enum"
-          :items="uniqValues(baseOrders, 'order_number')"
-          :model-value="colFilters['order_number'] ?? null"
-          :sort-by="getSortBy('order_number')"
-          @update:model-value="v => setFilter('order_number', v)"
-          @sort="dir => applySort('order_number', dir)"
-          @hide="toggleVisible('order_number', false)" />
-      </template>
-      <template #header.order_date="{ column }">
-        <ColumnHeaderMenu col-key="order_date" :title="String(column.title)" col-type="date"
-          :model-value="colFilters['order_date'] ?? null"
-          :sort-by="getSortBy('order_date')"
-          @update:model-value="v => setFilter('order_date', v)"
-          @sort="dir => applySort('order_date', dir)"
-          @hide="toggleVisible('order_date', false)" />
-      </template>
+      <template #header.agreement_number="{ column }"><ColumnHeaderMenu col-key="agreement_number" :title="String(column.title)" col-type="enum" :items="uniqValues(baseOrders, 'agreement_number')" :model-value="colFilters['agreement_number'] ?? null" :sort-by="getSortBy('agreement_number')" @update:model-value="v => setFilter('agreement_number', v)" @sort="dir => applySort('agreement_number', dir)" @hide="toggleVisible('agreement_number', false)" /></template>
+      <template #header.agreement_date="{ column }"><ColumnHeaderMenu col-key="agreement_date" :title="String(column.title)" col-type="date" :model-value="colFilters['agreement_date'] ?? null" :sort-by="getSortBy('agreement_date')" @update:model-value="v => setFilter('agreement_date', v)" @sort="dir => applySort('agreement_date', dir)" @hide="toggleVisible('agreement_date', false)" /></template>
+      <template #header.order_number="{ column }"><ColumnHeaderMenu col-key="order_number" :title="String(column.title)" col-type="enum" :items="uniqValues(baseOrders, 'order_number')" :model-value="colFilters['order_number'] ?? null" :sort-by="getSortBy('order_number')" @update:model-value="v => setFilter('order_number', v)" @sort="dir => applySort('order_number', dir)" @hide="toggleVisible('order_number', false)" /></template>
+      <template #header.order_date="{ column }"><ColumnHeaderMenu col-key="order_date" :title="String(column.title)" col-type="date" :model-value="colFilters['order_date'] ?? null" :sort-by="getSortBy('order_date')" @update:model-value="v => setFilter('order_date', v)" @sort="dir => applySort('order_date', dir)" @hide="toggleVisible('order_date', false)" /></template>
       <!-- Phase 26-N: денежные показатели по закупке -->
-      <template #header.ordered_amount="{ column }">
-        <ColumnHeaderMenu col-key="ordered_amount" :title="String(column.title)" col-type="number"
-          :items="uniqValues(baseOrders, 'ordered_amount')"
-          :model-value="colFilters['ordered_amount'] ?? null"
-          :sort-by="getSortBy('ordered_amount')"
-          @update:model-value="v => setFilter('ordered_amount', v)"
-          @sort="dir => applySort('ordered_amount', dir)"
-          @hide="toggleVisible('ordered_amount', false)" />
-      </template>
-      <template #header.delivered_amount="{ column }">
-        <ColumnHeaderMenu col-key="delivered_amount" :title="String(column.title)" col-type="number"
-          :items="uniqValues(baseOrders, 'delivered_amount')"
-          :model-value="colFilters['delivered_amount'] ?? null"
-          :sort-by="getSortBy('delivered_amount')"
-          @update:model-value="v => setFilter('delivered_amount', v)"
-          @sort="dir => applySort('delivered_amount', dir)"
-          @hide="toggleVisible('delivered_amount', false)" />
-      </template>
-      <template #header.paid_amount="{ column }">
-        <ColumnHeaderMenu col-key="paid_amount" :title="String(column.title)" col-type="number"
-          :items="uniqValues(baseOrders, 'paid_amount')"
-          :model-value="colFilters['paid_amount'] ?? null"
-          :sort-by="getSortBy('paid_amount')"
-          @update:model-value="v => setFilter('paid_amount', v)"
-          @sort="dir => applySort('paid_amount', dir)"
-          @hide="toggleVisible('paid_amount', false)" />
-      </template>
-      <template #header.diff_ordered_delivered="{ column }">
-        <ColumnHeaderMenu col-key="diff_ordered_delivered" :title="String(column.title)" col-type="number"
-          :items="uniqValues(baseOrders, 'diff_ordered_delivered')"
-          :model-value="colFilters['diff_ordered_delivered'] ?? null"
-          :sort-by="getSortBy('diff_ordered_delivered')"
-          @update:model-value="v => setFilter('diff_ordered_delivered', v)"
-          @sort="dir => applySort('diff_ordered_delivered', dir)"
-          @hide="toggleVisible('diff_ordered_delivered', false)" />
-      </template>
-      <template #header.diff_delivered_paid="{ column }">
-        <ColumnHeaderMenu col-key="diff_delivered_paid" :title="String(column.title)" col-type="number"
-          :items="uniqValues(baseOrders, 'diff_delivered_paid')"
-          :model-value="colFilters['diff_delivered_paid'] ?? null"
-          :sort-by="getSortBy('diff_delivered_paid')"
-          @update:model-value="v => setFilter('diff_delivered_paid', v)"
-          @sort="dir => applySort('diff_delivered_paid', dir)"
-          @hide="toggleVisible('diff_delivered_paid', false)" />
-      </template>
-      <template #header.diff_ordered_paid="{ column }">
-        <ColumnHeaderMenu col-key="diff_ordered_paid" :title="String(column.title)" col-type="number"
-          :items="uniqValues(baseOrders, 'diff_ordered_paid')"
-          :model-value="colFilters['diff_ordered_paid'] ?? null"
-          :sort-by="getSortBy('diff_ordered_paid')"
-          @update:model-value="v => setFilter('diff_ordered_paid', v)"
-          @sort="dir => applySort('diff_ordered_paid', dir)"
-          @hide="toggleVisible('diff_ordered_paid', false)" />
-      </template>
+      <template #header.ordered_amount="{ column }"><ColumnHeaderMenu col-key="ordered_amount" :title="String(column.title)" col-type="number" :items="uniqValues(baseOrders, 'ordered_amount')" :model-value="colFilters['ordered_amount'] ?? null" :sort-by="getSortBy('ordered_amount')" @update:model-value="v => setFilter('ordered_amount', v)" @sort="dir => applySort('ordered_amount', dir)" @hide="toggleVisible('ordered_amount', false)" /></template>
+      <template #header.delivered_amount="{ column }"><ColumnHeaderMenu col-key="delivered_amount" :title="String(column.title)" col-type="number" :items="uniqValues(baseOrders, 'delivered_amount')" :model-value="colFilters['delivered_amount'] ?? null" :sort-by="getSortBy('delivered_amount')" @update:model-value="v => setFilter('delivered_amount', v)" @sort="dir => applySort('delivered_amount', dir)" @hide="toggleVisible('delivered_amount', false)" /></template>
+      <template #header.paid_amount="{ column }"><ColumnHeaderMenu col-key="paid_amount" :title="String(column.title)" col-type="number" :items="uniqValues(baseOrders, 'paid_amount')" :model-value="colFilters['paid_amount'] ?? null" :sort-by="getSortBy('paid_amount')" @update:model-value="v => setFilter('paid_amount', v)" @sort="dir => applySort('paid_amount', dir)" @hide="toggleVisible('paid_amount', false)" /></template>
+      <template #header.diff_ordered_delivered="{ column }"><ColumnHeaderMenu col-key="diff_ordered_delivered" :title="String(column.title)" col-type="number" :items="uniqValues(baseOrders, 'diff_ordered_delivered')" :model-value="colFilters['diff_ordered_delivered'] ?? null" :sort-by="getSortBy('diff_ordered_delivered')" @update:model-value="v => setFilter('diff_ordered_delivered', v)" @sort="dir => applySort('diff_ordered_delivered', dir)" @hide="toggleVisible('diff_ordered_delivered', false)" /></template>
+      <template #header.diff_delivered_paid="{ column }"><ColumnHeaderMenu col-key="diff_delivered_paid" :title="String(column.title)" col-type="number" :items="uniqValues(baseOrders, 'diff_delivered_paid')" :model-value="colFilters['diff_delivered_paid'] ?? null" :sort-by="getSortBy('diff_delivered_paid')" @update:model-value="v => setFilter('diff_delivered_paid', v)" @sort="dir => applySort('diff_delivered_paid', dir)" @hide="toggleVisible('diff_delivered_paid', false)" /></template>
+      <template #header.diff_ordered_paid="{ column }"><ColumnHeaderMenu col-key="diff_ordered_paid" :title="String(column.title)" col-type="number" :items="uniqValues(baseOrders, 'diff_ordered_paid')" :model-value="colFilters['diff_ordered_paid'] ?? null" :sort-by="getSortBy('diff_ordered_paid')" @update:model-value="v => setFilter('diff_ordered_paid', v)" @sort="dir => applySort('diff_ordered_paid', dir)" @hide="toggleVisible('diff_ordered_paid', false)" /></template>
 
       <!-- Expand toggle column -->
       <template #item.data-table-expand="{ item, internalItem, isExpanded, toggleExpand }">
@@ -224,7 +64,11 @@
         <!-- Владелец, 2026-08-13: остановка закупки — крупный алерт на всю ширину -->
         <PurchaseStoppedBanner v-if="item.stopped_at"
           :stopped-by-name="item.stopped_by_name" :stopped-at="item.stopped_at" :stopped-reason="item.stopped_reason" />
-        <div class="d-flex align-center flex-wrap" style="gap:6px">
+        <div class="d-flex align-center flex-wrap" style="gap:6px"
+          :class="cellMarks.getCellMarkClasses('purchase', item.id, 'subject')"
+          :style="cellMarks.getCellMarkStyle('purchase', item.id, 'subject')"
+          @click="onCellClick($event, { entityType: 'purchase', entityId: item.id, fieldName: 'subject' })"
+          @contextmenu.prevent="openOrderCellMenu($event, item, 'subject', 'Предмет договора', item.subject || item.item_name)">
           <span>{{ item.subject || item.item_name || '—' }}</span>
           <!-- Phase 31-06: badge for unseen changes -->
           <v-chip
@@ -299,11 +143,19 @@
            реестре есть своя колонка «Мн. контрагент» (multi_contractor_label,
            group 'all'). У закупки контрагент один; несколько продавцов бывает только у авансового (чеки). -->
       <template #item.contractor_name="{ item }">
-        <span class="text-body-2">{{ item.contractor_name || '—' }}</span>
+        <span class="text-body-2"
+          :class="cellMarks.getCellMarkClasses('purchase', item.id, 'contractor_name')"
+          :style="cellMarks.getCellMarkStyle('purchase', item.id, 'contractor_name')"
+          @click="onCellClick($event, { entityType: 'purchase', entityId: item.id, fieldName: 'contractor_name' })"
+          @contextmenu.prevent="openOrderCellMenu($event, item, 'contractor_name', 'Контрагент', item.contractor_name)">{{ item.contractor_name || '—' }}</span>
       </template>
 
       <template #item.status="{ item }">
-        <div class="d-flex align-center ga-1 flex-wrap">
+        <div class="d-flex align-center ga-1 flex-wrap"
+          :class="cellMarks.getCellMarkClasses('purchase', item.id, 'status')"
+          :style="cellMarks.getCellMarkStyle('purchase', item.id, 'status')"
+          @click="onCellClick($event, { entityType: 'purchase', entityId: item.id, fieldName: 'status' })"
+          @contextmenu.prevent="openOrderCellMenu($event, item, 'status', 'Статус', statusLabelFor(item))">
           <v-chip :color="STATUS_COLOR[item.status] || 'grey'" size="small" variant="tonal">
             {{ statusLabelFor(item) }}
           </v-chip>
@@ -340,7 +192,11 @@
       </template>
 
       <template #item.effective_price="{ item }">
-        {{ formatMoney(effectivePrice(item)) }}
+        <span
+          :class="cellMarks.getCellMarkClasses('purchase', item.id, 'effective_price')"
+          :style="cellMarks.getCellMarkStyle('purchase', item.id, 'effective_price')"
+          @click="onCellClick($event, { entityType: 'purchase', entityId: item.id, fieldName: 'effective_price' })"
+          @contextmenu.prevent="openOrderCellMenu($event, item, 'planned_total_price', 'Сумма', effectivePrice(item), effectivePrice(item))">{{ formatMoney(effectivePrice(item)) }}</span>
       </template>
 
       <!-- phase26-m: для рамочного — framework_contract_total (max_amount or SUM) -->
@@ -370,20 +226,34 @@
 
       <!-- Подтверждённая сумма — основная; заявленная (не подтв.) слабее визуально. -->
       <template #item.payment_amount="{ item }">
-        <span v-if="item.payment_amount != null" class="font-weight-bold text-green">{{ formatMoney(Number(item.payment_amount)) }}</span>
+        <span v-if="item.payment_amount != null" class="font-weight-bold text-green"
+          :class="cellMarks.getCellMarkClasses('purchase', item.id, 'payment_amount')"
+          :style="cellMarks.getCellMarkStyle('purchase', item.id, 'payment_amount')"
+          @click="onCellClick($event, { entityType: 'purchase', entityId: item.id, fieldName: 'payment_amount' })"
+          @contextmenu.prevent="openOrderCellMenu($event, item, 'payment_amount', 'Оплачено', item.payment_amount, Number(item.payment_amount))">{{ formatMoney(Number(item.payment_amount)) }}</span>
         <span v-else class="text-medium-emphasis">—</span>
       </template>
       <template #item.payment_amount_declared="{ item }">
         <v-tooltip v-if="item.payment_amount_declared != null" location="top" text="Отмечено человеком, без подтверждения казначейской выпиской">
           <template #activator="{ props: tp }">
-            <span v-bind="tp" class="text-caption text-orange-darken-2">{{ formatMoney(Number(item.payment_amount_declared)) }}</span>
+            <span v-bind="tp" class="text-caption text-orange-darken-2"
+              :class="cellMarks.getCellMarkClasses('purchase', item.id, 'payment_amount_declared')"
+              :style="cellMarks.getCellMarkStyle('purchase', item.id, 'payment_amount_declared')"
+              @click="onCellClick($event, { entityType: 'purchase', entityId: item.id, fieldName: 'payment_amount_declared' })"
+              @contextmenu.prevent="openOrderCellMenu($event, item, 'payment_amount_declared', 'Заявлено (не подтв.)', item.payment_amount_declared, Number(item.payment_amount_declared))">{{ formatMoney(Number(item.payment_amount_declared)) }}</span>
           </template>
         </v-tooltip>
         <span v-else class="text-medium-emphasis">—</span>
       </template>
 
       <template #item.contract_date="{ item }">
-        {{ item.contract_date ? formatDate(item.contract_date) : '—' }}
+        <span
+          :class="cellMarks.getCellMarkClasses('purchase', item.id, 'contract_date')"
+          :style="cellMarks.getCellMarkStyle('purchase', item.id, 'contract_date')"
+          @click="onCellClick($event, { entityType: 'purchase', entityId: item.id, fieldName: 'contract_date' })"
+          @contextmenu.prevent="openOrderCellMenu($event, item, 'contract_date', 'Дата договора', item.contract_date ? formatDate(item.contract_date) : '')">
+          {{ item.contract_date ? formatDate(item.contract_date) : '—' }}
+        </span>
       </template>
 
       <template #item.subsidy_name="{ item }">
@@ -476,43 +346,7 @@
       <template #expanded-row="{ columns, item }">
         <tr>
           <td :colspan="columns.length" class="pa-0 bg-grey-lighten-5">
-            <div class="pa-3">
-              <PurchaseStoppedBanner v-if="item.stopped_at" class="mb-3"
-                :stopped-by-name="item.stopped_by_name" :stopped-at="item.stopped_at" :stopped-reason="item.stopped_reason" />
-              <v-table density="compact" class="rounded border expand-items-table">
-                <colgroup>
-                  <col style="width: auto">
-                  <col style="width: 140px">
-                  <col style="width: 110px">
-                  <col style="width: 80px">
-                  <col style="width: 160px">
-                  <col style="width: 160px">
-                </colgroup>
-                <thead>
-                  <tr class="bg-grey-lighten-4">
-                    <th>Наименование позиции</th>
-                    <th>Тип</th>
-                    <th class="text-right">Кол-во</th>
-                    <th>Ед.</th>
-                    <th class="text-right">Цена ед., ₽</th>
-                    <th class="text-right">Сумма, ₽</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="itm in item.items" :key="itm.id">
-                    <td>{{ itm.item_name }}</td>
-                    <td>{{ itm.item_type || '—' }}</td>
-                    <td class="text-right">{{ itm.quantity ?? '—' }}</td>
-                    <td>{{ itm.unit || '—' }}</td>
-                    <td class="text-right">{{ itm.unit_price ? Number(itm.unit_price).toLocaleString('ru-RU') : '—' }}</td>
-                    <td class="text-right">{{ itm.total_price ? Number(itm.total_price).toLocaleString('ru-RU') : '—' }}</td>
-                  </tr>
-                  <tr v-if="!item.items?.length">
-                    <td colspan="6" class="text-center text-medium-emphasis text-caption py-2">Нет позиций</td>
-                  </tr>
-                </tbody>
-              </v-table>
-            </div>
+            <OrdersExpandedItems :item="item" />
           </td>
         </tr>
       </template>
@@ -542,7 +376,9 @@ import {
 import type { Purchase } from '@/composables/orders/ordersTypes'
 import type { FilterValue } from '@/composables/useColumnConfig'
 import PurchaseStoppedBanner from '@/components/orders/PurchaseStoppedBanner.vue'
+import OrdersExpandedItems from '@/components/orders/OrdersExpandedItems.vue'
 import { useFundingSources } from '@/composables/subsidies/useFundingSources'
+import { useOrdersTableMarks } from '@/components/orders/useOrdersTableMarks'
 
 const funding = useFundingSources()
 function openCeilingFunding(item: Purchase) {
@@ -555,9 +391,6 @@ const props = defineProps<{
   items: any[]
   allOrders?: Purchase[]
   filteredOrders: Purchase[]
-  // Значок потолка (владелец, 21.10.2026) — карта purchase_id -> over_amount
-  // из GET /api/purchases/ceiling-badges (useOrdersData.ts::ceilingBadges),
-  // список закупок эту сумму больше не содержит полем.
   ceilingBadges: Map<number, number>
   loading: boolean
   selectedOrders: Purchase[]
@@ -585,6 +418,8 @@ const emit = defineEmits<{
   'stop-purchase': [item: Purchase]
   'resume-purchase': [item: Purchase]
 }>()
+
+const { cellMarks, displayItems, getRowProps, onCellClick, openOrderCellMenu } = useOrdersTableMarks(props)
 
 const baseOrders = computed(() => (props.allOrders && props.allOrders.length) ? props.allOrders : props.items)
 const router = useRouter()

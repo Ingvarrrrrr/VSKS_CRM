@@ -3,10 +3,23 @@
     <!-- Legend -->
     <PaymentsTableLegend />
 
+    <div v-if="cellMarks.activeColorFilter.value?.payment" class="mb-2">
+      <v-chip
+        size="small"
+        color="purple"
+        variant="tonal"
+        closable
+        prepend-icon="mdi-palette"
+        @click:close="cellMarks.setColorFilter('payment', null)"
+      >
+        🎨 Фильтр цвета: {{ cellMarks.activeColorFilter.value.payment }}
+      </v-chip>
+    </div>
+
     <v-data-table
       v-resizable-columns="'payment-registry'"
       :headers="headers"
-      :items="items"
+      :items="displayItems"
       :loading="loading"
       density="compact"
       show-expand
@@ -48,42 +61,87 @@
 
       <!-- Date -->
       <template #item.payment_date="{ item }">
-        {{ fmtDate(item.payment_date) }}
+        <span
+          :class="cellMarks.getCellMarkClasses('payment', item.id, 'payment_date')"
+          :style="cellMarks.getCellMarkStyle('payment', item.id, 'payment_date')"
+          @click="onCellClick($event, { entityType: 'payment', entityId: item.id, fieldName: 'payment_date' })"
+          @contextmenu.prevent="openPaymentCellMenu($event, item, 'payment_date', 'Дата платежа', fmtDate(item.payment_date))"
+        >
+          {{ fmtDate(item.payment_date) }}
+        </span>
       </template>
 
       <!-- Payer -->
       <template #item.payer_name="{ item }">
-        <div class="text-body-2">
-          {{ item.payer_name_resolved || item.payer_name || '—' }}
-        </div>
-        <div v-if="item.payer_name_resolved && item.payer_name_resolved !== item.payer_name" class="text-caption text-medium-emphasis" :title="item.payer_name || ''">
-          ({{ item.payer_name }})
+        <div
+          :class="cellMarks.getCellMarkClasses('payment', item.id, 'payer_name')"
+          :style="cellMarks.getCellMarkStyle('payment', item.id, 'payer_name')"
+          @click="onCellClick($event, { entityType: 'payment', entityId: item.id, fieldName: 'payer_name' })"
+          @contextmenu.prevent="openPaymentCellMenu($event, item, 'payer_name', 'Плательщик', item.payer_name_resolved || item.payer_name)"
+        >
+          <div class="text-body-2">
+            {{ item.payer_name_resolved || item.payer_name || '—' }}
+          </div>
+          <div v-if="item.payer_name_resolved && item.payer_name_resolved !== item.payer_name" class="text-caption text-medium-emphasis" :title="item.payer_name || ''">
+            ({{ item.payer_name }})
+          </div>
         </div>
       </template>
 
       <!-- Payee -->
       <template #item.payee_name="{ item }">
-        <div class="text-body-2">
-          {{ item.payee_name_resolved || item.payee_name || '—' }}
+        <div
+          :class="cellMarks.getCellMarkClasses('payment', item.id, 'payee_name')"
+          :style="cellMarks.getCellMarkStyle('payment', item.id, 'payee_name')"
+          @click="onCellClick($event, { entityType: 'payment', entityId: item.id, fieldName: 'payee_name' })"
+          @contextmenu.prevent="openPaymentCellMenu($event, item, 'payee_name', 'Получатель', item.payee_name_resolved || item.payee_name)"
+        >
+          <div class="text-body-2">
+            {{ item.payee_name_resolved || item.payee_name || '—' }}
+          </div>
+          <div v-if="item.payee_inn" class="text-caption text-medium-emphasis">ИНН {{ item.payee_inn }}</div>
         </div>
-        <div v-if="item.payee_inn" class="text-caption text-medium-emphasis">ИНН {{ item.payee_inn }}</div>
       </template>
 
       <!-- Amount -->
       <template #item.amount="{ item }">
-        <span class="font-weight-medium">{{ formatMoney(item.amount) }}</span>
+        <span
+          class="font-weight-medium"
+          :class="cellMarks.getCellMarkClasses('payment', item.id, 'amount')"
+          :style="cellMarks.getCellMarkStyle('payment', item.id, 'amount')"
+          @click="onCellClick($event, { entityType: 'payment', entityId: item.id, fieldName: 'amount' })"
+          @contextmenu.prevent="openPaymentCellMenu($event, item, 'amount', 'Сумма', item.amount, item.amount)"
+        >
+          {{ formatMoney(item.amount) }}
+        </span>
       </template>
 
       <!-- Status chip -->
       <template #item.status="{ item }">
-        <v-chip size="x-small" :color="statusColor(item.status)" variant="tonal">
+        <v-chip
+          size="x-small"
+          :color="statusColor(item.status)"
+          variant="tonal"
+          :class="cellMarks.getCellMarkClasses('payment', item.id, 'status')"
+          :style="cellMarks.getCellMarkStyle('payment', item.id, 'status')"
+          @click="onCellClick($event, { entityType: 'payment', entityId: item.id, fieldName: 'status' })"
+          @contextmenu.prevent="openPaymentCellMenu($event, item, 'status', 'Статус', item.status)"
+        >
           {{ item.status || '—' }}
         </v-chip>
       </template>
 
       <!-- Parsed contract / advance report / agreement -->
       <template #item.parsed_contract_number="{ item }">
-        <span class="text-caption">{{ docDisplay(item) }}</span>
+        <span
+          class="text-caption"
+          :class="cellMarks.getCellMarkClasses('payment', item.id, 'parsed_contract_number')"
+          :style="cellMarks.getCellMarkStyle('payment', item.id, 'parsed_contract_number')"
+          @click="onCellClick($event, { entityType: 'payment', entityId: item.id, fieldName: 'parsed_contract_number' })"
+          @contextmenu.prevent="openPaymentCellMenu($event, item, 'parsed_contract_number', 'Договор / Документ', docDisplay(item))"
+        >
+          {{ docDisplay(item) }}
+        </span>
       </template>
 
       <!-- Matched chip -->
@@ -308,6 +366,7 @@ import PaymentsTableLegend from './PaymentsTableLegend.vue'
 import type { FilterValue } from '@/composables/useColumnConfig'
 import type { BankPayment } from '@/composables/payments/paymentsTypes'
 import { fmtDate, formatMoney, docDisplay, statusColor } from '@/composables/payments/paymentsFormat'
+import { usePaymentsTableMarks, headerMenuColumns, resolveItemMatchedKind } from './usePaymentsTableMarks'
 
 const authStore = useAuthStore()
 function can(action: string) {
@@ -317,7 +376,7 @@ function can(action: string) {
 const expanded = defineModel<number[]>('expanded', { required: true })
 const page = defineModel<number>('page', { required: true })
 
-defineProps<{
+const props = defineProps<{
   headers: any[]
   items: any[]
   loading: boolean
@@ -337,48 +396,23 @@ const emit = defineEmits<{
   unbind: [item: BankPayment]
 }>()
 
-const headerMenuColumns = [
-  { key: 'payment_number', type: 'enum' },
-  { key: 'payer_name', type: 'enum' },
-  { key: 'payee_name', type: 'enum' },
-  { key: 'payer_inn', type: 'enum' },
-  { key: 'payee_inn', type: 'enum' },
-  { key: 'purpose_text', type: 'enum' },
-  { key: 'basis_doc_text', type: 'enum' },
-  { key: 'basis_doc_number', type: 'enum' },
-  { key: 'basis_doc_date', type: 'date' },
-  { key: 'parsed_contract_number', type: 'enum' },
-  { key: 'parsed_kbk', type: 'enum' },
-  { key: 'expense_code_short', type: 'enum' },
-  { key: 'expense_code', type: 'enum' },
-  { key: 'status', type: 'enum' },
-  { key: 'matched', type: 'boolean' },
-  { key: 'matched_confirmed', type: 'boolean' },
-  { key: 'amount', type: 'number', align: 'end' as const },
-  { key: 'payment_date', type: 'date' },
-  { key: 'parsed_contract_date', type: 'date' },
-]
-
-function resolveItemMatchedKind(item: any): 'goods' | 'services' | null {
-  const isMatched = Boolean(
-    item?.matched_contract_id ||
-      item?.matched_purchase_id ||
-      (item?.attached_purchases && item.attached_purchases.length > 0),
-  )
-  if (!isMatched) return null
-  if (item.matched_kind === 'goods' || item.matched_kind === 'services') {
-    return item.matched_kind
-  }
-  const ec = String(item.expense_code || item.expense_code_short || '').trim()
-  if (ec.startsWith('03') || ec.startsWith('300')) return 'goods'
-  return 'services'
-}
+const { cellMarks, displayItems, onCellClick, openPaymentCellMenu } = usePaymentsTableMarks(props)
 
 function getRowProps({ item }: { item: any }) {
   const kind = resolveItemMatchedKind(item)
-  if (kind === 'goods') return { class: 'row-matched-goods clickable-registry-row' }
-  if (kind === 'services') return { class: 'row-matched-services clickable-registry-row' }
-  return { class: 'clickable-registry-row' }
+  const baseClass =
+    kind === 'goods'
+      ? 'row-matched-goods clickable-registry-row'
+      : kind === 'services'
+      ? 'row-matched-services clickable-registry-row'
+      : 'clickable-registry-row'
+  const markClasses = cellMarks.getRowMarkClasses('payment', item.id)
+  const markStyle = cellMarks.getRowMarkStyle('payment', item.id)
+  return {
+    class: [baseClass, markClasses],
+    style: markStyle,
+    'data-gala-focus': `payment:${item.id}`,
+  }
 }
 
 function onRowClick(event: Event, { item }: { item: any }) {
@@ -421,5 +455,10 @@ function onRowClick(event: Event, { item }: { item: any }) {
 }
 :deep(.row-matched-services > td:first-child) {
   border-left: 4px solid #d97706 !important;
+}
+/* Priority of user color marks over matched status colors */
+:deep(tr[style*="background"] > td),
+:deep(tr.gala-row-marked > td) {
+  background-color: inherit !important;
 }
 </style>

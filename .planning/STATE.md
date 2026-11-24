@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Закрыты свежие планы GSD (живой поиск этапы 1-3 + Contract.price_shared, единые блоки оплаты/сроков/адреса + ключи ЭТП организаций + массовая отправка на ЭТП), рабочие хвосты (склонение ФИО, автономер приказа, переменные Заказчик/Подрядчик, волна 4c доп. соглашений, GZip + ускорение dashboard/charts, слияние дублей сотрудников, 26-B1) и отложенные фазы (Phase 27 delivery_items, вкладки Оборудование/Прочее в Имуществе) — локально проверено (vite build + целевые pytest + cm.py check PASS), ждёт слова владельца на пуш
-last_updated: "2026-11-21T14:48:00+03:00"
+status: Реализован полный пакет ПКМ в стиле Google Sheets (заливка выделенных ячеек/строк поверх статусов, групповые комментарии с уголками shared/private и автоснятием при «Вопрос решён», фильтры по значению/цвету, копирование чистого числа, ссылки, откат из истории — CL-10, CL-12) и понятная политика паролей (CL-11) — локально проверено (pytest 21 passed + vitest 18 passed + vite build + cm.py check PASS), ждёт слова владельца на пуш
+last_updated: "2026-11-24T08:28:00+03:00"
 progress:
   total_phases: 22
   completed_phases: 22
@@ -13,6 +13,12 @@ progress:
 ---
 
 # STATE.md — VSKS_CRM
+
+## 2026-11-24 — Пакет ПКМ в стиле Google Sheets: заливка поверх статусов + комментарии с уголками + история с откатом (`CL-10`, `CL-12`) и понятная памятка смены пароля (`CL-11`) — локально, не запушено
+- **Заливка выделенного, групповые комментарии и откат (`cell_mark.py`, `c3e5a7b9d1f3_add_cell_marks.py`, `cell_marks.py`, `entity_changes_restore.py`, `useCellMarks.ts`, `cell-marks.css`, `GalaContextColorBar.vue`, `CellCommentPopover.vue`):** ручная цветовая заливка (6 цветов маркера, перекрывает цвет по статусу в светлой и тёмной теме), мультивыделение `Ctrl/Shift+клик` и групповые чекбоксы, общий `group_id` комментария с режимами «Видно всем коллегам / Только для меня» и автоснятием заливки по кнопке «Вопрос решён» (с сохранением в истории).
+- **Быстрые функции ПКМ и карточка истории (`useGalaContextMenu.ts`, `GalaContextMenu.vue`, `CellHistoryPopover.vue`, таблицы ФЭО / Закупок / Задач / Платежей / Автопарка):** ревизии `< >` с аватаром и ФИО, кнопка «⏪ Вернуть это значение», фильтры по значению и цвету заливки, копирование чистого числа без `₽`, прямые ссылки `?gala_focus`, открытие в новой вкладке (`FeoTreeToolbar.vue` ужат с `733` до `490` строк за счёт `FeoToolbarMoreMenu.vue`).
+- **Понятные требования и ошибки пароля (`password_policy.py`, `errors.py`, `passwordPolicy.ts`, `PasswordRequirementsHint.vue`):** живые галочки длины (от 8 символов), букв, цифр, спецсимволов и спокойный `warning` на простых паролях (`123456` и др.) без технического `ApiErrorDialog`.
+- **Верификация:** `alembic heads` -> `c3e5a7b9d1f3 (head)`, `cm.py check` PASS (`< 500` строк), `pytest` (`21 passed`), `vitest` (`18 passed`), `npm --prefix frontend run build` PASS.
 
 ## 2026-11-21 — Закрытие свежих планов GSD, рабочих хвостов и отложенных фаз (`Phase 27` `delivery_items`, Имущество Оборудование/Прочее, ЭТП организаций и пакетная отправка, Живой поиск Этапы 1–3, Доп. соглашения 4c, `GZip` + дашборд, слияние дублей сотрудников) — локально, не запушено
 - **Живой поиск (Этапы 1–3) и `Contract.price_shared`:** исправлены парсеры `chipdip.py` (`&#160;`), `kuvalda.py` (`@graph`), отсев по артикулам в `relevance.py`, склейка `ОП 2` в `product_name_signature.py`, ТЗ из характеристик в `take.py`; добавлен фоновый бейдж `PlannedStoreOffersBadge.vue` (`🔎 Найдено в магазинах: N, от X ₽`) в `FeoPlannedItemRow.vue`; введено разрешение делиться договорными ценами `Contract.price_shared` (миграция `d9a1b3c5e7f9`, фильтрация в `product_market_price.py` и `products_price.py`, UI в `ContractsEditDialog.vue` и `PurchaseConfirmDialogs.vue`).

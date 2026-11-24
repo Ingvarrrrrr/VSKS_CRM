@@ -1,0 +1,53 @@
+/* Priority manual cell & row marks over status background colors */
+.gala-cell-marked,
+tr.gala-row-marked > td,
+.gala-row-marked {
+  background-color: var(--gala-mark-light) !important;
+}
+
+.v-theme--dark .gala-cell-marked,
+.v-theme--dark tr.gala-row-marked > td,
+.v-theme--dark .gala-row-marked {
+  background-color: var(--gala-mark-dark) !important;
+}
+
+/* Cell selection border */
+.gala-cell-selected,
+tr.gala-row-selected > td,
+.gala-row-selected {
+  outline: 2px solid #2563eb !important;
+  outline-offset: -2px !important;
+}
+
+/* Triangle comment indicator in top-right corner like Google Sheets */
+.gala-cell-has-comment,
+.gala-row-has-comment {
+  position: relative;
+}
+
+.gala-cell-has-comment::after,
+.gala-row-has-comment::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-top: 8px solid var(--gala-mark-corner, #f59e0b);
+  border-left: 8px solid transparent;
+  pointer-events: auto;
+  z-index: 2;
+}
+
+/* Highlight animation for deep link ?gala_focus=type:id */
+@keyframes gala-focus-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7); }
+  50% { box-shadow: 0 0 0 8px rgba(37, 99, 235, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}
+
+.gala-focus-highlight {
+  animation: gala-focus-pulse 1.5s ease-in-out 3;
+  outline: 2px dashed #2563eb !important;
+  outline-offset: -2px !important;
+}

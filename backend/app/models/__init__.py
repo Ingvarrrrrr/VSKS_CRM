@@ -100,3 +100,6 @@ from app.models.product_description_history import ProductDescriptionHistory  # 
 from app.models.product_description_proposal import ProductDescriptionProposal  # noqa: F401
 # Лидерборды мини-игр окна ожидания (владелец, 30.10.2026)
 from app.models.game_score import GameScore, GameProfile  # noqa: F401
+# Пометки ячеек/строк и привязанные комментарии (cell_marks)
+from app.models.cell_mark import CellMark  # noqa: F401
+

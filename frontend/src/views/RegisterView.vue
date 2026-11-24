@@ -50,6 +50,11 @@
               density="compact" class="mb-3" :error-messages="fieldError('password')"
               autocomplete="new-password"
             />
+            <PasswordRequirementsHint
+              :password="form.password"
+              :identifiers="[form.email]"
+              :show-when-empty="true"
+            />
             <v-text-field
               v-model="passwordConfirm" label="Подтверждение пароля *" type="password" variant="outlined"
               density="compact" class="mb-4" :error-messages="confirmError"
@@ -84,6 +89,8 @@
 import { ref, reactive, computed } from 'vue'
 import ConsentCheckbox, { PD_CONSENT_VERSION } from '@/components/legal/ConsentCheckbox.vue'
 import PoruchenieCheckbox from '@/components/legal/PoruchenieCheckbox.vue'
+import PasswordRequirementsHint from '@/components/common/PasswordRequirementsHint.vue'
+import { validatePassword } from '@/utils/passwordPolicy'
 
 const success = ref(false)
 const loading = ref(false)
@@ -120,7 +127,8 @@ async function register() {
   if (!form.org_name) { validationErrors.value.org_name = 'Обязательное поле'; return }
   if (!form.email) { validationErrors.value.email = 'Обязательное поле'; return }
   if (!form.password) { validationErrors.value.password = 'Обязательное поле'; return }
-  if (form.password.length < 8) { validationErrors.value.password = 'Минимум 8 символов'; return }
+  const check = validatePassword(form.password, [form.email])
+  if (!check.valid) { validationErrors.value.password = check.message || 'Пароль не соответствует требованиям'; return }
   if (form.password !== passwordConfirm.value) { return }
   if (!consentAccepted.value) { error.value = 'Нужно дать согласие на обработку персональных данных'; return }
   if (!poruchenieAccepted.value) { error.value = 'Нужно принять условия поручения обработки персональных данных'; return }

@@ -288,6 +288,8 @@ async def get_entity_changes(
     entity_type: str,
     entity_id: int,
     since: Optional[datetime] = Query(None, description="Filter changes after this datetime"),
+    field: Optional[str] = Query(None, description="Filter changes by specific field name"),
+    field_name: Optional[str] = Query(None, description="Alias for field"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),  # auth required (T-31-01-03)
 ):
@@ -317,6 +319,10 @@ async def get_entity_changes(
         EntityChange.entity_type == entity_type,
         EntityChange.entity_id == entity_id,
     ).order_by(EntityChange.changed_at.desc())
+
+    target_field = field or field_name
+    if target_field is not None and target_field.strip():
+        q = q.where(EntityChange.field_name == target_field.strip())
 
     if since is not None:
         q = q.where(EntityChange.changed_at > since)

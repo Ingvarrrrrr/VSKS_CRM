@@ -35,6 +35,12 @@
       <span v-if="loadError" class="text-caption text-error">{{ loadError }}</span>
     </div>
 
+    <div v-if="cellMarks.activeColorFilter.value?.feo_item" class="mb-2">
+      <v-chip size="small" color="purple" variant="tonal" closable @click:close="cellMarks.setColorFilter('feo_item', null)">
+        🎨 Фильтр по цвету: {{ cellMarks.activeColorFilter.value.feo_item }}
+      </v-chip>
+    </div>
+
     <div v-if="!loading && !entries.length" class="text-medium-emphasis text-body-2 py-4">
       Плановых позиций не найдено
     </div>
@@ -45,12 +51,25 @@
           v-for="entry in entries"
           :key="entry.key"
           :data-feo-planned-item-id="entry.kind === 'item' ? entry.item.id : undefined"
-          :class="{ 'feo-search-highlight-row': entry.kind === 'item' && feoSearch.isFeoSearchHighlighted(`p-${entry.item.id}`) }"
+          :class="[
+            entry.kind === 'item' ? cellMarks.getRowMarkClasses('feo_item', entry.item.id) : cellMarks.getRowMarkClasses('feo_category', entry.category_id || 0),
+            { 'feo-search-highlight-row': entry.kind === 'item' && feoSearch.isFeoSearchHighlighted(`p-${entry.item.id}`) }
+          ]"
+          :style="entry.kind === 'item' ? cellMarks.getRowMarkStyle('feo_item', entry.item.id) : cellMarks.getRowMarkStyle('feo_category', entry.category_id || 0)"
+          :data-gala-focus="entry.kind === 'item' ? `feo_item:${entry.item.id}` : `feo_category:${entry.category_id || 0}`"
         >
           <template v-if="entry.kind === 'header'">
             <td :colspan="planToRequest.active.value ? 5 : 4" class="scp-header"
-              :class="entry.level === 1 ? 'group-hdr--category' : 'group-hdr--type'"
-              :style="{ paddingLeft: `${(entry.level - 1) * 20 + 8}px` }">
+              :class="[
+                entry.level === 1 ? 'group-hdr--category' : 'group-hdr--type',
+                cellMarks.getCellMarkClasses('feo_category', entry.category_id || 0, 'budget')
+              ]"
+              :style="[
+                { paddingLeft: `${(entry.level - 1) * 20 + 8}px` },
+                cellMarks.getCellMarkStyle('feo_category', entry.category_id || 0, 'budget')
+              ]"
+              @click="onCellClick($event, { entityType: 'feo_category', entityId: entry.category_id || 0, fieldName: 'budget' })"
+              @contextmenu.prevent="onCategoryHeaderContextMenu($event, entry)">
               <v-checkbox-btn
                 v-if="planToRequest.active.value"
                 :model-value="headerCheckState(entry).all"
@@ -71,12 +90,30 @@
                 @update:model-value="feoLevel5.togglePlannedItemSelected(entry.item.id)"
               />
             </td>
-            <td class="scp-td-name">
+            <td
+              class="scp-td-name"
+              :class="cellMarks.getCellMarkClasses('feo_item', entry.item.id, 'name')"
+              :style="cellMarks.getCellMarkStyle('feo_item', entry.item.id, 'name')"
+              @click="onCellClick($event, { entityType: 'feo_item', entityId: entry.item.id, fieldName: 'name' })"
+              @contextmenu.prevent="onPlannedItemNameContextMenu($event, entry.item)"
+            >
               {{ entry.item.name }}
               <div class="text-caption text-medium-emphasis">{{ entry.item.feo_category_name || '—' }}</div>
             </td>
-            <td class="scp-td-qty text-right">{{ entry.item.quantity ?? '—' }} {{ entry.item.unit || '' }}</td>
-            <td class="scp-td-sum text-right">{{ formatMoney(entry.item.amount) }}</td>
+            <td
+              class="scp-td-qty text-right"
+              :class="cellMarks.getCellMarkClasses('feo_item', entry.item.id, 'quantity')"
+              :style="cellMarks.getCellMarkStyle('feo_item', entry.item.id, 'quantity')"
+              @click="onCellClick($event, { entityType: 'feo_item', entityId: entry.item.id, fieldName: 'quantity' })"
+              @contextmenu.prevent="onPlannedItemQtyContextMenu($event, entry.item)"
+            >{{ entry.item.quantity ?? '—' }} {{ entry.item.unit || '' }}</td>
+            <td
+              class="scp-td-sum text-right"
+              :class="cellMarks.getCellMarkClasses('feo_item', entry.item.id, 'amount')"
+              :style="cellMarks.getCellMarkStyle('feo_item', entry.item.id, 'amount')"
+              @click="onCellClick($event, { entityType: 'feo_item', entityId: entry.item.id, fieldName: 'amount' })"
+              @contextmenu.prevent="onPlannedItemAmountContextMenu($event, entry.item)"
+            >{{ formatMoney(entry.item.amount) }}</td>
             <td class="scp-td-badge">
               <v-chip v-if="planToRequest.isPlannedItemFullyTaken(entry.item.id)" size="x-small" color="success" variant="flat">закуплено полностью</v-chip>
             </td>
@@ -88,7 +125,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
 import { matchesItemTypeFilter } from '@/utils/itemTypeKind'
@@ -98,13 +136,130 @@ import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
 import { useFeoTreeSearch } from '@/composables/subsidies/useFeoTreeSearch'
 import { buildPlannedGroupEntries, type FeoPlannedGroupEntry } from '@/composables/subsidies/useFeoPlannedItemGroups'
 import type { FeoPlannedItem } from '@/composables/subsidies/types'
+import { useGalaContextMenu } from '@/composables/useGalaContextMenu'
+import { useCellMarks, type CellTarget } from '@/composables/useCellMarks'
 
 const props = defineProps<{ subsidyId: number | null }>()
 
+const router = useRouter()
 const feoTreePrefs = useFeoTreePrefs()
 const feoLevel5 = useFeoLevel5Api()
 const planToRequest = usePlanToRequest()
 const feoSearch = useFeoTreeSearch()
+const { openCellContextMenu } = useGalaContextMenu()
+const cellMarks = useCellMarks()
+
+function onCellClick(event: MouseEvent, target: CellTarget) {
+  if (cellMarks.handleCellSelectClick(event, target)) {
+    event.stopPropagation()
+    return
+  }
+  const el = event.currentTarget as HTMLElement | null
+  if (el) {
+    const rect = el.getBoundingClientRect()
+    const isTopRight = event.clientX >= rect.right - 18 && event.clientY <= rect.top + 18
+    const mark = cellMarks.getMark(target.entityType, Number(target.entityId), target.fieldName)
+    if (isTopRight && mark?.comment) {
+      event.stopPropagation()
+      cellMarks.openCommentAt(event, target)
+    }
+  }
+}
+
+function getItemExtraItems(item: FeoPlannedItem) {
+  return [
+    {
+      key: 'create_wish',
+      label: '🛒 Создать заявку в этой категории',
+      icon: 'mdi-cart-plus',
+      onClick: () => {
+        router.push({
+          path: '/wishes',
+          query: {
+            feo_category_id: String(item.feo_category_id || ''),
+            subsidy_id: String(props.subsidyId || ''),
+          },
+        })
+      },
+    },
+    {
+      key: 'edit_item',
+      label: '✏️ Редактировать позицию',
+      icon: 'mdi-pencil',
+      onClick: () => {
+        // focus or trigger edit
+      },
+    },
+  ]
+}
+
+function onPlannedItemNameContextMenu(e: MouseEvent, item: FeoPlannedItem) {
+  openCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: item.id,
+    fieldName: 'name',
+    fieldLabel: 'Наименование',
+    cellValue: item.name,
+    subsidyId: props.subsidyId,
+    extraItems: getItemExtraItems(item),
+  } as any)
+}
+
+function onPlannedItemQtyContextMenu(e: MouseEvent, item: FeoPlannedItem) {
+  openCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: item.id,
+    fieldName: 'quantity',
+    fieldLabel: 'Количество',
+    cellValue: item.quantity,
+    rawNumber: item.quantity,
+    subsidyId: props.subsidyId,
+    extraItems: getItemExtraItems(item),
+  } as any)
+}
+
+function onPlannedItemAmountContextMenu(e: MouseEvent, item: FeoPlannedItem) {
+  openCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: item.id,
+    fieldName: 'amount',
+    fieldLabel: 'Сумма (план)',
+    cellValue: item.amount,
+    rawNumber: item.amount,
+    subsidyId: props.subsidyId,
+    extraItems: getItemExtraItems(item),
+  } as any)
+}
+
+function onCategoryHeaderContextMenu(e: MouseEvent, entry: any) {
+  openCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: entry.category_id || 0,
+    fieldName: 'budget',
+    fieldLabel: entry.label || 'Категория',
+    cellValue: entry.sum,
+    rawNumber: entry.sum,
+    subsidyId: props.subsidyId,
+    extraItems: [
+      {
+        key: 'category_breakdown',
+        label: '📊 Расшифровка суммы',
+        icon: 'mdi-chart-pie',
+        onClick: () => {
+          // view breakdown
+        },
+      },
+      {
+        key: 'edit_category',
+        label: '✏️ Редактировать категорию',
+        icon: 'mdi-pencil',
+        onClick: () => {
+          // edit category
+        },
+      },
+    ],
+  } as any)
+}
 
 const loading = ref(false)
 const loadError = ref<string | null>(null)
@@ -117,6 +272,14 @@ async function load(subsidyId: number | null) {
   try {
     const res = await apiFetch<{ planned: FeoPlannedItem[] }>(`/feo-planned-items/comparison?subsidy_id=${subsidyId}`)
     plannedItems.value = res.planned || []
+    if (plannedItems.value.length) {
+      const itemIds = plannedItems.value.map(i => i.id)
+      void cellMarks.loadMarks('feo_item', itemIds, subsidyId)
+      const catIds = Array.from(new Set(plannedItems.value.map(i => i.feo_category_id).filter(Boolean))) as number[]
+      if (catIds.length) {
+        void cellMarks.loadMarks('feo_category', catIds, subsidyId)
+      }
+    }
   } catch (e: any) {
     plannedItems.value = []
     loadError.value = e?.payload?.detail || e?.message || 'Не удалось загрузить плановые позиции субсидии'
@@ -127,39 +290,50 @@ async function load(subsidyId: number | null) {
 
 watch(() => props.subsidyId, (id) => { void load(id) }, { immediate: true })
 
-// Жалоба владельца (28.10.2026): после правки плана в обычном дереве (PUT/POST/
-// DELETE плановой позиции) эта панель должна подхватить изменения без ручной
-// перезагрузки страницы — тот же сигнал feoPlanChangeBus, что уже перегружает
-// feoResiduals у usePlanToRequest.ts (Правило №6, второй bus не заводим).
 import { onFeoPlanChanged } from '@/composables/subsidies/feoPlanChangeBus'
 import '@/styles/feo-group-header.css'
 onFeoPlanChanged(() => { void load(props.subsidyId) })
 
+function onEntityRestored(e: Event) {
+  const customEv = e as CustomEvent<{ entityType: string; entityId: number | string }>
+  if (customEv.detail?.entityType === 'feo_item' || customEv.detail?.entityType === 'feo_category') {
+    void load(props.subsidyId)
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('gala:entity-restored', onEntityRestored)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('gala:entity-restored', onEntityRestored)
+})
+
 // Фильтр «Все/Товары/Услуги» применяется ДО группировки — отфильтрованные
 // позиции не попадают ни в список, ни в суммы заголовков групп.
-const filteredItems = computed(() =>
-  plannedItems.value.filter(p =>
-    feoSearch.isFeoSearchHighlighted(`p-${p.id}`) ||
-    matchesItemTypeFilter(p.item_type_effective, feoTreePrefs.feoItemTypeFilter.value),
-  ),
-)
+const filteredItems = computed(() => {
+  const colorFilter = cellMarks.activeColorFilter.value?.feo_item
+  return plannedItems.value.filter(p => {
+    if (colorFilter && !cellMarks.matchesColorFilter('feo_item', p.id)) {
+      return false
+    }
+    return (
+      feoSearch.isFeoSearchHighlighted(`p-${p.id}`) ||
+      matchesItemTypeFilter(p.item_type_effective, feoTreePrefs.feoItemTypeFilter.value)
+    )
+  })
+})
 
 // Всегда 'category_type' (категория → вид → позиции) — см. докстринг компонента.
 const entries = computed<FeoPlannedGroupEntry[]>(() => buildPlannedGroupEntries(filteredItems.value, 'category_type'))
 
-// ── Выбор группы целиком (владелец: «выбрать позиции галочками... и создать
-// ОДНУ заявку») — та же трактовка «остатка», что и usePlanToRequest.ts
-// (isPlannedItemFullyTaken, Правило №6): группа отмечает только позиции, у
-// которых остаток > 0 (полностью закупленные не предлагаются к повторному
-// выбору). Сами id собираются из entries (плоский список), не из
-// plannedItems напрямую — группа должна отражать РЕАЛЬНО отрисованные строки.
+// ── Выбор группы целиком ───────────────────────────────────────────────────
 function idsOfGroup(headerEntry: FeoPlannedGroupEntry & { kind: 'header' }): number[] {
   const ids: number[] = []
   let collecting = false
   for (const e of entries.value) {
     if (e.kind === 'header') {
       if (e.key === headerEntry.key) { collecting = true; continue }
-      // Заголовок того же или более верхнего уровня завершает группу.
       if (collecting && e.level <= headerEntry.level) break
       continue
     }
@@ -194,9 +368,6 @@ function toggleHeader(entry: FeoPlannedGroupEntry, on: boolean) {
 .subsidy-category-panel { margin: 8px 0; }
 .scp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .scp-table td { padding: 4px 8px; border-bottom: 1px solid var(--crm-border); vertical-align: middle; }
-/* Фон/цвет/жирность — общие .group-hdr--category/--type (styles/feo-group-header.css,
-   импортирован ниже), различают заголовок категории и вида (Правило №6, задача
-   владельца 28.10.2026 — второй копии этих цветов не заводим). */
 .scp-td-check { width: 36px; }
 .scp-td-qty { white-space: nowrap; width: 110px; }
 .scp-td-sum { white-space: nowrap; width: 120px; font-weight: 500; }

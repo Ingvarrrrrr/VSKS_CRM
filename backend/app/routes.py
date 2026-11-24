@@ -308,6 +308,8 @@ from app.routers import price_freshness as price_freshness_router
 # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
 # иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`
 from app.routers import entity_changes as entity_changes_router
+from app.routers import entity_changes_restore as entity_changes_restore_router
+from app.routers import cell_marks as cell_marks_router
 from app.routers import task_badges, task_delegation, task_reports, task_comments
 from app.routers import exports as exports_router
 from app.routers import okpd2 as okpd2_router
@@ -522,7 +524,9 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(purchase_transfer.router)
     # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
     # иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`
+    app.include_router(entity_changes_restore_router.router)
     app.include_router(entity_changes_router.router)  # /api/entity-changes (Phase 31 diff-tracking)
+    app.include_router(cell_marks_router.router)  # /api/cell-marks
     app.include_router(task_badges.router)
     app.include_router(task_delegation.router)
     app.include_router(task_reports.router)

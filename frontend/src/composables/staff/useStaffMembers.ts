@@ -3,6 +3,7 @@
 import { ref } from 'vue'
 import { apiFetch } from '@/api'
 import { unformatPhone } from '@/utils/phoneFormat'
+import { validatePassword } from '@/utils/passwordPolicy'
 import type { ToastType } from '@/composables/useToast'
 
 export function useStaffMembers(options: {
@@ -48,11 +49,17 @@ export function useStaffMembers(options: {
 
   async function createAndAddMember() {
     if (!selectedDept.value) return
+    const pwdCheck = validatePassword(newMemberForm.value.password, [newMemberForm.value.email])
+    if (!pwdCheck.valid) {
+      showSnack(pwdCheck.message || 'Пароль не соответствует требованиям', 'warning')
+      return
+    }
     newMemberSaving.value = true
     try {
       // 1. Create user
       const user = await apiFetch<any>('/users/', {
         method: 'POST',
+        suppressErrorDialog: true,
         body: JSON.stringify({
           email: newMemberForm.value.email,
           password: newMemberForm.value.password,

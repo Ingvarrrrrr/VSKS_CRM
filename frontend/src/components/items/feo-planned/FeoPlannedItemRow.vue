@@ -6,7 +6,12 @@
        событием — см. комментарий у onItemRadioClick в useFeoPlannedRows.ts). -->
   <div
     class="feo-tree-row"
-    :class="{ 'feo-tree-row--selected': selected, 'feo-tree-row--clickable': !readonly }"
+    :class="[
+      getRowMarkClasses('feo_item', row.id),
+      { 'feo-tree-row--selected': selected, 'feo-tree-row--clickable': !readonly }
+    ]"
+    :style="getRowMarkStyle('feo_item', row.id)"
+    :data-gala-focus="`feo_item:${row.id}`"
     :title="selected ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
     role="switch"
     :aria-checked="selected"
@@ -25,9 +30,21 @@
       color="primary"
       class="feo-planned-switch"
     />
-    <span class="feo-tree-name">
+    <span
+      class="feo-tree-name"
+      :class="getCellMarkClasses('feo_item', row.id, 'name')"
+      :style="getCellMarkStyle('feo_item', row.id, 'name')"
+      @click="onCellClick($event, { entityType: 'feo_item', entityId: row.id, fieldName: 'name' })"
+      @contextmenu.prevent.stop="onNameContextMenu"
+    >
       {{ row.name }}
-      <span class="feo-planned-qty text-caption text-medium-emphasis">{{ qtyLabel }}</span>
+      <span
+        class="feo-planned-qty text-caption text-medium-emphasis"
+        :class="getCellMarkClasses('feo_item', row.id, 'quantity')"
+        :style="getCellMarkStyle('feo_item', row.id, 'quantity')"
+        @click.stop="onCellClick($event, { entityType: 'feo_item', entityId: row.id, fieldName: 'quantity' })"
+        @contextmenu.prevent.stop="onQtyContextMenu"
+      >{{ qtyLabel }}</span>
       <v-chip size="x-small" :color="kindColor" variant="tonal" class="ml-1">{{ kindLabel }}</v-chip>
       <!-- Составная позиция (задача «Составная плановая позиция») — см.
            докстринг FeoPlannedItem.is_composite: несколько строк закупки на
@@ -58,7 +75,11 @@
       :residual-display="residualDisplay"
       :shortfall-label="shortfallLabel"
       show-consumers-link
+      :class="getCellMarkClasses('feo_item', row.id, 'amount')"
+      :style="getCellMarkStyle('feo_item', row.id, 'amount')"
+      @click="onCellClick($event, { entityType: 'feo_item', entityId: row.id, fieldName: 'amount' })"
       @open-consumers="emit('open-consumers')"
+      @contextmenu.prevent.stop="onAmountContextMenu"
     />
     <template v-if="row.linked_purchases?.length || row.linked_wishes?.length">
       · <FeoPlannedTakenBy :linked-purchases="row.linked_purchases" :linked-wishes="row.linked_wishes" short />
@@ -80,13 +101,17 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { PlanResidualDisplay } from '@/utils/numberFormat'
+import { useGalaContextMenu } from '@/composables/useGalaContextMenu'
+import { useCellMarks, type CellTarget } from '@/composables/useCellMarks'
 import FeoPlannedTakenBy from './FeoPlannedTakenBy.vue'
 import FeoPlanResidualSummary from './FeoPlanResidualSummary.vue'
 import PlannedStoreOffersBadge from '@/components/products/PlannedStoreOffersBadge.vue'
 
-defineProps<{
+const props = defineProps<{
   row: FeoPlanPosition
   selected: boolean
   readonly?: boolean
@@ -110,7 +135,119 @@ const emit = defineEmits<{
   select: []
   'open-consumers': []
   delete: []
+  refresh: []
 }>()
+
+const router = useRouter()
+const { openCellContextMenu } = useGalaContextMenu()
+const cellMarks = useCellMarks()
+const { getRowMarkClasses, getRowMarkStyle, getCellMarkClasses, getCellMarkStyle } = cellMarks
+
+function onCellClick(event: MouseEvent, target: CellTarget) {
+  if (cellMarks.handleCellSelectClick(event, target)) {
+    event.stopPropagation()
+    return
+  }
+  const el = event.currentTarget as HTMLElement | null
+  if (el) {
+    const rect = el.getBoundingClientRect()
+    const isTopRight = event.clientX >= rect.right - 18 && event.clientY <= rect.top + 18
+    const mark = cellMarks.getMark(target.entityType, Number(target.entityId), target.fieldName)
+    if (isTopRight && mark?.comment) {
+      event.stopPropagation()
+      cellMarks.openCommentAt(event, target)
+    }
+  }
+}
+
+function getItemExtraItems() {
+  return [
+    {
+      key: 'create_wish',
+      label: '🛒 Создать заявку в этой категории',
+      icon: 'mdi-cart-plus',
+      onClick: () => {
+        router.push({
+          path: '/wishes',
+          query: {
+            feo_category_id: String((props.row as any).feo_category_id || ''),
+            subsidy_id: String((props.row as any).subsidy_id || ''),
+          },
+        })
+      },
+    },
+    {
+      key: 'edit_item',
+      label: '✏️ Редактировать позицию',
+      icon: 'mdi-pencil',
+      onClick: () => {
+        emit('toggle', new MouseEvent('click'))
+      },
+    },
+  ]
+}
+
+function onNameContextMenu(e: MouseEvent) {
+  if (props.row.id) {
+    openCellContextMenu(e, {
+      entityType: 'feo_item',
+      entityId: props.row.id,
+      fieldName: 'name',
+      fieldLabel: 'Наименование',
+      cellValue: props.row.name,
+      subsidyId: (props.row as any).subsidy_id ?? null,
+      extraItems: getItemExtraItems(),
+    } as any)
+  }
+}
+
+function onQtyContextMenu(e: MouseEvent) {
+  if (props.row.id) {
+    openCellContextMenu(e, {
+      entityType: 'feo_item',
+      entityId: props.row.id,
+      fieldName: 'quantity',
+      fieldLabel: 'Количество',
+      cellValue: props.row.quantity,
+      rawNumber: props.row.quantity,
+      subsidyId: (props.row as any).subsidy_id ?? null,
+      extraItems: getItemExtraItems(),
+    } as any)
+  }
+}
+
+function onAmountContextMenu(e: MouseEvent) {
+  if (props.row.id) {
+    openCellContextMenu(e, {
+      entityType: 'feo_item',
+      entityId: props.row.id,
+      fieldName: 'amount',
+      fieldLabel: 'Сумма (план)',
+      cellValue: props.row.amount,
+      rawNumber: props.row.amount,
+      subsidyId: (props.row as any).subsidy_id ?? null,
+      extraItems: getItemExtraItems(),
+    } as any)
+  }
+}
+
+function onEntityRestored(e: Event) {
+  const customEv = e as CustomEvent<{ entityType: string; entityId: number | string }>
+  if (customEv.detail?.entityType === 'feo_item' && customEv.detail?.entityId === props.row.id) {
+    emit('refresh')
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('gala:entity-restored', onEntityRestored)
+  if (props.row?.id) {
+    void cellMarks.loadMarks('feo_item', [props.row.id], (props.row as any).subsidy_id)
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('gala:entity-restored', onEntityRestored)
+})
 </script>
 
 <style scoped src="../feoTreeRails.css"></style>

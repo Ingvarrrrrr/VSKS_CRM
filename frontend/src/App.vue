@@ -82,11 +82,14 @@
     <cookie-banner />
     <play-while-waiting />
     <swarm-rebuild-overlay />
+    <gala-context-menu />
+    <cell-history-popover />
+    <cell-comment-popover />
   </v-app>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import AppBar from './components/AppBar.vue'
@@ -104,6 +107,10 @@ import FundingSourcesDialog from './components/subsidies/FundingSourcesDialog.vu
 import CookieBanner from './components/legal/CookieBanner.vue'
 import PlayWhileWaiting from './components/games/PlayWhileWaiting.vue'
 import SwarmRebuildOverlay from './components/swarm/SwarmRebuildOverlay.vue'
+import GalaContextMenu from './components/common/GalaContextMenu.vue'
+import CellHistoryPopover from './components/common/CellHistoryPopover.vue'
+import CellCommentPopover from './components/common/CellCommentPopover.vue'
+import './styles/cell-marks.css'
 import { useAuthStore } from './stores/auth'
 import { CACHED_PAGE_NAMES, CACHED_PAGE_MAX } from './composables/pageCache'
 import { isLoggedIn, setLoggedIn, clearLoggedIn } from './composables/useAuthFlag'
@@ -205,6 +212,37 @@ onMounted(async () => {
     try { (window as any).__galaStopBootSwarm?.() } catch {}
   }
 })
+
+function checkGalaFocus() {
+  const focus = route.query.gala_focus as string | undefined
+  if (!focus) return
+  const [type, id] = focus.split(':')
+  if (!type || !id) return
+
+  let attempts = 0
+  const interval = setInterval(() => {
+    attempts++
+    const el = document.querySelector(
+      `[data-gala-row="${type}:${id}"], [data-entity-type="${type}"][data-entity-id="${id}"]`
+    )
+    if (el) {
+      clearInterval(interval)
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('gala-focus-highlight')
+      setTimeout(() => el.classList.remove('gala-focus-highlight'), 4500)
+    } else if (attempts > 20) {
+      clearInterval(interval)
+    }
+  }, 250)
+}
+
+watch(
+  () => route.query.gala_focus,
+  () => {
+    checkGalaFocus()
+  },
+  { immediate: true }
+)
 
 onUnmounted(() => {
   window.removeEventListener('api-loading', onApiLoading)

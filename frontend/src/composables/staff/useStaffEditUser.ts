@@ -4,6 +4,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { apiFetch } from '@/api'
 import { unformatPhone } from '@/utils/phoneFormat'
+import { validatePassword } from '@/utils/passwordPolicy'
 import type { ToastType } from '@/composables/useToast'
 import { numOrNull } from '@/utils/numberFormat'
 import type { UserItem, OrgEntry } from './staffTypes'
@@ -390,9 +391,17 @@ export function useStaffEditUser(options: {
         periodic_medical_expires_at: editDialog.can_drive ? (editDialog.periodic_medical_expires_at || null) : null,
         psych_cert_expires_at: editDialog.can_drive ? (editDialog.psych_cert_expires_at || null) : null,
       }
-      if (editDialog.password) body.password = editDialog.password
+      if (editDialog.password) {
+        const val = validatePassword(editDialog.password, [editDialog.email, editDialog.username])
+        if (!val.valid) {
+          showSnack(val.message || 'Пароль не соответствует требованиям', 'warning')
+          editDialog.saving = false
+          return
+        }
+        body.password = editDialog.password
+      }
       const updated = await apiFetch<UserItem>(`/users/${editDialog.userId}`, {
-        method: 'PATCH', body: JSON.stringify(body),
+        method: 'PATCH', body: JSON.stringify(body), suppressErrorDialog: true,
       })
 
       // Phase 30.3: separate save/delete for license_scan (Text blob, не в основном PATCH)

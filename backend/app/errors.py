@@ -33,6 +33,7 @@ field_labels = {
     "justification": "Обоснование", "org_id": "Организация",
     "assigned_to": "Ответственный", "event_id": "Мероприятие",
     "execution_deadline": "Срок исполнения",
+    "password": "Пароль",
     "unit_price": "Цена за единицу", "amount": "Сумма", "name": "Наименование",
     "feo_category_id": "Категория ФЭО", "months_count": "Количество месяцев",
     "monthly_amount": "Сумма в месяц", "planned_date": "Плановая дата",
@@ -70,6 +71,8 @@ def register_error_handlers(app: FastAPI) -> None:
             label = field_labels.get(field, field)
             fields.append({"field": field, "label": label})
             msg = err.get("msg", "")
+            if msg.startswith("Value error, "):
+                msg = msg[len("Value error, "):].strip()
             # Translate common pydantic messages
             if "required" in msg.lower():
                 errors.append(f"Поле «{label}» обязательно для заполнения")

@@ -167,6 +167,12 @@
       @click:close="filters.wishId = null">
       Закупки из заявки #{{ filters.wishId }} ({{ ordersFromWishCount }})
     </v-chip>
+
+    <!-- Color mark filter badge -->
+    <v-chip v-if="cellMarks.activeColorFilter.value?.purchase" color="purple" variant="tonal" closable class="mb-3 ml-2" prepend-icon="mdi-palette"
+      @click:close="cellMarks.setColorFilter('purchase', null)">
+      🎨 Фильтр по цвету: {{ cellMarks.activeColorFilter.value.purchase }}
+    </v-chip>
   </div>
 </template>
 
@@ -174,6 +180,9 @@
 import { formatMoney } from '@/utils/formatMoney'
 import type { OrdersFiltersState } from '@/composables/orders/useOrdersFilters'
 import type { FilterPreset, Subsidy } from '@/composables/orders/ordersTypes'
+import { useCellMarks } from '@/composables/useCellMarks'
+
+const cellMarks = useCellMarks()
 
 defineProps<{
   filters: OrdersFiltersState

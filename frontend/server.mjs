@@ -46,11 +46,33 @@ createServer(async (req, res) => {
   }
 
   // Static files
-  let filePath = join(DIST, req.url === '/' ? 'index.html' : req.url.split('?')[0])
+  const pathOnly = req.url.split('?')[0]
+  let filePath = join(DIST, pathOnly === '/' ? 'index.html' : pathOnly)
+
+  function getCacheControl(p) {
+    if (p.startsWith('/assets/')) {
+      return 'public, max-age=31536000, immutable'
+    }
+    if (
+      p === '/' ||
+      p === '/index.html' ||
+      p === '/sw.js' ||
+      p === '/custom-sw.js' ||
+      p === '/manifest.webmanifest' ||
+      p.includes('workbox')
+    ) {
+      return 'no-cache, no-store, must-revalidate'
+    }
+    return 'no-cache'
+  }
+
   try {
     const data = await readFile(filePath)
     const ext = extname(filePath)
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' })
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': getCacheControl(pathOnly),
+    })
     res.end(data)
   } catch {
     // Инцидент на проде 20.09.2026 22:43: во время поочерёдной замены двух
@@ -60,7 +82,6 @@ createServer(async (req, res) => {
     // браузер закэшировал HTML как CSS, и страница осталась без стилей до
     // очистки данных сайта. Ассеты и любые файлы с расширением при отсутствии
     // обязаны отвечать 404 без кэша — фолбэк на index.html только для маршрутов SPA.
-    const pathOnly = req.url.split('?')[0]
     if (pathOnly.startsWith('/assets/') || extname(pathOnly)) {
       res.writeHead(404, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
       res.end('Not Found')
@@ -68,7 +89,10 @@ createServer(async (req, res) => {
     }
     // SPA fallback
     const index = await readFile(join(DIST, 'index.html'))
-    res.writeHead(200, { 'Content-Type': 'text/html' })
+    res.writeHead(200, {
+      'Content-Type': 'text/html',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    })
     res.end(index)
   }
 }).listen(PORT, '0.0.0.0', () => {

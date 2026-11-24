@@ -54,17 +54,86 @@ function markReload(key: string) {
   try { sessionStorage.setItem(key, String(Date.now())) } catch { /* noop */ }
 }
 
-/** Обычный путь: поллинг обновлений SW + тост при появлении новой версии. */
+let updatePromptShown = false
+
+async function applyAppUpdate() {
+  try {
+    const jobs: Promise<unknown>[] = []
+    if ('serviceWorker' in navigator) {
+      jobs.push(
+        navigator.serviceWorker.getRegistrations()
+          .then(regs => Promise.all(regs.map(r => r.unregister())))
+      )
+    }
+    if ('caches' in window) {
+      jobs.push(caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))))
+    }
+    await Promise.all(jobs)
+  } catch { /* noop */ }
+  setTimeout(() => {
+    window.location.reload()
+  }, 150)
+}
+
+function notifyOrReloadUpdate() {
+  if (updatePromptShown) return
+  updatePromptShown = true
+
+  if (withinCooldown(RELOAD_TS_KEY, RELOAD_COOLDOWN_MS)) return
+  markReload(RELOAD_TS_KEY)
+
+  // Тихий reload если вкладка не видна — пользователь ничего не заметит,
+  // но при возврате во вкладку получит свежую версию.
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+    void applyAppUpdate()
+    return
+  }
+  // Активная вкладка — ненавязчивый тост вместо блокирующего confirm().
+  // Без auto-dismiss (duration не задан) — важное сообщение не должно
+  // исчезнуть само, пока пользователь его не заметил.
+  useToast().info('Доступна новая версия приложения', {
+    actionText: 'Обновить',
+    onAction: () => void applyAppUpdate(),
+  })
+}
+
+/** Обычный путь: поллинг обновлений SW + параллельный детектор бандла + тост при появлении новой версии. */
 export function initSwUpdate() {
-  if (!('serviceWorker' in navigator)) return
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return
 
   navigator.serviceWorker.register('/sw.js').catch(() => {})
 
+  const initialEntrySrc = typeof document !== 'undefined'
+    ? (document.querySelector('script[type="module"][src*="/assets/"]')?.getAttribute('src') || '')
+    : ''
+
   const tryUpdate = () => {
     navigator.serviceWorker.getRegistration().then(reg => reg?.update()).catch(() => {})
+
+    if (initialEntrySrc && typeof fetch !== 'undefined') {
+      fetch('/index.html?_t=' + Date.now(), {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      })
+        .then(res => res.text())
+        .then(html => {
+          const match = html.match(/src="(\/assets\/index-[^"]+\.js)"/)
+          const fetchedEntrySrc = match ? match[1] : ''
+          if (initialEntrySrc && fetchedEntrySrc && fetchedEntrySrc !== initialEntrySrc) {
+            notifyOrReloadUpdate()
+          }
+        })
+        .catch(() => {})
+    }
   }
-  setInterval(tryUpdate, 60 * 1000)
+
+  // Проверка через 5 сек после старта, периодический опрос каждые 45 сек, и по фокусу/видимости
+  setTimeout(tryUpdate, 5000)
+  setInterval(tryUpdate, 45 * 1000)
   window.addEventListener('focus', tryUpdate)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') tryUpdate()
+  })
 
   // controllerchange стреляет и при ПЕРВОЙ установке SW (clientsClaim берёт
   // страницу под контроль) — это НЕ обновление. Реагируем только если у
@@ -72,30 +141,12 @@ export function initSwUpdate() {
   // Иначе на iOS WebClip (Safari периодически сбрасывает SW-хранилище) тост
   // «новая версия» выскакивал бы при каждом запуске — вечное моргание.
   let hadController = !!navigator.serviceWorker.controller
-  let reloadScheduled = false
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!hadController) {
       hadController = true
       return
     }
-    if (reloadScheduled) return
-    reloadScheduled = true
-    if (withinCooldown(RELOAD_TS_KEY, RELOAD_COOLDOWN_MS)) return
-    markReload(RELOAD_TS_KEY)
-
-    // Тихий reload если вкладка не видна — пользователь ничего не заметит,
-    // но при возврате во вкладку получит свежую версию.
-    if (document.visibilityState === 'hidden') {
-      window.location.reload()
-      return
-    }
-    // Активная вкладка — ненавязчивый тост вместо блокирующего confirm().
-    // Без auto-dismiss (duration не задан) — важное сообщение не должно
-    // исчезнуть само, пока пользователь его не заметил.
-    useToast().info('Доступна новая версия приложения', {
-      actionText: 'Обновить',
-      onAction: () => window.location.reload(),
-    })
+    notifyOrReloadUpdate()
   })
 }
 

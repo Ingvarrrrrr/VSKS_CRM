@@ -122,7 +122,6 @@
 
         <!-- 🕘 История изменений -->
         <button
-          v-if="canMarkEntity"
           type="button"
           class="gala-context-menu-item"
           @click="onOpenHistory"

@@ -14,7 +14,7 @@ export function avatarColor(name: string): string {
     hash |= 0
   }
   const idx = Math.abs(hash) % AVATAR_COLORS.length
-  return AVATAR_COLORS[idx]
+  return AVATAR_COLORS[idx] || '#10B981'
 }
 
 export function avatarLetter(name: string): string {
@@ -64,6 +64,22 @@ export async function fetchCellHistory(opts: GalaCellContextOptions): Promise<Ce
     return await opts.historyLoader(opts)
   }
 
+  // Расчётные, сводные строки или строки без реального ID
+  if (!opts.entityType || opts.entityType === 'table_row' || Number(opts.entityId) <= 0) {
+    return [
+      {
+        id: 'calc',
+        changedAt: '',
+        changedByName: 'Система GALA',
+        oldValue: null,
+        newValue: opts.cellValue,
+        isCreated: true,
+        isCalculatedOrEmpty: true,
+        originLabel: 'Расчётная или сводная ячейка (формируется автоматически, вручную не редактировалась)',
+      },
+    ]
+  }
+
   if (opts.entityType === 'vehicle') {
     const url = `/vehicles/${opts.entityId}/field-history?field_key=${encodeURIComponent(opts.fieldName)}&limit=50`
     const raw = await apiFetch<any[]>(url)
@@ -84,29 +100,48 @@ export async function fetchCellHistory(opts: GalaCellContextOptions): Promise<Ce
   const list = Array.isArray(raw) ? raw : []
 
   const fieldChanges = list.filter(c => c.field_name === opts.fieldName)
+  const created = list.find(c => c.field_name === '__created__')
+
   if (fieldChanges.length > 0) {
-    return fieldChanges.map((c, i) => ({
+    const mapped: CellHistoryEvent[] = fieldChanges.map((c, i) => ({
       id: c.id || i,
       changedAt: c.changed_at,
       changedByName: c.changed_by_name,
       oldValue: c.old_value,
       newValue: c.new_value,
       source: c.source,
+      comment: c.comment,
+      originLabel: c.origin_label,
     }))
+
+    if (created) {
+      mapped.push({
+        id: created.id ?? 'origin',
+        changedAt: created.changed_at,
+        changedByName: created.changed_by_name,
+        oldValue: null,
+        newValue: fieldChanges[fieldChanges.length - 1].old_value ?? opts.cellValue,
+        isCreated: true,
+        source: created.source,
+        originLabel: created.origin_label,
+      })
+    }
+
+    return mapped
   }
 
-  // Check creation event
-  const created = list.find(c => c.field_name === '__created__')
   if (created) {
     return [
       {
-        id: created.id,
+        id: created.id ?? 'origin',
         changedAt: created.changed_at,
         changedByName: created.changed_by_name,
         oldValue: null,
         newValue: opts.cellValue,
         isCreated: true,
         source: created.source,
+        originLabel: created.origin_label,
+        comment: 'После внесения эта ячейка отдельно не изменялась',
       },
     ]
   }

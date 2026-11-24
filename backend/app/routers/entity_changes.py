@@ -30,9 +30,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/entity-changes", tags=["entity-changes"])
 
 # Allowed entity types (validation guard — ASVS V4 T-31-01-01)
-# feo_item/feo_category добавлены волной 1 журнала истории ФЭО (22.09,
-# app/services/feo_history.py — единственная точка записи для них).
-_VALID_ENTITY_TYPES = {"purchase", "wish", "task", "feo_item", "feo_category", "subsidy"}
+# feo_item/feo_category добавлены волной 1 журнала истории ФЭО (22.09).
+# contract/payment добавлены для поддержки истории по ПКМ в таблицах Договоров и Платежей.
+_VALID_ENTITY_TYPES = {"purchase", "wish", "task", "feo_item", "feo_category", "subsidy", "contract", "payment"}
 
 
 class DismissFieldBody(BaseModel):
@@ -51,6 +51,7 @@ class EntityChangeOut(BaseModel):
     changed_at: Optional[datetime] = None
     source: Optional[str] = None
     source_ref: Optional[int] = None
+    origin_label: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -283,6 +284,59 @@ async def _check_feo_history_read_access(
         raise HTTPException(status_code=403, detail="Нет доступа к ФЭО этой субсидии")
 
 
+async def _check_contract_or_payment_read_access(
+    entity_type: str, entity_id: int, current_user: User, db: AsyncSession,
+) -> None:
+    """Проверка доступа по контуру организации пользователя для contract и payment."""
+    from app.auth.visibility import get_account_contour_org_ids
+    from app.models.contract import Contract
+    from app.models.payment import Payment
+    from app.models.subsidy import Subsidy
+    from app.models.purchase import Purchase
+
+    if entity_type == "contract":
+        c = await db.get(Contract, entity_id)
+        if not c:
+            raise HTTPException(status_code=404, detail="Договор не найден")
+        if current_user.role == "superadmin":
+            return
+        contour_org_ids = await get_account_contour_org_ids(current_user, db)
+        if contour_org_ids:
+            target_sub_id = c.subsidy_id
+            if not target_sub_id:
+                p = (await db.execute(
+                    select(Purchase).where(Purchase.contract_id == c.id, Purchase.subsidy_id.isnot(None)).limit(1)
+                )).scalar_one_or_none()
+                if p:
+                    target_sub_id = p.subsidy_id
+            if target_sub_id:
+                sub = await db.get(Subsidy, target_sub_id)
+                if sub and sub.org_id and sub.org_id not in contour_org_ids:
+                    raise HTTPException(status_code=404, detail="Договор не найден")
+
+    elif entity_type == "payment":
+        pay = await db.get(Payment, entity_id)
+        if not pay:
+            raise HTTPException(status_code=404, detail="Платёж не найден")
+        if current_user.role == "superadmin":
+            return
+        contour_org_ids = await get_account_contour_org_ids(current_user, db)
+        if contour_org_ids:
+            target_sub_id = None
+            if pay.purchase_id:
+                p = await db.get(Purchase, pay.purchase_id)
+                if p:
+                    target_sub_id = p.subsidy_id
+            elif pay.contract_id:
+                c = await db.get(Contract, pay.contract_id)
+                if c:
+                    target_sub_id = c.subsidy_id
+            if target_sub_id:
+                sub = await db.get(Subsidy, target_sub_id)
+                if sub and sub.org_id and sub.org_id not in contour_org_ids:
+                    raise HTTPException(status_code=404, detail="Платёж не найден")
+
+
 @router.get("/{entity_type}/{entity_id}", response_model=List[EntityChangeOut])
 async def get_entity_changes(
     entity_type: str,
@@ -305,6 +359,7 @@ async def get_entity_changes(
     Исключение — feo_item/feo_category (волна 1 журнала ФЭО, 22.09): у них нет
     отдельного per-item роутера, который бы уже проверил доступ, поэтому здесь
     добавлена явная проверка _check_feo_history_read_access (см. её докстринг).
+    Для contract/payment также проверяется доступ по контуру организации.
     """
     if entity_type not in _VALID_ENTITY_TYPES:
         raise HTTPException(
@@ -314,6 +369,8 @@ async def get_entity_changes(
 
     if entity_type in ("feo_item", "feo_category"):
         await _check_feo_history_read_access(entity_type, entity_id, current_user, db)
+    elif entity_type in ("contract", "payment"):
+        await _check_contract_or_payment_read_access(entity_type, entity_id, current_user, db)
 
     q = select(EntityChange).where(
         EntityChange.entity_type == entity_type,
@@ -322,10 +379,12 @@ async def get_entity_changes(
 
     target_field = field or field_name
     if target_field is not None and target_field.strip():
-        q = q.where(EntityChange.field_name == target_field.strip())
+        q = q.where(EntityChange.field_name.in_([target_field.strip(), "__created__"]))
 
     if since is not None:
         q = q.where(EntityChange.changed_at > since)
 
     rows = (await db.execute(q)).scalars().all()
-    return rows
+    out_rows = [EntityChangeOut.model_validate(r) for r in rows]
+    from app.services.entity_origin import attach_entity_origin
+    return await attach_entity_origin(db, entity_type, entity_id, out_rows)

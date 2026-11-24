@@ -66,7 +66,12 @@
 
       <!-- Пустое состояние -->
       <div v-else-if="!currentEvent" class="gala-history-empty text-medium-emphasis text-body-2 pa-4 text-center">
-        Изменений по этой ячейке пока не было
+        <template v-if="hasValue(effectiveOptions?.cellValue)">
+          Отдельных правок по этой ячейке не зафиксировано. Текущее значение: «{{ formatCellValue(effectiveOptions?.cellValue, effectiveOptions) }}» (внесено при первоначальном заполнении)
+        </template>
+        <template v-else>
+          Ячейка пуста — изменений по ней не было
+        </template>
       </div>
 
       <!-- Содержимое текущей правки -->
@@ -80,7 +85,7 @@
             <div class="gala-history-author-name">
               {{ authorName }}
               <v-chip v-if="currentEvent.source && currentEvent.source !== 'manual'" size="x-small" variant="tonal" class="ml-1">
-                {{ currentEvent.source }}
+                {{ formatSource(currentEvent.source) }}
               </v-chip>
             </div>
             <div class="gala-history-author-date">
@@ -92,11 +97,26 @@
         <!-- Тело изменения -->
         <div class="gala-history-body">
           <template v-if="currentEvent.isCreated">
-            <span class="font-weight-medium">Создано: </span>
-            <span v-if="hasValue(currentEvent.newValue)" class="gala-history-val">
+            <div v-if="currentEvent.originLabel" class="font-weight-medium mb-1">
+              {{ currentEvent.originLabel }}
+            </div>
+            <div v-else class="font-weight-medium mb-1">
+              Внесено при создании записи:
+            </div>
+
+            <div v-if="hasValue(currentEvent.newValue)" class="gala-history-val">
               «{{ formatCellValue(currentEvent.newValue, effectiveOptions) }}»
-            </span>
-            <span v-else class="text-medium-emphasis">строка создана</span>
+            </div>
+            <div v-else-if="!currentEvent.isCalculatedOrEmpty" class="text-medium-emphasis">
+              ячейка не заполнялась
+            </div>
+
+            <div
+              v-if="events.length === 1 && !currentEvent.isCalculatedOrEmpty"
+              class="gala-history-single-notice mt-2 text-caption text-medium-emphasis"
+            >
+              Изменений после внесения не было
+            </div>
           </template>
 
           <template v-else-if="changeKind === 'added'">
@@ -157,11 +177,18 @@ import {
 } from '@/composables/useCellHistory'
 import { apiFetch } from '@/api'
 
-const props = defineProps<{
-  modelValue?: boolean
-  options?: GalaCellContextOptions | null
-  position?: ContextMenuPosition
-}>()
+const props = withDefaults(
+  defineProps<{
+    modelValue?: boolean | null
+    options?: GalaCellContextOptions | null
+    position?: ContextMenuPosition
+  }>(),
+  {
+    modelValue: null,
+    options: undefined,
+    position: undefined,
+  }
+)
 
 const emit = defineEmits<{
   'update:modelValue': [v: boolean]
@@ -174,9 +201,15 @@ const {
   closeCellHistory,
 } = useGalaContextMenu()
 
-const effectiveVisible = computed(() => props.modelValue !== undefined ? props.modelValue : isHistoryOpen.value)
-const effectiveOptions = computed<GalaCellContextOptions | null>(() => props.options !== undefined ? props.options : historyCellOptions.value)
-const effectivePosition = computed<ContextMenuPosition>(() => props.position !== undefined ? props.position : historyPosition.value)
+const effectiveVisible = computed(() =>
+  props.modelValue !== null && props.modelValue !== undefined ? props.modelValue : isHistoryOpen.value
+)
+const effectiveOptions = computed<GalaCellContextOptions | null>(() =>
+  (props.options !== undefined ? props.options : historyCellOptions.value) as GalaCellContextOptions | null
+)
+const effectivePosition = computed<ContextMenuPosition>(() =>
+  (props.position !== undefined ? props.position : historyPosition.value) as ContextMenuPosition
+)
 
 const events = ref<CellHistoryEvent[]>([])
 const currentIndex = ref(0)
@@ -191,7 +224,7 @@ const canRestore = computed(() => {
   if (!opts) return false
   if (opts.canRestoreHistory === false) return false
   if (!ALLOWED_RESTORE_ENTITIES.includes(opts.entityType)) return false
-  if (!currentEvent.value) return false
+  if (!currentEvent.value || currentEvent.value.isCalculatedOrEmpty) return false
   return hasValue(currentEvent.value.newValue) || hasValue(currentEvent.value.oldValue)
 })
 
@@ -226,11 +259,24 @@ function closePopover() {
   else closeCellHistory()
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  import: 'Импорт файла',
+  wish: 'Из заявки',
+  purchase: 'Из закупки',
+  autoassign: 'Автоплан',
+  collapse: 'Объединение',
+}
+
+function formatSource(source: string | null | undefined): string {
+  if (!source) return ''
+  return SOURCE_LABELS[source] || source
+}
+
 const authorName = computed(() => {
   if (!currentEvent.value) return 'Система'
   if (currentEvent.value.changedByName) return currentEvent.value.changedByName
   if (currentEvent.value.source === 'import') return 'Импорт Excel'
-  return 'Система'
+  return 'Система GALA'
 })
 
 function hasValue(val: any): boolean {
@@ -271,10 +317,10 @@ async function onRestoreValue() {
   try {
     await apiFetch(`/entity-changes/${opts.entityType}/${opts.entityId}/restore`, {
       method: 'POST',
-      body: {
+      body: JSON.stringify({
         field_name: opts.fieldName,
         value: valToRestore,
-      },
+      }),
     })
 
     if (typeof window !== 'undefined') {
@@ -359,6 +405,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 .gala-history-val { font-style: italic; font-weight: 500; }
 .gala-history-val--deleted { text-decoration: line-through; opacity: 0.65; }
 .gala-history-comment { font-size: 11px; color: rgba(var(--v-theme-on-surface), 0.7); font-style: italic; }
+.gala-history-single-notice {
+  padding: 4px 6px; background: rgba(var(--v-theme-primary), 0.08);
+  border-radius: 4px; color: rgba(var(--v-theme-on-surface), 0.85);
+}
 .gala-history-restore-box {
   display: flex;
 }

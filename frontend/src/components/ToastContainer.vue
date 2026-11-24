@@ -72,7 +72,7 @@ function goToLink(to: string) {
   position: fixed;
   top: 56px;
   right: 20px;
-  z-index: 10000;
+  z-index: 210000;
   display: flex;
   flex-direction: column;
   gap: 8px;

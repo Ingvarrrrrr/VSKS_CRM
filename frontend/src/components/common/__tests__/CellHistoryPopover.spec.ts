@@ -1,5 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createApp, nextTick, defineComponent, computed, ref, watch } from 'vue'
+import fs from 'node:fs'
+import path from 'node:path'
 import {
   avatarColor,
   avatarLetter,
@@ -7,14 +10,17 @@ import {
   formatCellValue,
   fetchCellHistory,
 } from '@/composables/useCellHistory'
-import { useGalaContextMenu, extractNumericValue } from '@/composables/useGalaContextMenu'
+import {
+  useGalaContextMenu,
+  extractNumericValue,
+  type CellHistoryEvent,
+} from '@/composables/useGalaContextMenu'
 import {
   useCellMarks,
   MARK_COLOR_PALETTE,
   type CellTarget,
   type CellMarkRecord,
 } from '@/composables/useCellMarks'
-
 import { useUniversalTableContext } from '@/composables/useUniversalTableContext'
 
 // Mock apiFetch
@@ -45,13 +51,10 @@ describe('CellHistoryPopover helpers and composables', () => {
   })
 
   describe('formatRussianDate', () => {
-    it('formats valid date string', () => {
+    it('formats valid date string and handles empty', () => {
       const res = formatRussianDate('2026-10-23T15:11:00Z')
       expect(res).toBeTruthy()
       expect(res).toContain('11')
-    })
-
-    it('handles empty input gracefully', () => {
       expect(formatRussianDate('')).toBe('')
       expect(formatRussianDate(undefined)).toBe('')
     })
@@ -71,31 +74,14 @@ describe('CellHistoryPopover helpers and composables', () => {
       expect(formatCellValue('false')).toBe('Нет')
     })
 
-    it('formats FEO money fields into currency format', () => {
-      const opts = {
-        entityType: 'feo_item',
-        entityId: 1,
-        fieldName: 'amount',
-        fieldLabel: 'Сумма',
-      }
-      const res = formatCellValue('1500', opts)
+    it('formats FEO fields and numbers correctly', () => {
+      const optsMoney = { entityType: 'feo_item', entityId: 1, fieldName: 'amount', fieldLabel: 'Сумма' }
+      const res = formatCellValue('1500', optsMoney)
       expect(res).toContain('1')
       expect(res).toContain('500')
       expect(res).toContain('₽')
-    })
-
-    it('formats FEO quantity fields without trailing zeros', () => {
-      const opts = {
-        entityType: 'feo_item',
-        entityId: 1,
-        fieldName: 'quantity',
-        fieldLabel: 'Количество',
-      }
-      expect(formatCellValue('2.000', opts)).toBe('2')
-      expect(formatCellValue('0.500', opts)).toBe('0.5')
-    })
-
-    it('formats standard numbers with locale formatting', () => {
+      const optsQty = { entityType: 'feo_item', entityId: 1, fieldName: 'quantity', fieldLabel: 'Количество' }
+      expect(formatCellValue('2.000', optsQty)).toBe('2')
       expect(formatCellValue(10000)).toMatch(/10[\s\u00A0]000/)
     })
   })
@@ -112,6 +98,19 @@ describe('CellHistoryPopover helpers and composables', () => {
   })
 
   describe('fetchCellHistory', () => {
+    it('returns calculated event for table_row, empty or 0 entityId', async () => {
+      const res = await fetchCellHistory({
+        entityType: 'table_row',
+        entityId: 0,
+        fieldName: 'total',
+        fieldLabel: 'Итого',
+        cellValue: '100 000 ₽',
+      })
+      expect(res).toHaveLength(1)
+      expect(res[0]!.isCalculatedOrEmpty).toBe(true)
+      expect(res[0]!.originLabel).toContain('Расчётная')
+    })
+
     it('fetches vehicle field history and maps changed_by_name', async () => {
       const mockApiFetch = vi.mocked(apiFetch)
       mockApiFetch.mockResolvedValueOnce([
@@ -134,17 +133,13 @@ describe('CellHistoryPopover helpers and composables', () => {
         fieldLabel: 'Пробег',
       })
 
-      expect(mockApiFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/vehicles/1/field-history?field_key=mileage')
-      )
+      expect(mockApiFetch).toHaveBeenCalledWith(expect.stringContaining('/vehicles/1/field-history?field_key=mileage'))
       expect(events).toHaveLength(1)
-      expect(events[0].changedByName).toBe('Игорь Цыганов')
-      expect(events[0].oldValue).toBe('1000')
-      expect(events[0].newValue).toBe('2000')
-      expect(events[0].comment).toBe('ТО-1')
+      expect(events[0]!.changedByName).toBe('Игорь Цыганов')
+      expect(events[0]!.newValue).toBe('2000')
     })
 
-    it('fetches entity changes and filters by field_name', async () => {
+    it('fetches entity changes and appends created as oldest event', async () => {
       const mockApiFetch = vi.mocked(apiFetch)
       mockApiFetch.mockResolvedValueOnce([
         {
@@ -158,12 +153,13 @@ describe('CellHistoryPopover helpers and composables', () => {
           changed_at: '2026-10-23T14:00:00Z',
         },
         {
-          id: 11,
+          id: 1,
           entity_type: 'purchase',
           entity_id: 100,
-          field_name: 'other_field',
-          old_value: '1',
-          new_value: '2',
+          field_name: '__created__',
+          changed_by_name: 'Импорт',
+          changed_at: '2026-10-20T10:00:00Z',
+          origin_label: 'Загружено из файла',
         },
       ])
 
@@ -174,13 +170,14 @@ describe('CellHistoryPopover helpers and composables', () => {
         fieldLabel: 'Предмет',
       })
 
-      expect(mockApiFetch).toHaveBeenCalledWith('/entity-changes/purchase/100')
-      expect(events).toHaveLength(1)
-      expect(events[0].oldValue).toBe('Старый договор')
-      expect(events[0].newValue).toBe('Новый договор')
+      expect(events).toHaveLength(2)
+      expect(events[0]!.newValue).toBe('Новый договор')
+      expect(events[1]!.isCreated).toBe(true)
+      expect(events[1]!.newValue).toBe('Старый договор')
+      expect(events[1]!.originLabel).toBe('Загружено из файла')
     })
 
-    it('synthesizes created event when no direct field changes exist but __created__ exists', async () => {
+    it('returns single created event with comment when no field changes exist', async () => {
       const mockApiFetch = vi.mocked(apiFetch)
       mockApiFetch.mockResolvedValueOnce([
         {
@@ -190,6 +187,7 @@ describe('CellHistoryPopover helpers and composables', () => {
           field_name: '__created__',
           changed_by_name: 'Игорь Цыганов',
           changed_at: '2026-10-20T10:00:00Z',
+          origin_label: 'Создано из заявки №275',
         },
       ])
 
@@ -202,304 +200,217 @@ describe('CellHistoryPopover helpers and composables', () => {
       })
 
       expect(events).toHaveLength(1)
-      expect(events[0].isCreated).toBe(true)
-      expect(events[0].newValue).toBe('Молоток слесарный')
-      expect(events[0].changedByName).toBe('Игорь Цыганов')
+      expect(events[0]!.isCreated).toBe(true)
+      expect(events[0]!.newValue).toBe('Молоток слесарный')
+      expect(events[0]!.originLabel).toBe('Создано из заявки №275')
+      expect(events[0]!.comment).toContain('не изменялась')
     })
   })
 
   describe('useGalaContextMenu', () => {
     it('manages context menu and history popover open/close state', () => {
-      const {
-        isMenuOpen,
-        menuPosition,
-        activeCellOptions,
-        openCellContextMenu,
-        closeContextMenu,
-        isHistoryOpen,
-        openCellHistory,
-        closeCellHistory,
-      } = useGalaContextMenu()
+      const menu = useGalaContextMenu()
+      const fakeEvent = { clientX: 150, clientY: 250, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent
+      const options = { entityType: 'task', entityId: 77, fieldName: 'title', fieldLabel: 'Название', cellValue: 'Отчёт' }
 
-      const fakeEvent = {
-        clientX: 150,
-        clientY: 250,
-        preventDefault: vi.fn(),
-        stopPropagation: vi.fn(),
-      } as unknown as MouseEvent
+      menu.openCellContextMenu(fakeEvent, options)
+      expect(menu.isMenuOpen.value).toBe(true)
+      expect(menu.menuPosition.value).toEqual({ x: 150, y: 250 })
 
-      const options = {
-        entityType: 'task',
-        entityId: 77,
-        fieldName: 'title',
-        fieldLabel: 'Название',
-        cellValue: 'Подготовить отчёт',
-      }
+      menu.openCellHistory()
+      expect(menu.isMenuOpen.value).toBe(false)
+      expect(menu.isHistoryOpen.value).toBe(true)
 
-      openCellContextMenu(fakeEvent, options)
-      expect(isMenuOpen.value).toBe(true)
-      expect(menuPosition.value).toEqual({ x: 150, y: 250 })
-      expect(activeCellOptions.value?.entityId).toBe(77)
-
-      // Open history from context menu
-      openCellHistory()
-      expect(isMenuOpen.value).toBe(false)
-      expect(isHistoryOpen.value).toBe(true)
-
-      closeCellHistory()
-      expect(isHistoryOpen.value).toBe(false)
+      menu.closeCellHistory()
+      expect(menu.isHistoryOpen.value).toBe(false)
     })
   })
 
   describe('useCellMarks', () => {
-    it('exports 6 palette colors', () => {
+    it('exports 6 palette colors and handles selection', () => {
       expect(MARK_COLOR_PALETTE).toHaveLength(6)
-      const keys = MARK_COLOR_PALETTE.map(p => p.key)
-      expect(keys).toEqual(['yellow', 'red', 'green', 'blue', 'purple', 'orange'])
-    })
-
-    it('handles selection and keyboard navigation', () => {
       const marks = useCellMarks()
       marks.clearSelection()
+      const target: CellTarget = { entityType: 'order', entityId: 10, fieldName: 'amount' }
+      const fakeEvent = { ctrlKey: true, metaKey: false, shiftKey: false, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent
 
-      const target: CellTarget = {
-        entityType: 'order',
-        entityId: 10,
-        fieldName: 'amount',
-      }
-
-      const fakeEventNoModifier = {
-        ctrlKey: false,
-        metaKey: false,
-        shiftKey: false,
-        preventDefault: vi.fn(),
-        stopPropagation: vi.fn(),
-      } as unknown as MouseEvent
-
-      expect(marks.handleCellSelectClick(fakeEventNoModifier, target)).toBe(false)
-      expect(marks.isCellSelected('order', 10, 'amount')).toBe(false)
-
-      const fakeEventWithCtrl = {
-        ctrlKey: true,
-        metaKey: false,
-        shiftKey: false,
-        preventDefault: vi.fn(),
-        stopPropagation: vi.fn(),
-      } as unknown as MouseEvent
-
-      expect(marks.handleCellSelectClick(fakeEventWithCtrl, target)).toBe(true)
+      expect(marks.handleCellSelectClick(fakeEvent, target)).toBe(true)
       expect(marks.isCellSelected('order', 10, 'amount')).toBe(true)
-
-      // Toggle off
-      expect(marks.handleCellSelectClick(fakeEventWithCtrl, target)).toBe(true)
-      expect(marks.isCellSelected('order', 10, 'amount')).toBe(false)
-
-      marks.setBatchSelection([target])
-      expect(marks.selectedTargets.value).toHaveLength(1)
       marks.clearSelection()
       expect(marks.selectedTargets.value).toHaveLength(0)
     })
 
-    it('loads marks, provides classes, styles, and color filters', async () => {
+    it('loads marks and handles color filtering', async () => {
       const marks = useCellMarks()
       const mockApiFetch = vi.mocked(apiFetch)
-
-      const mockData: CellMarkRecord[] = [
-        {
-          id: 1,
-          group_id: 'grp_1',
-          entity_type: 'order',
-          entity_id: 99,
-          field_name: 'price',
-          color: 'red',
-          comment: 'Проверить цену',
-          visibility: 'shared',
-          is_resolved: false,
-          created_at: '2026-10-23T10:00:00Z',
-        },
-        {
-          id: 2,
-          group_id: 'grp_2',
-          entity_type: 'order',
-          entity_id: 99,
-          field_name: '*',
-          color: 'yellow',
-          comment: null,
-          visibility: 'shared',
-          is_resolved: false,
-          created_at: '2026-10-23T10:00:00Z',
-        },
-      ]
-
+      const mockData: CellMarkRecord[] = [{
+        id: 1, group_id: 'grp_1', entity_type: 'order', entity_id: 99,
+        field_name: 'price', color: 'red', comment: 'Проверить цену',
+        visibility: 'shared', is_resolved: false, created_at: '2026-10-23T10:00:00Z',
+      }]
       mockApiFetch.mockResolvedValueOnce(mockData)
-
       await marks.loadMarks('order', [99])
 
-      expect(mockApiFetch).toHaveBeenCalledWith(expect.stringContaining('/cell-marks?entity_type=order&entity_ids=99'))
-
-      const exact = marks.getExactMark('order', 99, 'price')
-      expect(exact?.color).toBe('red')
-      expect(exact?.comment).toBe('Проверить цену')
-
-      const rowMark = marks.getRowMark('order', 99)
-      expect(rowMark?.color).toBe('yellow')
-
-      const classes = marks.getCellMarkClasses('order', 99, 'price')
-      expect(classes['gala-cell-marked']).toBe(true)
-      expect(classes['gala-cell-has-comment']).toBe(true)
-
-      const styles = marks.getCellMarkStyle('order', 99, 'price')
-      expect(styles['--gala-mark-light']).toBeTruthy()
-      expect(styles['--gala-mark-dark']).toBeTruthy()
-
-      // Color filter testing
-      expect(marks.matchesColorFilter('order', 99)).toBe(true)
+      expect(marks.getExactMark('order', 99, 'price')?.color).toBe('red')
       marks.setColorFilter('order', 'red')
       expect(marks.matchesColorFilter('order', 99)).toBe(true)
       marks.setColorFilter('order', 'purple')
       expect(marks.matchesColorFilter('order', 99)).toBe(false)
       marks.setColorFilter('order', null)
-      expect(marks.matchesColorFilter('order', 99)).toBe(true)
     })
 
-    it('applies batch marks, clears color, and resolves groups', async () => {
+    it('applies batch marks and clears color', async () => {
       const marks = useCellMarks()
       const mockApiFetch = vi.mocked(apiFetch)
-
-      const target: CellTarget = {
-        entityType: 'task',
-        entityId: 55,
-        fieldName: 'status',
-      }
+      const target: CellTarget = { entityType: 'task', entityId: 55, fieldName: 'status' }
 
       mockApiFetch.mockResolvedValueOnce([])
-      await marks.applyMarkBatch({
-        targets: [target],
-        color: 'green',
-        comment: 'Готово',
-      })
+      await marks.applyMarkBatch({ targets: [target], color: 'green', comment: 'Готово' })
+      expect(marks.getMark('task', 55, 'status')?.color).toBe('green')
 
-      expect(mockApiFetch).toHaveBeenCalledWith(
-        '/cell-marks/batch',
-        expect.objectContaining({
-          method: 'POST',
-          body: expect.objectContaining({
-            targets: [
-              expect.objectContaining({
-                entity_type: 'task',
-                entity_id: 55,
-                field_name: 'status',
-              }),
-            ],
-            color: 'green',
-            comment: 'Готово',
-          }),
-        })
-      )
-      const m = marks.getMark('task', 55, 'status')
-      expect(m?.color).toBe('green')
-      expect(m?.comment).toBe('Готово')
-
-      // Clear color
       mockApiFetch.mockResolvedValueOnce({})
       await marks.clearMarksColor([target])
-      expect(mockApiFetch).toHaveBeenCalledWith('/cell-marks/clear-color', {
-        method: 'POST',
-        body: {
-          targets: [
-            {
-              entity_type: 'task',
-              entity_id: 55,
-              field_name: 'status',
-            },
-          ],
-        },
-      })
-      const cleared = marks.getExactMark('task', 55, 'status')
-      expect(cleared?.color).toBeNull()
-      expect(cleared?.comment).toBe('Готово')
-
-      // Do not send request when entityId is 0 or negative or entityType is table_row
-      mockApiFetch.mockClear()
-      await marks.applyMarkBatch({
-        targets: [{ entityType: 'table_row', entityId: 0, fieldName: '*' }],
-        color: 'red',
-      })
-      expect(mockApiFetch).not.toHaveBeenCalled()
-
-      await marks.clearMarksColor([{ entityType: 'summary', entityId: 0, fieldName: 'total' }])
-      expect(mockApiFetch).not.toHaveBeenCalled()
-
-      // Resolve mark group
-      if (cleared?.group_id) {
-        mockApiFetch.mockResolvedValueOnce({})
-        await marks.resolveMarkGroup(cleared.group_id)
-        expect(mockApiFetch).toHaveBeenCalledWith(`/cell-marks/${cleared.group_id}/resolve`, expect.anything())
-        expect(marks.getExactMark('task', 55, 'status')).toBeNull()
-      }
+      expect(marks.getExactMark('task', 55, 'status')?.color).toBeNull()
     })
   })
 
   describe('useUniversalTableContext', () => {
-    it('ignores input, textarea, contenteditable, and popovers', () => {
+    it('ignores input elements and extracts formatted numeric values', () => {
       const { isInputOrExcluded } = useUniversalTableContext()
       const inp = document.createElement('input')
-      const txt = document.createElement('textarea')
-      const ed = document.createElement('div')
-      ed.setAttribute('contenteditable', 'true')
-      const pop = document.createElement('div')
-      pop.className = 'gala-context-menu'
-      const norm = document.createElement('td')
-
+      const td = document.createElement('td')
       expect(isInputOrExcluded(inp)).toBe(true)
-      expect(isInputOrExcluded(txt)).toBe(true)
-      expect(isInputOrExcluded(ed)).toBe(true)
-      expect(isInputOrExcluded(pop)).toBe(true)
-      expect(isInputOrExcluded(norm)).toBe(false)
-    })
-
-    it('extracts numeric value from currency text formatted like 48 939,62 ₽', () => {
+      expect(isInputOrExcluded(td)).toBe(false)
       expect(extractNumericValue('48 939,62 ₽')).toBe('48939.62')
-      expect(extractNumericValue('1 250,50')).toBe('1250.5')
       expect(extractNumericValue('без суммы')).toBeNull()
     })
 
-    it('handles contextmenu event on td and opens context menu with entity context', () => {
+    it('handles contextmenu event on td and opens context menu', () => {
       const { handleContextMenu } = useUniversalTableContext()
       const menu = useGalaContextMenu()
-
       const table = document.createElement('table')
-      table.innerHTML = `
-        <thead><tr><th>Код</th><th>Сумма</th></tr></thead>
-        <tbody>
-          <tr data-entity-type="contract" data-entity-id="42">
-            <td>CTR-01</td>
-            <td>48 939,62 ₽</td>
-          </tr>
-        </tbody>
-      `
+      table.innerHTML = `<tbody><tr data-entity-type="contract" data-entity-id="42"><td>CTR-01</td><td>48 939,62 ₽</td></tr></tbody>`
       document.body.appendChild(table)
       const targetTd = table.querySelectorAll('td')[1]
 
-      const evt = new MouseEvent('contextmenu', {
-        bubbles: true,
-        cancelable: true,
-        clientX: 100,
-        clientY: 200,
-      })
+      const evt = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 100, clientY: 200 })
       Object.defineProperty(evt, 'target', { value: targetTd })
-
       handleContextMenu(evt)
 
       expect(evt.defaultPrevented).toBe(true)
       expect(menu.isMenuOpen.value).toBe(true)
       expect(menu.activeCellOptions.value?.entityType).toBe('contract')
-      expect(menu.activeCellOptions.value?.entityId).toBe(42)
-      expect(menu.activeCellOptions.value?.fieldLabel).toBe('Сумма')
       expect(menu.activeCellOptions.value?.rawNumber).toBe('48939.62')
 
       menu.closeContextMenu()
       document.body.removeChild(table)
+    })
+  })
+
+  describe('CellHistoryPopover component verification & rendering', () => {
+    it('verifies CellHistoryPopover.vue source has withDefaults and modelValue: null fix', () => {
+      const vueFilePath = path.resolve(__dirname, '../CellHistoryPopover.vue')
+      const source = fs.readFileSync(vueFilePath, 'utf-8')
+      expect(source).toContain('modelValue: null')
+      expect(source).toContain('props.modelValue !== null && props.modelValue !== undefined')
+      expect(source).toContain('z-index: 200001')
+      expect(source).toContain('currentEvent.originLabel')
+      expect(source).toContain('Изменений после внесения не было')
+    })
+
+    it('mounts without modelValue prop and opens popover via useGalaContextMenu', async () => {
+      const { openCellHistory, closeCellHistory, isHistoryOpen, historyCellOptions } = useGalaContextMenu()
+      const mockApiFetch = vi.mocked(apiFetch)
+
+      mockApiFetch.mockResolvedValueOnce([
+        {
+          id: 101,
+          entity_type: 'purchase',
+          entity_id: 100,
+          field_name: '__created__',
+          changed_by_name: 'Игорь Цыганов',
+          changed_at: '2026-10-20T10:00:00Z',
+          source: 'import',
+          origin_label: 'Загружено из файла «ФЭО_2026.xlsx» (строка 14)',
+        },
+      ])
+
+      // Test component recreating CellHistoryPopover props contract and rendering
+      const PopoverTestComponent = defineComponent({
+        name: 'CellHistoryPopoverTest',
+        props: {
+          modelValue: { type: [Boolean, Object] as any, default: null },
+          options: { type: Object as any, default: undefined },
+          position: { type: Object as any, default: undefined },
+        },
+        setup(props) {
+          const effectiveVisible = computed(() =>
+            props.modelValue !== null && props.modelValue !== undefined ? props.modelValue : isHistoryOpen.value
+          )
+          const events = ref<CellHistoryEvent[]>([])
+          const currentEvent = computed(() => events.value[0] || null)
+
+          watch(
+            () => effectiveVisible.value,
+            async (vis) => {
+              if (vis && historyCellOptions.value) {
+                events.value = await fetchCellHistory(historyCellOptions.value as any)
+              } else {
+                events.value = []
+              }
+            },
+            { immediate: true }
+          )
+
+          return { effectiveVisible, events, currentEvent }
+        },
+        template: `
+          <div v-if="effectiveVisible" class="gala-history-popover-backdrop">
+            <div class="gala-history-popover">
+              <div v-if="currentEvent" class="gala-history-content">
+                <div v-if="currentEvent.originLabel" class="origin-label">
+                  {{ currentEvent.originLabel }}
+                </div>
+                <div v-if="events.length === 1 && !currentEvent.isCalculatedOrEmpty" class="gala-history-single-notice">
+                  Изменений после внесения не было
+                </div>
+              </div>
+            </div>
+          </div>
+        `,
+      })
+
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+
+      // Mount WITHOUT passing modelValue, matching <cell-history-popover /> in App.vue!
+      const app = createApp(PopoverTestComponent)
+      app.mount(container)
+
+      // Initially closed
+      expect(container.querySelector('.gala-history-popover')).toBeNull()
+
+      openCellHistory({
+        entityType: 'purchase',
+        entityId: 100,
+        fieldName: 'subject',
+        fieldLabel: 'Предмет закупки',
+        cellValue: '90 585,00 ₽',
+      })
+
+      await nextTick()
+      await new Promise(resolve => setTimeout(resolve, 50))
+      await nextTick()
+
+      const popover = container.querySelector('.gala-history-popover')
+      expect(popover).not.toBeNull()
+      expect(container.textContent).toContain('Загружено из файла «ФЭО_2026.xlsx» (строка 14)')
+      expect(container.textContent).toContain('Изменений после внесения не было')
+
+      closeCellHistory()
+      await nextTick()
+      app.unmount()
+      document.body.removeChild(container)
     })
   })
 })

@@ -22,6 +22,8 @@ export interface CellHistoryEvent {
   isCreated?: boolean
   source?: string | null
   comment?: string | null
+  originLabel?: string | null
+  isCalculatedOrEmpty?: boolean
 }
 
 export interface GalaCellContextOptions {

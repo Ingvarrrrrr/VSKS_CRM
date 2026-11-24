@@ -218,7 +218,7 @@
       <FeoToolbarMoreMenu
         :can-save-version="canSaveVersion"
         @clear-source-rows="clearSourceRowsConfirming = true"
-        @snack="showSnack"
+        @snack="(msg, col) => showSnack(msg, (col as any) || 'success')"
       />
       <v-btn v-if="ctx.canEditFeo.value" size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="ctx.openAddFeoDialog(null)">Добавить</v-btn>
     </div>

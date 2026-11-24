@@ -52,23 +52,23 @@
           :key="entry.key"
           :data-feo-planned-item-id="entry.kind === 'item' ? entry.item.id : undefined"
           :class="[
-            entry.kind === 'item' ? cellMarks.getRowMarkClasses('feo_item', entry.item.id) : cellMarks.getRowMarkClasses('feo_category', entry.category_id || 0),
+            entry.kind === 'item' ? cellMarks.getRowMarkClasses('feo_item', entry.item.id) : cellMarks.getRowMarkClasses('feo_category', (entry as any).category_id || 0),
             { 'feo-search-highlight-row': entry.kind === 'item' && feoSearch.isFeoSearchHighlighted(`p-${entry.item.id}`) }
           ]"
-          :style="entry.kind === 'item' ? cellMarks.getRowMarkStyle('feo_item', entry.item.id) : cellMarks.getRowMarkStyle('feo_category', entry.category_id || 0)"
-          :data-gala-focus="entry.kind === 'item' ? `feo_item:${entry.item.id}` : `feo_category:${entry.category_id || 0}`"
+          :style="entry.kind === 'item' ? cellMarks.getRowMarkStyle('feo_item', entry.item.id) : cellMarks.getRowMarkStyle('feo_category', (entry as any).category_id || 0)"
+          :data-gala-focus="entry.kind === 'item' ? `feo_item:${entry.item.id}` : `feo_category:${(entry as any).category_id || 0}`"
         >
           <template v-if="entry.kind === 'header'">
             <td :colspan="planToRequest.active.value ? 5 : 4" class="scp-header"
               :class="[
                 entry.level === 1 ? 'group-hdr--category' : 'group-hdr--type',
-                cellMarks.getCellMarkClasses('feo_category', entry.category_id || 0, 'budget')
+                cellMarks.getCellMarkClasses('feo_category', (entry as any).category_id || 0, 'budget')
               ]"
               :style="[
                 { paddingLeft: `${(entry.level - 1) * 20 + 8}px` },
-                cellMarks.getCellMarkStyle('feo_category', entry.category_id || 0, 'budget')
+                cellMarks.getCellMarkStyle('feo_category', (entry as any).category_id || 0, 'budget')
               ]"
-              @click="onCellClick($event, { entityType: 'feo_category', entityId: entry.category_id || 0, fieldName: 'budget' })"
+              @click="onCellClick($event, { entityType: 'feo_category', entityId: (entry as any).category_id || 0, fieldName: 'budget' })"
               @contextmenu.prevent="onCategoryHeaderContextMenu($event, entry)">
               <v-checkbox-btn
                 v-if="planToRequest.active.value"

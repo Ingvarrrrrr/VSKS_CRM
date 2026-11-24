@@ -267,7 +267,7 @@ export function useCellMarks() {
     return {
       '--gala-mark-light': paletteItem ? paletteItem.lightBg : 'transparent',
       '--gala-mark-dark': paletteItem ? paletteItem.darkBg : 'transparent',
-      '--gala-mark-corner': cornerPaletteItem.corner,
+      '--gala-mark-corner': cornerPaletteItem ? cornerPaletteItem.corner : 'transparent',
     }
   }
 
@@ -326,7 +326,7 @@ export function useCellMarks() {
 
     const res = await apiFetch<CellMarkRecord[] | { items?: CellMarkRecord[] }>('/cell-marks/batch', {
       method: 'POST',
-      body: payload,
+      body: payload as any,
     })
 
     const rawList = Array.isArray(res) ? res : (res && Array.isArray(res.items) ? res.items : [])
@@ -372,7 +372,7 @@ export function useCellMarks() {
 
     await apiFetch('/cell-marks/clear-color', {
       method: 'POST',
-      body: { targets },
+      body: { targets } as any,
     })
 
     const nextMap = new Map(marksMap.value)

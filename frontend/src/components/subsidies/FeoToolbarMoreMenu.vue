@@ -93,7 +93,7 @@
     ref="roundtripImportDialog"
     :subsidy-id="ctx.selectedId.value ?? null"
     :show-snack="(msg, col) => emit('snack', msg, col)"
-    :on-applied="() => ctx.selectedId.value != null && ctx.loadFeo(ctx.selectedId.value)"
+    :on-applied="() => { if (ctx.selectedId.value != null) void ctx.loadFeo(ctx.selectedId.value) }"
   />
 </template>
 

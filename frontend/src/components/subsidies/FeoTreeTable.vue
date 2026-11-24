@@ -251,7 +251,7 @@
 // (позиции «из заявок» после поддерева владельца). Формулы/состояние —
 // composables/subsidies/useFeoTree*.ts (Правило №6), здесь только вёрстка +
 // сборка строк.
-import { watchEffect, ref, computed } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'

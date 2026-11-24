@@ -9,7 +9,7 @@ import { useCellMarks } from '@/composables/useCellMarks'
  */
 export function useUniversalTableContext() {
   const { openCellContextMenu } = useGalaContextMenu()
-  const { isCellSelected, handleCellSelectClick, openCommentAt } = useCellMarks()
+  const { handleCellSelectClick, openCommentAt } = useCellMarks()
 
   function isInputOrExcluded(target: HTMLElement | null): boolean {
     if (!target) return false
@@ -111,13 +111,13 @@ export function useUniversalTableContext() {
       const fieldName = cell.dataset.field || cell.dataset.fieldName || '*'
       const fieldLabel = cell.dataset.fieldLabel || fieldName
       handleCellSelectClick(
+        e,
         {
           entityType,
           entityId,
           fieldName,
           fieldLabel,
-        },
-        e
+        }
       )
       e.preventDefault()
       return
@@ -130,8 +130,8 @@ export function useUniversalTableContext() {
       const fieldName = cell.dataset.field || cell.dataset.fieldName || '*'
       const fieldLabel = cell.dataset.fieldLabel || fieldName
       openCommentAt(
-        [{ entityType, entityId, fieldName, fieldLabel }],
-        { x: e.clientX, y: e.clientY }
+        { x: e.clientX, y: e.clientY },
+        [{ entityType, entityId, fieldName, fieldLabel }]
       )
       e.preventDefault()
     }

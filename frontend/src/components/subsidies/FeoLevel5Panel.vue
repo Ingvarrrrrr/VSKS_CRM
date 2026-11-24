@@ -1209,7 +1209,7 @@ watch(
 feoMarks.onEntityRestored((detail) => {
   if (detail.entityType === 'feo_item' || detail.entityType === 'feo_category') {
     if (subsidyId.value) void ctx.loadFeo(subsidyId.value)
-    void ctx.ensureComparison(node.id, true)
+    void ctx.ensureComparison(node.id)
   }
 })
 

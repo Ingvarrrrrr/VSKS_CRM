@@ -13,74 +13,52 @@
         :model-value="selected"
         items-per-page="25"
         :items-per-page-options="[25, 50, 100, -1]"
+        :row-props="(data: any) => ({
+          'data-gala-row': `wish:${data.item.id}`,
+          'data-entity-type': 'wish',
+          'data-entity-id': data.item.id,
+          class: getRowMarkClasses('wish', data.item.id),
+          style: getRowMarkStyle('wish', data.item.id),
+        })"
         @update:model-value="v => $emit('update:selected', v)"
         @click:row="(_: any, { item }: any) => $emit('open-edit', item)"
       >
         <!-- B7: column header menus -->
         <template #header.status="{ column }">
-          <ColumnHeaderMenu col-key="status" :title="column.title || ''" col-type="enum"
-            :items="Object.keys(statusLabel)"
-            :item-labels="statusLabel"
-            :model-value="colFilters.status"
-            :sort-by="colSort.status"
-            @update:model-value="v => colFilters.status = v"
-            @sort="dir => colSort.status = dir" />
+          <ColumnHeaderMenu col-key="status" :title="column.title || ''" col-type="enum" :items="Object.keys(statusLabel)" :item-labels="statusLabel"
+            :model-value="colFilters.status" :sort-by="colSort.status" @update:model-value="v => colFilters.status = v" @sort="dir => colSort.status = dir" />
         </template>
         <template #header.number_col="{ column }">
           <ColumnHeaderMenu col-key="number_col" :title="column.title || ''" col-type="text"
-            :model-value="colFilters.number_col"
-            :sort-by="colSort.number_col"
-            @update:model-value="v => colFilters.number_col = v"
-            @sort="dir => colSort.number_col = dir" />
+            :model-value="colFilters.number_col" :sort-by="colSort.number_col" @update:model-value="v => colFilters.number_col = v" @sort="dir => colSort.number_col = dir" />
         </template>
         <template #header.title_col="{ column }">
           <ColumnHeaderMenu col-key="title_col" :title="column.title || ''" col-type="text"
-            :model-value="colFilters.title_col"
-            :sort-by="colSort.title_col"
-            @update:model-value="v => colFilters.title_col = v"
-            @sort="dir => colSort.title_col = dir" />
+            :model-value="colFilters.title_col" :sort-by="colSort.title_col" @update:model-value="v => colFilters.title_col = v" @sort="dir => colSort.title_col = dir" />
         </template>
         <template #header.creator_name="{ column }">
           <ColumnHeaderMenu col-key="creator_name" :title="column.title || ''" col-type="text"
-            :model-value="colFilters.creator_name"
-            :sort-by="colSort.creator_name"
-            @update:model-value="v => colFilters.creator_name = v"
-            @sort="dir => colSort.creator_name = dir" />
+            :model-value="colFilters.creator_name" :sort-by="colSort.creator_name" @update:model-value="v => colFilters.creator_name = v" @sort="dir => colSort.creator_name = dir" />
         </template>
         <template #header.approver_names="{ column }">
           <ColumnHeaderMenu col-key="approver_names" :title="column.title || ''" col-type="text"
-            :model-value="colFilters.approver_names"
-            :sort-by="colSort.approver_names"
-            @update:model-value="v => colFilters.approver_names = v"
-            @sort="dir => colSort.approver_names = dir" />
+            :model-value="colFilters.approver_names" :sort-by="colSort.approver_names" @update:model-value="v => colFilters.approver_names = v" @sort="dir => colSort.approver_names = dir" />
         </template>
         <template #header.created_at="{ column }">
           <ColumnHeaderMenu col-key="created_at" :title="column.title || ''" col-type="date"
-            :model-value="colFilters.created_at"
-            :sort-by="colSort.created_at"
-            @update:model-value="v => colFilters.created_at = v"
-            @sort="dir => colSort.created_at = dir" />
+            :model-value="colFilters.created_at" :sort-by="colSort.created_at" @update:model-value="v => colFilters.created_at = v" @sort="dir => colSort.created_at = dir" />
         </template>
         <template #header.desired_date="{ column }">
           <ColumnHeaderMenu col-key="desired_date" :title="column.title || ''" col-type="date"
-            :model-value="colFilters.desired_date"
-            :sort-by="colSort.desired_date"
-            @update:model-value="v => colFilters.desired_date = v"
-            @sort="dir => colSort.desired_date = dir" />
+            :model-value="colFilters.desired_date" :sort-by="colSort.desired_date" @update:model-value="v => colFilters.desired_date = v" @sort="dir => colSort.desired_date = dir" />
         </template>
         <template #header.executor_name="{ column }">
           <ColumnHeaderMenu col-key="executor_name" :title="column.title || ''" col-type="text"
-            :model-value="colFilters.executor_name"
-            :sort-by="colSort.executor_name"
-            @update:model-value="v => colFilters.executor_name = v"
-            @sort="dir => colSort.executor_name = dir" />
+            :model-value="colFilters.executor_name" :sort-by="colSort.executor_name" @update:model-value="v => colFilters.executor_name = v" @sort="dir => colSort.executor_name = dir" />
         </template>
         <template #header.execution_deadline="{ column }">
           <ColumnHeaderMenu col-key="execution_deadline" :title="column.title || ''" col-type="date"
-            :model-value="colFilters.execution_deadline"
-            :sort-by="colSort.execution_deadline"
-            @update:model-value="v => colFilters.execution_deadline = v"
-            @sort="dir => colSort.execution_deadline = dir" />
+            :model-value="colFilters.execution_deadline" :sort-by="colSort.execution_deadline" @update:model-value="v => colFilters.execution_deadline = v" @sort="dir => colSort.execution_deadline = dir" />
         </template>
         <template #item.status="{ item }">
           <v-chip
@@ -425,8 +403,10 @@
 // читает DOM через $el для RegistryExportButton::get-capture-el без defineExpose).
 // Действия эмитятся наверх (WishesView.vue), которая вызывает те же функции
 // useWishForm/useWishActions, что и раньше.
+import { watch } from 'vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import WishCard from '@/components/wishes/WishCard.vue'
+import { useCellMarks } from '@/composables/useCellMarks'
 import {
   useWishesContext, statusColor, statusLabel, GALA_ORANGE,
   shortName, wishCoAuthors, wishRecipients, wishItemsTotal, formatDate, formatPrice,
@@ -435,7 +415,8 @@ import {
 import { canDistributeWish, canDeleteWish } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
-defineProps<{
+const ctx = useWishesContext()
+const props = defineProps<{
   items: Wish[]
   headers: any[]
   loading: boolean
@@ -466,7 +447,16 @@ defineEmits<{
   (e: 'update:selected', ids: number[]): void
 }>()
 
-const ctx = useWishesContext()
+const { loadMarks, getRowMarkClasses, getRowMarkStyle } = useCellMarks()
+
+watch(
+  () => props.items,
+  newItems => {
+    const ids = (newItems || []).map((x: any) => x.id).filter(Boolean)
+    if (ids.length) loadMarks('wish', ids)
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

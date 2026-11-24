@@ -78,6 +78,13 @@
     :model-value="selected"
     items-per-page="25"
     :items-per-page-options="[25, 50, 100, -1]"
+    :row-props="(data: any) => ({
+      'data-gala-row': `wish:${data.item.id}`,
+      'data-entity-type': 'wish',
+      'data-entity-id': data.item.id,
+      class: getRowMarkClasses('wish', data.item.id),
+      style: getRowMarkStyle('wish', data.item.id),
+    })"
     @update:model-value="v => $emit('update:selected', v)"
     @click:row="(_: any, { item }: any) => $emit('open-edit', item)"
   >
@@ -306,8 +313,10 @@
 // WishIncomingTab.vue — вкладка «На согласование мне». Дословный перенос шаблона
 // (596-795) из WishesView.vue. Действия эмитятся наверх, обрабатываются теми же
 // функциями useWishForm/useWishActions, что и раньше.
+import { watch } from 'vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import WishCard from '@/components/wishes/WishCard.vue'
+import { useCellMarks } from '@/composables/useCellMarks'
 import {
   useWishesContext, statusColor, statusLabel, GALA_ORANGE,
   shortName, wishCoAuthors, wishRecipients, wishItemsTotal, formatDate, formatPrice,
@@ -316,7 +325,8 @@ import {
 import { canDistributeWish, canDecideFromList, canDeleteWish } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
-defineProps<{
+const ctx = useWishesContext()
+const props = defineProps<{
   items: Wish[]
   headers: any[]
   loading: boolean
@@ -344,5 +354,14 @@ defineEmits<{
   (e: 'update:selected', ids: number[]): void
 }>()
 
-const ctx = useWishesContext()
+const { loadMarks, getRowMarkClasses, getRowMarkStyle } = useCellMarks()
+
+watch(
+  () => props.items,
+  newItems => {
+    const ids = (newItems || []).map((x: any) => x.id).filter(Boolean)
+    if (ids.length) loadMarks('wish', ids)
+  },
+  { immediate: true }
+)
 </script>

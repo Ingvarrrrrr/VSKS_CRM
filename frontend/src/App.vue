@@ -112,6 +112,7 @@ import CellHistoryPopover from './components/common/CellHistoryPopover.vue'
 import CellCommentPopover from './components/common/CellCommentPopover.vue'
 import './styles/cell-marks.css'
 import { useAuthStore } from './stores/auth'
+import { useUniversalTableContext } from './composables/useUniversalTableContext'
 import { CACHED_PAGE_NAMES, CACHED_PAGE_MAX } from './composables/pageCache'
 import { isLoggedIn, setLoggedIn, clearLoggedIn } from './composables/useAuthFlag'
 import { setSwarmBooting } from './composables/useLongWait'
@@ -120,6 +121,7 @@ const route = useRoute()
 const router = useRouter()
 const theme = useTheme()
 const authStore = useAuthStore()
+useUniversalTableContext()
 
 const apiLoading = ref(false)
 function onApiLoading(e: Event) {

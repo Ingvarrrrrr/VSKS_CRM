@@ -386,7 +386,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
 <style scoped>
 .gala-comment-popover-backdrop {
-  position: fixed; inset: 0; z-index: 99999; background: transparent;
+  position: fixed; inset: 0; z-index: 200002; background: transparent;
 }
 .gala-comment-popover {
   position: fixed; width: 310px; background: rgb(var(--v-theme-surface));

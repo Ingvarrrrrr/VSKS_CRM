@@ -15,120 +15,74 @@
     items-per-page="50"
     :items-per-page-options="[25,50,100,-1]"
     :sort-by="localSort ? [localSort] : []"
+    :row-props="(data: any) => ({
+      'data-gala-row': `contract:${data.item.id}`,
+      'data-entity-type': 'contract',
+      'data-entity-id': data.item.id,
+      'data-open-url': `/contracts?id=${data.item.id}`,
+      class: getRowMarkClasses('contract', data.item.id),
+      style: getRowMarkStyle('contract', data.item.id),
+    })"
     @click:row="(_e: any, { item }: any) => emit('edit', item)"
     style="cursor: pointer"
   >
     <!-- ColumnHeaderMenu slots -->
     <template #header.number="{ column }">
       <ColumnHeaderMenu col-key="number" :title="column.title" col-type="enum"
-        :items="uniqValues(contracts, 'number')"
-        :model-value="colFilters['number'] ?? null"
-        :sort-by="getSortBy('number')"
-        @update:model-value="v => setFilter('number', v)"
-        @sort="dir => applySort('number', dir)"
-        @hide="toggleVisible('number', false)"
-      />
+        :items="uniqValues(contracts, 'number')" :model-value="colFilters['number'] ?? null" :sort-by="getSortBy('number')"
+        @update:model-value="v => setFilter('number', v)" @sort="dir => applySort('number', dir)" @hide="toggleVisible('number', false)" />
     </template>
     <template #header.date="{ column }">
       <ColumnHeaderMenu col-key="date" :title="column.title" col-type="date"
-        :model-value="colFilters['date'] ?? null"
-        :sort-by="getSortBy('date')"
-        @update:model-value="v => setFilter('date', v)"
-        @sort="dir => applySort('date', dir)"
-        @hide="toggleVisible('date', false)"
-      />
+        :model-value="colFilters['date'] ?? null" :sort-by="getSortBy('date')"
+        @update:model-value="v => setFilter('date', v)" @sort="dir => applySort('date', dir)" @hide="toggleVisible('date', false)" />
     </template>
     <template #header.contract_type="{ column }">
       <ColumnHeaderMenu col-key="contract_type" :title="column.title" col-type="enum"
-        :items="uniqValues(contracts, 'contract_type')"
-        :item-labels="contractTypeLabels"
-        :model-value="colFilters['contract_type'] ?? null"
-        :sort-by="getSortBy('contract_type')"
-        @update:model-value="v => setFilter('contract_type', v)"
-        @sort="dir => applySort('contract_type', dir)"
-        @hide="toggleVisible('contract_type', false)"
-      />
+        :items="uniqValues(contracts, 'contract_type')" :item-labels="contractTypeLabels"
+        :model-value="colFilters['contract_type'] ?? null" :sort-by="getSortBy('contract_type')"
+        @update:model-value="v => setFilter('contract_type', v)" @sort="dir => applySort('contract_type', dir)" @hide="toggleVisible('contract_type', false)" />
     </template>
     <template #header.purchase_method="{ column }">
       <ColumnHeaderMenu col-key="purchase_method" :title="column.title" col-type="enum"
-        :items="uniqValues(contracts, 'purchase_method')"
-        :item-labels="purchaseMethodLabels"
-        :model-value="colFilters['purchase_method'] ?? null"
-        :sort-by="getSortBy('purchase_method')"
-        @update:model-value="v => setFilter('purchase_method', v)"
-        @sort="dir => applySort('purchase_method', dir)"
-        @hide="toggleVisible('purchase_method', false)"
-      />
+        :items="uniqValues(contracts, 'purchase_method')" :item-labels="purchaseMethodLabels"
+        :model-value="colFilters['purchase_method'] ?? null" :sort-by="getSortBy('purchase_method')"
+        @update:model-value="v => setFilter('purchase_method', v)" @sort="dir => applySort('purchase_method', dir)" @hide="toggleVisible('purchase_method', false)" />
     </template>
     <template #header.contractor_name="{ column }">
       <ColumnHeaderMenu col-key="contractor_name" :title="column.title" col-type="enum"
-        :items="uniqValues(contracts, 'contractor_name')"
-        :model-value="colFilters['contractor_name'] ?? null"
-        :sort-by="getSortBy('contractor_name')"
-        @update:model-value="v => setFilter('contractor_name', v)"
-        @sort="dir => applySort('contractor_name', dir)"
-        @hide="toggleVisible('contractor_name', false)"
-      />
+        :items="uniqValues(contracts, 'contractor_name')" :model-value="colFilters['contractor_name'] ?? null" :sort-by="getSortBy('contractor_name')"
+        @update:model-value="v => setFilter('contractor_name', v)" @sort="dir => applySort('contractor_name', dir)" @hide="toggleVisible('contractor_name', false)" />
     </template>
     <template #header.subsidy_name="{ column }">
       <ColumnHeaderMenu col-key="subsidy_name" :title="column.title" col-type="enum"
-        :items="uniqValues(contracts, 'subsidy_name')"
-        :model-value="colFilters['subsidy_name'] ?? null"
-        :sort-by="getSortBy('subsidy_name')"
-        @update:model-value="v => setFilter('subsidy_name', v)"
-        @sort="dir => applySort('subsidy_name', dir)"
-        @hide="toggleVisible('subsidy_name', false)"
-      />
+        :items="uniqValues(contracts, 'subsidy_name')" :model-value="colFilters['subsidy_name'] ?? null" :sort-by="getSortBy('subsidy_name')"
+        @update:model-value="v => setFilter('subsidy_name', v)" @sort="dir => applySort('subsidy_name', dir)" @hide="toggleVisible('subsidy_name', false)" />
     </template>
     <template #header.max_amount="{ column }">
       <ColumnHeaderMenu col-key="max_amount" :title="column.title" col-type="number" align="end"
-        :items="uniqValues(contracts, 'max_amount')"
-        :model-value="colFilters['max_amount'] ?? null"
-        :sort-by="getSortBy('max_amount')"
-        @update:model-value="v => setFilter('max_amount', v)"
-        @sort="dir => applySort('max_amount', dir)"
-        @hide="toggleVisible('max_amount', false)"
-      />
+        :items="uniqValues(contracts, 'max_amount')" :model-value="colFilters['max_amount'] ?? null" :sort-by="getSortBy('max_amount')"
+        @update:model-value="v => setFilter('max_amount', v)" @sort="dir => applySort('max_amount', dir)" @hide="toggleVisible('max_amount', false)" />
     </template>
     <template #header.total_ordered="{ column }">
       <ColumnHeaderMenu col-key="total_ordered" :title="column.title" col-type="number" align="end"
-        :items="uniqValues(contracts, 'total_ordered')"
-        :model-value="colFilters['total_ordered'] ?? null"
-        :sort-by="getSortBy('total_ordered')"
-        @update:model-value="v => setFilter('total_ordered', v)"
-        @sort="dir => applySort('total_ordered', dir)"
-        @hide="toggleVisible('total_ordered', false)"
-      />
+        :items="uniqValues(contracts, 'total_ordered')" :model-value="colFilters['total_ordered'] ?? null" :sort-by="getSortBy('total_ordered')"
+        @update:model-value="v => setFilter('total_ordered', v)" @sort="dir => applySort('total_ordered', dir)" @hide="toggleVisible('total_ordered', false)" />
     </template>
     <template #header.total_delivered="{ column }">
       <ColumnHeaderMenu col-key="total_delivered" :title="column.title" col-type="number" align="end"
-        :items="uniqValues(contracts, 'total_delivered')"
-        :model-value="colFilters['total_delivered'] ?? null"
-        :sort-by="getSortBy('total_delivered')"
-        @update:model-value="v => setFilter('total_delivered', v)"
-        @sort="dir => applySort('total_delivered', dir)"
-        @hide="toggleVisible('total_delivered', false)"
-      />
+        :items="uniqValues(contracts, 'total_delivered')" :model-value="colFilters['total_delivered'] ?? null" :sort-by="getSortBy('total_delivered')"
+        @update:model-value="v => setFilter('total_delivered', v)" @sort="dir => applySort('total_delivered', dir)" @hide="toggleVisible('total_delivered', false)" />
     </template>
     <template #header.total_paid="{ column }">
       <ColumnHeaderMenu col-key="total_paid" :title="column.title" col-type="number" align="end"
-        :items="uniqValues(contracts, 'total_paid')"
-        :model-value="colFilters['total_paid'] ?? null"
-        :sort-by="getSortBy('total_paid')"
-        @update:model-value="v => setFilter('total_paid', v)"
-        @sort="dir => applySort('total_paid', dir)"
-        @hide="toggleVisible('total_paid', false)"
-      />
+        :items="uniqValues(contracts, 'total_paid')" :model-value="colFilters['total_paid'] ?? null" :sort-by="getSortBy('total_paid')"
+        @update:model-value="v => setFilter('total_paid', v)" @sort="dir => applySort('total_paid', dir)" @hide="toggleVisible('total_paid', false)" />
     </template>
     <template #header.remaining_ordered="{ column }">
       <ColumnHeaderMenu col-key="remaining_ordered" :title="column.title" col-type="number" align="end"
-        :items="uniqValues(contracts, 'remaining_ordered')"
-        :model-value="colFilters['remaining_ordered'] ?? null"
-        :sort-by="getSortBy('remaining_ordered')"
-        @update:model-value="v => setFilter('remaining_ordered', v)"
-        @sort="dir => applySort('remaining_ordered', dir)"
-        @hide="toggleVisible('remaining_ordered', false)"
-      />
+        :items="uniqValues(contracts, 'remaining_ordered')" :model-value="colFilters['remaining_ordered'] ?? null" :sort-by="getSortBy('remaining_ordered')"
+        @update:model-value="v => setFilter('remaining_ordered', v)" @sort="dir => applySort('remaining_ordered', dir)" @hide="toggleVisible('remaining_ordered', false)" />
     </template>
     <template #header.remaining_delivered="{ column }">
       <ColumnHeaderMenu col-key="remaining_delivered" :title="column.title" col-type="number" align="end"
@@ -419,7 +373,9 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { watch } from 'vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
+import { useCellMarks } from '@/composables/useCellMarks'
 import type { FilterValue } from '@/composables/useColumnConfig'
 import type { Contract, Purchase } from '@/composables/contracts/contractsTypes'
 import {
@@ -463,6 +419,16 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+const { loadMarks, getRowMarkClasses, getRowMarkStyle } = useCellMarks()
+
+watch(
+  () => props.items,
+  newItems => {
+    const ids = (newItems || []).map((x: any) => x.id).filter(Boolean)
+    if (ids.length) loadMarks('contract', ids)
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>
@@ -492,14 +458,6 @@ const router = useRouter()
   padding: 6px 10px;
   margin-bottom: 6px;
 }
-.contract-approval-pending-banner__title {
-  font-weight: 800;
-  font-size: 0.92rem;
-  letter-spacing: 0.02em;
-}
-.contract-approval-pending-banner__meta {
-  font-size: 0.78rem;
-  font-weight: 500;
-  opacity: 0.85;
-}
+.contract-approval-pending-banner__title { font-weight: 800; font-size: 0.92rem; letter-spacing: 0.02em; }
+.contract-approval-pending-banner__meta { font-size: 0.78rem; font-weight: 500; opacity: 0.85; }
 </style>

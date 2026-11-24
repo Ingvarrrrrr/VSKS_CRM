@@ -137,11 +137,20 @@
                    data-feo-node-id у строки категории (FeoTreeRow.vue). -->
               <tr v-if="!isPlannedRowHidden(planned)"
                 style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id"
-                :class="{ 'feo-stage-row': !!rowStageBackground(planned), 'feo-search-highlight-row': ctx.isFeoSearchHighlighted(`p-${planned.id}`) }"
-                :style="rowStageBackground(planned) || {}"
+                :class="[
+                  { 'feo-stage-row': !!rowStageBackground(planned), 'feo-search-highlight-row': ctx.isFeoSearchHighlighted(`p-${planned.id}`) },
+                  feoMarks.feoRowAttrs('feo_item', planned.id).class,
+                ]"
+                :style="feoMarks.mergeRowStyle(rowStageBackground(planned) || { borderBottom: '1px solid #E5E7EB' }, 'feo_item', planned.id)"
                 :title="rowStageTooltip(planned) || undefined"
+                @contextmenu.prevent="onPlannedRowContextMenu($event, planned)"
               >
-                <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
+                <td :style="feoMarks.mergeCellStyle([nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }], 'feo_item', planned.id, 'name')"
+                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'name').class"
+                  style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e"
+                  @click="onPlannedCellClick($event, planned, 'name')"
+                  @contextmenu.prevent="onPlannedItemNameContextMenu($event, planned)"
+                >
                   <div class="d-flex align-center" style="gap:2px">
                     <!-- Задача владельца, п.12 волны 3: чекбокс массового выбора — только у
                          настоящих записей (ручная псевдо-строка isManual не может переноситься
@@ -334,7 +343,12 @@
                     {{ ctx.planBreakdownText(node.id, planned) }}
                   </div>
                 </td>
-                <td :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#64748b">
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('budget'), 'feo_item', planned.id, 'unit_price')"
+                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'unit_price').class"
+                  style="padding:4px 8px;text-align:right;color:#64748b"
+                  @click="onPlannedCellClick($event, planned, 'unit_price')"
+                  @contextmenu.prevent="onPlannedItemUnitPriceContextMenu($event, planned)"
+                >
                   <!-- Задача владельца, п.15б/Волна 5 (2026-09-14): позиция с ОБЕИМИ
                        галочками (по ФЭО + внутренний план) показывала одну и ту же
                        цифру под двумя подписями — цифры теперь РАЗНЫЕ (feo_unit_price
@@ -363,7 +377,12 @@
                     <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('unit_price', planned.id, planned.unit_price != null ? Number(planned.unit_price) : null)" />
                   </template>
                 </td>
-                <td :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#64748b">
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('qty'), 'feo_item', planned.id, 'quantity')"
+                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'quantity').class"
+                  style="padding:4px 8px;text-align:right;color:#64748b"
+                  @click="onPlannedCellClick($event, planned, 'quantity')"
+                  @contextmenu.prevent="onPlannedItemQtyContextMenu($event, planned)"
+                >
                   <!-- Тот же принцип разбивки, что и у «Плановой цены за единицу»
                        выше (задача владельца, Волна 5, 2026-09-14: «то же самое
                        нужно в Кол-во плана и Сумма плана») — единообразно во всех
@@ -385,7 +404,12 @@
                     <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('quantity', planned.id, planned.quantity != null ? Number(planned.quantity) : null)" />
                   </template>
                 </td>
-                <td :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#64748b">
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('planned'), 'feo_item', planned.id, 'amount')"
+                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'amount').class"
+                  style="padding:4px 8px;text-align:right;color:#64748b"
+                  @click="onPlannedCellClick($event, planned, 'amount')"
+                  @contextmenu.prevent="onPlannedItemAmountContextMenu($event, planned)"
+                >
                   <template v-if="!planned.isManual && (planned.is_feo_breakdown || planned.is_internal_plan)">
                     <div v-if="planned.is_feo_breakdown" class="feo-origin-split feo-origin-split--feo">
                       <span v-if="feoAmountFor(planned) != null">{{ formatCurrency(Number(feoAmountFor(planned))) }}</span>
@@ -403,7 +427,12 @@
                     <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('amount', planned.id, planned.amount != null ? Number(planned.amount) : null)" />
                   </template>
                 </td>
-                <td style="width:86px;min-width:86px;padding:2px 4px;text-align:center;color:#64748b">
+                <td :style="feoMarks.mergeCellStyle({ width: '86px', minWidth: '86px', padding: '2px 4px', textAlign: 'center', color: '#64748b' }, 'feo_item', planned.id, 'item_type')"
+                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'item_type').class"
+                  style="width:86px;min-width:86px;padding:2px 4px;text-align:center;color:#64748b"
+                  @click="onPlannedCellClick($event, planned, 'item_type')"
+                  @contextmenu.prevent="onPlannedItemTypeContextMenu($event, planned)"
+                >
                   <!-- Инлайн-правка (владелец, 21.09, раздел W2) — только у реальных
                        позиций (!isManual, есть id для PUT); ручная псевдо-строка
                        категории продолжает показываться текстом, как и раньше.
@@ -477,7 +506,12 @@
                     </span>
                   </div>
                 </td>
-                <td :style="feoResize.resizeStyle('spent')" style="padding:4px 8px;vertical-align:top">
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('spent'), 'feo_item', planned.id, 'spent')"
+                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'spent').class"
+                  style="padding:4px 8px;vertical-align:top"
+                  @click="onPlannedCellClick($event, planned, 'spent')"
+                  @contextmenu.prevent="onPlannedItemStageContextMenu($event, planned)"
+                >
                   <!-- Свёрнуто (нет ни одной раскрытой строки закупок под позицией) — полоска
                        долей по стадиям; развёрнуто — список закупок с текущим статусом каждой
                        (владелец, п.15 волны 4). Нет закупок вовсе — колонка честно молчит
@@ -527,8 +561,14 @@
                     </template>
                   </template>
                 </td>
-                <td :style="feoResize.resizeStyle('residual')"></td>
-                <td style="width:112px;min-width:112px;max-width:112px;padding:2px;text-align:center">
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('residual'), 'feo_item', planned.id, 'residual')"
+                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'residual').class"
+                  @click="onPlannedCellClick($event, planned, 'residual')"
+                  @contextmenu.prevent="onPlannedItemResidualContextMenu($event, planned)"
+                ></td>
+                <td style="width:112px;min-width:112px;max-width:112px;padding:2px;text-align:center"
+                  @contextmenu.prevent="onPlannedRowContextMenu($event, planned)"
+                >
                   <div class="d-flex align-center flex-wrap justify-center" style="gap:0">
                     <template v-if="!planned.isManual">
                       <v-btn icon="mdi-chevron-up" variant="text" size="x-small" color="grey-darken-1"
@@ -650,25 +690,25 @@
                         <td colspan="12" style="padding:8px 8px;color:#94a3b8;font-style:italic">Закупок по этой плановой позиции пока нет</td>
                       </tr>
                       <template v-for="row in feoLevel5.planVsFactRowsWithParts(node.id, planned.id)" :key="row.kind === 'actual' ? `pa-${row.actual.purchase_item_id}` : `pp-${planned.id}-${row.part.key}`">
-                      <tr v-if="row.kind === 'planned_only'" style="border-bottom:1px solid #E2E8F0">
-                        <td style="padding:4px 8px;color:#0c4a6e">
+                      <tr v-if="row.kind === 'planned_only'" style="border-bottom:1px solid #E2E8F0" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">
+                        <td style="padding:4px 8px;color:#0c4a6e" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">
                           {{ planned.name }}
                           <v-chip size="x-small" color="grey" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
                             title="Часть плановой позиции — своей закупки пока нет"
                           >как запланировано</v-chip>
                           <div v-if="row.part.row != null" class="feo-plan-note text-medium-emphasis">строка {{ row.part.row }} файла</div>
                         </td>
-                        <td style="padding:4px 8px;text-align:right;color:#64748b">{{ row.part.unit_price != null ? formatCurrency(Number(row.part.unit_price)) : '—' }}</td>
-                        <td style="padding:4px 8px;text-align:right;color:#64748b">{{ row.part.qty != null ? `${parseFloat(String(row.part.qty))} ${row.part.unit || ''}` : '—' }}</td>
-                        <td style="padding:4px 8px;text-align:right;color:#64748b">{{ row.part.amount != null ? formatCurrency(row.part.amount) : '—' }}</td>
-                        <td style="padding:4px 8px;color:#94a3b8;font-style:italic">—</td>
-                        <td style="padding:4px 8px;text-align:right;color:#94a3b8">—</td>
-                        <td style="padding:4px 8px;text-align:right;color:#94a3b8">—</td>
-                        <td style="padding:4px 8px;text-align:right;color:#94a3b8">—</td>
-                        <td style="padding:4px 8px"></td>
-                        <td style="padding:4px 8px;color:#94a3b8;font-size:11px">—</td>
-                        <td style="padding:4px 8px;text-align:center;color:#94a3b8;font-size:10px">запланировано</td>
-                        <td style="padding:2px">
+                        <td style="padding:4px 8px;text-align:right;color:#64748b" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">{{ row.part.unit_price != null ? formatCurrency(Number(row.part.unit_price)) : '—' }}</td>
+                        <td style="padding:4px 8px;text-align:right;color:#64748b" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">{{ row.part.qty != null ? `${parseFloat(String(row.part.qty))} ${row.part.unit || ''}` : '—' }}</td>
+                        <td style="padding:4px 8px;text-align:right;color:#64748b" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">{{ row.part.amount != null ? formatCurrency(row.part.amount) : '—' }}</td>
+                        <td style="padding:4px 8px;color:#94a3b8;font-style:italic" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">—</td>
+                        <td style="padding:4px 8px;text-align:right;color:#94a3b8" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">—</td>
+                        <td style="padding:4px 8px;text-align:right;color:#94a3b8" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">—</td>
+                        <td style="padding:4px 8px;text-align:right;color:#94a3b8" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">—</td>
+                        <td style="padding:4px 8px" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)"></td>
+                        <td style="padding:4px 8px;color:#94a3b8;font-size:11px" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">—</td>
+                        <td style="padding:4px 8px;text-align:center;color:#94a3b8;font-size:10px" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">запланировано</td>
+                        <td style="padding:2px" @contextmenu.prevent="onPlannedRowContextMenu($event, planned)">
                           <!-- Правка части позиции (владелец, 13.10.2026) — только
                                у частей БЕЗ закупки (эта ветка kind==='planned_only'
                                и есть «без закупки»); часть с закупкой не рисует
@@ -688,19 +728,47 @@
                            части (чек-лист 13.10.2026). -->
                       <template v-for="actual in [row.actual]" :key="`pa-${actual.purchase_item_id}`">
                         <tr
-                          :class="ctx.kpiItemRowClass(actual)"
+                          :class="[ctx.kpiItemRowClass(actual), feoMarks.feoRowAttrs('purchase', actual.purchase_id).class]"
                           :data-item-id="actual.purchase_item_id" data-item-group="planned"
-                          style="border-bottom:1px solid #E2E8F0">
-                          <td style="padding:4px 8px;color:#0c4a6e">
+                          style="border-bottom:1px solid #E2E8F0"
+                          :style="feoMarks.mergeRowStyle({ borderBottom: '1px solid #E2E8F0' }, 'purchase', actual.purchase_id)"
+                          @contextmenu.prevent="onActualRowContextMenu($event, actual)"
+                        >
+                          <td style="padding:4px 8px;color:#0c4a6e"
+                            :style="feoMarks.mergeCellStyle({}, 'purchase', actual.purchase_id, 'name')"
+                            :class="feoMarks.feoCellAttrs('purchase', actual.purchase_id, 'name').class"
+                            @click="onActualCellClick($event, actual, 'name')"
+                            @contextmenu.prevent="onActualCellContextMenu($event, actual, 'name', leftGroupInfo(actual).name, 'Позиция')"
+                          >
                             {{ leftGroupInfo(actual).name }}
                             <v-chip size="x-small" :color="ctx.stageChipColorFor(actual.purchase_status)" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
                               :title="ctx.stageChipTitleFor(actual.purchase_status)"
                             >{{ ctx.stageChipLabelFor(actual.purchase_status) }}</v-chip>
                           </td>
-                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
-                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
-                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).total != null ? formatCurrency(leftGroupInfo(actual).total!) : '—' }}</td>
-                          <td style="padding:4px 8px 4px 24px;color:#166534">
+                          <td style="padding:4px 8px;text-align:right;color:#64748b"
+                            :style="feoMarks.mergeCellStyle({}, 'purchase', actual.purchase_id, 'unit_price')"
+                            :class="feoMarks.feoCellAttrs('purchase', actual.purchase_id, 'unit_price').class"
+                            @click="onActualCellClick($event, actual, 'unit_price')"
+                            @contextmenu.prevent="onActualCellContextMenu($event, actual, 'unit_price', leftGroupInfo(actual).unitPrice, 'Цена')"
+                          >{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
+                          <td style="padding:4px 8px;text-align:right;color:#64748b"
+                            :style="feoMarks.mergeCellStyle({}, 'purchase', actual.purchase_id, 'quantity')"
+                            :class="feoMarks.feoCellAttrs('purchase', actual.purchase_id, 'quantity').class"
+                            @click="onActualCellClick($event, actual, 'quantity')"
+                            @contextmenu.prevent="onActualCellContextMenu($event, actual, 'quantity', leftGroupInfo(actual).quantity, 'Кол-во')"
+                          >{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
+                          <td style="padding:4px 8px;text-align:right;color:#64748b"
+                            :style="feoMarks.mergeCellStyle({}, 'purchase', actual.purchase_id, 'amount')"
+                            :class="feoMarks.feoCellAttrs('purchase', actual.purchase_id, 'amount').class"
+                            @click="onActualCellClick($event, actual, 'amount')"
+                            @contextmenu.prevent="onActualCellContextMenu($event, actual, 'amount', leftGroupInfo(actual).total, 'Сумма')"
+                          >{{ leftGroupInfo(actual).total != null ? formatCurrency(leftGroupInfo(actual).total!) : '—' }}</td>
+                          <td style="padding:4px 8px 4px 24px;color:#166534"
+                            :style="feoMarks.mergeCellStyle({}, 'purchase', actual.purchase_id, 'item_name')"
+                            :class="feoMarks.feoCellAttrs('purchase', actual.purchase_id, 'item_name').class"
+                            @click="onActualCellClick($event, actual, 'item_name')"
+                            @contextmenu.prevent="onActualCellContextMenu($event, actual, 'item_name', actual.item_name, 'Фактическая позиция')"
+                          >
                             <div class="d-flex align-center" style="gap:6px">
                               <v-btn v-if="(actual.stages?.length || 0) >= 2"
                                 :icon="ctx.expandedStageRows.value.has(`pa-${actual.purchase_item_id}`) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
@@ -740,9 +808,24 @@
                               <v-icon icon="mdi-alert-octagon" size="13" class="mr-1" />ЗАКУПКА ОСТАНОВЛЕНА · {{ ctx.feoStoppedLine(actual) }}
                             </div>
                           </td>
-                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.fact_amount != null && actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
-                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.fact_amount != null && actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
-                          <td style="padding:4px 8px;text-align:right;font-weight:500">
+                          <td style="padding:4px 8px;text-align:right;color:#64748b"
+                            :style="feoMarks.mergeCellStyle({}, 'purchase', actual.purchase_id, 'unit_price')"
+                            :class="feoMarks.feoCellAttrs('purchase', actual.purchase_id, 'unit_price').class"
+                            @click="onActualCellClick($event, actual, 'unit_price')"
+                            @contextmenu.prevent="onActualCellContextMenu($event, actual, 'unit_price', actual.unit_price, 'Цена (факт)')"
+                          >{{ actual.fact_amount != null && actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
+                          <td style="padding:4px 8px;text-align:right;color:#64748b"
+                            :style="feoMarks.mergeCellStyle({}, 'purchase', actual.purchase_id, 'quantity')"
+                            :class="feoMarks.feoCellAttrs('purchase', actual.purchase_id, 'quantity').class"
+                            @click="onActualCellClick($event, actual, 'quantity')"
+                            @contextmenu.prevent="onActualCellContextMenu($event, actual, 'quantity', actual.quantity, 'Кол-во (факт)')"
+                          >{{ actual.fact_amount != null && actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
+                          <td style="padding:4px 8px;text-align:right;font-weight:500"
+                            :style="feoMarks.mergeCellStyle({}, 'purchase', actual.purchase_id, 'amount')"
+                            :class="feoMarks.feoCellAttrs('purchase', actual.purchase_id, 'amount').class"
+                            @click="onActualCellClick($event, actual, 'amount')"
+                            @contextmenu.prevent="onActualCellContextMenu($event, actual, 'amount', actual.fact_amount, 'Сумма (факт)', actual.fact_amount)"
+                          >
                             <template v-if="actual.fact_amount != null">
                               <span :title="actual.fact_allocated ? 'Распределено пропорционально между позициями закупки' : ''">{{ formatCurrency(actual.fact_amount) }}</span>
                               <v-chip v-if="!actual.fact_confirmed" size="x-small" variant="tonal" color="warning" class="ml-1" style="font-size:9px;height:16px"
@@ -754,15 +837,15 @@
                               <span v-if="actual.purchase_substatus" class="text-caption text-teal-darken-2 font-weight-medium ms-1">({{ purchaseSubstatusLabel(actual.purchase_substatus) || actual.purchase_substatus }})</span>
                             </span>
                           </td>
-                          <td style="padding:4px 8px"></td>
-                          <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
-                          <td style="padding:4px 8px;text-align:center;color:#94a3b8;font-size:10px">
+                          <td style="padding:4px 8px" @click="onActualCellClick($event, actual, 'diff')" @contextmenu.prevent="onActualCellContextMenu($event, actual, 'diff', null, 'Разница')"></td>
+                          <td style="padding:4px 8px;color:#64748b;font-size:11px" @click="onActualCellClick($event, actual, 'contractor')" @contextmenu.prevent="onActualCellContextMenu($event, actual, 'contractor', actual.contractor_name, 'Контрагент')">{{ actual.contractor_name || '—' }}</td>
+                          <td style="padding:4px 8px;text-align:center;color:#94a3b8;font-size:10px" @click="onActualCellClick($event, actual, 'status')" @contextmenu.prevent="onActualCellContextMenu($event, actual, 'status', actual.purchase_status, 'Статус')">
                             <div>{{ purchaseStatusLabel(actual.purchase_status) }}</div>
                             <div v-if="actual.purchase_substatus" class="text-teal-darken-2 font-weight-medium" style="font-size:9px;line-height:1.2">
                               ({{ purchaseSubstatusLabel(actual.purchase_substatus) || actual.purchase_substatus }})
                             </div>
                           </td>
-                          <td style="padding:2px;text-align:center;white-space:nowrap">
+                          <td style="padding:2px;text-align:center;white-space:nowrap" @contextmenu.prevent="onActualRowContextMenu($event, actual)">
                             <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
                               title="Редактировать позицию закупки"
                               @click="ctx.openReqItemEditFromActual(node, actual)"
@@ -926,6 +1009,8 @@ import RevisionCellBadge from './RevisionCellBadge.vue'
 // FeoPlannedItemPartEditDialog.vue), здесь — только открытие по клику на карандаш.
 import { useFeoPlannedItemPartEditDialog } from '@/composables/subsidies/useFeoPlannedItemPartEditDialog'
 import { excessHitTooltip } from '@/composables/subsidies/useFeoTreeExcess'
+import { useFeoMarksContext } from '@/composables/subsidies/useFeoMarksContext'
+import type { ContextMenuItem } from '@/composables/useGalaContextMenu'
 import '@/styles/feo-group-header.css'
 
 const props = defineProps<{ node: FeoNode }>()
@@ -1082,6 +1167,9 @@ const hideFullyPurchased = useFeoHideFullyPurchased()
 // подсветка (владелец, 2026-10-13) — см. докстринг searchPathCategoryIds в
 // useFeoTreeSearch.ts (та же логика «путь к найденному», здесь — сама позиция).
 function isPlannedRowHidden(planned: FeoPlannedItem & { isManual?: boolean }): boolean {
+  if (!planned.isManual && !feoMarks.matchesColorFilter('feo_item', planned.id)) {
+    return true
+  }
   return hideFullyPurchased.hideFullyPurchased.value && isRowFullyPurchased(planned) && !ctx.isFeoSearchHighlighted(`p-${planned.id}`)
 }
 // Список скрытых переключателем позиций — для плашки НАД списком (жалоба
@@ -1105,6 +1193,252 @@ const hiddenFullyPurchasedPreview = computed(() => hiddenFullyPurchasedRows.valu
 // здесь читаем уже закэшированное значение, второй сетевой запрос не шлём).
 const feoComments = useFeoComments()
 const subsidyId = computed(() => ctx.selectedId.value)
+const feoMarks = useFeoMarksContext()
+
+watch(
+  () => [node.id, subsidyId.value, ctx.displayPlannedRowsFor(node)],
+  () => {
+    const items = ctx.displayPlannedRowsFor(node).filter((p) => !p.isManual && p.id > 0)
+    if (items.length && subsidyId.value) {
+      void feoMarks.loadMarks('feo_item', items.map((p) => p.id), subsidyId.value)
+    }
+  },
+  { immediate: true },
+)
+
+feoMarks.onEntityRestored((detail) => {
+  if (detail.entityType === 'feo_item' || detail.entityType === 'feo_category') {
+    if (subsidyId.value) void ctx.loadFeo(subsidyId.value)
+    void ctx.ensureComparison(node.id, true)
+  }
+})
+
+function getItemExtraItems(planned: FeoPlannedItem & { isManual?: boolean }): ContextMenuItem[] {
+  const items: ContextMenuItem[] = []
+  if (!planned.isManual) {
+    items.push({
+      key: 'edit_item',
+      label: '✏️ Редактировать позицию',
+      icon: 'mdi-pencil',
+      onClick: () => {
+        ctx.openEditPlannedItem(planned)
+      },
+    })
+    items.push({
+      key: 'plan_vs_fact',
+      label: '📊 План vs факт / закупки',
+      icon: 'mdi-compare-horizontal',
+      onClick: () => {
+        ctx.togglePlannedItemFolder(planned.id)
+      },
+    })
+    items.push({
+      key: 'create_wish',
+      label: '🛒 В заявку / закупку',
+      icon: 'mdi-cart-plus',
+      onClick: () => {
+        ctx.router.push({
+          path: '/wishes',
+          query: {
+            feo_category_id: String(planned.feo_category_id || node.id || ''),
+            subsidy_id: String(subsidyId.value || ''),
+          },
+        })
+      },
+    })
+  } else {
+    items.push({
+      key: 'edit_category_plan',
+      label: '✏️ Редактировать план категории',
+      icon: 'mdi-pencil',
+      onClick: () => {
+        ctx.openEditCategoryPlan(node)
+      },
+    })
+    items.push({
+      key: 'convert_to_item',
+      label: '📋 Завести плановую позицию',
+      icon: 'mdi-playlist-plus',
+      onClick: () => {
+        ctx.openConvertManualPlanToItem(node)
+      },
+    })
+  }
+  return items
+}
+
+function onPlannedCellClick(event: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }, fieldName: string) {
+  if (planned.isManual) return
+  feoMarks.onFeoCellClick(event, {
+    entityType: 'feo_item',
+    entityId: planned.id,
+    fieldName,
+    subsidyId: subsidyId.value,
+  })
+}
+
+function onPlannedRowContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: planned.id,
+    fieldName: '*',
+    fieldLabel: planned.name || 'Плановая позиция',
+    cellValue: planned.name,
+    subsidyId: subsidyId.value,
+    extraItems: getItemExtraItems(planned),
+  })
+}
+
+function onPlannedItemNameContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: planned.id,
+    fieldName: 'name',
+    fieldLabel: 'Наименование',
+    cellValue: planned.name,
+    subsidyId: subsidyId.value,
+    extraItems: getItemExtraItems(planned),
+  })
+}
+
+function onPlannedItemUnitPriceContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const price = !planned.isManual && planned.is_feo_breakdown ? feoUnitPriceFor(planned) : planned.unit_price
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: planned.id,
+    fieldName: 'unit_price',
+    fieldLabel: 'Цена за единицу',
+    cellValue: price != null ? formatCurrency(Number(price)) : '—',
+    rawNumber: price,
+    subsidyId: subsidyId.value,
+    extraItems: getItemExtraItems(planned),
+  })
+}
+
+function onPlannedItemQtyContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const qty = !planned.isManual && planned.is_feo_breakdown ? feoQuantityFor(planned) : planned.quantity
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: planned.id,
+    fieldName: 'quantity',
+    fieldLabel: 'Количество',
+    cellValue: qty != null ? `${qty} ${planned.unit || ''}` : '—',
+    rawNumber: qty,
+    subsidyId: subsidyId.value,
+    extraItems: getItemExtraItems(planned),
+  })
+}
+
+function onPlannedItemAmountContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const amt = !planned.isManual && planned.is_feo_breakdown ? feoAmountFor(planned) : planned.amount
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: planned.id,
+    fieldName: 'amount',
+    fieldLabel: 'Сумма (план)',
+    cellValue: amt != null ? formatCurrency(Number(amt)) : '—',
+    rawNumber: amt,
+    subsidyId: subsidyId.value,
+    extraItems: getItemExtraItems(planned),
+  })
+}
+
+function onPlannedItemTypeContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: planned.id,
+    fieldName: 'item_type',
+    fieldLabel: 'Тип (товар/услуга/работа)',
+    cellValue: planned.item_type_effective || '—',
+    subsidyId: subsidyId.value,
+    extraItems: getItemExtraItems(planned),
+  })
+}
+
+function onPlannedItemStageContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const purchases = feoLevel5.purchasesForPlanned(node.id, planned.id)
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: planned.id,
+    fieldName: 'amount',
+    fieldLabel: 'Стадия закупки',
+    cellValue: purchases.length
+      ? `${purchases.length} закупок, ${formatCurrency(feoLevel5.stageBreakdownTotal(node.id, planned.id))}`
+      : 'Без закупок',
+    rawNumber: feoLevel5.stageBreakdownTotal(node.id, planned.id),
+    subsidyId: subsidyId.value,
+    extraItems: getItemExtraItems(planned),
+  })
+}
+
+function onPlannedItemResidualContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const residualVal = planned.not_committed != null ? planned.not_committed : (planned.savings != null ? planned.savings : null)
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_item',
+    entityId: planned.id,
+    fieldName: 'amount',
+    fieldLabel: 'Остаток плана',
+    cellValue: residualVal != null ? formatCurrency(residualVal) : '—',
+    rawNumber: residualVal,
+    subsidyId: subsidyId.value,
+    extraItems: getItemExtraItems(planned),
+  })
+}
+
+function onActualCellClick(event: MouseEvent, actual: any, fieldName: string) {
+  if (!actual?.purchase_id) return
+  feoMarks.onFeoCellClick(event, {
+    entityType: 'purchase',
+    entityId: actual.purchase_id,
+    fieldName,
+    subsidyId: subsidyId.value,
+  })
+}
+
+function onActualRowContextMenu(e: MouseEvent, actual: any) {
+  if (!actual?.purchase_id) return
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'purchase',
+    entityId: actual.purchase_id,
+    fieldName: '*',
+    fieldLabel: actual.item_name || 'Закупка',
+    cellValue: actual.item_name,
+    subsidyId: subsidyId.value,
+    extraItems: [
+      {
+        key: 'open_order',
+        label: `🛒 Открыть закупку #${actual.purchase_id}`,
+        icon: 'mdi-cart',
+        onClick: () => {
+          ctx.router.push(`/orders/${actual.purchase_id}`)
+        },
+      },
+    ],
+  })
+}
+
+function onActualCellContextMenu(e: MouseEvent, actual: any, fieldName: string, cellVal: any, label: string, rawNum?: any) {
+  if (!actual?.purchase_id) return
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'purchase',
+    entityId: actual.purchase_id,
+    fieldName,
+    fieldLabel: label,
+    cellValue: cellVal,
+    rawNumber: rawNum,
+    subsidyId: subsidyId.value,
+    extraItems: [
+      {
+        key: 'open_order',
+        label: `🛒 Открыть закупку #${actual.purchase_id}`,
+        icon: 'mdi-cart',
+        onClick: () => {
+          ctx.router.push(`/orders/${actual.purchase_id}`)
+        },
+      },
+    ],
+  })
+}
 // Раскрытые ветки — локальный набор ЭТОЙ панели (per-node UI-состояние, не
 // разделяемые данные), reactive(Set) даёт корректную реактивность на add/delete.
 const commentsExpandedIds = reactive(new Set<number>())

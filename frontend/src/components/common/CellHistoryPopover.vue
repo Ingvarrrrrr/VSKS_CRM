@@ -316,7 +316,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
 <style scoped>
 .gala-history-popover-backdrop {
-  position: fixed; inset: 0; z-index: 99999; background: transparent;
+  position: fixed; inset: 0; z-index: 200001; background: transparent;
 }
 .gala-history-popover {
   position: fixed; width: 320px; max-width: calc(100vw - 24px);

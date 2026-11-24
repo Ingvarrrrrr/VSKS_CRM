@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   avatarColor,
@@ -13,6 +14,8 @@ import {
   type CellTarget,
   type CellMarkRecord,
 } from '@/composables/useCellMarks'
+
+import { useUniversalTableContext } from '@/composables/useUniversalTableContext'
 
 // Mock apiFetch
 vi.mock('@/api', () => ({
@@ -396,6 +399,69 @@ describe('CellHistoryPopover helpers and composables', () => {
         expect(mockApiFetch).toHaveBeenCalledWith(`/cell-marks/${cleared.group_id}/resolve`, expect.anything())
         expect(marks.getExactMark('task', 55, 'status')).toBeNull()
       }
+    })
+  })
+
+  describe('useUniversalTableContext', () => {
+    it('ignores input, textarea, contenteditable, and popovers', () => {
+      const { isInputOrExcluded } = useUniversalTableContext()
+      const inp = document.createElement('input')
+      const txt = document.createElement('textarea')
+      const ed = document.createElement('div')
+      ed.setAttribute('contenteditable', 'true')
+      const pop = document.createElement('div')
+      pop.className = 'gala-context-menu'
+      const norm = document.createElement('td')
+
+      expect(isInputOrExcluded(inp)).toBe(true)
+      expect(isInputOrExcluded(txt)).toBe(true)
+      expect(isInputOrExcluded(ed)).toBe(true)
+      expect(isInputOrExcluded(pop)).toBe(true)
+      expect(isInputOrExcluded(norm)).toBe(false)
+    })
+
+    it('extracts numeric value from currency text formatted like 48 939,62 ₽', () => {
+      expect(extractNumericValue('48 939,62 ₽')).toBe('48939.62')
+      expect(extractNumericValue('1 250,50')).toBe('1250.5')
+      expect(extractNumericValue('без суммы')).toBeNull()
+    })
+
+    it('handles contextmenu event on td and opens context menu with entity context', () => {
+      const { handleContextMenu } = useUniversalTableContext()
+      const menu = useGalaContextMenu()
+
+      const table = document.createElement('table')
+      table.innerHTML = `
+        <thead><tr><th>Код</th><th>Сумма</th></tr></thead>
+        <tbody>
+          <tr data-entity-type="contract" data-entity-id="42">
+            <td>CTR-01</td>
+            <td>48 939,62 ₽</td>
+          </tr>
+        </tbody>
+      `
+      document.body.appendChild(table)
+      const targetTd = table.querySelectorAll('td')[1]
+
+      const evt = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 100,
+        clientY: 200,
+      })
+      Object.defineProperty(evt, 'target', { value: targetTd })
+
+      handleContextMenu(evt)
+
+      expect(evt.defaultPrevented).toBe(true)
+      expect(menu.isMenuOpen.value).toBe(true)
+      expect(menu.activeCellOptions.value?.entityType).toBe('contract')
+      expect(menu.activeCellOptions.value?.entityId).toBe(42)
+      expect(menu.activeCellOptions.value?.fieldLabel).toBe('Сумма')
+      expect(menu.activeCellOptions.value?.rawNumber).toBe('48939.62')
+
+      menu.closeContextMenu()
+      document.body.removeChild(table)
     })
   })
 })

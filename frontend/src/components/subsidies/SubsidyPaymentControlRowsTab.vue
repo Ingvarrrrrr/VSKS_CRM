@@ -50,7 +50,15 @@
         <tr
           v-for="r in filteredRows"
           :key="r.key"
-          :class="[rowClass(r), r.bank_payment_ids?.length ? 'clickable-payment-row' : '']"
+          :data-gala-row="`payment:${r.bank_payment_ids?.[0] || r.key}`"
+          :data-entity-type="'payment'"
+          :data-entity-id="r.bank_payment_ids?.[0] || 0"
+          :class="[
+            rowClass(r),
+            r.bank_payment_ids?.length ? 'clickable-payment-row' : '',
+            getRowMarkClasses('payment', r.bank_payment_ids?.[0] || 0)
+          ]"
+          :style="getRowMarkStyle('payment', r.bank_payment_ids?.[0] || 0)"
           :title="r.bank_payment_ids?.length ? 'Нажмите, чтобы выбрать 1 или несколько закупок для этого платежа' : ''"
           @click="r.bank_payment_ids?.length ? emit('find', r) : undefined"
         >
@@ -193,7 +201,8 @@
 // закупку по платёжке» эмитятся наверх (SubsidyPaymentControlDialog.vue),
 // который открывает соответствующие диалоги — сами действия идут через общий
 // composable useSubsidyPaymentControl.ts (ПРАВИЛО №6).
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useCellMarks } from '@/composables/useCellMarks'
 import type {
   PaymentControlRow, PaymentControlArticle, PaymentControlNearMiss, useSubsidyPaymentControl,
 } from '@/composables/subsidies/useSubsidyPaymentControl'
@@ -322,6 +331,19 @@ function fmtDate(d: string | null): string {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('ru-RU')
 }
+
+const { loadMarks, getRowMarkClasses, getRowMarkStyle } = useCellMarks()
+
+watch(
+  () => props.rows,
+  newRows => {
+    const ids = (newRows || [])
+      .map(r => r.bank_payment_ids?.[0])
+      .filter((id): id is number => typeof id === 'number' && id > 0)
+    if (ids.length) loadMarks('payment', ids, props.subsidyId)
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

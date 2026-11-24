@@ -1,14 +1,20 @@
 /* Priority manual cell & row marks over status background colors */
 .gala-cell-marked,
+td.gala-cell-marked,
+tr.gala-row-marked,
 tr.gala-row-marked > td,
+.v-table tbody tr.gala-row-marked > td,
 .gala-row-marked {
-  background-color: var(--gala-mark-light) !important;
+  background: var(--gala-mark-light) !important;
 }
 
 .v-theme--dark .gala-cell-marked,
+.v-theme--dark td.gala-cell-marked,
+.v-theme--dark tr.gala-row-marked,
 .v-theme--dark tr.gala-row-marked > td,
+.v-theme--dark .v-table tbody tr.gala-row-marked > td,
 .v-theme--dark .gala-row-marked {
-  background-color: var(--gala-mark-dark) !important;
+  background: var(--gala-mark-dark) !important;
 }
 
 /* Cell selection border */

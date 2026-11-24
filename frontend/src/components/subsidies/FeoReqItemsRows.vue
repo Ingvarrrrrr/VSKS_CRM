@@ -2,12 +2,19 @@
   <template v-for="row in ctx.reqItemRowsFor(owner)" :key="`req-${owner.id}-${row.key}`">
     <tr
       class="feo-tr feo-req-row"
-      :class="ctx.kpiReqRowClass(row)"
+      :class="[ctx.kpiReqRowClass(row), feoMarks.feoRowAttrs(getRowEntityType(row), getRowEntityId(row)).class]"
       :data-item-ids="row.group ? row.group.items.map(i => i.id).join(',') : ''"
       data-item-group="owner-virtual"
-      :style="row.group ? 'background:rgba(20,184,166,0.04)' : 'background:rgba(20,184,166,0.10)'"
+      :style="feoMarks.mergeRowStyle(row.group ? { background: 'rgba(20,184,166,0.04)' } : { background: 'rgba(20,184,166,0.10)' }, getRowEntityType(row), getRowEntityId(row))"
+      @contextmenu.prevent="onVirtualRowContextMenu($event, row)"
     >
-      <td class="feo-td feo-td-name" :style="{ paddingLeft: ctx.reqRowIndent(owner, row) }">
+      <td
+        class="feo-td feo-td-name"
+        :style="feoMarks.mergeCellStyle({ paddingLeft: ctx.reqRowIndent(owner, row) }, getRowEntityType(row), getRowEntityId(row), 'name')"
+        :class="feoMarks.feoCellAttrs(getRowEntityType(row), getRowEntityId(row), 'name').class"
+        @click="onVirtualCellClick($event, row, 'name')"
+        @contextmenu.prevent="onVirtualRowContextMenu($event, row, 'name')"
+      >
         <div class="feo-name-inner">
           <template v-if="!row.group">
             <!-- Цвет/жирность — те же токены темы, что заголовки группировки «категория
@@ -39,28 +46,55 @@
         </div>
       </td>
       <!-- Финансирование по ФЭО: не задавалось -->
-      <td class="feo-td feo-td-num">
+      <td
+        class="feo-td feo-td-num"
+        @click="onVirtualCellClick($event, row, 'budget')"
+        @contextmenu.prevent="onVirtualRowContextMenu($event, row, 'budget')"
+      >
         <span v-if="row.group" class="feo-amount-empty"
           title="Эта позиция не задавалась в ФЭО — заведена через заявку">—</span>
       </td>
       <!-- Плановое кол-во: снимок ТЗ (planned_quantity), НЕ текущее кол-во. -->
-      <td class="feo-td feo-td-num">
+      <td
+        class="feo-td feo-td-num"
+        :style="feoMarks.mergeCellStyle({}, getRowEntityType(row), getRowEntityId(row), 'quantity')"
+        :class="feoMarks.feoCellAttrs(getRowEntityType(row), getRowEntityId(row), 'quantity').class"
+        @click="onVirtualCellClick($event, row, 'quantity')"
+        @contextmenu.prevent="onVirtualRowContextMenu($event, row, 'quantity')"
+      >
         <span class="feo-amount" :class="!row.group ? 'text-medium-emphasis' : ''" style="font-size:12px">{{ row.group ? ctx.groupPlannedQty(row.group) : row.sumQty }}{{ row.group?.unit ? ` ${row.group.unit}` : '' }}</span>
         <div v-if="row.group" class="feo-plan-note text-medium-emphasis">из заявок</div>
       </td>
       <!-- Плановая сумма: снимок ТЗ (planned_total), не съезжает при правке итоговой цены -->
-      <td class="feo-td feo-td-num">
+      <td
+        class="feo-td feo-td-num"
+        :style="feoMarks.mergeCellStyle({}, getRowEntityType(row), getRowEntityId(row), 'amount')"
+        :class="feoMarks.feoCellAttrs(getRowEntityType(row), getRowEntityId(row), 'amount').class"
+        @click="onVirtualCellClick($event, row, 'amount')"
+        @contextmenu.prevent="onVirtualRowContextMenu($event, row, 'amount')"
+      >
         <span class="feo-amount" :class="!row.group ? 'text-medium-emphasis' : ''" style="font-size:12px">{{ formatCurrency(row.group ? ctx.groupPlannedTotal(row.group) : row.sum) }}</span>
         <div v-if="row.group && row.group.items.length === 1 && (row.group.items[0]!.planned_unit_price ?? row.group.items[0]!.unit_price)"
           class="feo-plan-note text-medium-emphasis">{{ formatCurrency(row.group.items[0]!.planned_unit_price ?? row.group.items[0]!.unit_price) }}/ед.</div>
       </td>
       <!-- Фактическая сумма: реальный факт (ContractItem/contract_price), а не заглушка. -->
-      <td class="feo-td feo-td-num">
+      <td
+        class="feo-td feo-td-num"
+        @click="onVirtualCellClick($event, row, 'fact_amount')"
+        @contextmenu.prevent="onVirtualRowContextMenu($event, row, 'fact_amount')"
+      >
         <span v-if="row.group && ctx.groupFactTotal(row.group) != null" class="feo-amount" style="font-size:12px">{{ formatCurrency(ctx.groupFactTotal(row.group)!) }}</span>
         <span v-else-if="row.group" class="feo-amount-empty" title="Итог закупки/договора ещё не известен">—</span>
       </td>
-      <td class="feo-td feo-td-num"><span v-if="row.group" class="feo-amount-empty">—</span></td>
-      <td class="feo-td feo-td-actions">
+      <td
+        class="feo-td feo-td-num"
+        @click="onVirtualCellClick($event, row, 'spent')"
+        @contextmenu.prevent="onVirtualRowContextMenu($event, row, 'spent')"
+      ><span v-if="row.group" class="feo-amount-empty">—</span></td>
+      <td
+        class="feo-td feo-td-actions"
+        @contextmenu.prevent="onVirtualRowContextMenu($event, row)"
+      >
         <div v-if="row.group" class="d-flex align-center justify-end">
           <v-btn
             :icon="ctx.expandedReqItemPanels.value.has(ctx.reqPanelKey(owner, row.group)) ? 'mdi-list-box' : 'mdi-list-box-outline'"
@@ -112,8 +146,23 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="it in row.group.items" :key="`src-${it.id}`" :class="ctx.kpiItemRowClass(it)" :data-item-id="it.id" data-item-group="owner-virtual-source" style="border-bottom:1px solid #E0F2FE">
-                <td style="padding:4px 8px;color:#0c4a6e">
+              <tr
+                v-for="it in row.group.items"
+                :key="`src-${it.id}`"
+                :class="[ctx.kpiItemRowClass(it), feoMarks.feoRowAttrs(it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id).class]"
+                :data-item-id="it.id"
+                data-item-group="owner-virtual-source"
+                style="border-bottom:1px solid #E0F2FE"
+                :style="feoMarks.mergeRowStyle({ borderBottom: '1px solid #E0F2FE' }, it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id)"
+                @contextmenu.prevent="onSourceItemContextMenu($event, it)"
+              >
+                <td
+                  style="padding:4px 8px;color:#0c4a6e"
+                  :style="feoMarks.mergeCellStyle({}, it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id, 'name')"
+                  :class="feoMarks.feoCellAttrs(it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id, 'name').class"
+                  @click="onSourceCellClick($event, it, 'name')"
+                  @contextmenu.prevent="onSourceItemContextMenu($event, it, 'name')"
+                >
                   <div class="d-flex align-center" style="gap:6px">
                     <v-avatar v-if="it.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
                       @click.stop="ctx.photoPreview.value = { src: it.product_photo!, title: it.item_name }">
@@ -141,16 +190,34 @@
                     сопоставлено с плановой «{{ ctx.reqItemPlanned(owner.id, it.id)?.name }}»
                   </div>
                 </td>
-                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.planned_quantity ?? it.quantity }}{{ it.unit ? ` ${it.unit}` : '' }}</td>
-                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ (it.planned_unit_price ?? it.unit_price) ? formatCurrency(it.planned_unit_price ?? it.unit_price) : '—' }}</td>
-                <td style="padding:4px 8px;text-align:right;font-weight:500">{{ formatCurrency(it.planned_total ?? it.total_price) }}</td>
-                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">{{ it.fact_amount != null ? '' : 'ещё не поставлено' }}</td>
-                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.fact_amount != null ? `${it.fact_quantity ?? it.planned_quantity ?? it.quantity}${it.unit ? ` ${it.unit}` : ''}` : '' }}</td>
-                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.fact_amount != null && it.fact_unit_price != null ? formatCurrency(it.fact_unit_price) : '' }}</td>
-                <td style="padding:4px 8px;text-align:right;font-weight:500">{{ it.fact_amount != null ? formatCurrency(it.fact_amount) : '' }}</td>
-                <td style="padding:4px 8px;text-align:right" :style="ctx.getDiffStyle(it.planned_total ?? it.total_price, [it])">{{ formatCurrency(ctx.calcDiff(it.planned_total ?? it.total_price, [it])) }}</td>
-                <td style="padding:4px 8px;color:#9ca3af">—</td>
-                <td style="padding:4px 8px;text-align:center">
+                <td
+                  style="padding:4px 8px;text-align:right;color:#64748b"
+                  :style="feoMarks.mergeCellStyle({}, it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id, 'quantity')"
+                  :class="feoMarks.feoCellAttrs(it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id, 'quantity').class"
+                  @click="onSourceCellClick($event, it, 'quantity')"
+                  @contextmenu.prevent="onSourceItemContextMenu($event, it, 'quantity')"
+                >{{ it.planned_quantity ?? it.quantity }}{{ it.unit ? ` ${it.unit}` : '' }}</td>
+                <td
+                  style="padding:4px 8px;text-align:right;color:#64748b"
+                  :style="feoMarks.mergeCellStyle({}, it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id, 'unit_price')"
+                  :class="feoMarks.feoCellAttrs(it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id, 'unit_price').class"
+                  @click="onSourceCellClick($event, it, 'unit_price')"
+                  @contextmenu.prevent="onSourceItemContextMenu($event, it, 'unit_price')"
+                >{{ (it.planned_unit_price ?? it.unit_price) ? formatCurrency(it.planned_unit_price ?? it.unit_price) : '—' }}</td>
+                <td
+                  style="padding:4px 8px;text-align:right;font-weight:500"
+                  :style="feoMarks.mergeCellStyle({}, it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id, 'amount')"
+                  :class="feoMarks.feoCellAttrs(it.wish_id ? 'wish' : 'purchase', it.wish_id || it.purchase_id || it.id, 'amount').class"
+                  @click="onSourceCellClick($event, it, 'amount')"
+                  @contextmenu.prevent="onSourceItemContextMenu($event, it, 'amount')"
+                >{{ formatCurrency(it.planned_total ?? it.total_price) }}</td>
+                <td style="padding:4px 8px;color:#9ca3af;font-style:italic" @contextmenu.prevent="onSourceItemContextMenu($event, it)">{{ it.fact_amount != null ? '' : 'ещё не поставлено' }}</td>
+                <td style="padding:4px 8px;text-align:right;color:#64748b" @contextmenu.prevent="onSourceItemContextMenu($event, it)">{{ it.fact_amount != null ? `${it.fact_quantity ?? it.planned_quantity ?? it.quantity}${it.unit ? ` ${it.unit}` : ''}` : '' }}</td>
+                <td style="padding:4px 8px;text-align:right;color:#64748b" @contextmenu.prevent="onSourceItemContextMenu($event, it)">{{ it.fact_amount != null && it.fact_unit_price != null ? formatCurrency(it.fact_unit_price) : '' }}</td>
+                <td style="padding:4px 8px;text-align:right;font-weight:500" @contextmenu.prevent="onSourceItemContextMenu($event, it)">{{ it.fact_amount != null ? formatCurrency(it.fact_amount) : '' }}</td>
+                <td style="padding:4px 8px;text-align:right" :style="ctx.getDiffStyle(it.planned_total ?? it.total_price, [it])" @contextmenu.prevent="onSourceItemContextMenu($event, it)">{{ formatCurrency(ctx.calcDiff(it.planned_total ?? it.total_price, [it])) }}</td>
+                <td style="padding:4px 8px;color:#9ca3af" @contextmenu.prevent="onSourceItemContextMenu($event, it)">—</td>
+                <td style="padding:4px 8px;text-align:center" @contextmenu.prevent="onSourceItemContextMenu($event, it)">
                   <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(it.purchase_status)">
                     {{ purchaseStatusLabel(it.purchase_status) }}
                   </v-chip>
@@ -158,7 +225,7 @@
                     ({{ purchaseSubstatusLabel(it.purchase_substatus) || it.purchase_substatus }})
                   </div>
                 </td>
-                <td style="padding:2px;text-align:center;white-space:nowrap">
+                <td style="padding:2px;text-align:center;white-space:nowrap" @contextmenu.prevent="onSourceItemContextMenu($event, it)">
                   <v-btn icon="mdi-cart-outline" size="x-small" variant="text" color="blue"
                     title="Открыть закупку"
                     @click.stop="ctx.router.push(`/orders/${it.purchase_id}`)" />
@@ -202,10 +269,143 @@ import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { purchaseStatusIcon, purchaseStatusColor, purchaseStatusLabel, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 import type { FeoNode } from '@/composables/subsidies/types'
+import { useFeoMarksContext } from '@/composables/subsidies/useFeoMarksContext'
 import '@/styles/feo-group-header.css'
 
 const props = defineProps<{ owner: FeoNode }>()
 const owner = props.owner
 
 const ctx = useSubsidyDetailCtx()
+const feoMarks = useFeoMarksContext()
+
+function getRowEntityType(row: any): string {
+  if (!row.group) return 'feo_category'
+  return row.group.items.some((i: any) => i.wish_id) ? 'wish' : 'purchase'
+}
+
+function getRowEntityId(row: any): number {
+  if (!row.group) return owner.id
+  const wishItem = row.group.items.find((i: any) => i.wish_id)
+  return wishItem ? wishItem.wish_id : (row.group.items[0]?.purchase_id || row.group.items[0]?.id || 0)
+}
+
+function onVirtualRowContextMenu(e: MouseEvent, row: any, fieldName = '*') {
+  const entityType = getRowEntityType(row)
+  const entityId = getRowEntityId(row)
+  const title = row.group ? row.group.name : row.header
+  const amount = row.group ? ctx.groupPlannedTotal(row.group) : row.sum
+
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType,
+    entityId,
+    fieldName,
+    fieldLabel: fieldName === 'amount' ? 'Сумма' : (fieldName === 'quantity' ? 'Количество' : title),
+    cellValue:
+      fieldName === 'amount'
+        ? formatCurrency(amount)
+        : fieldName === 'quantity'
+          ? (row.group ? ctx.groupPlannedQty(row.group) : row.sumQty)
+          : title,
+    rawNumber:
+      fieldName === 'amount'
+        ? amount
+        : fieldName === 'quantity'
+          ? (row.group ? ctx.groupPlannedQty(row.group) : row.sumQty)
+          : undefined,
+    subsidyId: ctx.selectedId.value,
+    extraItems: row.group
+      ? [
+          {
+            key: 'toggle_panel',
+            label: '📊 Источники: план vs факт',
+            icon: 'mdi-list-box-outline',
+            onClick: () => {
+              ctx.toggleReqItemPanel(owner, row.group)
+            },
+          },
+          {
+            key: 'cart',
+            label: '🛒 Открыть закупку',
+            icon: 'mdi-cart-outline',
+            onClick: () => {
+              ctx.virtCart(owner, row.group)
+            },
+          },
+        ]
+      : [],
+  })
+}
+
+function onVirtualCellClick(e: MouseEvent, row: any, fieldName: string) {
+  const entityType = getRowEntityType(row)
+  const entityId = getRowEntityId(row)
+
+  feoMarks.onFeoCellClick(e, {
+    entityType,
+    entityId,
+    fieldName,
+    subsidyId: ctx.selectedId.value,
+  })
+}
+
+function onSourceItemContextMenu(e: MouseEvent, it: any, fieldName = '*') {
+  const isWish = !!it.wish_id
+  const entityType = isWish ? 'wish' : 'purchase'
+  const entityId = isWish ? it.wish_id : (it.purchase_id || it.id)
+
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType,
+    entityId,
+    fieldName,
+    fieldLabel: fieldName === 'amount' ? 'Сумма' : (fieldName === 'quantity' ? 'Количество' : it.item_name),
+    cellValue:
+      fieldName === 'amount'
+        ? formatCurrency(it.planned_total ?? it.total_price)
+        : fieldName === 'quantity'
+          ? (it.planned_quantity ?? it.quantity)
+          : it.item_name,
+    rawNumber:
+      fieldName === 'amount'
+        ? (it.planned_total ?? it.total_price)
+        : fieldName === 'quantity'
+          ? (it.planned_quantity ?? it.quantity)
+          : undefined,
+    subsidyId: ctx.selectedId.value,
+    extraItems: [
+      {
+        key: 'open_order',
+        label: `🛒 Открыть закупку #${it.purchase_id}`,
+        icon: 'mdi-cart-outline',
+        onClick: () => {
+          ctx.router.push(`/orders/${it.purchase_id}`)
+        },
+      },
+      ...(it.wish_id
+        ? [
+            {
+              key: 'open_wish',
+              label: `📋 Открыть заявку #${it.wish_id}`,
+              icon: 'mdi-hand-heart-outline',
+              onClick: () => {
+                ctx.router.push({ path: '/wishes', query: { open: String(it.wish_id) } })
+              },
+            },
+          ]
+        : []),
+    ],
+  })
+}
+
+function onSourceCellClick(e: MouseEvent, it: any, fieldName: string) {
+  const isWish = !!it.wish_id
+  const entityType = isWish ? 'wish' : 'purchase'
+  const entityId = isWish ? it.wish_id : (it.purchase_id || it.id)
+
+  feoMarks.onFeoCellClick(e, {
+    entityType,
+    entityId,
+    fieldName,
+    subsidyId: ctx.selectedId.value,
+  })
+}
 </script>

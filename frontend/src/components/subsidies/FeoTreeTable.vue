@@ -162,8 +162,9 @@
           style="cursor:pointer"
           title="Перейти в реестр закупок субсидии"
           @click="ctx.goToUnassignedFeoPurchases"
+          @contextmenu.prevent="onUnassignedContextMenu"
         >
-          <td class="feo-td feo-td-name" style="padding-left:8px">
+          <td class="feo-td feo-td-name" style="padding-left:8px" @contextmenu.prevent="onUnassignedContextMenu">
             <v-icon icon="mdi-help-circle-outline" size="16" color="#F59E0B" class="mr-1" />
             <span style="color:#F59E0B;font-weight:600">Без категории ФЭО</span>
             <div class="feo-plan-note text-medium-emphasis font-weight-regular">
@@ -171,17 +172,17 @@
               к категориям — распределите, иначе деньги не видны в плане
             </div>
           </td>
-          <td class="feo-td feo-td-num">—</td>
-          <td class="feo-td feo-td-num">—</td>
-          <td class="feo-td feo-td-num" style="color:#F59E0B;font-weight:600">{{ formatCurrency(ctx.unassignedFeo.value.amount) }}</td>
-          <td class="feo-td feo-td-num">—</td>
-          <td class="feo-td feo-td-num">—</td>
+          <td class="feo-td feo-td-num" @contextmenu.prevent="onUnassignedContextMenu">—</td>
+          <td class="feo-td feo-td-num" @contextmenu.prevent="onUnassignedContextMenu">—</td>
+          <td class="feo-td feo-td-num" style="color:#F59E0B;font-weight:600" @contextmenu.prevent="onUnassignedContextMenu">{{ formatCurrency(ctx.unassignedFeo.value.amount) }}</td>
+          <td class="feo-td feo-td-num" @contextmenu.prevent="onUnassignedContextMenu">—</td>
+          <td class="feo-td feo-td-num" @contextmenu.prevent="onUnassignedContextMenu">—</td>
         </tr>
 
         <!-- Итого -->
-        <tr class="feo-tr feo-tr--total">
-          <td class="feo-td feo-td-name font-weight-bold" style="padding-left:8px">ИТОГО</td>
-          <td class="feo-td feo-td-num font-weight-bold">
+        <tr class="feo-tr feo-tr--total" @contextmenu.prevent="onTotalContextMenu">
+          <td class="feo-td feo-td-name font-weight-bold" style="padding-left:8px" @contextmenu.prevent="onTotalContextMenu">ИТОГО</td>
+          <td class="feo-td feo-td-num font-weight-bold" @contextmenu.prevent="onTotalContextMenu">
             <span title="Сумма верхних категорий: ручное ФЭО, без него — факт (поставлено/оплачено), иначе план">
               {{ formatCurrency(ctx.totalFeoEffective.value) }}
             </span>
@@ -203,20 +204,20 @@
               не распределено {{ formatCurrency(-ctx.totalFeoDiff.value) }}
             </div>
           </td>
-          <td class="feo-td feo-td-num font-weight-bold">
+          <td class="feo-td feo-td-num font-weight-bold" @contextmenu.prevent="onTotalContextMenu">
             {{ ctx.feoTree.value.reduce((acc, r) => acc + ctx.feoQtyDisplayFor(r), 0) > 0 ? ctx.feoTree.value.reduce((acc, r) => acc + ctx.feoQtyDisplayFor(r), 0) : '—' }}
           </td>
-          <td class="feo-td feo-td-num font-weight-bold">
+          <td class="feo-td feo-td-num font-weight-bold" @contextmenu.prevent="onTotalContextMenu">
             {{ ctx.feoTree.value.reduce((acc, r) => acc + ctx.feoPlannedDisplayFor(r), 0) > 0 ? formatCurrency(ctx.feoTree.value.reduce((acc, r) => acc + ctx.feoPlannedDisplayFor(r), 0)) : '—' }}
           </td>
           <!-- Футер обязан считаться по той же шкале, что и колонка «В закупках» в строках. -->
-          <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(ctx.totalFeoInPlanSchedule.value) }}</td>
-          <td class="feo-td feo-td-num font-weight-bold">
+          <td class="feo-td feo-td-num font-weight-bold" @contextmenu.prevent="onTotalContextMenu">{{ formatCurrency(ctx.totalFeoInPlanSchedule.value) }}</td>
+          <td class="feo-td feo-td-num font-weight-bold" @contextmenu.prevent="onTotalContextMenu">
             {{ formatCurrency(ctx.feoTree.value.reduce((acc, r) => acc + ctx.feoResidualBaseFor(r), 0) - ctx.totalFeoInPlanSchedule.value) }}
           </td>
           <!-- Оплачено (по отметке) / подтверждено выпиской — решение владельца
                02.10.2026, см. докстринг useFeoTreeAmounts.ts::selectedPaidMarkedTotal. -->
-          <td class="feo-td feo-td-num font-weight-bold">
+          <td class="feo-td feo-td-num font-weight-bold" @contextmenu.prevent="onTotalContextMenu">
             {{ ctx.selectedPaidMarkedTotal.value > 0.005 ? formatCurrency(ctx.selectedPaidMarkedTotal.value) : '—' }}
             <div v-if="ctx.selectedPaidConfirmedTotal.value > 0.005" class="feo-plan-note text-medium-emphasis font-weight-regular">
               из них подтверждено выпиской: {{ formatCurrency(ctx.selectedPaidConfirmedTotal.value) }}
@@ -265,8 +266,51 @@ import FeoPlannedItemPartEditDialog from './FeoPlannedItemPartEditDialog.vue'
 import FeoBulkMoveBar from './FeoBulkMoveBar.vue'
 import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
 import { useRevisionChangedFilter } from '@/composables/subsidies/useRevisionChangedFilter'
+import { useFeoMarksContext } from '@/composables/subsidies/useFeoMarksContext'
 
 const ctx = useSubsidyDetailCtx()
+const feoMarks = useFeoMarksContext()
+
+watch(
+  () => [ctx.feoCategories.value, ctx.selectedId.value],
+  () => {
+    const catIds = ctx.feoCategories.value.map((c) => c.id).filter((id) => id > 0)
+    if (catIds.length && ctx.selectedId.value) {
+      void feoMarks.loadMarks('feo_category', catIds, ctx.selectedId.value)
+    }
+  },
+  { immediate: true },
+)
+
+feoMarks.onEntityRestored((detail) => {
+  if (detail.entityType === 'feo_category' || detail.entityType === 'feo_item') {
+    if (ctx.selectedId.value) void ctx.loadFeo(ctx.selectedId.value)
+  }
+})
+
+function onTotalContextMenu(e: MouseEvent) {
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: 0,
+    fieldName: '*',
+    fieldLabel: 'ИТОГО',
+    cellValue: formatCurrency(ctx.totalFeoEffective.value),
+    rawNumber: ctx.totalFeoEffective.value,
+    subsidyId: ctx.selectedId.value,
+  })
+}
+
+function onUnassignedContextMenu(e: MouseEvent) {
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: 0,
+    fieldName: '*',
+    fieldLabel: 'Без категории ФЭО',
+    cellValue: formatCurrency(ctx.unassignedFeo.value.amount),
+    rawNumber: ctx.unassignedFeo.value.amount,
+    subsidyId: ctx.selectedId.value,
+  })
+}
 
 // Волна 3B: оверлей «было/станет» — inject из SubsidiesView.vue
 // (provideRevisionOverlay); null, когда фича выключена/субсидия ещё не
@@ -286,7 +330,9 @@ const changedFilter = useRevisionChangedFilter(
 )
 function isNodeVisibleUnderRevisionFilter(nodeId: number): boolean {
   const visible = changedFilter.visibleCategoryIds.value
-  return !visible || visible.has(nodeId)
+  if (visible && !visible.has(nodeId)) return false
+  if (!feoMarks.matchesColorFilter('feo_category', nodeId)) return false
+  return true
 }
 // Подсветка «режим выбора» для «Создать закупку на основе плана» (владелец,
 // лист 2 №7) — тот же синглтон, что и кнопка в FeoTreeToolbar.vue (Правило №6).

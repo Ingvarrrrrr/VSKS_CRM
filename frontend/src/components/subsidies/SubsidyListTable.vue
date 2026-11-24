@@ -5,6 +5,13 @@
     density="compact"
     :items-per-page="25"
     hover
+    :row-props="(data: any) => ({
+      'data-gala-row': `subsidy:${data.item.id}`,
+      'data-entity-type': 'subsidy',
+      'data-entity-id': data.item.id,
+      class: getRowMarkClasses('subsidy', data.item.id),
+      style: getRowMarkStyle('subsidy', data.item.id),
+    })"
     class="subsidy-main-table mb-3"
   >
     <template #item.feo_budget_total="{ item }">
@@ -97,11 +104,13 @@
 </template>
 
 <script setup lang="ts">
+import { watch } from 'vue'
 import { formatCurrency, formatCurrencyShort } from '@/composables/subsidies/format'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
 import { useSubsidyApprovers } from '@/composables/subsidies/useSubsidyApprovers'
 import { useSubsidyTemplates } from '@/composables/subsidies/useSubsidyTemplates'
+import { useCellMarks } from '@/composables/useCellMarks'
 
 const ctx = useSubsidyDetailCtx()
 // useSubsidyList() без ctx — переиспользует singleton SubsidiesView.vue, см.
@@ -110,4 +119,14 @@ const ctx = useSubsidyDetailCtx()
 const { filteredSubsidies, subsidyTableHeaders, displayBudget, isBudgetUndefined } = useSubsidyList()
 const { openApproversDialog } = useSubsidyApprovers()
 const { openTemplateDialog, contractTemplates } = useSubsidyTemplates()
+const { loadMarks, getRowMarkClasses, getRowMarkStyle } = useCellMarks()
+
+watch(
+  () => filteredSubsidies.value,
+  list => {
+    const ids = (list || []).map((x: any) => x.id).filter(Boolean)
+    if (ids.length) loadMarks('subsidy', ids)
+  },
+  { immediate: true }
+)
 </script>

@@ -1,6 +1,6 @@
 <template>
   <tr
-    v-if="ctx.isNodeVisible(node) && !(ctx.plannedBase.value === 'requests' && ctx.isManualPosLeaf(node)) && !hiddenByFullyPurchasedFilter"
+    v-if="ctx.isNodeVisible(node) && !(ctx.plannedBase.value === 'requests' && ctx.isManualPosLeaf(node)) && !hiddenByFullyPurchasedFilter && feoMarks.matchesColorFilter('feo_category', node.id)"
     class="feo-tr"
     :data-feo-node-id="node.id"
     :class="[
@@ -12,8 +12,9 @@
       excessDrilldown.isExcessTarget(node.id) ? 'feo-excess-target-row' : '',
       excessDrilldown.isCurrentExcessTarget(node.id) ? 'feo-excess-target-row--current' : '',
       ctx.isFeoSearchHighlighted(`c-${node.id}`) ? 'feo-search-highlight-row' : '',
+      feoMarks.feoRowAttrs('feo_category', node.id).class,
     ]"
-    :style="categoryStageBackground || {}"
+    :style="feoMarks.mergeRowStyle(categoryStageBackground || {}, 'feo_category', node.id)"
     :title="categoryStageTooltip || undefined"
     :draggable="ctx.canEditFeo.value"
     @dragstart="ctx.canEditFeo.value && ctx.onDragStart($event, node)"
@@ -21,9 +22,15 @@
     @dragleave="ctx.onDragLeave"
     @drop="ctx.canEditFeo.value && ctx.onDrop($event, node)"
     @dragend="ctx.onDragEnd"
+    @contextmenu.prevent="onCategoryRowContextMenu($event, node)"
   >
     <!-- Наименование -->
-    <td class="feo-td feo-td-name" :style="{ paddingLeft: `${node.depth * 20 + 8}px` }">
+    <td class="feo-td feo-td-name"
+      :style="feoMarks.mergeCellStyle({ paddingLeft: `${node.depth * 20 + 8}px` }, 'feo_category', node.id, 'name')"
+      :class="feoMarks.feoCellAttrs('feo_category', node.id, 'name').class"
+      @click="onCategoryCellClick($event, node, 'name')"
+      @contextmenu.prevent="onCategoryNameContextMenu($event, node)"
+    >
       <div class="feo-name-inner">
         <!-- Один клик — одно раскрытие (жалоба владельца 2026-09-14, вторая волна:
              «пусть если это на направлении лежит, то разворачивается вместе с
@@ -152,7 +159,12 @@
     </td>
 
     <!-- Кол-во и финансирование по ФЭО (inline edit) -->
-    <td class="feo-td feo-td-num" style="vertical-align:top">
+    <td class="feo-td feo-td-num" style="vertical-align:top"
+      :style="feoMarks.mergeCellStyle({ verticalAlign: 'top' }, 'feo_category', node.id, 'budget')"
+      :class="feoMarks.feoCellAttrs('feo_category', node.id, 'budget').class"
+      @click="onCategoryCellClick($event, node, 'budget')"
+      @contextmenu.prevent="onCategoryBudgetContextMenu($event, node)"
+    >
       <!-- Только Кол-во и Сумма по документу ФЭО (задача владельца, п.15б —
            раньше здесь стояло «qty × цена за ед.», читавшееся как цена за
            единицу, которой в этой колонке быть не должно). feoRollup(node).amount
@@ -258,7 +270,12 @@
     </td>
 
     <!-- Плановое количество -->
-    <td class="feo-td feo-td-num" style="vertical-align:top">
+    <td class="feo-td feo-td-num" style="vertical-align:top"
+      :style="feoMarks.mergeCellStyle({ verticalAlign: 'top' }, 'feo_category', node.id, 'planned_quantity')"
+      :class="feoMarks.feoCellAttrs('feo_category', node.id, 'planned_quantity').class"
+      @click="onCategoryCellClick($event, node, 'planned_quantity')"
+      @contextmenu.prevent="onCategoryQtyContextMenu($event, node)"
+    >
       <div v-if="ctx.isAutoQtyNode(node)" class="text-right">
         <div class="feo-amount">{{ ctx.feoQtyDisplayFor(node) > 0 ? ctx.feoQtyDisplayFor(node) : '—' }}{{ node.unit ? ` ${node.unit}` : '' }}</div>
         <div v-if="ctx.plannedQtyBase.value === 'all' && ctx.feoQtyRequestsFor(node) > 0"
@@ -312,7 +329,12 @@
     </td>
 
     <!-- Плановая сумма: ручной план ФЭО и/или позиции заявок (по переключателю) -->
-    <td class="feo-td feo-td-num" style="vertical-align:top">
+    <td class="feo-td feo-td-num" style="vertical-align:top"
+      :style="feoMarks.mergeCellStyle({ verticalAlign: 'top' }, 'feo_category', node.id, 'planned_amount')"
+      :class="feoMarks.feoCellAttrs('feo_category', node.id, 'planned_amount').class"
+      @click="onCategoryCellClick($event, node, 'planned_amount')"
+      @contextmenu.prevent="onCategoryAmountContextMenu($event, node)"
+    >
       <!-- ИСПРАВЛЕНИЕ (задача владельца 22.10.2026, ДНР_2026 id 105): раньше
            красным становилось ЛЮБОЕ «Запланировано», где feoPlannedDisplayFor
            превышает feoDisplayedFor — а у узла БЕЗ своего ФЭО feoDisplayedFor
@@ -760,7 +782,12 @@
          законтрактовано/заказано/резерв/не распределено — своя сумма
          категории (useFeoRowContractTotals.ts, Правило №6 — поддерево тем же
          способом own+Σдетей, что соседние колонки), каждая тоже кликабельна. -->
-    <td class="feo-td feo-td-num" style="vertical-align:top">
+    <td class="feo-td feo-td-num" style="vertical-align:top"
+      :style="feoMarks.mergeCellStyle({ verticalAlign: 'top' }, 'feo_category', node.id, 'spent')"
+      :class="feoMarks.feoCellAttrs('feo_category', node.id, 'spent').class"
+      @click="onCategoryCellClick($event, node, 'spent')"
+      @contextmenu.prevent="onCategorySpentContextMenu($event, node)"
+    >
       <span :class="ctx.feoInPlanScheduleFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
         :style="(ctx.feoDisplayedFor(node) > 0 && ctx.feoInPlanScheduleFor(node) > ctx.feoDisplayedFor(node)) || (ctx.feoPlannedDisplayFor(node) > 0 && ctx.feoInPlanScheduleFor(node) > ctx.feoPlannedDisplayFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
         :title="ctx.feoInPlanScheduleFor(node) > 0 ? 'Открыть список закупок этой категории' : ''"
@@ -806,7 +833,12 @@
     </td>
 
     <!-- Остаток = (Плановая сумма | Финансирование по ФЭО) − В плане-графике. -->
-    <td class="feo-td feo-td-num" style="vertical-align:top">
+    <td class="feo-td feo-td-num" style="vertical-align:top"
+      :style="feoMarks.mergeCellStyle({ verticalAlign: 'top' }, 'feo_category', node.id, 'residual')"
+      :class="feoMarks.feoCellAttrs('feo_category', node.id, 'residual').class"
+      @click="onCategoryCellClick($event, node, 'residual')"
+      @contextmenu.prevent="onCategoryResidualContextMenu($event, node)"
+    >
       <span v-if="ctx.feoResidualBaseFor(node) > 0 || ctx.feoInPlanScheduleFor(node) > 0"
         class="feo-amount"
         :style="ctx.feoResidualFor(node) < -0.005 ? 'color:#EF4444;font-weight:700' : 'color:#16A34A'"
@@ -828,7 +860,12 @@
     <!-- Оплачено = по отметке закупщика (payment_amount + payment_amount_declared),
          из них подтверждено выпиской — payment_amount, см. PaymentsBlock.vue /
          app.services.feo_plan_payments (решение владельца 02.10.2026). -->
-    <td class="feo-td feo-td-num" style="vertical-align:top">
+    <td class="feo-td feo-td-num" style="vertical-align:top"
+      :style="feoMarks.mergeCellStyle({ verticalAlign: 'top' }, 'feo_category', node.id, 'paid')"
+      :class="feoMarks.feoCellAttrs('feo_category', node.id, 'paid').class"
+      @click="onCategoryCellClick($event, node, 'paid')"
+      @contextmenu.prevent="onCategoryPaidContextMenu($event, node)"
+    >
       <span v-if="feoTreeAmounts2.paidMarkedFor(node) > 0.005"
         class="feo-amount"
         title="Отметил человек — поставил платёж, перевёл закупку в «Оплачено»"
@@ -846,7 +883,9 @@
     </td>
 
     <!-- Действия -->
-    <td class="feo-td feo-td-actions">
+    <td class="feo-td feo-td-actions"
+      @contextmenu.prevent="onCategoryRowContextMenu($event, node)"
+    >
       <div class="feo-actions-wrap">
         <!-- Level 3: кнопка раскрытия позиций / spacer for alignment. У направления
              (node.hasChildren) кнопка тоже появляется, но ТОЛЬКО если у него есть
@@ -990,6 +1029,8 @@ import type { FeoNode } from '@/composables/subsidies/types'
 import FeoCommentThread from './FeoCommentThread.vue'
 import RevisionCellBadge from './RevisionCellBadge.vue'
 import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
+import { useFeoMarksContext } from '@/composables/subsidies/useFeoMarksContext'
+import type { ContextMenuItem } from '@/composables/useGalaContextMenu'
 // Раздел C0/E (план ancient-prancing-music.md, 2026-09-21): переключатель
 // «целиком / товары-услуги» (useKpiPrefs.ts — пишет параллельный агент, см.
 // задание волны: карточки KPI и второй экземпляр переключателя в
@@ -1211,6 +1252,164 @@ const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'acco
 const feoComments = useFeoComments()
 const commentsExpanded = ref(false)
 const subsidyId = computed(() => ctx.selectedId.value)
+const feoMarks = useFeoMarksContext()
+
+function getNodeExtraItems(targetNode: FeoNode): ContextMenuItem[] {
+  const items: ContextMenuItem[] = []
+  items.push({
+    key: 'open_items_panel',
+    label: targetNode.hasChildren ? '📂 Позиции направления' : '📋 Плановые / факт. позиции',
+    icon: 'mdi-list-box',
+    onClick: () => {
+      if (targetNode.hasChildren) ctx.toggleItemPanel(targetNode)
+      else toggleNodeExpansion(targetNode)
+    },
+  })
+  items.push({
+    key: 'show_purchases',
+    label: '🛒 Закупки по этой категории',
+    icon: 'mdi-cart-outline',
+    onClick: () => {
+      ctx.router.push(`/orders?feo_category_id=${targetNode.id}`)
+    },
+  })
+  if (ctx.canEditFeo.value) {
+    items.push({
+      key: 'edit_category',
+      label: '✏️ Редактировать категорию',
+      icon: 'mdi-pencil-outline',
+      onClick: () => {
+        ctx.startFeoEdit(targetNode)
+      },
+    })
+    items.push({
+      key: 'add_child',
+      label: '➕ Добавить дочернюю',
+      icon: 'mdi-plus-circle-outline',
+      onClick: () => {
+        ctx.openAddFeoDialog(targetNode.id)
+      },
+    })
+  }
+  return items
+}
+
+function onCategoryCellClick(event: MouseEvent, targetNode: FeoNode, fieldName: string) {
+  feoMarks.onFeoCellClick(event, {
+    entityType: 'feo_category',
+    entityId: targetNode.id,
+    fieldName,
+    subsidyId: subsidyId.value,
+  })
+}
+
+function onCategoryRowContextMenu(e: MouseEvent, targetNode: FeoNode) {
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: targetNode.id,
+    fieldName: '*',
+    fieldLabel: targetNode.name || 'Категория',
+    cellValue: targetNode.name,
+    subsidyId: subsidyId.value,
+    extraItems: getNodeExtraItems(targetNode),
+  })
+}
+
+function onCategoryNameContextMenu(e: MouseEvent, targetNode: FeoNode) {
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: targetNode.id,
+    fieldName: 'name',
+    fieldLabel: 'Наименование',
+    cellValue: targetNode.name,
+    subsidyId: subsidyId.value,
+    extraItems: getNodeExtraItems(targetNode),
+  })
+}
+
+function onCategoryBudgetContextMenu(e: MouseEvent, targetNode: FeoNode) {
+  const budgetVal = ctx.feoBudgetFor(targetNode)
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: targetNode.id,
+    fieldName: 'budget',
+    fieldLabel: 'Финансирование по ФЭО',
+    cellValue: budgetVal > 0 ? formatCurrency(budgetVal) : 'Не задано',
+    rawNumber: budgetVal > 0 ? budgetVal : null,
+    subsidyId: subsidyId.value,
+    extraItems: getNodeExtraItems(targetNode),
+  })
+}
+
+function onCategoryQtyContextMenu(e: MouseEvent, targetNode: FeoNode) {
+  const qtyVal = ctx.feoQtyDisplayFor(targetNode)
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: targetNode.id,
+    fieldName: 'planned_quantity',
+    fieldLabel: 'Плановое количество',
+    cellValue: qtyVal > 0 ? `${qtyVal}${targetNode.unit ? ' ' + targetNode.unit : ''}` : '—',
+    rawNumber: qtyVal > 0 ? qtyVal : null,
+    subsidyId: subsidyId.value,
+    extraItems: getNodeExtraItems(targetNode),
+  })
+}
+
+function onCategoryAmountContextMenu(e: MouseEvent, targetNode: FeoNode) {
+  const amtVal = ctx.feoPlannedDisplayFor(targetNode)
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: targetNode.id,
+    fieldName: 'planned_amount',
+    fieldLabel: 'Плановая сумма',
+    cellValue: amtVal > 0 ? formatCurrency(amtVal) : '—',
+    rawNumber: amtVal > 0 ? amtVal : null,
+    subsidyId: subsidyId.value,
+    extraItems: getNodeExtraItems(targetNode),
+  })
+}
+
+function onCategorySpentContextMenu(e: MouseEvent, targetNode: FeoNode) {
+  const spentVal = ctx.feoInPlanScheduleFor(targetNode)
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: targetNode.id,
+    fieldName: 'budget',
+    fieldLabel: 'В закупках',
+    cellValue: spentVal > 0 ? formatCurrency(spentVal) : '—',
+    rawNumber: spentVal > 0 ? spentVal : null,
+    subsidyId: subsidyId.value,
+    extraItems: getNodeExtraItems(targetNode),
+  })
+}
+
+function onCategoryResidualContextMenu(e: MouseEvent, targetNode: FeoNode) {
+  const resVal = ctx.feoResidualFor(targetNode)
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: targetNode.id,
+    fieldName: 'budget',
+    fieldLabel: 'Остаток',
+    cellValue: formatCurrency(resVal),
+    rawNumber: resVal,
+    subsidyId: subsidyId.value,
+    extraItems: getNodeExtraItems(targetNode),
+  })
+}
+
+function onCategoryPaidContextMenu(e: MouseEvent, targetNode: FeoNode) {
+  const paidVal = feoTreeAmounts2.paidMarkedFor(targetNode)
+  feoMarks.onFeoCellContextMenu(e, {
+    entityType: 'feo_category',
+    entityId: targetNode.id,
+    fieldName: 'budget',
+    fieldLabel: 'Оплачено',
+    cellValue: paidVal > 0.005 ? formatCurrency(paidVal) : '—',
+    rawNumber: paidVal > 0.005 ? paidVal : null,
+    subsidyId: subsidyId.value,
+    extraItems: getNodeExtraItems(targetNode),
+  })
+}
 
 // Счётчик комментариев ЭТОЙ категории (владелец, 2026-09-15) — читает
 // уже загруженный общесубсидийный кэш (см. loadCounts в onMounted ниже),

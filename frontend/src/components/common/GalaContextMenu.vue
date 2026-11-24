@@ -389,7 +389,7 @@ onUnmounted(() => {
 .gala-context-menu-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 99998;
+  z-index: 200000;
   background: transparent;
 }
 

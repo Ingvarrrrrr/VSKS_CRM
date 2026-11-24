@@ -139,14 +139,14 @@
                 style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id"
                 :class="[
                   { 'feo-stage-row': !!rowStageBackground(planned), 'feo-search-highlight-row': ctx.isFeoSearchHighlighted(`p-${planned.id}`) },
-                  feoMarks.feoRowAttrs('feo_item', planned.id).class,
+                  feoMarks.feoRowAttrs(plannedTarget(planned).entityType, plannedTarget(planned).entityId).class,
                 ]"
-                :style="feoMarks.mergeRowStyle(rowStageBackground(planned) || { borderBottom: '1px solid #E5E7EB' }, 'feo_item', planned.id)"
+                :style="feoMarks.mergeRowStyle(rowStageBackground(planned) || { borderBottom: '1px solid #E5E7EB' }, plannedTarget(planned).entityType, plannedTarget(planned).entityId)"
                 :title="rowStageTooltip(planned) || undefined"
                 @contextmenu.prevent="onPlannedRowContextMenu($event, planned)"
               >
-                <td :style="feoMarks.mergeCellStyle([nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }], 'feo_item', planned.id, 'name')"
-                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'name').class"
+                <td :style="feoMarks.mergeCellStyle([nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }], plannedTarget(planned, 'name').entityType, plannedTarget(planned, 'name').entityId, plannedTarget(planned, 'name').fieldName)"
+                  :class="feoMarks.feoCellAttrs(plannedTarget(planned, 'name').entityType, plannedTarget(planned, 'name').entityId, plannedTarget(planned, 'name').fieldName).class"
                   style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e"
                   @click="onPlannedCellClick($event, planned, 'name')"
                   @contextmenu.prevent="onPlannedItemNameContextMenu($event, planned)"
@@ -343,8 +343,8 @@
                     {{ ctx.planBreakdownText(node.id, planned) }}
                   </div>
                 </td>
-                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('budget'), 'feo_item', planned.id, 'unit_price')"
-                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'unit_price').class"
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('budget'), plannedTarget(planned, 'unit_price').entityType, plannedTarget(planned, 'unit_price').entityId, plannedTarget(planned, 'unit_price').fieldName)"
+                  :class="feoMarks.feoCellAttrs(plannedTarget(planned, 'unit_price').entityType, plannedTarget(planned, 'unit_price').entityId, plannedTarget(planned, 'unit_price').fieldName).class"
                   style="padding:4px 8px;text-align:right;color:#64748b"
                   @click="onPlannedCellClick($event, planned, 'unit_price')"
                   @contextmenu.prevent="onPlannedItemUnitPriceContextMenu($event, planned)"
@@ -377,8 +377,8 @@
                     <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('unit_price', planned.id, planned.unit_price != null ? Number(planned.unit_price) : null)" />
                   </template>
                 </td>
-                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('qty'), 'feo_item', planned.id, 'quantity')"
-                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'quantity').class"
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('qty'), plannedTarget(planned, 'quantity').entityType, plannedTarget(planned, 'quantity').entityId, plannedTarget(planned, 'quantity').fieldName)"
+                  :class="feoMarks.feoCellAttrs(plannedTarget(planned, 'quantity').entityType, plannedTarget(planned, 'quantity').entityId, plannedTarget(planned, 'quantity').fieldName).class"
                   style="padding:4px 8px;text-align:right;color:#64748b"
                   @click="onPlannedCellClick($event, planned, 'quantity')"
                   @contextmenu.prevent="onPlannedItemQtyContextMenu($event, planned)"
@@ -404,8 +404,8 @@
                     <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('quantity', planned.id, planned.quantity != null ? Number(planned.quantity) : null)" />
                   </template>
                 </td>
-                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('planned'), 'feo_item', planned.id, 'amount')"
-                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'amount').class"
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('planned'), plannedTarget(planned, 'amount').entityType, plannedTarget(planned, 'amount').entityId, plannedTarget(planned, 'amount').fieldName)"
+                  :class="feoMarks.feoCellAttrs(plannedTarget(planned, 'amount').entityType, plannedTarget(planned, 'amount').entityId, plannedTarget(planned, 'amount').fieldName).class"
                   style="padding:4px 8px;text-align:right;color:#64748b"
                   @click="onPlannedCellClick($event, planned, 'amount')"
                   @contextmenu.prevent="onPlannedItemAmountContextMenu($event, planned)"
@@ -427,8 +427,8 @@
                     <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('amount', planned.id, planned.amount != null ? Number(planned.amount) : null)" />
                   </template>
                 </td>
-                <td :style="feoMarks.mergeCellStyle({ width: '86px', minWidth: '86px', padding: '2px 4px', textAlign: 'center', color: '#64748b' }, 'feo_item', planned.id, 'item_type')"
-                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'item_type').class"
+                <td :style="feoMarks.mergeCellStyle({ width: '86px', minWidth: '86px', padding: '2px 4px', textAlign: 'center', color: '#64748b' }, plannedTarget(planned, 'item_type').entityType, plannedTarget(planned, 'item_type').entityId, plannedTarget(planned, 'item_type').fieldName)"
+                  :class="feoMarks.feoCellAttrs(plannedTarget(planned, 'item_type').entityType, plannedTarget(planned, 'item_type').entityId, plannedTarget(planned, 'item_type').fieldName).class"
                   style="width:86px;min-width:86px;padding:2px 4px;text-align:center;color:#64748b"
                   @click="onPlannedCellClick($event, planned, 'item_type')"
                   @contextmenu.prevent="onPlannedItemTypeContextMenu($event, planned)"
@@ -506,8 +506,8 @@
                     </span>
                   </div>
                 </td>
-                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('spent'), 'feo_item', planned.id, 'spent')"
-                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'spent').class"
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('spent'), plannedTarget(planned, 'spent').entityType, plannedTarget(planned, 'spent').entityId, plannedTarget(planned, 'spent').fieldName)"
+                  :class="feoMarks.feoCellAttrs(plannedTarget(planned, 'spent').entityType, plannedTarget(planned, 'spent').entityId, plannedTarget(planned, 'spent').fieldName).class"
                   style="padding:4px 8px;vertical-align:top"
                   @click="onPlannedCellClick($event, planned, 'spent')"
                   @contextmenu.prevent="onPlannedItemStageContextMenu($event, planned)"
@@ -561,8 +561,8 @@
                     </template>
                   </template>
                 </td>
-                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('residual'), 'feo_item', planned.id, 'residual')"
-                  :class="feoMarks.feoCellAttrs('feo_item', planned.id, 'residual').class"
+                <td :style="feoMarks.mergeCellStyle(feoResize.resizeStyle('residual'), plannedTarget(planned, 'residual').entityType, plannedTarget(planned, 'residual').entityId, plannedTarget(planned, 'residual').fieldName)"
+                  :class="feoMarks.feoCellAttrs(plannedTarget(planned, 'residual').entityType, plannedTarget(planned, 'residual').entityId, plannedTarget(planned, 'residual').fieldName).class"
                   @click="onPlannedCellClick($event, planned, 'residual')"
                   @contextmenu.prevent="onPlannedItemResidualContextMenu($event, planned)"
                 ></td>
@@ -1267,21 +1267,41 @@ function getItemExtraItems(planned: FeoPlannedItem & { isManual?: boolean }): Co
   return items
 }
 
-function onPlannedCellClick(event: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }, fieldName: string) {
-  if (planned.isManual) return
-  feoMarks.onFeoCellClick(event, {
+function plannedTarget(planned: FeoPlannedItem & { isManual?: boolean }, rawField = '*') {
+  if (planned.isManual) {
+    let field = rawField
+    if (rawField === 'amount') field = 'planned_amount'
+    else if (rawField === 'quantity') field = 'planned_quantity'
+    else if (rawField === 'name') field = 'name'
+    return {
+      entityType: 'feo_category',
+      entityId: node.id,
+      fieldName: field,
+    }
+  }
+  return {
     entityType: 'feo_item',
     entityId: planned.id,
-    fieldName,
+    fieldName: rawField,
+  }
+}
+
+function onPlannedCellClick(event: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }, fieldName: string) {
+  const t = plannedTarget(planned, fieldName)
+  feoMarks.onFeoCellClick(event, {
+    entityType: t.entityType,
+    entityId: t.entityId,
+    fieldName: t.fieldName,
     subsidyId: subsidyId.value,
   })
 }
 
 function onPlannedRowContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const t = plannedTarget(planned, '*')
   feoMarks.onFeoCellContextMenu(e, {
-    entityType: 'feo_item',
-    entityId: planned.id,
-    fieldName: '*',
+    entityType: t.entityType,
+    entityId: t.entityId,
+    fieldName: t.fieldName,
     fieldLabel: planned.name || 'Плановая позиция',
     cellValue: planned.name,
     subsidyId: subsidyId.value,
@@ -1290,10 +1310,11 @@ function onPlannedRowContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isMa
 }
 
 function onPlannedItemNameContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const t = plannedTarget(planned, 'name')
   feoMarks.onFeoCellContextMenu(e, {
-    entityType: 'feo_item',
-    entityId: planned.id,
-    fieldName: 'name',
+    entityType: t.entityType,
+    entityId: t.entityId,
+    fieldName: t.fieldName,
     fieldLabel: 'Наименование',
     cellValue: planned.name,
     subsidyId: subsidyId.value,
@@ -1302,11 +1323,12 @@ function onPlannedItemNameContextMenu(e: MouseEvent, planned: FeoPlannedItem & {
 }
 
 function onPlannedItemUnitPriceContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const t = plannedTarget(planned, 'unit_price')
   const price = !planned.isManual && planned.is_feo_breakdown ? feoUnitPriceFor(planned) : planned.unit_price
   feoMarks.onFeoCellContextMenu(e, {
-    entityType: 'feo_item',
-    entityId: planned.id,
-    fieldName: 'unit_price',
+    entityType: t.entityType,
+    entityId: t.entityId,
+    fieldName: t.fieldName,
     fieldLabel: 'Цена за единицу',
     cellValue: price != null ? formatCurrency(Number(price)) : '—',
     rawNumber: price,
@@ -1316,11 +1338,12 @@ function onPlannedItemUnitPriceContextMenu(e: MouseEvent, planned: FeoPlannedIte
 }
 
 function onPlannedItemQtyContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const t = plannedTarget(planned, 'quantity')
   const qty = !planned.isManual && planned.is_feo_breakdown ? feoQuantityFor(planned) : planned.quantity
   feoMarks.onFeoCellContextMenu(e, {
-    entityType: 'feo_item',
-    entityId: planned.id,
-    fieldName: 'quantity',
+    entityType: t.entityType,
+    entityId: t.entityId,
+    fieldName: t.fieldName,
     fieldLabel: 'Количество',
     cellValue: qty != null ? `${qty} ${planned.unit || ''}` : '—',
     rawNumber: qty,
@@ -1330,11 +1353,12 @@ function onPlannedItemQtyContextMenu(e: MouseEvent, planned: FeoPlannedItem & { 
 }
 
 function onPlannedItemAmountContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const t = plannedTarget(planned, 'amount')
   const amt = !planned.isManual && planned.is_feo_breakdown ? feoAmountFor(planned) : planned.amount
   feoMarks.onFeoCellContextMenu(e, {
-    entityType: 'feo_item',
-    entityId: planned.id,
-    fieldName: 'amount',
+    entityType: t.entityType,
+    entityId: t.entityId,
+    fieldName: t.fieldName,
     fieldLabel: 'Сумма (план)',
     cellValue: amt != null ? formatCurrency(Number(amt)) : '—',
     rawNumber: amt,
@@ -1344,10 +1368,11 @@ function onPlannedItemAmountContextMenu(e: MouseEvent, planned: FeoPlannedItem &
 }
 
 function onPlannedItemTypeContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const t = plannedTarget(planned, 'item_type')
   feoMarks.onFeoCellContextMenu(e, {
-    entityType: 'feo_item',
-    entityId: planned.id,
-    fieldName: 'item_type',
+    entityType: t.entityType,
+    entityId: t.entityId,
+    fieldName: t.fieldName,
     fieldLabel: 'Тип (товар/услуга/работа)',
     cellValue: planned.item_type_effective || '—',
     subsidyId: subsidyId.value,
@@ -1356,11 +1381,12 @@ function onPlannedItemTypeContextMenu(e: MouseEvent, planned: FeoPlannedItem & {
 }
 
 function onPlannedItemStageContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const t = plannedTarget(planned, 'amount')
   const purchases = feoLevel5.purchasesForPlanned(node.id, planned.id)
   feoMarks.onFeoCellContextMenu(e, {
-    entityType: 'feo_item',
-    entityId: planned.id,
-    fieldName: 'amount',
+    entityType: t.entityType,
+    entityId: t.entityId,
+    fieldName: t.fieldName,
     fieldLabel: 'Стадия закупки',
     cellValue: purchases.length
       ? `${purchases.length} закупок, ${formatCurrency(feoLevel5.stageBreakdownTotal(node.id, planned.id))}`
@@ -1372,11 +1398,12 @@ function onPlannedItemStageContextMenu(e: MouseEvent, planned: FeoPlannedItem & 
 }
 
 function onPlannedItemResidualContextMenu(e: MouseEvent, planned: FeoPlannedItem & { isManual?: boolean }) {
+  const t = plannedTarget(planned, 'amount')
   const residualVal = planned.not_committed != null ? planned.not_committed : (planned.savings != null ? planned.savings : null)
   feoMarks.onFeoCellContextMenu(e, {
-    entityType: 'feo_item',
-    entityId: planned.id,
-    fieldName: 'amount',
+    entityType: t.entityType,
+    entityId: t.entityId,
+    fieldName: t.fieldName,
     fieldLabel: 'Остаток плана',
     cellValue: residualVal != null ? formatCurrency(residualVal) : '—',
     rawNumber: residualVal,

@@ -20,6 +20,7 @@
 
       <!-- Color palette bar -->
       <gala-context-color-bar
+        v-if="canMarkEntity"
         v-model:mode="colorBarMode"
         :allow-row-toggle="allowRowToggle"
         :current-color="currentMarkColor"
@@ -30,6 +31,7 @@
       <div class="gala-context-menu-items">
         <!-- 💬 Комментарий к выделенному -->
         <button
+          v-if="canMarkEntity"
           type="button"
           class="gala-context-menu-item"
           @click="onOpenComment"
@@ -40,7 +42,7 @@
 
         <!-- 🎨 Фильтр по этому цвету (если цвет есть) или Сброс фильтра по цвету -->
         <button
-          v-if="currentMarkColor || activeEntityTypeColorFilter"
+          v-if="canMarkEntity && (currentMarkColor || activeEntityTypeColorFilter)"
           type="button"
           class="gala-context-menu-item"
           @click="onToggleColorFilter"
@@ -53,7 +55,7 @@
           </span>
         </button>
 
-        <div class="gala-context-menu-divider" />
+        <div v-if="canMarkEntity" class="gala-context-menu-divider" />
 
         <!-- 🔍 Фильтровать по значению (если передано onFilterValue) -->
         <template v-if="hasFilterValue">
@@ -120,6 +122,7 @@
 
         <!-- 🕘 История изменений -->
         <button
+          v-if="canMarkEntity"
           type="button"
           class="gala-context-menu-item"
           @click="onOpenHistory"
@@ -160,6 +163,7 @@ import {
   type CellTarget,
   type MarkColor,
 } from '@/composables/useCellMarks'
+import { useToast } from '@/composables/useToast'
 import GalaContextColorBar from './GalaContextColorBar.vue'
 
 const {
@@ -182,11 +186,35 @@ const {
   getRowMark,
   activeColorFilter,
   setColorFilter,
+  selectedTargets,
+  clearSelection,
 } = useCellMarks()
+
+const { addToast } = useToast()
 
 const colorBarMode = ref<'cell' | 'row'>('cell')
 
-const bulkCount = computed(() => activeCellOptions.value?.bulkTargets?.length || 0)
+const canMarkEntity = computed(() => {
+  const opts = activeCellOptions.value
+  return Boolean(opts?.entityType && opts.entityType !== 'table_row' && Number(opts.entityId) > 0) || Boolean(opts?.bulkTargets && opts.bulkTargets.length > 0)
+})
+
+const isSelectionActive = computed(() => {
+  const opts = activeCellOptions.value
+  if (!opts || selectedTargets.value.length === 0) return false
+  const numId = Number(opts.entityId)
+  const inSel = selectedTargets.value.some(
+    t => t.entityType === opts.entityType && Number(t.entityId) === numId && (t.fieldName === '*' || t.fieldName === opts.fieldName)
+  )
+  const sameType = selectedTargets.value.length > 1 && selectedTargets.value.every(t => t.entityType === opts.entityType)
+  return inSel || sameType
+})
+
+const bulkCount = computed(() => {
+  if (activeCellOptions.value?.bulkTargets?.length) return activeCellOptions.value.bulkTargets.length
+  if (isSelectionActive.value) return selectedTargets.value.length
+  return 0
+})
 const allowRowToggle = computed(() => bulkCount.value === 0)
 
 watch(
@@ -202,7 +230,17 @@ const currentTargets = computed<CellTarget[]>(() => {
   const opts = activeCellOptions.value
   if (!opts) return []
   if (opts.bulkTargets && opts.bulkTargets.length > 0) {
-    return opts.bulkTargets
+    return [...opts.bulkTargets]
+  }
+  if (isSelectionActive.value) {
+    return selectedTargets.value.map(t => ({
+      entityType: t.entityType,
+      entityId: Number(t.entityId),
+      fieldName: colorBarMode.value === 'row' ? '*' : (t.fieldName || '*'),
+      fieldLabel: t.fieldLabel,
+      orgId: t.orgId ?? opts.orgId,
+      subsidyId: t.subsidyId ?? opts.subsidyId,
+    }))
   }
 
   const numId = typeof opts.entityId === 'number' ? opts.entityId : Number(opts.entityId)
@@ -295,26 +333,41 @@ const computedStyle = computed(() => {
 async function onSelectColor(color: MarkColor) {
   const targets = currentTargets.value
   if (targets.length === 0) return
-  await applyMarkBatch({
-    targets,
-    color,
-    subsidyId: activeCellOptions.value?.subsidyId,
-    orgId: activeCellOptions.value?.orgId,
-  })
-  closeContextMenu()
+  try {
+    await applyMarkBatch({
+      targets,
+      color,
+      subsidyId: activeCellOptions.value?.subsidyId,
+      orgId: activeCellOptions.value?.orgId,
+    })
+    if (selectedTargets.value.length > 0) clearSelection()
+  } catch (e: any) {
+    console.error('Failed to set cell mark color', e)
+    addToast('Не удалось применить цвет ячейки', 'error')
+  } finally {
+    closeContextMenu()
+  }
 }
 
 async function onClearColor() {
   const targets = currentTargets.value
   if (targets.length === 0) return
-  await clearMarksColor(targets)
-  closeContextMenu()
+  try {
+    await clearMarksColor(targets)
+    if (selectedTargets.value.length > 0) clearSelection()
+  } catch (e: any) {
+    console.error('Failed to clear cell mark color', e)
+    addToast('Не удалось сбросить цвет ячейки', 'error')
+  } finally {
+    closeContextMenu()
+  }
 }
 
 function onOpenComment() {
   const targets = currentTargets.value
   if (targets.length === 0) return
   openCommentAt(menuPosition.value, targets)
+  if (selectedTargets.value.length > 0) clearSelection()
   closeContextMenu()
 }
 
@@ -364,118 +417,48 @@ function onCopyRowLink() {
 
 async function onExtraClick(item: ContextMenuItem) {
   if (item.disabled) return
-  if (item.onClick) {
-    await item.onClick()
-  }
+  if (item.onClick) await item.onClick()
   closeContextMenu()
 }
 
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && isMenuOpen.value) {
-    closeContextMenu()
-  }
+  if (e.key === 'Escape' && isMenuOpen.value) closeContextMenu()
 }
 
-onMounted(() => {
-  window.addEventListener('keydown', onKeyDown)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', onKeyDown)
-})
+onMounted(() => window.addEventListener('keydown', onKeyDown))
+onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 </script>
 
 <style scoped>
 .gala-context-menu-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 200000;
-  background: transparent;
+  position: fixed; inset: 0; z-index: 200000; background: transparent;
 }
-
 .gala-context-menu {
-  position: fixed;
-  width: 230px;
-  background: rgb(var(--v-theme-surface));
-  color: rgb(var(--v-theme-on-surface));
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 8px;
-  padding: 4px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
-  user-select: none;
+  position: fixed; width: 230px; background: rgb(var(--v-theme-surface));
+  color: rgb(var(--v-theme-on-surface)); border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 8px; padding: 4px; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18); user-select: none;
 }
-
 .gala-context-menu-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 8px 6px 8px;
-  border-bottom: 1px solid rgba(var(--v-border-color), 0.08);
-  margin-bottom: 4px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 8px 6px 8px; border-bottom: 1px solid rgba(var(--v-border-color), 0.08); margin-bottom: 4px;
 }
-
 .gala-context-menu-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(var(--v-theme-on-surface), 0.6);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
+  font-size: 11px; font-weight: 600; color: rgba(var(--v-theme-on-surface), 0.6);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
 }
-
 .gala-bulk-badge {
-  font-size: 10px;
-  background: rgba(var(--v-theme-primary), 0.12);
-  color: rgb(var(--v-theme-primary));
-  padding: 1px 5px;
-  border-radius: 10px;
-  font-weight: 600;
-  margin-left: 4px;
-  white-space: nowrap;
+  font-size: 10px; background: rgba(var(--v-theme-primary), 0.12); color: rgb(var(--v-theme-primary));
+  padding: 1px 5px; border-radius: 10px; font-weight: 600; margin-left: 4px; white-space: nowrap;
 }
-
-.gala-context-menu-items {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
+.gala-context-menu-items { display: flex; flex-direction: column; gap: 1px; }
 .gala-context-menu-item {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  padding: 5px 8px;
-  font-size: 12.5px;
-  border: none;
-  background: transparent;
-  color: inherit;
-  border-radius: 5px;
-  cursor: pointer;
-  text-align: left;
+  display: flex; align-items: center; width: 100%; padding: 5px 8px; font-size: 12.5px;
+  border: none; background: transparent; color: inherit; border-radius: 5px; cursor: pointer; text-align: left;
   transition: background-color 0.12s ease;
 }
-
-.gala-context-menu-item:hover:not(:disabled) {
-  background: rgba(var(--v-theme-primary), 0.08);
-}
-
-.gala-context-menu-item--danger {
-  color: rgb(var(--v-theme-error));
-}
-
-.gala-context-menu-item--danger:hover:not(:disabled) {
-  background: rgba(var(--v-theme-error), 0.1);
-}
-
-.gala-context-menu-item--disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.gala-context-menu-divider {
-  height: 1px;
-  background: rgba(var(--v-border-color), 0.12);
-  margin: 3px 0;
-}
+.gala-context-menu-item:hover:not(:disabled) { background: rgba(var(--v-theme-primary), 0.08); }
+.gala-context-menu-item--danger { color: rgb(var(--v-theme-error)); }
+.gala-context-menu-item--danger:hover:not(:disabled) { background: rgba(var(--v-theme-error), 0.1); }
+.gala-context-menu-item--disabled { opacity: 0.45; cursor: not-allowed; }
+.gala-context-menu-divider { height: 1px; background: rgba(var(--v-border-color), 0.12); margin: 3px 0; }
 </style>

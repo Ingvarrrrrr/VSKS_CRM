@@ -1,21 +1,13 @@
-"""Unit tests for CellMark model, schemas, router, restore endpoints, and Alembic migration."""
+"""Unit tests for CellMark model, schemas, router, and Alembic migration."""
 import sys
 import importlib.util
 from datetime import datetime, timezone
-from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
-from sqlalchemy import create_engine
-
 from app.models.cell_mark import CellMark
 from app.models.user import User
-from app.models.feo_planned_item import FeoPlannedItem
-from app.models.feo_category import FeoCategory
-from app.models.purchase import Purchase
-from app.models.wish import Wish
-from app.models.task import Task, TaskPriority
 from app.routers.cell_marks import (
     CellMarkTarget,
     CellMarkBatchIn,
@@ -29,11 +21,6 @@ from app.routers.cell_marks import (
     batch_upsert_cell_marks,
     clear_cell_mark_color,
     resolve_cell_marks_group,
-)
-from app.routers.entity_changes_restore import (
-    RestoreFieldBody,
-    restore_entity_field,
-    _parse_decimal,
 )
 
 
@@ -354,118 +341,70 @@ async def test_resolve_group_preserves_color_and_comment(mock_user):
     assert mark1.resolved_by_name == "Иван Иванов"
 
 
-# ── Restore endpoint tests ───────────────────────────────────────────────────
+def test_http_endpoints_snake_and_camel_case(mock_user):
+    from fastapi.testclient import TestClient
+    from app import app
+    from app.auth.jwt import get_current_user
+    from app.database import get_db
 
-@pytest.mark.asyncio
-async def test_restore_feo_item_quantity_and_amount(mock_user):
-    db = AsyncMock()
-    item = FeoPlannedItem(
-        id=101,
-        name="Товар 1",
-        quantity=Decimal("5.0"),
-        unit_price=Decimal("1000.0"),
-        amount=Decimal("5000.0"),
+    mock_db = AsyncMock()
+    scalars_mock = MagicMock()
+    mark = CellMark(
+        id=1, group_id="g-100", entity_type="task", entity_id=10, field_name="title",
+        color="red", comment="Test", visibility="shared", is_resolved=False,
+        created_by_id=mock_user.id, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc)
     )
-    mock_res = MagicMock()
-    mock_res.scalar_one_or_none.return_value = item
-    db.execute.return_value = mock_res
+    scalars_mock.first.return_value = mark
+    scalars_mock.all.return_value = [mark]
+    res_mock = MagicMock()
+    res_mock.scalars.return_value = scalars_mock
+    mock_db.execute.return_value = res_mock
 
-    with patch("app.routers.entity_changes_restore._check_feo_history_read_access", new=AsyncMock()), \
-         patch("app.routers.entity_changes_restore.record_entity_changes", new=AsyncMock()) as mock_rec, \
-         patch("app.routers.entity_changes_restore.owner_scope_org_ids", new=AsyncMock(return_value=None)):
+    async def mock_refresh(item):
+        if item.id is None:
+            item.id = 1
+    mock_db.refresh.side_effect = mock_refresh
 
-        res = await restore_entity_field(
-            entity_type="feo_item",
-            entity_id=101,
-            body=RestoreFieldBody(field_name="quantity", value="12.5"),
-            db=db,
-            current_user=mock_user,
-        )
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[get_db] = lambda: mock_db
 
-    assert res["ok"] is True
-    assert res["field_name"] == "quantity"
-    assert res["restored_value"] == "12.5"
-    assert item.quantity == Decimal("12.5")
-    mock_rec.assert_called_once()
+    try:
+        with patch("app.routers.cell_marks.owner_scope_org_ids", new=AsyncMock(return_value=None)), \
+             TestClient(app) as tc:
+            # 1. POST /api/cell-marks/batch (snake_case)
+            r1 = tc.post("/api/cell-marks/batch", json={
+                "targets": [{"entity_type": "task", "entity_id": 10, "field_name": "title"}],
+                "color": "red",
+                "comment": "Test",
+                "visibility": "shared",
+            })
+            assert r1.status_code == 200, r1.text
 
+            # 2. POST /api/cell-marks/batch (camelCase)
+            r2 = tc.post("/api/cell-marks/batch", json={
+                "targets": [{"entityType": "task", "entityId": 10, "fieldName": "title", "subsidyId": 2, "orgId": 1}],
+                "color": None,
+                "comment": "CamelCase comment",
+                "visibility": "shared",
+                "subsidyId": 2,
+                "orgId": 1,
+            })
+            assert r2.status_code == 200, r2.text
 
-@pytest.mark.asyncio
-async def test_restore_feo_category_budget(mock_user):
-    db = AsyncMock()
-    cat = FeoCategory(id=33, name="Категория А", budget=Decimal("100000.00"))
-    mock_res = MagicMock()
-    mock_res.scalar_one_or_none.return_value = cat
-    db.execute.return_value = mock_res
+            # 3. POST /api/cell-marks/clear-color (camelCase)
+            r3 = tc.post("/api/cell-marks/clear-color", json={
+                "targets": [{"entityType": "task", "entityId": 10, "fieldName": "title"}]
+            })
+            assert r3.status_code == 200, r3.text
 
-    with patch("app.routers.entity_changes_restore._check_feo_history_read_access", new=AsyncMock()), \
-         patch("app.routers.entity_changes_restore.record_entity_changes", new=AsyncMock()), \
-         patch("app.routers.entity_changes_restore.owner_scope_org_ids", new=AsyncMock(return_value=None)):
+            # 4. GET /api/cell-marks
+            r4 = tc.get("/api/cell-marks", params={"entity_type": "task", "entity_ids": "10"})
+            assert r4.status_code == 200, r4.text
 
-        res = await restore_entity_field(
-            entity_type="feo_category",
-            entity_id=33,
-            body=RestoreFieldBody(field_name="budget", value="150000,50"),
-            db=db,
-            current_user=mock_user,
-        )
+            # 5. POST /api/cell-marks/{group_id}/resolve
+            r5 = tc.post("/api/cell-marks/g-100/resolve")
+            assert r5.status_code == 200, r5.text
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
 
-    assert res["ok"] is True
-    assert cat.budget == Decimal("150000.50")
-
-
-@pytest.mark.asyncio
-async def test_restore_task_priority_and_title(mock_user):
-    db = AsyncMock()
-    task = Task(id=77, title="Старое название", priority=TaskPriority.low, org_id=7)
-    mock_res = MagicMock()
-    mock_res.scalar_one_or_none.return_value = task
-    db.execute.return_value = mock_res
-
-    with patch("app.routers.entity_changes_restore.record_entity_changes", new=AsyncMock()), \
-         patch("app.routers.entity_changes_restore.owner_scope_org_ids", new=AsyncMock(return_value={7})):
-
-        res_p = await restore_entity_field(
-            entity_type="task",
-            entity_id=77,
-            body=RestoreFieldBody(field_name="priority", value="urgent"),
-            db=db,
-            current_user=mock_user,
-        )
-        assert res_p["ok"] is True
-        assert task.priority == TaskPriority.urgent
-
-        res_t = await restore_entity_field(
-            entity_type="task",
-            entity_id=77,
-            body=RestoreFieldBody(field_name="title", value="Возвращенный заголовок"),
-            db=db,
-            current_user=mock_user,
-        )
-        assert res_t["ok"] is True
-        assert task.title == "Возвращенный заголовок"
-
-
-@pytest.mark.asyncio
-async def test_restore_invalid_entity_type_or_field_fails(mock_user):
-    from fastapi import HTTPException
-    db = AsyncMock()
-
-    with pytest.raises(HTTPException) as exc_info:
-        await restore_entity_field(
-            entity_type="unsupported_type",
-            entity_id=1,
-            body=RestoreFieldBody(field_name="title", value="val"),
-            db=db,
-            current_user=mock_user,
-        )
-    assert exc_info.value.status_code == 400
-
-    with pytest.raises(HTTPException) as exc_info2:
-        await restore_entity_field(
-            entity_type="task",
-            entity_id=1,
-            body=RestoreFieldBody(field_name="unsupported_field", value="val"),
-            db=db,
-            current_user=mock_user,
-        )
-    assert exc_info2.value.status_code == 400

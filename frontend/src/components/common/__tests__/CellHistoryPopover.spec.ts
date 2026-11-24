@@ -379,7 +379,23 @@ describe('CellHistoryPopover helpers and composables', () => {
         comment: 'Готово',
       })
 
-      expect(mockApiFetch).toHaveBeenCalledWith('/cell-marks/batch', expect.anything())
+      expect(mockApiFetch).toHaveBeenCalledWith(
+        '/cell-marks/batch',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.objectContaining({
+            targets: [
+              expect.objectContaining({
+                entity_type: 'task',
+                entity_id: 55,
+                field_name: 'status',
+              }),
+            ],
+            color: 'green',
+            comment: 'Готово',
+          }),
+        })
+      )
       const m = marks.getMark('task', 55, 'status')
       expect(m?.color).toBe('green')
       expect(m?.comment).toBe('Готово')
@@ -387,10 +403,32 @@ describe('CellHistoryPopover helpers and composables', () => {
       // Clear color
       mockApiFetch.mockResolvedValueOnce({})
       await marks.clearMarksColor([target])
-      expect(mockApiFetch).toHaveBeenCalledWith('/cell-marks/clear-color', expect.anything())
+      expect(mockApiFetch).toHaveBeenCalledWith('/cell-marks/clear-color', {
+        method: 'POST',
+        body: {
+          targets: [
+            {
+              entity_type: 'task',
+              entity_id: 55,
+              field_name: 'status',
+            },
+          ],
+        },
+      })
       const cleared = marks.getExactMark('task', 55, 'status')
       expect(cleared?.color).toBeNull()
       expect(cleared?.comment).toBe('Готово')
+
+      // Do not send request when entityId is 0 or negative or entityType is table_row
+      mockApiFetch.mockClear()
+      await marks.applyMarkBatch({
+        targets: [{ entityType: 'table_row', entityId: 0, fieldName: '*' }],
+        color: 'red',
+      })
+      expect(mockApiFetch).not.toHaveBeenCalled()
+
+      await marks.clearMarksColor([{ entityType: 'summary', entityId: 0, fieldName: 'total' }])
+      expect(mockApiFetch).not.toHaveBeenCalled()
 
       // Resolve mark group
       if (cleared?.group_id) {

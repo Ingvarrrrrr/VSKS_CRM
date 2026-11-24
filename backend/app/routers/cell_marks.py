@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, AliasChoices
 from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,29 +27,37 @@ router = APIRouter(prefix="/api/cell-marks", tags=["cell-marks"])
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 class CellMarkTarget(BaseModel):
-    entity_type: str
-    entity_id: int
-    field_name: str = "*"
-    org_id: Optional[int] = None
-    subsidy_id: Optional[int] = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    entity_type: str = Field(validation_alias=AliasChoices("entity_type", "entityType"))
+    entity_id: int = Field(validation_alias=AliasChoices("entity_id", "entityId"))
+    field_name: str = Field("*", validation_alias=AliasChoices("field_name", "fieldName"))
+    org_id: Optional[int] = Field(None, validation_alias=AliasChoices("org_id", "orgId"))
+    subsidy_id: Optional[int] = Field(None, validation_alias=AliasChoices("subsidy_id", "subsidyId"))
 
 
 class CellMarkBatchIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     targets: List[CellMarkTarget]
     color: Optional[str] = None
     comment: Optional[str] = None
     visibility: Literal["shared", "private"] = "shared"
-    subsidy_id: Optional[int] = None
-    org_id: Optional[int] = None
+    subsidy_id: Optional[int] = Field(None, validation_alias=AliasChoices("subsidy_id", "subsidyId"))
+    org_id: Optional[int] = Field(None, validation_alias=AliasChoices("org_id", "orgId"))
 
 
 class ClearColorTarget(BaseModel):
-    entity_type: str
-    entity_id: int
-    field_name: Optional[str] = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    entity_type: str = Field(validation_alias=AliasChoices("entity_type", "entityType"))
+    entity_id: int = Field(validation_alias=AliasChoices("entity_id", "entityId"))
+    field_name: Optional[str] = Field(None, validation_alias=AliasChoices("field_name", "fieldName"))
 
 
 class ClearColorIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     targets: List[ClearColorTarget]
 
 
@@ -196,7 +204,7 @@ async def batch_upsert_cell_marks(
 
         if existing:
             existing.group_id = batch_group_id
-            if "color" in body.model_fields_set and body.color is not None:
+            if "color" in body.model_fields_set:
                 existing.color = body.color
             if "comment" in body.model_fields_set:
                 existing.comment = body.comment

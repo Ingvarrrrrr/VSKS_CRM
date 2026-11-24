@@ -324,9 +324,35 @@ export function useCellMarks() {
   }): Promise<void> {
     if (!payload.targets || payload.targets.length === 0) return
 
+    const validTargets = payload.targets.filter(
+      t => Number(t.entityId) > 0 && !!t.entityType && t.entityType !== 'table_row'
+    )
+    if (validTargets.length === 0) return
+
+    const serializedTargets = validTargets.map(t => ({
+      entity_type: t.entityType,
+      entity_id: Number(t.entityId),
+      field_name: t.fieldName || '*',
+      org_id: t.orgId ?? payload.orgId ?? null,
+      subsidy_id: t.subsidyId ?? payload.subsidyId ?? null,
+    }))
+
+    const body: Record<string, any> = {
+      targets: serializedTargets,
+      visibility: payload.visibility || 'shared',
+      subsidy_id: payload.subsidyId ?? null,
+      org_id: payload.orgId ?? null,
+    }
+    if (payload.color !== undefined) {
+      body.color = payload.color
+    }
+    if (payload.comment !== undefined) {
+      body.comment = payload.comment
+    }
+
     const res = await apiFetch<CellMarkRecord[] | { items?: CellMarkRecord[] }>('/cell-marks/batch', {
       method: 'POST',
-      body: payload as any,
+      body: body as any,
     })
 
     const rawList = Array.isArray(res) ? res : (res && Array.isArray(res.items) ? res.items : [])
@@ -344,15 +370,15 @@ export function useCellMarks() {
     } else {
       // Optimistic update
       const groupId = `temp_${Date.now()}`
-      for (const t of payload.targets) {
-        const k = makeKey(t.entityType, t.entityId, t.fieldName)
+      for (const t of validTargets) {
+        const k = makeKey(t.entityType, Number(t.entityId), t.fieldName || '*')
         const prev = nextMap.get(k)
         const updated: CellMarkRecord = {
           id: prev?.id || Math.floor(Math.random() * 100000),
           group_id: prev?.group_id || groupId,
           entity_type: t.entityType,
-          entity_id: t.entityId,
-          field_name: t.fieldName,
+          entity_id: Number(t.entityId),
+          field_name: t.fieldName || '*',
           org_id: t.orgId ?? payload.orgId ?? null,
           subsidy_id: t.subsidyId ?? payload.subsidyId ?? null,
           color: payload.color !== undefined ? payload.color : (prev?.color ?? null),
@@ -370,14 +396,25 @@ export function useCellMarks() {
   async function clearMarksColor(targets: CellTarget[]): Promise<void> {
     if (!targets || targets.length === 0) return
 
+    const validTargets = targets.filter(
+      t => Number(t.entityId) > 0 && !!t.entityType && t.entityType !== 'table_row'
+    )
+    if (validTargets.length === 0) return
+
+    const serializedTargets = validTargets.map(t => ({
+      entity_type: t.entityType,
+      entity_id: Number(t.entityId),
+      field_name: t.fieldName || '*',
+    }))
+
     await apiFetch('/cell-marks/clear-color', {
       method: 'POST',
-      body: { targets } as any,
+      body: { targets: serializedTargets } as any,
     })
 
     const nextMap = new Map(marksMap.value)
-    for (const t of targets) {
-      const k = makeKey(t.entityType, t.entityId, t.fieldName)
+    for (const t of validTargets) {
+      const k = makeKey(t.entityType, Number(t.entityId), t.fieldName || '*')
       const prev = nextMap.get(k)
       if (prev) {
         if (!prev.comment) {

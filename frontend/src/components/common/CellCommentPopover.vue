@@ -288,7 +288,7 @@ async function loadResolvedComments() {
     })
     const data = await apiFetch<CellMarkRecord[]>(`/cell-marks?${query.toString()}`)
     const list = Array.isArray(data) ? data : []
-    resolvedList.value = list.filter(m => m.is_resolved)
+    resolvedList.value = list.filter(m => m.is_resolved && (target.fieldName === '*' || m.field_name === target.fieldName || m.field_name === '*'))
   } catch (e) {
     console.warn('Failed to load resolved cell comments', e)
     resolvedList.value = []
@@ -317,7 +317,7 @@ async function onSave() {
   saving.value = true
   try {
     await applyMarkBatch({
-      targets,
+      targets: [...targets],
       comment: commentText.value.trim() || null,
       color: selectedColor.value,
       visibility: visibility.value,

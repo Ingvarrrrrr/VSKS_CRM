@@ -43,7 +43,7 @@
             :items="orderTypeOptions"
             item-title="label"
             item-value="value"
-            label="Тип договора"
+            label="Тип закупки"
             variant="outlined"
             density="compact"
             multiple

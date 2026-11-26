@@ -10,10 +10,10 @@ export function isItemFramework(item: Purchase) { return FRAMEWORK_TYPES.has(ite
 
 export function purchaseTypeLabel(item: Purchase): string {
   if (item.purchase_method === 'advance') return 'Авансовый'
-  if (isItemFramework(item)) return 'Рамочный'
+  if (isItemFramework(item)) return 'В рамках рамочного'
   if (item.purchase_basis === 'invoice') return 'По счёту'
-  if (item.purchase_method === 'single' || item.purchase_contract_type === 'single') return 'Разовый'
   if (item.purchase_method === 'competitive') return 'Конкурентный'
+  if (item.purchase_method === 'single' || item.purchase_contract_type === 'single') return 'Разовый'
   return 'Разовый'
 }
 export function purchaseMethodLabel(m?: string): string {
@@ -243,16 +243,18 @@ export const formatDate = (d: string) => {
 export const effectivePrice = (item: Purchase): number | null => toAmount(item.amounts?.effective)
 
 export const orderTypeOptions = [
-  { label: 'Разовый', value: 'one_time' },
-  { label: 'Рамочный', value: 'framework' },
   { label: 'Авансовый', value: 'advance' },
+  { label: 'Разовый', value: 'one_time' },
+  { label: 'В рамках рамочного', value: 'framework' },
   { label: 'По счёту', value: 'invoice' },
+  { label: 'Конкурентный', value: 'competitive' },
 ]
 
 export function getOrderTypeKey(o: Purchase): string {
   if (o.purchase_method === 'advance') return 'advance'
-  if (o.purchase_contract_type === 'single' || o.purchase_method === 'single') return 'one_time'
-  if ((o.purchase_contract_type || '').startsWith('framework')) return 'framework'
+  if (isItemFramework(o) || (o.purchase_contract_type || '').startsWith('framework')) return 'framework'
   if (o.purchase_basis === 'invoice') return 'invoice'
+  if (o.purchase_method === 'competitive') return 'competitive'
+  if (o.purchase_contract_type === 'single' || o.purchase_method === 'single') return 'one_time'
   return 'one_time'
 }

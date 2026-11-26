@@ -19,8 +19,8 @@
           </v-btn>
         </div>
         <template v-else>
-          <div class="text-body-1 mb-1">Перетащите файл сюда</div>
-          <div class="text-body-2 text-medium-emphasis">{{ hint || 'или нажмите для выбора' }}</div>
+          <div class="text-body-1 mb-1">Перетащите файл сюда{{ allowPaste ? ' или вставьте (Ctrl+V)' : '' }}</div>
+          <div class="text-body-2 text-medium-emphasis">{{ hint || (allowPaste ? 'или нажмите для выбора / вставьте фото из буфера' : 'или нажмите для выбора') }}</div>
           <div v-if="maxSizeMb" class="text-caption text-medium-emphasis mt-1">Максимум {{ maxSizeMb }} МБ</div>
         </template>
       </div>
@@ -41,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { checkUploadSize } from '@/constants/uploadLimits'
 
 const props = defineProps<{
@@ -50,14 +50,8 @@ const props = defineProps<{
   multiple?: boolean
   hint?: string
   disabled?: boolean
-  /** Клиентская проверка размера ДО отправки (владелец, 2026-09-17: раньше
-   * нигде не было видно допустимого размера файла, а превышение узнавалось
-   * только по голому HTTP 413 от nginx). Не задан по умолчанию — остальные
-   * потребители FileDropZone (фото/документы ТС, чеки, вложения к закупке)
-   * имеют СВОИ лимиты вне этого компонента и не должны получить чужую
-   * подпись/проверку молча (Правило №6 — трогаем только явно подключённые
-   * диалоги импорта, см. frontend/src/constants/uploadLimits.ts). */
   maxSizeMb?: number
+  allowPaste?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -74,9 +68,6 @@ function onDragEnter() {
   dragging.value = true
 }
 
-/** Возвращает файлы, прошедшие проверку размера (если maxSizeMb задан) —
- * первый превысивший лимит файл останавливает приём и показывает ошибку
- * прямо под зоной сброса, ничего не эмитится наверх. */
 function _filterBySize(files: File[]): File[] {
   if (!props.maxSizeMb) { sizeError.value = null; return files }
   for (const f of files) {
@@ -87,10 +78,87 @@ function _filterBySize(files: File[]): File[] {
   return files
 }
 
-function onDrop(e: DragEvent) {
+async function onDrop(e: DragEvent) {
   dragging.value = false
   if (props.disabled) return
-  const rawFiles = Array.from(e.dataTransfer?.files || [])
+  const dt = e.dataTransfer
+  let rawFiles: File[] = []
+
+  if (dt?.files && dt.files.length > 0) {
+    rawFiles = Array.from(dt.files)
+  } else if (dt?.items && dt.items.length > 0) {
+    for (let i = 0; i < dt.items.length; i++) {
+      const item = dt.items[i]
+      if (item.kind === 'file') {
+        const f = item.getAsFile()
+        if (f) rawFiles.push(f)
+      }
+    }
+  }
+
+  // Если всё ещё пусто, попробуем извлечь URL / DataURL / HTML img из text/uri-list или text/html
+  if (!rawFiles.length && dt) {
+    let targetUrl = ''
+    const uriList = dt.getData('text/uri-list')
+    if (uriList) {
+      targetUrl = uriList.split('\n')[0].trim()
+    } else {
+      const html = dt.getData('text/html')
+      if (html) {
+        const match = html.match(/src="([^"]+)"/)
+        if (match && match[1]) {
+          targetUrl = match[1]
+        }
+      }
+    }
+
+    if (targetUrl && (targetUrl.startsWith('data:') || targetUrl.startsWith('blob:') || targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
+      try {
+        const resp = await fetch(targetUrl)
+        const blob = await resp.blob()
+        const mime = blob.type || 'image/jpeg'
+        const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : mime.includes('pdf') ? 'pdf' : 'jpg'
+        const pastedFile = new File([blob], `pasted-photo.${ext}`, { type: mime })
+        rawFiles.push(pastedFile)
+      } catch (err) {
+        sizeError.value = 'Мессенджер не передал файл напрямую. Скопируйте фото (Ctrl+C) и вставьте сюда (Ctrl+V), или сохраните на компьютер.'
+      }
+    }
+  }
+
+  if (!rawFiles.length) {
+    if (!sizeError.value) {
+      sizeError.value = 'Файл не обнаружен. Попробуйте сохранить картинку на компьютер или использовать Ctrl+V.'
+    }
+    return
+  }
+
+  const files = _filterBySize(rawFiles)
+  if (!files.length) return
+  if (props.multiple) {
+    emit('files', files)
+  } else {
+    emit('update:modelValue', files[0])
+    emit('files', [files[0]])
+  }
+}
+
+async function handleClipboardData(clipboard: DataTransfer | null) {
+  if (!clipboard || props.disabled) return
+  let rawFiles: File[] = []
+  if (clipboard.items && clipboard.items.length > 0) {
+    for (let i = 0; i < clipboard.items.length; i++) {
+      const item = clipboard.items[i]
+      if (item.kind === 'file') {
+        const f = item.getAsFile()
+        if (f) rawFiles.push(f)
+      }
+    }
+  }
+  if (!rawFiles.length && clipboard.files && clipboard.files.length > 0) {
+    rawFiles = Array.from(clipboard.files)
+  }
+
   if (!rawFiles.length) return
   const files = _filterBySize(rawFiles)
   if (!files.length) return
@@ -101,6 +169,25 @@ function onDrop(e: DragEvent) {
     emit('files', [files[0]])
   }
 }
+
+function onGlobalPaste(e: ClipboardEvent) {
+  if (!props.allowPaste || props.disabled) return
+  // Проверим, что фокус не в инпуте/текстарее, либо компонент активен
+  const activeTag = document.activeElement?.tagName?.toLowerCase()
+  if (activeTag === 'input' || activeTag === 'textarea' || (document.activeElement as HTMLElement)?.isContentEditable) {
+    // Если пользователь в инпуте, не перехватываем вставку
+    return
+  }
+  handleClipboardData(e.clipboardData)
+}
+
+onMounted(() => {
+  window.addEventListener('paste', onGlobalPaste)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('paste', onGlobalPaste)
+})
 
 function onFileSelect(e: Event) {
   const input = e.target as HTMLInputElement

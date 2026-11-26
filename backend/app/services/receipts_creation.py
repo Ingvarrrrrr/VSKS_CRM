@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase_receipt import PurchaseReceipt
-from app.product_matcher import find_matching_product
 from app.services import acceptance_docs as _acc_docs
 from app.services.item_amounts import line_total
 from app.services.item_contractor import set_item_contractor
@@ -243,12 +242,8 @@ async def _create_receipt_with_items(
             existing_unlinked.remove(matched_existing)
             continue  # пропустить создание нового PurchaseItem
 
-        # Phase 21.06+: token-set fuzzy match against catalog. Catches names
-        # like "Карабин Ozone..." vs "Ozone..." (where the type is stored in
-        # Product.product_type, not in the name itself). Matched items are
-        # marked unconfirmed so the user verifies each one.
-        matched = await find_matching_product(db, raw_name)
-        matched_id = matched.id if matched else None
+        # Phase 21.06+: for advance/receipt items, do not catalog match on load
+        matched_id = None
         _new_receipt_item = PurchaseItem(
             purchase_id=purchase_id,
             product_id=matched_id,

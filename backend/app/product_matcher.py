@@ -14,7 +14,7 @@ import unicodedata
 from difflib import SequenceMatcher
 from typing import Iterable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -22,7 +22,7 @@ from app.services.product_catalog_match import find_exact_product as _find_exact
 
 
 _STOP = {
-    'и', 'в', 'с', 'на', 'для', 'из', 'по', 'к', 'от', 'до', 'за', 'над',
+    'и', 'в', 'с', 'на', 'для', 'из', 'по', 'к', 'от', ' до', 'за', 'над',
     'под', 'или', 'либо', 'но', 'а', 'же', 'ли', 'бы', 'вр', 'тд', 'тп',
 }
 _PUNCT = re.compile(r'[\"\'«»()\[\],.;:!?@#%&*=+/\\—–\-_…]')
@@ -93,21 +93,38 @@ async def find_matching_product(
     if exact:
         return exact
 
-    # Fuzzy: load candidates, score in Python.
-    # For 10k-product catalogs this is still <50ms; if it grows we can
-    # pre-filter by trigram or ts_vector.
-    q = select(Product)
+    # Шаг 2 (fuzzy): безопасная SQL-предфильтрация (OOM prevention on large catalogs)
+    # - Выбирать в SQL ТОЛЬКО лёгкие колонки `select(Product.id, Product.name)`
+    # - Фильтр Product.is_active == True и Product.org_id == org_id (если org_id is not None)
+    # - Топ-3 самых длинных токена (длиной >= 3, или все токены если длинных нет)
+    # - .limit(500)
+    all_toks = list(_tokens(name))
+    if not all_toks:
+        return None
+    # Сортировка по убыванию длины, берем топ-3
+    sorted_toks = sorted(all_toks, key=len, reverse=True)
+    top_tokens = sorted_toks[:3]
+    if not top_tokens:
+        return None
+
+    q = select(Product.id, Product.name).where(Product.is_active == True)
     if org_id is not None:
         q = q.where(Product.org_id == org_id)
-    candidates: Iterable[Product] = (await db.execute(q)).scalars().all()
 
-    best: Optional[Product] = None
+    # Экранирование % и _ для ilike (autoescape=True или явное через icontains)
+    conditions = [Product.name.icontains(tok, autoescape=True) for tok in top_tokens]
+    q = q.where(or_(*conditions)).limit(500)
+
+    rows = (await db.execute(q)).all()
+
+    best_id: Optional[int] = None
     best_score = 0.0
-    for c in candidates:
-        score = name_similarity(name, c.name or '')
+    for pid, pname in rows:
+        score = name_similarity(name, pname or '')
         if score > best_score:
             best_score = score
-            best = c
-    if best is not None and best_score >= threshold:
-        return best
+            best_id = pid
+
+    if best_id is not None and best_score >= threshold:
+        return await db.get(Product, best_id)
     return None

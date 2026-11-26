@@ -54,6 +54,7 @@
       <FileDropZone
         :accept="RECEIPT_FILE_ACCEPT"
         multiple
+        allow-paste
         :hint="RECEIPT_FILE_HINT"
         class="mb-3"
         @files="onJsonReceiptUpload"

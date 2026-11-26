@@ -119,7 +119,7 @@ async def create_contract_item(pid: int, data: ContractItemCreate,
     # общий для всех орг (см. bulk replace_all_contract_items ниже — тот же
     # паттерн), поэтому поиск без org_id. Раньше здесь падало с AttributeError
     # ('Purchase' object has no attribute 'org_id') — 500 при любом POST с name.
-    if not payload.get("product_id") and payload.get("name"):
+    if not payload.get("product_id") and payload.get("name") and getattr(p, "purchase_method", None) != "advance":
         matched = await find_matching_product(db, payload["name"])
         if matched:
             payload["product_id"] = matched.id
@@ -262,7 +262,7 @@ async def replace_all_contract_items(pid: int, items: List[ContractItemCreate],
         # имени/цене/порядку среди позиций ЭТОЙ закупки.
         if payload.get("source_item_id") and payload["source_item_id"] not in existing_src_ids:
             payload.pop("source_item_id", None)
-        if not payload.get("product_id") and payload.get("name"):
+        if not payload.get("product_id") and payload.get("name") and getattr(p, "purchase_method", None) != "advance":
             # 27.4-16: Purchase не имеет .org_id напрямую (org через subsidy).
             # Поиск без org_id — каталог общий для всех орг.
             matched = await find_matching_product(db, payload["name"])

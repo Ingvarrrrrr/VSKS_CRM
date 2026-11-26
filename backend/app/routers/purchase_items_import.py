@@ -278,15 +278,7 @@ async def import_items_excel(
     _to_dec = to_decimal
 
     # Load products for auto-matching by name
-    org_id = get_single_org_id(current_user)
-    prod_q = select(Product)
-    if org_id:
-        prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
-    prod_result = await db.execute(prod_q)
-    products = prod_result.scalars().all()
-    # Build name lookup (normalize_product_name → предпочтительный Product,
-    # Правило №6, см. app/services/product_catalog_match.py).
-    product_by_name: dict[str, Product] = index_products_by_name(products)
+    product_by_name = {}
 
     TYPE_MAP = {
         'товар': 'товар', 'товары': 'товар', 'product': 'товар', 'goods': 'товар',

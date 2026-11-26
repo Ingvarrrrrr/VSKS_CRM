@@ -59,68 +59,116 @@
           style="min-width:280px;flex:1 1 280px;max-width:420px"
           @click:clear="searchText = ''"
         />
+        <v-select
+          v-model="filters.wishTypes"
+          :items="WISH_TYPE_OPTIONS"
+          item-title="title"
+          item-value="value"
+          label="Тип заявки"
+          variant="outlined"
+          density="compact"
+          multiple
+          clearable
+          hide-details
+          style="min-width:190px;max-width:240px"
+        >
+          <template #selection="{ item, index }">
+            <span v-if="index === 0" class="text-truncate" style="max-width:130px">{{ item.title }}</span>
+            <span v-else-if="index === 1" class="text-caption text-medium-emphasis ml-1">+{{ filters.wishTypes.length - 1 }}</span>
+          </template>
+        </v-select>
         <v-autocomplete
           v-if="ctx.isSaas.value"
-          v-model="filters.accountId"
+          v-model="filters.accountIds"
           :items="accountOptions"
           item-title="name"
           item-value="id"
           label="Аккаунт"
           variant="outlined"
           density="compact"
+          multiple
           clearable
           hide-details
           style="min-width:200px;max-width:260px"
-        />
+        >
+          <template #selection="{ item, index }">
+            <span v-if="index === 0" class="text-truncate" style="max-width:130px">{{ item.title }}</span>
+            <span v-else-if="index === 1" class="text-caption text-medium-emphasis ml-1">+{{ filters.accountIds.length - 1 }}</span>
+          </template>
+        </v-autocomplete>
         <v-autocomplete
           v-if="ctx.isSaas.value"
-          v-model="filters.orgId"
+          v-model="filters.orgIds"
           :items="orgOptionsFiltered"
           item-title="name"
           item-value="id"
           label="Организация"
           variant="outlined"
           density="compact"
+          multiple
           clearable
           hide-details
           style="min-width:200px;max-width:260px"
-        />
+        >
+          <template #selection="{ item, index }">
+            <span v-if="index === 0" class="text-truncate" style="max-width:130px">{{ item.title }}</span>
+            <span v-else-if="index === 1" class="text-caption text-medium-emphasis ml-1">+{{ filters.orgIds.length - 1 }}</span>
+          </template>
+        </v-autocomplete>
         <v-autocomplete
-          v-model="filters.subsidyId"
+          v-model="filters.subsidyIds"
           :items="ctx.subsidies.value"
           item-title="name"
           item-value="id"
           label="Субсидия"
           variant="outlined"
           density="compact"
+          multiple
           clearable
           hide-details
           style="min-width:220px;max-width:280px"
-        />
+        >
+          <template #selection="{ item, index }">
+            <span v-if="index === 0" class="text-truncate" style="max-width:140px">{{ item.title }}</span>
+            <span v-else-if="index === 1" class="text-caption text-medium-emphasis ml-1">+{{ filters.subsidyIds.length - 1 }}</span>
+          </template>
+        </v-autocomplete>
         <v-autocomplete
-          v-model="filters.creatorId"
+          v-model="filters.creatorIds"
           :items="ctx.users.value"
           item-title="full_name"
           item-value="id"
           label="От кого"
           variant="outlined"
           density="compact"
+          multiple
           clearable
           hide-details
-          style="min-width:200px;max-width:240px"
-        />
+          style="min-width:200px;max-width:250px"
+        >
+          <template #selection="{ item, index }">
+            <span v-if="index === 0" class="text-truncate" style="max-width:130px">{{ item.title }}</span>
+            <span v-else-if="index === 1" class="text-caption text-medium-emphasis ml-1">+{{ filters.creatorIds.length - 1 }}</span>
+          </template>
+        </v-autocomplete>
         <v-autocomplete
-          v-model="filters.assignedToId"
+          v-model="filters.assignedToIds"
           :items="ctx.users.value"
           item-title="full_name"
           item-value="id"
           label="Кому"
           variant="outlined"
           density="compact"
+          multiple
           clearable
           hide-details
-          style="min-width:200px;max-width:240px"
-        />
+          style="min-width:200px;max-width:250px"
+        >
+          <template #selection="{ item, index }">
+            <span v-if="index === 0" class="text-truncate" style="max-width:130px">{{ item.title }}</span>
+            <span v-else-if="index === 1" class="text-caption text-medium-emphasis ml-1">+{{ filters.assignedToIds.length - 1 }}</span>
+          </template>
+        </v-autocomplete>
         <v-text-field
           v-model="filters.createdFrom"
           type="date"
@@ -175,7 +223,7 @@
 // WishesView.vue (см. useWishFilters.ts для состояния/buildFilterParams).
 import { computed, ref } from 'vue'
 import { useWishesContext } from '@/composables/wishes/useWishesContext'
-import type { WishFiltersState } from '@/composables/wishes/useWishFilters'
+import { WISH_TYPE_OPTIONS, type WishFiltersState } from '@/composables/wishes/useWishFilters'
 
 const props = defineProps<{
   filters: WishFiltersState
@@ -197,9 +245,12 @@ const searchText = defineModel<string>('searchText', { default: '' })
 // кнопке/чипу разворачивает полную панель выше, «Свернуть» возвращает обратно.
 const expanded = ref(false)
 
-function nameOf(list: { id: number; name?: string; full_name?: string }[] | undefined, id: number | null): string {
-  const found = list?.find(o => o.id === id)
-  return found ? (found.name ?? found.full_name ?? `#${id}`) : `#${id}`
+function namesOf(list: { id: number; name?: string; full_name?: string }[] | undefined, ids: number[]): string {
+  if (ids.length === 1) {
+    const found = list?.find(o => o.id === ids[0])
+    return found ? (found.name ?? found.full_name ?? `#${ids[0]}`) : `#${ids[0]}`
+  }
+  return `выбрано ${ids.length}`
 }
 
 // Чипы активных фильтров — одно место для подсчёта N у кнопки «Фильтры · N» и
@@ -209,11 +260,17 @@ function nameOf(list: { id: number; name?: string; full_name?: string }[] | unde
 const activeFilterChips = computed(() => {
   const f = props.filters
   const chips: { key: keyof WishFiltersState; label: string }[] = []
-  if (f.accountId) chips.push({ key: 'accountId', label: `Аккаунт: ${nameOf(props.accountOptions, f.accountId)}` })
-  if (f.orgId) chips.push({ key: 'orgId', label: `Организация: ${nameOf(props.orgOptionsFiltered, f.orgId)}` })
-  if (f.subsidyId) chips.push({ key: 'subsidyId', label: `Субсидия: ${nameOf(ctx.subsidies.value, f.subsidyId)}` })
-  if (f.creatorId) chips.push({ key: 'creatorId', label: `От: ${nameOf(ctx.users.value, f.creatorId)}` })
-  if (f.assignedToId) chips.push({ key: 'assignedToId', label: `Кому: ${nameOf(ctx.users.value, f.assignedToId)}` })
+  if (f.wishTypes.length) {
+    const label = f.wishTypes.length === 1
+      ? (WISH_TYPE_OPTIONS.find(o => o.value === f.wishTypes[0])?.title ?? f.wishTypes[0])
+      : `выбрано ${f.wishTypes.length}`
+    chips.push({ key: 'wishTypes', label: `Тип: ${label}` })
+  }
+  if (f.accountIds.length) chips.push({ key: 'accountIds', label: `Аккаунт: ${namesOf(props.accountOptions, f.accountIds)}` })
+  if (f.orgIds.length) chips.push({ key: 'orgIds', label: `Организация: ${namesOf(props.orgOptionsFiltered, f.orgIds)}` })
+  if (f.subsidyIds.length) chips.push({ key: 'subsidyIds', label: `Субсидия: ${namesOf(ctx.subsidies.value, f.subsidyIds)}` })
+  if (f.creatorIds.length) chips.push({ key: 'creatorIds', label: `От: ${namesOf(ctx.users.value, f.creatorIds)}` })
+  if (f.assignedToIds.length) chips.push({ key: 'assignedToIds', label: `Кому: ${namesOf(ctx.users.value, f.assignedToIds)}` })
   if (f.createdFrom) chips.push({ key: 'createdFrom', label: `Создано с ${f.createdFrom}` })
   if (f.createdTo) chips.push({ key: 'createdTo', label: `Создано по ${f.createdTo}` })
   if (f.deadlineFrom) chips.push({ key: 'deadlineFrom', label: `Срок с ${f.deadlineFrom}` })
@@ -222,8 +279,8 @@ const activeFilterChips = computed(() => {
 })
 
 function clearOne(key: keyof WishFiltersState) {
-  const isId = key.endsWith('Id')
-  ;(props.filters as any)[key] = isId ? null : ''
+  const isArr = Array.isArray((props.filters as any)[key])
+  ;(props.filters as any)[key] = isArr ? [] : ''
 }
 
 // Владелец (поиск на десктопе, 2026-10-07): «Очистить фильтры» сбрасывал только

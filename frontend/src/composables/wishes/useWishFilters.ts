@@ -5,17 +5,23 @@ import { reactive, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 
 export interface WishFiltersState {
-  subsidyId: number | null
-  creatorId: number | null
-  assignedToId: number | null
+  subsidyIds: number[]
+  creatorIds: number[]
+  assignedToIds: number[]
+  wishTypes: string[]
   createdFrom: string
   createdTo: string
   deadlineFrom: string
   deadlineTo: string
-  // SaaS-фильтры: аккаунт (корневая орг + дочерние) и конкретная организация
-  accountId: number | null
-  orgId: number | null
+  // SaaS-фильтры: аккаунты (корневая орг + дочерние) и конкретные организации
+  accountIds: number[]
+  orgIds: number[]
 }
+
+export const WISH_TYPE_OPTIONS = [
+  { value: 'regular', title: 'Обычная заявка' },
+  { value: 'advance_report', title: 'Авансовый отчёт' },
+]
 
 export function useWishFilters(options: {
   allOrgs: Ref<{ id: number; name: string; root_org_id?: number | null; parent_org_id?: number | null }[]>
@@ -24,41 +30,49 @@ export function useWishFilters(options: {
   const { allOrgs, onChange } = options
 
   const filters = reactive<WishFiltersState>({
-    subsidyId: null,
-    creatorId: null,
-    assignedToId: null,
+    subsidyIds: [],
+    creatorIds: [],
+    assignedToIds: [],
+    wishTypes: [],
     createdFrom: '',
     createdTo: '',
     deadlineFrom: '',
     deadlineTo: '',
-    accountId: null,
-    orgId: null,
+    accountIds: [],
+    orgIds: [],
   })
 
   const accountOptions = ref<typeof allOrgs.value>([])
   const orgOptionsFiltered = ref<typeof allOrgs.value>([])
   function recomputeOrgOptions() {
     accountOptions.value = allOrgs.value.filter(o => !o.root_org_id && !o.parent_org_id)
-    const acc = filters.accountId
-    orgOptionsFiltered.value = acc
-      ? allOrgs.value.filter(o => o.id === acc || o.root_org_id === acc || o.parent_org_id === acc)
+    const accs = filters.accountIds
+    orgOptionsFiltered.value = accs.length
+      ? allOrgs.value.filter(o =>
+          accs.includes(o.id)
+          || (o.root_org_id != null && accs.includes(o.root_org_id))
+          || (o.parent_org_id != null && accs.includes(o.parent_org_id))
+        )
       : allOrgs.value
   }
   watch(() => allOrgs.value, recomputeOrgOptions, { immediate: true })
-  watch(() => filters.accountId, () => {
+  watch(() => filters.accountIds.join(','), () => {
     recomputeOrgOptions()
-    if (filters.orgId && !orgOptionsFiltered.value.some(o => o.id === filters.orgId)) {
-      filters.orgId = null
+    if (filters.orgIds.length) {
+      const allowed = new Set(orgOptionsFiltered.value.map(o => o.id))
+      const kept = filters.orgIds.filter(id => allowed.has(id))
+      if (kept.length !== filters.orgIds.length) filters.orgIds = kept
     }
   })
 
   function buildFilterParams(extra: Record<string, any> = {}) {
     const params = new URLSearchParams()
-    if (filters.accountId) params.set('account_org_id', String(filters.accountId))
-    if (filters.orgId) params.set('org_id', String(filters.orgId))
-    if (filters.subsidyId) params.set('subsidy_id', String(filters.subsidyId))
-    if (filters.creatorId) params.set('creator_id', String(filters.creatorId))
-    if (filters.assignedToId) params.set('assigned_to_id', String(filters.assignedToId))
+    if (filters.accountIds.length) params.set('account_org_ids', filters.accountIds.join(','))
+    if (filters.orgIds.length) params.set('org_ids', filters.orgIds.join(','))
+    if (filters.subsidyIds.length) params.set('subsidy_ids', filters.subsidyIds.join(','))
+    if (filters.creatorIds.length) params.set('creator_ids', filters.creatorIds.join(','))
+    if (filters.assignedToIds.length) params.set('assigned_to_ids', filters.assignedToIds.join(','))
+    if (filters.wishTypes.length) params.set('wish_types', filters.wishTypes.join(','))
     if (filters.createdFrom) params.set('created_from', filters.createdFrom)
     if (filters.createdTo) params.set('created_to', filters.createdTo)
     if (filters.deadlineFrom) params.set('deadline_from', filters.deadlineFrom)
@@ -71,11 +85,12 @@ export function useWishFilters(options: {
   }
 
   function resetFilters() {
-    filters.accountId = null
-    filters.orgId = null
-    filters.subsidyId = null
-    filters.creatorId = null
-    filters.assignedToId = null
+    filters.accountIds = []
+    filters.orgIds = []
+    filters.subsidyIds = []
+    filters.creatorIds = []
+    filters.assignedToIds = []
+    filters.wishTypes = []
     filters.createdFrom = ''
     filters.createdTo = ''
     filters.deadlineFrom = ''
@@ -86,7 +101,8 @@ export function useWishFilters(options: {
   let filterTimer: any = null
   watch(
     () => [
-      filters.accountId, filters.orgId, filters.subsidyId, filters.creatorId, filters.assignedToId,
+      filters.accountIds.join(','), filters.orgIds.join(','), filters.subsidyIds.join(','),
+      filters.creatorIds.join(','), filters.assignedToIds.join(','), filters.wishTypes.join(','),
       filters.createdFrom, filters.createdTo, filters.deadlineFrom, filters.deadlineTo,
     ],
     () => {

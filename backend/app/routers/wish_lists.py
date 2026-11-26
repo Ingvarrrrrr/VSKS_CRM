@@ -171,15 +171,18 @@ async def list_standalone_advances_endpoint(
     creator_ids: Optional[str] = None,
     assigned_to_id: Optional[int] = None,
     assigned_to_ids: Optional[str] = None,
+    wish_types: Optional[str] = None,
     mine_only: bool = False,
     search: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Авансовые отчёты (Purchase.purchase_method='advance') БЕЗ заявки-компаньона."""
+    if wish_types:
+        types_set = {t.strip() for t in wish_types.split(",") if t.strip()}
+        if types_set and "advance_report" not in types_set:
+            return []
     from app.services.standalone_advances import list_standalone_advances
-    # Передаем списковые параметры в list_standalone_advances если потребуется, 
-    # либо используем одиночные (или расширим список параметров).
     rows = await list_standalone_advances(
         db, current_user,
         subsidy_id=subsidy_id, org_id=org_id, account_org_id=account_org_id,
@@ -190,8 +193,6 @@ async def list_standalone_advances_endpoint(
         {
             "id": r.id,
             "purchase_id": r.id,
-            "title": r.title,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
             "is_advance": True,
             "registry_number": r.registry_number,
             "subsidy_id": r.subsidy_id,

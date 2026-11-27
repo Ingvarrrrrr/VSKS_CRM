@@ -62,8 +62,8 @@
       </div>
     </div>
 
-    <!-- Header row selection (optional) -->
-    <v-row dense class="align-center">
+    <!-- Header row selection (optional, shown after workbook is loaded when showHeaderRow=true) -->
+    <v-row v-if="showHeaderRow" dense class="align-center">
       <v-col cols="12" sm="6">
         <v-text-field
           :model-value="headerRow ?? ''"
@@ -87,7 +87,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sourceMode: 'file' | 'url'
   fileList: File[] | File | null
   sourceUrl: string
@@ -96,7 +96,10 @@ const props = defineProps<{
   loading?: boolean
   fileLabel?: string
   accept?: string
-}>()
+  showHeaderRow?: boolean
+}>(), {
+  showHeaderRow: true,
+})
 
 defineEmits<{
   (e: 'update:sourceMode', val: 'file' | 'url'): void

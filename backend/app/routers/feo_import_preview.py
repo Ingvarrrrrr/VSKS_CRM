@@ -44,8 +44,9 @@ async def feo_import_preview(
     await fc._require_feo_category_write(current_user, db, None)
     from app.services.cloud_spreadsheet import fetch_spreadsheet_from_url
 
+    preferred_sheet = None
     if source_url:
-        content, filename, _ = await fetch_spreadsheet_from_url(source_url)
+        content, filename, preferred_sheet = await fetch_spreadsheet_from_url(source_url)
     elif file is not None:
         content = await file.read()
         filename = file.filename or ""
@@ -56,7 +57,11 @@ async def feo_import_preview(
     if not fname.endswith((".xlsx", ".xls", ".docx", ".doc", ".pdf")):
         raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .docx, .pdf")
 
-    res = read_preview_sheets(content, filename, _FEO_HINTS)
-    if header_row and isinstance(res, dict):
-        res["detected_header_row"] = header_row
+    res = read_preview_sheets(content, filename, _FEO_HINTS, header_row=header_row)
+    if isinstance(res, dict):
+        if preferred_sheet:
+            res["preferred_sheet"] = preferred_sheet
+        if res.get("sheets"):
+            first = res["sheets"][0]
+            res["detected_header_row"] = (first.get("header_row_offset", 0) or 0) + 1
     return res

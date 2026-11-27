@@ -7,16 +7,53 @@
        п.5): drag&drop, подсветка обязательных полей и «Не определилось»
        теперь живут в одном месте для мастера ФЭО и мастера импорта товаров,
        поведение этого шага не менялось — только рендер сетки вынесен. -->
-  <v-alert v-if="feoCurrentSheet" type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-table-outline">
-    <strong>Лист:</strong> {{ feoCurrentSheet.name }} ({{ feoCurrentSheet.total_rows }} строк данных)
-  </v-alert>
-  <v-select
-    v-if="feoImport.previewData.sheets.length > 1"
-    v-model="feoImport.selectedSheet"
-    :items="feoImport.previewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
-    label="Сменить лист" variant="outlined" density="compact" class="mb-3"
-    @update:model-value="feoAutoMap(feoCurrentSheet?.headers || [])"
-  />
+  <!-- Выбор листа книги и строки заголовков ПОСЛЕ загрузки книги -->
+  <v-row dense class="mb-3 align-start">
+    <v-col cols="12" sm="7">
+      <v-select
+        v-model="feoImport.selectedSheet"
+        :items="(feoImport.previewData?.sheets || []).map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
+        label="Лист книги"
+        variant="outlined"
+        density="compact"
+        prepend-inner-icon="mdi-file-table-outline"
+        :hint="(feoImport.previewData?.sheets?.length || 0) > 1 ? `Всего листов в книге: ${feoImport.previewData.sheets.length}` : 'В книге 1 лист'"
+        persistent-hint
+        @update:model-value="onSheetSelected"
+      />
+    </v-col>
+    <v-col cols="12" sm="5">
+      <div class="d-flex ga-2 align-start">
+        <v-text-field
+          :model-value="feoImport.headerRow ?? ''"
+          @update:model-value="(val) => { feoImport.headerRow = val ? Number(val) : null }"
+          type="number"
+          min="1"
+          max="50"
+          clearable
+          density="compact"
+          variant="outlined"
+          label="Строка с названиями колонок"
+          placeholder="Авто"
+          :hint="headerRowHint"
+          persistent-hint
+          class="flex-grow-1"
+          @keyup.enter="applyHeaderRow"
+          @click:clear="() => { feoImport.headerRow = null; applyHeaderRow() }"
+        />
+        <v-btn
+          color="primary"
+          variant="tonal"
+          size="small"
+          height="40"
+          :loading="feoImport.loading"
+          @click="applyHeaderRow"
+        >
+          Применить
+        </v-btn>
+      </div>
+    </v-col>
+  </v-row>
   <v-select
     v-model="feoImportTargetSubsidy"
     :items="allSubsidies"
@@ -56,8 +93,22 @@ import { useFeoImport } from '@/composables/subsidies/useFeoImport'
 
 const {
   feoImport, feoImportTargetSubsidy, FEO_TARGET_FIELDS, feoDragMapping, feoIgnoredCols,
-  feoCurrentSheet, feoCurrentHeaders, feoMappingValid, feoAutoMap, allSubsidies,
+  feoCurrentSheet, feoCurrentHeaders, feoMappingValid, feoAutoMap, allSubsidies, doFeoImport,
 } = useFeoImport(useSubsidyDetailCtx())
+
+const headerRowHint = computed(() => {
+  const cur = feoCurrentSheet.value ? (feoCurrentSheet.value.header_row_offset ?? 0) + 1 : feoImport.detectedHeaderRow
+  return cur ? `Сейчас строка заголовков: ${cur} (укажите другую, например 3)` : 'Оставьте пустым для автоопределения или укажите номер строки'
+})
+
+function onSheetSelected() {
+  feoImport.detectedHeaderRow = feoCurrentSheet.value ? (feoCurrentSheet.value.header_row_offset ?? 0) + 1 : null
+  feoAutoMap(feoCurrentSheet.value?.headers || [])
+}
+
+function applyHeaderRow() {
+  void doFeoImport(true)
+}
 
 // ImportMappingGrid ожидает {key,label,required,hint}; FEO_TARGET_FIELDS хранит
 // {value,title,required} — маппинг имён полей, поведение автоподбора и

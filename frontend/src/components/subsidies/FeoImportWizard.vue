@@ -29,9 +29,10 @@
             v-model:headerRow="feoImport.headerRow"
             :detectedHeaderRow="feoImport.detectedHeaderRow"
             :loading="feoImport.loading"
+            :showHeaderRow="false"
             fileLabel="Выберите файл (Excel, PDF или Word)"
             accept=".xlsx,.xls,.pdf,.docx,.doc"
-            @load-sheets="doFeoImport"
+            @load-sheets="doFeoImport()"
             @update:sourceMode="feoImport.fileList = []; feoImport.file = null"
             @update:fileList="feoImport.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
           />
@@ -588,7 +589,7 @@
         <v-spacer />
         <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 5 ? 'Закрыть' : 'Отмена' }}</v-btn>
         <v-btn v-if="feoImport.step === 1" color="primary" :loading="feoImport.loading"
-          :disabled="feoImport.sourceMode === 'file' ? !feoImport.file : !feoImport.sourceUrl" @click="doFeoImport">Далее</v-btn>
+          :disabled="feoImport.sourceMode === 'file' ? !feoImport.file : !feoImport.sourceUrl" @click="doFeoImport()">Далее</v-btn>
         <!-- Шаг 2: запускает dry-run → шаг 3 (Проверка) -->
         <v-btn v-if="feoImport.step === 2" color="primary" variant="flat"
           :loading="feoImport.loading" :disabled="!feoMappingValid"

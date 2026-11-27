@@ -20,6 +20,7 @@
     v-model:headerRow="factImport.headerRow"
     :detectedHeaderRow="factImport.detectedHeaderRow"
     :loading="factImport.loading"
+    :showHeaderRow="factImport.sheets.length > 0 || !!factImport.preview"
     fileLabel="Файл Excel (.xlsx, .xls)"
     accept=".xlsx,.xls"
     @load-sheets="onLoadSheets"

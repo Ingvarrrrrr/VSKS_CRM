@@ -47,18 +47,26 @@ def detect_header_row(rows: list, hints: tuple, max_scan: int = 20) -> int:
     return best_idx
 
 
-def read_preview_sheets(content: bytes, filename: str, hints: tuple, sample_rows: int = 5) -> dict:
+def read_preview_sheets(
+    content: bytes,
+    filename: str,
+    hints: tuple,
+    sample_rows: int = 5,
+    header_row: Optional[int] = None,
+) -> dict:
     """Читает файл целиком, возвращает
     {"sheets": [{name, headers, sample, total_rows, header_row_offset}, ...]}
     по КАЖДОМУ листу/таблице/странице (в зависимости от формата). Заголовки
-    определяются `detect_header_row()` с переданными `hints` — свои для
-    ФЭО и свои для товаров, поведение мастеров друг с другом не смешивается.
+    определяются `detect_header_row()` с переданными `hints` (или берутся
+    строго из 1-based строки `header_row`, если она указана пользователем).
     """
     fname = (filename or "").lower()
     if not fname.endswith((".xlsx", ".xls", ".docx", ".doc", ".pdf")):
         raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .docx, .pdf")
 
     def _detect_hdr(rows):
+        if header_row is not None and header_row >= 1:
+            return min(header_row - 1, max(len(rows) - 1, 0))
         return detect_header_row(rows, hints)
 
     sheets: list = []

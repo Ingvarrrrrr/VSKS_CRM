@@ -528,9 +528,10 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     return ctx?.allSubsidies.value.find(s => s.id === id)?.name ?? null
   })
 
-  async function doFeoImport() {
+  async function doFeoImport(keepSheet = false) {
     if (feoImport.sourceMode === 'file' && !feoImport.file) return
     if (feoImport.sourceMode === 'url' && !feoImport.sourceUrl) return
+    const prevSheet = keepSheet ? feoImport.selectedSheet : ''
     feoImport.loading = true
     try {
       const fd = new FormData()
@@ -556,13 +557,23 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       }
       const data = await res.json()
       feoImport.previewData = data
-      feoImport.detectedHeaderRow = data.header_row ?? null
-      feoImport.selectedSheet = data.sheets[0]?.name || ''
+      const sheets: any[] = data.sheets || []
+      const preferred = data.preferred_sheet && sheets.some((s: any) => s.name === data.preferred_sheet)
+        ? data.preferred_sheet
+        : ''
+      const chosenName = (prevSheet && sheets.some((s: any) => s.name === prevSheet))
+        ? prevSheet
+        : (preferred || sheets[0]?.name || '')
+      feoImport.selectedSheet = chosenName
+      const chosenSheet = sheets.find((s: any) => s.name === chosenName) || sheets[0]
+      feoImport.detectedHeaderRow = chosenSheet ? ((chosenSheet.header_row_offset ?? 0) + 1) : (data.detected_header_row ?? null)
       feoIgnoredCols.value = []
-      feoAutoMap(data.sheets[0]?.headers || [])
-      const curId = ctx?.selectedId.value ?? null
-      const isKnown = curId != null && ctx?.allSubsidies?.value?.some((s: any) => s.id === curId)
-      feoImportTargetSubsidy.value = isKnown ? curId : null
+      feoAutoMap(chosenSheet?.headers || [])
+      if (!keepSheet) {
+        const curId = ctx?.selectedId.value ?? null
+        const isKnown = curId != null && ctx?.allSubsidies?.value?.some((s: any) => s.id === curId)
+        feoImportTargetSubsidy.value = isKnown ? curId : null
+      }
       feoImport.step = 2
     } catch (e: any) {
       // fetchWithNetworkRetry уже перевела сетевую ошибку в человекочитаемый

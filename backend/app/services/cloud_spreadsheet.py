@@ -36,7 +36,7 @@ _ALLOWED_DOMAINS = {
 # Allowed domains for Yandex download href redirection
 _YANDEX_DOWNLOAD_DOMAINS = (".yandex.net", ".yandex.ru")
 
-MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 def _validate_and_normalize_url(url: str) -> str:
@@ -108,11 +108,16 @@ async def fetch_spreadsheet_from_url(
             if "gid" in frag_params:
                 gid = frag_params["gid"][0]
 
+        # Всегда качаем книгу ЦЕЛИКОМ (БЕЗ &gid=...), иначе Google экспортирует
+        # только один лист вместо всех листов книги!
         export_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx"
-        if gid:
-            export_url += f"&gid={gid}"
+        cache_key = f"gs:{spreadsheet_id}"
+        if not force_refresh:
+            cached = _get_from_cache(cache_key)
+            if cached is not None:
+                return cached
 
-        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
             try:
                 resp = await client.get(export_url)
             except httpx.RequestError as e:
@@ -130,7 +135,7 @@ async def fetch_spreadsheet_from_url(
 
         content = resp.content
         if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(400, "Размер файла превышает лимит в 25 МБ.")
+            raise HTTPException(400, "Размер файла превышает лимит в 50 МБ.")
 
         if content.startswith(b"<!DOCTYPE html>") or b"<html" in content[:200].lower():
             raise HTTPException(
@@ -139,9 +144,8 @@ async def fetch_spreadsheet_from_url(
             )
 
         filename = f"google_sheet_{spreadsheet_id}.xlsx"
-        sheet_hint = f"gid_{gid}" if gid else None
-        _put_to_cache(norm_url, content, filename, sheet_hint)
-        return (content, filename, sheet_hint)
+        _put_to_cache(cache_key, content, filename, None)
+        return (content, filename, None)
 
     # 2. Yandex Disk / Tables
     else:

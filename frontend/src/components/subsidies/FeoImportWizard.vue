@@ -636,6 +636,7 @@ import { formatCurrency } from '@/composables/subsidies/format'
 import { MAX_UPLOAD_SIZE_MB, checkUploadSize } from '@/constants/uploadLimits'
 import FeoImportMappingStep from './FeoImportMappingStep.vue'
 import FeoImportItemTypeConflicts from './FeoImportItemTypeConflicts.vue'
+import SpreadsheetSourceInput from '@/components/common/SpreadsheetSourceInput.vue'
 
 const { mobile } = useDisplay()
 const ctx = useSubsidyDetailCtx()

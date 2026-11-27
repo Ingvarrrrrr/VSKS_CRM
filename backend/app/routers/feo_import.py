@@ -26,8 +26,9 @@ app/services/feo_import_engine.py — этот модуль только опр�
 того, в каком файле реально живёт вызывающий обработчик.
 """
 from io import BytesIO
+from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, Query, HTTPException, Request, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 try:
     from openpyxl import load_workbook
@@ -254,7 +255,8 @@ async def import_feo_from_excel(
 @router.post("/import-mapped")
 async def import_feo_mapped(
     request: Request,
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    source_url: Optional[str] = Form(None),
     sheet_name: str = Query(""),
     header_row_offset: int = Query(0),
     col_subsidy: int = Query(-1),
@@ -431,8 +433,15 @@ async def import_feo_mapped(
     from app.services.subsidy_revision_guard import assert_direct_edit
     await assert_direct_edit(db, current_user, _gate_subsidy_id)
 
-    fname = (file.filename or "").lower()
-    content = await file.read()
+    if source_url:
+        from app.services.cloud_spreadsheet import fetch_spreadsheet_from_url
+        content, raw_fname, _ = await fetch_spreadsheet_from_url(source_url)
+        fname = raw_fname.lower()
+    elif file is not None:
+        fname = (file.filename or "").lower()
+        content = await file.read()
+    else:
+        raise HTTPException(400, "Необходимо передать файл или публичную ссылку (source_url).")
 
     try:
         if fname.endswith(".xls"):

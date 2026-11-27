@@ -1,179 +1,261 @@
 """unified_template.py — генератор единого многолистового шаблона импорта GALA
-(задача владельца: объединить план ФЭО, выгрузку ФЭО и шаблоны факта в один .xlsx).
+(объединяет план ФЭО, выгрузку ФЭО и шаблоны факта/GoodsService в один .xlsx).
 
 Листы в итоговой книге:
-1. «Как выбрать лист» — аккуратная таблица-памятка: название листа | для чего нужен | куда загружать в GALA + заметка про загрузку по публичной ссылке (Google Таблицы / Яндекс Диск) и указание строки заголовков.
-2. «План ФЭО (и факт)» — из шаблона ФЭО (app.routers.feo_import_template).
-3. «Выгрузка ФЭО (правки)» — из round-trip шаблона (app.services.feo_export_xlsx.build_feo_roundtrip_template_workbook).
-4. «Факт — 1 колонка» — из шаблона факта single (app.services.historical_fact_import.template).
-5. «Факт — этапы Да_Нет» — из шаблона факта stages (app.services.historical_fact_import.template_stages).
+1. «Как выбрать лист» — таблица-памятка по всем вкладкам + про Google/Яндекс Таблицы и выбор строки заголовков.
+2. «План ФЭО (и факт)» — реальный лист из app.routers.feo_import_template.download_feo_template.
+3. «Выгрузка ФЭО (правки)» — реальный лист из app.services.feo_export_xlsx.build_feo_roundtrip_template_workbook.
+4. «Факт — 1 колонка» — реальный лист из app.services.historical_fact_import.template (или заголовки TEMPLATE_HEADER + пример, если субсидия не выбрана).
+5. «Факт — этапы Да_Нет» — реальный лист из app.services.historical_fact_import.template_stages (или заголовки _HEADER + пример, если субсидия не выбрана).
 
-Правило №6 (Single Source of Truth): переиспользует существующие функции генерации книг/байтов, копируя листы в общую Workbook.
+Правило №6 (Single Source of Truth): переиспользует существующие генераторы и списки колонок, не дублирует их вручную.
 """
 from __future__ import annotations
 
-from typing import Optional
+from copy import copy
 from io import BytesIO
+from typing import Optional
+
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 from sqlalchemy.ext.asyncio import AsyncSession
 
-try:
-    from openpyxl import Workbook, load_workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-except ImportError:
-    Workbook = None
-    load_workbook = None
+
+_THIN = Side(style="thin", color="D9D9D9")
+_THIN_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+_HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+_HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+_NORMAL_FONT = Font(name="Calibri", size=11)
 
 
-async def build_unified_template_bytes(subsidy_id: Optional[int] = None, db: Optional[AsyncSession] = None) -> bytes:
-    """Собирает единый многолистовой Excel-шаблон импорта GALA со всеми 5 листами."""
-    if Workbook is None:
-        raise RuntimeError("openpyxl не установлен")
+def _copy_sheet_content(source_ws, target_ws) -> None:
+    """Копирует значения, стили, ширины столбцов, высоты строк, объединения и freeze_panes."""
+    target_ws.sheet_view.showGridLines = getattr(source_ws.sheet_view, "showGridLines", True)
+    if source_ws.freeze_panes:
+        target_ws.freeze_panes = source_ws.freeze_panes
 
-    wb_out = Workbook()
-    default_sheet = wb_out.active
+    for row in source_ws.iter_rows():
+        for cell in row:
+            t_cell = target_ws.cell(row=cell.row, column=cell.column, value=cell.value)
+            if cell.has_style:
+                t_cell.font = copy(cell.font)
+                t_cell.fill = copy(cell.fill)
+                t_cell.border = copy(cell.border)
+                t_cell.alignment = copy(cell.alignment)
+                t_cell.number_format = cell.number_format
 
-    # 1. Лист «Как выбрать лист»
-    ws_guide = wb_out.create_sheet(title="Как выбрать лист")
-    ws_guide.sheet_view.showGridLines = True
-    
-    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    normal_font = Font(name="Calibri", size=11)
-    thin_border = Border(
-        left=Side(style="thin", color="D9D9D9"),
-        right=Side(style="thin", color="D9D9D9"),
-        top=Side(style="thin", color="D9D9D9"),
-        bottom=Side(style="thin", color="D9D9D9"),
-    )
+    for col_key, dim in source_ws.column_dimensions.items():
+        if dim.width:
+            target_ws.column_dimensions[col_key].width = dim.width
+    for row_idx, rdim in source_ws.row_dimensions.items():
+        if rdim.height:
+            target_ws.row_dimensions[row_idx].height = rdim.height
+    for merged_range in source_ws.merged_cells.ranges:
+        target_ws.merge_cells(str(merged_range))
 
-    ws_guide.append(["Параметры единого шаблона импорта GALA"])
-    ws_guide["A1"].font = Font(name="Calibri", size=14, bold=True, color="1F4E78")
-    ws_guide.append([])
-    
-    headers_guide = ["Название листа в книге", "Для чего нужен этот шаблон", "Куда загружать в GALA", "Строка заголовков", "Примечания / Загрузка по ссылке"]
-    ws_guide.append(headers_guide)
-    for col_num in range(1, len(headers_guide) + 1):
-        cell = ws_guide.cell(row=3, column=col_num)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    guide_rows = [
-        (
-            "Как выбрать лист",
-            "Памятка пользователю по всем вкладкам шаблона",
-            "Информационная вкладка (в GALA не загружается)",
-            "—",
-            "Ознакомьтесь с описанием перед заполнением конкретного шаблона."
-        ),
+def _build_guide_sheet(wb_out: Workbook) -> None:
+    ws = wb_out.create_sheet(title="Как выбрать лист")
+    ws.sheet_view.showGridLines = True
+    ws.append(["Единый шаблон импорта GALA — выберите нужный лист"])
+    ws["A1"].font = Font(name="Calibri", size=14, bold=True, color="1F4E78")
+    ws.append([])
+
+    headers = [
+        "Название листа в книге",
+        "Для чего нужен этот шаблон",
+        "Куда загружать в GALA",
+        "Строка заголовков",
+        "Примечания / Google и Яндекс Таблицы",
+    ]
+    ws.append(headers)
+    for col_num in range(1, len(headers) + 1):
+        c = ws.cell(row=3, column=col_num)
+        c.fill = _HEADER_FILL
+        c.font = _HEADER_FONT
+        c.border = _THIN_BORDER
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[3].height = 28
+
+    rows = [
         (
             "План ФЭО (и факт)",
-            "Создание и первичное наполнение структуры ФЭО и плановых позиций (с опциональным фактом в тех же строках)",
-            "Раздел «ФЭО» → кнопка «Импорт направлений и плана»",
-            "Строка 3 (шапка с уровнями и позициями)",
-            "Можно загружать файл .xlsx напрямую или по публичной ссылке (Google Таблицы / Яндекс Диск)."
+            "Первичная загрузка дерева ФЭО и плановых позиций (с опциональным блоком «Факт» в тех же строках)",
+            "Карточка субсидии → Ещё → Импорт плана ФЭО",
+            "Строка 1",
+            "Можно загружать файл .xlsx или вставить публичную ссылку Google / Яндекс Таблицы (доступ «Читатель»).",
         ),
         (
             "Выгрузка ФЭО (правки)",
-            "Массовое редактирование структуры ФЭО методом round-trip (выгрузка → правка → загрузка обратно)",
-            "Раздел «ФЭО» → кнопка «Загрузить изменения (Round-trip)»",
-            "Строка 3",
-            "Сохраняет служебные метаданные (_meta) для точного сопоставления категорий и позиций при обратной загрузке."
+            "Правки существующего ФЭО (формат «Выгрузить ФЭО»): изменение сумм, названий, добавление строк",
+            "Карточка субсидии → Ещё → Загрузить правки из выгрузки ФЭО",
+            "Строка 1 (структура выгрузки)",
+            "Удобно для корректировки уже загруженного дерева ФЭО.",
         ),
         (
             "Факт — 1 колонка",
-            "Импорт фактически осуществленных закупок (статус одной колонкой: План, Ведётся работа, Заключён договор, Заказано, Поставлено, Оплачено)",
-            "Раздел «ФЭО / Закупки» → Импорт факта (раскладка «single»)",
-            "Строка 1 (в предзаполненном шаблоне)",
-            "Содержит выпадающий список статусов и авансов. Можно скачать предзаполненным под текущий план субсидии."
+            "Импорт факта закупок и оплат, когда статус указан в одной колонке («Правильный статус»)",
+            "Карточка субсидии → Ещё → Импорт факта и оплат",
+            "Строка 1 (или укажите вручную)",
+            "Если в вашей таблице шапка в 3-й строке (как в «ХРО Импорт»), укажите «3» в поле «Строка с названиями колонок».",
         ),
         (
             "Факт — этапы Да_Нет",
-            "Импорт фактических закупок со стадиями в нескольких колонках Да/Нет (GoodsService / ХРО Импорт)",
-            "Раздел «ФЭО / Закупки» → Импорт факта (раскладка «stages»)",
-            "Строка 1",
-            "Удобно для детального трекинга стадий (закупка проведена, договор заключен, товар заказан, товар поставлен, оплачено)."
+            "Импорт факта и оплат со стадиями в отдельных колонках Да/Нет (формат GoodsService / ХРО Импорт)",
+            "Карточка субсидии → Ещё → Импорт факта и оплат",
+            "Строка 1 (или укажите вручную)",
+            "Поддерживает колонки стадий (Закупка проведена, Договор заключен, Товар заказан, Товар поставлен, Оплачено) и суммы оплат.",
         ),
     ]
-
-    for r_idx, r_data in enumerate(guide_rows, start=4):
-        ws_guide.append(list(r_data))
+    for r_idx, r_data in enumerate(rows, start=4):
+        ws.append(list(r_data))
+        ws.row_dimensions[r_idx].height = 42
         for col_num in range(1, len(r_data) + 1):
-            cell = ws_guide.cell(row=r_idx, column=col_num)
-            cell.font = normal_font
-            cell.border = thin_border
-            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            c = ws.cell(row=r_idx, column=col_num)
+            c.font = _NORMAL_FONT
+            c.border = _THIN_BORDER
+            c.alignment = Alignment(vertical="top", wrap_text=True)
 
-    col_widths = {
-        "A": 25,
-        "B": 42,
-        "C": 35,
-        "D": 18,
-        "E": 45,
-    }
-    for col_letter, width in col_widths.items():
-        ws_guide.column_dimensions[col_letter].width = width
+    for col_letter, width in {"A": 26, "B": 46, "C": 42, "D": 24, "E": 50}.items():
+        ws.column_dimensions[col_letter].width = width
 
-    # Вспомогательная функция для копирования листов
-    def _copy_sheet_content(source_ws, target_ws):
-        target_ws.sheet_view.showGridLines = getattr(source_ws.sheet_view, "showGridLines", True)
-        for row in source_ws.iter_rows():
-            for cell in row:
-                t_cell = target_ws.cell(row=cell.row, column=cell.column, value=cell.value)
-                if cell.has_style:
-                    t_cell.font = copy_font(cell.font) if cell.font else None
-                    t_cell.fill = copy_fill(cell.fill) if cell.fill else None
-                    t_cell.border = copy_border(cell.border) if cell.border else None
-                    t_cell.alignment = copy_alignment(cell.alignment) if cell.alignment else None
-                # числовые форматы
-                if cell.number_format:
-                    t_cell.number_format = cell.number_format
-        for col_letter, dim in source_ws.column_dimensions.items():
-            if dim.width:
-                target_ws.column_dimensions[col_letter].width = dim.width
-        # копирование объединенных ячеек
-        for merged_range in source_ws.merged_cells.ranges:
-            target_ws.merge_cells(str(merged_range))
 
-    def copy_font(f):
-        if not f: return None
-        return Font(name=f.name, size=f.size, bold=f.bold, italic=f.italic, color=f.color, strike=f.strike, underline=f.underline)
+def _fill_neutral_fact_single(ws) -> None:
+    """Нейтральный шаблон факта (1 колонка статуса), когда субсидия не выбрана."""
+    from app.services.historical_fact_import import columns as columns_mod
+    from app.services.historical_fact_import import statuses as statuses_mod
 
-    def copy_fill(fl):
-        if not fl: return None
-        return PatternFill(fill_type=fl.fill_type, start_color=fl.start_color, end_color=fl.end_color)
+    ws.sheet_view.showGridLines = True
+    header = list(columns_mod.TEMPLATE_HEADER)
+    ws.append(header)
+    for col_idx in range(1, len(header) + 1):
+        c = ws.cell(row=1, column=col_idx)
+        c.fill = _HEADER_FILL
+        c.font = _HEADER_FONT
+        c.border = _THIN_BORDER
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(col_idx)].width = max(14, min(32, len(str(header[col_idx - 1])) + 4))
+    ws.row_dimensions[1].height = 34
+    ws.freeze_panes = "A2"
 
-    def copy_border(b):
-        if not b: return None
-        return Border(left=b.left, right=b.right, top=b.top, bottom=b.bottom)
+    sample = [None] * len(header)
+    sample[0] = "Название субсидии"
+    sample[4] = "Материально-техническое обеспечение"
+    sample[5] = "Приобретение оборудования"
+    sample[7] = "Ноутбук (пример позиции)"
+    sample[15] = 2
+    sample[16] = 75000
+    sample[17] = 150000
+    if len(sample) > 24:
+        status_label = statuses_mod.STATUS_CHOICES[2]["label"] if len(statuses_mod.STATUS_CHOICES) > 2 else "Заключён договор"
+        sample[24] = status_label
+    ws.append(sample)
+    for cell in ws[2]:
+        cell.font = _NORMAL_FONT
+        cell.border = _THIN_BORDER
 
-    def copy_alignment(a):
-        if not a: return None
-        return Alignment(horizontal=a.horizontal, vertical=a.vertical, wrap_text=a.wrap_text, indent=a.indent)
 
-    # 2. План ФЭО (и факт)
+def _fill_neutral_fact_stages(ws) -> None:
+    """Нейтральный шаблон факта (этапы Да/Нет — GoodsService / ХРО Импорт), когда субсидия не выбрана."""
+    from app.services.historical_fact_import import template_stages
+
+    ws.sheet_view.showGridLines = True
+    header = list(template_stages._HEADER)
+    ws.append(header)
+    for col_idx in range(1, len(header) + 1):
+        c = ws.cell(row=1, column=col_idx)
+        c.fill = _HEADER_FILL
+        c.font = _HEADER_FONT
+        c.border = _THIN_BORDER
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(col_idx)].width = max(14, min(32, len(str(header[col_idx - 1])) + 4))
+    ws.row_dimensions[1].height = 34
+    ws.freeze_panes = "A2"
+
+    sample = [None] * len(header)
+    sample[0] = "З-001"
+    sample[1] = "Ноутбук (пример позиции)"
+    sample[2] = "ООО «Ромашка»"
+    sample[3] = "7701234567"
+    sample[4] = 2
+    sample[5] = "шт"
+    sample[6] = 75000
+    sample[7] = 150000
+    sample[8] = 72000
+    sample[9] = 144000
+    sample[10] = "Товар"
+    sample[11] = "Материально-техническое обеспечение"
+    sample[12] = "Приобретение оборудования"
+    sample[15] = "Да"
+    sample[16] = "Да"
+    sample[17] = "Да"
+    sample[18] = "Нет"
+    sample[19] = "Нет"
+    sample[20] = 72000
+    sample[21] = "Да"
+    ws.append(sample)
+    for cell in ws[2]:
+        cell.font = _NORMAL_FONT
+        cell.border = _THIN_BORDER
+
+
+async def _load_feo_template_wb(subsidy_id: Optional[int], db: Optional[AsyncSession]):
+    from app.routers.feo_import_template import download_feo_template
+
+    resp = await download_feo_template(subsidy_id=subsidy_id, db=db, current_user=None)
+    chunks: list[bytes] = []
+    async for chunk in resp.body_iterator:
+        chunks.append(chunk if isinstance(chunk, bytes) else chunk.encode("utf-8"))
+    return load_workbook(BytesIO(b"".join(chunks)))
+
+
+async def build_unified_template_bytes(
+    subsidy_id: Optional[int] = None,
+    db: Optional[AsyncSession] = None,
+) -> bytes:
+    """Собирает единый многолистовой Excel-шаблон импорта GALA со всеми 5 реальными листами."""
+    wb_out = Workbook()
+    default_sheet = wb_out.active
+
+    # 1. Памятка
+    _build_guide_sheet(wb_out)
+
+    # 2. План ФЭО (и факт) — реальный лист из download_feo_template
     ws_feo = wb_out.create_sheet(title="План ФЭО (и факт)")
-    ws_feo.sheet_view.showGridLines = True
-    ws_feo["A1"] = "Шаблон плана ФЭО и факта"
+    wb_feo = await _load_feo_template_wb(subsidy_id, db)
+    _copy_sheet_content(wb_feo.worksheets[0], ws_feo)
 
-    # 3. Выгрузка ФЭО (правки)
+    # 3. Выгрузка ФЭО (правки) — реальный лист из build_feo_roundtrip_template_workbook
+    from app.services.feo_export_xlsx import build_feo_roundtrip_template_workbook
+
     ws_rt = wb_out.create_sheet(title="Выгрузка ФЭО (правки)")
-    ws_rt.sheet_view.showGridLines = True
-    ws_rt["A1"] = "Шаблон выгрузки ФЭО для round-trip"
+    wb_rt = build_feo_roundtrip_template_workbook()
+    _copy_sheet_content(wb_rt.worksheets[0], ws_rt)
 
     # 4. Факт — 1 колонка
     ws_f1 = wb_out.create_sheet(title="Факт — 1 колонка")
-    ws_f1.sheet_view.showGridLines = True
-    ws_f1["A1"] = "Шаблон факта — 1 колонка"
+    if subsidy_id is not None and db is not None:
+        from app.services.historical_fact_import.template import build_template_workbook
 
-    # 5. Факт — этапы Да_Нет
+        wb_f1 = load_workbook(BytesIO(await build_template_workbook(db, subsidy_id)))
+        _copy_sheet_content(wb_f1.worksheets[0], ws_f1)
+    else:
+        _fill_neutral_fact_single(ws_f1)
+
+    # 5. Факт — этапы Да_Нет (GoodsService / ХРО Импорт)
     ws_f2 = wb_out.create_sheet(title="Факт — этапы Да_Нет")
-    ws_f2.sheet_view.showGridLines = True
-    ws_f2["A1"] = "Шаблон факта — этапы Да_Нет"
+    if subsidy_id is not None and db is not None:
+        from app.services.historical_fact_import.template_stages import build_stages_template_workbook
 
-    if default_sheet in wb_out.sheetnames:
-        wb_out.remove(default_sheet)
+        wb_f2 = load_workbook(BytesIO(await build_stages_template_workbook(db, subsidy_id)))
+        _copy_sheet_content(wb_f2.worksheets[0], ws_f2)
+    else:
+        _fill_neutral_fact_stages(ws_f2)
+
+    # Обязательно удаляем дефолтный пустой лист «Sheet» (раньше было `default_sheet in sheetnames` — баг!)
+    wb_out.remove(default_sheet)
+    wb_out.active = 0
 
     buf = BytesIO()
     wb_out.save(buf)

@@ -909,13 +909,14 @@ async function exportToExcel() {
 }
 
 async function downloadFeoTemplate() {
-  const res = await fetch('/api/feo-categories/import/template', {
-    headers: {},
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch('/api/feo-categories/unified-template', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'Шаблон_импорта_направлений_ФЭО.xlsx'; a.click()
+  const a = document.createElement('a'); a.href = url; a.download = 'Единый_шаблон_импорта_GALA.xlsx'; a.click()
   URL.revokeObjectURL(url)
 }
 

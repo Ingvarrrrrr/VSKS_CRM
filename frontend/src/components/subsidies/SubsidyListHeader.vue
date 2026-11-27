@@ -29,7 +29,7 @@
       <v-btn
         v-if="canEditFeo"
         variant="outlined" prepend-icon="mdi-download-outline" class="mr-2"
-        title="Шаблон импорта направлений ФЭО (без выбранной субсидии — общий, с нейтральными примерами)"
+        title="Единый шаблон импорта (.xlsx): все варианты (план ФЭО, выгрузка, факт и этапы GoodsService) на разных листах"
         @click="ctx.downloadFeoTemplate()"
       >
         Шаблон ФЭО

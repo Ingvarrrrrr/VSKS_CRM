@@ -779,7 +779,7 @@ watch(() => kpiPrefs.payrollView.value, () => {
 async function downloadFeoTemplate(subsidyId?: number, subsidyName?: string) {
   const token = localStorage.getItem('auth_token')
   const qs = subsidyId ? `?subsidy_id=${subsidyId}` : ''
-  const res = await fetch(`/api/feo-categories/import/template${qs}`, {
+  const res = await fetch(`/api/feo-categories/unified-template${qs}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
@@ -787,8 +787,8 @@ async function downloadFeoTemplate(subsidyId?: number, subsidyName?: string) {
   const url = URL.createObjectURL(blob)
   const safeName = subsidyName ? subsidyName.replace(/[\\/:*?"<>|]/g, '_').trim() : ''
   const fname = safeName
-    ? `Шаблон_импорта_направлений_ФЭО_${safeName}.xlsx`
-    : 'Шаблон_импорта_направлений_ФЭО.xlsx'
+    ? `Единый_шаблон_импорта_${safeName}.xlsx`
+    : 'Единый_шаблон_импорта_GALA.xlsx'
   const a = document.createElement('a'); a.href = url; a.download = fname; a.click()
   URL.revokeObjectURL(url)
 }

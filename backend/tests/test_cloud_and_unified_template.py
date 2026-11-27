@@ -35,10 +35,19 @@ def test_unified_template_generation():
     wb_bytes = asyncio.run(build_unified_template_bytes())
     assert isinstance(wb_bytes, bytes)
     wb = openpyxl.load_workbook(io.BytesIO(wb_bytes))
-    assert len(wb.sheetnames) >= 5
-    for name in wb.sheetnames:
+    expected = [
+        "Как выбрать лист",
+        "План ФЭО (и факт)",
+        "Выгрузка ФЭО (правки)",
+        "Факт — 1 колонка",
+        "Факт — этапы Да_Нет",
+    ]
+    assert wb.sheetnames == expected
+    assert "Sheet" not in wb.sheetnames
+    for name in expected[1:]:
         sheet = wb[name]
-        assert sheet.max_row >= 1
+        assert sheet.max_row >= 2, f"{name}: too few rows ({sheet.max_row})"
+        assert sheet.max_column >= 13, f"{name}: too few columns ({sheet.max_column})"
 
 
 def test_historical_fact_import_header_row():

@@ -462,7 +462,11 @@ export interface FactImportState {
   // таблица шага 3/4 просто перекрывается полупрозрачным оверлеем.
   previewRefreshing: boolean
   subsidyId: number | null
+  sourceMode: 'file' | 'url'
   file: File | null
+  sourceUrl: string
+  headerRow: number | null
+  detectedHeaderRow: number | null
   sheets: FactImportSheet[]
   selectedSheet: string | null
   mapping: Record<string, number | null>
@@ -493,7 +497,11 @@ const factImport = reactive<FactImportState>({
   loading: false,
   previewRefreshing: false,
   subsidyId: null,
+  sourceMode: 'file',
   file: null,
+  sourceUrl: '',
+  headerRow: null,
+  detectedHeaderRow: null,
   sheets: [],
   selectedSheet: null,
   mapping: {},
@@ -517,7 +525,11 @@ export function useFactImport() {
     factImport.step = 1
     factImport.loading = false
     factImport.subsidyId = subsidyId
+    factImport.sourceMode = 'file'
     factImport.file = null
+    factImport.sourceUrl = ''
+    factImport.headerRow = null
+    factImport.detectedHeaderRow = null
     factImport.sheets = []
     factImport.selectedSheet = null
     factImport.mapping = {}
@@ -580,8 +592,15 @@ export function useFactImport() {
 
   function buildFormData(extra?: { mapping?: boolean; decisions?: boolean }): FormData {
     const fd = new FormData()
-    if (factImport.file) fd.append('file', factImport.file)
+    if (factImport.sourceMode === 'url' && factImport.sourceUrl) {
+      fd.append('source_url', factImport.sourceUrl)
+    } else if (factImport.file) {
+      fd.append('file', factImport.file)
+    }
     if (factImport.selectedSheet) fd.append('sheet', factImport.selectedSheet)
+    if (factImport.headerRow != null && factImport.headerRow >= 1) {
+      fd.append('header_row', String(factImport.headerRow))
+    }
     if (extra?.mapping) fd.append('mapping', JSON.stringify(factImport.mapping))
     if (extra?.decisions) {
       const d: FactImportDecisions = { ...factImport.decisions }
@@ -598,17 +617,32 @@ export function useFactImport() {
   // отдельного флага retryOnNetworkError не ставим (apiFetch ретраит GET/POST
   // по умолчанию только для GET; здесь явный POST с файлом — повтор при
   // неопределённом исходе первой попытки нежелателен, см. докстринг apiFetch).
-  async function loadSheets() {
-    if (!factImport.file || !factImport.subsidyId) return
+  async function loadSheets(forceRefresh = false) {
+    if (!factImport.subsidyId) return
+    if (factImport.sourceMode === 'file' && !factImport.file) return
+    if (factImport.sourceMode === 'url' && !factImport.sourceUrl) return
     factImport.loading = true
     try {
       const fd = new FormData()
-      fd.append('file', factImport.file)
-      const data = await apiFetch<{ sheets: FactImportSheet[] }>(`${basePath()}/sheets`, {
+      if (factImport.sourceMode === 'url' && factImport.sourceUrl) {
+        fd.append('source_url', factImport.sourceUrl)
+        if (forceRefresh) fd.append('force_refresh', 'true')
+      } else if (factImport.file) {
+        fd.append('file', factImport.file)
+      }
+      if (factImport.headerRow != null && factImport.headerRow >= 1) {
+        fd.append('header_row', String(factImport.headerRow))
+      }
+      const data = await apiFetch<{ sheets: FactImportSheet[]; preferred_sheet?: string }>(`${basePath()}/sheets`, {
         method: 'POST', body: fd, suppressErrorDialog: true,
       })
       factImport.sheets = data.sheets || []
-      factImport.selectedSheet = factImport.sheets[0]?.name ?? null
+      const pref = data.preferred_sheet
+      if (pref && factImport.sheets.some(s => s.name === pref)) {
+        factImport.selectedSheet = pref
+      } else {
+        factImport.selectedSheet = factImport.sheets[0]?.name ?? null
+      }
       if (factImport.selectedSheet) await loadPreview()
     } catch (e: any) {
       showSnack(e?.payload?.message || `Ошибка чтения файла (${e?.status ?? '?'})`, 'error')
@@ -624,7 +658,9 @@ export function useFactImport() {
   // не factImport.loading (тот блокирует кнопки «Далее»/«Назад» мастера
   // целиком — на серии быстрых кликов это дёргало бы их без нужды).
   async function loadPreview(opts?: { quiet?: boolean }) {
-    if (!factImport.file || !factImport.subsidyId) return
+    if (factImport.sourceMode === 'file' && !factImport.file) return
+    if (factImport.sourceMode === 'url' && !factImport.sourceUrl) return
+    if (!factImport.subsidyId) return
     const quiet = !!opts?.quiet
     if (quiet) factImport.previewRefreshing = true
     else factImport.loading = true
@@ -635,6 +671,7 @@ export function useFactImport() {
         method: 'POST', body: fd, suppressErrorDialog: true,
       })
       factImport.preview = data
+      factImport.detectedHeaderRow = data.header_row ?? null
       if (!hasMapping) {
         const m: Record<string, number | null> = {}
         for (const col of data.columns) {
@@ -698,8 +735,32 @@ export function useFactImport() {
     }
   }
 
+  async function downloadUnifiedTemplate(subsidyId?: number | null) {
+    const sId = subsidyId ?? factImport.subsidyId
+    try {
+      const url = sId ? `/api/feo-categories/unified-template?subsidy_id=${sId}` : '/api/feo-categories/unified-template'
+      const res = await fetch(url, { headers: {} })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        showSnack(err?.detail || err?.message || `Ошибка загрузки единого шаблона (${res.status})`, 'error')
+        return
+      }
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = filenameFromContentDisposition(res.headers.get('Content-Disposition'), 'Единый_шаблон_плана_и_факта.xlsx')
+      a.click()
+      URL.revokeObjectURL(blobUrl)
+    } catch (e: any) {
+      showSnack(e?.payload?.message || e?.message || 'Ошибка загрузки единого шаблона', 'error')
+    }
+  }
+
   async function commitImport() {
-    if (!factImport.file || !factImport.subsidyId) return
+    if (factImport.sourceMode === 'file' && !factImport.file) return
+    if (factImport.sourceMode === 'url' && !factImport.sourceUrl) return
+    if (!factImport.subsidyId) return
     factImport.loading = true
     try {
       const fd = buildFormData({ mapping: true, decisions: true })

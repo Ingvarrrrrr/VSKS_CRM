@@ -22,17 +22,18 @@
               какой столбец соответствует какому полю.
             </div>
           </v-alert>
-          <v-file-input
-            v-model="feoImport.fileList"
-            label="Выберите файл (Excel, PDF или Word)"
+          <SpreadsheetSourceInput
+            v-model:sourceMode="feoImport.sourceMode"
+            v-model:fileList="feoImport.fileList"
+            v-model:sourceUrl="feoImport.sourceUrl"
+            v-model:headerRow="feoImport.headerRow"
+            :detectedHeaderRow="feoImport.detectedHeaderRow"
+            :loading="feoImport.loading"
+            fileLabel="Выберите файл (Excel, PDF или Word)"
             accept=".xlsx,.xls,.pdf,.docx,.doc"
-            variant="outlined" density="compact"
-            prepend-icon="mdi-file-upload"
-            show-size
-            :hint="`Перетащите файл сюда или нажмите для выбора. Максимум ${MAX_UPLOAD_SIZE_MB} МБ.`"
-            persistent-hint
-            :rules="[(files: File[] | File | null) => checkUploadSize(Array.isArray(files) ? files[0] : files) || true]"
-            @update:model-value="feoImport.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
+            @load-sheets="doFeoImport"
+            @update:sourceMode="feoImport.fileList = []; feoImport.file = null"
+            @update:fileList="feoImport.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
           />
         </template>
 
@@ -587,7 +588,7 @@
         <v-spacer />
         <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 5 ? 'Закрыть' : 'Отмена' }}</v-btn>
         <v-btn v-if="feoImport.step === 1" color="primary" :loading="feoImport.loading"
-          :disabled="!feoImport.file" @click="doFeoImport">Далее</v-btn>
+          :disabled="feoImport.sourceMode === 'file' ? !feoImport.file : !feoImport.sourceUrl" @click="doFeoImport">Далее</v-btn>
         <!-- Шаг 2: запускает dry-run → шаг 3 (Проверка) -->
         <v-btn v-if="feoImport.step === 2" color="primary" variant="flat"
           :loading="feoImport.loading" :disabled="!feoMappingValid"

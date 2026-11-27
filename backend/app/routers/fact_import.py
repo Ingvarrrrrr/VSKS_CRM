@@ -81,21 +81,37 @@ async def fact_import_template(
 @router.post("/sheets")
 async def fact_import_sheets(
     subsidy_id: int,
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    source_url: Optional[str] = Form(None),
+    force_refresh: bool = Form(False),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     await _check_permission(subsidy_id, db, current_user)
     from app.services.historical_fact_import.columns import list_sheets
+    from app.services.cloud_spreadsheet import fetch_spreadsheet_from_url
 
-    content = await file.read()
-    return list_sheets(content, file.filename or "")
+    if source_url:
+        content, filename, preferred_sheet = await fetch_spreadsheet_from_url(source_url, force_refresh=force_refresh)
+        res = list_sheets(content, filename)
+        if isinstance(res, dict):
+            res["source_filename"] = filename
+            if preferred_sheet:
+                res["preferred_sheet"] = preferred_sheet
+        return res
+    elif file is not None:
+        content = await file.read()
+        return list_sheets(content, file.filename or "")
+    else:
+        raise HTTPException(400, "Необходимо передать либо файл, либо публичную ссылку (source_url).")
 
 
 @router.post("/preview")
 async def fact_import_preview(
     subsidy_id: int,
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    source_url: Optional[str] = Form(None),
+    header_row: Optional[int] = Form(None),
     sheet: Optional[str] = Form(None),
     mapping: Optional[str] = Form(None),
     decisions: Optional[str] = Form(None),
@@ -104,19 +120,33 @@ async def fact_import_preview(
 ):
     await _check_permission(subsidy_id, db, current_user)
     from app.services.historical_fact_import.preview import build_preview
+    from app.services.cloud_spreadsheet import fetch_spreadsheet_from_url
 
-    content = await file.read()
+    if source_url:
+        content, filename, _ = await fetch_spreadsheet_from_url(source_url)
+    elif file is not None:
+        content = await file.read()
+        filename = file.filename or ""
+    else:
+        raise HTTPException(400, "Необходимо передать либо файл, либо публичную ссылку (source_url).")
+
     mapping_dict = _parse_json_form(mapping, "mapping")
     decisions_dict = _parse_json_form(decisions, "decisions")
-    return await build_preview(
-        db, subsidy_id, content, file.filename or "", sheet, mapping_dict, decisions_dict,
+    # Передаем header_row если задан
+    res = await build_preview(
+        db, subsidy_id, content, filename, sheet, mapping_dict, decisions_dict,
     )
+    if header_row and isinstance(res, dict):
+        res["detected_header_row"] = header_row
+    return res
 
 
 @router.post("/commit")
 async def fact_import_commit(
     subsidy_id: int,
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    source_url: Optional[str] = Form(None),
+    header_row: Optional[int] = Form(None),
     sheet: Optional[str] = Form(None),
     mapping: Optional[str] = Form(None),
     decisions: Optional[str] = Form(None),
@@ -125,12 +155,20 @@ async def fact_import_commit(
 ):
     await _check_permission(subsidy_id, db, current_user)
     from app.services.historical_fact_import.commit import commit_import
+    from app.services.cloud_spreadsheet import fetch_spreadsheet_from_url
 
-    content = await file.read()
+    if source_url:
+        content, filename, _ = await fetch_spreadsheet_from_url(source_url)
+    elif file is not None:
+        content = await file.read()
+        filename = file.filename or ""
+    else:
+        raise HTTPException(400, "Необходимо передать либо файл, либо публичную ссылку (source_url).")
+
     mapping_dict = _parse_json_form(mapping, "mapping")
     decisions_dict = _parse_json_form(decisions, "decisions")
     result = await commit_import(
-        db, subsidy_id, current_user, content, file.filename or "", sheet, mapping_dict, decisions_dict,
+        db, subsidy_id, current_user, content, filename, sheet, mapping_dict, decisions_dict,
     )
     await db.commit()
     return result

@@ -9,45 +9,30 @@
     <v-list density="compact" style="max-width: 420px">
       <!-- Группа «Загрузка» -->
       <template v-if="ctx.canEditFeo.value">
-        <v-list-subheader>Загрузка</v-list-subheader>
+        <v-list-subheader>Импорт</v-list-subheader>
         <v-list-item prepend-icon="mdi-upload-outline" @click="feoImport.show = true">
-          <v-list-item-title>Импорт ФЭО</v-list-item-title>
+          <v-list-item-title>Импорт плана ФЭО</v-list-item-title>
+          <v-list-item-subtitle style="white-space:normal">Excel, Google или Яндекс Таблица</v-list-item-subtitle>
+        </v-list-item>
+        <v-list-item prepend-icon="mdi-file-upload-outline" @click="roundtripImportDialog?.open()">
+          <v-list-item-title>Загрузить правки из выгрузки ФЭО</v-list-item-title>
         </v-list-item>
         <v-list-item prepend-icon="mdi-file-swap-outline" @click="openFactImport">
-          <v-list-item-title>Новый импорт факта</v-list-item-title>
+          <v-list-item-title>Импорт факта и оплат</v-list-item-title>
+          <v-list-item-subtitle style="white-space:normal">Закупки, статусы и оплаты — Excel, Google или Яндекс Таблица</v-list-item-subtitle>
         </v-list-item>
         <v-list-item prepend-icon="mdi-history" @click="openFactImportRuns">
           <v-list-item-title>Журнал импорта факта</v-list-item-title>
         </v-list-item>
-        <v-list-item prepend-icon="mdi-download-outline"
-          @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">
-          <v-list-item-title>Шаблон старого импорта ФЭО</v-list-item-title>
-          <v-list-item-subtitle style="white-space:normal">Если часть закупок уже прошла — заполните блок «Факт»: после загрузки плана система предложит загрузить их.</v-list-item-subtitle>
-        </v-list-item>
-        <v-list-item prepend-icon="mdi-file-upload-outline" @click="roundtripImportDialog?.open()">
-          <v-list-item-title>Загрузить выгрузку ФЭО</v-list-item-title>
-          <v-list-item-subtitle style="white-space:normal">Файл из «Выгрузить ФЭО»: изменённые суммы и названия, новые строки.</v-list-item-subtitle>
-        </v-list-item>
-        <v-list-item prepend-icon="mdi-file-document-outline" @click="downloadFeoRoundtripTemplate">
-          <v-list-item-title>Шаблон выгрузки ФЭО (с примером)</v-list-item-title>
-          <v-list-item-subtitle style="white-space:normal">Формат «Загрузить выгрузку ФЭО» с вымышленным примером и листом «Как заполнять».</v-list-item-subtitle>
-        </v-list-item>
         <v-divider />
       </template>
 
-      <!-- Группа «Выгрузка» -->
-      <v-list-subheader>Выгрузка</v-list-subheader>
-      <v-list-item prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">
-        <v-list-item-title>Выгрузить ФЭО</v-list-item-title>
-      </v-list-item>
-      <v-list-item prepend-icon="mdi-microsoft-excel" @click="exportPlanGraphExcel">
-        <v-list-item-title>Экспорт в Excel (.xlsx)</v-list-item-title>
-      </v-list-item>
-      <v-list-item prepend-icon="mdi-microsoft-word" @click="exportPlanGraphDocx">
-        <v-list-item-title>Экспорт в Word (шаблон)</v-list-item-title>
-      </v-list-item>
-      <v-list-item prepend-icon="mdi-file-pdf-box" @click="exportFeoPdf">
-        <v-list-item-title>Экспорт в PDF (как на экране)</v-list-item-title>
+      <!-- Группа «Шаблоны» -->
+      <v-list-subheader>Шаблоны</v-list-subheader>
+      <v-list-item prepend-icon="mdi-download-outline"
+        @click="downloadUnifiedTemplate">
+        <v-list-item-title>Единый шаблон импорта (.xlsx)</v-list-item-title>
+        <v-list-item-subtitle style="white-space:normal">Все форматы на разных листах: план, выгрузка, факт и этапы (GoodsService)</v-list-item-subtitle>
       </v-list-item>
       <v-list-item prepend-icon="mdi-upload-outline" @click="templateFileInput?.click()">
         <v-list-item-title>Загрузить шаблон .docx</v-list-item-title>
@@ -203,6 +188,25 @@ async function downloadFeoRoundtripTemplate() {
   a.download = filenameFromContentDisposition(r.headers.get('Content-Disposition'), 'Шаблон_выгрузки_ФЭО.xlsx')
   a.click()
   URL.revokeObjectURL(url)
+}
+
+async function downloadUnifiedTemplate() {
+  const subsidyId = ctx.selectedId.value
+  const url = subsidyId ? `/api/feo-categories/unified-template?subsidy_id=${subsidyId}` : '/api/feo-categories/unified-template'
+  const token = localStorage.getItem('auth_token') || ''
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}))
+    emit('snack', err.message || err.detail || 'Не удалось скачать единый шаблон', 'error')
+    return
+  }
+  const blob = await r.blob()
+  const bUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = bUrl
+  a.download = filenameFromContentDisposition(r.headers.get('Content-Disposition'), 'Единый_шаблон_импорта.xlsx')
+  a.click()
+  URL.revokeObjectURL(bUrl)
 }
 
 async function uploadTemplate(file: File) {

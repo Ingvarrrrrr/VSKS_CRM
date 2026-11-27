@@ -66,7 +66,12 @@ export function feoWarnKinds(warnings: FeoWarning[] | undefined | null): string[
 }
 
 const feoImport = reactive({
-  show: false, step: 1, file: null as File | null, fileList: [] as File[],
+  show: false, step: 1,
+  sourceMode: 'file' as 'file' | 'url',
+  file: null as File | null, fileList: [] as File[],
+  sourceUrl: '',
+  headerRow: null as number | null,
+  detectedHeaderRow: null as number | null,
   loading: false,
   result: null as FeoImportResult | null,
   dryResult: null as FeoImportResult | null,
@@ -524,11 +529,19 @@ export function useFeoImport(ctx?: FeoImportCtx) {
   })
 
   async function doFeoImport() {
-    if (!feoImport.file) return
+    if (feoImport.sourceMode === 'file' && !feoImport.file) return
+    if (feoImport.sourceMode === 'url' && !feoImport.sourceUrl) return
     feoImport.loading = true
     try {
       const fd = new FormData()
-      fd.append('file', feoImport.file)
+      if (feoImport.sourceMode === 'url' && feoImport.sourceUrl) {
+        fd.append('source_url', feoImport.sourceUrl)
+      } else if (feoImport.file) {
+        fd.append('file', feoImport.file)
+      }
+      if (feoImport.headerRow != null && feoImport.headerRow >= 1) {
+        fd.append('header_row', String(feoImport.headerRow))
+      }
       // Чтение файла ничего не пишет в БД (см. докстринг эндпоинта) — можно
       // один раз тихо повторить при обрыве сети (Правило №6: тот же хелпер
       // и то же сообщение «Нет связи с сервером», что у apiFetch, см. api.ts).
@@ -543,6 +556,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       }
       const data = await res.json()
       feoImport.previewData = data
+      feoImport.detectedHeaderRow = data.header_row ?? null
       feoImport.selectedSheet = data.sheets[0]?.name || ''
       feoIgnoredCols.value = []
       feoAutoMap(data.sheets[0]?.headers || [])
@@ -586,7 +600,8 @@ export function useFeoImport(ctx?: FeoImportCtx) {
   // ошибки идут в feoImport.recomputeError (инлайн в мастере, п.6 задачи),
   // а не в общий toast, и прежний feoImport.dryResult не перетирается.
   async function doFeoMappedImport(dryRun = false, keepStep = false, opts?: { silent?: boolean }) {
-    if (!feoImport.file) return
+    if (feoImport.sourceMode === 'file' && !feoImport.file) return
+    if (feoImport.sourceMode === 'url' && !feoImport.sourceUrl) return
     const silent = !!opts?.silent
     if (!silent) feoImport.loading = true
     try {
@@ -597,16 +612,15 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         .filter(([, newPath]) => !!newPath)
         .map(([oldId, newPath]) => ({ old_id: Number(oldId), new_path: newPath as string }))
 
-      // Баг владельца 2026-09-17 (HTTP 414 на субсидии "Центрпоиск_3"): все
-      // параметры ниже раньше шли в query-строку GET-подобным способом при
-      // POST'е — ~70 col_* плюс remap плюс duplicate_resolutions (кириллица,
-      // по группе на каждую категорию) уходили на десятки КБ, выше лимита
-      // nginx (large_client_header_buffers). Файл и так шёл в теле FormData —
-      // теперь ВСЁ идёт туда же, в URL не остаётся ничего, что растёт от
-      // данных файла (backend принимает то же самое и из формы, и из query
-      // для обратной совместимости — см. app/services/feo_import_params.py).
       const fd = new FormData()
-      fd.append('file', feoImport.file)
+      if (feoImport.sourceMode === 'url' && feoImport.sourceUrl) {
+        fd.append('source_url', feoImport.sourceUrl)
+      } else if (feoImport.file) {
+        fd.append('file', feoImport.file)
+      }
+      if (feoImport.headerRow != null && feoImport.headerRow >= 1) {
+        fd.append('header_row', String(feoImport.headerRow))
+      }
       fd.append('sheet_name', feoImport.selectedSheet)
       fd.append('header_row_offset', String(sheet?.header_row_offset ?? 0))
       fd.append('dry_run', dryRun ? 'true' : 'false')

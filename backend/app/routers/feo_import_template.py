@@ -63,6 +63,22 @@ router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 _content_disposition = content_disposition
 
 
+@router.get("/unified-template")
+async def download_unified_template(
+    subsidy_id: Optional[int] = Query(None, description="ID субсидии для предзаполнения"),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Единый многолистовой Excel-шаблон импорта GALA (со всеми 5 листами)."""
+    from app.services.unified_template import build_unified_template_bytes
+    content = await build_unified_template_bytes(subsidy_id, db)
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": _content_disposition("Единый_шаблон_импорта_GALA.xlsx")},
+    )
+
+
 @router.get("/import/template")
 async def download_feo_template(
     subsidy_id: Optional[int] = Query(

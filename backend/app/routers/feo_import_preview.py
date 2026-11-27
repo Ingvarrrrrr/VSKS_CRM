@@ -14,7 +14,8 @@ feo_categories.router (несёт catch-all GET/PUT/DELETE "/{cat_id}"), как 
 сервис с мастером импорта товаров (ПРАВИЛО №6, третьей копии нет). Поведение
 ЭТОГО эндпоинта не поменялось — те же hints, тот же формат ответа.
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -33,17 +34,29 @@ _FEO_HINTS = (
 
 @router.post("/import-preview")
 async def feo_import_preview(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    source_url: Optional[str] = Form(None),
+    header_row: Optional[int] = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('feo_categories')),
 ):
     """Read Excel/DOCX file and return headers + sample rows for column mapping."""
-    # B2: файл ещё не связан с конкретной субсидией на этом шаге (маппинг колонок
-    # выбирается ПОСЛЕ) — subsidy_id=None, право проверяется по любой доступной орге.
     await fc._require_feo_category_write(current_user, db, None)
-    fname = (file.filename or "").lower()
+    from app.services.cloud_spreadsheet import fetch_spreadsheet_from_url
+
+    if source_url:
+        content, filename, _ = await fetch_spreadsheet_from_url(source_url)
+    elif file is not None:
+        content = await file.read()
+        filename = file.filename or ""
+    else:
+        raise HTTPException(400, "Необходимо передать либо файл, либо публичную ссылку (source_url).")
+
+    fname = filename.lower()
     if not fname.endswith((".xlsx", ".xls", ".docx", ".doc", ".pdf")):
         raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .docx, .pdf")
 
-    content = await file.read()
-    return read_preview_sheets(content, file.filename or "", _FEO_HINTS)
+    res = read_preview_sheets(content, filename, _FEO_HINTS)
+    if header_row and isinstance(res, dict):
+        res["detected_header_row"] = header_row
+    return res
